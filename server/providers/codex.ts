@@ -6,6 +6,7 @@ import { CodexAppServerController } from './codex-app-server.js';
 import {
   providerSessionPayload,
   type AgentRuntime,
+  type AgentRuntimeDrainInput,
   type AgentRuntimeFollowupInput,
   type AgentRuntimeFollowupResult,
   type AgentRuntimeInput,
@@ -79,6 +80,13 @@ export class CodexCliAgentRuntime implements AgentRuntime {
       threadId: controller.threadId,
     });
     return { accepted: true, text: `appended to ${turnId}` };
+  }
+
+  async requestDrain(input: AgentRuntimeDrainInput): Promise<void> {
+    if (!this.activeRun.accepts(input)) return;
+    const controller = this.controller;
+    if (!controller) return;
+    await controller.waitForQuiescent(input.signal);
   }
 
   private ensureController(input: AgentRuntimeInput): CodexAppServerController {

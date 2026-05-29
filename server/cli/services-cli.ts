@@ -1,14 +1,21 @@
 import { fileURLToPath } from 'node:url';
-import { resolve as resolvePath } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, resolve as resolvePath } from 'node:path';
 
 import type { Command } from 'commander';
 
 import { defaultServerSettingsService } from '../settings/settings.service.js';
 import { resolveAnimaHome } from '../anima-home.js';
 import {
+  clearRestartDrain,
+} from '../services/restart-drain.js';
+import {
+  DEFAULT_RESTART_DRAIN_TIMEOUT_MS,
   DEFAULT_RESTART_IDLE_TIMEOUT_MS,
   listRestartBlockers,
+  type RestartDrainResult,
   restartBlockedError,
+  waitForRestartDrain,
   waitForRestartIdle,
 } from '../services/restart-gate.js';
 import {
@@ -24,9 +31,12 @@ import type { GlobalCliOptions } from './shared.js';
 const DEFAULT_DASHBOARD_PORT = 4174;
 type ServiceId = 'agent' | 'web';
 type ServicesCliOptions = GlobalCliOptions & {
+  drainActive?: boolean;
+  drainTimeoutMs?: number;
   force?: boolean;
   idleTimeoutMs?: number;
   only?: ServiceId;
+  resumeRunning?: boolean;
 };
 
 export function registerServicesCommand(program: Command): void {
@@ -56,6 +66,13 @@ export function registerServicesCommand(program: Command): void {
     .command('restart')
     .description('Stop and start the agent and web app background processes')
     .option('--only <service>', 'Restart only one service: agent or web')
+    .option('--drain-active', 'Drain running agents to a safe boundary before restart')
+    .option(
+      '--drain-timeout-ms <ms>',
+      'How long to wait for running agents to reach a drain point',
+      parseNonNegativeInteger,
+      DEFAULT_RESTART_DRAIN_TIMEOUT_MS,
+    )
     .option('--force', 'Restart even if agent inboxes are running or queued')
     .option(
       '--idle-timeout-ms <ms>',
@@ -63,6 +80,7 @@ export function registerServicesCommand(program: Command): void {
       parseNonNegativeInteger,
       DEFAULT_RESTART_IDLE_TIMEOUT_MS,
     )
+    .option('--resume-running', 'Resume drained running agents after restart')
     .action(async (_, command) => {
       const opts = command.optsWithGlobals() as ServicesCliOptions;
       await runRestart(opts);
@@ -92,12 +110,24 @@ async function runStop(opts: ServicesCliOptions): Promise<void> {
 }
 
 async function runRestart(opts: ServicesCliOptions): Promise<void> {
+  validateRestartDrainOptions(opts);
   const { specs, supervisor } = await resolveServices(opts);
   assertCanControlServices(specs);
-  await assertRestartGate(specs, opts);
-  for (const spec of specs) await stopService(spec);
-  for (const spec of specs) await startService(spec, supervisor);
-  await printStatus(specs);
+  const gate = await prepareRestartGate(specs, opts);
+  let stopped = false;
+  try {
+    for (const spec of specs) await stopService(spec);
+    stopped = true;
+    await gate.beforeStart();
+    for (const spec of specs) await startService(spec, supervisor);
+    await printStatus(specs);
+    await writeRestartResult(gate.result);
+    if (gate.drainResult?.resumedCount) {
+      console.log(`restart: ${gate.drainResult.resumedCount} agent item(s) resumed after restart`);
+    }
+  } finally {
+    if (!stopped) await gate.cleanup();
+  }
 }
 
 async function runStatus(opts: ServicesCliOptions): Promise<void> {
@@ -156,20 +186,75 @@ function assertCanControlServices(specs: ServiceSpec[]): void {
   );
 }
 
-async function assertRestartGate(specs: ServiceSpec[], opts: ServicesCliOptions): Promise<void> {
+interface RestartGateLease {
+  beforeStart(): Promise<void>;
+  cleanup(): Promise<void>;
+  drainResult?: RestartDrainResult;
+  result: ServicesRestartResult;
+}
+
+interface ServicesRestartResult {
+  fallbackToIdle: boolean;
+  mode: 'idle' | 'drain-active';
+  requestedCount: number;
+  resumedCount: number;
+}
+
+async function prepareRestartGate(specs: ServiceSpec[], opts: ServicesCliOptions): Promise<RestartGateLease> {
   const agentSpec = specs.find((spec) => spec.id === 'agent');
-  if (!agentSpec || opts.force || !(await isServiceRunning(agentSpec))) return;
+  const noop = {
+    beforeStart: async () => {},
+    cleanup: async () => {},
+    result: idleRestartResult(),
+  };
+  if (!agentSpec || opts.force || !(await isServiceRunning(agentSpec))) return noop;
+
+  if (opts.drainActive || opts.resumeRunning) {
+    const drainResult = await waitForRestartDrain({
+      drainTimeoutMs: opts.drainTimeoutMs ?? DEFAULT_RESTART_DRAIN_TIMEOUT_MS,
+      markerTtlMs: (opts.drainTimeoutMs ?? DEFAULT_RESTART_DRAIN_TIMEOUT_MS) + 60_000,
+    });
+    return {
+      beforeStart: clearRestartDrain,
+      cleanup: clearRestartDrain,
+      drainResult,
+      result: drainResult,
+    };
+  }
 
   await waitForRestartIdle(opts.idleTimeoutMs ?? DEFAULT_RESTART_IDLE_TIMEOUT_MS);
 
   const finalBlockers = await listRestartBlockers();
   if (finalBlockers.length > 0) throw restartBlockedError(finalBlockers, 'Agents became busy before restart.');
+  return noop;
+}
+
+function validateRestartDrainOptions(opts: ServicesCliOptions): void {
+  if ((opts.drainActive || opts.resumeRunning) && (!opts.drainActive || !opts.resumeRunning)) {
+    throw new Error('--drain-active and --resume-running must be used together');
+  }
+}
+
+function idleRestartResult(): ServicesRestartResult {
+  return {
+    fallbackToIdle: false,
+    mode: 'idle',
+    requestedCount: 0,
+    resumedCount: 0,
+  };
+}
+
+async function writeRestartResult(result: ServicesRestartResult): Promise<void> {
+  const resultPath = process.env.ANIMA_RESTART_RESULT_FILE;
+  if (!resultPath) return;
+  await mkdir(dirname(resultPath), { recursive: true });
+  await writeFile(resultPath, `${JSON.stringify({ ...result, completedAt: new Date().toISOString() }, null, 2)}\n`, 'utf8');
 }
 
 function parseNonNegativeInteger(value: string): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 0) {
-    throw new Error('--idle-timeout-ms must be a non-negative integer');
+    throw new Error('timeout must be a non-negative integer');
   }
   return parsed;
 }

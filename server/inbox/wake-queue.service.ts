@@ -111,6 +111,17 @@ export class WakeQueueService {
     return this.store.requestStop(itemId);
   }
 
+  requestDrain(input: {
+    itemId: string;
+    timeoutMs: number;
+  }): Promise<InboxItem> {
+    return this.store.requestDrain(input);
+  }
+
+  clearDrainRequest(itemId: string): Promise<InboxItem> {
+    return this.store.clearDrainRequest(itemId);
+  }
+
   markRunning(input: {
     itemId: string;
     startedAt?: string;

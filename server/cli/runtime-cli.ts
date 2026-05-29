@@ -24,6 +24,7 @@ interface RuntimeCliOptions {
   channel?: string;
   dashboardHost?: string;
   dashboardPort?: number;
+  drainTimeoutMs?: number;
   force?: boolean;
   idleTimeoutMs?: number;
   logPath?: string;
@@ -157,7 +158,8 @@ function registerRuntimeCommands(program: Command, options: { topLevel: boolean 
     });
 
   serviceCommand(program, 'restart', { installable: true })
-    .description('Install the managed runtime if needed, then idle-gated restart local Anima services')
+    .description('Install the managed runtime if needed, then restart local Anima services')
+    .option('--drain-timeout-ms <ms>', 'How long to wait for active agents to reach a restart drain point', parseNonNegativeInteger)
     .option('--force', 'Restart even if agent inboxes are running or queued')
     .option('--idle-timeout-ms <ms>', 'How long to wait for idle agents before failing', parseNonNegativeInteger)
     .action(async (options: RuntimeCliOptions) => {
@@ -303,8 +305,14 @@ async function runAnimactlServices(
   const args = [animactlScript, 'services', command];
   if (options.only) args.push('--only', options.only);
   if (command === 'restart') {
-    if (options.force) args.push('--force');
-    if (options.idleTimeoutMs !== undefined) args.push('--idle-timeout-ms', String(options.idleTimeoutMs));
+    if (options.force) {
+      args.push('--force');
+      if (options.idleTimeoutMs !== undefined) args.push('--idle-timeout-ms', String(options.idleTimeoutMs));
+    } else {
+      args.push('--drain-active', '--resume-running');
+      const drainTimeoutMs = options.drainTimeoutMs ?? options.idleTimeoutMs;
+      if (drainTimeoutMs !== undefined) args.push('--drain-timeout-ms', String(drainTimeoutMs));
+    }
   }
 
   return new Promise((resolveDone, reject) => {

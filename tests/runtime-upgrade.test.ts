@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -53,6 +53,31 @@ test('runtime upgrade status is track-scoped and includes idle gate state', asyn
       assert.equal(status.gate.state, 'idle');
       assert.deepEqual(status.gate.blockers, []);
       assert.equal(status.operation.status, 'idle');
+    });
+  } finally {
+    await rm(rootDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime upgrade gate reports running blockers and ignores queued items', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'anima-runtime-upgrade-running-gate-'));
+  try {
+    await withAnimaHome(rootDir, async () => {
+      await writeAgentQueueFixture(rootDir, 'scout', [
+        queueItem('item_queued', 'queued'),
+        queueItem('item_running', 'running'),
+      ]);
+      const status = await new RuntimeUpgradeService({
+        checkTtlMs: Number.MAX_SAFE_INTEGER,
+        distTagLookup: async () => '0.1.2',
+        packageVersion: async () => '0.1.1',
+      }).status();
+
+      assert.equal(status.gate.state, 'busy');
+      assert.deepEqual(
+        status.gate.blockers.map((blocker) => ({ itemId: blocker.itemId, status: blocker.status })),
+        [{ itemId: 'item_running', status: 'running' }],
+      );
     });
   } finally {
     await rm(rootDir, { force: true, recursive: true });
@@ -146,6 +171,41 @@ if (version !== '0.1.2') {
     'utf8',
   );
   await chmod(path, 0o755);
+}
+
+async function writeAgentQueueFixture(rootDir: string, agentId: string, items: Record<string, unknown>[]): Promise<void> {
+  const agentDir = join(rootDir, 'agents', agentId);
+  await mkdir(agentDir, { recursive: true });
+  await writeFile(join(agentDir, 'config.json'), `${JSON.stringify({ id: agentId }, null, 2)}\n`, 'utf8');
+  await writeFile(
+    join(agentDir, 'inbox.json'),
+    `${JSON.stringify(Object.fromEntries(items.map((item) => [String(item['id']), item])), null, 2)}\n`,
+    'utf8',
+  );
+}
+
+function queueItem(id: string, status: 'queued' | 'running'): Record<string, unknown> {
+  const createdAt = '2026-05-29T08:00:00.000Z';
+  const handling: Record<string, unknown> = {
+    createdAt,
+    queuedAt: '2026-05-29T08:00:01.000Z',
+    status,
+    updatedAt: status === 'running' ? '2026-05-29T08:00:02.000Z' : '2026-05-29T08:00:01.000Z',
+  };
+  if (status === 'running') {
+    handling['startedAt'] = '2026-05-29T08:00:02.000Z';
+    handling['workerId'] = 'scout:12345';
+  }
+  return {
+    channelId: 'D1',
+    handling,
+    id,
+    kind: 'slack',
+    messageTs: '1780040000.000001',
+    receivedAt: createdAt,
+    teamId: 'T1',
+    text: id,
+  };
 }
 
 test('runtime upgrade status degrades cleanly when npm check fails', async () => {

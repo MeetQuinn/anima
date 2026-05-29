@@ -143,6 +143,37 @@ export class WakeQueueStore {
     }));
   }
 
+  async requestDrain(input: {
+    itemId: string;
+    timeoutMs: number;
+  }): Promise<InboxItem> {
+    const now = nowIso();
+    const item = await this.findOrThrow(input.itemId);
+    return this.replaceItem({
+      ...item,
+      handling: {
+        ...item.handling,
+        drainRequestedAt: now,
+        drainTimeoutMs: input.timeoutMs,
+        updatedAt: now,
+      },
+    });
+  }
+
+  async clearDrainRequest(itemId: string): Promise<InboxItem> {
+    const item = await this.findOrThrow(itemId);
+    const handling = { ...item.handling };
+    delete handling.drainRequestedAt;
+    delete handling.drainTimeoutMs;
+    return this.replaceItem({
+      ...item,
+      handling: {
+        ...handling,
+        updatedAt: nowIso(),
+      },
+    });
+  }
+
   async requeue(itemId: string): Promise<void> {
     await this.replaceItemWithTimestamp(itemId, requeuedItem);
   }
@@ -227,6 +258,8 @@ function requeuedItem(item: InboxItem, now: string): InboxItem {
   delete handling.startedAt;
   delete handling.workerId;
   delete handling.settledAt;
+  delete handling.drainRequestedAt;
+  delete handling.drainTimeoutMs;
   return {
     ...item,
     handling: {

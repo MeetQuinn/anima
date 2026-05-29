@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, open, readFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -36,6 +36,13 @@ const DEFAULT_VERIFY_TIMEOUT_MS = 60_000;
 const VERIFY_POLL_MS = 1_000;
 const UPGRADE_AFTER_RESPONSE_DELAY_MS = 250;
 const OPERATION_IDLE: RuntimeUpgradeOperationType = { status: 'idle' };
+
+interface RuntimeRestartResult {
+  fallbackToIdle: boolean;
+  mode: 'idle' | 'drain-active';
+  requestedCount: number;
+  resumedCount: number;
+}
 
 export interface RuntimeUpgradeServiceOptions {
   checkStore?: RuntimeUpgradeCheckStore;
@@ -296,6 +303,7 @@ export async function runRuntimeUpgradeWorker(options: RuntimeUpgradeWorkerOptio
     targetVersion: options.targetVersion,
   });
 
+  let restart: RuntimeRestartResult | undefined;
   try {
     await appendUpgradeLog(logPath, `upgrade worker running target=${options.targetVersion} track=${options.releaseTrack}`);
     const previousPids = await readServicePids(resolveAnimaHome());
@@ -307,7 +315,7 @@ export async function runRuntimeUpgradeWorker(options: RuntimeUpgradeWorkerOptio
       version: options.targetVersion,
     });
     verifyInstalledRuntime(target.paths);
-    await runManagedServicesRestart(target.paths.animactlScript, target.paths.packageDir, options.idleTimeoutMs);
+    restart = await runManagedServicesRestart(target.paths.animactlScript, target.paths.packageDir, options.idleTimeoutMs);
     await verifyRuntimeBoot({
       dashboardHost: options.dashboardHost,
       dashboardPort: options.dashboardPort,
@@ -322,6 +330,7 @@ export async function runRuntimeUpgradeWorker(options: RuntimeUpgradeWorkerOptio
       currentVersion: options.targetVersion,
       logPath,
       previousVersion: options.previousVersion,
+      ...(restart ? { restart } : {}),
       rollback: 'not_needed',
       startedAt,
       status: 'succeeded',
@@ -348,6 +357,7 @@ export async function runRuntimeUpgradeWorker(options: RuntimeUpgradeWorkerOptio
       error: message,
       logPath,
       previousVersion: options.previousVersion,
+      ...(restart ? { restart } : {}),
       rollback: rollback.status,
       startedAt,
       status: 'failed',
@@ -358,7 +368,7 @@ export async function runRuntimeUpgradeWorker(options: RuntimeUpgradeWorkerOptio
 }
 
 export async function runtimeUpgradeGate(): Promise<RuntimeUpgradeGate> {
-  const blockers = await listRestartBlockers();
+  const blockers = await listRestartBlockers({ statuses: ['running'] });
   return {
     blockers: blockers.map(runtimeUpgradeBlocker),
     state: blockers.length > 0 ? 'busy' : 'idle',
@@ -465,13 +475,14 @@ async function runManagedServicesRestart(
   animactlScript: string,
   packageDir: string,
   idleTimeoutMs: number | undefined,
-): Promise<void> {
-  const args = [animactlScript, 'services', 'restart'];
-  if (idleTimeoutMs !== undefined) args.push('--idle-timeout-ms', String(idleTimeoutMs));
+): Promise<RuntimeRestartResult> {
+  const args = [animactlScript, 'services', 'restart', '--drain-active', '--resume-running'];
+  if (idleTimeoutMs !== undefined) args.push('--drain-timeout-ms', String(idleTimeoutMs));
+  const resultPath = join(resolveAnimaHome(), 'run', `runtime-upgrade-restart-${process.pid}-${Date.now()}.json`);
   const code = await new Promise<number>((resolveDone, reject) => {
     const child = spawn(process.execPath, args, {
       cwd: packageDir,
-      env: { ...cleanServiceEnv(), ANIMA_HOME: resolveAnimaHome() },
+      env: { ...cleanServiceEnv(), ANIMA_HOME: resolveAnimaHome(), ANIMA_RESTART_RESULT_FILE: resultPath },
       stdio: 'inherit',
     });
     child.once('error', reject);
@@ -481,6 +492,11 @@ async function runManagedServicesRestart(
     });
   });
   if (code !== 0) throw new Error(`services restart exited with code ${code}`);
+  try {
+    return parseRuntimeRestartResult(JSON.parse(await readFile(resultPath, 'utf8')));
+  } finally {
+    await rm(resultPath, { force: true }).catch(() => undefined);
+  }
 }
 
 function verifyInstalledRuntime(paths: RuntimePaths): void {
@@ -651,6 +667,23 @@ function runtimeUpgradeCheckErrorFromUnknown(value: unknown): RuntimeUpgradeChec
   if (type !== 'network' && type !== 'parse' && type !== 'unknown') return undefined;
   if (typeof message !== 'string' || !message) return undefined;
   return { message, type };
+}
+
+function parseRuntimeRestartResult(value: unknown): RuntimeRestartResult {
+  if (!isRecord(value)) throw new Error('services restart did not report a restart result');
+  const mode = value['mode'];
+  const fallbackToIdle = value['fallbackToIdle'];
+  const requestedCount = value['requestedCount'];
+  const resumedCount = value['resumedCount'];
+  if (mode !== 'idle' && mode !== 'drain-active') throw new Error('services restart reported an invalid mode');
+  if (typeof fallbackToIdle !== 'boolean') throw new Error('services restart reported an invalid fallback flag');
+  if (typeof requestedCount !== 'number' || !Number.isFinite(requestedCount)) {
+    throw new Error('services restart reported an invalid requested count');
+  }
+  if (typeof resumedCount !== 'number' || !Number.isFinite(resumedCount)) {
+    throw new Error('services restart reported an invalid resumed count');
+  }
+  return { fallbackToIdle, mode, requestedCount, resumedCount };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -66,7 +66,7 @@ The agent's text output and the start/finish/fail/abort of a run.
 | `agent.text` | Provider emits final assistant text. | Conversation | `Output` + message text (truncated at 280 chars). | Full text. |
 | `runtime.completed` | Runtime finishes an item successfully. | Conversation (subtle) | `Idle` — turn-end marker. | — |
 | `runtime.failed` | Runtime throws or exits with an error. | Conversation | `Run failed` + first line of the error. | Full error. |
-| `runtime.aborted` | Item aborted by shutdown, user stop, or idle timeout. | Conversation | Reason-mapped title: `Runtime restarted` / `Stopped by user` / `Idle timeout` / `Runtime stopped`. | — |
+| `runtime.aborted` | Item aborted by restart drain, shutdown, user stop, or idle timeout. | Conversation | Reason-mapped title: `Runtime restarted` / `Stopped by user` / `Idle timeout` / `Runtime stopped`. | — |
 | `runtime.followup_failed` | Appending a follow-up to an active run failed. | Conversation | `Follow-up failed` + reason. | Full reason/error. |
 | `runtime.started` | Runtime starts processing an item. | Audit | `Working` / `Message received`. | — |
 | `runtime.pending` | Item arrived while another was active and couldn't be appended. | Audit | `Queued behind current item`. | — |

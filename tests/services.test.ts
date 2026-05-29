@@ -295,6 +295,123 @@ test('services restart refuses to kill running or queued inbox items by default'
   }
 });
 
+test('services restart requires drain-active and resume-running together', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'anima-services-restart-drain-flags-'));
+  try {
+    const configDir = join(tempDir, '.anima');
+    await writeMinimalConfig(configDir, {});
+
+    const restart = await runAnimactl(['services', 'restart', '--drain-active'], {
+      env: { ANIMA_HOME: configDir },
+    });
+
+    assert.equal(restart.status, 1);
+    assert.match(restart.stderr, /--drain-active and --resume-running must be used together/);
+    assert.doesNotMatch(restart.stdout, /stopped pid/);
+    assert.doesNotMatch(restart.stdout, /started pid/);
+  } finally {
+    await rm(tempDir, { force: true, recursive: true });
+  }
+});
+
+test('services restart drain mode leaves queued inbox items for the new worker', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'anima-services-restart-drain-queued-'));
+  const childPids = new Set<number>();
+  try {
+    const configDir = join(tempDir, '.anima');
+    await writeTokenlessAgentConfig(configDir, tempDir);
+
+    const start = await runAnimactl(['services', 'start', '--only', 'agent'], {
+      env: { ANIMA_HOME: configDir },
+    });
+    collectStartedPids(start.stdout, childPids);
+    assert.equal(start.status, 0, start.stderr || start.stdout);
+    const [oldPid] = childPids;
+    assert.ok(oldPid);
+
+    await writeInbox(configDir, 'anima', [
+      slackInboxItem('item_queued', 'queued', 'Queued message should remain queued.'),
+    ]);
+
+    const restart = await runAnimactl([
+      'services',
+      'restart',
+      '--only',
+      'agent',
+      '--drain-active',
+      '--resume-running',
+    ], {
+      env: { ANIMA_HOME: configDir },
+    });
+    collectStartedPids(restart.stdout, childPids);
+
+    assert.equal(restart.status, 0, restart.stderr || restart.stdout);
+    assert.match(restart.stdout, new RegExp(`agent: stopped pid ${oldPid}`));
+    assert.match(restart.stdout, /agent: started pid/);
+    const inbox = JSON.parse(await readFile(join(configDir, 'agents', 'anima', 'inbox.json'), 'utf8')) as Record<string, { handling?: { status?: string } }>;
+    assert.equal(inbox['item_queued']?.handling?.status, 'queued');
+  } finally {
+    for (const pid of childPids) {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {}
+    }
+    await rm(tempDir, { force: true, recursive: true });
+  }
+});
+
+test('services restart drain mode times out a running item without stopping services', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'anima-services-restart-drain-timeout-'));
+  const childPids = new Set<number>();
+  try {
+    const configDir = join(tempDir, '.anima');
+    await writeTokenlessAgentConfig(configDir, tempDir);
+
+    const start = await runAnimactl(['services', 'start', '--only', 'agent'], {
+      env: { ANIMA_HOME: configDir },
+    });
+    collectStartedPids(start.stdout, childPids);
+    assert.equal(start.status, 0, start.stderr || start.stdout);
+    const [oldPid] = childPids;
+    assert.ok(oldPid);
+
+    await writeInbox(configDir, 'anima', [
+      slackInboxItem('item_running', 'running', 'Long-running tool should block drain.'),
+    ]);
+
+    const restart = await runAnimactl([
+      'services',
+      'restart',
+      '--only',
+      'agent',
+      '--drain-active',
+      '--resume-running',
+      '--drain-timeout-ms',
+      '0',
+    ], {
+      env: { ANIMA_HOME: configDir },
+    });
+
+    assert.equal(restart.status, 1);
+    assert.match(restart.stderr, /Timed out waiting for running agents to reach a restart drain point/);
+    assert.match(restart.stderr, /agent=anima status=running item=item_running/);
+    assert.doesNotMatch(restart.stdout, /stopped pid/);
+    assert.doesNotMatch(restart.stdout, /started pid/);
+    assert.equal(pidIsRunning(oldPid), true);
+    const inbox = JSON.parse(await readFile(join(configDir, 'agents', 'anima', 'inbox.json'), 'utf8')) as Record<string, { handling?: { drainRequestedAt?: string; drainTimeoutMs?: number; status?: string } }>;
+    assert.equal(inbox['item_running']?.handling?.status, 'running');
+    assert.equal(inbox['item_running']?.handling?.drainRequestedAt, undefined);
+    assert.equal(inbox['item_running']?.handling?.drainTimeoutMs, undefined);
+  } finally {
+    for (const pid of childPids) {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {}
+    }
+    await rm(tempDir, { force: true, recursive: true });
+  }
+});
+
 test('services restart --force bypasses the inbox idle gate', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'anima-services-restart-force-'));
   const childPids = new Set<number>();

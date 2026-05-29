@@ -31,6 +31,12 @@ export const RuntimeUpgradeOperation = z.object({
   logPath: z.string().optional(),
   previousVersion: z.string().optional(),
   rollback: z.enum(['not_needed', 'succeeded', 'failed']).optional(),
+  restart: z.object({
+    fallbackToIdle: z.boolean(),
+    mode: z.enum(['idle', 'drain-active']),
+    requestedCount: z.number(),
+    resumedCount: z.number(),
+  }).optional(),
   scheduledAt: z.string().optional(),
   startedAt: z.string().optional(),
   status: z.enum(['idle', 'scheduled', 'running', 'succeeded', 'failed']),

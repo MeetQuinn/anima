@@ -11,6 +11,7 @@ import { kimiInitializeEvent, recordKimiWireEvent } from './kimi-events.js';
 import {
   providerSessionPayload,
   type AgentRuntime,
+  type AgentRuntimeDrainInput,
   type AgentRuntimeFollowupInput,
   type AgentRuntimeFollowupResult,
   type AgentRuntimeInput,
@@ -75,6 +76,13 @@ export class KimiCliAgentRuntime implements AgentRuntime {
     return { accepted: true, text: 'appended to Kimi wire stdin' };
   }
 
+  async requestDrain(input: AgentRuntimeDrainInput): Promise<void> {
+    const controller = this.controller;
+    if (!this.activeRun.accepts(input)) return;
+    if (!controller) return;
+    await controller.waitForQuiescent(input.signal);
+  }
+
   private async ensureController(input: AgentRuntimeInput): Promise<KimiWireController> {
     if (this.controller) return this.controller;
     const sessionId = input.providerSession?.id ?? randomUUID();
@@ -136,12 +144,18 @@ class KimiWireController {
     text: string[];
   };
   private latestPendingToolCallId?: string;
+  private readonly activeToolIds = new Set<string>();
   private readonly pendingToolCalls = new Map<string, {
     args: string[];
     id: string;
     name: string;
   }>();
   private pendingInitializeEvent?: Record<string, unknown>;
+  private readonly quiescentWaiters = new Set<{
+    cleanup(): void;
+    reject(error: unknown): void;
+    resolve(): void;
+  }>();
   readonly completion: Promise<{ stdout: string; stderr: string }>;
 
   constructor(
@@ -150,10 +164,12 @@ class KimiWireController {
   ) {
     this.completion = child.completion.then(
       (result) => {
+        this.rejectQuiescentWaiters(new Error('Kimi wire runtime exited before drain reached a quiescent point'));
         this.abortCurrentTurn(new Error('Kimi wire runtime exited before completing active turn'));
         return result;
       },
       (error) => {
+        this.rejectQuiescentWaiters(error);
         this.abortCurrentTurn(error);
         throw error;
       },
@@ -223,6 +239,33 @@ class KimiWireController {
     this.child.kill(signal);
   }
 
+  waitForQuiescent(signal?: AbortSignal): Promise<void> {
+    if (this.activeToolIds.size === 0) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        cleanup: () => {
+          signal?.removeEventListener('abort', onAbort);
+          this.quiescentWaiters.delete(waiter);
+        },
+        reject: (error: unknown) => {
+          waiter.cleanup();
+          reject(error);
+        },
+        resolve: () => {
+          waiter.cleanup();
+          resolve();
+        },
+      };
+      const onAbort = () => waiter.reject(signal?.reason ?? new Error('Drain wait aborted'));
+      if (signal?.aborted) {
+        reject(signal.reason ?? new Error('Drain wait aborted'));
+        return;
+      }
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.quiescentWaiters.add(waiter);
+    });
+  }
+
   private async acceptLine(line: string): Promise<void> {
     const trimmed = line.trim();
     if (!trimmed) return;
@@ -271,6 +314,11 @@ class KimiWireController {
     }
     if (eventType === 'ToolResult') {
       await this.flushPendingToolCall(turn.input, stringField(payload, 'tool_call_id'));
+      const id = stringField(payload, 'tool_call_id');
+      if (id) {
+        this.activeToolIds.delete(id);
+        this.resolveQuiescentWaitersIfReady();
+      }
       return;
     }
     if (eventType === 'ContentPart') {
@@ -367,12 +415,15 @@ class KimiWireController {
       runtimeKind: 'kimi-cli',
       tool: `kimi.${name}`,
     });
+    this.activeToolIds.add(id);
   }
 
   private abortCurrentTurn(error: unknown): void {
     const turn = this.currentTurn;
     if (!turn) return;
     this.currentTurn = undefined;
+    this.activeToolIds.clear();
+    this.resolveQuiescentWaitersIfReady();
     turn.reject(error);
   }
 
@@ -380,9 +431,20 @@ class KimiWireController {
     const turn = this.currentTurn;
     if (!turn) return;
     this.currentTurn = undefined;
+    this.activeToolIds.clear();
+    this.resolveQuiescentWaitersIfReady();
     const text = turn.text.join('').trim();
     if (text) await turn.input.effects.recordAgentText(text, { eventType: 'kimi.assistant' });
     turn.resolve(text);
+  }
+
+  private resolveQuiescentWaitersIfReady(): void {
+    if (this.activeToolIds.size > 0) return;
+    for (const waiter of [...this.quiescentWaiters]) waiter.resolve();
+  }
+
+  private rejectQuiescentWaiters(error: unknown): void {
+    for (const waiter of [...this.quiescentWaiters]) waiter.reject(error);
   }
 
   private writeJson(payload: Record<string, unknown>): void {

@@ -12,11 +12,13 @@ import { allActivities, loadState } from './helpers/state.js';
 import type { InboxItem, InboxItemStatus } from '../shared/inbox.js';
 import type {
   AgentRuntime,
+  AgentRuntimeDrainInput,
   AgentRuntimeInput,
   AgentRuntimeResult,
   AgentRuntimeFollowupInput,
 } from '../server/runtime/provider-contract.js';
 import { AgentRuntimeWorker } from '../server/runtime/runtime-worker.js';
+import { clearRestartDrain, requestRestartDrain } from '../server/services/restart-drain.js';
 import { runtimeContextForItemId } from '../server/runtime/context.js';
 import type { RuntimeWorkerConfig, RuntimeItemContext } from '../server/runtime/types.js';
 import { findActiveRuntimeItem } from '../server/runtime/active-item.js';
@@ -721,6 +723,14 @@ class AbortableRuntime implements AgentRuntime {
   }
 }
 
+class DrainableRuntime extends AbortableRuntime {
+  readonly drainCalls: AgentRuntimeDrainInput[] = [];
+
+  async requestDrain(input: AgentRuntimeDrainInput): Promise<void> {
+    this.drainCalls.push(input);
+  }
+}
+
 class ActivityBeforeFinishRuntime implements AgentRuntime {
   readonly kind = 'activity-runtime';
   readonly calls: AgentRuntimeInput[] = [];
@@ -772,6 +782,97 @@ class FatalProviderRuntime implements AgentRuntime {
     return { accepted: false };
   }
 }
+
+test('runtime worker leaves queued work untouched while a restart drain marker is active', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-restart-drain-marker-test-'));
+  const runtime = new ControlledRuntime();
+  const coordinator = { agentId: 'scout', stateDir };
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await requestRestartDrain(60_000);
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        queue: queueFor('scout'),
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+      const decision = await enqueueInbox(
+        makeSlackEvent({
+          channelId: 'D-user',
+          eventId: 'evt-restart-drain-marker',
+          teamId: 'T-demo',
+          text: 'stay queued',
+          ts: '1770000010.000001',
+          userId: 'U1',
+        }),
+        coordinator,
+      );
+
+      assert.equal(await worker.drainOnce(), 0);
+      assert.equal(runtime.calls.length, 0);
+      assert.equal((await queueFor('scout').find(decision.ctx.item.id))?.handling.status, 'queued');
+    });
+  } finally {
+    await withAnimaHome(stateDir, async () => clearRestartDrain().catch(() => undefined));
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker drains a running item for restart without marking it failed', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-restart-drain-test-'));
+  const runtime = new DrainableRuntime();
+  const coordinator = { agentId: 'scout', stateDir };
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        idleTimeoutMs: 1_000,
+        queue: queueFor('scout'),
+        pollIntervalMs: 10_000,
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+      const decision = await enqueueInbox(
+        makeSlackEvent({
+          channelId: 'D-user',
+          eventId: 'evt-restart-drain',
+          teamId: 'T-demo',
+          text: 'drain me',
+          ts: '1770000010.000001',
+          userId: 'U1',
+        }),
+        coordinator,
+      );
+      const drain = worker.drainOnce();
+      await waitFor(() => runtime.calls.length === 1);
+
+      await requestRestartDrain(60_000);
+      await queueFor('scout').requestDrain({ itemId: decision.ctx.item.id, timeoutMs: 1_000 });
+      await waitForInboxItemStatus('scout', decision.ctx.item.id, 'queued', 3_000);
+      assert.equal(await drain, 1);
+
+      const item = await queueFor('scout').find(decision.ctx.item.id);
+      assert.equal(item?.handling.status, 'queued');
+      assert.equal(item?.handling.drainRequestedAt, undefined);
+      assert.equal(item?.handling.drainTimeoutMs, undefined);
+      assert.equal(runtime.drainCalls.length, 1);
+      assert.equal(runtime.drainCalls[0]?.activeItemId, decision.ctx.item.id);
+      const activities = allActivities(await loadState());
+      assert.equal(activities.some((activity) => activity.type === 'runtime.failed'), false);
+      const aborted = activities.find((activity) => activity.type === 'runtime.aborted');
+      assert.equal(aborted?.payload?.['reason'], 'restart_drain');
+    });
+  } finally {
+    await withAnimaHome(stateDir, async () => clearRestartDrain().catch(() => undefined));
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
 
 test('runtime worker stops a item when queue requestStop sets stopRequestedAt', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-stop-test-'));

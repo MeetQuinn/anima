@@ -69,8 +69,9 @@ Anima's own live install should run a pinned canary version, not a mutable check
 npx @totoday/animactl@canary restart
 ```
 
-Restarts should stay idle-gated. If agents are active, the restart waits or exits without killing
-active turns. Use `--force` only for an explicit incident decision.
+Restarts should use drain-and-resume. If agents are active, the restart waits for each running
+agent to reach a provider quiescent point, re-queues those items, and lets the new worker resume
+them. Queued items remain queued. Use `--force` only for an explicit incident decision.
 
 ## Stable User Upgrades
 
@@ -83,7 +84,7 @@ First-version behavior:
 2. Check npm `latest`.
 3. If newer, show an upgrade button in the dashboard.
 4. On click, install the selected version.
-5. Restart services through the idle gate.
+5. Restart services through drain-and-resume.
 6. Verify the service comes back on the new version.
 7. If the upgrade fails, report the error and leave the old version running when possible.
 
