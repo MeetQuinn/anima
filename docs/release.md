@@ -43,21 +43,20 @@ against the latest `main` snapshot.
 3. Merge to `main`.
 4. CI publishes an immutable canary package for that commit and updates the `canary` dist-tag.
 5. Anima dogfood/staging upgrades to that canary and runs it with real usage.
-6. Once the canary has behaved well enough, tag a stable release from the same dogfooded commit.
-7. CI publishes that tag as a normal semver version and updates the `latest` dist-tag.
+6. Once the canary has behaved well enough, run the stable publish workflow for the same dogfooded
+   source with the next semver version.
+7. CI publishes that version and updates the `latest` dist-tag.
 
-Stable releases should be cut from a commit that already ran in dogfood. Early on, do this directly
-from `main` by tagging the chosen commit:
+Stable releases should be cut from source that already ran in dogfood. Early on, use the manual
+GitHub Actions workflow:
 
-```bash
-git checkout main
-git pull --ff-only
-git tag v0.1.3 <dogfooded-commit-sha>
-git push origin v0.1.3
-```
+1. Open **Actions -> Publish npm -> Run workflow**.
+2. Enter the stable version, for example `0.1.3`.
+3. Run it from the dogfooded branch or commit.
+4. After it publishes successfully, tag the same source as `v0.1.3`.
 
-The release workflow should build and publish the package from the tag, not from a mutable branch
-name.
+The stable workflow publishes to `latest`. The canary path publishes to `canary` automatically on
+future merges to `main` once `NPM_CANARY_PUBLISH_ENABLED=true` is set as a repository variable.
 
 ## Version Rules
 
@@ -81,3 +80,22 @@ Before publishing a stable release:
 The npm package should contain built artifacts (`dist/server`, `dist/shared`, `dist/web`) so users
 do not need to build Anima to run it.
 
+## GitHub Actions Setup
+
+Workflows:
+
+- `.github/workflows/ci.yml`: runs build and fast tests on pull requests and `main`.
+- `.github/workflows/publish.yml`: publishes npm packages. `main` publishes `canary`;
+  `workflow_dispatch` publishes `latest`.
+
+Publishing uses npm Trusted Publishing, not a long-lived `NPM_TOKEN`. The npm trusted relationship
+is tied to the `publish.yml` workflow:
+
+```bash
+npm trust github @totoday/anima \
+  --repo totoday/anima \
+  --file publish.yml
+```
+
+Keep the workflow filename stable. If it changes, update the npm trusted publisher configuration
+before relying on CI publish.

@@ -61,6 +61,7 @@ const timeoutMs = timeouts[group] ?? 60_000;
 const args = [
   '--test',
   `--test-timeout=${timeoutMs}`,
+  '--test-concurrency=1',
   ...tests.map((name) => join(distTestsDir, name)),
 ];
 

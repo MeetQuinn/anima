@@ -1,0 +1,73 @@
+name: Publish npm
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable semver version to publish on the latest dist-tag, for example 0.1.1.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'totoday/anima' && (github.event_name != 'push' || vars.NPM_CANARY_PUBLISH_ENABLED == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+
+      - name: Select version and dist-tag
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+            npm version "$VERSION" --no-git-tag-version
+            DIST_TAG="latest"
+          else
+            VERSION="$(node <<'NODE'
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const [major, minor, patch] = pkg.version.split('-')[0].split('.').map(Number);
+          if (![major, minor, patch].every(Number.isInteger)) {
+            throw new Error(`package.json version is not a simple semver: ${pkg.version}`);
+          }
+          const run = process.env.GITHUB_RUN_NUMBER;
+          const attempt = process.env.GITHUB_RUN_ATTEMPT;
+          const sha = process.env.GITHUB_SHA.slice(0, 7);
+          process.stdout.write(`${major}.${minor}.${patch + 1}-canary.${run}.${attempt}.${sha}`);
+          NODE
+            )"
+            npm version "$VERSION" --no-git-tag-version
+            DIST_TAG="canary"
+          fi
+          if npm view "@totoday/anima@$VERSION" version >/dev/null 2>&1; then
+            echo "@totoday/anima@$VERSION already exists on npm" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "dist_tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
+          echo "Publishing @totoday/anima@$VERSION with dist-tag $DIST_TAG"
+
+      - run: pnpm build
+      - run: pnpm test:fast:dist
+      - run: npm pack --dry-run --ignore-scripts
+      - run: npm publish --access public --tag "${{ steps.release.outputs.dist_tag }}"

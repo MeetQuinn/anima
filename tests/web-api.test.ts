@@ -790,7 +790,7 @@ test('web API mutates agent configs with redacted responses', async () => {
         headers: { 'content-type': 'application/json' },
         method: 'POST',
       });
-      assert.equal(rename.status, 200);
+      await assertStatus(rename, 200, 'rename profile');
       assert.equal('impact' in ((await rename.json()) as Record<string, unknown>), false);
       assert.equal((await agentService('anima').getConfig()).profile?.displayName, 'Anima Prime');
 
@@ -802,7 +802,7 @@ test('web API mutates agent configs with redacted responses', async () => {
       assert.equal(invalid.status, 400);
       assert.equal(
         (await agentService('anima').getConfig()).homePath,
-        '~/anima-team/agents/anima',
+        join(stateDir, 'agent-homes', 'anima'),
         'invalid home update leaves last-good config',
       );
 
@@ -1062,7 +1062,7 @@ test('web API validates Slack tokens with structured reasons before persisting',
           appToken: 'xapp-1-ADEMO123-valid',
           botToken: 'xoxb-valid-bot',
         });
-        assert.equal(goodConnect.status, 200);
+        await assertStatus(goodConnect, 200, 'connect Slack tokens');
         const goodConnectBody = await goodConnect.json() as {
           slack?: { appId?: string; appToken?: string; avatarUrl?: string; botToken?: string; connected?: boolean; teamId?: string; workspaceName?: string };
         };
@@ -1156,7 +1156,7 @@ test('web API exposes Slack manifest update flow and bumps version after scoped 
         const upgrade = await postJson(`${base}/api/agents/anima/slack/manifest-upgrade`, {
           botToken: 'xoxb-with-commands',
         });
-        assert.equal(upgrade.status, 200);
+        await assertStatus(upgrade, 200, 'upgrade Slack manifest');
         const upgradeBody = await upgrade.json() as { slack?: { botToken?: string; manifestVersion?: number } };
         assert.equal(upgradeBody.slack?.botToken, '');
         assert.equal(upgradeBody.slack?.manifestVersion, CURRENT_SLACK_MANIFEST_VERSION);
@@ -1454,7 +1454,7 @@ test('web API syncs Slack avatar metadata and exposes app id without secrets', a
         const base = `http://127.0.0.1:${address.port}`;
 
         const sync = await fetch(`${base}/api/agents/anima/slack/sync-avatar`, { method: 'POST' });
-        assert.equal(sync.status, 200);
+        await assertStatus(sync, 200, 'sync Slack avatar');
         const syncBody = (await sync.json()) as {
           slack?: {
             appId?: string;
@@ -1665,8 +1665,10 @@ async function writeConfig(configDir: string, agents: TestAgentConfig[] = [defau
   await writeFile(join(configDir, 'config.json'), `${JSON.stringify({}, null, 2)}\n`, 'utf8');
   for (const agent of agents) {
     const agentDir = join(configDir, 'agents', agent.id);
+    const homePath = agent.homePath ?? join(configDir, 'agent-homes', agent.id);
+    await mkdir(homePath, { recursive: true });
     await mkdir(agentDir, { recursive: true });
-    await writeFile(join(agentDir, 'config.json'), `${JSON.stringify(agent, null, 2)}\n`, 'utf8');
+    await writeFile(join(agentDir, 'config.json'), `${JSON.stringify({ ...agent, homePath }, null, 2)}\n`, 'utf8');
   }
 }
 
@@ -1717,6 +1719,12 @@ function postJson(url: string, body: unknown): Promise<Response> {
     headers: { 'content-type': 'application/json' },
     method: 'POST',
   });
+}
+
+async function assertStatus(response: Response, expected: number, label: string): Promise<void> {
+  if (response.status === expected) return;
+  const body = await response.clone().text().catch((error: unknown) => `failed to read body: ${String(error)}`);
+  assert.equal(response.status, expected, `${label} returned ${response.status}: ${body}`);
 }
 
 function bearerToken(request: IncomingMessage): string {

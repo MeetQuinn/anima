@@ -45,7 +45,7 @@
     "build:server": "rm -rf dist/server dist/shared dist/tests && tsc -p tsconfig.json",
     "build:ui": "cd web && pnpm build",
     "pack:check": "pnpm build && npm pack --dry-run --ignore-scripts",
-    "pack:tarball": "rm -f anima-*.tgz && npm pack",
+    "pack:tarball": "rm -f totoday-anima-*.tgz anima-*.tgz && npm pack",
     "prepack": "pnpm build",
     "services:restart": "pnpm build && node dist/server/cli/animactl.js services restart",
     "services:start": "node dist/server/cli/animactl.js services start",
