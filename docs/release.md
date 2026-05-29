@@ -41,11 +41,12 @@ against the latest `main` snapshot.
 1. Open a pull request.
 2. Review and pass required checks.
 3. Merge to `main`.
-4. CI publishes an immutable canary package for that commit and updates the `canary` dist-tag.
+4. CI publishes an immutable `@totoday/animactl` canary package for that commit and updates the
+   `canary` dist-tag.
 5. Anima dogfood/staging upgrades to that canary and runs it with real usage.
 6. Once the canary has behaved well enough, run the stable publish workflow for the same dogfooded
    source with the next semver version.
-7. CI publishes that version and updates the `latest` dist-tag.
+7. CI publishes `@totoday/animactl` at that version and updates the `latest` dist-tag.
 
 Stable releases should be cut from source that already ran in dogfood. Early on, use the manual
 GitHub Actions workflow:
@@ -55,8 +56,9 @@ GitHub Actions workflow:
 3. Run it from the dogfooded branch or commit.
 4. After it publishes successfully, tag the same source as `v0.1.3`.
 
-The stable workflow publishes to `latest`. The canary path publishes to `canary` automatically on
-future merges to `main` once `NPM_CANARY_PUBLISH_ENABLED=true` is set as a repository variable.
+The stable workflow publishes `@totoday/animactl` to `latest`. The canary path publishes
+`@totoday/animactl` to `canary` automatically on future merges to `main` once
+`NPM_CANARY_PUBLISH_ENABLED=true` is set as a repository variable.
 
 ## Version Rules
 
@@ -77,22 +79,21 @@ Before publishing a stable release:
 - Confirm no local private data, credentials, `.anima/` homes, or personal paths are included.
 - Confirm the package version and git tag match.
 
-The npm package should contain built artifacts (`dist/server`, `dist/shared`, `dist/web`) so users
-do not need to build Anima to run it.
+The npm runtime package, `@totoday/animactl`, should contain built artifacts (`dist/server`,
+`dist/shared`, `dist/web`) so users do not need to build Anima to run it.
 
 ## GitHub Actions Setup
 
 Workflows:
 
 - `.github/workflows/ci.yml`: runs build and fast tests on pull requests and `main`.
-- `.github/workflows/publish.yml`: publishes npm packages. `main` publishes `canary`;
+- `.github/workflows/publish.yml`: publishes `@totoday/animactl`. `main` publishes `canary`;
   `workflow_dispatch` publishes `latest`.
 
 Publishing uses npm Trusted Publishing, not a long-lived `NPM_TOKEN`. The npm trusted relationship
 is tied to the `publish.yml` workflow:
 
 ```bash
-npm trust github @totoday/anima --repo totoday/anima --file publish.yml --allow-publish
 npm trust github @totoday/animactl --repo totoday/anima --file publish.yml --allow-publish
 ```
 

@@ -2,7 +2,7 @@
   "name": "@totoday/anima",
   "version": "0.1.0",
   "license": "Apache-2.0",
-  "private": false,
+  "private": true,
   "description": "An AI agent team that works alongside your human team in Slack.",
   "homepage": "https://github.com/totoday/anima#readme",
   "repository": {

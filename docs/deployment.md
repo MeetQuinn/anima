@@ -39,9 +39,9 @@ there. It can be deleted and reinstalled from npm as long as `~/.anima` is intac
 
 ## Managed Runtime Commands
 
-The public npm package exposes a user-facing `anima` entrypoint. `start` and `restart` install the
-package version that `npx` downloaded into `~/.anima/runtime/current`, then run services from that
-pinned runtime:
+The public npm package exposes a user-facing `animactl` entrypoint. `start` and `restart` install
+the package version that `npx` downloaded into `~/.anima/runtime/current`, then run services from
+that pinned runtime:
 
 ```bash
 npx @totoday/animactl start          # stable/latest channel user path
@@ -115,5 +115,5 @@ After a deploy or upgrade, verify:
 - Agent provider configs are intact.
 - Agents can receive and send Slack messages.
 
-The service should expose enough metadata to make wrong-root or wrong-version deployments obvious:
-package version, code root, Anima home, environment, startedAt, and build commit when available.
+The service should expose enough metadata to make wrong-version deployments obvious: package
+version, Anima home, environment, startedAt, and build commit when available.

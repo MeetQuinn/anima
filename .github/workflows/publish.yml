@@ -57,21 +57,17 @@ jobs:
             )"
             DIST_TAG="canary"
           fi
-          VERSION="$VERSION" node -e "const fs=require('node:fs'); for (const path of ['package.json','packages/animactl/package.json']) { const pkg=JSON.parse(fs.readFileSync(path,'utf8')); pkg.version=process.env.VERSION; fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n'); }"
-          for PACKAGE in "@totoday/anima" "@totoday/animactl"; do
-            if npm view "$PACKAGE@$VERSION" version >/dev/null 2>&1; then
-              echo "$PACKAGE@$VERSION already exists on npm" >&2
-              exit 1
-            fi
-          done
+          VERSION="$VERSION" node -e "const fs=require('node:fs'); const path='packages/animactl/package.json'; const pkg=JSON.parse(fs.readFileSync(path,'utf8')); pkg.version=process.env.VERSION; fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');"
+          if npm view "@totoday/animactl@$VERSION" version >/dev/null 2>&1; then
+            echo "@totoday/animactl@$VERSION already exists on npm" >&2
+            exit 1
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "dist_tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
-          echo "Publishing @totoday/anima@$VERSION and @totoday/animactl@$VERSION with dist-tag $DIST_TAG"
+          echo "Publishing @totoday/animactl@$VERSION with dist-tag $DIST_TAG"
 
       - run: pnpm build
       - run: pnpm test:fast:dist
-      - run: npm pack --dry-run --ignore-scripts
-      - run: npm publish --access public --tag "${{ steps.release.outputs.dist_tag }}"
       - run: npm pack --dry-run --ignore-scripts
         working-directory: packages/animactl
       - run: npm publish --access public --tag "${{ steps.release.outputs.dist_tag }}"
