@@ -365,21 +365,26 @@ export default function ServerPanel({ onClose }: Props) {
                 <UsageSkeleton />
                 <UsageSkeleton />
               </div>
-            ) : usageData?.providers.length ? (
-              <div className="space-y-5">
-                {usageData.providers.map((row) => (
-                  <ProviderBlock key={row.provider} row={row} />
-                ))}
-                {usageData.providers.some((r) => r.source === 'private-api') && (
-                  <p className="font-mono text-[9px] text-text-subtle opacity-50">
-                    ≈ best-effort (private API)
-                  </p>
-                )}
-              </div>
             ) : (
-              <p className="font-serif italic text-[13px] text-text-subtle">
-                No providers found.
-              </p>
+              (() => {
+                const visible = usageData?.providers.filter((r) => r.error?.type !== 'not_configured') ?? [];
+                return visible.length > 0 ? (
+                  <div className="space-y-5">
+                    {visible.map((row) => (
+                      <ProviderBlock key={row.provider} row={row} />
+                    ))}
+                    {visible.some((r) => r.source === 'private-api') && (
+                      <p className="font-mono text-[9px] text-text-subtle opacity-50">
+                        ≈ best-effort (private API)
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="font-serif italic text-[13px] text-text-subtle">
+                    No providers configured.
+                  </p>
+                );
+              })()
             )}
           </PanelSection>
 
