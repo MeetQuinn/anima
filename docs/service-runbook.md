@@ -4,9 +4,13 @@
 
 Anima itself does not name environments. If a team wants aliases for specific Anima homes, put that mapping in deployment scripts outside this repo and invoke `animactl` with the appropriate `ANIMA_HOME`.
 
-The root `services:*` npm scripts use that normal resolver. For Anima source development, the
-`dev:services:*` scripts explicitly set `ANIMA_HOME=./.anima` so local dev state stays inside the
-repo clone.
+For managed (npm) installs, operators normally drive the runtime with `npx @totoday/animactl
+start|restart|status|stop` — those install and run the pinned runtime, and are documented in
+[deployment.md](deployment.md). This runbook covers the underlying `animactl services <op>`
+supervisor those commands invoke, plus its idle-gate and cross-environment restart semantics.
+
+For Anima source development, the `dev:services:*` npm scripts explicitly set `ANIMA_HOME=./.anima`
+so local dev state stays inside the repo clone.
 
 Each Anima home runs two daemons:
 
@@ -19,7 +23,7 @@ The agent service auto-starts newly runnable Slack-connected agents. Restart ser
 ## Status
 
 ```bash
-ANIMA_HOME=<path> node dist/server/cli/animactl.js services status
+ANIMA_HOME=<path> animactl services status
 ```
 
 Status output includes each service id (`agent` / `web`), pid if running, web URL when relevant, and log path.
@@ -27,8 +31,7 @@ Status output includes each service id (`agent` / `web`), pid if running, web UR
 ## Restart
 
 ```bash
-pnpm build
-ANIMA_HOME=<path> node dist/server/cli/animactl.js services restart
+ANIMA_HOME=<path> animactl services restart
 ```
 
 Full restarts are idle-gated by default. Before stopping the agent service, `animactl` waits for every agent inbox to have no `running` or `queued` items. If agents do not become idle before the timeout, the restart exits non-zero and prints the blocking agent/item ids instead of killing the service. Use `--idle-timeout-ms <ms>` to tune the wait for a deploy.
@@ -42,8 +45,8 @@ Same-environment restart from inside an active runtime is refused, because it wo
 ## Stop And Start
 
 ```bash
-ANIMA_HOME=<path> node dist/server/cli/animactl.js services stop
-ANIMA_HOME=<path> node dist/server/cli/animactl.js services start
+ANIMA_HOME=<path> animactl services stop
+ANIMA_HOME=<path> animactl services start
 ```
 
 `stop` is also refused from inside the same environment's active runtime, for the same reason.

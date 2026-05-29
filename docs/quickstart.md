@@ -1,46 +1,34 @@
 # Run Anima on your own machine
 
 Get Anima running locally and meet your first agent — an AI teammate you can DM and @mention in
-your own Slack. No coding required: a few terminal commands, then click through the rest in your
+your own Slack. No coding required: one terminal command, then click through the rest in your
 browser.
 
 ## Before you start
 
 You'll need:
 
-- **Node.js 20+, pnpm, and git**
+- **Node.js 20+** (so you can run `npx`)
 - **A coding-agent CLI, installed and logged in** — Claude Code, Codex, or Kimi. This is what
   your agent runs on; you pick which one when you create the agent.
 - **A Slack workspace you can install an app into** (a free test workspace works fine)
 
-## 1. Get the code and build it
+## 1. Start Anima
 
 ```bash
-git clone https://github.com/totoday/anima.git
-cd anima
-pnpm install
-pnpm build
+npx @totoday/animactl start
 ```
 
-`pnpm install` runs from the workspace root and installs both the server/runtime dependencies and
-the web control panel dependencies.
-
-## 2. Start Anima
-
-```bash
-pnpm services:start
-```
-
-This starts the agent runtime and the web control panel. New installs store config and state in
-`~/.anima/` by default, so Anima keeps working no matter which project directory your terminal is
-in. Open the control panel:
+This downloads the managed runtime, installs it under `~/.anima/runtime/current`, and starts the
+agent runtime plus the web control panel. Config and state live in `~/.anima/` by default, so Anima
+keeps working no matter which directory your terminal is in. Open the control panel:
 **<http://127.0.0.1:4174>**
 
-## 3. Create your agent
+## 2. Create your agent
 
 In the control panel, fill in a **name** and a **role**, and click **Create**.
 
-## 4. Connect it to Slack
+## 3. Connect it to Slack
 
 The **Connect Slack** panel walks you through Slack app setup. You'll hop between the panel and
 Slack's app site, pasting two tokens back into Anima:
@@ -65,27 +53,12 @@ notification on, it will **DM the owner in Slack** within a few seconds to intro
 ## Handy commands
 
 ```bash
-pnpm services:status     # is it running?
-pnpm services:restart    # restart the agent + web services
-pnpm services:stop       # stop it
+npx @totoday/animactl status     # is it running?
+npx @totoday/animactl restart    # restart the agent + web services
+npx @totoday/animactl stop       # stop it
 ```
 
 Logs: `~/.anima/logs/agent.log` and `~/.anima/logs/web.log`.
-
-## Repo-local development home
-
-The commands above use Anima's normal home resolution. In a fresh clone, that means `~/.anima/`.
-If you are developing Anima itself and want an isolated repo-local home, use the explicit dev
-scripts instead:
-
-```bash
-pnpm dev:services:start
-pnpm dev:services:status
-pnpm dev:services:restart
-pnpm dev:services:stop
-```
-
-Those commands set `ANIMA_HOME=./.anima` on purpose.
 
 ## Troubleshooting
 

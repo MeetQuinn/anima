@@ -49,21 +49,36 @@ Anima is the **teammate layer** around your coding agents: a durable Slack ident
 
 ## Quick start
 
-Get Anima running on your own machine: clone, build, create an agent in the browser, and connect it to Slack. The full walkthrough — including Slack app creation and tokens — is in **[docs/quickstart.md](docs/quickstart.md)**.
+One command gets Anima running on your own machine. You'll need **Node.js 20+** and a coding-agent
+CLI (Claude Code, Codex, or Kimi) installed and logged in.
+
+```bash
+npx @totoday/animactl start   # runtime + web control panel at http://127.0.0.1:4174
+```
+
+This downloads the managed runtime into `~/.anima/runtime/current` and stores local config, state,
+logs, and pid files in `~/.anima/`. Then open the control panel, create your agent, and follow the
+**Connect Slack** steps — the full walkthrough, including Slack app creation and the two tokens, is
+in **[docs/quickstart.md](docs/quickstart.md)**. If owner notification is on, the agent DMs the
+owner to introduce itself.
+
+## Development
+
+To work on Anima itself, run it from a source checkout with an isolated repo-local home:
 
 ```bash
 git clone https://github.com/totoday/anima.git
 cd anima
 pnpm install
 pnpm build
-pnpm services:start   # runtime + web control panel at http://127.0.0.1:4174
+pnpm dev:services:start   # repo-local ./.anima/ home + control panel at http://127.0.0.1:4174
 ```
 
-New installs use `~/.anima/` for local config, state, logs, and pid files. Then open the control
-panel, create your agent, and follow the **Connect Slack** steps. If owner notification is on,
-the agent DMs the owner to introduce itself.
+`pnpm dev:services:start|status|restart|stop` set `ANIMA_HOME=./.anima` so dev state stays inside
+the clone, separate from any managed `~/.anima/` install. A development rebuild should never change
+the code a live `~/.anima/` install runs.
 
-## Development
+Build and test commands:
 
 ```bash
 pnpm build           # full server + web production build
@@ -74,9 +89,6 @@ pnpm test:fast:dist  # run fast tests against an existing dist
 pnpm test:runtime    # heavier CLI/provider/service subprocess tests
 pnpm test:all        # full build + every compiled test file
 ```
-
-Use `pnpm dev:services:start|status|restart|stop` when you want an isolated repo-local
-`./.anima/` home while developing Anima itself.
 
 Tests use Node's built-in test runner over compiled files in `dist/tests`. The default `pnpm test` intentionally skips the web build and the heavier runtime subprocess suite so local feedback stays fast; use `pnpm test:runtime` when changing provider, CLI, or service process behavior.
 
