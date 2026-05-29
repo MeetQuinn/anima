@@ -94,7 +94,8 @@ is tied to the `publish.yml` workflow:
 ```bash
 npm trust github @totoday/anima \
   --repo totoday/anima \
-  --file publish.yml
+  --file publish.yml \
+  --allow-publish
 ```
 
 Keep the workflow filename stable. If it changes, update the npm trusted publisher configuration
