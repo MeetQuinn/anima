@@ -24,6 +24,7 @@ export const queryKeys = {
   health: () => ['health'] as const,
   serverInfo: () => ['server-info'] as const,
   sidebarOrder: () => ['sidebar-order'] as const,
+  runtimeUpgrade: () => ['runtime-upgrade'] as const,
 };
 
 export const refetchIntervals = {

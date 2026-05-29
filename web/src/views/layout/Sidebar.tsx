@@ -20,6 +20,7 @@ import { removeKb, renameKb } from '@/api/kb';
 import { queryClient } from '@/query-client';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
+import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import { agentColor, initialOf } from '@/lib/avatars';
 import { AgentRow } from './sidebar/AgentRow';
 import { AgentCreateModal } from '@/views/onboarding';
@@ -114,6 +115,10 @@ export default function Sidebar({
 
   // Server panel
   const [serverPanelOpen, setServerPanelOpen] = useState(false);
+  // Resting indicator — a subtle accent dot on the Server trigger when a system
+  // update is available. Reuses the panel's query (deduped by key), so no extra
+  // request; the dot disappears once the user opens the panel and upgrades.
+  const updateAvailable = useUpdateAvailable();
 
   function openKebab(e: React.MouseEvent<HTMLButtonElement>, id: string) {
     e.stopPropagation();
@@ -281,10 +286,16 @@ export default function Sidebar({
             <button
               data-server-panel-trigger
               onClick={() => setServerPanelOpen((v) => !v)}
-              title="Server status & restart"
-              className="flex h-8 w-8 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              title={updateAvailable ? 'Server — update available' : 'Server status & restart'}
+              className="relative flex h-8 w-8 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             >
               <Server className="h-3.5 w-3.5" />
+              {updateAvailable && (
+                <span
+                  aria-hidden
+                  className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-accent ring-1 ring-spine-border"
+                />
+              )}
             </button>
           </div>
         </div>
@@ -461,6 +472,13 @@ export default function Sidebar({
             >
               <Server className="h-3.5 w-3.5" />
               <span>Server</span>
+              {updateAvailable && (
+                <span
+                  aria-hidden
+                  className="ml-auto h-1.5 w-1.5 rounded-full bg-accent"
+                  title="Update available"
+                />
+              )}
             </button>
           </div>
         </div>

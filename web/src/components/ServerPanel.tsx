@@ -6,6 +6,7 @@ import { fetchServerInfo, fetchProviderUsage, pingHealth } from '@/api/system';
 import { shortIso, formatUptime } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
 import RestartButton from './RestartButton';
+import RuntimeUpgradeRow from './RuntimeUpgrade';
 import type { ProviderUsageRow, ProviderUsageWindow, ProviderUsageExtra } from '@shared/provider-usage';
 
 interface Props {
@@ -333,6 +334,8 @@ export default function ServerPanel({ onClose }: Props) {
                   <span className="font-serif text-[14px] text-text-on-spine">{info.version}</span>
                 </LabelRow>
               )}
+
+              <RuntimeUpgradeRow />
             </div>
           </PanelSection>
 
