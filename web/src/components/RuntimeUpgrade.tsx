@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Download, RefreshCw } from 'lucide-react';
 import { fetchAgents } from '@/api/agents';
@@ -367,7 +368,10 @@ function UpdateLabelRow({ children }: { children: React.ReactNode }) {
 // ---------------------------------------------------------------------------
 
 function UpgradeOverlay({ target }: { target?: string }) {
-  return (
+  // Portal to body — same drawer-trapping reason as BusyConfirmModal: this row
+  // lives inside the ServerPanel, whose positioned/scroll container would
+  // otherwise confine `fixed inset-0` to the ~330px drawer.
+  return createPortal(
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-page/70 p-4 backdrop-blur-sm">
       <div className="flex max-w-sm flex-col items-center gap-3 rounded-sm border border-border-soft bg-surface px-10 py-7 text-center shadow-deep">
         <RefreshCw className="h-6 w-6 animate-spin text-accent" />
@@ -384,7 +388,8 @@ function UpgradeOverlay({ target }: { target?: string }) {
           dashboard reloads automatically when it&apos;s back.
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
