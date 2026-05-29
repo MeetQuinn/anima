@@ -19,5 +19,7 @@ jobs:
           node-version: '24'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+      - run: pnpm type-check
+      - run: pnpm lint
       - run: pnpm build
       - run: pnpm test:fast:dist

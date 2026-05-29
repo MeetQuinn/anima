@@ -43,6 +43,9 @@
   "scripts": {
     "build": "rm -rf dist packages/animactl/dist && tsc -p tsconfig.json && pnpm build:ui && node scripts/prepare-animactl-package.mjs",
     "build:server": "rm -rf dist/server dist/shared dist/tests && tsc -p tsconfig.json",
+    "prepare": "husky",
+    "lint": "pnpm --dir web lint",
+    "type-check": "tsc -p tsconfig.json --noEmit && cd web && npx tsc -b --dry",
     "build:ui": "cd web && pnpm build",
     "pack:check": "pnpm build && npm pack --dry-run --ignore-scripts",
     "pack:tarball": "rm -f totoday-anima-*.tgz anima-*.tgz && npm pack",
@@ -65,9 +68,15 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/luxon": "^3.7.1",
     "@types/node": "^24.10.0",
-    "typescript": "^5.9.3"
+    "eslint": "^10.4.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.5",
+    "prettier": "3.8.3",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.60.0"
   },
   "dependencies": {
     "@slack/bolt": "^4.7.2",
@@ -77,5 +86,14 @@
     "ignore": "^7.0.5",
     "luxon": "^3.7.2",
     "zod": "^4.4.3"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{css,json,md}": [
+      "prettier --write"
+    ]
   }
 }
