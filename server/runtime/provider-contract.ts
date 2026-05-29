@@ -68,10 +68,16 @@ export interface AgentRuntimeFollowupResult {
   text?: string;
 }
 
+export interface AgentRuntimeDrainInput {
+  activeItemId: string;
+  signal?: AbortSignal;
+}
+
 export interface AgentRuntime {
   readonly env?: Record<string, string>;
   readonly kind: string;
   close?(): Promise<void>;
   run(input: AgentRuntimeInput): Promise<AgentRuntimeResult>;
   appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<AgentRuntimeFollowupResult>;
+  requestDrain?(input: AgentRuntimeDrainInput): Promise<void>;
 }

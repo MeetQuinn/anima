@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import type { ServerResponse } from 'node:http';
-import { mkdir, open, readFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +19,12 @@ import {
   RuntimeUpgradeUnavailableError,
 } from '../runtime/runtime-upgrade.js';
 import { SidebarOrder } from '../../shared/server-settings.js';
-import { type ServerInfo, type ServicesRestartResponse } from '../../shared/server-info.js';
+import {
+  LastServicesRestart,
+  type LastServicesRestart as LastServicesRestartType,
+  type ServerInfo,
+  type ServicesRestartResponse,
+} from '../../shared/server-info.js';
 import type { RuntimeUpgradeApplyResponse } from '../../shared/runtime-upgrade.js';
 import { PROVIDER_CATALOG, type ProviderAvailability } from '../../shared/provider-catalog.js';
 import { HttpError } from './http.js';
@@ -93,10 +98,11 @@ function queueServicesRestart(response: ServerResponse): ServicesRestartResponse
     throw new HttpError(500, `animactl not found: ${ANIMACTL_SCRIPT}`);
   }
   const animaHome = resolveAnimaHome();
-  const logPath = join(animaHome, 'logs', 'services-restart.log');
+  const logPath = servicesRestartLogPath(animaHome);
+  const resultPath = servicesRestartResultPath(animaHome);
   response.once('finish', () => {
     const timer = setTimeout(() => {
-      void restartServicesDetached(animaHome, logPath).catch((error) => {
+      void restartServicesDetached(animaHome, logPath, resultPath).catch((error) => {
         console.error(`Failed to queue services restart: ${error instanceof Error ? error.message : String(error)}`);
       });
     }, RESTART_AFTER_RESPONSE_DELAY_MS);
@@ -111,19 +117,20 @@ function queueServicesRestart(response: ServerResponse): ServicesRestartResponse
   };
 }
 
-async function restartServicesDetached(animaHome: string, logPath: string): Promise<void> {
+async function restartServicesDetached(animaHome: string, logPath: string, resultPath: string): Promise<void> {
   let log: Awaited<ReturnType<typeof open>> | undefined;
   try {
     await mkdir(dirname(logPath), { recursive: true });
+    await rm(resultPath, { force: true });
     log = await open(logPath, 'a');
     await log.write(`\n[${new Date().toISOString()}] web app requested services restart\n`);
   } catch (error) {
     console.error(`Failed to open restart log ${logPath}: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const child = spawn(process.execPath, [ANIMACTL_SCRIPT, 'services', 'restart'], {
+  const child = spawn(process.execPath, [ANIMACTL_SCRIPT, 'services', 'restart', '--drain-active', '--resume-running'], {
     cwd: PROJECT_ROOT,
     detached: true,
-    env: { ...cleanServiceEnv(), ANIMA_HOME: animaHome },
+    env: { ...cleanServiceEnv(), ANIMA_HOME: animaHome, ANIMA_RESTART_RESULT_FILE: resultPath },
     stdio: log ? ['ignore', log.fd, log.fd] : 'ignore',
   });
   child.on('error', (error) => {
@@ -134,22 +141,57 @@ async function restartServicesDetached(animaHome: string, logPath: string): Prom
 }
 
 async function serverInfoForUi(): Promise<ServerInfo> {
-  const [config, version, commit] = await Promise.all([
+  const animaHome = resolveAnimaHome();
+  const [config, version, commit, lastRestart] = await Promise.all([
     defaultServerSettingsService.readConfig(),
     packageVersion(),
     API_SERVER_COMMIT,
+    readLastServicesRestart(animaHome),
   ]);
-  const animaHome = resolveAnimaHome();
   return {
     animaHome,
     ...(commit ? { commit } : {}),
     dashboardPort: config.dashboardPort ?? 4174,
     env: environmentName(animaHome),
+    ...(lastRestart ? { lastRestart } : {}),
     ok: true as const,
     startedAt: API_SERVER_STARTED_AT,
     uptimeSeconds: Math.max(0, Math.floor((Date.now() - Date.parse(API_SERVER_STARTED_AT)) / 1000)),
     version,
   };
+}
+
+async function readLastServicesRestart(animaHome: string): Promise<LastServicesRestartType | undefined> {
+  const resultPath = servicesRestartResultPath(animaHome);
+  try {
+    const raw = JSON.parse(await readFile(resultPath, 'utf8')) as unknown;
+    const parsed = LastServicesRestart.safeParse({ ...recordOrEmpty(raw), logPath: servicesRestartLogPath(animaHome) });
+    if (!parsed.success) {
+      console.warn(`Ignoring invalid services restart result at ${resultPath}: ${parsed.error.message}`);
+      return undefined;
+    }
+    return parsed.data;
+  } catch (error) {
+    if (isErrno(error, 'ENOENT')) return undefined;
+    console.warn(`Ignoring unreadable services restart result at ${resultPath}: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  }
+}
+
+function servicesRestartLogPath(animaHome: string): string {
+  return join(animaHome, 'logs', 'services-restart.log');
+}
+
+function servicesRestartResultPath(animaHome: string): string {
+  return join(animaHome, 'run', 'services-restart-result.json');
+}
+
+function recordOrEmpty(value: unknown): Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value)) ? value as Record<string, unknown> : {};
+}
+
+function isErrno(error: unknown, code: string): boolean {
+  return Boolean(error && typeof error === 'object' && 'code' in error && (error as { code?: unknown }).code === code);
 }
 
 async function packageVersion(): Promise<string> {

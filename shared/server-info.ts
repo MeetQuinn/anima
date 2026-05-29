@@ -1,10 +1,25 @@
 import { z } from 'zod';
 
+export const ServicesRestartResult = z.object({
+  completedAt: z.string(),
+  fallbackToIdle: z.boolean(),
+  mode: z.enum(['idle', 'drain-active']),
+  requestedCount: z.number(),
+  resumedCount: z.number(),
+});
+export type ServicesRestartResult = z.infer<typeof ServicesRestartResult>;
+
+export const LastServicesRestart = ServicesRestartResult.extend({
+  logPath: z.string().optional(),
+});
+export type LastServicesRestart = z.infer<typeof LastServicesRestart>;
+
 export const ServerInfo = z.object({
   animaHome: z.string(),
   commit: z.string().optional(),
   dashboardPort: z.number(),
   env: z.enum(['dev', 'prod', 'custom']),
+  lastRestart: LastServicesRestart.optional(),
   ok: z.literal(true),
   startedAt: z.string(),
   uptimeSeconds: z.number(),

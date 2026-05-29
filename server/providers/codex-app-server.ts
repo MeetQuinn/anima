@@ -47,7 +47,13 @@ export class CodexAppServerController {
   private readonly completedTurns = new Set<string>();
   private readonly linkedTextByItem = new Map<string, LinkedAgentText>();
   private readonly textByTurn = new Map<string, string>();
+  private readonly activeProviderToolIds = new Set<string>();
   private readonly providerToolsById = new Map<string, Record<string, unknown>>();
+  private readonly quiescentWaiters = new Set<{
+    cleanup(): void;
+    reject(error: unknown): void;
+    resolve(): void;
+  }>();
   private currentTurn?: ActiveCodexTurn;
   threadId = '';
   readonly completion: Promise<{ stdout: string; stderr: string }>;
@@ -58,10 +64,12 @@ export class CodexAppServerController {
   ) {
     this.completion = child.completion.then(
       (result) => {
+        this.rejectQuiescentWaiters(new Error('Codex app-server runtime exited before drain reached a quiescent point'));
         this.rejectOpenWaiters(new Error('Codex app-server runtime exited before completing active requests'));
         return result;
       },
       (error) => {
+        this.rejectQuiescentWaiters(error);
         this.rejectOpenWaiters(error);
         throw error;
       },
@@ -140,6 +148,8 @@ export class CodexAppServerController {
         this.textByTurn.delete(turnId);
       }
       this.linkedTextByItem.clear();
+      this.activeProviderToolIds.clear();
+      this.resolveQuiescentWaitersIfReady();
     }
   }
 
@@ -147,6 +157,33 @@ export class CodexAppServerController {
     const turn = this.currentTurn;
     if (!turn) throw new Error('Codex runtime has no active turn');
     return turn.ready.promise;
+  }
+
+  waitForQuiescent(signal?: AbortSignal): Promise<void> {
+    if (this.activeProviderToolIds.size === 0) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        cleanup: () => {
+          signal?.removeEventListener('abort', onAbort);
+          this.quiescentWaiters.delete(waiter);
+        },
+        reject: (error: unknown) => {
+          waiter.cleanup();
+          reject(error);
+        },
+        resolve: () => {
+          waiter.cleanup();
+          resolve();
+        },
+      };
+      const onAbort = () => waiter.reject(signal?.reason ?? new Error('Drain wait aborted'));
+      if (signal?.aborted) {
+        reject(signal.reason ?? new Error('Drain wait aborted'));
+        return;
+      }
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.quiescentWaiters.add(waiter);
+    });
   }
 
   request(method: string, params: Record<string, unknown> | undefined): Promise<unknown> {
@@ -238,7 +275,10 @@ export class CodexAppServerController {
       }
       for (const tool of providerToolCallsFromAppServerItem(item)) {
         const providerToolId = stringField(tool, 'providerToolId');
-        if (providerToolId) this.providerToolsById.set(providerToolId, tool);
+        if (providerToolId) {
+          this.providerToolsById.set(providerToolId, tool);
+          this.activeProviderToolIds.add(providerToolId);
+        }
         await turn.input.effects.recordToolStarted(tool);
       }
       return;
@@ -260,7 +300,11 @@ export class CodexAppServerController {
         await turn.input.effects.recordToolFailed(failure);
       }
       const providerToolId = item ? stringField(item, 'id') : undefined;
-      if (providerToolId) this.providerToolsById.delete(providerToolId);
+      if (providerToolId) {
+        this.providerToolsById.delete(providerToolId);
+        this.activeProviderToolIds.delete(providerToolId);
+        this.resolveQuiescentWaitersIfReady();
+      }
       return;
     }
     if (message.method === 'thread/tokenUsage/updated') {
@@ -281,6 +325,15 @@ export class CodexAppServerController {
       this.completedTurns.add(turnId);
       if (this.currentTurn?.turnId === turnId) this.currentTurn.completed.resolve();
     }
+  }
+
+  private resolveQuiescentWaitersIfReady(): void {
+    if (this.activeProviderToolIds.size > 0) return;
+    for (const waiter of [...this.quiescentWaiters]) waiter.resolve();
+  }
+
+  private rejectQuiescentWaiters(error: unknown): void {
+    for (const waiter of [...this.quiescentWaiters]) waiter.reject(error);
   }
 
   private acceptAgentMessageDelta(params: Record<string, unknown> | undefined): void {

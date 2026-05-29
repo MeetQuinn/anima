@@ -8,6 +8,8 @@ export type InboxItemStatus = z.infer<typeof InboxItemStatus>;
 export const InboxItemHandling = z.object({
   completedAt: z.string().optional(),
   createdAt: z.string(),
+  drainRequestedAt: z.string().optional(),
+  drainTimeoutMs: z.number().int().nonnegative().optional(),
   failedAt: z.string().optional(),
   queuedAt: z.string().optional(),
   settledAt: z.string().optional(),

@@ -1,12 +1,21 @@
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { WakeQueueService, type InboxItem } from '../inbox/wake-queue.service.js';
+import { clearRestartDrain, requestRestartDrain } from './restart-drain.js';
 
 export const DEFAULT_RESTART_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+export const DEFAULT_RESTART_DRAIN_TIMEOUT_MS = 15 * 1000;
 export const RESTART_IDLE_POLL_MS = 1000;
 
 export interface RestartBlocker {
   agentId: string;
   item: InboxItem;
+}
+
+export interface RestartDrainResult {
+  fallbackToIdle: boolean;
+  mode: 'drain-active';
+  requestedCount: number;
+  resumedCount: number;
 }
 
 export async function waitForRestartIdle(timeoutMs: number): Promise<void> {
@@ -27,17 +36,70 @@ export async function waitForRestartIdle(timeoutMs: number): Promise<void> {
   }
 }
 
-export async function listRestartBlockers(): Promise<RestartBlocker[]> {
+export async function waitForRestartDrain(input: {
+  drainTimeoutMs?: number;
+  markerTtlMs?: number;
+} = {}): Promise<RestartDrainResult> {
+  const drainTimeoutMs = input.drainTimeoutMs ?? DEFAULT_RESTART_DRAIN_TIMEOUT_MS;
+  const startedAt = Date.now();
+  await requestRestartDrain(input.markerTtlMs ?? drainTimeoutMs + 60_000);
+  const initialRunning = await listRestartBlockers({ statuses: ['running'] });
+  if (initialRunning.length === 0) {
+    return { fallbackToIdle: false, mode: 'drain-active', requestedCount: 0, resumedCount: 0 };
+  }
+
+  await Promise.all(initialRunning.map(({ agentId, item }) =>
+    new WakeQueueService(agentId).requestDrain({ itemId: item.id, timeoutMs: drainTimeoutMs }),
+  ));
+
+  let loggedWait = false;
+  while (true) {
+    const blockers = await listRestartBlockers({ statuses: ['running'] });
+    if (blockers.length === 0) {
+      const resumedCount = await countRequeuedItems(initialRunning);
+      return { fallbackToIdle: false, mode: 'drain-active', requestedCount: initialRunning.length, resumedCount };
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs >= drainTimeoutMs) {
+      await clearRestartDrain().catch(() => {});
+      await Promise.all(initialRunning.map(({ agentId, item }) =>
+        new WakeQueueService(agentId).clearDrainRequest(item.id).catch(() => undefined),
+      ));
+      throw restartBlockedError(blockers, 'Timed out waiting for running agents to reach a restart drain point.');
+    }
+
+    if (!loggedWait) {
+      console.error(`Waiting for running agents to drain before restart (timeout ${formatDurationMs(drainTimeoutMs)}).`);
+      loggedWait = true;
+    }
+    await sleep(Math.min(RESTART_IDLE_POLL_MS, drainTimeoutMs - elapsedMs));
+  }
+}
+
+export async function listRestartBlockers(options: {
+  statuses?: InboxItem['handling']['status'][];
+} = {}): Promise<RestartBlocker[]> {
+  const statuses = new Set(options.statuses ?? ['queued', 'running']);
   const blockers: RestartBlocker[] = [];
   for (const agentId of await defaultAgentRegistryService.listAgentIds()) {
     for (const item of await new WakeQueueService(agentId).list()) {
-      if (item.handling.status !== 'queued' && item.handling.status !== 'running') continue;
+      if (!statuses.has(item.handling.status)) continue;
       blockers.push({ agentId, item });
     }
   }
   return blockers.sort((a, b) =>
     blockerSortKey(a).localeCompare(blockerSortKey(b)),
   );
+}
+
+async function countRequeuedItems(blockers: RestartBlocker[]): Promise<number> {
+  let count = 0;
+  await Promise.all(blockers.map(async ({ agentId, item }) => {
+    const current = await new WakeQueueService(agentId).find(item.id).catch(() => undefined);
+    if (current?.handling.status === 'queued' && !current.handling.drainRequestedAt) count += 1;
+  }));
+  return count;
 }
 
 export function restartBlockedError(blockers: RestartBlocker[], prefix: string): Error {

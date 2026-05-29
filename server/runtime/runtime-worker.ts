@@ -3,6 +3,7 @@ import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { errorMessage } from '../ids.js';
 import { PROVIDER_IDLE_TIMEOUT_MS_DEFAULT } from '../../shared/agent-config.js';
 import type { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { isRestartDrainActive } from '../services/restart-drain.js';
 import type {
   ItemStopReason,
   RuntimeWorkerConfig,
@@ -41,6 +42,8 @@ interface ActiveItemHandle {
   // Follow-up inbox items are completed as soon as they are appended, but their
   // processing reactions should stay visible until the active provider run ends.
   appendedFollowups: RuntimeItemContext[];
+  drainRequestedAt?: string;
+  drainRequestInFlight: boolean;
   lastActivityAt: number;
   startedAt: number;
   watchdog: NodeJS.Timeout;
@@ -147,6 +150,7 @@ export class AgentRuntimeWorker {
   }
 
   private async runOne(): Promise<boolean> {
+    if (await isRestartDrainActive()) return false;
     const item = await this.queue.claimNext(this.workerId);
     if (!item) return false;
     await this.processClaimedItem(item);
@@ -204,17 +208,24 @@ export class AgentRuntimeWorker {
         this.logger.error(`Runtime worker follow-up loop failed for item ${item.id}: ${errorMessage(followupError)}`);
       }
       const abortReason = itemAbort.signal.aborted ? abortReasonOf(itemAbort.signal) : undefined;
+      let itemSettled = false;
       if (abortReason && context) {
-        await recordRuntimeAborted(
-          { agentId: this.options.agentId },
-          abortReason,
-          abortReason === 'idle_timeout' ? { timeoutMs: this.idleTimeoutMs } : undefined,
-        );
+        await this.settleAbortedItem(context, abortReason);
+        itemSettled = true;
       } else if (context && !runtimeFailureRecorded) {
         await this.recordFinalRuntimeFailure(error, 0);
       }
-      await this.queue.fail(item.id);
-      this.logger.error(`Runtime worker failed for item ${item.id}: ${errorMessage(error)}`);
+      if (!itemSettled) await this.queue.fail(item.id);
+      if (abortReason === 'restart_drain') {
+        this.logger.log(JSON.stringify({
+          agentRuntime: this.options.agentRuntime.kind,
+          event: 'runtime.drained_for_restart',
+          itemId: item.id,
+          workerId: this.workerId,
+        }, null, 2));
+      } else {
+        this.logger.error(`Runtime worker failed for item ${item.id}: ${errorMessage(error)}`);
+      }
     } finally {
       if (context) {
         await clearActiveRuntimeItem({
@@ -237,6 +248,7 @@ export class AgentRuntimeWorker {
     const handle: ActiveItemHandle = {
       abortController,
       appendedFollowups: [],
+      drainRequestInFlight: false,
       lastActivityAt: startedAt,
       startedAt,
       watchdog: setInterval(() => {
@@ -246,7 +258,7 @@ export class AgentRuntimeWorker {
           abortController.abort('idle_timeout');
           return;
         }
-        void this.checkExternalStopRequest(itemId, abortController);
+        void this.checkExternalRequests(itemId, abortController, handle);
       }, tickInterval),
     };
     this.activeItem = handle;
@@ -338,14 +350,53 @@ export class AgentRuntimeWorker {
     );
   }
 
-  private async checkExternalStopRequest(itemId: string, abortController: AbortController): Promise<void> {
+  private async checkExternalRequests(
+    itemId: string,
+    abortController: AbortController,
+    handle: ActiveItemHandle,
+  ): Promise<void> {
     try {
       const item = await this.queue.find(itemId);
       if (item?.handling.stopRequestedAt && !abortController.signal.aborted) {
         abortController.abort('user_stop');
+        return;
+      }
+      const drainRequestedAt = item?.handling.drainRequestedAt;
+      if (
+        drainRequestedAt &&
+        !handle.drainRequestInFlight &&
+        handle.drainRequestedAt !== drainRequestedAt &&
+        !abortController.signal.aborted
+      ) {
+        handle.drainRequestInFlight = true;
+        handle.drainRequestedAt = drainRequestedAt;
+        void this.drainActiveItem(itemId, item.handling.drainTimeoutMs, abortController, handle);
       }
     } catch (error) {
-      this.logger.error(`Runtime worker stop check failed for item ${itemId}: ${errorMessage(error)}`);
+      this.logger.error(`Runtime worker control check failed for item ${itemId}: ${errorMessage(error)}`);
+    }
+  }
+
+  private async drainActiveItem(
+    itemId: string,
+    timeoutMs: number | undefined,
+    abortController: AbortController,
+    handle: ActiveItemHandle,
+  ): Promise<void> {
+    try {
+      if (!this.options.agentRuntime.requestDrain) return;
+      await withTimeout(
+        this.options.agentRuntime.requestDrain({ activeItemId: itemId, signal: abortController.signal }),
+        timeoutMs ?? 15_000,
+        `Timed out waiting for item ${itemId} to reach a restart drain point`,
+      );
+      const current = await this.queue.find(itemId);
+      if (current?.handling.drainRequestedAt !== handle.drainRequestedAt) return;
+      if (!abortController.signal.aborted) abortController.abort('restart_drain');
+    } catch (error) {
+      this.logger.error(`Runtime worker drain request failed for item ${itemId}: ${errorMessage(error)}`);
+    } finally {
+      handle.drainRequestInFlight = false;
     }
   }
 
@@ -359,6 +410,10 @@ export class AgentRuntimeWorker {
   private async appendQueuedFollowupsUntilFinished(activeContext: RuntimeItemContext, itemDone: AbortSignal, handle: ActiveItemHandle): Promise<void> {
     const skippedItemIds = new Set<string>();
     while (!itemDone.aborted) {
+      if (await isRestartDrainActive()) {
+        await sleep(FOLLOWUP_POLL_MS, itemDone);
+        continue;
+      }
       const item = await this.queue.claimNextFollowup({
         activeItemId: activeContext.item.id,
         excludedItemIds: skippedItemIds,
@@ -491,6 +546,19 @@ export class AgentRuntimeWorker {
       this.logger.error(`Runtime worker follow-up append failed for item ${item.id}: ${followup.error}`);
     }
   }
+
+  private async settleAbortedItem(context: RuntimeItemContext, abortReason: ItemStopReason): Promise<void> {
+    await recordRuntimeAborted(
+      { agentId: this.options.agentId },
+      abortReason,
+      abortReason === 'idle_timeout' ? { timeoutMs: this.idleTimeoutMs } : undefined,
+    );
+    if (abortReason === 'restart_drain') {
+      await this.queue.requeue(context.item.id);
+      return;
+    }
+    await this.queue.fail(context.item.id);
+  }
 }
 
 function isoFromMs(value: number): string {
@@ -499,7 +567,9 @@ function isoFromMs(value: number): string {
 
 function abortReasonOf(signal: AbortSignal): ItemStopReason | undefined {
   const reason = signal.reason;
-  return reason === 'idle_timeout' || reason === 'shutdown' || reason === 'user_stop' ? reason : undefined;
+  return reason === 'idle_timeout' || reason === 'restart_drain' || reason === 'shutdown' || reason === 'user_stop'
+    ? reason
+    : undefined;
 }
 
 async function appendRuntimeFollowup(input: {
@@ -584,5 +654,15 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
     };
     const timer = setTimeout(done, ms);
     signal.addEventListener('abort', done, { once: true });
+  });
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
   });
 }

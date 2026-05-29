@@ -1549,6 +1549,56 @@ test('web API reports provider availability', async () => {
   await rm(stateDir, { force: true, recursive: true });
 });
 
+test('server-info exposes the last standalone restart result for UI echoes', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-last-restart-test-'));
+  await writeConfig(stateDir);
+  await mkdir(join(stateDir, 'run'), { recursive: true });
+  await writeFile(
+    join(stateDir, 'run', 'services-restart-result.json'),
+    `${JSON.stringify({
+      completedAt: '2026-05-29T10:55:00.000Z',
+      fallbackToIdle: false,
+      mode: 'drain-active',
+      requestedCount: 2,
+      resumedCount: 2,
+    })}\n`,
+    'utf8',
+  );
+  await withAnimaHome(stateDir, async () => {
+    const server = await createWebServer();
+    try {
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected TCP address');
+
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/server-info`);
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as {
+        lastRestart?: {
+          completedAt: string;
+          fallbackToIdle: boolean;
+          logPath?: string;
+          mode: string;
+          requestedCount: number;
+          resumedCount: number;
+        };
+      };
+      assert.deepEqual(body.lastRestart, {
+        completedAt: '2026-05-29T10:55:00.000Z',
+        fallbackToIdle: false,
+        logPath: join(stateDir, 'logs', 'services-restart.log'),
+        mode: 'drain-active',
+        requestedCount: 2,
+        resumedCount: 2,
+      });
+    } finally {
+      server.close();
+    }
+  });
+  await rm(stateDir, { force: true, recursive: true });
+});
+
 test('web API exposes Slack manifest install links without secrets', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-slack-install-test-'));
   await writeConfig(stateDir, [

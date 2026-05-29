@@ -11,6 +11,7 @@ import {
   providerSessionPayload,
   type ProviderSessionRecord,
   AgentRuntime,
+  AgentRuntimeDrainInput,
   AgentRuntimeFollowupInput,
   AgentRuntimeFollowupResult,
   AgentRuntimeInput,
@@ -151,6 +152,13 @@ export class ClaudeCodeAgentRuntime implements AgentRuntime {
     return { accepted: true, text: 'appended to Claude stream-json stdin' };
   }
 
+  async requestDrain(input: AgentRuntimeDrainInput): Promise<void> {
+    const controller = this.controller;
+    if (!this.activeRun.accepts(input)) return;
+    if (!controller) return;
+    await controller.waitForQuiescent(input.signal);
+  }
+
   private async ensureController(input: AgentRuntimeInput): Promise<ClaudeStreamJsonController> {
     if (this.controller) return this.controller;
     const systemPromptFilePath = await writeSystemPromptFile(input);
@@ -275,11 +283,17 @@ class ClaudeStreamJsonController {
     resolve(value: string): void;
   };
   private readonly queuedMessages: string[] = [];
+  private readonly quiescentWaiters = new Set<{
+    cleanup(): void;
+    reject(error: unknown): void;
+    resolve(): void;
+  }>();
   private startedSession = false;
 
   constructor(private readonly child: RunningChildProcess) {
     child.completion
       .then(({ stderr, stdout }) => {
+        this.rejectQuiescentWaiters(new Error('Claude Code runtime exited before drain reached a quiescent point'));
         const stderrOutput = stderr || this.stderrText;
         if (claudeSessionNotFound(stderrOutput)) {
           this.rejectCurrentTurn(new ClaudeSessionNotFoundError(stderrOutput));
@@ -287,7 +301,10 @@ class ClaudeStreamJsonController {
         }
         this.resolveCurrentTurn(parseClaudeRuntimeOutput(stdout).text ?? '');
       })
-      .catch((error) => this.rejectCurrentTurn(error));
+      .catch((error) => {
+        this.rejectQuiescentWaiters(error);
+        this.rejectCurrentTurn(error);
+      });
   }
 
   get completion(): Promise<{ stdout: string; stderr: string }> {
@@ -340,6 +357,33 @@ class ClaudeStreamJsonController {
     this.child.kill(signal);
   }
 
+  waitForQuiescent(signal?: AbortSignal): Promise<void> {
+    if (!this.inputGateClosed()) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        cleanup: () => {
+          signal?.removeEventListener('abort', onAbort);
+          this.quiescentWaiters.delete(waiter);
+        },
+        reject: (error: unknown) => {
+          waiter.cleanup();
+          reject(error);
+        },
+        resolve: () => {
+          waiter.cleanup();
+          resolve();
+        },
+      };
+      const onAbort = () => waiter.reject(signal?.reason ?? new Error('Drain wait aborted'));
+      if (signal?.aborted) {
+        reject(signal.reason ?? new Error('Drain wait aborted'));
+        return;
+      }
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.quiescentWaiters.add(waiter);
+    });
+  }
+
   async acceptStdoutChunk(chunk: string): Promise<void> {
     this.currentTurn?.input.onActivity?.();
     await this.currentTurn?.jsonlMapper.accept(chunk);
@@ -377,6 +421,7 @@ class ClaudeStreamJsonController {
     if (type === 'result') {
       this.compacting = false;
       this.activeToolUseIds.clear();
+      this.resolveQuiescentWaitersIfReady();
       const providerError = claudeProviderErrorFromResult(parsed, {
         sideEffectFree: this.currentTurn?.hadProviderToolCall !== true,
       });
@@ -389,6 +434,7 @@ class ClaudeStreamJsonController {
       return;
     }
     this.flushQueuedMessages();
+    this.resolveQuiescentWaitersIfReady();
   }
 
   private resolveCurrentTurn(value: string): void {
@@ -444,6 +490,16 @@ class ClaudeStreamJsonController {
         if (id) this.activeToolUseIds.delete(id);
       }
     }
+    this.resolveQuiescentWaitersIfReady();
+  }
+
+  private resolveQuiescentWaitersIfReady(): void {
+    if (this.inputGateClosed()) return;
+    for (const waiter of [...this.quiescentWaiters]) waiter.resolve();
+  }
+
+  private rejectQuiescentWaiters(error: unknown): void {
+    for (const waiter of [...this.quiescentWaiters]) waiter.reject(error);
   }
 }
 
