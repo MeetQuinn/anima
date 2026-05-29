@@ -212,9 +212,9 @@ async function gitShortCommit(): Promise<string | undefined> {
   }
 }
 
-function environmentName(animaHome: string): 'dev' | 'prod' | 'custom' {
+function environmentName(animaHome: string): 'dev' | 'dogfood' | 'custom' {
   if (resolve(animaHome) === resolve(PROJECT_ROOT, '.anima')) return 'dev';
-  if (resolve(animaHome) === resolve(homedir(), '.anima')) return 'prod';
+  if (resolve(animaHome) === resolve(homedir(), '.anima')) return 'dogfood';
   return 'custom';
 }
 

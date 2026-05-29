@@ -45,7 +45,7 @@ export const ServerInfo = z.object({
   animaHome: z.string(),
   commit: z.string().optional(),
   dashboardPort: z.number(),
-  env: z.enum(['dev', 'prod', 'custom']),
+  env: z.enum(['dev', 'dogfood', 'custom']),
   lastRestart: LastServicesRestart.optional(),
   ok: z.literal(true),
   startedAt: z.string(),
