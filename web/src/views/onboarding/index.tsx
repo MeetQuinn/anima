@@ -142,8 +142,10 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     if (providerReady(providerOptions.find((o) => o.kind === providerKind), providerAvailability)) return;
     const next = firstReadyProvider(providerOptions, providerAvailability);
     if (!next) return;
-    setProviderKind(next.kind);
-    setModel(next.defaultModel);
+    setTimeout(() => {
+      setProviderKind(next.kind);
+      setModel(next.defaultModel);
+    }, 0);
   }, [providerAvailability, providerKind, providerOptions]);
 
   useEffect(() => {

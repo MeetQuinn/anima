@@ -78,11 +78,11 @@ export default function Kb() {
   // Open tree to deep-linked file when path changes.
   useEffect(() => {
     if (!filePath) return;
-    setExpanded((prev) => {
+    setTimeout(() => setExpanded((prev) => {
       const next = new Set(prev);
       for (const a of ancestorsOf(filePath)) next.add(a);
       return next;
-    });
+    }), 0);
   }, [filePath]);
 
   // ---------------------------------------------------------------------------
@@ -91,14 +91,14 @@ export default function Kb() {
 
   const kbTitle = kb?.label ?? 'Knowledge Base';
 
-  const toggleDir = (path: string) => {
+  const toggleDir = useCallback((path: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
       else next.add(path);
       return next;
     });
-  };
+  }, []);
 
   const selectFile = useCallback(
     (path: string) => {

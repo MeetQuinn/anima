@@ -267,7 +267,7 @@ export function SlackConnectStepper({ agentId, onConnect }: Props) {
   // Once both tokens are individually verified, validate the pair.
   useEffect(() => {
     if (appVerified && botVerified && !connecting && !connected) {
-      void checkConnection();
+      setTimeout(() => void checkConnection(), 0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appVerified, botVerified]);

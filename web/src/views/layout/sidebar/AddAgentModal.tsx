@@ -88,8 +88,10 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
     if (providerReady(activeProvider, providerAvailability)) return;
     const next = firstReadyProvider(providerOptions, providerAvailability);
     if (!next) return;
-    setProviderKind(next.kind);
-    setModel(next.defaultModel);
+    setTimeout(() => {
+      setProviderKind(next.kind);
+      setModel(next.defaultModel);
+    }, 0);
   }, [providerAvailability, providerKind, providerOptions]);
 
   useEffect(() => {

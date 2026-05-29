@@ -204,7 +204,7 @@ export default function DirectoryPicker({
     for (let i = 0; i < segments.length - 1; i++) {
       toExpand.add(rootAbsPath + '/' + segments.slice(0, i + 1).join('/'));
     }
-    setExpandedPaths(toExpand);
+    setTimeout(() => setExpandedPaths(toExpand), 0);
   }, [rootAbsPath, startPath]);
 
   function toggleExpanded(path: string) {

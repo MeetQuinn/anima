@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useLocation, useNavigate, Outlet, Navigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 
@@ -94,10 +94,7 @@ export default function Layout() {
   // Track the last explicitly selected agent so MobileNavScreen (Screen 1) can
   // show a selected-state highlight after navigating back from Screen 2.
   // Screen 1 only renders when agentId === null, so we persist the last non-null value.
-  const lastSelectedAgentRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (agentId) lastSelectedAgentRef.current = agentId;
-  }, [agentId]);
+  const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
 
   // First-run: when there are no agents (and the list has loaded), redirect to
   // the dedicated /onboarding route. Must come after all hooks.
@@ -124,8 +121,11 @@ export default function Layout() {
       {showMobileNav ? (
         /* ── Mobile Screen 1: nav list ── */
         <MobileNavScreen
-          onSelectAgent={(id) => setAgentId(id)}
-          lastSelectedId={lastSelectedAgentRef.current}
+          onSelectAgent={(id) => {
+            setAgentId(id);
+            setLastSelectedId(id);
+          }}
+          lastSelectedId={lastSelectedId}
         />
       ) : (
         /* ── Desktop + Mobile Screen 2: agent detail (+ kb) ── */

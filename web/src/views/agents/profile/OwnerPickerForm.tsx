@@ -78,8 +78,6 @@ export function OwnerPickerForm({
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setLoadError(undefined);
     fetchAgentSlackUsers(agentId)
       .then((users) => { if (!cancelled) { setCandidates(users); setLoading(false); } })
       .catch((err) => {

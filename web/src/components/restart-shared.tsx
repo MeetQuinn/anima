@@ -216,7 +216,7 @@ export function RestartEchoToast() {
     } catch {
       /* sessionStorage unavailable — fall through and show once */
     }
-    setVisible(true);
+    setTimeout(() => setVisible(true), 0);
     const remaining = RESTART_ECHO_FRESH_MS - (Date.now() - Date.parse(completedAt));
     const dwell = Math.max(1_500, Math.min(TOAST_DWELL_MS, remaining));
     const timer = setTimeout(() => {

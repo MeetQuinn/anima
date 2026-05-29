@@ -456,9 +456,7 @@ export function ProviderEnvRow({
   const [saved, setSaved] = useState(false);
   const keys = Object.keys(env ?? {}).sort();
 
-  useEffect(() => {
-    if (!open) setRows(draftRowsFor(env));
-  }, [env, open]);
+  // Rows are initialised in the open handler (onClick) so no effect needed.
 
   function updateRow(id: string, patch: Partial<EnvDraftRow>) {
     setRows((current) => current.map((row) => (row.id === id ? { ...row, ...patch } : row)));

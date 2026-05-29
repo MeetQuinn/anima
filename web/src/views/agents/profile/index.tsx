@@ -61,9 +61,8 @@ export default function Profile() {
   // Avatar sync.
   const [syncingAvatar, setSyncingAvatar] = useState(false);
 
-  // Owner picker (reset when agent changes).
+  // Owner picker (reset when agent changes via key prop on OwnerPickerForm).
   const [ownerPickerOpen, setOwnerPickerOpen] = useState(false);
-  useEffect(() => { setOwnerPickerOpen(false); }, [agentId]);
 
   // Provider-bound changes are applied by the agent host without bouncing other agents.
   const [pendingRestart, setPendingRestart] = useState<PendingRestart | null>(null);
@@ -306,6 +305,7 @@ export default function Profile() {
                 </div>
                 <div className="p-5">
                   <OwnerPickerForm
+                    key={agentId}
                     agentId={agentId}
                     onConfirm={() => { setOwnerPickerOpen(false); refreshAgentData(agentId); }}
                     submitLabel={agent.owner ? 'Change owner →' : 'Assign owner →'}
