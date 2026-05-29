@@ -18,8 +18,8 @@
   "packageManager": "pnpm@11.0.0",
   "type": "module",
   "bin": {
-    "anima": "./bin/anima",
-    "animactl": "./bin/animactl"
+    "anima": "bin/anima",
+    "animactl": "bin/animactl"
   },
   "files": [
     "CLAUDE.md",
