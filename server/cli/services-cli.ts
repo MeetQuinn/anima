@@ -1,6 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname, resolve as resolvePath } from 'node:path';
+import { resolve as resolvePath } from 'node:path';
 
 import type { Command } from 'commander';
 
@@ -14,12 +13,17 @@ import {
   DEFAULT_RESTART_IDLE_TIMEOUT_MS,
   listRestartBlockers,
   RestartBlockedError,
-  restartBlockerInfo,
   type RestartDrainResult,
   restartBlockedError,
   waitForRestartDrain,
   waitForRestartIdle,
 } from '../services/restart-gate.js';
+import {
+  blockedServicesRestartResult,
+  idleServicesRestartResult,
+  type ServicesRestartResultDraft,
+  writeServicesRestartResult,
+} from '../services/restart-result.js';
 import {
   isServiceRunning,
   printStatus,
@@ -130,7 +134,7 @@ async function runRestart(opts: ServicesCliOptions): Promise<void> {
     }
   } catch (error) {
     if (error instanceof RestartBlockedError) {
-      await writeRestartResult(blockedRestartResult(error));
+      await writeRestartResult(blockedServicesRestartResult(error));
     }
     throw error;
   } finally {
@@ -198,24 +202,7 @@ interface RestartGateLease {
   beforeStart(): Promise<void>;
   cleanup(): Promise<void>;
   drainResult?: RestartDrainResult;
-  result: ServicesRestartResult;
-}
-
-type ServicesRestartResult = ServicesRestartBlockedResult | ServicesRestartSucceededResult;
-
-interface ServicesRestartSucceededResult {
-  fallbackToIdle: boolean;
-  mode: 'idle' | 'drain-active';
-  requestedCount: number;
-  resumedCount: number;
-  status: 'succeeded';
-}
-
-interface ServicesRestartBlockedResult {
-  blockers: ReturnType<typeof restartBlockerInfo>[];
-  message: string;
-  reason: 'became_busy' | 'drain_timeout' | 'idle_timeout';
-  status: 'blocked';
+  result: ServicesRestartResultDraft;
 }
 
 async function prepareRestartGate(specs: ServiceSpec[], opts: ServicesCliOptions): Promise<RestartGateLease> {
@@ -223,7 +210,7 @@ async function prepareRestartGate(specs: ServiceSpec[], opts: ServicesCliOptions
   const noop = {
     beforeStart: async () => {},
     cleanup: async () => {},
-    result: idleRestartResult(),
+    result: idleServicesRestartResult(),
   };
   if (!agentSpec || opts.force || !(await isServiceRunning(agentSpec))) return noop;
 
@@ -255,30 +242,10 @@ function validateRestartDrainOptions(opts: ServicesCliOptions): void {
   }
 }
 
-function idleRestartResult(): ServicesRestartResult {
-  return {
-    fallbackToIdle: false,
-    mode: 'idle',
-    requestedCount: 0,
-    resumedCount: 0,
-    status: 'succeeded',
-  };
-}
-
-function blockedRestartResult(error: RestartBlockedError): ServicesRestartResult {
-  return {
-    blockers: error.blockers.map(restartBlockerInfo),
-    message: 'Agents still working — restart did not run. Try again once they reach a safe point.',
-    reason: error.reason,
-    status: 'blocked',
-  };
-}
-
-async function writeRestartResult(result: ServicesRestartResult): Promise<void> {
+async function writeRestartResult(result: ServicesRestartResultDraft): Promise<void> {
   const resultPath = process.env.ANIMA_RESTART_RESULT_FILE;
   if (!resultPath) return;
-  await mkdir(dirname(resultPath), { recursive: true });
-  await writeFile(resultPath, `${JSON.stringify({ ...result, completedAt: new Date().toISOString() }, null, 2)}\n`, 'utf8');
+  await writeServicesRestartResult(resultPath, result);
 }
 
 function parseNonNegativeInteger(value: string): number {

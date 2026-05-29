@@ -88,9 +88,8 @@
     "zod": "^4.4.3"
   },
   "lint-staged": {
-    "*.{ts,tsx}": [
-      "eslint --fix",
-      "prettier --write"
+    "web/**/*.{ts,tsx}": [
+      "pnpm --dir web exec eslint --fix"
     ],
     "*.{css,json,md}": [
       "prettier --write"

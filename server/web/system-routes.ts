@@ -12,6 +12,11 @@ import type { FastifyInstance } from 'fastify';
 import { resolveAnimaHome } from '../anima-home.js';
 import { defaultServerSettingsService } from '../settings/settings.service.js';
 import { cleanServiceEnv } from '../services/env.js';
+import {
+  readLastServicesRestart,
+  servicesRestartLogPath,
+  servicesRestartResultPath,
+} from '../services/restart-result.js';
 import { defaultProviderUsageService } from '../provider-usage/provider-usage.service.js';
 import {
   defaultRuntimeUpgradeService,
@@ -19,12 +24,7 @@ import {
   RuntimeUpgradeUnavailableError,
 } from '../runtime/runtime-upgrade.js';
 import { SidebarOrder } from '../../shared/server-settings.js';
-import {
-  LastServicesRestart,
-  type LastServicesRestart as LastServicesRestartType,
-  type ServerInfo,
-  type ServicesRestartResponse,
-} from '../../shared/server-info.js';
+import type { ServerInfo, ServicesRestartResponse } from '../../shared/server-info.js';
 import type { RuntimeUpgradeApplyResponse } from '../../shared/runtime-upgrade.js';
 import { PROVIDER_CATALOG, type ProviderAvailability } from '../../shared/provider-catalog.js';
 import { HttpError } from './http.js';
@@ -159,39 +159,6 @@ async function serverInfoForUi(): Promise<ServerInfo> {
     uptimeSeconds: Math.max(0, Math.floor((Date.now() - Date.parse(API_SERVER_STARTED_AT)) / 1000)),
     version,
   };
-}
-
-async function readLastServicesRestart(animaHome: string): Promise<LastServicesRestartType | undefined> {
-  const resultPath = servicesRestartResultPath(animaHome);
-  try {
-    const raw = JSON.parse(await readFile(resultPath, 'utf8')) as unknown;
-    const parsed = LastServicesRestart.safeParse({ ...recordOrEmpty(raw), logPath: servicesRestartLogPath(animaHome) });
-    if (!parsed.success) {
-      console.warn(`Ignoring invalid services restart result at ${resultPath}: ${parsed.error.message}`);
-      return undefined;
-    }
-    return parsed.data;
-  } catch (error) {
-    if (isErrno(error, 'ENOENT')) return undefined;
-    console.warn(`Ignoring unreadable services restart result at ${resultPath}: ${error instanceof Error ? error.message : String(error)}`);
-    return undefined;
-  }
-}
-
-function servicesRestartLogPath(animaHome: string): string {
-  return join(animaHome, 'logs', 'services-restart.log');
-}
-
-function servicesRestartResultPath(animaHome: string): string {
-  return join(animaHome, 'run', 'services-restart-result.json');
-}
-
-function recordOrEmpty(value: unknown): Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value)) ? value as Record<string, unknown> : {};
-}
-
-function isErrno(error: unknown, code: string): boolean {
-  return Boolean(error && typeof error === 'object' && 'code' in error && (error as { code?: unknown }).code === code);
 }
 
 async function packageVersion(): Promise<string> {

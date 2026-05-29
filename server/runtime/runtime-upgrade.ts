@@ -7,7 +7,8 @@ import { promisify } from 'node:util';
 import { resolveAnimaHome } from '../anima-home.js';
 import { defaultServerSettingsService, type ServerSettingsService } from '../settings/settings.service.js';
 import { cleanServiceEnv } from '../services/env.js';
-import { listRestartBlockers } from '../services/restart-gate.js';
+import { listRestartBlockers, restartBlockerInfo, type RestartBlocker } from '../services/restart-gate.js';
+import { readServicesRestartSummary, type ServicesRestartSummary } from '../services/restart-result.js';
 import { JsonStore } from '../storage/json-store.js';
 import {
   DEFAULT_RUNTIME_PACKAGE,
@@ -36,13 +37,6 @@ const DEFAULT_VERIFY_TIMEOUT_MS = 60_000;
 const VERIFY_POLL_MS = 1_000;
 const UPGRADE_AFTER_RESPONSE_DELAY_MS = 250;
 const OPERATION_IDLE: RuntimeUpgradeOperationType = { status: 'idle' };
-
-interface RuntimeRestartResult {
-  fallbackToIdle: boolean;
-  mode: 'idle' | 'drain-active';
-  requestedCount: number;
-  resumedCount: number;
-}
 
 export interface RuntimeUpgradeServiceOptions {
   checkStore?: RuntimeUpgradeCheckStore;
@@ -303,7 +297,7 @@ export async function runRuntimeUpgradeWorker(options: RuntimeUpgradeWorkerOptio
     targetVersion: options.targetVersion,
   });
 
-  let restart: RuntimeRestartResult | undefined;
+  let restart: ServicesRestartSummary | undefined;
   try {
     await appendUpgradeLog(logPath, `upgrade worker running target=${options.targetVersion} track=${options.releaseTrack}`);
     const previousPids = await readServicePids(resolveAnimaHome());
@@ -475,7 +469,7 @@ async function runManagedServicesRestart(
   animactlScript: string,
   packageDir: string,
   idleTimeoutMs: number | undefined,
-): Promise<RuntimeRestartResult> {
+): Promise<ServicesRestartSummary> {
   const args = [animactlScript, 'services', 'restart', '--drain-active', '--resume-running'];
   if (idleTimeoutMs !== undefined) args.push('--drain-timeout-ms', String(idleTimeoutMs));
   const resultPath = join(resolveAnimaHome(), 'run', `runtime-upgrade-restart-${process.pid}-${Date.now()}.json`);
@@ -493,7 +487,7 @@ async function runManagedServicesRestart(
   });
   if (code !== 0) throw new Error(`services restart exited with code ${code}`);
   try {
-    return parseRuntimeRestartResult(JSON.parse(await readFile(resultPath, 'utf8')));
+    return await readServicesRestartSummary(resultPath);
   } finally {
     await rm(resultPath, { force: true }).catch(() => undefined);
   }
@@ -588,29 +582,16 @@ async function rollbackRuntime(input: {
   }
 }
 
-function runtimeUpgradeBlocker({ agentId, item }: Awaited<ReturnType<typeof listRestartBlockers>>[number]): RuntimeUpgradeGateBlocker {
-  const summary = itemSummary(item);
+function runtimeUpgradeBlocker(blocker: RestartBlocker): RuntimeUpgradeGateBlocker {
+  const info = restartBlockerInfo(blocker);
+  if (info.status !== 'queued' && info.status !== 'running') throw new Error(`Invalid runtime upgrade blocker status: ${info.status}`);
   return {
-    agentId,
-    itemId: item.id,
-    since: item.handling.startedAt ?? item.handling.queuedAt ?? item.handling.updatedAt,
-    status: item.handling.status === 'running' ? 'running' : 'queued',
-    ...(summary ? { summary } : {}),
+    agentId: info.agentId,
+    itemId: info.itemId,
+    since: info.since,
+    status: info.status,
+    ...(info.summary ? { summary: info.summary } : {}),
   };
-}
-
-function itemSummary(item: Awaited<ReturnType<typeof listRestartBlockers>>[number]['item']): string | undefined {
-  if (item.kind === 'slack' || item.kind === 'onboarding') return truncate(item.text);
-  if (item.kind === 'choice_response') {
-    const actor = item.answeredBy.handle ?? item.answeredBy.displayName ?? item.answeredBy.slackUserId;
-    return truncate(`${actor}: ${item.optionLabel}`);
-  }
-  return item.kind;
-}
-
-function truncate(value: string): string {
-  const normalized = value.replace(/\s+/g, ' ').trim();
-  return normalized.length > 80 ? `${normalized.slice(0, 77)}...` : normalized;
 }
 
 function runtimeUpgradeCheckError(error: unknown): RuntimeUpgradeCheckError {
@@ -667,23 +648,6 @@ function runtimeUpgradeCheckErrorFromUnknown(value: unknown): RuntimeUpgradeChec
   if (type !== 'network' && type !== 'parse' && type !== 'unknown') return undefined;
   if (typeof message !== 'string' || !message) return undefined;
   return { message, type };
-}
-
-function parseRuntimeRestartResult(value: unknown): RuntimeRestartResult {
-  if (!isRecord(value)) throw new Error('services restart did not report a restart result');
-  const mode = value['mode'];
-  const fallbackToIdle = value['fallbackToIdle'];
-  const requestedCount = value['requestedCount'];
-  const resumedCount = value['resumedCount'];
-  if (mode !== 'idle' && mode !== 'drain-active') throw new Error('services restart reported an invalid mode');
-  if (typeof fallbackToIdle !== 'boolean') throw new Error('services restart reported an invalid fallback flag');
-  if (typeof requestedCount !== 'number' || !Number.isFinite(requestedCount)) {
-    throw new Error('services restart reported an invalid requested count');
-  }
-  if (typeof resumedCount !== 'number' || !Number.isFinite(resumedCount)) {
-    throw new Error('services restart reported an invalid resumed count');
-  }
-  return { fallbackToIdle, mode, requestedCount, resumedCount };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
