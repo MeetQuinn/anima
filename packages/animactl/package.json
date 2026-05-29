@@ -26,6 +26,7 @@
     "dist/server/",
     "dist/shared/",
     "dist/web/",
+    "templates/",
     "package.json",
     "README.md"
   ],

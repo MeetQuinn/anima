@@ -10,3 +10,5 @@ await mkdir(packageDist, { recursive: true });
 for (const dir of ['server', 'shared', 'web']) {
   await cp(join('dist', dir), join(packageDist, dir), { recursive: true });
 }
+
+await cp('templates', join('packages', 'animactl', 'templates'), { recursive: true });

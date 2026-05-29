@@ -1,5 +1,6 @@
 node_modules/
 dist/
+packages/animactl/templates/
 .anima/
 .anima-demo/
 .env
