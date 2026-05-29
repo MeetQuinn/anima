@@ -12,6 +12,7 @@ import {
 } from '@/lib/url-state';
 import Sidebar from './Sidebar';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { RestartEchoToast } from '@/components/restart-shared';
 import MobileTopBar from './MobileTopBar';
 import MobileBottomNav from './MobileBottomNav';
 import MobileNavScreen from './MobileNavScreen';
@@ -112,6 +113,10 @@ export default function Layout() {
 
   return (
     <>
+      {/* App-level: honest post-restart echo, survives the restart's page reload
+          (which closes the Server panel). Portals to body. */}
+      <RestartEchoToast />
+
       {!kbLocation && <AgentReconciler disabled={reconcilerDisabled} />}
 
       {showMobileNav ? (

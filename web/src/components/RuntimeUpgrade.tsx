@@ -6,11 +6,12 @@ import { applyRuntimeUpgrade, fetchRuntimeUpgrade, RuntimeUpgradeApplyError } fr
 import { useRuntimeUpgrade } from '@/hooks/useRuntimeUpgrade';
 import { queryKeys } from '@/lib/query-keys';
 import { queryClient } from '@/query-client';
-import type { RuntimeUpgradeGateBlocker } from '@shared/runtime-upgrade';
+import { BusyConfirmModal, restartEcho, resumedText } from './restart-shared';
+import type { RuntimeUpgradeGateBlocker, RuntimeUpgradeOperation } from '@shared/runtime-upgrade';
 
 // Apply lifecycle: the worker installs the target (dashboard stays up), then
-// uses the idle-gated restart path (dashboard goes down, then recovers). A
-// broken target fails BEFORE the restart, so the dashboard never goes down —
+// uses the drain-to-quiescent restart path (dashboard goes down, then recovers).
+// A broken target fails BEFORE the restart, so the dashboard never goes down —
 // we poll the status endpoint to catch that fast-fail without waiting out the
 // whole timeout, and treat a fetch failure as "restart in progress".
 const UPGRADE_TIMEOUT_MS = 300_000; // install + restart can take a couple of minutes
@@ -30,10 +31,14 @@ type Phase = 'idle' | 'confirming' | 'applying';
  *
  *   checking  (client query in-flight, no data yet)  → spinner row
  *   error     (status.state)                          → "Update check unavailable"
- *   current   (status.state)                          → "Up to date"
- *   available (status.state)                          → card + Upgrade (gate-gated)
+ *   current   (status.state)                          → "Up to date" (+ resume echo)
+ *   available (status.state)                          → card + Upgrade
  *   upgrading (operation.status running/scheduled)    → spinner row + overlay
  *   failed    (operation.status)                      → "still on <old>" + Retry
+ *
+ * Drain mode: agents working no longer DISABLES the upgrade — it routes through
+ * a continuity-first confirm naming the running agents. The only disabler left
+ * is a mid-operation (scheduled/running) upgrade, which shows the spinner.
  */
 export default function RuntimeUpgradeRow() {
   const { data: status, isLoading } = useRuntimeUpgrade();
@@ -123,6 +128,26 @@ export default function RuntimeUpgradeRow() {
   const failureFresh =
     op === 'failed' && (!completedAt || Date.now() - Date.parse(completedAt) < RECENT_FAILURE_MS);
 
+  // Running agents we'd drain — names the upgrade confirm. Queued items are NOT
+  // blockers in drain mode (the new worker picks them up), so filter to running.
+  const runningNames = runningBlockerNames(status.gate.blockers, agents);
+
+  // Honest resume echo for the upgrade path: "N agents resumed" rides the
+  // version-flip surface (the "Up to date" row), gated on the same drain-vs-
+  // fallback + resumedCount + freshness rule as the restart toast.
+  const upgradeEcho = restartEcho(echoSignal(status.operation), Date.now());
+  const upgradeResumed = upgradeEcho?.kind === 'resumed' ? upgradeEcho.count : null;
+
+  // All idle → execute immediately (no modal). Agents working → confirm with
+  // continuity copy naming them. Shared by the Upgrade button and Retry.
+  function requestUpgrade() {
+    if (runningNames.length > 0) {
+      setPhase('confirming');
+    } else {
+      void performUpgrade();
+    }
+  }
+
   let content: React.ReactNode;
   if (inProgress) {
     content = (
@@ -140,9 +165,7 @@ export default function RuntimeUpgradeRow() {
         error={status.operation.error}
         rollback={status.operation.rollback}
         logPath={status.operation.logPath}
-        gateBusy={status.gate.state === 'busy'}
-        gateLabel={gatedLabel(status.gate.blockers, agents)}
-        onRetry={() => setPhase('confirming')}
+        onRetry={requestUpgrade}
       />
     );
   } else if (status.state === 'error') {
@@ -161,18 +184,21 @@ export default function RuntimeUpgradeRow() {
       <AvailableCard
         currentVersion={status.currentVersion}
         target={target}
-        gateBusy={status.gate.state === 'busy'}
-        gateLabel={gatedLabel(status.gate.blockers, agents)}
         error={applyError}
-        onUpgrade={() => setPhase('confirming')}
+        onUpgrade={requestUpgrade}
       />
     );
   } else {
-    // current (up to date)
+    // current (up to date) — with the post-upgrade resume echo when fresh.
     content = (
       <UpdateLabelRow>
         <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-health-ok" />
         <span className="font-serif text-[14px] text-text-on-spine">Up to date</span>
+        {upgradeResumed !== null && (
+          <span className="font-sans text-[11px] text-text-on-spine-subtle">
+            · {resumedText(upgradeResumed)}
+          </span>
+        )}
       </UpdateLabelRow>
     );
   }
@@ -181,7 +207,9 @@ export default function RuntimeUpgradeRow() {
     <>
       {content}
       {phase === 'confirming' && target && (
-        <UpgradeConfirmModal
+        <BusyConfirmModal
+          kind="upgrade"
+          runningNames={runningNames}
           target={target}
           onCancel={() => setPhase('idle')}
           onConfirm={() => void performUpgrade()}
@@ -199,15 +227,11 @@ export default function RuntimeUpgradeRow() {
 function AvailableCard({
   currentVersion,
   target,
-  gateBusy,
-  gateLabel,
   error,
   onUpgrade,
 }: {
   currentVersion: string;
   target: string;
-  gateBusy: boolean;
-  gateLabel: string;
   error: string | null;
   onUpgrade: () => void;
 }) {
@@ -231,28 +255,14 @@ function AvailableCard({
       )}
 
       <div className="mt-2.5">
-        {gateBusy ? (
-          <>
-            <button
-              type="button"
-              disabled
-              className="flex w-full cursor-not-allowed items-center justify-center gap-1.5 rounded-sm border border-spine-border px-3 py-1.5 text-[12px] text-text-on-spine-subtle opacity-60"
-            >
-              <Download aria-hidden className="h-3 w-3" />
-              Upgrade &amp; restart
-            </button>
-            <p className="mt-1.5 font-sans text-[11px] text-text-on-spine-subtle">{gateLabel}</p>
-          </>
-        ) : (
-          <button
-            type="button"
-            onClick={onUpgrade}
-            className="flex w-full items-center justify-center gap-1.5 rounded-sm bg-accent px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-page"
-          >
-            <Download aria-hidden className="h-3 w-3" />
-            Upgrade &amp; restart
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={onUpgrade}
+          className="flex w-full items-center justify-center gap-1.5 rounded-sm bg-accent px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-page"
+        >
+          <Download aria-hidden className="h-3 w-3" />
+          Upgrade &amp; restart
+        </button>
         {error && <p className="mt-1.5 font-sans text-[11px] text-health-error">{error}</p>}
       </div>
     </div>
@@ -264,16 +274,12 @@ function FailedCard({
   error,
   rollback,
   logPath,
-  gateBusy,
-  gateLabel,
   onRetry,
 }: {
   currentVersion: string;
   error?: string;
   rollback?: 'not_needed' | 'succeeded' | 'failed';
   logPath?: string;
-  gateBusy: boolean;
-  gateLabel: string;
   onRetry: () => void;
 }) {
   // The reassuring path (install failed cleanly OR rolled back): the dashboard
@@ -310,18 +316,14 @@ function FailedCard({
         </p>
       )}
       <div className="mt-2.5">
-        {gateBusy ? (
-          <p className="font-sans text-[11px] text-text-on-spine-subtle">{gateLabel}</p>
-        ) : (
-          <button
-            type="button"
-            onClick={onRetry}
-            className="flex items-center gap-1.5 rounded-sm border border-spine-border px-2.5 py-1 text-[12px] text-text-on-spine-muted transition-colors hover:border-spine-border hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-          >
-            <RefreshCw aria-hidden className="h-3 w-3" />
-            Try again
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={onRetry}
+          className="flex items-center gap-1.5 rounded-sm border border-spine-border px-2.5 py-1 text-[12px] text-text-on-spine-muted transition-colors hover:border-spine-border hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          <RefreshCw aria-hidden className="h-3 w-3" />
+          Try again
+        </button>
       </div>
     </div>
   );
@@ -361,70 +363,8 @@ function UpdateLabelRow({ children }: { children: React.ReactNode }) {
 }
 
 // ---------------------------------------------------------------------------
-// Confirm + overlay (editorial style, mirrors RestartButton)
+// Overlay (editorial style, mirrors RestartButton)
 // ---------------------------------------------------------------------------
-
-function UpgradeConfirmModal({
-  target,
-  onCancel,
-  onConfirm,
-}: {
-  target: string;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onCancel();
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onCancel]);
-
-  return (
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-page/70 p-4 backdrop-blur-sm"
-      onClick={onCancel}
-      role="presentation"
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="upgrade-confirm-title"
-        className="relative w-full max-w-xl rounded-sm border border-accent/40 bg-surface p-7 pl-8 shadow-deep"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <span aria-hidden className="absolute left-0 top-4 bottom-4 w-px bg-accent" />
-        <div id="upgrade-confirm-title" className="font-serif text-[17px] font-semibold text-text">
-          Update and restart?
-        </div>
-        <div className="font-serif mt-2 text-[15px] leading-relaxed text-text-muted">
-          Anima will install{' '}
-          <span className="font-mono text-[13px] text-text">{target}</span> and restart its
-          services. Provider sessions and reminder schedules persist; the dashboard reconnects
-          automatically.
-        </div>
-        <div className="mt-5 flex gap-2">
-          <button
-            type="button"
-            onClick={onConfirm}
-            className="flex items-center gap-1.5 rounded-sm bg-accent px-3.5 py-2 text-[13px] font-medium text-white transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-          >
-            <Download aria-hidden className="h-3.5 w-3.5" />
-            Upgrade &amp; restart
-          </button>
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-sm border border-border-soft px-3.5 py-2 text-[13px] text-text-muted transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function UpgradeOverlay({ target }: { target?: string }) {
   return (
@@ -434,9 +374,13 @@ function UpgradeOverlay({ target }: { target?: string }) {
         <div className="font-serif text-[16px] font-medium text-text">
           {target ? `Installing ${target}…` : 'Installing update…'}
         </div>
+        {/* Continuity-first default. The old idle-wait line ("waits for a working
+            agent to finish") survives here, reframed as "at a safe point" — which
+            is honest for BOTH the drain path (clean edge reached quickly) and the
+            drain-timeout fallback (waits for a safe point; v1 never force-kills). */}
         <div className="font-sans text-[12px] leading-relaxed text-text-muted">
-          Your current version keeps running while Anima installs and verifies the new one. It then
-          restarts once no agent is mid-task — so this may wait for a working agent to finish. The
+          Your current version keeps running while Anima installs and verifies the new one, then
+          restarts at a safe point so any working agents resume right where they left off. The
           dashboard reloads automatically when it&apos;s back.
         </div>
       </div>
@@ -454,19 +398,26 @@ function isLongPair(a: string, b: string): boolean {
 }
 
 /**
- * Gated copy from the server's blockers — name the single common case, count
- * the rest, so the helper line stays short. (The full named roster belongs in
- * the confirm step; v1's apply path is only reachable when the gate is idle.)
+ * Names the agents we'd drain (running only). Queued items are not blockers in
+ * drain mode, so they're filtered out — naming a queued agent in the confirm
+ * would be wrong (it's never interrupted).
  */
-function gatedLabel(
+function runningBlockerNames(
   blockers: RuntimeUpgradeGateBlocker[],
   agents: { id: string; profile?: { displayName?: string } }[],
-): string {
-  if (blockers.length === 0) return 'Available once agents are idle.';
-  if (blockers.length === 1) {
-    const nameById = new Map(agents.map((a) => [a.id, a.profile?.displayName ?? a.id]));
-    const name = nameById.get(blockers[0].agentId) ?? blockers[0].agentId;
-    return `${name} is working — available once idle.`;
-  }
-  return `${blockers.length} agents are working — available once idle.`;
+): string[] {
+  const nameById = new Map(agents.map((a) => [a.id, a.profile?.displayName ?? a.id]));
+  return blockers
+    .filter((b) => b.status === 'running')
+    .map((b) => nameById.get(b.agentId) ?? b.agentId);
+}
+
+/** Map the upgrade operation's restart result into the shared echo signal. */
+function echoSignal(op: RuntimeUpgradeOperation) {
+  return {
+    completedAt: op.completedAt,
+    fallbackToIdle: op.restart?.fallbackToIdle,
+    mode: op.restart?.mode,
+    resumedCount: op.restart?.resumedCount,
+  };
 }
