@@ -34,21 +34,21 @@ export function matchesFilter(node: KbTreeNode, query: string): boolean {
   return node.children?.some((c) => matchesFilter(c, query)) ?? false;
 }
 
-function kindIcon(kind: KbFileKind) {
+function KindIcon({ kind, className }: { kind: KbFileKind; className: string }) {
   switch (kind) {
     case 'markdown':
     case 'text':
-      return FileText;
+      return <FileText className={className} />;
     case 'json':
-      return FileJson;
+      return <FileJson className={className} />;
     case 'code':
-      return FileCode;
+      return <FileCode className={className} />;
     case 'image':
-      return ImageIcon;
+      return <ImageIcon className={className} />;
     case 'html':
-      return Globe;
+      return <Globe className={className} />;
     default:
-      return FileIcon;
+      return <FileIcon className={className} />;
   }
 }
 
@@ -135,8 +135,8 @@ export function TreeRow({
     );
   }
 
-  const Icon = kindIcon(kbFileKind(node.name));
   const active = node.path === selectedPath;
+  const iconClass = `h-3.5 w-3.5 shrink-0 ${active ? 'text-accent/70' : 'text-text-subtle'}`;
   return (
     <button
       onClick={() => onSelectFile(node.path)}
@@ -152,7 +152,7 @@ export function TreeRow({
       ].join(' ')}
     >
       <span className="h-3.5 w-3.5 shrink-0" aria-hidden />
-      <Icon className={`h-3.5 w-3.5 shrink-0 ${active ? 'text-accent/70' : 'text-text-subtle'}`} />
+      <KindIcon kind={kbFileKind(node.name)} className={iconClass} />
       <span className="truncate">
         <HighlightMatch text={node.name} query={filterQuery ?? ''} />
       </span>

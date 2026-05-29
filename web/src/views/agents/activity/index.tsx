@@ -300,7 +300,6 @@ export default function Activity() {
       if (delta > 0) el.scrollTop += delta;
       prevScrollHeightRef.current = 0;
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageCount]);
 
   // Scroll to bottom when activity data first loads for this agent.

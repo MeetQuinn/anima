@@ -95,7 +95,9 @@ export default function Layout() {
   // show a selected-state highlight after navigating back from Screen 2.
   // Screen 1 only renders when agentId === null, so we persist the last non-null value.
   const lastSelectedAgentRef = useRef<string | null>(null);
-  if (agentId) lastSelectedAgentRef.current = agentId;
+  useEffect(() => {
+    if (agentId) lastSelectedAgentRef.current = agentId;
+  }, [agentId]);
 
   // First-run: when there are no agents (and the list has loaded), redirect to
   // the dedicated /onboarding route. Must come after all hooks.
