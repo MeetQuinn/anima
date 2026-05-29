@@ -10,6 +10,7 @@ import { fetchAgentStatuses } from '@/api/agents';
 import { queryClient } from '@/query-client';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
+import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import ServerPanel from '@/components/ServerPanel';
 import { AgentCreateModal, AddKbModal } from './Sidebar';
 import { agentColor, initialOf } from '@/lib/avatars';
@@ -56,6 +57,12 @@ export default function MobileNavScreen({
   const [showAddAgentModal, setShowAddAgentModal] = useState(false);
   const [showAddKbModal, setShowAddKbModal] = useState(false);
   const [serverPanelOpen, setServerPanelOpen] = useState(false);
+  // Resting indicator — accent dot on the Server footer when a system update is
+  // available, matching the desktop sidebar. This is the only mobile entry to the
+  // Server panel (MobileTopBar routes here), so without it a mobile user gets no
+  // resting hint that an update exists. Reuses the panel's deduped query (no extra
+  // request); clears once the user upgrades.
+  const updateAvailable = useUpdateAvailable();
 
   // Restore scroll position when returning from detail screen.
   useEffect(() => {
@@ -263,12 +270,20 @@ export default function MobileNavScreen({
       >
         <button
           onClick={() => setServerPanelOpen(true)}
+          title={updateAvailable ? 'Server — update available' : 'Server status & restart'}
           className="flex min-h-[44px] w-full items-center gap-2.5 rounded-sm px-3 py-2 text-left transition-colors hover:bg-surface-elevated/60"
         >
           <Server className="h-4 w-4 shrink-0 text-text-muted" />
           <span className="font-serif text-[15px] font-medium leading-tight text-text-muted">
             Server
           </span>
+          {updateAvailable && (
+            <span
+              aria-hidden
+              className="ml-auto h-1.5 w-1.5 rounded-full bg-accent"
+              title="Update available"
+            />
+          )}
         </button>
       </div>
 
