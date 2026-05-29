@@ -40,11 +40,9 @@ Anima's own live install should run a pinned canary version, not a mutable check
 
 ```bash
 cd ~/anima-prod
-npm install @scope/anima@0.2.0-canary.20260529.36fa5d8
+npm install @totoday/anima@0.2.0-canary.20260529.36fa5d8
 ANIMA_HOME=~/.anima npx animactl services restart
 ```
-
-Use the real package name once the npm scope is finalized.
 
 Restarts should stay idle-gated. If agents are active, the restart waits or exits without killing
 active turns. Use `--force` only for an explicit incident decision.
@@ -94,4 +92,3 @@ After a deploy or upgrade, verify:
 
 The service should expose enough metadata to make wrong-root or wrong-version deployments obvious:
 package version, code root, Anima home, environment, startedAt, and build commit when available.
-
