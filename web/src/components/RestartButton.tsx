@@ -93,8 +93,8 @@ export default function RestartButton({ compact = false }: { compact?: boolean }
           className={[
             'flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] transition-colors',
             phase === 'restarting'
-              ? 'cursor-wait text-text-on-spine-subtle'
-              : 'cursor-pointer border border-spine-border/60 text-text-on-spine-muted hover:border-spine-border hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
+              ? 'cursor-wait text-text-subtle'
+              : 'cursor-pointer border border-border-soft/60 text-text-muted hover:border-border-soft hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
           ].join(' ')}
           title={phase === 'failed' && error ? error : 'Restart Anima services'}
         >

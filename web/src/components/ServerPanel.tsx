@@ -60,7 +60,7 @@ function WindowRow({ w }: { w: ProviderUsageWindow }) {
   return (
     <div className="space-y-0.5">
       <div className="flex items-center justify-between gap-2">
-        <span className="font-sans text-[11px] text-text-on-spine-subtle">{w.label}</span>
+        <span className="font-sans text-[11px] text-text-subtle">{w.label}</span>
         <div className="flex shrink-0 items-center gap-1.5">
           <span
             className={`font-mono text-[11px] ${
@@ -68,20 +68,20 @@ function WindowRow({ w }: { w: ProviderUsageWindow }) {
                 ? 'text-health-error'
                 : pct < 50
                   ? 'text-health-warn'
-                  : 'text-text-on-spine-muted'
+                  : 'text-text-muted'
             }`}
           >
             {pct}%
           </span>
           {w.resetsAt && (
-            <span className="font-sans text-[10px] text-text-on-spine-subtle">
+            <span className="font-sans text-[10px] text-text-subtle">
               {formatReset(w.resetsAt)}
             </span>
           )}
         </div>
       </div>
       {/* Remaining bar */}
-      <div className="h-1 w-full overflow-hidden rounded-full bg-spine-elevated">
+      <div className="h-1 w-full overflow-hidden rounded-full bg-surface-elevated">
         <div
           className={`h-full rounded-full transition-[width] duration-300 ${barColor(pct)}`}
           style={{ width: `${pct}%` }}
@@ -97,10 +97,10 @@ function ProviderBlock({ row }: { row: ProviderUsageRow }) {
     <div className={isAvailable ? '' : 'opacity-50'}>
       {/* Name + best-effort badge */}
       <div className="mb-2 flex items-center gap-1.5">
-        <span className="font-sans text-[12px] font-medium text-text-on-spine">{row.label}</span>
+        <span className="font-sans text-[12px] font-medium text-text">{row.label}</span>
         {row.source === 'private-api' && (
           <span
-            className="rounded border border-text-on-spine-subtle/20 px-1 font-mono text-[9px] text-text-on-spine-subtle"
+            className="rounded border border-text-subtle/20 px-1 font-mono text-[9px] text-text-subtle"
             title="Data scraped from private API — best-effort"
           >
             ≈
@@ -117,8 +117,8 @@ function ProviderBlock({ row }: { row: ProviderUsageRow }) {
             <div className="flex flex-wrap gap-x-4 gap-y-0.5">
               {row.extras.map((e, i) => (
                 <div key={i} className="flex items-baseline gap-1">
-                  <span className="font-sans text-[10px] text-text-on-spine-subtle">{e.label}</span>
-                  <span className="font-serif text-[12px] text-text-on-spine-muted">
+                  <span className="font-sans text-[10px] text-text-subtle">{e.label}</span>
+                  <span className="font-serif text-[12px] text-text-muted">
                     {extraValue(e)}
                   </span>
                 </div>
@@ -128,7 +128,7 @@ function ProviderBlock({ row }: { row: ProviderUsageRow }) {
         </div>
       ) : (
         <div className="space-y-0.5">
-          <span className="font-sans text-[12px] text-text-on-spine-muted">
+          <span className="font-sans text-[12px] text-text-muted">
             {row.error?.type === 'not_configured'
               ? 'Not configured'
               : row.error?.type === 'unauthorized'
@@ -140,7 +140,7 @@ function ProviderBlock({ row }: { row: ProviderUsageRow }) {
           {row.error?.message &&
             row.error.type !== 'network_error' &&
             row.error.type !== 'unknown' && (
-              <p className="font-mono text-[10px] text-text-on-spine-subtle leading-relaxed">
+              <p className="font-mono text-[10px] text-text-subtle leading-relaxed">
                 {row.error.message}
               </p>
             )}
@@ -153,9 +153,9 @@ function ProviderBlock({ row }: { row: ProviderUsageRow }) {
 function UsageSkeleton() {
   return (
     <div className="animate-pulse space-y-2">
-      <div className="h-3 w-20 rounded bg-spine-elevated" />
-      <div className="h-1 w-full rounded-full bg-spine-elevated" />
-      <div className="h-1 w-2/3 rounded-full bg-spine-elevated" />
+      <div className="h-3 w-20 rounded bg-surface-elevated" />
+      <div className="h-1 w-full rounded-full bg-surface-elevated" />
+      <div className="h-1 w-2/3 rounded-full bg-surface-elevated" />
     </div>
   );
 }
@@ -221,18 +221,9 @@ export default function ServerPanel({ onClose }: Props) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // Click-outside to close — but NOT when clicking the trigger button itself.
+  // Desktop: backdrop click closes. Mobile: full-screen sheet, no backdrop.
+  // Trigger button toggles open/close in the parent; no special handling needed here.
   const panelRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Element;
-      if (panelRef.current?.contains(target as Node)) return;
-      if (target.closest?.('[data-server-panel-trigger]')) return;
-      onClose();
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [onClose]);
 
   const healthColor =
     health === 'loading'
@@ -249,26 +240,33 @@ export default function ServerPanel({ onClose }: Props) {
   const usageCheckedAt = usageData?.providers[0]?.checkedAt;
 
   return createPortal(
-    <div className="fixed inset-0 z-50 pointer-events-none">
+    <div className="fixed inset-0 z-50">
+      {/* Desktop backdrop — click to close */}
+      <div
+        className="hidden md:block fixed inset-0 bg-page/70 backdrop-blur-sm"
+        onClick={onClose}
+      />
+
       <div
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label="Server"
         className={[
-          'flex h-full w-full flex-col bg-page pointer-events-auto',
-          'md:absolute md:bottom-14 md:left-3 md:h-auto md:max-h-[calc(100dvh-5rem)] md:max-w-[22rem] md:rounded-sm md:border md:border-spine-border md:shadow-deep',
+          'relative flex h-full w-full flex-col bg-surface',
+          'md:absolute md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2',
+          'md:h-auto md:max-h-[calc(100dvh-4rem)] md:max-w-xl md:rounded-sm md:border md:border-border-soft md:shadow-deep',
           'transition-[opacity,transform] duration-150 ease-out',
-          isReady ? 'opacity-100 translate-y-0' : 'opacity-0 md:translate-y-1',
+          isReady ? 'opacity-100 scale-100' : 'opacity-0 md:scale-95',
         ].join(' ')}
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
         {/* ── Panel header ── */}
-        <div className="flex h-10 shrink-0 items-center justify-between border-b border-spine-border px-3">
-          <span className="caps text-text-on-spine">Server</span>
+        <div className="flex h-10 shrink-0 items-center justify-between border-b border-border-soft px-3">
+          <span className="caps text-text">Server</span>
           <button
             onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            className="flex h-7 w-7 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             aria-label="Close server panel"
           >
             <X className="h-3.5 w-3.5" />
@@ -277,7 +275,7 @@ export default function ServerPanel({ onClose }: Props) {
 
         {/* ── Scrollable body — add sections here as needed ── */}
         {/* divide-y puts a border between each PanelSection without doubling at the top */}
-        <div className="flex-1 overflow-y-auto divide-y divide-spine-border">
+        <div className="flex-1 overflow-y-auto divide-y divide-border-soft">
 
           {/* Section 1: System infra */}
           <PanelSection title="System" action={<RestartButton compact />}>
@@ -289,14 +287,14 @@ export default function ServerPanel({ onClose }: Props) {
                     className="h-2 w-2 shrink-0 rounded-full"
                     style={{ background: healthColor }}
                   />
-                  <span className="font-serif text-[14px] text-text-on-spine">{healthLabel}</span>
+                  <span className="font-serif text-[14px] text-text">{healthLabel}</span>
                 </span>
               </LabelRow>
 
               {info && (
                 <LabelRow label="Home">
                   <span
-                    className="min-w-0 break-all font-mono text-[12px] text-text-on-spine"
+                    className="min-w-0 break-all font-mono text-[12px] text-text"
                     title={info.animaHome}
                   >
                     {info.animaHome}
@@ -306,7 +304,7 @@ export default function ServerPanel({ onClose }: Props) {
 
               {info && (
                 <LabelRow label="Port">
-                  <span className="font-serif text-[14px] text-text-on-spine">
+                  <span className="font-serif text-[14px] text-text">
                     {info.dashboardPort}
                   </span>
                 </LabelRow>
@@ -314,10 +312,10 @@ export default function ServerPanel({ onClose }: Props) {
 
               {info?.startedAt && (
                 <LabelRow label="Started">
-                  <span className="font-serif text-[14px] text-text-on-spine">
+                  <span className="font-serif text-[14px] text-text">
                     {shortIso(info.startedAt)}
                   </span>
-                  <span className="font-sans text-[11px] tracking-wide text-text-on-spine-subtle">
+                  <span className="font-sans text-[11px] tracking-wide text-text-subtle">
                     up {formatUptime(info.startedAt, now)}
                   </span>
                 </LabelRow>
@@ -325,13 +323,13 @@ export default function ServerPanel({ onClose }: Props) {
 
               {info?.commit && (
                 <LabelRow label="Commit">
-                  <span className="font-mono text-[12px] text-text-on-spine">{info.commit}</span>
+                  <span className="font-mono text-[12px] text-text">{info.commit}</span>
                 </LabelRow>
               )}
 
               {info?.version && info.version !== '0.0.0' && (
                 <LabelRow label="Version">
-                  <span className="font-serif text-[14px] text-text-on-spine">{info.version}</span>
+                  <span className="font-serif text-[14px] text-text">{info.version}</span>
                 </LabelRow>
               )}
 
@@ -345,14 +343,14 @@ export default function ServerPanel({ onClose }: Props) {
             action={
               <div className="flex items-center gap-2">
                 {usageCheckedAt && (
-                  <span className="font-sans text-[10px] text-text-on-spine-subtle">
+                  <span className="font-sans text-[10px] text-text-subtle">
                     {formatAgo(usageCheckedAt, now)}
                   </span>
                 )}
                 <button
                   onClick={() => refetchUsage()}
                   disabled={usageFetching}
-                  className="flex h-5 w-5 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40"
+                  className="flex h-5 w-5 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40"
                   aria-label="Refresh provider usage"
                   title="Refresh"
                 >
@@ -373,13 +371,13 @@ export default function ServerPanel({ onClose }: Props) {
                   <ProviderBlock key={row.provider} row={row} />
                 ))}
                 {usageData.providers.some((r) => r.source === 'private-api') && (
-                  <p className="font-mono text-[9px] text-text-on-spine-subtle opacity-50">
+                  <p className="font-mono text-[9px] text-text-subtle opacity-50">
                     ≈ best-effort (private API)
                   </p>
                 )}
               </div>
             ) : (
-              <p className="font-serif italic text-[13px] text-text-on-spine-subtle">
+              <p className="font-serif italic text-[13px] text-text-subtle">
                 No providers found.
               </p>
             )}
@@ -398,7 +396,7 @@ export default function ServerPanel({ onClose }: Props) {
 
 /**
  * PanelSection — consistent container for each section in the panel.
- * Dividers between sections come from the parent's `divide-y divide-spine-border`.
+ * Dividers between sections come from the parent's `divide-y divide-border-soft`.
  * To add a third section: <PanelSection title="…">…</PanelSection>
  */
 function PanelSection({
@@ -411,10 +409,10 @@ function PanelSection({
   children: React.ReactNode;
 }) {
   return (
-    <div className="px-4 py-4">
+    <div className="px-4 py-4 md:px-6 md:py-5">
         {/* Section sub-header */}
         <div className="mb-3 flex items-center justify-between gap-2">
-          <span className="font-sans text-[10px] font-medium uppercase tracking-widest text-text-on-spine-subtle">
+          <span className="font-sans text-[10px] font-medium uppercase tracking-widest text-text-subtle">
             {title}
           </span>
           {action && <div className="shrink-0">{action}</div>}
@@ -439,7 +437,7 @@ function LabelRow({
 }) {
   return (
     <div className="flex items-center gap-3">
-      <span className="w-14 shrink-0 font-sans text-[11px] text-text-on-spine-subtle">
+      <span className="w-14 shrink-0 font-sans text-[11px] text-text-subtle">
         {label}
       </span>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">

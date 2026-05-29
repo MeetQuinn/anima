@@ -113,8 +113,8 @@ export default function RuntimeUpgradeRow() {
   if (isLoading && !status) {
     return (
       <UpdateLabelRow>
-        <RefreshCw aria-hidden className="h-3 w-3 animate-spin text-text-on-spine-subtle" />
-        <span className="font-serif text-[14px] text-text-on-spine-muted">Checking for updates…</span>
+        <RefreshCw aria-hidden className="h-3 w-3 animate-spin text-text-subtle" />
+        <span className="font-serif text-[14px] text-text-muted">Checking for updates…</span>
       </UpdateLabelRow>
     );
   }
@@ -154,7 +154,7 @@ export default function RuntimeUpgradeRow() {
     content = (
       <UpdateLabelRow>
         <RefreshCw aria-hidden className="h-3 w-3 animate-spin text-accent" />
-        <span className="font-serif text-[14px] text-text-on-spine">
+        <span className="font-serif text-[14px] text-text">
           {target ? `Updating to ${target}…` : 'Updating…'}
         </span>
       </UpdateLabelRow>
@@ -173,7 +173,7 @@ export default function RuntimeUpgradeRow() {
     content = (
       <UpdateLabelRow>
         <span
-          className="font-serif text-[14px] text-text-on-spine-muted"
+          className="font-serif text-[14px] text-text-muted"
           title={status.checkError?.message}
         >
           Update check unavailable
@@ -194,9 +194,9 @@ export default function RuntimeUpgradeRow() {
     content = (
       <UpdateLabelRow>
         <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-health-ok" />
-        <span className="font-serif text-[14px] text-text-on-spine">Up to date</span>
+        <span className="font-serif text-[14px] text-text">Up to date</span>
         {upgradeResumed !== null && (
-          <span className="font-sans text-[11px] text-text-on-spine-subtle">
+          <span className="font-sans text-[11px] text-text-subtle">
             · {resumedText(upgradeResumed)}
           </span>
         )}
@@ -242,7 +242,7 @@ function AvailableCard({
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
-          <span className="font-serif text-[14px] font-medium text-text-on-spine">
+          <span className="font-serif text-[14px] font-medium text-text">
             Update available
           </span>
         </div>
@@ -293,26 +293,26 @@ function FailedCard({
       <div className="flex items-start gap-2">
         <AlertTriangle aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-health-error" />
         {rollbackFailed ? (
-          <span className="font-serif text-[14px] font-medium text-text-on-spine">
+          <span className="font-serif text-[14px] font-medium text-text">
             Update failed and rollback didn&apos;t complete — the runtime may need attention.
           </span>
         ) : (
-          <span className="font-serif text-[14px] font-medium text-text-on-spine">
+          <span className="font-serif text-[14px] font-medium text-text">
             Update failed — still on{' '}
-            <span className="font-mono text-[12px] text-text-on-spine-muted">{currentVersion}</span>
-            <span className="font-sans text-[12px] font-normal text-text-on-spine-subtle">
+            <span className="font-mono text-[12px] text-text-muted">{currentVersion}</span>
+            <span className="font-sans text-[12px] font-normal text-text-subtle">
               {' '}· nothing else changed
             </span>
           </span>
         )}
       </div>
       {error && (
-        <p className="mt-1.5 break-words font-mono text-[10px] leading-relaxed text-text-on-spine-subtle">
+        <p className="mt-1.5 break-words font-mono text-[10px] leading-relaxed text-text-subtle">
           {error}
         </p>
       )}
       {logPath && (
-        <p className="mt-1 break-all font-mono text-[10px] leading-relaxed text-text-on-spine-subtle opacity-70">
+        <p className="mt-1 break-all font-mono text-[10px] leading-relaxed text-text-subtle opacity-70">
           log: {logPath}
         </p>
       )}
@@ -320,7 +320,7 @@ function FailedCard({
         <button
           type="button"
           onClick={onRetry}
-          className="flex items-center gap-1.5 rounded-sm border border-spine-border px-2.5 py-1 text-[12px] text-text-on-spine-muted transition-colors hover:border-spine-border hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          className="flex items-center gap-1.5 rounded-sm border border-border-soft px-2.5 py-1 text-[12px] text-text-muted transition-colors hover:border-border-soft hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
           <RefreshCw aria-hidden className="h-3 w-3" />
           Try again
@@ -340,16 +340,16 @@ function VersionPair({ from, to, stacked = false }: { from: string; to: string; 
   if (stacked) {
     return (
       <div className="font-mono text-[11px] leading-snug">
-        <div className="break-all text-text-on-spine-subtle">{from}</div>
-        <div className="break-all text-text-on-spine">
-          <span className="text-text-on-spine-subtle">→</span> {to}
+        <div className="break-all text-text-subtle">{from}</div>
+        <div className="break-all text-text">
+          <span className="text-text-subtle">→</span> {to}
         </div>
       </div>
     );
   }
   return (
-    <span className="shrink-0 whitespace-nowrap font-mono text-[12px] text-text-on-spine-muted">
-      {from} <span className="text-text-on-spine-subtle">→</span> {to}
+    <span className="shrink-0 whitespace-nowrap font-mono text-[12px] text-text-muted">
+      {from} <span className="text-text-subtle">→</span> {to}
     </span>
   );
 }
@@ -357,7 +357,7 @@ function VersionPair({ from, to, stacked = false }: { from: string; to: string; 
 function UpdateLabelRow({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-3">
-      <span className="w-14 shrink-0 font-sans text-[11px] text-text-on-spine-subtle">Update</span>
+      <span className="w-14 shrink-0 font-sans text-[11px] text-text-subtle">Update</span>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">{children}</div>
     </div>
   );
