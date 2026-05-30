@@ -15,14 +15,12 @@ import { runtimeContextForItemId } from './context.js';
 import { clearActiveRuntimeItem, setActiveRuntimeItem } from './active-item.js';
 import {
   recordRuntimeAborted,
-  recordRuntimeActivity,
   recordRuntimeEvent,
   recordRuntimeFollowupAppended,
   recordRuntimeFollowupFailed,
   recordRuntimePending,
 } from './activity.js';
-import { runtimeErrorPayload } from './activity-text.js';
-import { buildProviderCrashRetryDeliveryPrompt } from './delivery-prompt.js';
+import { recordFinalRuntimeFailure, runProviderWithCrashRetries } from './provider-runner.js';
 
 // Executor for one agent: claims queued inbox items, runs the provider runtime,
 // appends follow-up items into the active run, and settles item lifecycle state.
@@ -30,8 +28,6 @@ const IDLE_TIMEOUT_MS_DEFAULT = PROVIDER_IDLE_TIMEOUT_MS_DEFAULT;
 const IDLE_CHECK_INTERVAL_FLOOR_MS = 50;
 const IDLE_CHECK_INTERVAL_CAP_MS = 1_000;
 const FOLLOWUP_POLL_MS = 100;
-const PROVIDER_CRASH_MAX_RETRIES = 3;
-const PROVIDER_CRASH_RETRY_BACKOFF_MS = 500;
 
 type RuntimeFollowupDecision =
   | { status: 'appended'; text?: string }
@@ -159,7 +155,7 @@ export class AgentRuntimeWorker {
   }
 
   private async processClaimedItem(item: InboxItem): Promise<void> {
-    let context;
+    let context: RuntimeItemContext | undefined;
     let runtimeFailureRecorded = false;
     const itemAbort = new AbortController();
     const handle = this.registerActiveItem(item.id, itemAbort);
@@ -181,17 +177,25 @@ export class AgentRuntimeWorker {
       if (context.item.handling.resumeReason === 'runtime_restart') {
         await this.recordRestartResumeActivity(context);
       }
-      const result = await this.runProviderWithCrashRetries({
-        context,
-        handle,
+      const runContext = context;
+      const result = await runProviderWithCrashRetries({
+        agentId: this.options.agentId,
+        agentRuntime: this.options.agentRuntime,
+        buildInput: (retryNotice) => this.runtimeBridge.runInput({
+          context: runContext,
+          onActivity: () => this.noteProviderActivity(handle),
+          profile: {
+            displayName: agentConfig.profile?.displayName ?? this.options.agentId,
+            ...(agentConfig.profile?.role ? { role: agentConfig.profile.role } : {}),
+          },
+          retryNotice,
+          session: runContext.session,
+          signal: itemAbort.signal,
+          suppressFailureRecord: true,
+        }),
         onFinalFailureRecorded: () => {
           runtimeFailureRecorded = true;
         },
-        profile: {
-          displayName: agentConfig.profile?.displayName ?? this.options.agentId,
-          ...(agentConfig.profile?.role ? { role: agentConfig.profile.role } : {}),
-        },
-        session: context.session,
         signal: itemAbort.signal,
       });
       itemAbort.abort('completed');
@@ -217,7 +221,12 @@ export class AgentRuntimeWorker {
         await this.settleAbortedItem(context, abortReason);
         itemSettled = true;
       } else if (context && !runtimeFailureRecorded) {
-        await this.recordFinalRuntimeFailure(error, 0);
+        await recordFinalRuntimeFailure({
+          agentId: this.options.agentId,
+          agentRuntime: this.options.agentRuntime,
+          error,
+          retryAttempts: 0,
+        });
       }
       if (!itemSettled) await this.queue.fail(item.id);
       if (abortReason === 'restart_drain') {
@@ -271,87 +280,6 @@ export class AgentRuntimeWorker {
 
   private noteProviderActivity(handle: ActiveItemHandle): void {
     handle.lastActivityAt = Date.now();
-  }
-
-  private async runProviderWithCrashRetries(input: {
-    context: RuntimeItemContext;
-    handle: ActiveItemHandle;
-    onFinalFailureRecorded: () => void;
-    profile: { displayName: string; role?: string };
-    session: RuntimeItemContext['session'];
-    signal: AbortSignal;
-  }): Promise<{ text?: string }> {
-    let retryCount = 0;
-    let previousError: unknown;
-    for (;;) {
-      try {
-        return await this.options.agentRuntime.run(await this.runtimeBridge.runInput({
-          context: input.context,
-          onActivity: () => this.noteProviderActivity(input.handle),
-          profile: input.profile,
-          retryNotice: retryCount > 0
-            ? buildProviderCrashRetryDeliveryPrompt({
-                attempt: retryCount,
-                maxRetries: PROVIDER_CRASH_MAX_RETRIES,
-                previousError: errorMessage(previousError),
-              })
-            : undefined,
-          session: input.session,
-          signal: input.signal,
-          suppressFailureRecord: true,
-        }));
-      } catch (error) {
-        previousError = error;
-        if (input.signal.aborted) throw error;
-        if (!isProviderCrashError(error) || retryCount >= PROVIDER_CRASH_MAX_RETRIES) {
-          await this.recordFinalRuntimeFailure(error, retryCount, { providerFailure: true });
-          input.onFinalFailureRecorded();
-          throw error;
-        }
-
-        retryCount += 1;
-        const retryAfterMs = PROVIDER_CRASH_RETRY_BACKOFF_MS * retryCount;
-        await recordRuntimeEvent(
-          { agentId: this.options.agentId },
-          this.options.agentRuntime.kind,
-          this.options.agentRuntime.env,
-          {
-            attempt: retryCount,
-            error: errorMessage(error),
-            eventType: 'provider.crash.retry',
-            maxRetries: PROVIDER_CRASH_MAX_RETRIES,
-            retryAfterMs,
-          },
-        );
-        await this.options.agentRuntime.close?.();
-        await sleep(retryAfterMs, input.signal);
-      }
-    }
-  }
-
-  private async recordFinalRuntimeFailure(
-    error: unknown,
-    retryAttempts: number,
-    options: { providerFailure?: boolean } = {},
-  ): Promise<void> {
-    const processCrash = isProviderCrashError(error);
-    await recordRuntimeActivity(
-      { agentId: this.options.agentId },
-      this.options.agentRuntime.kind,
-      'runtime.failed',
-      {
-        ...runtimeErrorPayload(error),
-        ...(options.providerFailure
-          ? {
-              failureSource: 'provider',
-              maxRetries: PROVIDER_CRASH_MAX_RETRIES,
-              providerReason: processCrash ? 'process_crash' : 'provider_error',
-              retryAttempts,
-              retryable: processCrash && retryAttempts < PROVIDER_CRASH_MAX_RETRIES,
-            }
-          : {}),
-      },
-    );
   }
 
   private async recordRestartResumeActivity(context: RuntimeItemContext): Promise<void> {
@@ -635,16 +563,6 @@ function isWorkerAlive(workerId: string): boolean {
   } catch {
     return false;
   }
-}
-
-function isProviderCrashError(error: unknown): boolean {
-  const message = errorMessage(error);
-  return (
-    /runtime exited before completing/i.test(message) ||
-    /runtime terminated by/i.test(message) ||
-    /runtime exited with code/i.test(message) ||
-    /stdin is closed/i.test(message)
-  );
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
