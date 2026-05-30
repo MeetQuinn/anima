@@ -3,7 +3,7 @@ import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 
-const distTestsDir = 'dist/tests';
+const distTestsDir = 'dist/server/tests';
 
 const groups = {
   unit: [

@@ -82,7 +82,7 @@ Build and test commands:
 
 ```bash
 pnpm build           # full server + web production build
-pnpm build:server    # server/shared/tests only; skips Vite
+pnpm build:server    # server, shared, and server tests only; skips Vite
 pnpm typecheck       # TypeScript only
 pnpm test            # fast default gate: server build + unit/api tests
 pnpm test:fast:dist  # run fast tests against an existing dist
@@ -90,7 +90,7 @@ pnpm test:runtime    # heavier CLI/provider/service subprocess tests
 pnpm test:all        # full build + every compiled test file
 ```
 
-Tests use Node's built-in test runner over compiled files in `dist/tests`. The default `pnpm test` intentionally skips the web build and the heavier runtime subprocess suite so local feedback stays fast; use `pnpm test:runtime` when changing provider, CLI, or service process behavior.
+Server tests live under `server/tests` and use Node's built-in test runner over compiled files in `dist/server/tests`. The default `pnpm test` intentionally skips the web build and the heavier runtime subprocess suite so local feedback stays fast; use `pnpm test:runtime` when changing provider, CLI, or service process behavior.
 
 ## Docs
 

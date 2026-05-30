@@ -42,7 +42,7 @@
   ],
   "scripts": {
     "build": "rm -rf dist packages/animactl/dist && tsc -p tsconfig.json && pnpm build:ui && node scripts/prepare-animactl-package.mjs",
-    "build:server": "rm -rf dist/server dist/shared dist/tests && tsc -p tsconfig.json",
+    "build:server": "rm -rf dist/server dist/shared && tsc -p tsconfig.json",
     "prepare": "husky",
     "lint": "pnpm --dir web lint",
     "type-check": "tsc -p tsconfig.json --noEmit && cd web && npx tsc -b --dry",
