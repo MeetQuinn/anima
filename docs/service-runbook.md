@@ -4,8 +4,10 @@
 
 Anima itself does not name environments. If a team wants aliases for specific Anima homes, put that mapping in deployment scripts outside this repo and invoke `animactl` with the appropriate `ANIMA_HOME`.
 
-For managed (npm) installs, operators normally drive the runtime with `npx @meetquinn/animactl
-start|restart|status|stop` — those install and run the pinned runtime, and are documented in
+For managed (npm) installs, operators normally drive the runtime with `npx -y @meetquinn/animactl
+start|dashboard|restart|status|stop` — `start` boots a stopped runtime, `dashboard` opens the
+control panel, `restart` is the command-line upgrade/restart path, and `start`/`restart` install
+and run the pinned runtime. They are documented in
 [deployment.md](deployment.md). This runbook covers the underlying `animactl services <op>`
 supervisor those commands invoke, plus its idle-gate and cross-environment restart semantics.
 

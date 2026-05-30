@@ -29,6 +29,7 @@ interface RuntimeCliOptions {
   idleTimeoutMs?: number;
   logPath?: string;
   npm?: string;
+  browser?: boolean;
   only?: 'agent' | 'web';
   packageName?: string;
   previousStartedAt?: string;
@@ -107,6 +108,13 @@ function registerRuntimeCommands(program: Command, options: { topLevel: boolean 
   }
 
   program
+    .command('dashboard')
+    .description('Launch the local Anima dashboard in your browser')
+    .action(async () => {
+      await runDashboardCommand();
+    });
+
+  program
     .command('upgrade-status')
     .description('Check whether the managed runtime has an available update')
     .action(async () => {
@@ -153,6 +161,7 @@ function registerRuntimeCommands(program: Command, options: { topLevel: boolean 
 
   serviceCommand(program, 'start', { installable: true })
     .description('Install the managed runtime if needed, then start local Anima services')
+    .option('--no-browser', 'Do not launch the dashboard after starting services')
     .action(async (options: RuntimeCliOptions) => {
       await runManagedServiceCommand('start', options);
     });
@@ -272,7 +281,12 @@ async function runManagedServiceCommand(command: ServiceCommand, options: Runtim
   }
 
   const exitCode = await runAnimactlServices(paths.animactlScript, paths.packageDir, command, options);
-  if (exitCode !== 0) process.exitCode = exitCode;
+  if (exitCode !== 0) {
+    process.exitCode = exitCode;
+    return;
+  }
+
+  await handleDashboardAfterServiceCommand(command, options);
 }
 
 async function installRuntimeForService(options: RuntimeCliOptions): Promise<{ paths: RuntimeStatus['paths'] }> {
@@ -287,6 +301,94 @@ async function installRuntimeForService(options: RuntimeCliOptions): Promise<{ p
   console.log(`runtime: ${action} ${result.metadata.packageName}@${result.metadata.version}`);
   console.log(`dir: ${result.paths.runtimeDir}`);
   return { paths: result.paths };
+}
+
+async function runDashboardCommand(): Promise<void> {
+  const url = await managedDashboardUrl();
+  if (!(await dashboardIsReachable(url))) {
+    console.error(`Dashboard is not reachable at ${url}. Run \`npx -y @meetquinn/animactl start\` first.`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`Dashboard: ${url}`);
+  await launchDashboard(url);
+}
+
+async function handleDashboardAfterServiceCommand(command: ServiceCommand, options: RuntimeCliOptions): Promise<void> {
+  if (options.only === 'agent') return;
+  if (command !== 'start' && command !== 'status') return;
+  const url = await managedDashboardUrl();
+  console.log(`Dashboard: ${url}`);
+  if (command === 'start' && options.browser !== false && process.stdout.isTTY) {
+    if (await waitForDashboard(url, 5000)) {
+      await launchDashboard(url);
+    } else {
+      console.warn(`Dashboard did not become reachable yet. Open it manually when ready: ${url}`);
+    }
+  }
+}
+
+async function managedDashboardUrl(): Promise<string> {
+  return withAnimaHome(resolveManagedAnimaHome(), async () => {
+    const { host, port } = await defaultServerSettingsService.getDashboardSettings({
+      defaultHost: '0.0.0.0',
+      defaultPort: 4174,
+    });
+    return dashboardUrl(host, port);
+  });
+}
+
+export function dashboardUrl(host: string, port: number): string {
+  const displayHost = host === '0.0.0.0' ? '127.0.0.1' : host;
+  return `http://${displayHost}:${port}`;
+}
+
+async function waitForDashboard(url: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if (await dashboardIsReachable(url, 500)) return true;
+    await sleep(150);
+  } while (Date.now() < deadline);
+  return false;
+}
+
+async function dashboardIsReachable(url: string, timeoutMs = 1000): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(`${url}/api/health`, { signal: controller.signal });
+      return response.ok;
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch {
+    return false;
+  }
+}
+
+async function launchDashboard(url: string): Promise<void> {
+  const launcher = dashboardLaunchCommand(url, process.platform);
+  await new Promise<void>((resolveOpened, reject) => {
+    const child = spawn(launcher.command, launcher.args, {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.once('error', reject);
+    child.once('spawn', () => {
+      child.unref();
+      resolveOpened();
+    });
+  }).catch((error: unknown) => {
+    console.warn(`Unable to launch dashboard automatically. Open it manually: ${url}`);
+    if (error instanceof Error && error.message) console.warn(error.message);
+  });
+}
+
+export function dashboardLaunchCommand(url: string, platform: NodeJS.Platform): { command: string; args: string[] } {
+  if (platform === 'darwin') return { command: 'open', args: [url] };
+  if (platform === 'win32') return { command: 'cmd', args: ['/c', 'start', '', url] };
+  return { command: 'xdg-open', args: [url] };
 }
 
 function assertServiceOptions(options: RuntimeCliOptions): void {
@@ -329,6 +431,12 @@ async function runAnimactlServices(
       if (signal) reject(new Error(`animactl services ${command} exited from signal ${signal}`));
       else resolveDone(code ?? 1);
     });
+  });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolveSleep) => {
+    setTimeout(resolveSleep, ms);
   });
 }
 

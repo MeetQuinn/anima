@@ -104,5 +104,5 @@ When moving the public package to a new npm scope, publish and verify the new pa
 deprecate the old scoped package with a clear redirect message, for example:
 
 ```bash
-npm deprecate @totoday/animactl "Anima's runtime now ships as @meetquinn/animactl. Use: npx @meetquinn/animactl start"
+npm deprecate @totoday/animactl "Anima's runtime now ships as @meetquinn/animactl. Use: npx -y @meetquinn/animactl start"
 ```

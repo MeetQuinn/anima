@@ -16,12 +16,13 @@ You'll need:
 ## 1. Start Anima
 
 ```bash
-npx @meetquinn/animactl start
+npx -y @meetquinn/animactl start
 ```
 
 This downloads the managed runtime, installs it under `~/.anima/runtime/current`, and starts the
 agent runtime plus the web control panel. Config and state live in `~/.anima/` by default, so Anima
-keeps working no matter which directory your terminal is in. Open the control panel:
+keeps working no matter which directory your terminal is in. On a local desktop, Anima opens the
+control panel automatically. If it does not, open:
 **<http://127.0.0.1:4174>**
 
 ## 2. Create your agent
@@ -53,10 +54,15 @@ notification on, it will **DM the owner in Slack** within a few seconds to intro
 ## Handy commands
 
 ```bash
-npx @meetquinn/animactl status     # is it running?
-npx @meetquinn/animactl restart    # restart the agent + web services
-npx @meetquinn/animactl stop       # stop it
+npx -y @meetquinn/animactl status     # is it running?
+npx -y @meetquinn/animactl dashboard  # open the control panel
+npx -y @meetquinn/animactl restart    # upgrade to latest, then restart the agent + web services
+npx -y @meetquinn/animactl stop       # stop it
 ```
+
+Use `restart` for command-line upgrades: it installs the package version selected by `npx` into
+`~/.anima/runtime/current`, then restarts the services. With no version suffix, `npx` selects the
+`latest` npm dist-tag.
 
 Logs: `~/.anima/logs/agent.log` and `~/.anima/logs/web.log`.
 

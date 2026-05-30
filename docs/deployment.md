@@ -44,11 +44,20 @@ the package version that `npx` downloaded into `~/.anima/runtime/current`, then 
 that pinned runtime:
 
 ```bash
-npx @meetquinn/animactl start          # stable/latest channel user path
-npx @meetquinn/animactl@canary restart # dogfood path
-npx @meetquinn/animactl status
-npx @meetquinn/animactl stop
+npx -y @meetquinn/animactl start          # first start on stable/latest
+npx -y @meetquinn/animactl dashboard      # launch the local control panel
+npx -y @meetquinn/animactl restart        # command-line upgrade to stable/latest
+npx -y @meetquinn/animactl@canary restart # dogfood upgrade/restart path
+npx -y @meetquinn/animactl status
+npx -y @meetquinn/animactl stop
 ```
+
+`start` is the first-run path, or for starting stopped services. On an interactive desktop it
+launches the dashboard automatically; use `--no-browser` for headless scripts. `dashboard` launches
+the current home's dashboard without starting services. `restart` is the command-line upgrade path:
+it installs the package version selected by `npx` into `~/.anima/runtime/current`, then restarts
+services with drain-and-resume. With no version suffix, `npx` selects the `latest` npm dist-tag; use
+`@canary` or an exact version suffix when you want a different target.
 
 The admin CLI exposes the lower-level runtime status/install commands:
 
@@ -66,7 +75,7 @@ repo-local `.anima`.
 Anima's own live install should run a pinned canary version, not a mutable checkout:
 
 ```bash
-npx @meetquinn/animactl@canary restart
+npx -y @meetquinn/animactl@canary restart
 ```
 
 Restarts should use drain-and-resume. If agents are active, the restart waits for each running
