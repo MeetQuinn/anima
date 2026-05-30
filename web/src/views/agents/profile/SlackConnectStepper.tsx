@@ -20,9 +20,9 @@ const REASON_COPY: Record<NonNullable<SlackTokenValidation['reason']>, string> =
   invalid_token:
     "Slack didn't recognize this token. Check you copied the whole thing and the app is still installed.",
   missing_connections_write:
-    "This App-Level Token is missing the `connections:write` scope. Regenerate it with that scope checked (Basic Information → App-Level Tokens).",
+    "Slack says this App-Level Token is missing `connections:write`. In App-Level Tokens, regenerate it with that scope checked.",
   not_bot_token:
-    "This isn't a Bot User token. Copy the one labeled Bot User OAuth Token under OAuth & Permissions — it starts with `xoxb-`.",
+    "Slack says this is not the Bot User OAuth Token. Copy Bot User OAuth Token from OAuth & Permissions — it starts with `xoxb-`.",
   slack_api_error: "Couldn't reach Slack to check this token. Try again in a moment.",
 };
 
@@ -354,17 +354,17 @@ export function SlackConnectStepper({ agentId, onConnect }: Props) {
               onClick={openInstall}
               className="font-serif text-[13px] text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
             >
-              Create app
+              Create app in Slack
             </button>
-            {' '}→ pick your Slack workspace → click <strong>Install</strong>.
-            {' '}The manifest turns on Interactivity; if you reuse an older app, enable Interactivity in Slack.
+            {' '}→ pick your workspace → click <strong>Install</strong>.
+            {' '}Anima fills in the manifest; reusing an older app only works if Interactivity is enabled.
           </div>
           {!step1Done && (
             <button
               onClick={() => setStep1Done(true)}
               className="mt-1.5 font-sans text-[11px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted hover:decoration-text-muted/40"
             >
-              Already have an app
+              I already created the app
             </button>
           )}
         </div>
@@ -391,15 +391,17 @@ export function SlackConnectStepper({ agentId, onConnect }: Props) {
           }
         />
         <div className="flex-1">
-          <div className="font-serif text-[14px] font-semibold text-text">Copy App-Level Token</div>
+          <div className="font-serif text-[14px] font-semibold text-text">Paste App-Level Token</div>
           <div className="mt-1 font-serif text-[13px] leading-snug text-text-muted">
-            Basic Information → App-Level Tokens → Generate → Add scope:{' '}
-            <span className="font-mono text-[11px]">connections:write</span> → copy{' '}
-            (<span className="font-mono text-[11px]">xapp-…</span>)
+            In Slack: Basic Information → App-Level Tokens → Generate. Add scope{' '}
+            <span className="font-mono text-[11px]">connections:write</span>, then paste the{' '}
+            <span className="font-mono text-[11px]">xapp-…</span> token here.
           </div>
           {step2Active && (
             <div className="mt-2">
               <input
+                aria-label="App-Level Token"
+                autoComplete="off"
                 type="text"
                 value={appToken}
                 onChange={(e) => handleAppTokenChange(e.target.value)}
@@ -409,6 +411,7 @@ export function SlackConnectStepper({ agentId, onConnect }: Props) {
                 }}
                 placeholder="xapp-…"
                 disabled={appVerified || connecting}
+                spellCheck={false}
                 className={[
                   'w-full rounded-sm border bg-muted/30 px-3 py-1.5 font-mono text-[12px] text-text placeholder:font-sans placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-ring',
                   appState.status === 'verified'
@@ -445,16 +448,18 @@ export function SlackConnectStepper({ agentId, onConnect }: Props) {
           }
         />
         <div className="flex-1">
-          <div className="font-serif text-[14px] font-semibold text-text">Copy Bot Token</div>
+          <div className="font-serif text-[14px] font-semibold text-text">Paste Bot User OAuth Token</div>
           <div className="mt-1 font-serif text-[13px] leading-snug text-text-muted">
-            OAuth &amp; Permissions → Install to Workspace → copy{' '}
-            <strong>Bot User OAuth Token</strong>{' '}
-            (<span className="font-mono text-[11px]">xoxb-…</span>)
+            In Slack: OAuth &amp; Permissions → Install to Workspace. Copy{' '}
+            <strong>Bot User OAuth Token</strong> and paste the{' '}
+            <span className="font-mono text-[11px]">xoxb-…</span> token here.
           </div>
           {step3Active && (
             <div className="mt-2 space-y-3">
               <div>
                 <input
+                  aria-label="Bot User OAuth Token"
+                  autoComplete="off"
                   type="text"
                   value={botToken}
                   onChange={(e) => handleBotTokenChange(e.target.value)}
@@ -464,6 +469,7 @@ export function SlackConnectStepper({ agentId, onConnect }: Props) {
                   }}
                   placeholder="xoxb-…"
                   disabled={botVerified || connecting}
+                  spellCheck={false}
                   className={[
                     'w-full rounded-sm border bg-muted/30 px-3 py-1.5 font-mono text-[12px] text-text placeholder:font-sans placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-ring',
                     botState.status === 'verified'
