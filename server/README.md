@@ -76,7 +76,7 @@ One foreground server process may run multiple agents. For each runnable agent, 
 
 Only one normal inbox item runs per agent at a time. The worker owns item claiming, stop requests, idle timeouts, recovery, follow-up append, and settlement.
 
-`AgentRuntimeBridge` is the boundary between Anima semantics and provider protocol. It builds the provider-facing prompt, environment, provider-session input, and activity/effect sinks. Provider adapters should stay protocol-focused: start/resume the provider, stream events, persist provider session ids through effects, and report provider activity.
+`AgentRuntimeBridge` is the boundary between Anima semantics and provider protocol. It builds the provider-facing prompt, environment, provider-session input, and activity/effect sinks. Provider-facing delivery prompt builders and dynamic payload formatting live together in `runtime/delivery-prompt.ts`. Provider adapters should stay protocol-focused: start/resume the provider, stream events, persist provider session ids through effects, and report provider activity.
 
 See `docs/runtime-providers.md` for provider contract details.
 
@@ -84,15 +84,15 @@ See `docs/runtime-providers.md` for provider contract details.
 
 An agent is not one service. It is a small group of agent-scoped services over one agent id, plus runtime wiring that runs work for that agent. API routes, CLI commands, Slack callbacks, and workers should call these services instead of editing storage files directly.
 
-| Service | Scope | Owns |
-| --- | --- | --- |
-| `AgentService` | one agent | Config CRUD, enable/disable, home/profile/provider mutation, operator-facing session read/rotate, provider-kind session archive side effects, skills visible from the agent home. |
-| `AgentSlackService` | one agent | Slack token validation, connect flow, manifest upgrade metadata, bot/workspace display sync, Slack WebClient construction, owner selection, onboarding DM queueing, and private Slack URL fetches. |
-| `ActivityService` | one agent | Activity append/read API, feed pagination, and the inbox join needed by the Activity tab. Domain-specific payload construction stays with the domain that emits the activity. |
-| `WakeQueueService` | one agent | Durable wake item lifecycle: enqueue/dedupe, find/list, claim, requeue, stop request, complete/fail, active-run settlement. Product inbox/outbox history lives in `MessageService`. |
-| `RuntimeSessionService` | one agent | Runtime-owned session persistence: primary session upsert, provider session ids, runtime stats, and lifetime token accounting. |
-| `ReminderService` | one agent | Reminder records, schedule/cancel/snooze, due scans, repeat math, fire completion, reminder activity rows. |
-| `InteractiveAskService` | one agent | Pending ask records, answer validation, click result persistence, answered-message replacement, forbidden-click notices. |
+| Service                 | Scope     | Owns                                                                                                                                                                                               |
+| ----------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AgentService`          | one agent | Config CRUD, enable/disable, home/profile/provider mutation, operator-facing session read/rotate, provider-kind session archive side effects, skills visible from the agent home.                  |
+| `AgentSlackService`     | one agent | Slack token validation, connect flow, manifest upgrade metadata, bot/workspace display sync, Slack WebClient construction, owner selection, onboarding DM queueing, and private Slack URL fetches. |
+| `ActivityService`       | one agent | Activity append/read API, feed pagination, and the inbox join needed by the Activity tab. Domain-specific payload construction stays with the domain that emits the activity.                      |
+| `WakeQueueService`      | one agent | Durable wake item lifecycle: enqueue/dedupe, find/list, claim, requeue, stop request, complete/fail, active-run settlement. Product inbox/outbox history lives in `MessageService`.                |
+| `RuntimeSessionService` | one agent | Runtime-owned session persistence: primary session upsert, provider session ids, runtime stats, and lifetime token accounting.                                                                     |
+| `ReminderService`       | one agent | Reminder records, schedule/cancel/snooze, due scans, repeat math, fire completion, reminder activity rows.                                                                                         |
+| `InteractiveAskService` | one agent | Pending ask records, answer validation, click result persistence, answered-message replacement, forbidden-click notices.                                                                           |
 
 Agent runtime execution is intentionally not exposed as a broad `AgentRuntimeService`. Runtime code wires an `AgentRuntimeWorker`, `AgentRuntimeBridge`, and provider adapter for each runnable agent. That layer owns claiming wake work, provider prompt/input construction, active-run follow-up append, idle/stop behavior, and runtime event recording. Runtime session persistence goes through `RuntimeSessionService`.
 
