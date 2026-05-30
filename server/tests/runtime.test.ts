@@ -10,7 +10,7 @@ import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { ingestEvent } from './helpers/inbox.js';
 import { loadState } from './helpers/state.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
-import { isFirstClassAnimaCliCommand } from '../runtime/activity-text.js';
+import { isFirstClassAnimaCliCommand } from '../activities/format.js';
 import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
 import { startChildProcess } from '../providers/child-process.js';
 import { RuntimeHost, type RunningAgentHandle } from '../runtime/host.js';

@@ -14,7 +14,7 @@ import {
   type JsonRpcMessage,
 } from './codex-events.js';
 import type { AgentRuntimeInput } from './contract.js';
-import { truncateForActivity } from '../runtime/activity-text.js';
+import { truncateForActivity } from '../activities/format.js';
 
 interface CodexThread {
   id: string;

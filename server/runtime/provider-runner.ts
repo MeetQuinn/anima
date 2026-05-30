@@ -1,6 +1,6 @@
 import { errorMessage } from '../ids.js';
 import { recordRuntimeActivity, recordRuntimeEvent } from './activity.js';
-import { runtimeErrorPayload } from './activity-text.js';
+import { runtimeErrorPayload } from '../activities/format.js';
 import { buildProviderCrashRetryDeliveryPrompt } from './delivery-prompt.js';
 import type { AgentRuntime, AgentRuntimeInput, AgentRuntimeResult } from '../providers/contract.js';
 

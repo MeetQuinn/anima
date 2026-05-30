@@ -121,6 +121,7 @@ Keep API and CLI thin. They should parse input, call a domain service, redact or
 - Stores live under `storage/schema/` and own one persisted file family or table. Prefer typed stores over ad hoc filesystem reads/writes.
 - Services own workflows and cross-store orchestration. If a method has product semantics or records activity, it usually belongs in a service.
 - Runtime provider effects should use runtime-owned sinks (`runtime/activity.ts`, `RuntimeSessionService`) for execution internals such as activity rows, provider session ids, runtime stats, and lifetime token accounting. Do not make provider/runtime code depend back on `AgentService`.
+- Shared activity text/payload formatting lives in `activities/format.ts`, not in runtime/provider adapters.
 - Pure parsing, formatting, DTO-to-config transforms, validation, path checks, and payload builders should live in nearby helpers, not inside service methods unless the logic is tiny.
 - `providers/` own provider CLI protocols only. They do not know Slack wake policy, web response shape, queue semantics, or config mutation semantics.
 - `slack/` keeps Slack API/data helpers such as workspace directory lookup, inbound file metadata/download, mentions, manifest helpers, and event surfaces. Slack-triggered application workflows live in `slack-interactions/`; inbox enrichment lives in `inbox/`; Slack-visible side effects and tool-facing display/upload formatting live in `tools/`.

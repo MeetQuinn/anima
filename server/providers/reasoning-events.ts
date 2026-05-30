@@ -1,4 +1,4 @@
-import { truncateForActivity } from '../runtime/activity-text.js';
+import { truncateForActivity } from '../activities/format.js';
 
 export type ReasoningProvider = 'claude' | 'codex' | 'kimi';
 export type ReasoningTextKind = 'raw' | 'summary' | 'think';

@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { nowIso } from '../ids.js';
 import { isRecord, singleLineForActivity, stringField } from '../json.js';
 import { ActiveRuntimeRun } from './active-runtime.js';
-import { runtimeErrorPayload, truncateForActivity } from '../runtime/activity-text.js';
+import { runtimeErrorPayload, truncateForActivity } from '../activities/format.js';
 import { startChildProcess, type RunningChildProcess } from './child-process.js';
 import { kimiInitializeEvent, recordKimiWireEvent } from './kimi-events.js';
 import {

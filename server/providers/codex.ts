@@ -1,5 +1,5 @@
 import { nowIso } from '../ids.js';
-import { runtimeErrorPayload } from '../runtime/activity-text.js';
+import { runtimeErrorPayload } from '../activities/format.js';
 import { ActiveRuntimeRun } from './active-runtime.js';
 import { startChildProcess } from './child-process.js';
 import { CodexAppServerController } from './codex-app-server.js';

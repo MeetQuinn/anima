@@ -2,7 +2,7 @@ import { activityServiceForAgent } from '../activities/activity.service.js';
 import { makeId, nowIso } from '../ids.js';
 import { stringField } from '../json.js';
 import type { Activity } from '../../shared/activity.js';
-import { truncateForActivity } from './activity-text.js';
+import { truncateForActivity } from '../activities/format.js';
 import { runtimeSessionServiceForAgent } from './runtime-session.service.js';
 import type { ItemStopReason } from './types.js';
 

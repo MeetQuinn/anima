@@ -5,13 +5,13 @@ import { join } from 'node:path';
 import type { AgentRuntimeEffects } from './contract.js';
 import type { ProviderSessionRecord } from './contract.js';
 import { exposedReasoningEvent, notExposedReasoningEvent } from './reasoning-events.js';
-import { isFirstClassAnimaCliCommand, truncateForActivity } from '../runtime/activity-text.js';
+import { isFirstClassAnimaCliCommand, truncateForActivity } from '../activities/format.js';
 import {
   copyActivityPreview,
   copyBoolean,
   copyNumber,
   copyString,
-} from '../runtime/activity-payload.js';
+} from '../activities/format.js';
 import { nowIso } from '../ids.js';
 import { isNonEmptyString, isRecord, singleLine, singleLineForActivity, stringField } from '../json.js';
 

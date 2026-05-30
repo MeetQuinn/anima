@@ -1,6 +1,6 @@
 import { asRecord, singleLine, singleLineForActivity, stringField } from '../json.js';
 import { exposedReasoningEvent } from './reasoning-events.js';
-import { isFirstClassAnimaCliCommand, truncateForActivity } from '../runtime/activity-text.js';
+import { isFirstClassAnimaCliCommand, truncateForActivity } from '../activities/format.js';
 
 export interface JsonRpcMessage {
   id?: number;

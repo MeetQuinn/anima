@@ -4,7 +4,7 @@ import {
   copyBoolean,
   copyNumber,
   copyString,
-} from '../runtime/activity-payload.js';
+} from '../activities/format.js';
 import type { AgentRuntimeInput } from './contract.js';
 import { exposedReasoningEvent } from './reasoning-events.js';
 
