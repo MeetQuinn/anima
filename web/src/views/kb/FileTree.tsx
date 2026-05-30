@@ -104,6 +104,7 @@ export function TreeRow({
           data-path={node.path}
           data-type="dir"
           style={depthStyle}
+          title={node.name}
           className="tree-row flex w-full items-center gap-1.5 py-1.5 pr-2 text-left font-sans text-[15px] text-text-muted hover:bg-surface-elevated/60 md:py-1 md:text-[14px]"
         >
           {isOpen ? (
@@ -144,6 +145,7 @@ export function TreeRow({
       data-path={node.path}
       data-type="file"
       style={depthStyle}
+      title={node.name}
       className={[
         'tree-row flex w-full items-center gap-1.5 py-1.5 pr-2 text-left font-sans text-[15px] transition-colors md:py-1 md:text-[14px]',
         active
