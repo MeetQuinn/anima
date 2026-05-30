@@ -147,6 +147,21 @@ export class RuntimeUpgradeService {
     };
   }
 
+  async checkNow(): Promise<RuntimeUpgradeStatusResponse> {
+    const [currentVersion, releaseTrack, operation] = await Promise.all([
+      this.packageVersion(),
+      this.settings.getReleaseTrack(),
+      this.operationStore.read(),
+    ]);
+    const refreshed = await this.refreshCheckCache(releaseTrack);
+    return this.statusFromCheck({
+      check: refreshed,
+      currentVersion,
+      operation,
+      releaseTrack,
+    });
+  }
+
   async prepareApply(input: {
     animactlScript: string;
     dashboardHost?: string;

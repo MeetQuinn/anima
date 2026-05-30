@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Download, RefreshCw } from 'lucide-react';
 import { fetchAgents } from '@/api/agents';
-import { applyRuntimeUpgrade, fetchRuntimeUpgrade, RuntimeUpgradeApplyError } from '@/api/system';
+import {
+  applyRuntimeUpgrade,
+  checkRuntimeUpgrade,
+  fetchRuntimeUpgrade,
+  RuntimeUpgradeApplyError,
+} from '@/api/system';
 import { useRuntimeUpgrade } from '@/hooks/useRuntimeUpgrade';
 import { queryKeys } from '@/lib/query-keys';
 import { queryClient } from '@/query-client';
@@ -46,6 +51,12 @@ export default function RuntimeUpgradeRow() {
   const { data: agents = [] } = useQuery({ queryKey: queryKeys.agents(), queryFn: fetchAgents });
   const [phase, setPhase] = useState<Phase>('idle');
   const [applyError, setApplyError] = useState<string | null>(null);
+  const checkMutation = useMutation({
+    mutationFn: checkRuntimeUpgrade,
+    onSuccess: (next) => {
+      queryClient.setQueryData(queryKeys.runtimeUpgrade(), next);
+    },
+  });
 
   async function performUpgrade() {
     setApplyError(null);
@@ -127,6 +138,12 @@ export default function RuntimeUpgradeRow() {
   const inProgress = phase === 'applying' || op === 'scheduled' || op === 'running';
   const completedAt = status.operation.completedAt;
   const failureFresh = op === 'failed' && isFailureFresh(completedAt);
+  const checkAction = !inProgress ? (
+    <CheckNowButton
+      checking={checkMutation.isPending}
+      onCheck={() => checkMutation.mutate()}
+    />
+  ) : undefined;
 
   // Running agents we'd drain — names the upgrade confirm. Queued items are NOT
   // blockers in drain mode (the new worker picks them up), so filter to running.
@@ -170,7 +187,7 @@ export default function RuntimeUpgradeRow() {
     );
   } else if (status.state === 'error') {
     content = (
-      <UpdateLabelRow>
+      <UpdateLabelRow action={checkAction}>
         <span
           className="font-serif text-[14px] text-text-muted"
           title={status.checkError?.message}
@@ -186,12 +203,13 @@ export default function RuntimeUpgradeRow() {
         target={target}
         error={applyError}
         onUpgrade={requestUpgrade}
+        action={checkAction}
       />
     );
   } else {
     // current (up to date) — with the post-upgrade resume echo when fresh.
     content = (
-      <UpdateLabelRow>
+      <UpdateLabelRow action={checkAction}>
         <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-health-ok" />
         <span className="font-serif text-[14px] text-text">Up to date</span>
         {upgradeResumed !== null && (
@@ -229,11 +247,13 @@ function AvailableCard({
   target,
   error,
   onUpgrade,
+  action,
 }: {
   currentVersion: string;
   target: string;
   error: string | null;
   onUpgrade: () => void;
+  action?: React.ReactNode;
 }) {
   const long = isLongPair(currentVersion, target);
   return (
@@ -245,7 +265,10 @@ function AvailableCard({
             Update available
           </span>
         </div>
-        {!long && <VersionPair from={currentVersion} to={target} />}
+        <div className="flex shrink-0 items-center gap-1">
+          {!long && <VersionPair from={currentVersion} to={target} />}
+          {action}
+        </div>
       </div>
 
       {long && (
@@ -353,12 +376,40 @@ function VersionPair({ from, to, stacked = false }: { from: string; to: string; 
   );
 }
 
-function UpdateLabelRow({ children }: { children: React.ReactNode }) {
+function UpdateLabelRow({
+  children,
+  action,
+}: {
+  children: React.ReactNode;
+  action?: React.ReactNode;
+}) {
   return (
-    <div className="flex items-center gap-3">
+    <div className="group/update-row flex items-center gap-3">
       <span className="w-14 shrink-0 font-sans text-[11px] text-text-subtle">Update</span>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">{children}</div>
+      {action}
     </div>
+  );
+}
+
+function CheckNowButton({
+  checking,
+  onCheck,
+}: {
+  checking: boolean;
+  onCheck: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onCheck}
+      disabled={checking}
+      aria-label={checking ? 'Checking for updates' : 'Check for updates'}
+      title={checking ? 'Checking for updates…' : 'Check for updates'}
+      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-subtle opacity-40 transition hover:bg-surface-elevated hover:text-text hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-default disabled:opacity-70 group-hover/update-row:opacity-100"
+    >
+      <RefreshCw aria-hidden className={`h-3.5 w-3.5 ${checking ? 'animate-spin' : ''}`} />
+    </button>
   );
 }
 

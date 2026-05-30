@@ -71,6 +71,10 @@ export async function fetchRuntimeUpgrade(): Promise<RuntimeUpgradeStatusRespons
   return apiRequest('/api/system-update');
 }
 
+export async function checkRuntimeUpgrade(): Promise<RuntimeUpgradeStatusResponse> {
+  return apiRequest('/api/system-update/check', jsonInit('POST'));
+}
+
 /**
  * Apply errors carry the HTTP status so the UI can distinguish the gate race
  * (409 — an agent started working between status and click) and unavailable

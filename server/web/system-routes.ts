@@ -41,6 +41,7 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
   fastify.get('/api/provider-availability', async () => detectProviderAvailability());
   fastify.get('/api/provider-usage', async () => defaultProviderUsageService.list());
   fastify.get('/api/system-update', async () => defaultRuntimeUpgradeService.status());
+  fastify.post('/api/system-update/check', async () => defaultRuntimeUpgradeService.checkNow());
   fastify.get('/api/server-info', async () => serverInfoForUi());
   fastify.post('/api/system-update/apply', async (_request, reply) => {
     try {

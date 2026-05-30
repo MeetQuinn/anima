@@ -274,6 +274,44 @@ test('runtime upgrade status returns cached state immediately and refreshes in b
   }
 });
 
+test('runtime upgrade checkNow refreshes npm dist-tag before returning', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'anima-runtime-upgrade-check-now-'));
+  try {
+    await withAnimaHome(rootDir, async () => {
+      await defaultServerSettingsService.setReleaseTrack('canary');
+      const checkStore = new RuntimeUpgradeCheckStore();
+      await checkStore.write({
+        checkedAt: '2026-05-29T08:00:00.000Z',
+        latestOnTrack: '0.1.1-canary.21.1.cd63d38',
+        releaseTrack: 'canary',
+      });
+      let lookupCalls = 0;
+      const service = new RuntimeUpgradeService({
+        checkStore,
+        distTagLookup: async ({ packageName, tag }) => {
+          lookupCalls += 1;
+          assert.equal(packageName, '@meetquinn/animactl');
+          assert.equal(tag, 'canary');
+          return '0.1.1-canary.22.1.d153e32';
+        },
+        now: () => new Date('2026-05-29T09:00:00.000Z'),
+        packageVersion: async () => '0.1.1-canary.21.1.cd63d38',
+      });
+
+      const status = await service.checkNow();
+
+      assert.equal(lookupCalls, 1);
+      assert.equal(status.checkedAt, '2026-05-29T09:00:00.000Z');
+      assert.equal(status.latestOnTrack, '0.1.1-canary.22.1.d153e32');
+      assert.equal(status.state, 'available');
+      assert.equal(status.updateAvailable, true);
+      assert.equal((await checkStore.read()).latestOnTrack, '0.1.1-canary.22.1.d153e32');
+    });
+  } finally {
+    await rm(rootDir, { force: true, recursive: true });
+  }
+});
+
 test('runtime upgrade apply records a scheduled operation and prevents duplicate scheduling', async () => {
   const rootDir = await mkdtemp(join(tmpdir(), 'anima-runtime-upgrade-apply-'));
   try {
