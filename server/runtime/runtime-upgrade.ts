@@ -1,15 +1,23 @@
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, open, readFile, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { promisify } from 'node:util';
 
 import { resolveAnimaHome } from '../anima-home.js';
+import { errorMessage } from '../ids.js';
+import { isRecord } from '../json.js';
 import { defaultServerSettingsService, type ServerSettingsService } from '../settings/settings.service.js';
 import { cleanServiceEnv } from '../services/env.js';
 import { listRestartBlockers, restartBlockerInfo, type RestartBlocker } from '../services/restart-gate.js';
 import { readServicesRestartSummary, type ServicesRestartSummary } from '../services/restart-result.js';
 import { JsonStore } from '../storage/json-store.js';
+import {
+  compareRuntimeVersions,
+  npmDistTagLookup,
+  npmTagForReleaseTrack,
+  runtimeUpgradeCheckError,
+  type RuntimeDistTagLookup,
+} from './runtime-release.js';
 import {
   DEFAULT_RUNTIME_PACKAGE,
   currentRuntimePackageInfo,
@@ -28,10 +36,16 @@ import {
 } from '../../shared/runtime-upgrade.js';
 import type { ServerInfo } from '../../shared/server-info.js';
 
-const execFileAsync = promisify(execFile);
+export {
+  compareRuntimeVersions,
+  npmDistTagLookup,
+  npmTagForReleaseTrack,
+  runtimeUpgradeCheckError,
+};
+export type { RuntimeDistTagLookup };
+
 const DEFAULT_DASHBOARD_HOST = '127.0.0.1';
 const DEFAULT_DASHBOARD_PORT = 4174;
-const DEFAULT_NPM_TIMEOUT_MS = 10_000;
 const DEFAULT_CHECK_TTL_MS = 60 * 60 * 1000;
 const DEFAULT_VERIFY_TIMEOUT_MS = 60_000;
 const VERIFY_POLL_MS = 1_000;
@@ -67,11 +81,6 @@ export interface PreparedRuntimeUpgrade {
   response: RuntimeUpgradeApplyResponse;
   spawn: () => Promise<void>;
 }
-
-export type RuntimeDistTagLookup = (input: {
-  packageName: string;
-  tag: string;
-}) => Promise<string>;
 
 interface RuntimeUpgradeCheckCache {
   checkedAt: string;
@@ -369,56 +378,6 @@ export async function runtimeUpgradeGate(): Promise<RuntimeUpgradeGate> {
   };
 }
 
-export function npmTagForReleaseTrack(track: RuntimeReleaseTrack): string {
-  return track === 'canary' ? 'canary' : 'latest';
-}
-
-export async function npmDistTagLookup(input: {
-  packageName: string;
-  tag: string;
-}): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync('npm', [
-      'view',
-      `${input.packageName}@${input.tag}`,
-      'version',
-      '--json',
-    ], {
-      maxBuffer: 1024 * 1024,
-      timeout: DEFAULT_NPM_TIMEOUT_MS,
-    });
-    const trimmed = stdout.trim();
-    if (!trimmed) throw new Error('npm returned an empty version');
-    const parsed = JSON.parse(trimmed) as unknown;
-    if (typeof parsed === 'string' && parsed) return parsed;
-    throw new Error(`npm returned non-string version: ${trimmed}`);
-  } catch (error) {
-    if (error instanceof SyntaxError) throw Object.assign(new Error('Unable to parse npm version response'), { code: 'PARSE' });
-    throw error;
-  }
-}
-
-export function compareRuntimeVersions(left: string, right: string): number {
-  const a = parseSemver(left);
-  const b = parseSemver(right);
-  for (const key of ['major', 'minor', 'patch'] as const) {
-    if (a[key] !== b[key]) return Math.sign(a[key] - b[key]);
-  }
-  if (!a.prerelease.length && !b.prerelease.length) return 0;
-  if (!a.prerelease.length) return 1;
-  if (!b.prerelease.length) return -1;
-  const length = Math.max(a.prerelease.length, b.prerelease.length);
-  for (let index = 0; index < length; index += 1) {
-    const leftId = a.prerelease[index];
-    const rightId = b.prerelease[index];
-    if (leftId === undefined) return -1;
-    if (rightId === undefined) return 1;
-    const compared = comparePrereleaseId(leftId, rightId);
-    if (compared !== 0) return compared;
-  }
-  return 0;
-}
-
 async function spawnRuntimeUpgradeWorker(input: {
   animactlScript: string;
   dashboardHost: string;
@@ -594,16 +553,6 @@ function runtimeUpgradeBlocker(blocker: RestartBlocker): RuntimeUpgradeGateBlock
   };
 }
 
-function runtimeUpgradeCheckError(error: unknown): RuntimeUpgradeCheckError {
-  const message = errorMessage(error);
-  const type = typeof error === 'object' && error && 'code' in error && error.code === 'PARSE'
-    ? 'parse'
-    : message.includes('timed out') || message.includes('ENOTFOUND') || message.includes('ECONN')
-      ? 'network'
-      : 'unknown';
-  return { message: `Unable to check npm dist-tag: ${message}`, type };
-}
-
 function shouldRefreshRuntimeCheck(
   cached: RuntimeUpgradeCheckCache,
   releaseTrack: RuntimeReleaseTrack,
@@ -648,42 +597,6 @@ function runtimeUpgradeCheckErrorFromUnknown(value: unknown): RuntimeUpgradeChec
   if (type !== 'network' && type !== 'parse' && type !== 'unknown') return undefined;
   if (typeof message !== 'string' || !message) return undefined;
   return { message, type };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-}
-
-interface ParsedSemver {
-  major: number;
-  minor: number;
-  patch: number;
-  prerelease: string[];
-}
-
-function parseSemver(version: string): ParsedSemver {
-  const match = version.match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/);
-  if (!match) throw new Error(`Invalid semver version: ${version}`);
-  return {
-    major: Number(match[1]),
-    minor: Number(match[2]),
-    patch: Number(match[3]),
-    prerelease: match[4]?.split('.') ?? [],
-  };
-}
-
-function comparePrereleaseId(left: string, right: string): number {
-  const leftNumber = numericIdentifier(left);
-  const rightNumber = numericIdentifier(right);
-  if (leftNumber !== undefined && rightNumber !== undefined) return Math.sign(leftNumber - rightNumber);
-  if (leftNumber !== undefined) return -1;
-  if (rightNumber !== undefined) return 1;
-  return Math.sign(left.localeCompare(right));
-}
-
-function numericIdentifier(value: string): number | undefined {
-  if (!/^(0|[1-9]\d*)$/.test(value)) return undefined;
-  return Number(value);
 }
 
 interface ServicePids {
@@ -747,8 +660,4 @@ async function appendUpgradeLog(path: string, text: string): Promise<void> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
