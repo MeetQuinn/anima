@@ -283,7 +283,7 @@ body::before {
    declared here, scoped under `.md-prose`. Mirrors the paper/ink palette. */
 .md-prose {
   color: var(--color-text);
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.7;
 }
 .md-prose > :first-child {
@@ -469,12 +469,12 @@ body::before {
      components don't each need cursor-pointer classes. Disabled state reverts
      to the default cursor automatically via the :not([disabled]) guard. */
   button:not([disabled]),
-  [role="button"]:not([aria-disabled="true"]),
+  [role='button']:not([aria-disabled='true']),
   a[href],
   label[for],
   select:not([disabled]),
-  input[type="checkbox"]:not([disabled]),
-  input[type="radio"]:not([disabled]) {
+  input[type='checkbox']:not([disabled]),
+  input[type='radio']:not([disabled]) {
     cursor: pointer;
   }
 }
