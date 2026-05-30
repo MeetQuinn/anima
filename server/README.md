@@ -75,7 +75,7 @@ One foreground server process may run multiple agents. For each runnable agent, 
 3. A worker loop.
 4. A provider adapter selected by agent provider config.
 
-Only one normal inbox item runs per agent at a time. The worker owns item claiming, stop requests, idle timeouts, recovery, follow-up append, and settlement.
+Only one normal inbox item runs per agent at a time. The worker owns item claiming, recovery, and settlement. `active-run-control.ts` owns active-run stop/drain checks and idle timeout aborts.
 
 `AgentRuntimeBridge` is the boundary between Anima semantics and provider protocol. It builds the provider-facing prompt, environment, provider-session input, and activity/effect sinks. `provider-runner.ts` owns retry/failure policy around provider process crashes. Provider-facing delivery prompt builders and dynamic payload formatting live together in `runtime/delivery-prompt.ts`. Provider adapters should stay protocol-focused: start/resume the provider, stream events, persist provider session ids through effects, and report provider activity.
 
