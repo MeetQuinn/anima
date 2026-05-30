@@ -37,7 +37,7 @@ test('runtime upgrade status is track-scoped and includes idle gate state', asyn
       const status = await new RuntimeUpgradeService({
         checkStore,
         distTagLookup: async ({ packageName, tag }) => {
-          assert.equal(packageName, '@totoday/animactl');
+          assert.equal(packageName, '@meetquinn/animactl');
           assert.equal(tag, 'canary');
           return '0.1.1-canary.5.1.723b529';
         },
@@ -138,7 +138,7 @@ test('runtime upgrade worker rolls metadata back when target artifact is incompl
       assert.equal(operation.status, 'failed');
       assert.equal(operation.rollback, 'succeeded');
       const installed = JSON.parse(await readFile(
-        join(rootDir, 'runtime', 'current', 'node_modules', '@totoday', 'animactl', 'package.json'),
+        join(rootDir, 'runtime', 'current', 'node_modules', '@meetquinn', 'animactl', 'package.json'),
         'utf8',
       )) as { version?: string };
       assert.equal(installed.version, '0.1.1');
@@ -159,9 +159,9 @@ const args = process.argv.slice(2);
 const prefix = args[args.indexOf('--prefix') + 1];
 const spec = args[args.length - 1];
 const version = spec.slice(spec.lastIndexOf('@') + 1);
-const packageDir = join(prefix, 'node_modules', '@totoday', 'animactl');
+const packageDir = join(prefix, 'node_modules', '@meetquinn', 'animactl');
 mkdirSync(join(packageDir, 'dist', 'server', 'cli'), { recursive: true });
-writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: '@totoday/animactl', version }, null, 2));
+writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: '@meetquinn/animactl', version }, null, 2));
 writeFileSync(join(packageDir, 'dist', 'server', 'cli', 'animactl.js'), 'process.exit(0);\\n');
 if (version !== '0.1.2') {
   mkdirSync(join(packageDir, 'templates'), { recursive: true });

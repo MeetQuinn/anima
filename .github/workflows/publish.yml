@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   publish:
-    if: github.repository == 'totoday/anima' && (github.event_name != 'push' || vars.NPM_CANARY_PUBLISH_ENABLED == 'true')
+    if: github.repository == 'MeetQuinn/anima' && (github.event_name != 'push' || vars.NPM_CANARY_PUBLISH_ENABLED == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -58,13 +58,13 @@ jobs:
             DIST_TAG="canary"
           fi
           VERSION="$VERSION" node -e "const fs=require('node:fs'); const path='packages/animactl/package.json'; const pkg=JSON.parse(fs.readFileSync(path,'utf8')); pkg.version=process.env.VERSION; fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');"
-          if npm view "@totoday/animactl@$VERSION" version >/dev/null 2>&1; then
-            echo "@totoday/animactl@$VERSION already exists on npm" >&2
+          if npm view "@meetquinn/animactl@$VERSION" version >/dev/null 2>&1; then
+            echo "@meetquinn/animactl@$VERSION already exists on npm" >&2
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "dist_tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
-          echo "Publishing @totoday/animactl@$VERSION with dist-tag $DIST_TAG"
+          echo "Publishing @meetquinn/animactl@$VERSION with dist-tag $DIST_TAG"
 
       - run: pnpm build
       - run: pnpm test:fast:dist

@@ -1,16 +1,16 @@
 {
-  "name": "@totoday/anima",
+  "name": "@meetquinn/anima",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
   "description": "An AI agent team that works alongside your human team in Slack.",
-  "homepage": "https://github.com/totoday/anima#readme",
+  "homepage": "https://github.com/MeetQuinn/anima#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/totoday/anima.git"
+    "url": "git+https://github.com/MeetQuinn/anima.git"
   },
   "bugs": {
-    "url": "https://github.com/totoday/anima/issues"
+    "url": "https://github.com/MeetQuinn/anima/issues"
   },
   "publishConfig": {
     "access": "public"
@@ -48,7 +48,7 @@
     "type-check": "tsc -p tsconfig.json --noEmit && cd web && npx tsc -b --dry",
     "build:ui": "cd web && pnpm build",
     "pack:check": "pnpm build && npm pack --dry-run --ignore-scripts",
-    "pack:tarball": "rm -f totoday-anima-*.tgz anima-*.tgz && npm pack",
+    "pack:tarball": "rm -f meetquinn-anima-*.tgz anima-*.tgz && npm pack",
     "prepack": "pnpm build",
     "services:restart": "pnpm build && node dist/server/cli/animactl.js services restart",
     "services:start": "node dist/server/cli/animactl.js services start",

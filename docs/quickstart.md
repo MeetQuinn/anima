@@ -16,7 +16,7 @@ You'll need:
 ## 1. Start Anima
 
 ```bash
-npx @totoday/animactl start
+npx @meetquinn/animactl start
 ```
 
 This downloads the managed runtime, installs it under `~/.anima/runtime/current`, and starts the
@@ -53,9 +53,9 @@ notification on, it will **DM the owner in Slack** within a few seconds to intro
 ## Handy commands
 
 ```bash
-npx @totoday/animactl status     # is it running?
-npx @totoday/animactl restart    # restart the agent + web services
-npx @totoday/animactl stop       # stop it
+npx @meetquinn/animactl status     # is it running?
+npx @meetquinn/animactl restart    # restart the agent + web services
+npx @meetquinn/animactl stop       # stop it
 ```
 
 Logs: `~/.anima/logs/agent.log` and `~/.anima/logs/web.log`.
