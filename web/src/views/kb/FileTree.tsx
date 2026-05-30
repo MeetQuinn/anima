@@ -104,6 +104,7 @@ export function TreeRow({
           data-path={node.path}
           data-type="dir"
           style={depthStyle}
+          title={node.name}
           className="tree-row group relative flex w-full items-center gap-1.5 py-1.5 pr-2 text-left font-sans text-[15px] text-text-muted hover:bg-surface-elevated/60 md:py-1 md:text-[14px]"
         >
           {isOpen ? (
@@ -116,8 +117,8 @@ export function TreeRow({
           ) : (
             <FolderClosed className="h-3.5 w-3.5 shrink-0 text-text-subtle" />
           )}
-          <span className="truncate" title={node.name}>{node.name}</span>
-          <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 hidden -translate-y-1/2 whitespace-nowrap rounded-md border border-border-soft bg-surface px-2 py-1 text-xs text-text shadow-deep group-hover:block">
+          <span className="truncate">{node.name}</span>
+          <span className="pointer-events-none absolute left-0 top-full z-50 mt-1 hidden whitespace-nowrap rounded-md border border-border-soft bg-surface px-2 py-1 text-xs text-text shadow-deep group-hover:block">
             {node.name}
           </span>
         </button>
@@ -147,6 +148,7 @@ export function TreeRow({
       data-path={node.path}
       data-type="file"
       style={depthStyle}
+      title={node.name}
       className={[
         'tree-row group relative flex w-full items-center gap-1.5 py-1.5 pr-2 text-left font-sans text-[15px] transition-colors md:py-1 md:text-[14px]',
         active
@@ -156,10 +158,10 @@ export function TreeRow({
     >
       <span className="h-3.5 w-3.5 shrink-0" aria-hidden />
       <KindIcon kind={kbFileKind(node.name)} className={iconClass} />
-      <span className="truncate" title={node.name}>
+      <span className="truncate">
         <HighlightMatch text={node.name} query={filterQuery ?? ''} />
       </span>
-      <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 hidden -translate-y-1/2 whitespace-nowrap rounded-md border border-border-soft bg-surface px-2 py-1 text-xs text-text shadow-deep group-hover:block">
+      <span className="pointer-events-none absolute left-0 top-full z-50 mt-1 hidden whitespace-nowrap rounded-md border border-border-soft bg-surface px-2 py-1 text-xs text-text shadow-deep group-hover:block">
         {node.name}
       </span>
     </button>
