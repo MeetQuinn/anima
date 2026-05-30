@@ -43,35 +43,39 @@ export interface CodeAgentPromptContext {
  */
 export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgentPromptContext = {}): string {
   if (event.handling.resumeReason === 'runtime_restart') {
-    return [
-      'Anima system message: runtime restarted while this task was in progress.',
-      'Continue the same task from the current session; do not repeat completed external side effects.',
-    ].join('\n');
+    return buildRuntimeRestartContinuationDeliveryPrompt();
   }
   if (event.kind === 'reminder') {
-    return formatReminderForPrompt(event, context);
+    return buildReminderDeliveryPrompt(event, context);
   }
   if (event.kind === 'onboarding') {
-    return formatOnboardingForPrompt(event);
+    return buildOnboardingDeliveryPrompt({
+      channelId: event.channelId,
+      operatorLabel: readableOperatorLabel(event.operator),
+      receivedAt: event.receivedAt,
+      text: event.text,
+    });
   }
   if (event.kind === 'choice_response') {
-    return formatChoiceResponseForPrompt(event);
+    return buildChoiceResponseDeliveryPrompt(event);
   }
   if (event.id.startsWith('agent-onboarding:')) {
-    return formatLegacyOnboardingSlackForPrompt(event);
+    return buildLegacyOnboardingSlackDeliveryPrompt(event);
   }
 
+  return buildSlackDeliveryPrompt(event);
+}
+
+function buildSlackDeliveryPrompt(event: SlackEvent): string {
   const envelope = `${messageEnvelope(event)} ${actorLabel(event)}: ${event.text}`;
-  const attachments = formatAttachedFiles(event.files);
-  const attentionSuggestion = formatAttentionSuggestion(event.attentionSuggestion);
   return [
     `New Slack message:\n\n${envelope}`,
-    attachments,
-    attentionSuggestion,
+    formatAttachedFiles(event.files),
+    event.attentionSuggestion ? `Attention suggestion:\n${event.attentionSuggestion}` : '',
   ].filter(Boolean).join('\n');
 }
 
-function formatChoiceResponseForPrompt(event: ChoiceResponseInboxItem): string {
+function buildChoiceResponseDeliveryPrompt(event: ChoiceResponseInboxItem): string {
   const actor = readableChoiceActor(event.answeredBy);
   return `Choice response:
 
@@ -85,29 +89,32 @@ Reply target:
 Use \`anima message send --channel ${event.channelId} --thread-ts ${event.threadTs}\` to reply under the question.`;
 }
 
-function formatLegacyOnboardingSlackForPrompt(event: SlackEvent): string {
+function buildLegacyOnboardingSlackDeliveryPrompt(event: SlackEvent): string {
   const ownerLabel = event.actor?.userId ? `<@${event.actor.userId}>` : 'the operator';
-  return `Agent onboarding:
-
-[operator=${ownerLabel} channel=${event.channelId} time=${event.receivedAt}]
-${event.text}
-
-Reply target:
-Use \`anima message send --channel ${event.channelId}\` to reply to ${ownerLabel}.`;
+  return buildOnboardingDeliveryPrompt({
+    channelId: event.channelId,
+    operatorLabel: ownerLabel,
+    receivedAt: event.receivedAt,
+    text: event.text,
+  });
 }
 
-function formatOnboardingForPrompt(event: OnboardingInboxItem): string {
-  const ownerLabel = readableOperatorLabel(event.operator);
+function buildOnboardingDeliveryPrompt(input: {
+  channelId: string;
+  operatorLabel: string;
+  receivedAt: string;
+  text: string;
+}): string {
   return `Agent onboarding:
 
-[operator=${ownerLabel} channel=${event.channelId} time=${event.receivedAt}]
-${event.text}
+[operator=${input.operatorLabel} channel=${input.channelId} time=${input.receivedAt}]
+${input.text}
 
 Reply target:
-Use \`anima message send --channel ${event.channelId}\` to reply to ${ownerLabel}.`;
+Use \`anima message send --channel ${input.channelId}\` to reply to ${input.operatorLabel}.`;
 }
 
-function formatReminderForPrompt(
+function buildReminderDeliveryPrompt(
   event: ReminderInboxItem,
   context: CodeAgentPromptContext,
 ): string {
@@ -125,6 +132,27 @@ function formatReminderForPrompt(
 
 Instructions:
 ${reminder.instructions}${provenance}`;
+}
+
+export function buildRuntimeRestartContinuationDeliveryPrompt(): string {
+  return [
+    'Anima system message: runtime restarted while this task was in progress.',
+    'Continue the same task from the current session; do not repeat completed external side effects.',
+  ].join('\n');
+}
+
+export function buildProviderCrashRetryDeliveryPrompt(input: {
+  attempt: number;
+  maxRetries: number;
+  previousError: string;
+}): string {
+  return [
+    'Anima system note: the previous provider process crashed before completing this same item.',
+    `This is retry ${input.attempt}/${input.maxRetries}.`,
+    `Previous error: ${input.previousError}`,
+    'Continue the original task from the current files, conversation, and Slack state.',
+    'Do not repeat completed external side effects such as Slack messages, file sends, or file edits; inspect state first if needed.',
+  ].join('\n');
 }
 
 function messageEnvelope(event: SlackEvent): string {
@@ -177,10 +205,6 @@ function formatAttachedFile(file: SlackFile): string {
   const errorAttr = file.downloadError ? ` error=${escapeAttr(file.downloadError)}` : '';
 
   return `<file id=${escapeAttr(file.id)} name=${escapeAttr(file.name)} mimetype=${escapeAttr(file.mimetype)} size_bytes=${escapeAttr(String(file.sizeBytes))}${errorAttr} />`;
-}
-
-function formatAttentionSuggestion(suggestion: string | undefined): string {
-  return suggestion ? `Attention suggestion:\n${suggestion}` : '';
 }
 
 function normalizeHandle(handle: string | undefined): string | undefined {

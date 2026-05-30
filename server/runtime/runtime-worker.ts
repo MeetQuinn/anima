@@ -22,6 +22,7 @@ import {
   recordRuntimePending,
 } from './activity.js';
 import { runtimeErrorPayload } from './activity-text.js';
+import { buildProviderCrashRetryDeliveryPrompt } from './delivery-prompt.js';
 
 // Executor for one agent: claims queued inbox items, runs the provider runtime,
 // appends follow-up items into the active run, and settles item lifecycle state.
@@ -289,7 +290,7 @@ export class AgentRuntimeWorker {
           onActivity: () => this.noteProviderActivity(input.handle),
           profile: input.profile,
           retryNotice: retryCount > 0
-            ? providerCrashRetryPrompt({
+            ? buildProviderCrashRetryDeliveryPrompt({
                 attempt: retryCount,
                 maxRetries: PROVIDER_CRASH_MAX_RETRIES,
                 previousError: errorMessage(previousError),
@@ -644,20 +645,6 @@ function isProviderCrashError(error: unknown): boolean {
     /runtime exited with code/i.test(message) ||
     /stdin is closed/i.test(message)
   );
-}
-
-function providerCrashRetryPrompt(input: {
-  attempt: number;
-  maxRetries: number;
-  previousError: string;
-}): string {
-  return [
-    'Anima system note: the previous provider process crashed before completing this same item.',
-    `This is retry ${input.attempt}/${input.maxRetries}.`,
-    `Previous error: ${input.previousError}`,
-    'Continue the original task from the current files, conversation, and Slack state.',
-    'Do not repeat completed external side effects such as Slack messages, file sends, or file edits; inspect state first if needed.',
-  ].join('\n');
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {

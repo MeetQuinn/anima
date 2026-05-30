@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 
 import { makeReminderInboxItem } from './helpers/inbox.js';
 import type { InboxItem } from '../inbox/wake-queue.service.js';
-import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
+import {
+  buildProviderCrashRetryDeliveryPrompt,
+  buildRuntimeRestartContinuationDeliveryPrompt,
+  buildCodeAgentDeliveryPrompt,
+} from '../runtime/delivery-prompt.js';
 import { runtimeEnv } from '../runtime/runtime-bridge.js';
 import { buildAnimaRuntimeProfile } from '../runtime/standing-prompt.js';
 import { makeSlackEvent } from './helpers/slack.js';
@@ -83,12 +87,24 @@ test('buildCodeAgentDeliveryPrompt renders restart resumes as a short system con
 
   const text = buildCodeAgentDeliveryPrompt(event);
 
-  assert.equal(text, [
-    'Anima system message: runtime restarted while this task was in progress.',
-    'Continue the same task from the current session; do not repeat completed external side effects.',
-  ].join('\n'));
+  assert.equal(text, buildRuntimeRestartContinuationDeliveryPrompt());
   assert.doesNotMatch(text, /New Slack message/);
   assert.doesNotMatch(text, /do the expensive thing/);
+});
+
+test('delivery prompt module exposes named provider-facing Anima builders', () => {
+  assert.match(buildRuntimeRestartContinuationDeliveryPrompt(), /runtime restarted/);
+  assert.equal(buildProviderCrashRetryDeliveryPrompt({
+    attempt: 2,
+    maxRetries: 3,
+    previousError: 'boom',
+  }), [
+    'Anima system note: the previous provider process crashed before completing this same item.',
+    'This is retry 2/3.',
+    'Previous error: boom',
+    'Continue the original task from the current files, conversation, and Slack state.',
+    'Do not repeat completed external side effects such as Slack messages, file sends, or file edits; inspect state first if needed.',
+  ].join('\n'));
 });
 
 test('buildCodeAgentDeliveryPrompt omits channel_id for DMs (channel= already shows the raw id) and still emits user_id', () => {
