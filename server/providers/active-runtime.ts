@@ -1,4 +1,4 @@
-import type { AgentRuntimeInput } from '../runtime/provider-contract.js';
+import type { AgentRuntimeInput } from './contract.js';
 
 export class ActiveRuntimeRun {
   private activeItemId?: string;

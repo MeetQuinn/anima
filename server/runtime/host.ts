@@ -11,7 +11,7 @@ import {
 import { resolveAnimaHome } from '../anima-home.js';
 import { errorMessage } from '../ids.js';
 import { createAgentRuntime } from '../providers/factory.js';
-import type { AgentProviderConfig } from './provider-contract.js';
+import type { AgentProviderConfig } from '../providers/contract.js';
 import { createSlackWebClient } from '../slack/client.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
 import { startRunningAgent, type RunningAgentHandle } from './agent-runner.js';

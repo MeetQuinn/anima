@@ -17,7 +17,7 @@ import {
   type AgentRuntimeInput,
   type AgentRuntimeResult,
   type KimiCliAgentProviderConfig,
-} from '../runtime/provider-contract.js';
+} from './contract.js';
 
 const KIMI_COMMAND = 'kimi';
 const KIMI_WIRE_PROTOCOL_VERSION = '1.7';

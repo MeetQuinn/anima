@@ -1,6 +1,6 @@
 import { errorMessage } from '../ids.js';
 import type { WakeQueueService } from '../inbox/wake-queue.service.js';
-import type { AgentRuntime } from './provider-contract.js';
+import type { AgentRuntime } from '../providers/contract.js';
 import type { RuntimeItemContext } from './types.js';
 
 const IDLE_CHECK_INTERVAL_FLOOR_MS = 50;

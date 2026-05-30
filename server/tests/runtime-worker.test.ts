@@ -16,7 +16,7 @@ import type {
   AgentRuntimeInput,
   AgentRuntimeResult,
   AgentRuntimeFollowupInput,
-} from '../runtime/provider-contract.js';
+} from '../providers/contract.js';
 import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
 import { clearRestartDrain, requestRestartDrain } from '../services/restart-drain.js';
 import { runtimeContextForItemId } from '../runtime/context.js';

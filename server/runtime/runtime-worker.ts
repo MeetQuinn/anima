@@ -1,4 +1,4 @@
-import type { AgentRuntime } from './provider-contract.js';
+import type { AgentRuntime } from '../providers/contract.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { errorMessage } from '../ids.js';
 import { PROVIDER_IDLE_TIMEOUT_MS_DEFAULT } from '../../shared/agent-config.js';

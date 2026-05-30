@@ -28,7 +28,7 @@ Anima context/state -> AgentRuntimeBridge -> provider-facing prompt/env/sinks ->
 
 ## The Provider Contract
 
-The contract lives in `server/providers/types.ts`.
+The contract lives in `server/providers/contract.ts`.
 
 ```ts
 export interface AgentRuntime {
@@ -36,7 +36,9 @@ export interface AgentRuntime {
   readonly kind: string;
   close?(): Promise<void>;
   run(input: AgentRuntimeInput): Promise<AgentRuntimeResult>;
-  appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<AgentRuntimeFollowupResult>;
+  appendToActiveRun(
+    input: AgentRuntimeFollowupInput,
+  ): Promise<AgentRuntimeFollowupResult>;
 }
 ```
 
@@ -221,17 +223,17 @@ claude
 
 Anima uses provider tools for observability only; Slack side effects, reminders, subscriptions, inbox routing, and scheduling must stay Anima-owned. Claude Code currently receives a small strategic denylist through `--disallowedTools`:
 
-| Tool | Current CLI presence | Stream-json behavior | Side effect | Decision |
-| --- | --- | --- | --- | --- |
-| `AskUserQuestion` | Claude Code built-in | Fails in the non-interactive runtime. | Attempts to ask the operator outside Anima. | Deny |
-| `CronCreate` / `CronDelete` / `CronList` | Claude Code built-ins | Works as Claude-native session cron management. | Creates or manages recurring scheduled prompts outside Anima inbox/reminder/activity ownership. | Deny |
-| `ScheduleWakeup` | Claude Code built-in | Works as Claude-native one-off delayed wake. | Creates future wakeups outside Anima reminders and audit. | Deny |
-| `RemoteTrigger` | Claude Code built-in | Not needed by Anima runtime. | Establishes provider-native remote triggers outside Anima routing. | Deny |
-| `PushNotification` | Claude Code built-in | Not needed by Anima runtime. | Sends provider-native notifications outside Anima-visible messaging. | Deny |
-| `SlashCommand` | Claude Code built-in | Observe. Some commands are internal and may be valid in stream-json. | Can affect Claude session state, but not proven broken in Anima. | Allow/observe |
-| File, shell, search, task, todo, notebook, and skill tools | Claude Code built-ins | Required for normal agent work. | Provider work, surfaced through Anima activity mapping. | Allow |
-| Codex CLI tools | Codex app-server protocol | No equivalent user-question/scheduler controls found in the current adapter surface. | Tool activity is mapped by Anima. | Allow/observe |
-| Kimi CLI tools | Kimi wire protocol | Anima initializes with `supports_question: false` and `supports_plan_mode: false`. | Tool activity is mapped by Anima. | Allow/observe |
+| Tool                                                       | Current CLI presence      | Stream-json behavior                                                                 | Side effect                                                                                     | Decision      |
+| ---------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- | ------------- |
+| `AskUserQuestion`                                          | Claude Code built-in      | Fails in the non-interactive runtime.                                                | Attempts to ask the operator outside Anima.                                                     | Deny          |
+| `CronCreate` / `CronDelete` / `CronList`                   | Claude Code built-ins     | Works as Claude-native session cron management.                                      | Creates or manages recurring scheduled prompts outside Anima inbox/reminder/activity ownership. | Deny          |
+| `ScheduleWakeup`                                           | Claude Code built-in      | Works as Claude-native one-off delayed wake.                                         | Creates future wakeups outside Anima reminders and audit.                                       | Deny          |
+| `RemoteTrigger`                                            | Claude Code built-in      | Not needed by Anima runtime.                                                         | Establishes provider-native remote triggers outside Anima routing.                              | Deny          |
+| `PushNotification`                                         | Claude Code built-in      | Not needed by Anima runtime.                                                         | Sends provider-native notifications outside Anima-visible messaging.                            | Deny          |
+| `SlashCommand`                                             | Claude Code built-in      | Observe. Some commands are internal and may be valid in stream-json.                 | Can affect Claude session state, but not proven broken in Anima.                                | Allow/observe |
+| File, shell, search, task, todo, notebook, and skill tools | Claude Code built-ins     | Required for normal agent work.                                                      | Provider work, surfaced through Anima activity mapping.                                         | Allow         |
+| Codex CLI tools                                            | Codex app-server protocol | No equivalent user-question/scheduler controls found in the current adapter surface. | Tool activity is mapped by Anima.                                                               | Allow/observe |
+| Kimi CLI tools                                             | Kimi wire protocol        | Anima initializes with `supports_question: false` and `supports_plan_mode: false`.   | Tool activity is mapped by Anima.                                                               | Allow/observe |
 
 The denylist is global for now. Per-agent tool policy should be added only when there is a concrete operator need; the default policy should keep provider-native scheduling and notifications out of the runtime.
 
@@ -243,7 +245,13 @@ Provider `run` protocol:
 4. write one bridge-built delivery prompt as a JSONL user message to Claude stdin:
 
    ```json
-   {"type":"user","message":{"role":"user","content":[{"type":"text","text":"..."}]}}
+   {
+     "type": "user",
+     "message": {
+       "role": "user",
+       "content": [{ "type": "text", "text": "..." }]
+     }
+   }
    ```
 
 5. stream Claude stdout through the JSONL activity mapper;

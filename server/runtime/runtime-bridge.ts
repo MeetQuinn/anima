@@ -27,7 +27,7 @@ import type {
   AgentRuntimeFollowupInput,
   AgentRuntimeInput,
   ProviderSessionRecord,
-} from './provider-contract.js';
+} from '../providers/contract.js';
 
 export class AgentRuntimeBridge {
   constructor(private readonly runtime: AgentRuntime) {}

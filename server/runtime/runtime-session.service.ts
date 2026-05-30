@@ -11,7 +11,7 @@ import {
   type Session,
 } from '../storage/schema/session.store.js';
 import { activitiesForInboxItemWindow } from './item-activities.js';
-import { CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW, type ProviderSessionRecord } from './provider-contract.js';
+import { CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW, type ProviderSessionRecord } from '../providers/contract.js';
 
 export type { ProviderSession, Session };
 

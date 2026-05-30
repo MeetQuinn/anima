@@ -8,7 +8,7 @@ import {
   recordRuntimePending,
 } from './activity.js';
 import { runtimeContextForItemId } from './context.js';
-import type { AgentRuntime } from './provider-contract.js';
+import type { AgentRuntime } from '../providers/contract.js';
 import type { AgentRuntimeBridge } from './runtime-bridge.js';
 import type { RuntimeItemContext, RuntimeWorkerConfig } from './types.js';
 

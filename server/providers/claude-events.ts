@@ -2,8 +2,8 @@ import { readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import type { AgentRuntimeEffects } from '../runtime/provider-contract.js';
-import type { ProviderSessionRecord } from '../runtime/provider-contract.js';
+import type { AgentRuntimeEffects } from './contract.js';
+import type { ProviderSessionRecord } from './contract.js';
 import { exposedReasoningEvent, notExposedReasoningEvent } from './reasoning-events.js';
 import { isFirstClassAnimaCliCommand, truncateForActivity } from '../runtime/activity-text.js';
 import {

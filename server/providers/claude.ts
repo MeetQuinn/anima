@@ -17,7 +17,7 @@ import {
   AgentRuntimeInput,
   AgentRuntimeResult,
   ClaudeCodeAgentProviderConfig,
-} from '../runtime/provider-contract.js';
+} from './contract.js';
 
 const CLAUDE_COMMAND = 'claude';
 const CLAUDE_DEFAULT_ENV = {

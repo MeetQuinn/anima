@@ -2,7 +2,7 @@ import { errorMessage } from '../ids.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { InboxSubscriber } from '../inbox/subscriber.js';
 import { addProcessingReaction, removeProcessingReactions, slackReactionClient } from './processing-reactions.js';
-import type { AgentRuntime } from './provider-contract.js';
+import type { AgentRuntime } from '../providers/contract.js';
 import { AgentRuntimeWorker } from './runtime-worker.js';
 import type { RuntimeWorkerConfig } from './types.js';
 import { recordLifetimeTokenUsageForItem } from './usage.js';
