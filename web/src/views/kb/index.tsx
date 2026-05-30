@@ -354,14 +354,18 @@ export default function Kb() {
           </div>
         </nav>
 
-        {/* Resizer */}
+        {/* Resizer — wide hit target, thin visual line */}
         <div
           onMouseDown={startResize}
-          className={[
-            'hidden md:block shrink-0 w-px bg-border-soft cursor-col-resize transition-colors',
-            resizing ? 'bg-accent' : 'hover:bg-accent/50',
-          ].join(' ')}
-        />
+          className="hidden md:flex shrink-0 w-4 cursor-col-resize items-center justify-center"
+        >
+          <div
+            className={[
+              'h-full w-px transition-colors',
+              resizing ? 'bg-accent' : 'bg-border-soft hover:bg-accent/50',
+            ].join(' ')}
+          />
+        </div>
 
         {/* Right panel */}
         <section
