@@ -121,26 +121,20 @@ export function TreeRow({
           data-path={node.path}
           data-type="dir"
           style={depthStyle}
-          className="tree-row group flex flex-col justify-center w-full py-1.5 pr-2 text-left font-sans text-[15px] text-text-muted hover:bg-surface-elevated/60 md:py-1 md:text-[14px]"
+          title={isTruncated ? node.name : undefined}
+          className="tree-row group flex w-full items-center gap-1.5 py-1.5 pr-2 text-left font-sans text-[15px] text-text-muted hover:bg-surface-elevated/60 md:py-1 md:text-[14px]"
         >
-          <div className="flex items-center gap-1.5">
-            {isOpen ? (
-              <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
-            )}
-            {isOpen ? (
-              <FolderOpen className="h-3.5 w-3.5 shrink-0 text-text-subtle" />
-            ) : (
-              <FolderClosed className="h-3.5 w-3.5 shrink-0 text-text-subtle" />
-            )}
-            <span ref={nameRef} className="truncate">{node.name}</span>
-          </div>
-          {isTruncated && (
-            <span className="hidden group-hover:block text-xs text-text-subtle mt-0.5">
-              {node.name}
-            </span>
+          {isOpen ? (
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
           )}
+          {isOpen ? (
+            <FolderOpen className="h-3.5 w-3.5 shrink-0 text-text-subtle" />
+          ) : (
+            <FolderClosed className="h-3.5 w-3.5 shrink-0 text-text-subtle" />
+          )}
+          <span ref={nameRef} className="truncate">{node.name}</span>
         </button>
         {isOpen &&
           node.children?.map((child) => (
@@ -168,25 +162,19 @@ export function TreeRow({
       data-path={node.path}
       data-type="file"
       style={depthStyle}
+      title={isTruncated ? node.name : undefined}
       className={[
-        'tree-row group flex flex-col justify-center w-full py-1.5 pr-2 text-left font-sans text-[15px] transition-colors md:py-1 md:text-[14px]',
+        'tree-row group flex w-full items-center gap-1.5 py-1.5 pr-2 text-left font-sans text-[15px] transition-colors md:py-1 md:text-[14px]',
         active
           ? 'bg-accent/10 text-accent font-medium'
           : 'text-text-muted hover:bg-surface-elevated/60',
       ].join(' ')}
     >
-      <div className="flex items-center gap-1.5">
-        <span className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        <KindIcon kind={kbFileKind(node.name)} className={iconClass} />
-        <span ref={nameRef} className="truncate">
-          <HighlightMatch text={node.name} query={filterQuery ?? ''} />
-        </span>
-      </div>
-      {isTruncated && (
-        <span className="hidden group-hover:block text-xs text-text-subtle mt-0.5">
-          {node.name}
-        </span>
-      )}
+      <span className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      <KindIcon kind={kbFileKind(node.name)} className={iconClass} />
+      <span ref={nameRef} className="truncate">
+        <HighlightMatch text={node.name} query={filterQuery ?? ''} />
+      </span>
     </button>
   );
 }
