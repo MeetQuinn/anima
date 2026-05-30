@@ -9,8 +9,12 @@ import {
   defaultSlackShortcutService,
   userIdFromShortcutBody,
   type SlackShortcutBody,
-} from '../slack/shortcut.service.js';
-import { SLACK_STOP_CONFIRM_VIEW_CALLBACK_ID, SLACK_VIEW_REMINDER_DETAIL_ACTION_ID, SLACK_VIEW_REMINDERS_ACTION_ID } from '../slack/shortcuts.js';
+} from '../slack-interactions/shortcut.service.js';
+import {
+  SLACK_STOP_CONFIRM_VIEW_CALLBACK_ID,
+  SLACK_VIEW_REMINDER_DETAIL_ACTION_ID,
+  SLACK_VIEW_REMINDERS_ACTION_ID,
+} from '../slack-interactions/shortcut-ids.js';
 import { SlackWorkspaceDirectoryService, type SlackWorkspaceDirectoryEvent } from '../slack/workspace-directory.service.js';
 import {
   replaceSlackChannelMentions,
