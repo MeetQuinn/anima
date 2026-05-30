@@ -72,7 +72,7 @@ function StepDot({
 
 interface AgentCreateFlowProps {
   firstRun: boolean;
-  onClose: () => void;
+  onClose: (createdAgentId?: string) => void;
   onComplete?: (agentId: string) => void;
 }
 
@@ -152,16 +152,22 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     setTimeout(() => nameInputRef.current?.focus(), 50);
   }, []);
 
-  const handleClose = useCallback(() => {
-    if (createdAgentId) refreshDashboardData();
-    onClose();
+  const handleClose = useCallback(async () => {
+    if (createdAgentId) {
+      refreshDashboardData();
+      // Closing after Step 1 leaves a real, inert agent behind. Make sure the
+      // shell sees it before we leave the flow so the user lands on that agent's
+      // Profile instead of bouncing through the first-run redirect.
+      await awaitAgentsRefresh().catch(() => undefined);
+    }
+    onClose(createdAgentId ?? undefined);
   }, [createdAgentId, onClose]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key !== 'Escape' || creating) return;
       if (showPicker) { setShowPicker(false); return; }
-      handleClose();
+      void handleClose();
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -228,7 +234,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
   const stepTitle =
     step === 1 ? 'Create your agent' :
     step === 2 ? 'Connect to Slack' :
-    'Assign owner';
+    'Pick an owner';
   const createDisabledReason = (() => {
     if (creating) return undefined;
     if (!derivedId) return 'Enter a name';
@@ -294,7 +300,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
         {/* X close — hidden on first-run before any agent is created (no destination behind it) */}
         {(!firstRun || createdAgentId) && (
           <button
-            onClick={handleClose}
+            onClick={() => void handleClose()}
             className="flex h-8 w-8 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text"
             title="Close"
           >
@@ -480,7 +486,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
         </div>
       )}
 
-      {/* ---- Step 3 — Assign Owner ---- */}
+      {/* ---- Step 3 — Pick Owner ---- */}
       {step === 3 && createdAgentId && (
         <div className="px-6 py-6">
           <OwnerPickerForm
@@ -488,6 +494,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
             onConfirm={handleOwnerComplete}
             onSkip={handleOwnerComplete}
             submitLabel="Start onboarding →"
+            skipLabel="Start without owner →"
             showRationale
           />
         </div>
@@ -534,7 +541,7 @@ export function OnboardingPage() {
   return (
     <AgentCreateFlow
       firstRun={true}
-      onClose={() => navigate('/')}
+      onClose={(createdAgentId) => navigate(createdAgentId ? `/agents/${createdAgentId}/profile` : '/')}
       onComplete={(id) => navigate(`/agents/${id}/activity`)}
     />
   );
@@ -550,7 +557,10 @@ export function AgentCreateModal({ onClose }: { onClose: () => void }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-page/70 backdrop-blur-sm">
       <AgentCreateFlow
         firstRun={false}
-        onClose={onClose}
+        onClose={(createdAgentId) => {
+          onClose();
+          if (createdAgentId) navigate(`/agents/${createdAgentId}/profile`);
+        }}
         onComplete={(id) => { onClose(); navigate(`/agents/${id}/activity`); }}
       />
     </div>

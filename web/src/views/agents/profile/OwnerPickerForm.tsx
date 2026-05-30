@@ -27,6 +27,7 @@ function Rationale() {
 //   onConfirm     — called after a successful setOwner
 //   onSkip        — optional; if provided, a "Skip for now →" link is shown
 //   submitLabel   — CTA label (default: "Assign owner →")
+//   skipLabel     — optional skip CTA label (default: "Skip for now →")
 //   autoFocus     — focus the combobox input on mount (default: true)
 //   showRationale — show the "why assign an owner" blurb (default: false)
 // ---------------------------------------------------------------------------
@@ -36,6 +37,7 @@ interface OwnerPickerFormProps {
   onConfirm: () => void;
   onSkip?: () => void;
   submitLabel?: string;
+  skipLabel?: string;
   autoFocus?: boolean;
   showRationale?: boolean;
 }
@@ -45,6 +47,7 @@ export function OwnerPickerForm({
   onConfirm,
   onSkip,
   submitLabel = 'Assign owner →',
+  skipLabel = 'Skip for now →',
   autoFocus = true,
   showRationale = false,
 }: OwnerPickerFormProps) {
@@ -427,7 +430,7 @@ export function OwnerPickerForm({
               disabled={saving}
               className="font-sans text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 hover:text-text hover:decoration-text/40 transition-colors"
             >
-              Skip for now →
+              {skipLabel}
             </button>
           </div>
         )}
