@@ -1,6 +1,6 @@
 import type { ProviderUsageExtra, ProviderUsageRow, ProviderUsageWindow } from '../../../shared/provider-usage.js';
 import { bearer, fetchJson } from '../http.js';
-import { available, unavailable, usageError } from '../provider-usage.service.js';
+import { available, unavailable, usageError } from '../result.js';
 import { homePath, numberValue, readJsonFile, record, stringValue, windowFromUsedPercent } from './common.js';
 
 const CODEX_USAGE_API = 'https://chatgpt.com/backend-api/wham/usage';

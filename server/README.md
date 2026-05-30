@@ -109,6 +109,7 @@ Some services are collections or platform-level resources rather than one-agent 
 - `SlackFileService` owns Slack file cache semantics: download-to-cache, cache lookup, cached file reads, cache path construction, and download size limits.
 - `SlackWorkspaceDirectoryService` owns Slack workspace lookup/cache for users, channels, DMs, and workspace events. It is scoped by Slack team, not by Anima agent.
 - `SlackShortcutService` handles Slack shortcut payloads and dispatches to the owning services: runtime status/stop, reminders, and inbox handoff.
+- `SystemService` owns local system/operator view data and actions for the web API: server info, provider command availability, and web-triggered services restart preparation.
 
 ## Boundary Rules
 

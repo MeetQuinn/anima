@@ -1,5 +1,4 @@
 import type {
-  ProviderUsageError,
   ProviderUsageKind,
   ProviderUsageResponse,
   ProviderUsageRow,
@@ -7,6 +6,7 @@ import type {
 import { fetchClaudeUsage } from './providers/claude.js';
 import { fetchCodexUsage } from './providers/codex.js';
 import { fetchKimiUsage } from './providers/kimi.js';
+import { usageError } from './result.js';
 
 export interface ProviderUsageAdapter {
   label: string;
@@ -46,30 +46,6 @@ export class ProviderUsageService {
       };
     }
   }
-}
-
-export function usageError(type: ProviderUsageError['type'], message: string): ProviderUsageError {
-  return { message, type };
-}
-
-export function unavailable(error: ProviderUsageError): Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'> {
-  return {
-    error,
-    extras: [],
-    status: 'unavailable',
-    windows: [],
-  };
-}
-
-export function available(
-  windows: ProviderUsageRow['windows'],
-  extras: ProviderUsageRow['extras'] = [],
-): Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'> {
-  return {
-    extras,
-    status: 'available',
-    windows,
-  };
 }
 
 export function defaultProviderUsageAdapters(): ProviderUsageAdapter[] {

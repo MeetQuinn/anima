@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 
 import type { ProviderUsageExtra, ProviderUsageRow, ProviderUsageWindow } from '../../../shared/provider-usage.js';
 import { bearer, fetchJson } from '../http.js';
-import { available, unavailable, usageError } from '../provider-usage.service.js';
+import { available, unavailable, usageError } from '../result.js';
 import {
   clampPercent,
   homePath,
