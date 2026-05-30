@@ -51,7 +51,7 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
   if (event.kind === 'onboarding') {
     return buildOnboardingDeliveryPrompt({
       channelId: event.channelId,
-      operatorLabel: readableOperatorLabel(event.operator),
+      ownerLabel: readableOwnerLabel(event.operator),
       receivedAt: event.receivedAt,
       text: event.text,
     });
@@ -90,10 +90,10 @@ Use \`anima message send --channel ${event.channelId} --thread-ts ${event.thread
 }
 
 function buildLegacyOnboardingSlackDeliveryPrompt(event: SlackEvent): string {
-  const ownerLabel = event.actor?.userId ? `<@${event.actor.userId}>` : 'the operator';
+  const ownerLabel = event.actor?.userId ? `<@${event.actor.userId}>` : 'the owner';
   return buildOnboardingDeliveryPrompt({
     channelId: event.channelId,
-    operatorLabel: ownerLabel,
+    ownerLabel,
     receivedAt: event.receivedAt,
     text: event.text,
   });
@@ -101,17 +101,17 @@ function buildLegacyOnboardingSlackDeliveryPrompt(event: SlackEvent): string {
 
 function buildOnboardingDeliveryPrompt(input: {
   channelId: string;
-  operatorLabel: string;
+  ownerLabel: string;
   receivedAt: string;
   text: string;
 }): string {
   return `Agent onboarding:
 
-[operator=${input.operatorLabel} channel=${input.channelId} time=${input.receivedAt}]
+[owner=${input.ownerLabel} channel=${input.channelId} time=${input.receivedAt}]
 ${input.text}
 
 Reply target:
-Use \`anima message send --channel ${input.channelId}\` to reply to ${input.operatorLabel}.`;
+Use \`anima message send --channel ${input.channelId}\` to reply to ${input.ownerLabel}.`;
 }
 
 function buildReminderDeliveryPrompt(
@@ -179,11 +179,11 @@ function actorLabel(event: SlackEvent): string {
   return displayName ?? handle ?? (actor?.userId ? `@${actor.userId}` : '@unknown');
 }
 
-function readableOperatorLabel(operator: OnboardingInboxItem['operator']): string {
-  const handle = normalizeHandle(operator.handle);
-  const mention = `<@${operator.slackUserId}>`;
-  if (operator.displayName && handle) return `${operator.displayName} (${handle}, ${mention})`;
-  if (operator.displayName) return `${operator.displayName} (${mention})`;
+function readableOwnerLabel(owner: OnboardingInboxItem['operator']): string {
+  const handle = normalizeHandle(owner.handle);
+  const mention = `<@${owner.slackUserId}>`;
+  if (owner.displayName && handle) return `${owner.displayName} (${handle}, ${mention})`;
+  if (owner.displayName) return `${owner.displayName} (${mention})`;
   return handle ? `${handle} (${mention})` : mention;
 }
 

@@ -164,11 +164,6 @@ export const AgentSetOwnerRequest = z.object({
 
 export type AgentSetOwnerRequest = z.infer<typeof AgentSetOwnerRequest>;
 
-/** @deprecated Use AgentSetOwnerRequest */
-export const AgentSetOperatorRequest = AgentSetOwnerRequest;
-/** @deprecated Use AgentSetOwnerRequest */
-export type AgentSetOperatorRequest = AgentSetOwnerRequest;
-
 export const SlackUserCandidate = z.object({
   slackUserId: z.string(),
   displayName: z.string(),
@@ -253,11 +248,6 @@ export const AgentOwner = SlackUserCandidate.extend({
 }).strict();
 
 export type AgentOwner = z.infer<typeof AgentOwner>;
-
-/** @deprecated Use AgentOwner */
-export const AgentOperator = AgentOwner;
-/** @deprecated Use AgentOwner */
-export type AgentOperator = AgentOwner;
 
 const AgentProfileInput = z.preprocess((value) => {
   if (!isRecord(value)) return value;
