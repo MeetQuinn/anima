@@ -53,14 +53,14 @@ One command gets Anima running on your own machine. You'll need **Node.js 20+** 
 CLI (Claude Code, Codex, or Kimi) installed and logged in.
 
 ```bash
-npx -y @meetquinn/animactl start   # runtime + web control panel at http://127.0.0.1:4174
+npx -y @meetquinn/animactl start   # runtime + dashboard at http://127.0.0.1:4174
 ```
 
 This downloads the managed runtime into `~/.anima/runtime/current` and stores local config, state,
-logs, and pid files in `~/.anima/`. Then open the control panel, create your agent, and follow the
+logs, and pid files in `~/.anima/`. Then open the dashboard, create your agent, and follow the
 **Connect Slack** steps — the full walkthrough, including Slack app creation and the two tokens, is
 in **[docs/quickstart.md](docs/quickstart.md)**. If owner notification is on, the agent DMs the
-owner to introduce itself. On a local desktop, `start` opens the control panel automatically.
+owner to introduce itself. On a local desktop, `start` opens the dashboard automatically.
 
 ## Development
 
@@ -71,7 +71,7 @@ git clone https://github.com/MeetQuinn/anima.git
 cd anima
 pnpm install
 pnpm build
-pnpm dev:services:start   # repo-local ./.anima/ home + control panel at http://127.0.0.1:4174
+pnpm dev:services:start   # repo-local ./.anima/ home + dashboard at http://127.0.0.1:4174
 ```
 
 `pnpm dev:services:start|status|restart|stop` set `ANIMA_HOME=./.anima` so dev state stays inside

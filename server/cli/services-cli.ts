@@ -104,7 +104,7 @@ export function registerServicesCommand(program: Command): void {
 
   services
     .command('dashboard')
-    .description('Launch the local web control panel')
+    .description('Launch the local Anima dashboard')
     .action(async (_, command) => {
       const opts = command.optsWithGlobals() as ServicesCliOptions;
       await runDashboard(opts);

@@ -20,14 +20,14 @@ npx -y @meetquinn/animactl start
 ```
 
 This downloads the managed runtime, installs it under `~/.anima/runtime/current`, and starts the
-agent runtime plus the web control panel. Config and state live in `~/.anima/` by default, so Anima
+agent runtime plus the dashboard. Config and state live in `~/.anima/` by default, so Anima
 keeps working no matter which directory your terminal is in. On a local desktop, Anima opens the
-control panel automatically. If it does not, open:
+dashboard automatically. If it does not, open:
 **<http://127.0.0.1:4174>**
 
 ## 2. Create your agent
 
-In the control panel, fill in a **name** and a **role**, and click **Create**.
+In the dashboard, fill in a **name** and a **role**, and click **Create**.
 
 ## 3. Connect it to Slack
 
@@ -55,7 +55,7 @@ notification on, it will **DM the owner in Slack** within a few seconds to intro
 
 ```bash
 npx -y @meetquinn/animactl status     # is it running?
-npx -y @meetquinn/animactl dashboard  # open the control panel
+npx -y @meetquinn/animactl dashboard  # open the dashboard
 npx -y @meetquinn/animactl restart    # upgrade to latest, then restart the agent + web services
 npx -y @meetquinn/animactl stop       # stop it
 ```
@@ -68,7 +68,7 @@ Logs: `~/.anima/logs/agent.log` and `~/.anima/logs/web.log`.
 
 ## Troubleshooting
 
-- **No DM from the agent?** Check that it shows as connected in the control panel.
+- **No DM from the agent?** Check that it shows as connected in the dashboard.
 - **No reply when you @ it in a channel?** Invite the bot first: `/invite @your-agent`.
 - **Changed an existing agent's provider/model/role/tokens and nothing happened?** Restart to pick it
   up — a running agent doesn't hot-reload its config.

@@ -45,7 +45,7 @@ that pinned runtime:
 
 ```bash
 npx -y @meetquinn/animactl start          # first start on stable/latest
-npx -y @meetquinn/animactl dashboard      # launch the local control panel
+npx -y @meetquinn/animactl dashboard      # launch the local dashboard
 npx -y @meetquinn/animactl restart        # command-line upgrade to stable/latest
 npx -y @meetquinn/animactl@canary restart # dogfood upgrade/restart path
 npx -y @meetquinn/animactl status

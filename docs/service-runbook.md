@@ -6,7 +6,7 @@ Anima itself does not name environments. If a team wants aliases for specific An
 
 For managed (npm) installs, operators normally drive the runtime with `npx -y @meetquinn/animactl
 start|dashboard|restart|status|stop` — `start` boots a stopped runtime, `dashboard` opens the
-control panel, `restart` is the command-line upgrade/restart path, and `start`/`restart` install
+dashboard, `restart` is the command-line upgrade/restart path, and `start`/`restart` install
 and run the pinned runtime. They are documented in
 [deployment.md](deployment.md). This runbook covers the underlying `animactl services <op>`
 supervisor those commands invoke, plus its idle-gate and cross-environment restart semantics.
@@ -21,7 +21,7 @@ Each Anima home runs two daemons:
 
 The web app port comes from the selected home config's `dashboardPort` field (default `4174`).
 Use `npx -y @meetquinn/animactl dashboard` for managed installs, or
-`ANIMA_HOME=<path> animactl services dashboard` for a specific home, to launch the control panel
+`ANIMA_HOME=<path> animactl services dashboard` for a specific home, to launch the dashboard
 without remembering the port.
 The agent service auto-starts newly runnable Slack-connected agents. Restart services after changing an already-running agent's provider, home, Slack tokens, or enabled state.
 
