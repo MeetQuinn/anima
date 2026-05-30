@@ -1260,6 +1260,7 @@ test('kimi-cli wire transport starts a turn and appends subscription follow-up i
       const args = JSON.parse((await readFile(callsPath, 'utf8')).split('\n')[0] ?? '{}') as { argv: string[] };
       assert.ok(args.argv.includes('--wire'));
       assert.ok(args.argv.includes('--yolo'));
+      assert.ok(args.argv.includes('--thinking'));
       assert.equal(args.argv[args.argv.indexOf('--model') + 1], 'kimi-code/kimi-for-coding');
       assert.equal(args.argv[args.argv.indexOf('--session') + 1], sessionId);
       assert.deepEqual(await providerSessionStartedPayload(firstCtx.item.id), { kind: 'kimi-cli', resumed: false });

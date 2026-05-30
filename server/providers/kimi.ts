@@ -117,6 +117,7 @@ export class KimiCliAgentRuntime implements AgentRuntime {
     const args = [
       '--wire',
       '--yolo',
+      '--thinking',
       '--agent-file',
       agentFilePath,
       '--session',
