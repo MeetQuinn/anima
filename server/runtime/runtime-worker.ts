@@ -177,6 +177,9 @@ export class AgentRuntimeWorker {
         workerId: this.workerId,
       });
       await this.notifyItemStarted(context);
+      if (context.item.handling.resumeReason === 'runtime_restart') {
+        await this.recordRestartResumeActivity(context);
+      }
       const result = await this.runProviderWithCrashRetries({
         context,
         handle,
@@ -346,6 +349,19 @@ export class AgentRuntimeWorker {
               retryable: processCrash && retryAttempts < PROVIDER_CRASH_MAX_RETRIES,
             }
           : {}),
+      },
+    );
+  }
+
+  private async recordRestartResumeActivity(context: RuntimeItemContext): Promise<void> {
+    await recordRuntimeEvent(
+      { agentId: this.options.agentId },
+      this.options.agentRuntime.kind,
+      this.options.agentRuntime.env,
+      {
+        eventType: 'runtime.restart_resumed',
+        itemId: context.item.id,
+        message: 'Resumed after restart',
       },
     );
   }
@@ -554,7 +570,7 @@ export class AgentRuntimeWorker {
       abortReason === 'idle_timeout' ? { timeoutMs: this.idleTimeoutMs } : undefined,
     );
     if (abortReason === 'restart_drain') {
-      await this.queue.requeue(context.item.id);
+      await this.queue.requeue(context.item.id, { resumeReason: 'runtime_restart' });
       return;
     }
     await this.queue.fail(context.item.id);

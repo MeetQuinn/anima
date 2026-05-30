@@ -174,8 +174,8 @@ export class WakeQueueStore {
     });
   }
 
-  async requeue(itemId: string): Promise<void> {
-    await this.replaceItemWithTimestamp(itemId, requeuedItem);
+  async requeue(itemId: string, options: { resumeReason?: 'runtime_restart' } = {}): Promise<void> {
+    await this.replaceItemWithTimestamp(itemId, (item, now) => requeuedItem(item, now, options));
   }
 
   async requestStop(itemId: string): Promise<InboxItem> {
@@ -253,17 +253,23 @@ function isSettledBefore(item: InboxItem, cutoffIso: string): boolean {
   return settledAt < cutoffIso;
 }
 
-function requeuedItem(item: InboxItem, now: string): InboxItem {
+function requeuedItem(
+  item: InboxItem,
+  now: string,
+  options: { resumeReason?: 'runtime_restart' } = {},
+): InboxItem {
   const handling = { ...item.handling };
   delete handling.startedAt;
   delete handling.workerId;
   delete handling.settledAt;
   delete handling.drainRequestedAt;
   delete handling.drainTimeoutMs;
+  delete handling.resumeReason;
   return {
     ...item,
     handling: {
       ...handling,
+      ...(options.resumeReason ? { resumeReason: options.resumeReason } : {}),
       status: 'queued',
       updatedAt: now,
     },

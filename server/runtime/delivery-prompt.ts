@@ -42,6 +42,12 @@ export interface CodeAgentPromptContext {
  *   }
  */
 export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgentPromptContext = {}): string {
+  if (event.handling.resumeReason === 'runtime_restart') {
+    return [
+      'Anima system message: runtime restarted while this task was in progress.',
+      'Continue the same task from the current session; do not repeat completed external side effects.',
+    ].join('\n');
+  }
   if (event.kind === 'reminder') {
     return formatReminderForPrompt(event, context);
   }
