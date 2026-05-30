@@ -138,6 +138,7 @@ export default function RuntimeUpgradeRow() {
   const inProgress = phase === 'applying' || op === 'scheduled' || op === 'running';
   const completedAt = status.operation.completedAt;
   const failureFresh = op === 'failed' && isFailureFresh(completedAt);
+  const checkFailed = checkMutation.isError;
   const checkAction = !inProgress ? (
     <CheckNowButton
       checking={checkMutation.isPending}
@@ -194,6 +195,7 @@ export default function RuntimeUpgradeRow() {
         >
           Update check unavailable
         </span>
+        {checkFailed && <CheckFailedLabel />}
       </UpdateLabelRow>
     );
   } else if (status.state === 'available' && target) {
@@ -204,6 +206,7 @@ export default function RuntimeUpgradeRow() {
         error={applyError}
         onUpgrade={requestUpgrade}
         action={checkAction}
+        checkFailed={checkFailed}
       />
     );
   } else {
@@ -217,6 +220,7 @@ export default function RuntimeUpgradeRow() {
             · {resumedText(upgradeResumed)}
           </span>
         )}
+        {checkFailed && <CheckFailedLabel />}
       </UpdateLabelRow>
     );
   }
@@ -248,12 +252,14 @@ function AvailableCard({
   error,
   onUpgrade,
   action,
+  checkFailed,
 }: {
   currentVersion: string;
   target: string;
   error: string | null;
   onUpgrade: () => void;
   action?: React.ReactNode;
+  checkFailed?: boolean;
 }) {
   const long = isLongPair(currentVersion, target);
   return (
@@ -287,6 +293,11 @@ function AvailableCard({
           Upgrade &amp; restart
         </button>
         {error && <p className="mt-1.5 font-sans text-[11px] text-health-error">{error}</p>}
+        {checkFailed && (
+          <p className="mt-1.5 font-sans text-[11px] text-text-subtle">
+            Check failed — showing last known.
+          </p>
+        )}
       </div>
     </div>
   );
@@ -410,6 +421,14 @@ function CheckNowButton({
     >
       <RefreshCw aria-hidden className={`h-3.5 w-3.5 ${checking ? 'animate-spin' : ''}`} />
     </button>
+  );
+}
+
+function CheckFailedLabel() {
+  return (
+    <span className="font-sans text-[11px] text-text-subtle">
+      Check failed — showing last known.
+    </span>
   );
 }
 
