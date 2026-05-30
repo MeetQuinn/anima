@@ -10,14 +10,33 @@ import { queryKeys } from '@/lib/query-keys';
 import { TreeRow, ancestorsOf, matchesFilter } from './FileTree';
 import { FileContent, BreadcrumbPath, FileToolbar, TocButton, extractToc } from './FileViewer';
 
+const expandedDirsByKb = new Map<string, string[]>();
+const lastViewedFileByKb = new Map<string, string>();
+
+function restoredExpandedDirs(kbId: string, filePath: string | null): Set<string> {
+  const expanded = new Set(expandedDirsByKb.get(kbId) ?? []);
+  const pathToReveal = filePath ?? lastViewedFileByKb.get(kbId) ?? null;
+  for (const ancestor of ancestorsOf(pathToReveal)) expanded.add(ancestor);
+  return expanded;
+}
+
+function cacheExpandedDirs(kbId: string, expanded: Set<string>): void {
+  expandedDirsByKb.set(kbId, [...expanded]);
+}
+
 export default function Kb() {
   // Route params: id from /kb/:id, splat (*) for the file path.
   const { id: idParam, '*': splatPath } = useParams<{ id: string; '*'?: string }>();
   const id = idParam!;
   const filePath = splatPath || null;
+
+  return <KbContent key={id} id={id} filePath={filePath} />;
+}
+
+function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
   const navigate = useNavigate();
 
-  const [expanded, setExpanded] = useState<Set<string>>(() => ancestorsOf(filePath));
+  const [expanded, setExpanded] = useState<Set<string>>(() => restoredExpandedDirs(id, filePath));
   const [filterQuery, setFilterQuery] = useState('');
   const [treeWidth, setTreeWidth] = useState(() => {
     try {
@@ -94,15 +113,36 @@ export default function Kb() {
   // Effects
   // ---------------------------------------------------------------------------
 
-  // Open tree to deep-linked file when path changes.
+  // Open the tree to deep-linked files and remember the last file per KB so
+  // back-to-files returns to the same branch instead of a reset tree.
   useEffect(() => {
     if (!filePath) return;
-    setTimeout(() => setExpanded((prev) => {
-      const next = new Set(prev);
-      for (const a of ancestorsOf(filePath)) next.add(a);
-      return next;
-    }), 0);
-  }, [filePath]);
+    lastViewedFileByKb.set(id, filePath);
+    const t = setTimeout(() => {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        for (const a of ancestorsOf(filePath)) next.add(a);
+        cacheExpandedDirs(id, next);
+        return next;
+      });
+    }, 0);
+    return () => clearTimeout(t);
+  }, [id, filePath]);
+
+  // When the file panel returns to the tree, keep the last-opened row in view.
+  // This is intentionally transient/in-memory, not a durable preference.
+  const rowToRestore = filePath ? null : (lastViewedFileByKb.get(id) ?? null);
+  useEffect(() => {
+    if (filterQuery || !tree || !rowToRestore) return;
+    const t = setTimeout(() => {
+      const rows = Array.from(
+        treeRef.current?.querySelectorAll<HTMLElement>('[data-tree-row][data-type="file"]') ?? [],
+      );
+      const row = rows.find((candidate) => candidate.dataset.path === rowToRestore);
+      row?.scrollIntoView({ block: 'center' });
+    }, 0);
+    return () => clearTimeout(t);
+  }, [expanded, filterQuery, rowToRestore, tree]);
 
   // ---------------------------------------------------------------------------
   // Handlers
@@ -115,12 +155,14 @@ export default function Kb() {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
       else next.add(path);
+      cacheExpandedDirs(id, next);
       return next;
     });
-  }, []);
+  }, [id]);
 
   const selectFile = useCallback(
     (path: string) => {
+      lastViewedFileByKb.set(id, path);
       navigate(buildKbPath({ id, filePath: path }));
     },
     [id, navigate],
@@ -344,7 +386,7 @@ export default function Kb() {
                 node={node}
                 depth={0}
                 expanded={expanded}
-                selectedPath={filePath}
+                selectedPath={filePath ?? rowToRestore}
                 filterQuery={filterQuery || undefined}
                 onToggleDir={toggleDir}
                 onSelectFile={selectFile}
