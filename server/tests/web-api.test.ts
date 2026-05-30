@@ -1179,8 +1179,8 @@ test('web API exposes Slack manifest update flow and bumps version after scoped 
 });
 
 test('web API sets Slack owner and queues onboarding wake-up', async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-agent-operator-test-'));
-  const homeDir = await mkdtemp(join(tmpdir(), 'anima-web-api-agent-operator-home-'));
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-agent-owner-test-'));
+  const homeDir = await mkdtemp(join(tmpdir(), 'anima-web-api-agent-owner-home-'));
   const slackCalls: Array<{ body: Record<string, string>; method: string }> = [];
   const slackApi = await startSlackApiMock((method, body) => {
     slackCalls.push({ method, body: slackRequestBody(body) });
@@ -1189,7 +1189,7 @@ test('web API sets Slack owner and queues onboarding wake-up', async () => {
         ok: true,
         members: [
           {
-            id: 'U-operator',
+            id: 'U-owner',
             name: 'iris',
             real_name: 'Iris Lead',
             profile: { display_name: 'Iris', image_72: 'https://example.test/iris.png' },
@@ -1200,7 +1200,7 @@ test('web API sets Slack owner and queues onboarding wake-up', async () => {
       };
     }
     if (method === 'auth.test') return { ok: true, team_id: 'T-demo' };
-    if (method === 'conversations.open') return { ok: true, channel: { id: 'D-operator' } };
+    if (method === 'conversations.open') return { ok: true, channel: { id: 'D-owner' } };
     throw new Error(`unexpected Slack API method ${method}`);
   });
   const previousSlackApiUrl = process.env.ANIMA_SLACK_API_URL;
@@ -1221,10 +1221,10 @@ test('web API sets Slack owner and queues onboarding wake-up', async () => {
         const usersRes = await fetch(`${base}/api/agents/anima/slack/users`);
         assert.equal(usersRes.status, 200);
         const usersBody = (await usersRes.json()) as { users: Array<{ displayName: string; slackUserId: string }> };
-        assert.deepEqual(usersBody.users.map((user) => user.slackUserId), ['U-operator']);
+        assert.deepEqual(usersBody.users.map((user) => user.slackUserId), ['U-owner']);
 
         const setOwner = await fetch(`${base}/api/agents/anima/slack/owner`, {
-          body: JSON.stringify({ slackUserId: 'U-operator' }),
+          body: JSON.stringify({ slackUserId: 'U-owner' }),
           headers: { 'content-type': 'application/json' },
           method: 'POST',
         });
@@ -1232,25 +1232,25 @@ test('web API sets Slack owner and queues onboarding wake-up', async () => {
         const setOwnerBody = (await setOwner.json()) as {
           owner?: { displayName?: string; handle?: string; onboardingPromptedAt?: string; slackUserId?: string };
         };
-        assert.equal(setOwnerBody.owner?.slackUserId, 'U-operator');
+        assert.equal(setOwnerBody.owner?.slackUserId, 'U-owner');
         assert.equal(setOwnerBody.owner?.displayName, 'Iris');
         assert.equal(setOwnerBody.owner?.handle, 'iris');
         assert.match(setOwnerBody.owner?.onboardingPromptedAt ?? '', /^\d{4}-/);
 
         const items = await new WakeQueueService('anima').list();
-        const onboarding = items.find((item) => item.id === 'agent-onboarding:anima:U-operator');
+        const onboarding = items.find((item) => item.id === 'agent-onboarding:anima:U-owner');
         assert.equal(onboarding?.kind, 'onboarding');
-        assert.equal(onboarding?.kind === 'onboarding' ? onboarding.channelId : undefined, 'D-operator');
+        assert.equal(onboarding?.kind === 'onboarding' ? onboarding.channelId : undefined, 'D-owner');
         assert.equal(onboarding?.kind === 'onboarding' ? onboarding.teamId : undefined, 'T-demo');
-        assert.equal(onboarding?.kind === 'onboarding' ? onboarding.operator.slackUserId : undefined, 'U-operator');
-        assert.match(onboarding?.kind === 'onboarding' ? onboarding.text : '', /<@U-operator>/);
+        assert.equal(onboarding?.kind === 'onboarding' ? onboarding.operator.slackUserId : undefined, 'U-owner');
+        assert.match(onboarding?.kind === 'onboarding' ? onboarding.text : '', /<@U-owner>/);
         assert.match(onboarding?.kind === 'onboarding' ? onboarding.text : '', /You've been set up here/);
         assert.match(onboarding?.kind === 'onboarding' ? onboarding.text : '', /Your owner is Iris/);
         assert.match(onboarding?.kind === 'onboarding' ? onboarding.text : '', /MEMORY\.md/);
         assert.match(onboarding?.kind === 'onboarding' ? onboarding.text : '', /introduce yourself to Iris/);
 
         const openCalls = slackCalls.filter((call) => call.method === 'conversations.open');
-        assert.deepEqual(openCalls.map((call) => call.body['users']), ['U-operator']);
+        assert.deepEqual(openCalls.map((call) => call.body['users']), ['U-owner']);
       } finally {
         server.close();
       }

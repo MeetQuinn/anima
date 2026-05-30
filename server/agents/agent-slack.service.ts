@@ -200,7 +200,7 @@ export class AgentSlackService {
 
     const mention = `<@${owner.slackUserId}>`;
     const ownerName = owner.displayName?.trim()
-      || operatorHandleLabel(owner.handle)
+      || ownerHandleLabel(owner.handle)
       || mention;
     const now = nowIso();
     const textLines = [
@@ -248,7 +248,7 @@ function requireBotToken(agent: AgentConfig): string {
   return token;
 }
 
-function operatorHandleLabel(handle: string | undefined): string | undefined {
+function ownerHandleLabel(handle: string | undefined): string | undefined {
   const trimmed = handle?.trim();
   if (!trimmed) return undefined;
   return trimmed.startsWith('@') ? trimmed : `@${trimmed}`;

@@ -26,7 +26,7 @@ Anima is not a skill marketplace, a generic provider platform, or a replacement 
 
 - **Team**: the human team plus its AI agent team, operating in Slack over a shared body of knowledge.
 - **Knowledge Base**: a registered knowledge root. Humans govern it, agents read and write it, and git can preserve the compounding history of decisions, notes, and artifacts.
-- **Agent**: a durable Slack teammate with a name, role, Slack app connection, provider config, operator, and home.
+- **Agent**: a durable Slack teammate with a name, role, Slack app connection, provider config, owner, and home.
 - **Home**: the agent's working seat inside a Knowledge Base. It contains `MEMORY.md`, notes, runtime scratch, and agent-specific context; it is not itself the whole Knowledge Base.
 - **Inbox item**: one durable unit of work for an agent. Current sources are Slack messages, scheduled reminders, onboarding wakes, and follow-ups appended to an active run.
 - **Session**: Anima's long-lived product continuity for an agent. It is not a Slack thread and not a provider process; it ties together inbox history, activity history, provider session ids, and token/accounting state.

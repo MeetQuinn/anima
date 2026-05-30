@@ -161,43 +161,43 @@ test('buildCodeAgentDeliveryPrompt renders scheduled reminders as the current ev
 
 test('buildCodeAgentDeliveryPrompt renders onboarding as an onboarding wake, not a Slack DM', () => {
   const text = buildCodeAgentDeliveryPrompt({
-    channelId: 'D-operator',
+    channelId: 'D-owner',
     handling: {
       createdAt: '2026-01-01T00:00:00.000Z',
       queuedAt: '2026-01-01T00:00:00.000Z',
       status: 'queued',
       updatedAt: '2026-01-01T00:00:00.000Z',
     },
-    id: 'agent-onboarding:anima:U-operator',
+    id: 'agent-onboarding:anima:U-owner',
     kind: 'onboarding',
     operator: {
       displayName: 'Iris',
       handle: 'iris',
-      slackUserId: 'U-operator',
+      slackUserId: 'U-owner',
     },
     receivedAt: '2026-01-01T00:00:00.000Z',
     teamId: 'T-demo',
-    text: 'Iris (<@U-operator>) just set you up here.',
+    text: 'Iris (<@U-owner>) just set you up here.',
   });
 
   assert.match(text, /^Agent onboarding:/);
-  assert.match(text, /\[operator=Iris \(@iris, <@U-operator>\) channel=D-operator time=2026-01-01T00:00:00\.000Z\]/);
-  assert.match(text, /Use `anima message send --channel D-operator` to reply to Iris/);
+  assert.match(text, /\[owner=Iris \(@iris, <@U-owner>\) channel=D-owner time=2026-01-01T00:00:00\.000Z\]/);
+  assert.match(text, /Use `anima message send --channel D-owner` to reply to Iris/);
   assert.doesNotMatch(text, /^New Slack message:/);
 });
 
 test('buildCodeAgentDeliveryPrompt treats legacy Slack-shaped onboarding as onboarding', () => {
   const event = makeSlackEvent({
-    channelId: 'D-operator',
-    eventId: 'agent-onboarding:anima:U-operator',
+    channelId: 'D-owner',
+    eventId: 'agent-onboarding:anima:U-owner',
     teamId: 'T-demo',
-    text: 'Iris (<@U-operator>) just set you up here.',
-    userId: 'U-operator',
+    text: 'Iris (<@U-owner>) just set you up here.',
+    userId: 'U-owner',
   });
   const text = buildCodeAgentDeliveryPrompt(event);
 
   assert.match(text, /^Agent onboarding:/);
-  assert.match(text, /\[operator=<@U-operator> channel=D-operator time=/);
+  assert.match(text, /\[owner=<@U-owner> channel=D-owner time=/);
   assert.doesNotMatch(text, /^New Slack message:/);
 });
 
