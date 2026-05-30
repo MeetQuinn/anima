@@ -18,8 +18,18 @@ export default function Kb() {
 
   const [expanded, setExpanded] = useState<Set<string>>(() => ancestorsOf(filePath));
   const [filterQuery, setFilterQuery] = useState('');
+  const [treeWidth, setTreeWidth] = useState(() => {
+    try {
+      const saved = localStorage.getItem('kb.treeWidth');
+      if (saved) return Math.max(180, Math.min(480, Number(saved)));
+    } catch { /* ignore */ }
+    return 256; // default matches md:w-64
+  });
+  const [resizing, setResizing] = useState(false);
   const filterInputRef = useRef<HTMLInputElement>(null);
   const treeRef = useRef<HTMLDivElement>(null);
+  const startXRef = useRef(0);
+  const startWidthRef = useRef(256);
 
   // ---------------------------------------------------------------------------
   // Queries
@@ -31,7 +41,11 @@ export default function Kb() {
     isLoading: kbLoading,
   } = useQuery({ queryKey: queryKeys.kb(id), queryFn: () => fetchKb(id) });
 
-  const { data: tree, error: treeError } = useQuery({
+  const {
+    data: tree,
+    error: treeError,
+    isLoading: treeLoading,
+  } = useQuery({
     queryKey: queryKeys.kbTree(id),
     queryFn: () => fetchKbTree(id),
     refetchInterval: 30_000,
@@ -58,7 +72,11 @@ export default function Kb() {
   }, [tree]);
 
   // Fetch README when no file is selected and one was found.
-  const { data: readmeFile, isLoading: readmeLoading } = useQuery({
+  const {
+    data: readmeFile,
+    isLoading: readmeLoading,
+    error: readmeError,
+  } = useQuery({
     queryKey: queryKeys.kbFile(id, readmePath ?? ''),
     queryFn: () => fetchKbFile(id, readmePath!),
     enabled: !filePath && !!readmePath,
@@ -106,6 +124,38 @@ export default function Kb() {
     },
     [id, navigate],
   );
+
+  // ---------------------------------------------------------------------------
+  // Tree width resize
+  // ---------------------------------------------------------------------------
+
+  const startResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setResizing(true);
+    startXRef.current = e.clientX;
+    startWidthRef.current = treeWidth;
+  }, [treeWidth]);
+
+  useEffect(() => {
+    if (!resizing) return;
+    function onMove(e: MouseEvent) {
+      const delta = e.clientX - startXRef.current;
+      const next = Math.max(180, Math.min(480, startWidthRef.current + delta));
+      setTreeWidth(next);
+    }
+    function onUp() {
+      setResizing(false);
+      try {
+        localStorage.setItem('kb.treeWidth', String(treeWidth));
+      } catch { /* ignore */ }
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [resizing, treeWidth]);
 
   // Keyboard navigation for the file tree: Up/Down between rows, Right/Left
   // expand/collapse dirs, Enter to select files or toggle dirs.
@@ -222,13 +272,16 @@ export default function Kb() {
         {/* Left panel */}
         <nav
           className={[
-            'flex shrink-0 flex-col overflow-hidden border-r border-border-soft bg-surface-raised/40',
-            mobileShowRight ? 'hidden md:flex md:w-64' : 'w-full md:w-64',
+            'flex shrink-0 flex-col bg-surface-raised/40',
+            mobileShowRight
+              ? 'hidden md:flex md:w-[var(--kb-tree-width)]'
+              : 'w-full md:flex md:w-[var(--kb-tree-width)]',
           ].join(' ')}
+          style={{ '--kb-tree-width': `${treeWidth}px` } as React.CSSProperties}
         >
           {/* Filter input — pinned above the file tree */}
-          <div className="shrink-0 border-b border-border-soft px-3 py-2">
-            <div className="flex items-center gap-1.5 rounded-md border border-border-soft bg-surface-elevated/40 px-2 py-1.5">
+          <div className="flex shrink-0 items-center border-b border-border-soft px-3 min-h-[44px]">
+            <div className="flex items-center gap-1.5 rounded-md border border-border-soft bg-surface-elevated/40 px-2 py-1.5 w-full">
               <Search className="h-3 w-3 shrink-0 text-text-subtle" />
               <input
                 ref={filterInputRef}
@@ -301,6 +354,19 @@ export default function Kb() {
           </div>
         </nav>
 
+        {/* Resizer — wide hit target, thin visual line */}
+        <div
+          onMouseDown={startResize}
+          className="hidden md:flex shrink-0 w-4 cursor-col-resize items-center justify-center"
+        >
+          <div
+            className={[
+              'h-full w-px transition-colors',
+              resizing ? 'bg-accent' : 'bg-border-soft hover:bg-accent/50',
+            ].join(' ')}
+          />
+        </div>
+
         {/* Right panel */}
         <section
           className={[
@@ -334,15 +400,23 @@ export default function Kb() {
                 />
               </div>
             </div>
+          ) : treeLoading ? (
+            <div className="flex h-full flex-col items-start justify-start p-8">
+              <div className="font-sans text-[13px] text-text-subtle">Loading files…</div>
+            </div>
           ) : readmePath ? (
             /* README default */
             <div className="flex h-full flex-col">
-              <div className="flex shrink-0 items-center gap-2 border-b border-border-soft px-5 py-2">
+              <div className="flex shrink-0 items-center gap-2 border-b border-border-soft px-5 min-h-[44px]">
                 <span className="font-mono text-[11px] text-text-subtle truncate">{readmePath}</span>
               </div>
               <div className="min-h-0 flex-1 overflow-hidden flex flex-col">
                 {readmeLoading ? (
                   <div className="p-6 font-sans text-[13px] text-text-subtle">Loading…</div>
+                ) : readmeError ? (
+                  <div className="p-6 font-sans text-[13px] text-health-error">
+                    Could not load README: {readmeError instanceof Error ? readmeError.message : String(readmeError)}
+                  </div>
                 ) : readmeFile ? (
                   <FileContent
                     id={id}
@@ -351,7 +425,9 @@ export default function Kb() {
                     loading={false}
                     error={null}
                   />
-                ) : null}
+                ) : (
+                  <div className="p-6 font-sans text-[13px] text-text-subtle">README not found.</div>
+                )}
               </div>
             </div>
           ) : (

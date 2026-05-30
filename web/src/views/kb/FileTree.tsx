@@ -10,6 +10,7 @@ import {
   Image as ImageIcon,
   Globe,
 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { kbFileKind } from '@shared/kb-file-types';
 import type { KbFileKind } from '@shared/kb-file-types';
 import type { KbTreeNode } from '@shared/kb';
@@ -32,6 +33,21 @@ export function matchesFilter(node: KbTreeNode, query: string): boolean {
   const q = query.toLowerCase();
   if (node.type === 'file') return node.name.toLowerCase().includes(q);
   return node.children?.some((c) => matchesFilter(c, query)) ?? false;
+}
+
+function useIsTruncated<T extends HTMLElement>(): [React.RefObject<T | null>, boolean] {
+  const ref = useRef<T | null>(null);
+  const [truncated, setTruncated] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => setTruncated(el.scrollWidth > el.clientWidth);
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, truncated];
 }
 
 function KindIcon({ kind, className }: { kind: KbFileKind; className: string }) {
@@ -84,6 +100,7 @@ export function TreeRow({
   onSelectFile: (path: string) => void;
 }) {
   const isFiltering = !!filterQuery;
+  const [nameRef, isTruncated] = useIsTruncated<HTMLSpanElement>();
 
   // When filtering, skip nodes that don't match.
   if (isFiltering && !matchesFilter(node, filterQuery)) return null;
@@ -104,7 +121,8 @@ export function TreeRow({
           data-path={node.path}
           data-type="dir"
           style={depthStyle}
-          className="tree-row flex w-full items-center gap-1.5 py-1.5 pr-2 text-left font-sans text-[15px] text-text-muted hover:bg-surface-elevated/60 md:py-1 md:text-[14px]"
+          title={isTruncated ? node.name : undefined}
+          className="tree-row group flex w-full items-center gap-1.5 py-1.5 pr-2 text-left font-sans text-[15px] text-text-muted hover:bg-surface-elevated/60 md:py-1 md:text-[14px]"
         >
           {isOpen ? (
             <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
@@ -116,7 +134,7 @@ export function TreeRow({
           ) : (
             <FolderClosed className="h-3.5 w-3.5 shrink-0 text-text-subtle" />
           )}
-          <span className="truncate">{node.name}</span>
+          <span ref={nameRef} className="truncate">{node.name}</span>
         </button>
         {isOpen &&
           node.children?.map((child) => (
@@ -144,8 +162,9 @@ export function TreeRow({
       data-path={node.path}
       data-type="file"
       style={depthStyle}
+      title={isTruncated ? node.name : undefined}
       className={[
-        'tree-row flex w-full items-center gap-1.5 py-1.5 pr-2 text-left font-sans text-[15px] transition-colors md:py-1 md:text-[14px]',
+        'tree-row group flex w-full items-center gap-1.5 py-1.5 pr-2 text-left font-sans text-[15px] transition-colors md:py-1 md:text-[14px]',
         active
           ? 'bg-accent/10 text-accent font-medium'
           : 'text-text-muted hover:bg-surface-elevated/60',
@@ -153,7 +172,7 @@ export function TreeRow({
     >
       <span className="h-3.5 w-3.5 shrink-0" aria-hidden />
       <KindIcon kind={kbFileKind(node.name)} className={iconClass} />
-      <span className="truncate">
+      <span ref={nameRef} className="truncate">
         <HighlightMatch text={node.name} query={filterQuery ?? ''} />
       </span>
     </button>
