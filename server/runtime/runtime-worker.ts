@@ -16,10 +16,8 @@ import { clearActiveRuntimeItem, setActiveRuntimeItem } from './active-item.js';
 import {
   recordRuntimeAborted,
   recordRuntimeEvent,
-  recordRuntimeFollowupAppended,
-  recordRuntimeFollowupFailed,
-  recordRuntimePending,
 } from './activity.js';
+import { appendQueuedFollowupsUntilFinished } from './followup-appender.js';
 import { recordFinalRuntimeFailure, runProviderWithCrashRetries } from './provider-runner.js';
 
 // Executor for one agent: claims queued inbox items, runs the provider runtime,
@@ -27,12 +25,6 @@ import { recordFinalRuntimeFailure, runProviderWithCrashRetries } from './provid
 const IDLE_TIMEOUT_MS_DEFAULT = PROVIDER_IDLE_TIMEOUT_MS_DEFAULT;
 const IDLE_CHECK_INTERVAL_FLOOR_MS = 50;
 const IDLE_CHECK_INTERVAL_CAP_MS = 1_000;
-const FOLLOWUP_POLL_MS = 100;
-
-type RuntimeFollowupDecision =
-  | { status: 'appended'; text?: string }
-  | { status: 'rejected' }
-  | { error: string; status: 'failed' };
 
 interface ActiveItemHandle {
   abortController: AbortController;
@@ -163,7 +155,23 @@ export class AgentRuntimeWorker {
     let followupError: unknown;
     try {
       context = await runtimeContextForItemId(item.id, this.options);
-      followupLoop = this.appendQueuedFollowupsUntilFinished(context, itemAbort.signal, handle).catch((error: unknown) => {
+      const activeContext = context;
+      followupLoop = appendQueuedFollowupsUntilFinished({
+        activeContext,
+        agentRuntime: this.options.agentRuntime,
+        itemDone: itemAbort.signal,
+        logger: this.logger,
+        onFollowupAccepted: () => this.noteProviderActivity(handle),
+        onFollowupAppended: async (followupContext, _text) => {
+          handle.appendedFollowups.push(followupContext);
+          await this.notifyItemFollowupAppended(activeContext, followupContext);
+        },
+        onFollowupSettled: (followupContext) => this.notifySettledItems([followupContext]),
+        queue: this.queue,
+        runtimeBridge: this.runtimeBridge,
+        runtimeConfig: this.options,
+        workerId: this.workerId,
+      }).catch((error: unknown) => {
         followupError = error;
       });
       const agentConfig = await defaultAgentRegistryService.serviceFor(this.options.agentId).getConfig();
@@ -352,94 +360,6 @@ export class AgentRuntimeWorker {
     this.activeItem = undefined;
   }
 
-  private async appendQueuedFollowupsUntilFinished(activeContext: RuntimeItemContext, itemDone: AbortSignal, handle: ActiveItemHandle): Promise<void> {
-    const skippedItemIds = new Set<string>();
-    while (!itemDone.aborted) {
-      if (await isRestartDrainActive()) {
-        await sleep(FOLLOWUP_POLL_MS, itemDone);
-        continue;
-      }
-      const item = await this.queue.claimNextFollowup({
-        activeItemId: activeContext.item.id,
-        excludedItemIds: skippedItemIds,
-        workerId: this.workerId,
-      });
-      if (!item) {
-        await sleep(FOLLOWUP_POLL_MS, itemDone);
-        continue;
-      }
-      await this.tryOneFollowupItem(activeContext, item, handle, itemDone, skippedItemIds);
-    }
-  }
-
-  private async tryOneFollowupItem(
-    activeContext: RuntimeItemContext,
-    item: InboxItem,
-    handle: ActiveItemHandle,
-    itemDone: AbortSignal,
-    skippedItemIds: Set<string>,
-  ): Promise<void> {
-    let appended = false;
-    let context: RuntimeItemContext | undefined;
-    try {
-      context = await runtimeContextForItemId(item.id, this.options);
-      const followup = await appendRuntimeFollowup({
-        activeContext,
-        agentRuntime: this.options.agentRuntime,
-        context,
-        runtimeBridge: this.runtimeBridge,
-      });
-      if (followup.status === 'appended') {
-        await this.recordFollowupAppendSuccess(activeContext, context, followup.text, handle);
-        appended = true;
-        return;
-      }
-      await this.recordFollowupAppendSkip(activeContext, item, followup);
-      skippedItemIds.add(item.id);
-      await this.queue.requeue(item.id);
-      await sleep(FOLLOWUP_POLL_MS, itemDone);
-    } catch (error) {
-      skippedItemIds.add(item.id);
-      await this.queue.requeue(item.id);
-      await recordRuntimeFollowupFailed(
-        { agentId: this.options.agentId },
-        {
-          activeItemId: activeContext.item.id,
-          agentRuntime: this.options.agentRuntime.kind,
-          error: errorMessage(error),
-          reason: 'followup_failed',
-        },
-      );
-      this.logger.error(`Runtime worker follow-up append failed for item ${item.id}: ${errorMessage(error)}`);
-      await sleep(FOLLOWUP_POLL_MS, itemDone);
-    } finally {
-      const current = context && !appended ? await this.queue.find(context.item.id).catch(() => undefined) : undefined;
-      if (context && (current?.handling.status === 'completed' || current?.handling.status === 'failed')) {
-        await this.notifySettledItems([context]);
-      }
-    }
-  }
-
-  private async recordFollowupAppendSuccess(
-    activeContext: RuntimeItemContext,
-    context: RuntimeItemContext,
-    text: string | undefined,
-    handle: ActiveItemHandle,
-  ): Promise<void> {
-    this.noteProviderActivity(handle);
-    await this.queue.complete(context.item.id);
-    handle.appendedFollowups.push(context);
-    await this.notifyItemFollowupAppended(activeContext, context);
-    this.logger.log(JSON.stringify({
-      activeItemId: activeContext.item.id,
-      agentRuntime: this.options.agentRuntime.kind,
-      event: 'runtime.followup_appended',
-      itemId: context.item.id,
-      text,
-      workerId: this.workerId,
-    }, null, 2));
-  }
-
   private async notifyItemStarted(context: RuntimeItemContext): Promise<void> {
     try {
       await this.options.onItemStarted?.(context);
@@ -472,26 +392,6 @@ export class AgentRuntimeWorker {
     }
   }
 
-  private async recordFollowupAppendSkip(
-    activeContext: RuntimeItemContext,
-    item: InboxItem,
-    followup: RuntimeFollowupDecision,
-  ): Promise<void> {
-    if (followup.status === 'rejected') {
-      await recordRuntimePending(
-        { agentId: this.options.agentId },
-        {
-          activeItemId: activeContext.item.id,
-          agentRuntime: this.options.agentRuntime.kind,
-          reason: 'followup_rejected',
-        },
-      );
-    }
-    if (followup.status === 'failed') {
-      this.logger.error(`Runtime worker follow-up append failed for item ${item.id}: ${followup.error}`);
-    }
-  }
-
   private async settleAbortedItem(context: RuntimeItemContext, abortReason: ItemStopReason): Promise<void> {
     await recordRuntimeAborted(
       { agentId: this.options.agentId },
@@ -517,42 +417,6 @@ function abortReasonOf(signal: AbortSignal): ItemStopReason | undefined {
     : undefined;
 }
 
-async function appendRuntimeFollowup(input: {
-  activeContext: RuntimeItemContext;
-  agentRuntime: AgentRuntime;
-  context: RuntimeItemContext;
-  runtimeBridge: AgentRuntimeBridge;
-}): Promise<RuntimeFollowupDecision> {
-  try {
-    const result = await input.agentRuntime.appendToActiveRun(await input.runtimeBridge.followupInput({
-      activeContext: input.activeContext,
-      context: input.context,
-    }));
-    if (!result.accepted) return { status: 'rejected' };
-    await recordRuntimeFollowupAppended(
-      { agentId: input.context.agentId },
-      {
-        activeItemId: input.activeContext.item.id,
-        agentRuntime: input.agentRuntime.kind,
-        text: result.text,
-      },
-    );
-    return { status: 'appended', text: result.text };
-  } catch (error) {
-    const message = errorMessage(error);
-    await recordRuntimeFollowupFailed(
-      { agentId: input.context.agentId },
-      {
-        activeItemId: input.activeContext.item.id,
-        agentRuntime: input.agentRuntime.kind,
-        error: message,
-        reason: 'followup_failed',
-      },
-    );
-    return { error: message, status: 'failed' };
-  }
-}
-
 function isWorkerAlive(workerId: string): boolean {
   const pidText = workerId.split(':').at(-1);
   const pid = pidText ? Number.parseInt(pidText, 10) : Number.NaN;
@@ -563,19 +427,6 @@ function isWorkerAlive(workerId: string): boolean {
   } catch {
     return false;
   }
-}
-
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.resolve();
-  return new Promise((resolve) => {
-    const done = () => {
-      clearTimeout(timer);
-      signal.removeEventListener('abort', done);
-      resolve();
-    };
-    const timer = setTimeout(done, ms);
-    signal.addEventListener('abort', done, { once: true });
-  });
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {

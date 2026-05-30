@@ -62,7 +62,7 @@ flowchart LR
 
 Workers claim durable inbox items and run them through the configured provider. Provider processes do not talk to Slack directly; they call `anima` tools so visible side effects are audited.
 
-Same-session follow-ups are a side path: while an item is running, the worker can claim a newly queued follow-up and ask the provider to append it to the active run. If the provider rejects the append, the item goes back to the queue and runs later.
+Same-session follow-ups are a side path: while an item is running, `followup-appender.ts` can claim a newly queued follow-up and ask the provider to append it to the active run. If the provider rejects the append, the item goes back to the queue and runs later.
 
 The provider's text result is internal. Anima does not automatically post it to Slack. If the spawned agent wants humans to see something, it must call an `anima` tool.
 
