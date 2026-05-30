@@ -198,7 +198,7 @@ export function printRuntimeStatus(status: RuntimeStatus): void {
   if (!status.installed) {
     console.log('runtime: not installed');
     console.log(`dir: ${status.paths.runtimeDir}`);
-    console.log('Run `npx @totoday/animactl start` to install and start the local runtime.');
+    console.log('Run `npx @meetquinn/animactl start` to install and start the local runtime.');
     return;
   }
   console.log(`runtime: ${status.packageName}@${status.version ?? 'unknown'}`);

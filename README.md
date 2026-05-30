@@ -29,13 +29,13 @@ Anima is the **teammate layer** around your coding agents: a durable Slack ident
 - **In scope:** identity · continuous memory · shared Knowledge Base · audited Slack I/O · scheduled wakeups · multi-agent teams — all running locally.
 - **Deliberately not:** not a model, not a hosted SaaS, not a data-integration platform, not a replacement for Claude Code / Codex / Kimi. Anima is the boundary around the tools you already run.
 
-| | Raw coding-agent session | Anima |
-|---|---|---|
-| **Who can use it** | One developer, in a terminal | **The whole team, via Slack @** |
-| **Memory** | Resets per session | **Continuous across DMs, channels, threads** |
-| **Team knowledge** | Locked in one session | **Shared Knowledge Base in git, compounding** |
-| **Side effects** | Raw output | **Audited tools + local activity trail** |
-| **Integration** | Manual | **Any Slack @mention wakes it** |
+|                           | Raw coding-agent session                                       | Anima                                                               |
+| ------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------- |
+| **Who can use it**        | One developer, in a terminal                                   | **The whole team, via Slack @**                                     |
+| **Memory**                | Resets per session                                             | **Continuous across DMs, channels, threads**                        |
+| **Team knowledge**        | Locked in one session                                          | **Shared Knowledge Base in git, compounding**                       |
+| **Side effects**          | Raw output                                                     | **Audited tools + local activity trail**                            |
+| **Integration**           | Manual                                                         | **Any Slack @mention wakes it**                                     |
 | **Where knowledge lives** | On each person's own machine — walks out the door when they do | **One shared team Knowledge Base in git — outlives any individual** |
 
 ## How it works
@@ -53,7 +53,7 @@ One command gets Anima running on your own machine. You'll need **Node.js 20+** 
 CLI (Claude Code, Codex, or Kimi) installed and logged in.
 
 ```bash
-npx @totoday/animactl start   # runtime + web control panel at http://127.0.0.1:4174
+npx @meetquinn/animactl start   # runtime + web control panel at http://127.0.0.1:4174
 ```
 
 This downloads the managed runtime into `~/.anima/runtime/current` and stores local config, state,
@@ -67,7 +67,7 @@ owner to introduce itself.
 To work on Anima itself, run it from a source checkout with an isolated repo-local home:
 
 ```bash
-git clone https://github.com/totoday/anima.git
+git clone https://github.com/MeetQuinn/anima.git
 cd anima
 pnpm install
 pnpm build

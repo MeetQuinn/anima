@@ -5,11 +5,11 @@ stable user installs isolated from each other.
 
 ## Environments
 
-| Environment | Code source | Anima home | Purpose |
-| --- | --- | --- | --- |
-| Development | Source checkout, usually `~/anima` | Repo-local `./.anima` or `~/.anima-dev` | Build and test Anima itself |
-| Dogfood | Pinned npm canary package | `~/.anima` for Anima's own live team | Run real usage before stable |
-| Stable user install | Pinned npm stable package | User's chosen home, normally `~/.anima` | External users |
+| Environment         | Code source                        | Anima home                              | Purpose                      |
+| ------------------- | ---------------------------------- | --------------------------------------- | ---------------------------- |
+| Development         | Source checkout, usually `~/anima` | Repo-local `./.anima` or `~/.anima-dev` | Build and test Anima itself  |
+| Dogfood             | Pinned npm canary package          | `~/.anima` for Anima's own live team    | Run real usage before stable |
+| Stable user install | Pinned npm stable package          | User's chosen home, normally `~/.anima` | External users               |
 
 Do not run dogfood or stable installs from a development checkout. A development rebuild should not
 be able to change the UI or server code used by a live install.
@@ -44,10 +44,10 @@ the package version that `npx` downloaded into `~/.anima/runtime/current`, then 
 that pinned runtime:
 
 ```bash
-npx @totoday/animactl start          # stable/latest channel user path
-npx @totoday/animactl@canary restart # dogfood path
-npx @totoday/animactl status
-npx @totoday/animactl stop
+npx @meetquinn/animactl start          # stable/latest channel user path
+npx @meetquinn/animactl@canary restart # dogfood path
+npx @meetquinn/animactl status
+npx @meetquinn/animactl stop
 ```
 
 The admin CLI exposes the lower-level runtime status/install commands:
@@ -66,7 +66,7 @@ repo-local `.anima`.
 Anima's own live install should run a pinned canary version, not a mutable checkout:
 
 ```bash
-npx @totoday/animactl@canary restart
+npx @meetquinn/animactl@canary restart
 ```
 
 Restarts should use drain-and-resume. If agents are active, the restart waits for each running

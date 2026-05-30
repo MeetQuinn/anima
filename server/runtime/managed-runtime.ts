@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-export const DEFAULT_RUNTIME_PACKAGE = '@totoday/animactl';
+export const DEFAULT_RUNTIME_PACKAGE = '@meetquinn/animactl';
 export const RUNTIME_METADATA_VERSION = 1;
 
 export interface RuntimePathOptions {

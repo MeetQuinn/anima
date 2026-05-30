@@ -22,10 +22,10 @@ merge point stays reviewable and reproducible.
 
 Anima uses npm versions plus npm dist-tags to separate dogfood builds from stable releases.
 
-| Channel | npm dist-tag | Example version | Who should use it |
-| --- | --- | --- | --- |
-| Canary | `canary` | `0.2.0-canary.20260529.36fa5d8` | Anima's own dogfood/staging installs |
-| Stable | `latest` | `0.1.3` | External users and default installs |
+| Channel | npm dist-tag | Example version                 | Who should use it                    |
+| ------- | ------------ | ------------------------------- | ------------------------------------ |
+| Canary  | `canary`     | `0.2.0-canary.20260529.36fa5d8` | Anima's own dogfood/staging installs |
+| Stable  | `latest`     | `0.1.3`                         | External users and default installs  |
 
 Optional later channels:
 
@@ -41,12 +41,12 @@ against the latest `main` snapshot.
 1. Open a pull request.
 2. Review and pass required checks.
 3. Merge to `main`.
-4. CI publishes an immutable `@totoday/animactl` canary package for that commit and updates the
+4. CI publishes an immutable `@meetquinn/animactl` canary package for that commit and updates the
    `canary` dist-tag.
 5. Anima dogfood/staging upgrades to that canary and runs it with real usage.
 6. Once the canary has behaved well enough, run the stable publish workflow for the same dogfooded
    source with the next semver version.
-7. CI publishes `@totoday/animactl` at that version and updates the `latest` dist-tag.
+7. CI publishes `@meetquinn/animactl` at that version and updates the `latest` dist-tag.
 
 Stable releases should be cut from source that already ran in dogfood. Early on, use the manual
 GitHub Actions workflow:
@@ -56,8 +56,8 @@ GitHub Actions workflow:
 3. Run it from the dogfooded branch or commit.
 4. After it publishes successfully, tag the same source as `v0.1.3`.
 
-The stable workflow publishes `@totoday/animactl` to `latest`. The canary path publishes
-`@totoday/animactl` to `canary` automatically on future merges to `main` once
+The stable workflow publishes `@meetquinn/animactl` to `latest`. The canary path publishes
+`@meetquinn/animactl` to `canary` automatically on future merges to `main` once
 `NPM_CANARY_PUBLISH_ENABLED=true` is set as a repository variable.
 
 ## Version Rules
@@ -79,7 +79,7 @@ Before publishing a stable release:
 - Confirm no local private data, credentials, `.anima/` homes, or personal paths are included.
 - Confirm the package version and git tag match.
 
-The npm runtime package, `@totoday/animactl`, should contain built artifacts (`dist/server`,
+The npm runtime package, `@meetquinn/animactl`, should contain built artifacts (`dist/server`,
 `dist/shared`, `dist/web`) so users do not need to build Anima to run it.
 
 ## GitHub Actions Setup
@@ -87,15 +87,22 @@ The npm runtime package, `@totoday/animactl`, should contain built artifacts (`d
 Workflows:
 
 - `.github/workflows/ci.yml`: runs build and fast tests on pull requests and `main`.
-- `.github/workflows/publish.yml`: publishes `@totoday/animactl`. `main` publishes `canary`;
+- `.github/workflows/publish.yml`: publishes `@meetquinn/animactl`. `main` publishes `canary`;
   `workflow_dispatch` publishes `latest`.
 
 Publishing uses npm Trusted Publishing, not a long-lived `NPM_TOKEN`. The npm trusted relationship
 is tied to the `publish.yml` workflow:
 
 ```bash
-npm trust github @totoday/animactl --repo totoday/anima --file publish.yml --allow-publish
+npm trust github @meetquinn/animactl --repo MeetQuinn/anima --file publish.yml --allow-publish
 ```
 
 Keep the workflow filename stable. If it changes, update the npm trusted publisher configuration
 before relying on CI publish.
+
+When moving the public package to a new npm scope, publish and verify the new package first. Then
+deprecate the old scoped package with a clear redirect message, for example:
+
+```bash
+npm deprecate @totoday/animactl "Anima's runtime now ships as @meetquinn/animactl. Use: npx @meetquinn/animactl start"
+```

@@ -76,15 +76,15 @@ test('managed runtime install writes package metadata', async () => {
   const rootDir = await mkdtemp(join(tmpdir(), 'anima-managed-runtime-test-'));
   try {
     const runtimeDir = join(rootDir, 'runtime', 'current');
-    assert.equal(packageSpecifier({ packageName: '@totoday/animactl', version: '0.1.0' }), '@totoday/animactl@0.1.0');
-    assert.equal(packageSpecifier({ packageName: '@totoday/animactl', channel: 'canary' }), '@totoday/animactl@canary');
+    assert.equal(packageSpecifier({ packageName: '@meetquinn/animactl', version: '0.1.0' }), '@meetquinn/animactl@0.1.0');
+    assert.equal(packageSpecifier({ packageName: '@meetquinn/animactl', channel: 'canary' }), '@meetquinn/animactl@canary');
     assert.throws(
-      () => packageSpecifier({ packageName: '@totoday/animactl', channel: 'canary', version: '0.1.0' }),
+      () => packageSpecifier({ packageName: '@meetquinn/animactl', channel: 'canary', version: '0.1.0' }),
       /Choose either --version or --channel/,
     );
 
     const result = await installManagedRuntime({
-      packageName: '@totoday/animactl',
+      packageName: '@meetquinn/animactl',
       runtimeDir,
       version: '0.1.0',
       runner: async (command, args, options) => {
@@ -96,14 +96,14 @@ test('managed runtime install writes package metadata', async () => {
           '--omit=dev',
           '--no-audit',
           '--fund=false',
-          '@totoday/animactl@0.1.0',
+          '@meetquinn/animactl@0.1.0',
         ]);
         assert.equal(options.cwd, runtimeDir);
-        const packageDir = join(runtimeDir, 'node_modules', '@totoday', 'animactl');
+        const packageDir = join(runtimeDir, 'node_modules', '@meetquinn', 'animactl');
         await mkdir(packageDir, { recursive: true });
         await writeFile(
           join(packageDir, 'package.json'),
-          `${JSON.stringify({ name: '@totoday/animactl', version: '0.1.0' }, null, 2)}\n`,
+          `${JSON.stringify({ name: '@meetquinn/animactl', version: '0.1.0' }, null, 2)}\n`,
           'utf8',
         );
         await mkdir(join(packageDir, 'dist', 'server', 'cli'), { recursive: true });
@@ -112,14 +112,14 @@ test('managed runtime install writes package metadata', async () => {
       },
     });
 
-    assert.equal(result.metadata.packageName, '@totoday/animactl');
+    assert.equal(result.metadata.packageName, '@meetquinn/animactl');
     assert.equal(result.metadata.version, '0.1.0');
-    assert.equal(result.metadata.specifier, '@totoday/animactl@0.1.0');
+    assert.equal(result.metadata.specifier, '@meetquinn/animactl@0.1.0');
 
-    const status = await readManagedRuntimeStatus({ packageName: '@totoday/animactl', runtimeDir });
+    const status = await readManagedRuntimeStatus({ packageName: '@meetquinn/animactl', runtimeDir });
     assert.equal(status.installed, true);
     assert.equal(status.version, '0.1.0');
-    assert.equal(status.metadata?.specifier, '@totoday/animactl@0.1.0');
+    assert.equal(status.metadata?.specifier, '@meetquinn/animactl@0.1.0');
   } finally {
     await rm(rootDir, { force: true, recursive: true });
   }
