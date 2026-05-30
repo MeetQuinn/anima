@@ -1,6 +1,6 @@
 import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Copy, Download, ExternalLink, List } from 'lucide-react';
+import { Copy, Download, ExternalLink, List, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Highlight, themes } from 'prism-react-renderer';
@@ -58,24 +58,54 @@ function slugify(text: string): string {
     .toLowerCase()
     .replace(/[^\w\s-]/g, '')
     .trim()
-    .replace(/\s+/g, '-');
+    .replace(/\s+/g, '-') || 'section';
 }
 
 interface TocEntry {
   depth: number;
   text: string;
   id: string;
+  line: number;
+}
+
+type HeadingNode = {
+  position?: {
+    start?: {
+      line?: number;
+    };
+  };
+};
+
+function uniqueHeadingId(text: string, counts: Map<string, number>): string {
+  const base = slugify(text);
+  const count = counts.get(base) ?? 0;
+  counts.set(base, count + 1);
+  return count === 0 ? base : `${base}-${count}`;
+}
+
+function markdownHeadingText(text: string): string {
+  return text.replace(/\s+#+\s*$/, '').trim();
+}
+
+function replaceLocationHash(id: string): void {
+  if (window.location.hash === `#${id}`) return;
+  window.history.replaceState(
+    null,
+    '',
+    `${window.location.pathname}${window.location.search}#${id}`,
+  );
 }
 
 export function extractToc(markdown: string): TocEntry[] {
   const entries: TocEntry[] = [];
+  const counts = new Map<string, number>();
   const lines = markdown.split('\n');
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
     const match = line.match(/^(#{1,6})\s+(.+)/);
     if (match) {
       const depth = match[1].length;
-      const text = match[2].trim();
-      entries.push({ depth, text, id: slugify(text) });
+      const text = markdownHeadingText(match[2]);
+      entries.push({ depth, text, id: uniqueHeadingId(text, counts), line: index + 1 });
     }
   }
   return entries;
@@ -98,16 +128,26 @@ function childrenText(children: ReactNode): string {
     .join('');
 }
 
-function makeHeading(Tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') {
-  return function Heading({ children }: { children?: ReactNode }) {
-    const id = slugify(childrenText(children));
+function makeHeading(
+  Tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6',
+  idsByLine: Map<number, string>,
+) {
+  return function Heading({
+    children,
+    node,
+    className,
+    ...props
+  }: React.ComponentPropsWithoutRef<'h1'> & { children?: ReactNode; node?: HeadingNode }) {
+    const line = node?.position?.start?.line;
+    const id = (typeof line === 'number' ? idsByLine.get(line) : undefined) ?? slugify(childrenText(children));
     return (
       <Tag
+        {...props}
         id={id}
         onClick={() => {
-          window.history.replaceState(null, '', `#${id}`);
+          replaceLocationHash(id);
         }}
-        className="cursor-pointer"
+        className={['cursor-pointer', className].filter(Boolean).join(' ')}
       >
         {children}
       </Tag>
@@ -115,14 +155,16 @@ function makeHeading(Tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') {
   };
 }
 
-const headingComponents = {
-  h1: makeHeading('h1'),
-  h2: makeHeading('h2'),
-  h3: makeHeading('h3'),
-  h4: makeHeading('h4'),
-  h5: makeHeading('h5'),
-  h6: makeHeading('h6'),
-};
+function makeHeadingComponents(idsByLine: Map<number, string>) {
+  return {
+    h1: makeHeading('h1', idsByLine),
+    h2: makeHeading('h2', idsByLine),
+    h3: makeHeading('h3', idsByLine),
+    h4: makeHeading('h4', idsByLine),
+    h5: makeHeading('h5', idsByLine),
+    h6: makeHeading('h6', idsByLine),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // CopyLinkButton
@@ -152,19 +194,64 @@ export function BreadcrumbPath({ filePath }: { filePath: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// FileToolbar — download (icon only)
+// FileToolbar — path copy, raw open, download
 // ---------------------------------------------------------------------------
 
-export function FileToolbar({ id, filePath }: { id: string; filePath: string }) {
+function CopyPathButton({ filePath }: { filePath: string }) {
+  const [copied, setCopied] = useState(false);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(filePath).then(() => {
+      setCopied(true);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => setCopied(false), 2000);
+    });
+  }, [filePath]);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
+
   return (
-    <a
-      href={kbDownloadUrl(id, filePath)}
-      download
-      title="Download file"
+    <button
+      onClick={handleCopy}
+      title={copied ? 'Path copied!' : 'Copy path'}
+      aria-label={copied ? 'Path copied' : 'Copy path'}
       className="chrome flex min-h-[44px] shrink-0 items-center justify-center rounded-sm px-2 text-text-subtle transition-colors hover:bg-surface-elevated hover:text-text-muted"
     >
-      <Download className="h-3.5 w-3.5" />
-    </a>
+      <Copy className="h-3.5 w-3.5" />
+    </button>
+  );
+}
+
+export function FileToolbar({ id, filePath }: { id: string; filePath: string }) {
+  const rawUrl = buildKbRawPath(id, filePath);
+  return (
+    <>
+      <CopyPathButton filePath={filePath} />
+      <a
+        href={rawUrl}
+        target="_blank"
+        rel="noreferrer"
+        title="Open raw"
+        aria-label="Open raw"
+        className="chrome flex min-h-[44px] shrink-0 items-center justify-center rounded-sm px-2 text-text-subtle transition-colors hover:bg-surface-elevated hover:text-text-muted"
+      >
+        <ExternalLink className="h-3.5 w-3.5" />
+      </a>
+      <a
+        href={kbDownloadUrl(id, filePath)}
+        download
+        title="Download file"
+        aria-label="Download file"
+        className="chrome flex min-h-[44px] shrink-0 items-center justify-center rounded-sm px-2 text-text-subtle transition-colors hover:bg-surface-elevated hover:text-text-muted"
+      >
+        <Download className="h-3.5 w-3.5" />
+      </a>
+    </>
   );
 }
 
@@ -316,35 +403,84 @@ function makeKbLinkComponent(
 
 function ImageLightbox({ src, alt }: { src: string; alt: string }) {
   const [open, setOpen] = useState(false);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  const openLightbox = useCallback(() => {
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setOpen(true);
+  }, []);
+
+  const closeLightbox = useCallback(() => {
+    setOpen(false);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') {
+        closeLightbox();
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        closeButtonRef.current?.focus();
+      }
     }
+    closeButtonRef.current?.focus();
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open]);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      previousFocusRef.current?.focus();
+    };
+  }, [closeLightbox, open]);
 
   return (
     <>
       <img
         src={src}
         alt={alt}
-        onClick={() => setOpen(true)}
+        onClick={openLightbox}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            openLightbox();
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        aria-label={alt ? `Open image: ${alt}` : 'Open image'}
         className="max-w-full cursor-zoom-in rounded"
       />
       {open && (
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={alt ? `Image preview: ${alt}` : 'Image preview'}
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setOpen(false)}
+          onClick={closeLightbox}
         >
+          <button
+            ref={closeButtonRef}
+            onClick={(e) => {
+              e.stopPropagation();
+              closeLightbox();
+            }}
+            aria-label="Close image preview"
+            title="Close"
+            className="chrome absolute right-4 top-4 flex min-h-[44px] min-w-[44px] items-center justify-center rounded-sm bg-black/40 text-white transition-colors hover:bg-black/60 focus-visible:bg-black/60"
+          >
+            <X className="h-4 w-4" />
+          </button>
           <img
             src={src}
             alt={alt}
             className="max-h-full max-w-full object-contain"
             onClick={(e) => e.stopPropagation()}
           />
+          {alt && (
+            <div className="chrome absolute bottom-4 left-4 right-4 rounded-sm bg-black/45 px-3 py-2 text-center text-[12px] text-white/85">
+              {alt}
+            </div>
+          )}
         </div>
       )}
     </>
@@ -370,6 +506,11 @@ export function FileContent({
 }) {
   const rawUrl = buildKbRawPath(id, filePath);
   const navigate = useNavigate();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const headingIdsByLine = useMemo(() => {
+    if (file?.kind !== 'markdown' || !file.content) return new Map<number, string>();
+    return new Map(extractToc(file.content).map((entry) => [entry.line, entry.id]));
+  }, [file]);
 
   // Scroll to hash target after markdown renders.
   useEffect(() => {
@@ -384,12 +525,47 @@ export function FileContent({
     }
   }, [file]);
 
+  // Keep the hash aligned with the heading closest to the top of the markdown
+  // scroller. This preserves shareable anchors while reading long KB docs.
+  useEffect(() => {
+    if (file?.kind !== 'markdown') return;
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const root: HTMLDivElement = scroller;
+    const headings = Array.from(
+      root.querySelectorAll<HTMLElement>('h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]'),
+    );
+    if (headings.length === 0) return;
+
+    let frame = 0;
+    function syncHash() {
+      frame = 0;
+      const edge = root.getBoundingClientRect().top + 24;
+      let active = headings[0];
+      for (const heading of headings) {
+        if (heading.getBoundingClientRect().top <= edge) active = heading;
+        else break;
+      }
+      if (active?.id) replaceLocationHash(active.id);
+    }
+    function onScroll() {
+      if (frame) return;
+      frame = window.requestAnimationFrame(syncHash);
+    }
+
+    root.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      root.removeEventListener('scroll', onScroll);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [file]);
+
   // Memoised so ReactMarkdown sees stable component references (avoids remounting
   // all links on every parent re-render while the file content stays the same).
   const markdownComponents = useMemo(
     () => ({
       a: makeKbLinkComponent(id, filePath, navigate),
-      ...headingComponents,
+      ...makeHeadingComponents(headingIdsByLine),
       img: ({ src, alt }: React.ComponentPropsWithoutRef<'img'>) => {
         let resolvedSrc = src ?? '';
         if (resolvedSrc && !/^[a-z][a-z\d+\-.]*:/i.test(resolvedSrc) && !resolvedSrc.startsWith('#')) {
@@ -432,7 +608,7 @@ export function FileContent({
         );
       },
     }),
-    [id, filePath, navigate],
+    [headingIdsByLine, id, filePath, navigate],
   );
 
   if (error) {
@@ -520,7 +696,7 @@ export function FileContent({
 
   if (file.kind === 'markdown') {
     return (
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         <div className="md-prose">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}

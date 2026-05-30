@@ -26,6 +26,10 @@ export default defineConfig({
         target: process.env['VITE_API_TARGET'] ?? 'http://localhost:4174',
         changeOrigin: true,
       },
+      '/kb/raw': {
+        target: process.env['VITE_API_TARGET'] ?? 'http://localhost:4174',
+        changeOrigin: true,
+      },
     },
   },
 })

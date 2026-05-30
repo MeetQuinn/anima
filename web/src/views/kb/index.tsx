@@ -384,7 +384,9 @@ export default function Kb() {
             <div className="flex h-full flex-col">
               {/* Mobile file toolbar */}
               <div className="flex min-h-[44px] shrink-0 items-center gap-2 border-b border-border-soft px-4 md:hidden">
-                <BreadcrumbPath filePath={filePath} />
+                <div className="min-w-0 flex-1">
+                  <BreadcrumbPath filePath={filePath} />
+                </div>
                 {file && !fileLoading && (
                   <span className="chrome shrink-0 text-[11px] text-text-subtle">
                     {formatBytes(file.size)}
