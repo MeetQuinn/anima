@@ -65,6 +65,32 @@ test('buildCodeAgentDeliveryPrompt includes the Slack message envelope for threa
   assert.doesNotMatch(text, /Reply command/);
 });
 
+test('buildCodeAgentDeliveryPrompt renders restart resumes as a short system continuation', () => {
+  const event = makeSlackEvent({
+    channelId: 'D-user',
+    eventId: 'evt-restart-resume-prompt',
+    handling: {
+      createdAt: '2026-01-01T00:00:00.000Z',
+      resumeReason: 'runtime_restart',
+      status: 'queued',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    },
+    teamId: 'T-demo',
+    text: 'do the expensive thing',
+    ts: '1770000010.000001',
+    userId: 'U1',
+  });
+
+  const text = buildCodeAgentDeliveryPrompt(event);
+
+  assert.equal(text, [
+    'Anima system message: runtime restarted while this task was in progress.',
+    'Continue the same task from the current session; do not repeat completed external side effects.',
+  ].join('\n'));
+  assert.doesNotMatch(text, /New Slack message/);
+  assert.doesNotMatch(text, /do the expensive thing/);
+});
+
 test('buildCodeAgentDeliveryPrompt omits channel_id for DMs (channel= already shows the raw id) and still emits user_id', () => {
   const text = buildCodeAgentDeliveryPrompt(buildInput({ channelId: 'D-user' }).event);
   assert.match(text, /\[channel=D-user message_ts=1770000010\.000001 time=[^ \]]+ user_id=U1\]/);

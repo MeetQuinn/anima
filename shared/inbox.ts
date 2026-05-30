@@ -12,6 +12,7 @@ export const InboxItemHandling = z.object({
   drainTimeoutMs: z.number().int().nonnegative().optional(),
   failedAt: z.string().optional(),
   queuedAt: z.string().optional(),
+  resumeReason: z.enum(['runtime_restart']).optional(),
   settledAt: z.string().optional(),
   startedAt: z.string().optional(),
   status: InboxItemStatus,

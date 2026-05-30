@@ -93,6 +93,13 @@ test('queued Slack listener persists work for a separate runtime worker', async 
     assert.equal(await drain, 1);
 
     assert.equal((await queueFor('scout').listRunnable())[0]?.handling.status, 'completed');
+    assert.equal(
+      allActivities(await loadState()).some((activity) =>
+        activity.type === 'runtime.event'
+        && activity.payload?.['eventType'] === 'runtime.restart_resumed'
+      ),
+      false,
+    );
     assert.deepEqual(reactionCalls, ['remove:D-user:1770000010.000001:eyes']);
     });
   } finally {
@@ -860,12 +867,47 @@ test('runtime worker drains a running item for restart without marking it failed
       assert.equal(item?.handling.status, 'queued');
       assert.equal(item?.handling.drainRequestedAt, undefined);
       assert.equal(item?.handling.drainTimeoutMs, undefined);
+      assert.equal(item?.handling.resumeReason, 'runtime_restart');
       assert.equal(runtime.drainCalls.length, 1);
       assert.equal(runtime.drainCalls[0]?.activeItemId, decision.ctx.item.id);
-      const activities = allActivities(await loadState());
+      let activities = allActivities(await loadState());
       assert.equal(activities.some((activity) => activity.type === 'runtime.failed'), false);
       const aborted = activities.find((activity) => activity.type === 'runtime.aborted');
       assert.equal(aborted?.payload?.['reason'], 'restart_drain');
+
+      await worker?.close();
+      worker = undefined;
+      await clearRestartDrain();
+
+      const resumedRuntime = new ControlledRuntime();
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: resumedRuntime,
+        queue: queueFor('scout'),
+        pollIntervalMs: 10_000,
+        stateDir,
+        workerId: 'resumed-worker',
+      }, silentLogger);
+      const resumeDrain = worker.drainOnce();
+      await waitFor(() => resumedRuntime.calls.length === 1);
+      assert.equal(resumedRuntime.calls[0]?.itemId, decision.ctx.item.id);
+      assert.equal(resumedRuntime.calls[0]?.prompt, [
+        'Anima system message: runtime restarted while this task was in progress.',
+        'Continue the same task from the current session; do not repeat completed external side effects.',
+      ].join('\n'));
+      assert.doesNotMatch(resumedRuntime.calls[0]?.prompt ?? '', /drain me/);
+      resumedRuntime.finishNext();
+      assert.equal(await resumeDrain, 1);
+
+      activities = allActivities(await loadState());
+      assert.equal(activities.some((activity) => activity.type === 'runtime.failed'), false);
+      const resumeEvents = activities.filter((activity) =>
+        activity.type === 'runtime.event'
+        && activity.payload?.['eventType'] === 'runtime.restart_resumed'
+      );
+      assert.equal(resumeEvents.length, 1);
+      assert.equal(resumeEvents[0]?.payload?.['message'], 'Resumed after restart');
+      assert.equal(resumeEvents[0]?.payload?.['itemId'], decision.ctx.item.id);
     });
   } finally {
     await withAnimaHome(stateDir, async () => clearRestartDrain().catch(() => undefined));

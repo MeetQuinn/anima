@@ -86,7 +86,9 @@ export class WakeQueueService {
     for (const item of await this.listRunnable()) {
       if (item.handling.status !== 'running') continue;
       if (item.handling.workerId && input.isWorkerAlive(item.handling.workerId)) continue;
-      await this.store.requeue(item.id);
+      await this.store.requeue(item.id, {
+        ...(item.handling.drainRequestedAt ? { resumeReason: 'runtime_restart' as const } : {}),
+      });
       const updated = await this.find(item.id);
       if (updated?.handling.status === 'queued') recovered.push(updated);
     }
@@ -103,8 +105,8 @@ export class WakeQueueService {
     await this.pruneOldSettled();
   }
 
-  requeue(itemId: string): Promise<void> {
-    return this.store.requeue(itemId);
+  requeue(itemId: string, options: { resumeReason?: 'runtime_restart' } = {}): Promise<void> {
+    return this.store.requeue(itemId, options);
   }
 
   requestStop(itemId: string): Promise<InboxItem> {
