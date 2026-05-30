@@ -68,7 +68,11 @@ export default function Kb() {
   }, [tree]);
 
   // Fetch README when no file is selected and one was found.
-  const { data: readmeFile, isLoading: readmeLoading } = useQuery({
+  const {
+    data: readmeFile,
+    isLoading: readmeLoading,
+    error: readmeError,
+  } = useQuery({
     queryKey: queryKeys.kbFile(id, readmePath ?? ''),
     queryFn: () => fetchKbFile(id, readmePath!),
     enabled: !filePath && !!readmePath,
@@ -395,6 +399,10 @@ export default function Kb() {
               <div className="min-h-0 flex-1 overflow-hidden flex flex-col">
                 {readmeLoading ? (
                   <div className="p-6 font-sans text-[13px] text-text-subtle">Loading…</div>
+                ) : readmeError ? (
+                  <div className="p-6 font-sans text-[13px] text-health-error">
+                    Could not load README: {readmeError instanceof Error ? readmeError.message : String(readmeError)}
+                  </div>
                 ) : readmeFile ? (
                   <FileContent
                     id={id}
@@ -403,7 +411,9 @@ export default function Kb() {
                     loading={false}
                     error={null}
                   />
-                ) : null}
+                ) : (
+                  <div className="p-6 font-sans text-[13px] text-text-subtle">README not found.</div>
+                )}
               </div>
             </div>
           ) : (
