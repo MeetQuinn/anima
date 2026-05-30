@@ -16,7 +16,7 @@ import type {
   AgentRuntimeFollowupInput,
   AgentRuntimeInput,
   AgentRuntimeResult,
-} from '../runtime/provider-contract.js';
+} from '../providers/contract.js';
 import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
 import { withAnimaHome } from './anima-home.js';
 

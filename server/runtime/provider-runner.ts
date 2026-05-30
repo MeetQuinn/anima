@@ -2,7 +2,7 @@ import { errorMessage } from '../ids.js';
 import { recordRuntimeActivity, recordRuntimeEvent } from './activity.js';
 import { runtimeErrorPayload } from './activity-text.js';
 import { buildProviderCrashRetryDeliveryPrompt } from './delivery-prompt.js';
-import type { AgentRuntime, AgentRuntimeInput, AgentRuntimeResult } from './provider-contract.js';
+import type { AgentRuntime, AgentRuntimeInput, AgentRuntimeResult } from '../providers/contract.js';
 
 const PROVIDER_CRASH_MAX_RETRIES = 3;
 const PROVIDER_CRASH_RETRY_BACKOFF_MS = 500;

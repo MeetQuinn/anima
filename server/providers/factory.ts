@@ -1,7 +1,7 @@
 import { ClaudeCodeAgentRuntime } from './claude.js';
 import { CodexCliAgentRuntime } from './codex.js';
 import { KimiCliAgentRuntime } from './kimi.js';
-import type { AgentRuntime, AgentProviderConfig } from '../runtime/provider-contract.js';
+import type { AgentRuntime, AgentProviderConfig } from './contract.js';
 
 export function createAgentRuntime(config: AgentProviderConfig): AgentRuntime {
   if (config.kind === 'codex-cli') return new CodexCliAgentRuntime(config);

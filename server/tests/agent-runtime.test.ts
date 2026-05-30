@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { createAgentRuntime } from '../providers/factory.js';
 import { CLAUDE_DISALLOWED_TOOLS } from '../providers/claude.js';
 import { AgentRuntimeBridge } from '../runtime/runtime-bridge.js';
-import type { AgentRuntime } from '../runtime/provider-contract.js';
+import type { AgentRuntime } from '../providers/contract.js';
 import { makeSlackEvent } from './helpers/slack.js';
 import { ingestEvent } from './helpers/inbox.js';
 import type { RuntimeItemContext } from '../runtime/types.js';

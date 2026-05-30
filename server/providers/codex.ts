@@ -12,7 +12,7 @@ import {
   type AgentRuntimeInput,
   type AgentRuntimeResult,
   type CodexCliAgentProviderConfig,
-} from '../runtime/provider-contract.js';
+} from './contract.js';
 
 const CODEX_COMMAND = 'codex';
 

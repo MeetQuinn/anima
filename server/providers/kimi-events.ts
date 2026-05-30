@@ -5,7 +5,7 @@ import {
   copyNumber,
   copyString,
 } from '../runtime/activity-payload.js';
-import type { AgentRuntimeInput } from '../runtime/provider-contract.js';
+import type { AgentRuntimeInput } from './contract.js';
 import { exposedReasoningEvent } from './reasoning-events.js';
 
 export async function recordKimiWireEvent(
