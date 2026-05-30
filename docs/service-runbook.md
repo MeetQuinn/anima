@@ -20,6 +20,9 @@ Each Anima home runs two daemons:
 - Web (`animactl web`): local status and activity views.
 
 The web app port comes from the selected home config's `dashboardPort` field (default `4174`).
+Use `npx -y @meetquinn/animactl dashboard` for managed installs, or
+`ANIMA_HOME=<path> animactl services dashboard` for a specific home, to launch the control panel
+without remembering the port.
 The agent service auto-starts newly runnable Slack-connected agents. Restart services after changing an already-running agent's provider, home, Slack tokens, or enabled state.
 
 ## Status

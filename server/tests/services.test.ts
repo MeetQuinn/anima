@@ -43,6 +43,7 @@ test('services status reports stopped agent and web with web URL', async () => {
     assert.equal(status.status, 0, status.stderr || status.stdout);
     assert.match(status.stdout, /agent \| stopped \| log .*\/agent\.log/);
     assert.match(status.stdout, /web \| stopped \| http:\/\/127\.0\.0\.1:4188 \| log .*\/web\.log/);
+    assert.match(status.stdout, /\nDashboard: http:\/\/127\.0\.0\.1:4188/);
   } finally {
     await rm(tempDir, { force: true, recursive: true });
   }
@@ -58,6 +59,7 @@ test('services status uses default web port when config omits dashboardPort', as
 
     assert.equal(status.status, 0, status.stderr || status.stdout);
     assert.match(status.stdout, /web \| stopped \| http:\/\/127\.0\.0\.1:4174/);
+    assert.match(status.stdout, /\nDashboard: http:\/\/127\.0\.0\.1:4174/);
   } finally {
     await rm(tempDir, { force: true, recursive: true });
   }

@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { resolve as resolvePath } from 'node:path';
+import { spawn } from 'node:child_process';
 
 import type { Command } from 'commander';
 
@@ -100,12 +101,21 @@ export function registerServicesCommand(program: Command): void {
       const opts = command.optsWithGlobals() as ServicesCliOptions;
       await runStatus(opts);
     });
+
+  services
+    .command('dashboard')
+    .description('Launch the local web control panel')
+    .action(async (_, command) => {
+      const opts = command.optsWithGlobals() as ServicesCliOptions;
+      await runDashboard(opts);
+    });
 }
 
 async function runStart(opts: ServicesCliOptions): Promise<void> {
   const { specs, supervisor } = await resolveServices(opts);
   for (const spec of specs) await startService(spec, supervisor);
   await printStatus(specs);
+  printDashboardHint(specs);
 }
 
 async function runStop(opts: ServicesCliOptions): Promise<void> {
@@ -128,6 +138,7 @@ async function runRestart(opts: ServicesCliOptions): Promise<void> {
     await gate.beforeStart();
     for (const spec of specs) await startService(spec, supervisor);
     await printStatus(specs);
+    printDashboardHint(specs);
     await writeRestartResult(gate.result);
     if (gate.drainResult?.resumedCount) {
       console.log(`restart: ${gate.drainResult.resumedCount} agent item(s) resumed after restart`);
@@ -145,6 +156,15 @@ async function runRestart(opts: ServicesCliOptions): Promise<void> {
 async function runStatus(opts: ServicesCliOptions): Promise<void> {
   const { specs } = await resolveServices(opts);
   await printStatus(specs);
+  printDashboardHint(specs);
+}
+
+async function runDashboard(opts: ServicesCliOptions): Promise<void> {
+  const { specs } = await resolveServices(opts);
+  const url = dashboardUrl(specs);
+  if (!url) throw new Error('No web service URL is configured.');
+  console.log(`Dashboard: ${url}`);
+  await launchDashboard(url);
 }
 
 async function resolveServices(opts: ServicesCliOptions): Promise<{ specs: ServiceSpec[]; supervisor: SupervisorOptions }> {
@@ -182,6 +202,28 @@ async function resolveServices(opts: ServicesCliOptions): Promise<{ specs: Servi
   const animactl = fileURLToPath(new URL('./animactl.js', import.meta.url));
   const cwd = process.cwd();
   return { specs, supervisor: { animactl, cwd } };
+}
+
+function printDashboardHint(specs: ServiceSpec[]): void {
+  const url = dashboardUrl(specs);
+  if (url) console.log(`Dashboard: ${url}`);
+}
+
+function dashboardUrl(specs: ServiceSpec[]): string | undefined {
+  return specs.find((spec) => spec.id === 'web')?.url;
+}
+
+async function launchDashboard(url: string): Promise<void> {
+  const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
+  const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
+  await new Promise<void>((resolveOpen, reject) => {
+    const child = spawn(command, args, { detached: true, stdio: 'ignore' });
+    child.once('error', reject);
+    child.once('spawn', () => {
+      child.unref();
+      resolveOpen();
+    });
+  });
 }
 
 function assertCanControlServices(specs: ServiceSpec[]): void {
