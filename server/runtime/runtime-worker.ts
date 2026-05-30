@@ -17,26 +17,13 @@ import {
   recordRuntimeAborted,
   recordRuntimeEvent,
 } from './activity.js';
+import { startActiveRunControl, type ActiveRunHandle } from './active-run-control.js';
 import { appendQueuedFollowupsUntilFinished } from './followup-appender.js';
 import { recordFinalRuntimeFailure, runProviderWithCrashRetries } from './provider-runner.js';
 
 // Executor for one agent: claims queued inbox items, runs the provider runtime,
 // appends follow-up items into the active run, and settles item lifecycle state.
 const IDLE_TIMEOUT_MS_DEFAULT = PROVIDER_IDLE_TIMEOUT_MS_DEFAULT;
-const IDLE_CHECK_INTERVAL_FLOOR_MS = 50;
-const IDLE_CHECK_INTERVAL_CAP_MS = 1_000;
-
-interface ActiveItemHandle {
-  abortController: AbortController;
-  // Follow-up inbox items are completed as soon as they are appended, but their
-  // processing reactions should stay visible until the active provider run ends.
-  appendedFollowups: RuntimeItemContext[];
-  drainRequestedAt?: string;
-  drainRequestInFlight: boolean;
-  lastActivityAt: number;
-  startedAt: number;
-  watchdog: NodeJS.Timeout;
-}
 
 interface AgentRuntimeWorkerOptions extends RuntimeWorkerConfig {
   agentRuntime: AgentRuntime;
@@ -56,7 +43,7 @@ export class AgentRuntimeWorker {
   private readonly idleTimeoutMs: number;
   private readonly queue: WakeQueueService;
   private readonly runtimeBridge: AgentRuntimeBridge;
-  private activeItem?: ActiveItemHandle;
+  private activeItem?: ActiveRunHandle;
   private activeDrain?: Promise<number>;
   private closing = false;
   private pollTimer?: NodeJS.Timeout;
@@ -161,7 +148,7 @@ export class AgentRuntimeWorker {
         agentRuntime: this.options.agentRuntime,
         itemDone: itemAbort.signal,
         logger: this.logger,
-        onFollowupAccepted: () => this.noteProviderActivity(handle),
+        onFollowupAccepted: () => handle.noteActivity(),
         onFollowupAppended: async (followupContext, _text) => {
           handle.appendedFollowups.push(followupContext);
           await this.notifyItemFollowupAppended(activeContext, followupContext);
@@ -191,7 +178,7 @@ export class AgentRuntimeWorker {
         agentRuntime: this.options.agentRuntime,
         buildInput: (retryNotice) => this.runtimeBridge.runInput({
           context: runContext,
-          onActivity: () => this.noteProviderActivity(handle),
+          onActivity: () => handle.noteActivity(),
           profile: {
             displayName: agentConfig.profile?.displayName ?? this.options.agentId,
             ...(agentConfig.profile?.role ? { role: agentConfig.profile.role } : {}),
@@ -260,34 +247,17 @@ export class AgentRuntimeWorker {
     }
   }
 
-  private registerActiveItem(itemId: string, abortController: AbortController): ActiveItemHandle {
-    const startedAt = Date.now();
-    const tickInterval = Math.max(
-      IDLE_CHECK_INTERVAL_FLOOR_MS,
-      Math.min(IDLE_CHECK_INTERVAL_CAP_MS, Math.floor(this.idleTimeoutMs / 2)),
-    );
-    const handle: ActiveItemHandle = {
+  private registerActiveItem(itemId: string, abortController: AbortController): ActiveRunHandle {
+    const handle = startActiveRunControl({
       abortController,
-      appendedFollowups: [],
-      drainRequestInFlight: false,
-      lastActivityAt: startedAt,
-      startedAt,
-      watchdog: setInterval(() => {
-        if (abortController.signal.aborted) return;
-        const now = Date.now();
-        if (now - handle.lastActivityAt >= this.idleTimeoutMs) {
-          abortController.abort('idle_timeout');
-          return;
-        }
-        void this.checkExternalRequests(itemId, abortController, handle);
-      }, tickInterval),
-    };
+      agentRuntime: this.options.agentRuntime,
+      idleTimeoutMs: this.idleTimeoutMs,
+      itemId,
+      logger: this.logger,
+      queue: this.queue,
+    });
     this.activeItem = handle;
     return handle;
-  }
-
-  private noteProviderActivity(handle: ActiveItemHandle): void {
-    handle.lastActivityAt = Date.now();
   }
 
   private async recordRestartResumeActivity(context: RuntimeItemContext): Promise<void> {
@@ -303,60 +273,10 @@ export class AgentRuntimeWorker {
     );
   }
 
-  private async checkExternalRequests(
-    itemId: string,
-    abortController: AbortController,
-    handle: ActiveItemHandle,
-  ): Promise<void> {
-    try {
-      const item = await this.queue.find(itemId);
-      if (item?.handling.stopRequestedAt && !abortController.signal.aborted) {
-        abortController.abort('user_stop');
-        return;
-      }
-      const drainRequestedAt = item?.handling.drainRequestedAt;
-      if (
-        drainRequestedAt &&
-        !handle.drainRequestInFlight &&
-        handle.drainRequestedAt !== drainRequestedAt &&
-        !abortController.signal.aborted
-      ) {
-        handle.drainRequestInFlight = true;
-        handle.drainRequestedAt = drainRequestedAt;
-        void this.drainActiveItem(itemId, item.handling.drainTimeoutMs, abortController, handle);
-      }
-    } catch (error) {
-      this.logger.error(`Runtime worker control check failed for item ${itemId}: ${errorMessage(error)}`);
-    }
-  }
-
-  private async drainActiveItem(
-    itemId: string,
-    timeoutMs: number | undefined,
-    abortController: AbortController,
-    handle: ActiveItemHandle,
-  ): Promise<void> {
-    try {
-      if (!this.options.agentRuntime.requestDrain) return;
-      await withTimeout(
-        this.options.agentRuntime.requestDrain({ activeItemId: itemId, signal: abortController.signal }),
-        timeoutMs ?? 15_000,
-        `Timed out waiting for item ${itemId} to reach a restart drain point`,
-      );
-      const current = await this.queue.find(itemId);
-      if (current?.handling.drainRequestedAt !== handle.drainRequestedAt) return;
-      if (!abortController.signal.aborted) abortController.abort('restart_drain');
-    } catch (error) {
-      this.logger.error(`Runtime worker drain request failed for item ${itemId}: ${errorMessage(error)}`);
-    } finally {
-      handle.drainRequestInFlight = false;
-    }
-  }
-
   private releaseActiveItem(): void {
     const handle = this.activeItem;
     if (!handle) return;
-    clearInterval(handle.watchdog);
+    handle.release();
     this.activeItem = undefined;
   }
 
@@ -427,14 +347,4 @@ function isWorkerAlive(workerId: string): boolean {
   } catch {
     return false;
   }
-}
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-  });
-  return Promise.race([promise, timeout]).finally(() => {
-    if (timer) clearTimeout(timer);
-  });
 }
