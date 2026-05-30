@@ -6,10 +6,10 @@ import { join } from 'node:path';
 import type { WebClient } from '@slack/web-api';
 
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
-import { SlackShortcutService, type ShortcutModalView } from '../slack/shortcut.service.js';
+import { SlackShortcutService, type ShortcutModalView } from '../slack-interactions/shortcut.service.js';
+import { SLACK_STOP_CONFIRM_VIEW_CALLBACK_ID } from '../slack-interactions/shortcut-ids.js';
 import {
   SLACK_SHORTCUTS,
-  SLACK_STOP_CONFIRM_VIEW_CALLBACK_ID,
   ensureSlackShortcutManifest,
   hasCommandsScope,
   inspectSlackShortcutManifest,

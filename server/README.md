@@ -108,7 +108,7 @@ Some services are collections or platform-level resources rather than one-agent 
 - `ServerSettingsService` owns Anima-home level settings such as dashboard host/port and sidebar order. Routes and process launch code should use it instead of reading `config.json` directly.
 - `SlackFileService` owns Slack file cache semantics: download-to-cache, cache lookup, cached file reads, cache path construction, and download size limits.
 - `SlackWorkspaceDirectoryService` owns Slack workspace lookup/cache for users, channels, DMs, and workspace events. It is scoped by Slack team, not by Anima agent.
-- `SlackShortcutService` handles Slack shortcut payloads and dispatches to the owning services: runtime status/stop, reminders, and inbox handoff.
+- `SlackShortcutService` handles Slack shortcut payloads and dispatches to the owning services: runtime status/stop, reminders, and inbox handoff. It lives under `slack-interactions/` because it is an application workflow, not a low-level Slack API helper.
 - `SystemService` owns local system/operator view data and actions for the web API: server info, provider command availability, and web-triggered services restart preparation.
 
 ## Boundary Rules
@@ -120,7 +120,7 @@ Keep API and CLI thin. They should parse input, call a domain service, redact or
 - Runtime provider effects should use runtime-owned sinks (`runtime/activity.ts`, `RuntimeSessionService`) for execution internals such as activity rows, provider session ids, runtime stats, and lifetime token accounting. Do not make provider/runtime code depend back on `AgentService`.
 - Pure parsing, formatting, DTO-to-config transforms, validation, path checks, and payload builders should live in nearby helpers, not inside service methods unless the logic is tiny.
 - `providers/` own provider CLI protocols only. They do not know Slack wake policy, web response shape, queue semantics, or config mutation semantics.
-- `slack/` keeps Slack API/data helpers such as workspace directory lookup, inbound file metadata/download, mentions, and event surfaces. Inbox enrichment lives in `inbox/`; Slack-visible side effects and tool-facing display/upload formatting live in `tools/`.
+- `slack/` keeps Slack API/data helpers such as workspace directory lookup, inbound file metadata/download, mentions, manifest helpers, and event surfaces. Slack-triggered application workflows live in `slack-interactions/`; inbox enrichment lives in `inbox/`; Slack-visible side effects and tool-facing display/upload formatting live in `tools/`.
 
 ## Process Supervision
 
