@@ -11,7 +11,7 @@ import { useQuery } from '@tanstack/react-query';
 import { disableAgent, enableAgent, removeAgent, rotateAgentSession, fetchAgents, refreshDashboardData } from '@/api/agents';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button } from './ui/button';
-import ConfirmModal from './ConfirmModal';
+import { useConfirm } from '@/hooks/useConfirm';
 import { queryKeys } from '@/lib/query-keys';
 
 
@@ -30,17 +30,10 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
   const { agentId } = useParams<{ agentId: string }>();
   const navigate = useNavigate();
   const menuRef = useRef<HTMLDivElement>(null);
+  const { confirm, modal } = useConfirm();
 
   const [menuOpen, setMenuOpen] = useState(false);
-  const [confirmDisable, setConfirmDisable] = useState(false);
   const [toggling, setToggling] = useState(false);
-  const [toggleError, setToggleError] = useState<string | undefined>();
-  const [confirmRemove, setConfirmRemove] = useState(false);
-  const [removeBusy, setRemoveBusy] = useState(false);
-  const [removeError, setRemoveError] = useState<string | undefined>();
-  const [confirmRotate, setConfirmRotate] = useState(false);
-  const [rotating, setRotating] = useState(false);
-  const [rotateError, setRotateError] = useState<string | undefined>();
 
   // Click-outside to close the dropdown.
   useEffect(() => {
@@ -62,43 +55,14 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
   async function handleToggleEnabled(nextEnabled: boolean) {
     if (!agentId || toggling) return;
     setToggling(true);
-    setToggleError(undefined);
     try {
       await (nextEnabled ? enableAgent(agentId) : disableAgent(agentId));
-      setConfirmDisable(false);
       refreshDashboardData();
-    } catch (e) {
-      setToggleError(e instanceof Error ? e.message : String(e));
+    } catch {
+      // Error is surfaced by the caller if needed; this path is for the
+      // instant enable case that skips the confirm modal.
     } finally {
       setToggling(false);
-    }
-  }
-
-  async function handleRemoveAgent() {
-    if (!agentId || removeBusy) return;
-    setRemoveBusy(true);
-    setRemoveError(undefined);
-    try {
-      await removeAgent(agentId);
-      navigate('/');
-    } catch (e) {
-      setRemoveError(e instanceof Error ? e.message : String(e));
-      setRemoveBusy(false);
-    }
-  }
-
-  async function handleRotate() {
-    if (!agentId || rotating) return;
-    setRotating(true);
-    setRotateError(undefined);
-    try {
-      await rotateAgentSession(agentId);
-      setConfirmRotate(false);
-      refreshDashboardData();
-    } catch (e) {
-      setRotateError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRotating(false);
     }
   }
 
@@ -122,7 +86,17 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
                 className="flex min-h-[44px] w-full items-center gap-2.5 px-3 text-left font-sans text-[13px] text-text-muted hover:bg-surface-elevated hover:text-text"
                 onClick={() => {
                   setMenuOpen(false);
-                  setConfirmDisable(true);
+                  confirm({
+                    title: 'Disable this agent?',
+                    description: 'If it is running now, it will stop after the current item finishes. Memory and session are preserved.',
+                    variant: 'error',
+                    confirmLabel: 'Disable',
+                    busyLabel: 'Saving...',
+                    onConfirm: async () => {
+                      await disableAgent(agentId);
+                      refreshDashboardData();
+                    },
+                  });
                 }}
               >
                 <PowerOff className="h-3.5 w-3.5 shrink-0" />
@@ -146,7 +120,17 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
               className="flex min-h-[44px] w-full items-center gap-2.5 px-3 text-left font-sans text-[13px] text-text-muted hover:bg-surface-elevated hover:text-text"
               onClick={() => {
                 setMenuOpen(false);
-                setConfirmRotate(true);
+                confirm({
+                  title: 'Rotate primary session?',
+                  description: 'The current item keeps running. The next item starts fresh, and the current provider session is archived.',
+                  variant: 'warn',
+                  confirmLabel: 'Confirm',
+                  busyLabel: 'Rotating…',
+                  onConfirm: async () => {
+                    await rotateAgentSession(agentId);
+                    refreshDashboardData();
+                  },
+                });
               }}
             >
               <RotateCcw className="h-3.5 w-3.5 shrink-0" />
@@ -159,7 +143,18 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
               className="flex min-h-[44px] w-full items-center gap-2.5 px-3 text-left font-sans text-[13px] text-health-error hover:bg-health-error-soft"
               onClick={() => {
                 setMenuOpen(false);
-                setConfirmRemove(true);
+                confirm({
+                  title: 'Remove this agent?',
+                  description: 'The agent will stop running and its local Anima config will be deleted. Home files are not affected.',
+                  variant: 'error',
+                  confirmLabel: 'Remove',
+                  busyLabel: 'Removing…',
+                  confirmVariant: 'destructive',
+                  onConfirm: async () => {
+                    await removeAgent(agentId);
+                    navigate('/');
+                  },
+                });
               }}
             >
               <Trash2 className="h-4 w-4 shrink-0" />
@@ -169,52 +164,8 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
         )}
       </div>
 
-      {/* Confirm overlays — rendered via fixed positioning, work from any parent */}
-      <ConfirmModal
-        open={confirmDisable && enabled}
-        title="Disable this agent?"
-        description="If it is running now, it will stop after the current item finishes. Memory and session are preserved."
-        variant="error"
-        busy={toggling}
-        error={toggleError}
-        confirmLabel="Disable"
-        busyLabel="Saving..."
-        onConfirm={() => void handleToggleEnabled(false)}
-        onCancel={() => {
-          setConfirmDisable(false);
-          setToggleError(undefined);
-        }}
-      />
-      <ConfirmModal
-        open={confirmRemove}
-        title="Remove this agent?"
-        description="The agent will stop running and its local Anima config will be deleted. Home files are not affected."
-        variant="error"
-        busy={removeBusy}
-        error={removeError}
-        confirmLabel="Remove"
-        busyLabel="Removing…"
-        onConfirm={() => void handleRemoveAgent()}
-        onCancel={() => {
-          setConfirmRemove(false);
-          setRemoveError(undefined);
-        }}
-      />
-      <ConfirmModal
-        open={confirmRotate}
-        title="Rotate primary session?"
-        description="The current item keeps running. The next item starts fresh, and the current provider session is archived."
-        variant="warn"
-        busy={rotating}
-        error={rotateError}
-        confirmLabel="Confirm"
-        busyLabel="Rotating…"
-        onConfirm={() => void handleRotate()}
-        onCancel={() => {
-          setConfirmRotate(false);
-          setRotateError(undefined);
-        }}
-      />
+      {/* Single confirm modal instance, driven by the useConfirm hook */}
+      {modal}
     </>
   );
 }
