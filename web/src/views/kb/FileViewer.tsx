@@ -14,7 +14,7 @@ import type { KbFile } from '@shared/kb';
 // CopyButton
 // ---------------------------------------------------------------------------
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text, variant = 'floating' }: { text: string; variant?: 'floating' | 'inline' }) {
   const [copied, setCopied] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
 
@@ -36,7 +36,12 @@ function CopyButton({ text }: { text: string }) {
     <button
       onClick={handleCopy}
       title={copied ? 'Copied!' : 'Copy'}
-      className="chrome absolute right-2 top-2 flex h-7 items-center gap-1 rounded-sm bg-surface-elevated/80 px-2 text-[11px] text-text-subtle opacity-0 transition-opacity hover:bg-surface-elevated hover:text-text focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
+      aria-label={copied ? 'Copied' : 'Copy code'}
+      className={
+        variant === 'floating'
+          ? 'chrome absolute right-2 top-2 flex h-7 items-center gap-1 rounded-sm bg-surface-elevated/80 px-2 text-[11px] text-text-subtle opacity-0 transition-opacity hover:bg-surface-elevated hover:text-text focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100'
+          : 'chrome flex h-7 items-center gap-1 rounded-sm px-2 text-[11px] text-text-subtle transition-colors hover:bg-surface-hover hover:text-text focus-visible:bg-surface-hover focus-visible:text-text'
+      }
     >
       <Copy className="h-3 w-3" />
       {copied && <span>Copied!</span>}
@@ -411,13 +416,17 @@ export function FileContent({
           if (m) lang = m[1];
         }
         return (
-          <div className="relative group">
-            <CopyButton text={codeText} />
-            {lang && (
-              <span className="chrome absolute left-2 top-2 rounded-sm bg-surface-elevated/80 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-text-subtle">
-                {lang}
-              </span>
-            )}
+          <div className="kb-markdown-code-block group">
+            <div className="chrome flex min-h-9 items-center justify-between gap-2 border-b border-border-soft/70 bg-surface-raised/45 px-2 py-1">
+              {lang ? (
+                <span className="rounded-sm px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-text-subtle">
+                  {lang}
+                </span>
+              ) : (
+                <span aria-hidden="true" />
+              )}
+              <CopyButton text={codeText} variant="inline" />
+            </div>
             <pre>{children}</pre>
           </div>
         );
