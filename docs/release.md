@@ -20,12 +20,12 @@ merge point stays reviewable and reproducible.
 
 ## Version Channels
 
-Anima uses npm versions plus npm dist-tags to separate dogfood builds from stable releases.
+Anima uses npm versions plus npm dist-tags to separate canary builds from stable releases.
 
-| Channel | npm dist-tag | Example version                 | Who should use it                    |
-| ------- | ------------ | ------------------------------- | ------------------------------------ |
-| Canary  | `canary`     | `0.2.0-canary.20260529.36fa5d8` | Anima's own dogfood/staging installs |
-| Stable  | `latest`     | `0.1.3`                         | External users and default installs  |
+| Channel | npm dist-tag | Example version                 | Who should use it                   |
+| ------- | ------------ | ------------------------------- | ----------------------------------- |
+| Canary  | `canary`     | `0.2.0-canary.20260529.36fa5d8` | Anima's own canary environment      |
+| Stable  | `latest`     | `0.1.3`                         | External users and default installs |
 
 Optional later channels:
 
@@ -43,18 +43,18 @@ against the latest `main` snapshot.
 3. Merge to `main`.
 4. CI publishes an immutable `@meetquinn/animactl` canary package for that commit and updates the
    `canary` dist-tag.
-5. Anima dogfood/staging upgrades to that canary and runs it with real usage.
-6. Once the canary has behaved well enough, run the stable publish workflow for the same dogfooded
+5. Anima's canary environment upgrades to that canary and runs it with real usage.
+6. Once the canary has behaved well enough, run the stable publish workflow for the same validated
    source with the next semver version.
 7. CI publishes `@meetquinn/animactl` at that version, updates the `latest` dist-tag, creates the
    matching `vX.Y.Z` GitHub release, and uploads the pinned `install.sh` asset.
 
-Stable releases should be cut from source that already ran in dogfood. Early on, use the manual
+Stable releases should be cut from source that already ran in canary. Early on, use the manual
 GitHub Actions workflow:
 
 1. Open **Actions -> Publish npm -> Run workflow**.
 2. Enter the stable version, for example `0.1.3`.
-3. Run it from the dogfooded branch or commit.
+3. Run it from the validated branch or commit.
 4. After it publishes successfully, verify npm `latest`, the `v0.1.3` GitHub release, and the
    release `install.sh` asset.
 
@@ -69,7 +69,7 @@ While Anima is pre-1.0:
 
 - Patch version (`0.1.2` -> `0.1.3`): bug fixes, polish, docs, small compatible behavior changes.
 - Minor version (`0.1.x` -> `0.2.0`): larger user-visible features or storage/runtime changes.
-- Canary version: any merge to `main` that should be dogfooded before stable.
+- Canary version: any merge to `main` that should be validated in canary before stable.
 
 Canary versions are immutable. Never republish the same canary version with different contents.
 

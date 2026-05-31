@@ -73,7 +73,7 @@ export function BusyConfirmModal({
   // absolutely-positioned, overflow-scrolling container), which traps a plain
   // `fixed inset-0` child to the ~330px drawer instead of the viewport. Rendering
   // into <body> guarantees the backdrop covers the whole app and the dialog
-  // centers on the real viewport. (Caught in busy-path dogfood pass-2.)
+  // centers on the real viewport. (Caught in busy-path canary pass-2.)
   return createPortal(
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-page/70 p-4 backdrop-blur-sm"

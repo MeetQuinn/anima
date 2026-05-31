@@ -19,15 +19,15 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      // Forward all /api/* requests to the Anima backend (default port 4174).
+      // Forward dev-mode API requests to the repo-local Anima backend.
       // Without this, dev-mode fetches hit the Vite server and get back HTML,
       // producing "Unexpected token '<', '<!doctype…' is not valid JSON".
       '/api': {
-        target: process.env['VITE_API_TARGET'] ?? 'http://localhost:4174',
+        target: process.env['VITE_API_TARGET'] ?? 'http://localhost:14174',
         changeOrigin: true,
       },
       '/kb/raw': {
-        target: process.env['VITE_API_TARGET'] ?? 'http://localhost:4174',
+        target: process.env['VITE_API_TARGET'] ?? 'http://localhost:14174',
         changeOrigin: true,
       },
     },

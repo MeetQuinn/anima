@@ -11,8 +11,9 @@ and run the pinned runtime. They are documented in
 [deployment.md](deployment.md). This runbook covers the underlying `animactl services <op>`
 supervisor those commands invoke, plus its idle-gate and cross-environment restart semantics.
 
-For Anima source development, the `dev:services:*` npm scripts explicitly set `ANIMA_HOME=./.anima`
-so local dev state stays inside the repo clone.
+For Anima source development, the `dev:services:*` npm scripts explicitly set
+`ANIMA_HOME=./.anima-dev` and seed dashboard port `14174`, so local dev state stays inside the repo
+clone and does not collide with the managed `~/.anima` dashboard on `4174`.
 
 Each Anima home runs two daemons:
 
