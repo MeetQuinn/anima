@@ -81,6 +81,14 @@ function planLabel(value: string): string {
     .join(' ');
 }
 
+function providerUsageErrorMessage(row: ProviderUsageRow): string | null {
+  if (!row.error || row.error.type === 'unknown') return null;
+  if (row.error.type === 'network_error') {
+    return `Usage check could not reach ${row.label}. Refresh to try again.`;
+  }
+  return row.error.message;
+}
+
 function WindowRow({ w, now }: { w: ProviderUsageWindow; now: Date }) {
   const pct = Math.round(w.remainingPercent);
   return (
@@ -119,6 +127,7 @@ function WindowRow({ w, now }: { w: ProviderUsageWindow; now: Date }) {
 
 function ProviderBlock({ row, now }: { row: ProviderUsageRow; now: Date }) {
   const isAvailable = row.status === 'available';
+  const errorMessage = providerUsageErrorMessage(row);
   return (
     <div className={isAvailable ? '' : 'opacity-50'}>
       {/* Name + best-effort badge */}
@@ -163,9 +172,9 @@ function ProviderBlock({ row, now }: { row: ProviderUsageRow; now: Date }) {
                   ? 'Unreachable'
                   : 'Unavailable'}
           </span>
-          {row.error?.message && row.error.type !== 'unknown' && (
+          {errorMessage && (
               <p className="font-mono text-[10px] text-text-subtle leading-relaxed">
-                {row.error.message}
+                {errorMessage}
               </p>
             )}
         </div>

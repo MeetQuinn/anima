@@ -49,7 +49,7 @@ export async function fetchJson({
     return {
       error: {
         type: 'network_error',
-        message: error instanceof Error ? error.message : 'Provider usage request failed',
+        message: providerUsageNetworkErrorMessage(error),
       },
     };
   }
@@ -58,4 +58,30 @@ export async function fetchJson({
 export function bearer(token: string): string {
   const trimmed = token.trim();
   return trimmed.toLowerCase().startsWith('bearer ') ? trimmed : `Bearer ${trimmed}`;
+}
+
+export function providerUsageNetworkErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.name === 'AbortError') {
+    return 'Provider usage request timed out.';
+  }
+
+  const cause = error instanceof Error ? error.cause : undefined;
+  const code = typeof cause === 'object' && cause !== null && 'code' in cause
+    ? String((cause as { code?: unknown }).code ?? '')
+    : '';
+
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
+    return 'Provider usage service could not be resolved.';
+  }
+  if (code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT') {
+    return 'Provider usage request timed out.';
+  }
+  if (code === 'ECONNRESET' || code === 'ECONNREFUSED' || code === 'UND_ERR_SOCKET') {
+    return 'Provider usage connection was interrupted.';
+  }
+  if (code.includes('CERT') || code.includes('TLS') || code === 'DEPTH_ZERO_SELF_SIGNED_CERT') {
+    return 'Provider usage TLS check failed.';
+  }
+
+  return 'Provider usage request could not reach the provider service.';
 }
