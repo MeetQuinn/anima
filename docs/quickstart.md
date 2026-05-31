@@ -1,74 +1,43 @@
 # Run Anima on your own machine
 
-Get Anima running locally and meet your first agent — an AI teammate you can DM and @mention in
-your own Slack. No coding required: one terminal command, then click through the rest in your
-browser.
+In a few minutes you'll have an AI teammate you can DM and @mention in your own Slack.
 
 ## Before you start
 
-You'll need:
-
-- **Node.js 20+** (so you can run `npx`)
-- **A coding-agent CLI, installed and logged in** — Claude Code, Codex, or Kimi. This is what
-  your agent runs on; you pick which one when you create the agent.
-- **A Slack workspace you can install an app into** (a free test workspace works fine)
+- **A supported coding tool, installed and signed in.** Anima uses it as
+  the engine for your agents.
+- **A Slack workspace you can install an app into.** A free test workspace works fine.
 
 ## 1. Start Anima
 
 ```bash
-npx -y @meetquinn/animactl start
+curl -fsSL https://github.com/MeetQuinn/anima/releases/latest/download/install.sh | sh
 ```
 
-This downloads the managed runtime, installs it under `~/.anima/runtime/current`, and starts the
-agent runtime plus the dashboard. Config and state live in `~/.anima/` by default, so Anima
-keeps working no matter which directory your terminal is in. On a local desktop, Anima opens the
-dashboard automatically. If it does not, open:
-**<http://127.0.0.1:4174>**
+Anima starts and opens the dashboard in your browser. If it doesn't open on its own, go to
+**<http://127.0.0.1:4174>**.
+
+Prefer npm? `npx -y @meetquinn/animactl start` does the same thing.
 
 ## 2. Create your agent
 
-In the dashboard, fill in a **name** and a **role**, and click **Create**.
+In the dashboard, give your agent a **name** and a **role**, and pick the **provider** it runs on (the
+coding tool you signed into). The **role** is a short job description: what the agent is responsible for.
+Then click **Create agent**.
 
-## 3. Connect it to Slack
+## 3. Connect to Slack
 
-The **Connect Slack** panel walks you through Slack app setup. You'll hop between the panel and
-Slack's app site, pasting two tokens back into Anima:
+Each agent talks to your team through its own Slack bot. On the next screen, follow **Connect to
+Slack** to set that up. You'll create the agent's Slack app and paste the two tokens it gives you back
+into Anima.
 
-1. **Create app** → pick your workspace → **Install**.
-2. **Basic Information → App-Level Tokens** → generate one with scope `connections:write` → paste
-   the `xapp-…` token into Anima.
-3. **OAuth & Permissions → Install to Workspace** → paste the **Bot User OAuth Token** (`xoxb-…`).
-   Anima connects automatically.
-4. Assign an **Owner** from the member list. If **Notify the new owner now** is on, the agent DMs
-   them to introduce itself.
+## 4. Pick an owner
 
-Tokens are stored only in `~/.anima/`. The agent comes online automatically. If you left owner
-notification on, it will **DM the owner in Slack** within a few seconds to introduce itself. 🎉
+Pick an **owner**: the person responsible for this agent, its main point of contact, and the one who
+steers it. Anima introduces them with a hello DM in Slack, usually within a few seconds. That hello is
+your sign it's live.
 
-## Play with it
+## You're set
 
-- Reply to its DM.
-- Invite it to a channel (`/invite @your-agent`) and @mention it.
-- Watch the **Activity** tab to see everything it does — every action is logged.
-
-## Handy commands
-
-```bash
-npx -y @meetquinn/animactl status     # is it running?
-npx -y @meetquinn/animactl dashboard  # open the dashboard
-npx -y @meetquinn/animactl restart    # upgrade to latest, then restart the agent + web services
-npx -y @meetquinn/animactl stop       # stop it
-```
-
-Use `restart` for command-line upgrades: it installs the package version selected by `npx` into
-`~/.anima/runtime/current`, then restarts the services. With no version suffix, `npx` selects the
-`latest` npm dist-tag.
-
-Logs: `~/.anima/logs/agent.log` and `~/.anima/logs/web.log`.
-
-## Troubleshooting
-
-- **No DM from the agent?** Check that it shows as connected in the dashboard.
-- **No reply when you @ it in a channel?** Invite the bot first: `/invite @your-agent`.
-- **Changed an existing agent's provider/model/role/tokens and nothing happened?** Restart to pick it
-  up — a running agent doesn't hot-reload its config.
+Reply to its DM, or invite it to a channel (`/invite @your-agent`) and @mention it to bring it into
+shared work. For how to work with your team day to day, see **[Working with your agent](./guide/working-with-your-agent.md)**.
