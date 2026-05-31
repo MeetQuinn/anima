@@ -26,41 +26,41 @@ Anima takes a coding agent you already run and gives it what a real teammate nee
 - **An audited Slack boundary.** Agents act through explicit `anima` tools, and the actions they take through Anima are recorded to a local activity trail. That boundary is the teammate contract.
 - **A team, not a bot.** Multiple named agents, each with its own identity, provider, memory, and home. Route channels to teammates, or let them hand work to whoever is needed.
 
-For how a single agent thinks, remembers, and acts, see [How an agent works](docs/guide/how-an-agent-works.md).
+For how a single agent thinks, remembers, and acts, see [How an agent works](https://anima.meetquinn.ai/guide/how-an-agent-works).
 
 ## Quick Start
 
-One command gets Anima running on your own machine. You will need a supported coding agent installed and signed in (see [providers](docs/runtime-providers.md)), and Node.js 20+ (the installer checks for it and tells you how to install it if it is missing).
+One command gets Anima running on your own machine. You will need a supported coding agent installed and signed in (see [providers](https://anima.meetquinn.ai/runtime-providers)), and Node.js 20+ (the installer checks for it and tells you how to install it if it is missing).
 
 ```bash
 curl -fsSL https://github.com/MeetQuinn/anima/releases/latest/download/install.sh | sh
 ```
 
-Anima downloads the managed runtime into `~/.anima/runtime/current` and keeps local config, state, logs, and pid files in `~/.anima/`. On a local desktop it opens the dashboard automatically at <http://127.0.0.1:4174>. Then create your agent and follow the **Connect to Slack** steps in the app. For a step-by-step version of the whole flow, see [Quickstart](docs/quickstart.md).
+Anima downloads the managed runtime into `~/.anima/runtime/current` and keeps local config, state, logs, and pid files in `~/.anima/`. On a local desktop it opens the dashboard automatically at <http://127.0.0.1:4174>. Then create your agent and follow the **Connect to Slack** steps in the app. For a step-by-step version of the whole flow, see [Quickstart](https://anima.meetquinn.ai/quickstart).
 
 ## Documentation
 
 **Start here**
 
-- [What is Anima](docs/guide/what-is-anima.md): the product in one read
-- [Quickstart](docs/quickstart.md): run it on your own machine
+- [What is Anima](https://anima.meetquinn.ai/guide/what-is-anima): the product in one read
+- [Quickstart](https://anima.meetquinn.ai/quickstart): run it on your own machine
 
 **Using your team**
 
-- [Working with your agent](docs/guide/working-with-your-agent.md): how to work with your team day to day
-- [How an agent works](docs/guide/how-an-agent-works.md): how a single agent thinks, remembers, and acts
+- [Working with your agent](https://anima.meetquinn.ai/guide/working-with-your-agent): how to work with your team day to day
+- [How an agent works](https://anima.meetquinn.ai/guide/how-an-agent-works): how a single agent thinks, remembers, and acts
 
 **How it is built**
 
-- [Architecture overview](docs/architecture/overview.md): components, message flow, and where each concern lives in code
+- [Architecture overview](https://anima.meetquinn.ai/architecture/overview): components, message flow, and where each concern lives in code
 
 **Reference**
 
-- [Design](docs/design.md): concepts and product principles
-- [Provider layer](docs/runtime-providers.md): the providers Anima supports and how to add one
-- [Release process](docs/release.md): PR-only main, canary validation, and stable npm releases
-- [Deployment and upgrades](docs/deployment.md): code roots, Anima homes, and one-click upgrades
-- [Service runbook](docs/service-runbook.md)
+- [Design](https://anima.meetquinn.ai/design): concepts and product principles
+- [Provider layer](https://anima.meetquinn.ai/runtime-providers): the providers Anima supports and how to add one
+- [Release process](https://anima.meetquinn.ai/release): PR-only main, canary validation, and stable npm releases
+- [Deployment and upgrades](https://anima.meetquinn.ai/deployment): code roots, Anima homes, and one-click upgrades
+- [Service runbook](https://anima.meetquinn.ai/service-runbook)
 - [Slack app manifest](templates/slack-app-manifest.yaml)
 - [Agent guidance](CLAUDE.md)
 
