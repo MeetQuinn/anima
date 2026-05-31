@@ -39,9 +39,8 @@ export function parseKimiUsageResponse(
   const root = record(data);
   if (!root) return { error: usageError('parse_error', 'Kimi usage response is not an object'), extras: [], windows: [] };
 
-  const windows: ProviderUsageWindow[] = [];
   const summary = kimiUsageWindow('Weekly', record(root.usage));
-  if (summary) windows.push(summary);
+  const windows: ProviderUsageWindow[] = [];
 
   const limits = Array.isArray(root.limits) ? root.limits : [];
   for (const [index, rawLimit] of limits.entries()) {
@@ -51,6 +50,7 @@ export function parseKimiUsageResponse(
     const parsed = kimiUsageWindow(kimiLimitLabel(limit, detail, window, index), detail);
     if (parsed) windows.push(parsed);
   }
+  if (summary) windows.push(summary);
 
   if (windows.length === 0) {
     return { error: usageError('parse_error', 'Kimi usage response did not include usage windows'), extras: [], windows: [] };

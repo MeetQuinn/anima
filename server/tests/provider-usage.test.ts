@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { ProviderUsageService } from '../provider-usage/provider-usage.service.js';
+import { providerUsageNetworkErrorMessage } from '../provider-usage/http.js';
 import { parseClaudeUsageResponse } from '../provider-usage/providers/claude.js';
 import { parseCodexUsageResponse } from '../provider-usage/providers/codex.js';
 import { parseKimiUsageResponse } from '../provider-usage/providers/kimi.js';
@@ -65,9 +66,24 @@ test('Kimi usage parser returns top-level and short-window limits', () => {
 
   assert.equal(parsed.error, undefined);
   assert.deepEqual(parsed.windows.map(({ label, remainingPercent, usedPercent }) => [label, remainingPercent, usedPercent]), [
-    ['Weekly', 99, 1],
     ['5h', 99, 1],
+    ['Weekly', 99, 1],
   ]);
+});
+
+test('provider usage network errors are classified without raw fetch wording', () => {
+  const abortError = new Error('This operation was aborted');
+  abortError.name = 'AbortError';
+
+  const dnsError = new Error('fetch failed') as Error & { cause?: unknown };
+  dnsError.cause = { code: 'ENOTFOUND' };
+
+  assert.equal(providerUsageNetworkErrorMessage(abortError), 'Provider usage request timed out.');
+  assert.equal(providerUsageNetworkErrorMessage(dnsError), 'Provider usage service could not be resolved.');
+  assert.equal(
+    providerUsageNetworkErrorMessage(new Error('fetch failed')),
+    'Provider usage request could not reach the provider service.',
+  );
 });
 
 test('provider usage service isolates adapter failures per provider', async () => {
