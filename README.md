@@ -42,7 +42,7 @@ Anima downloads the managed runtime into `~/.anima/runtime/current` and keeps lo
 
 **Start here**
 
-- [What is Anima](https://anima.meetquinn.ai/guide/what-is-anima): the product in one read
+- [What is Anima](https://anima.meetquinn.ai/): the product in one read
 - [Quickstart](https://anima.meetquinn.ai/guide/quickstart): run it on your own machine
 
 **Using your team**
