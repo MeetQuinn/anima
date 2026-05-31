@@ -12,7 +12,7 @@ pageClass: landing-home
         Real teammates that do real work, and the knowledge they build stays yours.
       </p>
       <div class="landing-actions" aria-label="Primary links">
-        <a class="landing-button landing-button-primary" href="/quickstart">Get started</a>
+        <a class="landing-button landing-button-primary" href="/guide/quickstart">Get started</a>
         <a class="landing-button landing-button-secondary" href="/guide/what-is-anima">What is Anima?</a>
         <a class="landing-button landing-button-secondary" href="https://github.com/MeetQuinn/anima">GitHub</a>
       </div>
@@ -109,7 +109,7 @@ pageClass: landing-home
       >Copy</button>
     </div>
     <nav class="landing-links" aria-label="Get started links">
-      <a href="/quickstart">Quickstart</a>
+      <a href="/guide/quickstart">Quickstart</a>
       <a href="/guide/what-is-anima">What is Anima</a>
       <a href="/architecture/overview">Architecture</a>
     </nav>
