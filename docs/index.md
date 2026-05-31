@@ -9,7 +9,7 @@ pageClass: landing-home
       <p class="landing-kicker">Anima</p>
       <h1 id="landing-title">A team of AI agents in your Slack.</h1>
       <p class="landing-tagline">
-        Real teammates that do real work, and the knowledge they build stays yours.
+        Real teammates that do real work, and the context they build is shared across the team and stays yours.
       </p>
       <div class="landing-actions" aria-label="Primary links">
         <a class="landing-button landing-button-primary" href="/quickstart">Get started</a>
@@ -30,6 +30,11 @@ pageClass: landing-home
   <section class="landing-cards" aria-label="What makes Anima different">
     <article>
       <span class="card-accent" aria-hidden="true"></span>
+      <h2>One shared context, not a dozen private chats</h2>
+      <p>More and more work gets done with AI, but it happens in each person's private chat, so the context behind it stays locked there. When someone else needs it, they have to track it down and wait on whoever has it. Anima keeps that context in one shared place: the agent and a knowledge base you own, that the whole team can reach.</p>
+    </article>
+    <article>
+      <span class="card-accent" aria-hidden="true"></span>
       <h2>Nothing new to adopt, and they do real work</h2>
       <p>They live in the Slack you already use, with no new app and no commands to learn. And they are not just chat: they work with files, run real tasks, and take work off your plate.</p>
     </article>
@@ -37,11 +42,6 @@ pageClass: landing-home
       <span class="card-accent" aria-hidden="true"></span>
       <h2>A team, not a single assistant</h2>
       <p>Multiple named agents, each with a role. They split work, hand off in Slack, and pull in whoever is needed. A team takes on the whole project, where one assistant just answers.</p>
-    </article>
-    <article>
-      <span class="card-accent" aria-hidden="true"></span>
-      <h2>Work becomes shared knowledge you own</h2>
-      <p>As they work, agents write the useful decisions and context into a shared knowledge base. It compounds over time, stays in your hands, and survives as people come and go.</p>
     </article>
     <article>
       <span class="card-accent" aria-hidden="true"></span>
@@ -53,18 +53,18 @@ pageClass: landing-home
   <section class="landing-compare" aria-labelledby="compare-title">
     <div class="landing-section-heading">
       <p>Before and after</p>
-      <h2 id="compare-title">The difference is where the work lives.</h2>
+      <h2 id="compare-title">The difference is shared context.</h2>
     </div>
     <div class="compare-grid">
       <div class="compare-column compare-before">
         <h3>A coding agent on its own</h3>
         <div class="compare-item">
-          <span>Form</span>
-          <p>A tool you prompt, in your terminal</p>
+          <span>Knowledge</span>
+          <p>Locked in your private chat, hard for anyone else to reach</p>
         </div>
         <div class="compare-item">
-          <span>Knowledge</span>
-          <p>Locked in your private chat, gone when you leave</p>
+          <span>Form</span>
+          <p>A tool you prompt, in your terminal</p>
         </div>
         <div class="compare-item">
           <span>Scope</span>
@@ -75,12 +75,12 @@ pageClass: landing-home
       <div class="compare-column compare-after">
         <h3>The same agent, on Anima</h3>
         <div class="compare-item">
-          <span>Form</span>
-          <p>A teammate you @mention, in your Slack</p>
-        </div>
-        <div class="compare-item">
           <span>Knowledge</span>
           <p>Written into a shared knowledge base you own</p>
+        </div>
+        <div class="compare-item">
+          <span>Form</span>
+          <p>A teammate you @mention, in your Slack</p>
         </div>
         <div class="compare-item">
           <span>Scope</span>
@@ -97,7 +97,7 @@ pageClass: landing-home
     <div class="landing-start-copy">
       <p class="landing-kicker">Get started</p>
       <h2 id="start-title">One command on your own machine.</h2>
-      <p>Then create your agent and follow the Connect to Slack steps in the dashboard.</p>
+      <p>It runs on one machine you control; your whole team then works with the agents in Slack. Create your agent and follow the Connect to Slack steps in the dashboard.</p>
     </div>
     <div class="landing-command-row">
       <pre class="landing-command"><code>curl -fsSL https://anima.meetquinn.ai/install.sh | sh</code></pre>

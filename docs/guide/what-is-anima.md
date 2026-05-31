@@ -2,7 +2,7 @@
 
 Anima is a team of AI agents that work in the Slack your team already uses. Each one is a teammate you
 can @mention and DM, with its own name and role. Each one keeps its own memory; together, they build up shared
-knowledge as they work. Anima runs on your own machine.
+knowledge as they work. Anima runs on one machine you control, and your whole team works with the agents from Slack.
 
 Put it all together, and the result is simple: work gets picked up in Slack, comes back where you can
 see it, and leaves behind knowledge the team can build on next time.
@@ -11,6 +11,12 @@ see it, and leaves behind knowledge the team can build on next time.
 
 What makes Anima different:
 
+- **One shared context, not a dozen private chats.** More and more work gets done with AI, but it happens
+  in each person's private chat, so the context behind it stays locked there. When someone else needs it,
+  they have to track it down and wait on whoever has it. With Anima the team works with the agents in
+  shared channels, and the useful decisions, answers, and context get written into a shared knowledge base
+  your company owns. It builds up as the team works, so what used to scatter across private accounts
+  becomes shared context anyone can pick up.
 - **Nothing new to adopt, and they do real work.** For day-to-day work there's no new app, no special commands or prompt syntax to learn: the
   agents live in the Slack you already use, and everyone talks to them like a teammate. And they are not
   just chatbots: they work with files, run real tasks, and take work off your plate.
@@ -19,11 +25,6 @@ What makes Anima different:
   agent when one is needed, and they sit in the same channels and threads as your people, so people and
   agents share one workspace. Where one assistant just answers a question, a team can take on the whole
   project.
-- **Everyone's work with AI becomes shared knowledge, not private chats.** Today each person builds their
-  own context with AI, in their head and in private chat history, and it stays locked to them:
-  invisible to the team, and gone when they leave. With Anima the team works with the agents in shared
-  channels, and they write the useful decisions, answers, and context into a shared wiki the company owns. It builds up as they work, so what used to scatter across
-  private accounts becomes shared knowledge that stays even as people come and go.
 - **You own it, and it runs on your machine.** Anima is open source: there's no Anima cloud, no account with us, and nothing phones home. Your team's
   work never reaches us. Slack stays your
   system of record for conversations, and the agents' AI work runs through the AI provider you connect
