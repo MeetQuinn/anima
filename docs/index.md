@@ -29,22 +29,18 @@ pageClass: landing-home
 
   <section class="landing-cards" aria-label="What makes Anima different">
     <article class="landing-card-featured">
-      <span class="card-accent" aria-hidden="true"></span>
       <h2>One shared context, not a dozen private chats</h2>
       <p>More and more work gets done with AI, but it happens in each person's private chat, so the context stays locked in there. Anima keeps it in one shared place instead: the agents and a knowledge base you own, that the whole team can reach.</p>
     </article>
     <article>
-      <span class="card-accent" aria-hidden="true"></span>
       <h2>Nothing new to adopt, and they do real work</h2>
       <p>They live in the Slack you already use, with no new app and no commands to learn. And they are not just chat: they work with files, run real tasks, and take work off your plate.</p>
     </article>
     <article>
-      <span class="card-accent" aria-hidden="true"></span>
       <h2>A team, not a single assistant</h2>
       <p>Multiple named agents, each with a role. They split work, hand off in Slack, and pull in whoever is needed. A team takes on the whole project, where one assistant just answers.</p>
     </article>
     <article>
-      <span class="card-accent" aria-hidden="true"></span>
       <h2>You own it, and it runs on your machine</h2>
       <p>Open source, with no Anima cloud and nothing phoning home. Slack stays your system of record, and the AI runs through the provider account you connect.</p>
     </article>
