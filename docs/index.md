@@ -31,7 +31,7 @@ pageClass: landing-home
     <article>
       <span class="card-accent" aria-hidden="true"></span>
       <h2>One shared context, not a dozen private chats</h2>
-      <p>More and more work gets done with AI, but it happens in each person's private chat, so the context behind it stays locked there. When someone else needs it, they have to track it down and wait on whoever has it. Anima keeps that context in one shared place: the agent and a knowledge base you own, that the whole team can reach.</p>
+      <p>More and more work gets done with AI, but it happens in each person's private chat, so the context stays locked in there. Anima keeps it in one shared place instead: the agents and a knowledge base you own, that the whole team can reach.</p>
     </article>
     <article>
       <span class="card-accent" aria-hidden="true"></span>
