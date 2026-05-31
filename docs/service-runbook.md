@@ -1,15 +1,27 @@
 # Anima Service Runbook
 
-`animactl services <op>` supervises the agent and web daemons for one Anima home. The target is whichever environment is resolved from `ANIMA_HOME` or the default lookup (`./.anima` first, then `~/.anima`). In a fresh install, there is no repo-local `.anima`, so the normal home is `~/.anima`.
+This is an operator runbook for the lower-level service supervisor. Most users should start with
+[Quickstart](quickstart.md) and [Deployment and upgrades](deployment.md). Use this page when you need
+to inspect or directly control the local daemons behind an Anima home.
 
-Anima itself does not name environments. If a team wants aliases for specific Anima homes, put that mapping in deployment scripts outside this repo and invoke `animactl` with the appropriate `ANIMA_HOME`.
+`animactl services <op>` supervises the agent and web daemons for one Anima home. The target is the
+home selected by `ANIMA_HOME`, or the default managed home `~/.anima` when `ANIMA_HOME` is unset.
+Anima records the visible runtime track (`dev`, `canary`, or `stable`) in that home's config; the
+track is shown in the dashboard so operators can tell which kind of runtime they are looking at.
 
-For managed (npm) installs, operators normally drive the runtime with `npx -y @meetquinn/animactl
-start|dashboard|restart|status|stop` — `start` boots a stopped runtime, `dashboard` opens the
-dashboard, `restart` is the command-line upgrade/restart path, and `start`/`restart` install
-and run the pinned runtime. They are documented in
-[deployment.md](deployment.md). This runbook covers the underlying `animactl services <op>`
-supervisor those commands invoke, plus its idle-gate and cross-environment restart semantics.
+For managed installs, operators normally drive the runtime with the public commands:
+
+```bash
+curl -fsSL https://github.com/MeetQuinn/anima/releases/latest/download/install.sh | sh
+npx -y @meetquinn/animactl dashboard
+npx -y @meetquinn/animactl restart
+npx -y @meetquinn/animactl status
+npx -y @meetquinn/animactl stop
+```
+
+Those commands are documented in [Deployment and upgrades](deployment.md). This runbook covers the
+underlying `animactl services <op>` supervisor they invoke, plus its idle-gate and cross-environment
+restart semantics.
 
 For Anima source development, the `dev:services:*` npm scripts explicitly set
 `ANIMA_HOME=./.anima-dev` and seed dashboard port `14174`, so local dev state stays inside the repo
@@ -20,10 +32,11 @@ Each Anima home runs two daemons:
 - Agent (`animactl server`): Slack listener, reminder scheduler, and worker loop in one process.
 - Web (`animactl web`): local status and activity views.
 
-The web app port comes from the selected home config's `dashboardPort` field (default `4174`).
-Use `npx -y @meetquinn/animactl dashboard` for managed installs, or
-`ANIMA_HOME=<path> animactl services dashboard` for a specific home, to launch the dashboard
-without remembering the port.
+The web app port comes from the selected home config's `dashboardPort` field. Managed installs
+normally use `4174`; source-development services seed `14174`. Use
+`npx -y @meetquinn/animactl dashboard` for managed installs, or
+`ANIMA_HOME=<path> animactl services dashboard` for a specific home, to launch the dashboard without
+remembering the port.
 The agent service auto-starts newly runnable Slack-connected agents. Restart services after changing an already-running agent's provider, home, Slack tokens, or enabled state.
 
 ## Status

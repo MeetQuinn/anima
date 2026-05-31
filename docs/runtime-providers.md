@@ -2,7 +2,7 @@
 
 This document explains the layer where Anima talks to an underlying provider such as Codex CLI, Claude Code, or Kimi CLI.
 
-It intentionally does not re-explain Slack routing, reminder scheduling, inbox ingestion, or the web app. Those are covered by `docs/design.md` and the architecture notes in `CLAUDE.md`.
+It intentionally does not re-explain Slack routing, reminder scheduling, inbox ingestion, or the web app. For the system map, start with [Architecture overview](architecture/overview.md).
 
 ## Mental Model
 

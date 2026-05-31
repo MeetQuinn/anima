@@ -4,7 +4,7 @@
 
 Teams lose most of what their people and agents produce — not because the work is weak, but because of where it ends up.
 
-- **Work and knowledge stay locked in individual sessions and individual heads.** The context an engineer built up, the decision an operator made, the *why* behind a choice — these live in one person's chat history or memory and never compound across the team.
+- **Work and knowledge stay locked in individual sessions and individual heads.** The context an engineer built up, the decision an operator made, the _why_ behind a choice — these live in one person's chat history or memory and never compound across the team.
 - **Using agents has a real barrier.** Driving a code agent well takes CLI fluency, prompt skill, and tool setup. Most of a team can't or won't do that, so agents stay a power-user tool instead of a team capability.
 - **An agent is only as good as the machine it runs on.** A laptop with the right tools installed and authed is a different agent than a bare one — the same prompt yields very different results. Getting consistent value out of an agent depends on its environment, and that's a hidden variable most teams never control for.
 
@@ -17,7 +17,7 @@ Each agent is a teammate with a name, a role, and a durable home. Your whole tea
 This answers the three problems head-on:
 
 - **Slack is the interface → no adoption barrier.** Anyone on the team can work with an agent without learning a CLI or a prompt syntax.
-- **A small, managed local runtime → the environment is handled, not improvised.** Setup is guided, and every action an agent takes is logged.
+- **A small, managed local runtime → the environment is handled, not improvised.** Setup is guided, and actions an agent takes through Anima are recorded.
 - **A shared knowledge base → work compounds instead of dying in one session.** What the team and its agents learn accumulates somewhere durable that gets more valuable over time.
 
 Anima is not a skill marketplace, a generic provider platform, or a replacement for Codex, Claude Code, Kimi, repo scripts, or MCP servers. Users bring those capabilities; Anima makes them a team.
@@ -46,15 +46,15 @@ The unit Anima is built around is **an AI agent team working alongside your huma
 
 Many agent products build their own chat app. That is the harder path and the wrong one. A capable messaging surface is a deep platform — threads, reactions, files, search, channels, presence — and a home-grown one is years behind Slack while costing real effort to build. It also re-erects the adoption barrier, because it asks the whole team to move to a new tool.
 
-Standing on Slack inverts this. The agent isn't confined to a bare chat box; with a Slack connection it becomes a **native operator of a mature collaboration surface** — it can thread, react, share files, search history, and work across channels and DMs, using the same tools the team already lives in. The richness that matters isn't custom widgets; it's an agent fluent in the workspace the team already uses.
+Standing on Slack inverts this. The agent isn't confined to a bare chat box; with a Slack connection it becomes a **native operator of a mature collaboration surface** — it can thread, react, share files, work in the channels and DMs it can access, and use the same tools the team already lives in. The richness that matters isn't custom widgets; it's an agent fluent in the workspace the team already uses.
 
 So not building our own interface is a deliberate leverage choice, not a shortcut: we spend our effort on the differentiated layer — the agent team, its memory, the shared knowledge, the orchestration — and borrow a mature platform for the rest. When we hit a limit in Slack, the answer is the local web app as a depth-and-inspection surface, not rebuilding a weaker Slack.
 
 ## Shared knowledge is the moat
 
-As the agents work, knowledge **compiles itself** — decisions, context, the *why* — into the team's Knowledge Base, which lives in git and compounds over time. **Agents author it; humans govern it.** It is the org brain that writes itself.
+As the agents work, they can write the useful decisions, context, and artifacts into the team's Knowledge Base. **Agents author it; humans govern it.**
 
-This is the moat because it is the one asset that gets *more* valuable the longer a team uses Anima, and it can't be copied — it is your team's accumulated context. Files are the source of truth; any graph or overview is a projection of them.
+This is the moat because it is the one asset that gets _more_ valuable the longer a team uses Anima, and it can't be copied — it is your team's accumulated context. Files are the source of truth; any graph or overview is a projection of them.
 
 ## Humans govern
 
@@ -82,6 +82,6 @@ Slack is where the team interacts with Anima. The runtime should stay small enou
 
 - Slack messages wake the agent; scheduled reminders can wake it without auto-sending a message.
 - The agent reads Slack context only through audited tools, and visible replies go back through Anima tools.
-- Everything an agent does is inspectable, and users control agent/session state through local state and the web app.
+- Work an agent does through Anima is recorded and reviewable, and users control agent/session state through local state and the web app.
 
 Anima is not an "agent Notion" or a rich-text tool — the Knowledge Base is files in git; the value is agents authoring and humans governing, not a fancy editor. And business data belongs in the agent's own tools or scripts; Anima should not become an adapter layer for every data source an agent might use.
