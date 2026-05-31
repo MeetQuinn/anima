@@ -32,8 +32,8 @@ into Anima.
 ## 4. Pick an owner
 
 Pick an **owner**: the person responsible for this agent, its main point of contact, and the one who
-steers it. Anima introduces them with a hello DM in Slack, usually within a few seconds. That hello is
-your sign it's live.
+steers it. Within a few seconds, the new agent DMs that owner in Slack to introduce itself and start
+onboarding. Reply to tell it what you need, and it gets set up with you right there in the conversation.
 
 ## You're set
 
