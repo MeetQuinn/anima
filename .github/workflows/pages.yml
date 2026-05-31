@@ -1,6 +1,9 @@
 name: Deploy Docs to Pages
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -21,7 +24,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
-          node-version: '24'
+          node-version: "24"
           package-manager-cache: false
       - run: corepack enable
       - run: pnpm install --frozen-lockfile

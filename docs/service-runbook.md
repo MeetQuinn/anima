@@ -12,7 +12,7 @@ track is shown in the dashboard so operators can tell which kind of runtime they
 For managed installs, operators normally drive the runtime with the public commands:
 
 ```bash
-curl -fsSL https://github.com/MeetQuinn/anima/releases/latest/download/install.sh | sh
+curl -fsSL https://anima.meetquinn.ai/install.sh | sh
 npx -y @meetquinn/animactl dashboard
 npx -y @meetquinn/animactl restart
 npx -y @meetquinn/animactl status

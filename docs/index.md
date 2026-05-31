@@ -100,12 +100,12 @@ pageClass: landing-home
       <p>Then create your agent and follow the Connect to Slack steps in the dashboard.</p>
     </div>
     <div class="landing-command-row">
-      <pre class="landing-command"><code>curl -fsSL https://github.com/MeetQuinn/anima/releases/latest/download/install.sh | sh</code></pre>
+      <pre class="landing-command"><code>curl -fsSL https://anima.meetquinn.ai/install.sh | sh</code></pre>
       <button
         class="landing-copy-command"
         type="button"
         aria-label="Copy install command"
-        @click="navigator.clipboard.writeText('curl -fsSL https://github.com/MeetQuinn/anima/releases/latest/download/install.sh | sh'); $event.currentTarget.textContent = 'Copied'; setTimeout(() => { $event.currentTarget.textContent = 'Copy'; }, 1400)"
+        @click="navigator.clipboard.writeText('curl -fsSL https://anima.meetquinn.ai/install.sh | sh'); $event.currentTarget.textContent = 'Copied'; setTimeout(() => { $event.currentTarget.textContent = 'Copy'; }, 1400)"
       >Copy</button>
     </div>
     <nav class="landing-links" aria-label="Get started links">
