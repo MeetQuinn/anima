@@ -30,7 +30,7 @@ pageClass: landing-home
   <section class="landing-cards" aria-label="What makes Anima different">
     <article class="landing-card-featured">
       <h2>One shared context, not a dozen private chats</h2>
-      <p>More and more work gets done with AI, but it happens in each person's private chat, so the context stays locked in there. Anima keeps it in one shared place instead: the agents and a knowledge base you own, that the whole team can reach.</p>
+      <p>More and more work gets done with AI, but it happens in each person's private chat. Anima keeps it in one shared place the whole team can reach, and you own it.</p>
     </article>
     <article>
       <h2>Nothing new to adopt, and they do real work</h2>
