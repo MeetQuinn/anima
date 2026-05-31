@@ -1,17 +1,17 @@
 # Deployment And Upgrades
 
-This document describes the npm-era deployment model. The goal is to keep development, dogfood, and
+This document describes the npm-era deployment model. The goal is to keep development, canary, and
 stable user installs isolated from each other.
 
 ## Environments
 
 | Environment         | Code source                        | Anima home                              | Purpose                      |
 | ------------------- | ---------------------------------- | --------------------------------------- | ---------------------------- |
-| Development         | Source checkout, usually `~/anima` | Repo-local `./.anima` or `~/.anima-dev` | Build and test Anima itself  |
-| Dogfood             | Pinned npm canary package          | `~/.anima` for Anima's own live team    | Run real usage before stable |
+| Development         | Source checkout, usually `~/anima` | Repo-local `./.anima-dev`               | Build and test Anima itself  |
+| Canary              | Pinned npm canary package          | `~/.anima` for Anima's own live team    | Run real usage before stable |
 | Stable user install | Pinned npm stable package          | User's chosen home, normally `~/.anima` | External users               |
 
-Do not run dogfood or stable installs from a development checkout. A development rebuild should not
+Do not run canary or stable installs from a development checkout. A development rebuild should not
 be able to change the UI or server code used by a live install.
 
 ## Code Root Vs Data Home
@@ -26,9 +26,9 @@ For example:
 
 ```text
 ~/anima/                         source checkout for development
-~/.anima/                        dogfood/stable runtime data
+~/.anima/                        canary/stable runtime data
 ~/.anima/runtime/current/        npm-installed managed runtime
-~/anima/.anima/                  development runtime data
+~/anima/.anima-dev/              development runtime data
 ```
 
 The code root can be replaced during an upgrade. The Anima home is durable user data and should not
@@ -48,7 +48,7 @@ curl -fsSL https://github.com/MeetQuinn/anima/releases/latest/download/install.s
 npx -y @meetquinn/animactl start          # first start on stable/latest
 npx -y @meetquinn/animactl dashboard      # launch the local dashboard
 npx -y @meetquinn/animactl restart        # command-line upgrade to stable/latest
-npx -y @meetquinn/animactl@canary restart # dogfood upgrade/restart path
+npx -y @meetquinn/animactl@canary restart # canary upgrade/restart path
 npx -y @meetquinn/animactl status
 npx -y @meetquinn/animactl stop
 ```
@@ -71,9 +71,9 @@ animactl runtime install --channel canary
 
 Set `ANIMA_HOME=/path/to/home` to manage a non-default home. If `ANIMA_HOME` is unset, managed
 runtime commands use `~/.anima` even when the shell is currently inside a source checkout that has a
-repo-local `.anima`.
+repo-local `.anima-dev`.
 
-## Dogfood Deployment
+## Canary Deployment
 
 Anima's own live install should run a pinned canary version, not a mutable checkout:
 
@@ -100,7 +100,7 @@ First-version behavior:
 6. Verify the service comes back on the new version.
 7. If the upgrade fails, report the error and leave the old version running when possible.
 
-Dogfood installs may optionally check `canary` instead of `latest`, but that should be an explicit
+Canary installs may optionally check `canary` instead of `latest`, but that should be an explicit
 setting. Stable users should not see pre-release upgrades unless they opt in.
 
 ## Auto-Upgrade Policy
@@ -113,7 +113,7 @@ Reasons:
 - Users run Anima on varied local machines.
 - A package upgrade can require a service restart.
 
-The safe default is a visible update prompt plus a user-initiated restart. Fully automatic dogfood
+The safe default is a visible update prompt plus a user-initiated restart. Fully automatic canary
 upgrades can come later after the one-click path is reliable.
 
 ## Verification

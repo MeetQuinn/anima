@@ -1,4 +1,4 @@
-import type { ReleaseTrack, SidebarOrder } from '../../shared/server-settings.js';
+import type { ReleaseTrack, ServerTrack, SidebarOrder } from '../../shared/server-settings.js';
 import {
   serverConfigStore,
   type ServerConfig,
@@ -35,12 +35,19 @@ export class ServerSettingsService {
 
   async getReleaseTrack(): Promise<ReleaseTrack> {
     const config = await this.store.read();
+    if (config.releaseTrack) return config.releaseTrack;
+    if (config.track === 'canary' || config.track === 'stable') return config.track;
     return config.releaseTrack ?? 'stable';
+  }
+
+  async getTrack(): Promise<ServerTrack> {
+    const config = await this.store.read();
+    return config.track ?? config.releaseTrack ?? 'stable';
   }
 
   async setReleaseTrack(releaseTrack: ReleaseTrack): Promise<ReleaseTrack> {
     const config = await this.store.read();
-    await this.store.write({ ...config, releaseTrack });
+    await this.store.write({ ...config, releaseTrack, track: releaseTrack });
     return releaseTrack;
   }
 

@@ -99,9 +99,9 @@ test('runtime upgrade worker rolls metadata back when target artifact is incompl
       res.end(JSON.stringify({
         animaHome: rootDir,
         dashboardPort: 4174,
-        env: 'custom',
         ok: true,
         startedAt: '2026-05-29T08:18:33.000Z',
+        track: 'stable',
         uptimeSeconds: 10,
         version: '0.1.1',
       }));

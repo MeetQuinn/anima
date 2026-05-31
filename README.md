@@ -10,12 +10,12 @@ It runs locally and wraps the coding agents you already use (Claude Code, Codex,
 
 Anima takes a coding agent you already run and gives it what a real teammate needs: a place to live, a memory, a team, and a record.
 
-|                           | A coding agent on its own                                  | The same agent, on Anima                                                 |
-| ------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------ |
-| **Adoption**              | One developer drives it in a terminal; needs CLI and prompt skill | The whole team works with it in Slack: @mention or DM, no CLI to learn |
-| **Form**                  | A single solo session                                     | A team of named teammates, each with its own identity, memory, and home  |
-| **Knowledge**             | Locked in one session, gone when it ends                  | A shared knowledge base in git that compounds and your company owns      |
-| **Ownership and control** | Raw output on one person's machine                        | Runs locally; actions go through audited tools; knowledge stays in your own git |
+|                           | A coding agent on its own                                         | The same agent, on Anima                                                        |
+| ------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| **Adoption**              | One developer drives it in a terminal; needs CLI and prompt skill | The whole team works with it in Slack: @mention or DM, no CLI to learn          |
+| **Form**                  | A single solo session                                             | A team of named teammates, each with its own identity, memory, and home         |
+| **Knowledge**             | Locked in one session, gone when it ends                          | A shared knowledge base in git that compounds and your company owns             |
+| **Ownership and control** | Raw output on one person's machine                                | Runs locally; actions go through audited tools; knowledge stays in your own git |
 
 ## How it works
 
@@ -56,7 +56,7 @@ Anima downloads the managed runtime into `~/.anima/runtime/current` and keeps lo
 
 - [Design](docs/design.md): concepts and product principles
 - [Provider layer](docs/runtime-providers.md): the providers Anima supports and how to add one
-- [Release process](docs/release.md): PR-only main, canary dogfood, and stable npm releases
+- [Release process](docs/release.md): PR-only main, canary validation, and stable npm releases
 - [Deployment and upgrades](docs/deployment.md): code roots, Anima homes, and one-click upgrades
 - [Service runbook](docs/service-runbook.md)
 - [Slack app manifest](templates/slack-app-manifest.yaml)
@@ -71,10 +71,10 @@ git clone https://github.com/MeetQuinn/anima.git
 cd anima
 pnpm install
 pnpm build
-pnpm dev:services:start   # repo-local ./.anima/ home + dashboard at http://127.0.0.1:4174
+pnpm dev:services:start   # repo-local ./.anima-dev/ home + dashboard at http://127.0.0.1:14174
 ```
 
-`pnpm dev:services:start|status|restart|stop` set `ANIMA_HOME=./.anima` so dev state stays inside the clone, separate from any managed `~/.anima/` install. A development rebuild should never change the code a live `~/.anima/` install runs.
+`pnpm dev:services:start|status|restart|stop` set `ANIMA_HOME=./.anima-dev` so dev state stays inside the clone, separate from any managed `~/.anima/` install. A development rebuild should never change the code a live `~/.anima/` install runs.
 
 Build and test commands:
 
@@ -90,4 +90,4 @@ pnpm test:all        # full build + every compiled test file
 
 Server tests live under `server/tests` and use Node's built-in test runner over compiled files in `dist/server/tests`. The default `pnpm test` skips the web build and the heavier runtime subprocess suite so local feedback stays fast; use `pnpm test:runtime` when changing provider, CLI, or service process behavior.
 
-The docs site is built with VitePress: run `pnpm docs:dev` to preview it locally, or `pnpm docs:build` to build it.
+The docs site is built with VitePress: run `pnpm docs:dev` to preview it locally at <http://127.0.0.1:14175/>, or `pnpm docs:build` to build it.

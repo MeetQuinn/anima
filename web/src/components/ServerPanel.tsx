@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronRight, RefreshCw, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink, RefreshCw, X } from 'lucide-react';
 import { fetchServerInfo, fetchProviderUsage, pingHealth } from '@/api/system';
 import { shortIso, formatUptime } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
@@ -322,6 +322,28 @@ export default function ServerPanel({ onClose }: Props) {
                   <span className="font-serif text-[14px] text-text">{healthLabel}</span>
                 </span>
               </LabelRow>
+
+              {info?.track && (
+                <LabelRow label="Track">
+                  <span className="font-serif text-[14px] text-text">
+                    {info.track}
+                  </span>
+                </LabelRow>
+              )}
+
+              {info?.docsUrl && (
+                <LabelRow label="Docs">
+                  <a
+                    href={info.docsUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 font-serif text-[14px] text-accent hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  >
+                    Open docs
+                    <ExternalLink className="h-3 w-3" aria-hidden />
+                  </a>
+                </LabelRow>
+              )}
 
               {info && (
                 <LabelRow label="Home">

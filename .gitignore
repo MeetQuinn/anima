@@ -2,6 +2,7 @@ node_modules/
 dist/
 packages/animactl/templates/
 .anima/
+.anima-dev/
 .anima-demo/
 .env
 *.tgz

@@ -4,15 +4,15 @@ A React/Vite web app for a single Anima home. Shows agent activity, reminders, p
 
 ## Stack
 
-| Layer | Library |
-|---|---|
-| Framework | React 19 + TypeScript |
-| Build | Vite |
-| Routing | React Router v7 (`createBrowserRouter`) |
-| Server state | TanStack Query v5 |
-| Styling | Tailwind CSS |
-| Icons | lucide-react |
-| Date/time | date-fns v4 |
+| Layer        | Library                                 |
+| ------------ | --------------------------------------- |
+| Framework    | React 19 + TypeScript                   |
+| Build        | Vite                                    |
+| Routing      | React Router v7 (`createBrowserRouter`) |
+| Server state | TanStack Query v5                       |
+| Styling      | Tailwind CSS                            |
+| Icons        | lucide-react                            |
+| Date/time    | date-fns v4                             |
 
 ## Source layout
 
@@ -65,14 +65,14 @@ pnpm install           # install server + web workspace dependencies
 pnpm build:ui          # build web app into dist/web/
 pnpm services:start    # start API + web app using the normal Anima home
 pnpm services:status   # check service health
-pnpm dev:services:start # start API + web app with repo-local ./.anima
+pnpm dev:services:start # start API + web app with repo-local ./.anima-dev
 ```
 
 From `web/`:
 
 ```bash
 pnpm install           # still uses the repo-root workspace lockfile
-pnpm dev               # Vite dev server (proxies API at :4174)
+pnpm dev               # Vite dev server (proxies API at :14174)
 pnpm build             # production build
 pnpm lint              # ESLint
 pnpm format            # Prettier (writes in place)

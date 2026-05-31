@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { ServerTrack } from './server-settings.js';
+
 export const ServicesRestartBlocker = z.object({
   agentId: z.string(),
   itemId: z.string(),
@@ -45,10 +47,11 @@ export const ServerInfo = z.object({
   animaHome: z.string(),
   commit: z.string().optional(),
   dashboardPort: z.number(),
-  env: z.enum(['dev', 'dogfood', 'custom']),
+  docsUrl: z.string().url().optional(),
   lastRestart: LastServicesRestart.optional(),
   ok: z.literal(true),
   startedAt: z.string(),
+  track: ServerTrack,
   uptimeSeconds: z.number(),
   version: z.string(),
 });

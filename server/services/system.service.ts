@@ -1,7 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, open, readFile, rm } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -80,14 +79,16 @@ export class SystemService {
       this.commit,
       readLastServicesRestart(animaHome),
     ]);
+    const track = config.track ?? config.releaseTrack ?? 'stable';
     return {
       animaHome,
       ...(commit ? { commit } : {}),
       dashboardPort: config.dashboardPort ?? 4174,
-      env: environmentName(this.projectRoot, animaHome),
+      docsUrl: docsUrl(track),
       ...(lastRestart ? { lastRestart } : {}),
       ok: true as const,
       startedAt: this.startedAt,
+      track,
       uptimeSeconds: Math.max(0, Math.floor((this.now().getTime() - Date.parse(this.startedAt)) / 1000)),
       version,
     };
@@ -178,10 +179,11 @@ async function gitShortCommit(projectRoot: string): Promise<string | undefined> 
   }
 }
 
-function environmentName(projectRoot: string, animaHome: string): 'dev' | 'dogfood' | 'custom' {
-  if (resolve(animaHome) === resolve(projectRoot, '.anima')) return 'dev';
-  if (resolve(animaHome) === resolve(homedir(), '.anima')) return 'dogfood';
-  return 'custom';
+export function docsUrl(track: 'dev' | 'canary' | 'stable'): string {
+  const configured = process.env.ANIMA_DOCS_URL?.trim();
+  if (configured) return configured;
+  if (track === 'dev') return 'http://127.0.0.1:14175/';
+  return 'https://anima.meetquinn.ai/';
 }
 
 function commandPresent(command: string): Promise<boolean> {
