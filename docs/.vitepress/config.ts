@@ -29,7 +29,7 @@ export default defineConfig({
         text: "Guide",
         items: [
           { text: "What is Anima", link: "/guide/what-is-anima" },
-          { text: "Quickstart", link: "/quickstart" },
+          { text: "Quickstart", link: "/guide/quickstart" },
           {
             text: "Working with your agent",
             link: "/guide/working-with-your-agent",
@@ -41,7 +41,6 @@ export default defineConfig({
         text: "Architecture",
         items: [
           { text: "Overview", link: "/architecture/overview" },
-          { text: "Deployment", link: "/deployment" },
           { text: "Provider layer", link: "/runtime-providers" },
           { text: "Activity events", link: "/activity-events" },
         ],

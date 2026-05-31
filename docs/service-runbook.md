@@ -1,7 +1,7 @@
 # Anima Service Runbook
 
 This is an operator runbook for the lower-level service supervisor. Most users should start with
-[Quickstart](quickstart.md) and [Deployment and upgrades](deployment.md). Use this page when you need
+[Quickstart](guide/quickstart.md) and [Deployment and upgrades](deployment.md). Use this page when you need
 to inspect or directly control the local daemons behind an Anima home.
 
 `animactl services <op>` supervises the agent and web daemons for one Anima home. The target is the
