@@ -12,7 +12,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 concurrency:
@@ -41,6 +41,14 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSION="${{ inputs.version }}"
             DIST_TAG="latest"
+            if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Stable version must be a simple semver, for example 0.1.3" >&2
+              exit 1
+            fi
+            if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+              echo "Git tag v$VERSION already exists" >&2
+              exit 1
+            fi
           else
             VERSION="$(node <<'NODE'
           const fs = require('node:fs');
@@ -70,5 +78,38 @@ jobs:
       - run: pnpm test:fast:dist
       - run: npm pack --dry-run --ignore-scripts
         working-directory: packages/animactl
+      - name: Prepare release installer
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          VERSION="${{ steps.release.outputs.version }}"
+          sed "s/^ANIMA_VERSION_DEFAULT=.*/ANIMA_VERSION_DEFAULT=\"$VERSION\"/" scripts/install.sh > release-assets/install.sh
+          chmod +x release-assets/install.sh
+          sh -n release-assets/install.sh
+          cat > release-assets/notes.md <<EOF
+          Stable npm release for \`@meetquinn/animactl@$VERSION\`.
+
+          Install:
+
+          \`\`\`sh
+          curl -fsSL https://github.com/MeetQuinn/anima/releases/latest/download/install.sh | sh
+          \`\`\`
+          EOF
       - run: npm publish --access public --tag "${{ steps.release.outputs.dist_tag }}"
         working-directory: packages/animactl
+      - name: Create GitHub release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.release.outputs.version }}"
+          TAG="v$VERSION"
+          gh release create "$TAG" release-assets/install.sh \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Anima $VERSION" \
+            --notes-file release-assets/notes.md
