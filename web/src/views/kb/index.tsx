@@ -12,6 +12,7 @@ import { FileContent, BreadcrumbPath, FileToolbar, TocButton, extractToc } from 
 
 const expandedDirsByKb = new Map<string, string[]>();
 const lastViewedFileByKb = new Map<string, string>();
+const DEFAULT_TREE_WIDTH = 288;
 
 function restoredExpandedDirs(kbId: string, filePath: string | null): Set<string> {
   const expanded = new Set(expandedDirsByKb.get(kbId) ?? []);
@@ -42,13 +43,13 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
       const saved = localStorage.getItem('kb.treeWidth');
       if (saved) return Math.max(180, Math.min(480, Number(saved)));
     } catch { /* ignore */ }
-    return 256; // default matches md:w-64
+    return DEFAULT_TREE_WIDTH;
   });
   const [resizing, setResizing] = useState(false);
   const filterInputRef = useRef<HTMLInputElement>(null);
   const treeRef = useRef<HTMLDivElement>(null);
   const startXRef = useRef(0);
-  const startWidthRef = useRef(256);
+  const startWidthRef = useRef(DEFAULT_TREE_WIDTH);
 
   // ---------------------------------------------------------------------------
   // Queries
