@@ -158,6 +158,8 @@
 .landing-cards h2 {
   max-width: 460px;
   margin: 0;
+  border-top: 0;
+  padding-top: 0;
   color: var(--landing-ink);
   font-size: 30px;
   line-height: 1.08;
