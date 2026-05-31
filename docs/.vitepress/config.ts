@@ -19,9 +19,7 @@ export default defineConfig({
     },
     nav: [
       { text: "Guide", link: "/guide/what-is-anima" },
-      { text: "Operations", link: "/deployment" },
       { text: "Architecture", link: "/architecture/overview" },
-      { text: "Maintainers", link: "/release" },
     ],
     search: {
       provider: "local",
@@ -40,26 +38,12 @@ export default defineConfig({
         ],
       },
       {
-        text: "Operations",
-        items: [
-          { text: "Deployment", link: "/deployment" },
-          { text: "Service runbook", link: "/service-runbook" },
-        ],
-      },
-      {
         text: "Architecture",
         items: [
           { text: "Overview", link: "/architecture/overview" },
+          { text: "Deployment", link: "/deployment" },
           { text: "Provider layer", link: "/runtime-providers" },
           { text: "Activity events", link: "/activity-events" },
-        ],
-      },
-      {
-        text: "Maintainers",
-        items: [
-          { text: "Release process", link: "/release" },
-          { text: "Design principles", link: "/design" },
-          { text: "Docs roadmap", link: "/docs-roadmap" },
         ],
       },
     ],
