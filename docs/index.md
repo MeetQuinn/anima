@@ -6,15 +6,13 @@ pageClass: landing-home
 <main class="landing-shell">
   <section class="landing-hero" aria-labelledby="landing-title">
     <div class="landing-hero-copy">
-      <p class="landing-kicker">Anima</p>
       <h1 id="landing-title">A team of AI agents in your Slack.</h1>
       <p class="landing-tagline">
         Real teammates that do real work, and the context they build is shared across the team and stays yours.
       </p>
       <div class="landing-actions" aria-label="Primary links">
-        <a class="landing-button landing-button-primary" href="/quickstart">Get started</a>
+        <a class="landing-button landing-button-primary" href="/guide/quickstart">Get started</a>
         <a class="landing-button landing-button-secondary" href="/guide/what-is-anima">What is Anima?</a>
-        <a class="landing-button landing-button-secondary" href="https://github.com/MeetQuinn/anima">GitHub</a>
       </div>
     </div>
     <div class="landing-hero-visual" aria-labelledby="proof-title">
@@ -80,7 +78,7 @@ pageClass: landing-home
         </div>
         <div class="compare-item">
           <span>Context</span>
-          <p>Shared with the whole team, and yours</p>
+          <p>Shared with the whole team</p>
         </div>
       </div>
     </div>
@@ -105,7 +103,7 @@ pageClass: landing-home
       >Copy</button>
     </div>
     <nav class="landing-links" aria-label="Get started links">
-      <a href="/quickstart">Read the Quickstart</a>
+      <a href="/guide/quickstart">Read the Quickstart</a>
     </nav>
   </section>
 </main>
