@@ -36,14 +36,14 @@ One command gets Anima running on one machine you control; your whole team then 
 curl -fsSL https://anima.meetquinn.ai/install.sh | sh
 ```
 
-Anima downloads the managed runtime into `~/.anima/runtime/current` and keeps local config, state, logs, and pid files in `~/.anima/`. On a local desktop it opens the dashboard automatically at <http://127.0.0.1:4174>. Then create your agent and follow the **Connect to Slack** steps in the app. For a step-by-step version of the whole flow, see [Quickstart](https://anima.meetquinn.ai/quickstart).
+Anima downloads the managed runtime into `~/.anima/runtime/current` and keeps local config, state, logs, and pid files in `~/.anima/`. On a local desktop it opens the dashboard automatically at <http://127.0.0.1:4174>. Then create your agent and follow the **Connect to Slack** steps in the app. For a step-by-step version of the whole flow, see [Quickstart](https://anima.meetquinn.ai/guide/quickstart).
 
 ## Documentation
 
 **Start here**
 
 - [What is Anima](https://anima.meetquinn.ai/guide/what-is-anima): the product in one read
-- [Quickstart](https://anima.meetquinn.ai/quickstart): run it on your own machine
+- [Quickstart](https://anima.meetquinn.ai/guide/quickstart): run it on your own machine
 
 **Using your team**
 
@@ -56,11 +56,7 @@ Anima downloads the managed runtime into `~/.anima/runtime/current` and keeps lo
 
 **Reference**
 
-- [Design](https://anima.meetquinn.ai/design): concepts and product principles
 - [Provider layer](https://anima.meetquinn.ai/runtime-providers): the providers Anima supports and how to add one
-- [Release process](https://anima.meetquinn.ai/release): PR-only main, canary validation, and stable npm releases
-- [Deployment and upgrades](https://anima.meetquinn.ai/deployment): code roots, Anima homes, and one-click upgrades
-- [Service runbook](https://anima.meetquinn.ai/service-runbook)
 - [Slack app manifest](templates/slack-app-manifest.yaml)
 - [Agent guidance](CLAUDE.md)
 

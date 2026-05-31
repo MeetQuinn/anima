@@ -32,7 +32,7 @@ What makes Anima different:
 
 ## Start here
 
-- **[Quickstart](../quickstart.md)** gets a team running on your machine in a few minutes.
+- **[Quickstart](quickstart.md)** gets a team running on your machine in a few minutes.
 - **[Working with your agent](./working-with-your-agent.md)** is what an agent can do and how to work with
   it day to day.
 - **[How an agent works](./how-an-agent-works.md)** explains what is going on inside a single agent.

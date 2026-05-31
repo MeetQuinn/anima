@@ -38,4 +38,4 @@ your sign it's live.
 ## You're set
 
 Reply to its DM, or invite it to a channel (`/invite @your-agent`) and @mention it to bring it into
-shared work. For how to work with your team day to day, see **[Working with your agent](./guide/working-with-your-agent.md)**.
+shared work. For how to work with your team day to day, see **[Working with your agent](./working-with-your-agent.md)**.

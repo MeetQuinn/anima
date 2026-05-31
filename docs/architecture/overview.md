@@ -2,9 +2,9 @@
 
 > **What this is.** The one-page map of how Anima is built: the components, how a message flows
 > through them, and where each concern lives in the code. It frames the rest of Part 2. Reader: the
-> coding agent in the repo and human contributors. For the product-level model and vocabulary, see
-> [`design.md`](../design.md); for the single-agent behavior, see
-> [How an agent works](../guide/how-an-agent-works.md).
+> coding agent in the repo and human contributors. For the product-level introduction, see
+> [What is Anima](../guide/what-is-anima.md); for the single-agent behavior, see [How an agent
+> works](../guide/how-an-agent-works.md).
 
 ---
 
@@ -70,19 +70,19 @@ events, and its Anima-mediated side effects to an activity/event stream that a l
 
 A map from concern to its home in the code, for finding the entry point fast.
 
-| Concern | Home |
-| --- | --- |
-| Web dashboard UI | `web/src/` |
-| Frontend API clients | `web/src/api/` |
-| Local HTTP API routes | `server/web/` (shared DTOs in `shared/`) |
-| Agent identity, config, Slack connect, owner | `server/agents/`, `shared/agent-config.ts`; manifest `shared/slack-manifest.ts` + `server/slack/app-manifest.ts` |
-| Agent execution (running a turn) | `server/runtime/` (`runtime-worker.ts`, `runtime-bridge.ts`, `delivery-prompt.ts`, `runtime-session.service.ts`, `followup-appender.ts`, `active-run-control.ts`, `provider-runner.ts`) |
-| Managed runtime / supervisor / upgrade | `server/runtime-management/`, `server/services/`, `server/cli/services-cli.ts`, `server/cli/animactl.ts`, `server/cli/animactl-npm.ts`, `packages/animactl/bin/` |
-| Inbox, routing, attention, mute | `server/inbox/` (`slack-subscriber.ts`, `slack-subscription.service.ts`, `wake-queue.service.ts`, `reminder-subscriber.ts`); item shape `shared/inbox.ts` |
-| Slack-visible tools / audited outputs | `server/tools/` (`messages.ts`, `reactions.ts`, `file-send.ts`, `ask.ts`); activity append `server/activities/`; message ledger `server/messages/` |
-| Providers | `server/providers/` (`contract.ts`, `factory.ts`, `claude.ts`, `codex.ts`, `kimi.ts`, `*-events.ts`); usage data `server/provider-usage/` |
-| Knowledge base | `server/kb/`; routes `server/web/kb-routes.ts`; store `server/storage/schema/kb.store.ts`; contract `shared/kb.ts`; UI `web/src/views/kb/` + `web/src/api/kb.ts` |
-| Persisted state | typed stores `server/storage/schema/`; JSON/JSONL mechanics `server/storage/json-file.ts`, `json-store.ts`, `jsonl-log.ts` |
+| Concern                                      | Home                                                                                                                                                                                    |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Web dashboard UI                             | `web/src/`                                                                                                                                                                              |
+| Frontend API clients                         | `web/src/api/`                                                                                                                                                                          |
+| Local HTTP API routes                        | `server/web/` (shared DTOs in `shared/`)                                                                                                                                                |
+| Agent identity, config, Slack connect, owner | `server/agents/`, `shared/agent-config.ts`; manifest `shared/slack-manifest.ts` + `server/slack/app-manifest.ts`                                                                        |
+| Agent execution (running a turn)             | `server/runtime/` (`runtime-worker.ts`, `runtime-bridge.ts`, `delivery-prompt.ts`, `runtime-session.service.ts`, `followup-appender.ts`, `active-run-control.ts`, `provider-runner.ts`) |
+| Managed runtime / supervisor / upgrade       | `server/runtime-management/`, `server/services/`, `server/cli/services-cli.ts`, `server/cli/animactl.ts`, `server/cli/animactl-npm.ts`, `packages/animactl/bin/`                        |
+| Inbox, routing, attention, mute              | `server/inbox/` (`slack-subscriber.ts`, `slack-subscription.service.ts`, `wake-queue.service.ts`, `reminder-subscriber.ts`); item shape `shared/inbox.ts`                               |
+| Slack-visible tools / audited outputs        | `server/tools/` (`messages.ts`, `reactions.ts`, `file-send.ts`, `ask.ts`); activity append `server/activities/`; message ledger `server/messages/`                                      |
+| Providers                                    | `server/providers/` (`contract.ts`, `factory.ts`, `claude.ts`, `codex.ts`, `kimi.ts`, `*-events.ts`); usage data `server/provider-usage/`                                               |
+| Knowledge base                               | `server/kb/`; routes `server/web/kb-routes.ts`; store `server/storage/schema/kb.store.ts`; contract `shared/kb.ts`; UI `web/src/views/kb/` + `web/src/api/kb.ts`                        |
+| Persisted state                              | typed stores `server/storage/schema/`; JSON/JSONL mechanics `server/storage/json-file.ts`, `json-store.ts`, `jsonl-log.ts`                                                              |
 
 ## Three lines not to conflate
 
@@ -91,7 +91,7 @@ These three are easy to blur and should stay separate:
 - **Agent execution runtime** (`server/runtime/`) runs an agent's turns.
 - **Managed runtime / service supervisor** (`server/runtime-management/`, `server/services/`,
   `server/cli/`) starts, stops, and upgrades the whole thing.
-- **Web routes** (`server/web/`) are a local control surface. They are *not* the owner of the runtime.
+- **Web routes** (`server/web/`) are a local control surface. They are _not_ the owner of the runtime.
 
 ## The rest of Part 2
 
