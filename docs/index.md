@@ -93,7 +93,7 @@ pageClass: landing-home
     <div class="landing-start-copy">
       <p class="landing-kicker">Get started</p>
       <h2 id="start-title">One command on your own machine.</h2>
-      <p>It runs on one machine you control; your whole team then works with the agents in Slack. Create your agent and follow the Connect to Slack steps in the dashboard.</p>
+      <p>Runs from a machine you control. No Anima cloud, no Anima account, and nothing phones home to us.</p>
     </div>
     <div class="landing-command-row">
       <pre class="landing-command"><code>curl -fsSL https://anima.meetquinn.ai/install.sh | sh</code></pre>
@@ -101,13 +101,11 @@ pageClass: landing-home
         class="landing-copy-command"
         type="button"
         aria-label="Copy install command"
-        @click="navigator.clipboard.writeText('curl -fsSL https://anima.meetquinn.ai/install.sh | sh'); $event.currentTarget.textContent = 'Copied'; setTimeout(() => { $event.currentTarget.textContent = 'Copy'; }, 1400)"
+        data-command="curl -fsSL https://anima.meetquinn.ai/install.sh | sh"
       >Copy</button>
     </div>
     <nav class="landing-links" aria-label="Get started links">
-      <a href="/quickstart">Quickstart</a>
-      <a href="/guide/what-is-anima">What is Anima</a>
-      <a href="/architecture/overview">Architecture</a>
+      <a href="/quickstart">Read the Quickstart</a>
     </nav>
   </section>
 </main>
