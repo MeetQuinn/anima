@@ -56,9 +56,7 @@ Anima downloads the managed runtime into `~/.anima/runtime/current` and keeps lo
 
 **Reference**
 
-- [Design](https://anima.meetquinn.ai/design): concepts and product principles
 - [Provider layer](https://anima.meetquinn.ai/runtime-providers): the providers Anima supports and how to add one
-- [Release process](https://anima.meetquinn.ai/release): PR-only main, canary validation, and stable npm releases
 - [Deployment and upgrades](https://anima.meetquinn.ai/deployment): code roots, Anima homes, and one-click upgrades
 - [Service runbook](https://anima.meetquinn.ai/service-runbook)
 - [Slack app manifest](templates/slack-app-manifest.yaml)
