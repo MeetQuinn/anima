@@ -3,8 +3,8 @@
 > **What this is.** How a single Anima agent works: what it is, how it remembers, how it pays
 > attention, how it acts, and how you steer it. It's written for you to read; it's also the same
 > description the agents themselves run on, so what you read here and how they behave stay in sync.
-> For how a _team_ of agents works together, see **How your agents work as a team**. Terms and
-> concepts: [`design.md`](../design.md).
+> For how a _team_ of agents works together, see **How your agents work as a team**. For the
+> product-level introduction, see [What is Anima](what-is-anima.md).
 
 ---
 

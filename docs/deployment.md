@@ -1,18 +1,18 @@
 # Deployment And Upgrades
 
-This document describes the npm-era deployment model. The goal is to keep development, canary, and
-stable user installs isolated from each other.
+This document describes the npm-era deployment model for running Anima on a machine you control. The
+goal is to keep the runtime package replaceable while your local Anima home stays durable.
 
-## Environments
+## Runtime Shape
 
-| Environment         | Code source                        | Anima home                              | Purpose                      |
-| ------------------- | ---------------------------------- | --------------------------------------- | ---------------------------- |
-| Development         | Source checkout, usually `~/anima` | Repo-local `./.anima-dev`               | Build and test Anima itself  |
-| Canary              | Pinned npm canary package          | `~/.anima` for Anima's own live team    | Run real usage before stable |
-| Stable user install | Pinned npm stable package          | User's chosen home, normally `~/.anima` | External users               |
+| Runtime shape      | Code source                         | Anima home                              | Purpose                    |
+| ------------------ | ----------------------------------- | --------------------------------------- | -------------------------- |
+| Stable install     | Pinned npm stable package           | User's chosen home, normally `~/.anima` | Default user install       |
+| Prerelease install | Pinned npm prerelease package       | User's chosen home                      | Opt-in validation          |
+| Source checkout    | Local source tree, for contributors | Repo-local `./.anima-dev`               | Development and PR testing |
 
-Do not run canary or stable installs from a development checkout. A development rebuild should not
-be able to change the UI or server code used by a live install.
+Do not run a managed install directly from a development checkout. A development rebuild should not
+be able to change the UI or server code used by a live `~/.anima` install.
 
 ## Code Root Vs Data Home
 
@@ -25,8 +25,8 @@ Keep these separate:
 For example:
 
 ```text
-~/anima/                         source checkout for development
-~/.anima/                        canary/stable runtime data
+~/anima/                         optional source checkout for contributors
+~/.anima/                        default managed runtime data
 ~/.anima/runtime/current/        npm-installed managed runtime
 ~/anima/.anima-dev/              development runtime data
 ```
@@ -48,7 +48,7 @@ curl -fsSL https://anima.meetquinn.ai/install.sh | sh
 npx -y @meetquinn/animactl start          # first start on stable/latest
 npx -y @meetquinn/animactl dashboard      # launch the local dashboard
 npx -y @meetquinn/animactl restart        # command-line upgrade to stable/latest
-npx -y @meetquinn/animactl@canary restart # canary upgrade/restart path
+npx -y @meetquinn/animactl@canary restart # opt-in prerelease upgrade/restart path
 npx -y @meetquinn/animactl status
 npx -y @meetquinn/animactl stop
 ```
@@ -73,18 +73,6 @@ Set `ANIMA_HOME=/path/to/home` to manage a non-default home. If `ANIMA_HOME` is 
 runtime commands use `~/.anima` even when the shell is currently inside a source checkout that has a
 repo-local `.anima-dev`.
 
-## Canary Deployment
-
-Anima's own live install should run a pinned canary version, not a mutable checkout:
-
-```bash
-npx -y @meetquinn/animactl@canary restart
-```
-
-Restarts should use drain-and-resume. If agents are active, the restart waits for each running
-agent to reach a provider quiescent point, re-queues those items, and lets the new worker resume
-them. Queued items remain queued. Use `--force` only for an explicit incident decision.
-
 ## Stable User Upgrades
 
 External users should not be silently upgraded. A stable install checks the `latest` dist-tag and
@@ -102,6 +90,12 @@ First-version behavior:
 
 Canary installs may optionally check `canary` instead of `latest`, but that should be an explicit
 setting. Stable users should not see pre-release upgrades unless they opt in.
+
+## Restart Behavior
+
+Restarts should use drain-and-resume. If agents are active, the restart waits for each running agent
+to reach a provider quiescent point, re-queues those items, and lets the new worker resume them.
+Queued items remain queued. Use `--force` only for an explicit incident decision.
 
 ## Auto-Upgrade Policy
 
@@ -129,4 +123,4 @@ After a deploy or upgrade, verify:
 - Agents can receive and send Slack messages.
 
 The service should expose enough metadata to make wrong-version deployments obvious: package
-version, Anima home, environment, startedAt, and build commit when available.
+version, Anima home, runtime track, startedAt, and build commit when available.

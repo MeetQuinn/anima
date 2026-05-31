@@ -156,6 +156,7 @@ There is no global web SSE stream. Surfaces that need freshness own their own re
 ## Related Docs
 
 - `README.md`: product overview and local setup.
-- `docs/design.md`: product-level model and terminology.
+- `docs/guide/what-is-anima.md`: product-level introduction.
+- `docs/architecture/overview.md`: system map and code ownership.
 - `docs/runtime-providers.md`: provider contract and adapter behavior.
 - `docs/service-runbook.md`: daemon operations and restart safety.
