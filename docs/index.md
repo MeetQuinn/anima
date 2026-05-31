@@ -55,37 +55,37 @@ pageClass: landing-home
       <div class="compare-column compare-before">
         <h3>A coding agent on its own</h3>
         <div class="compare-item">
-          <span>Knowledge</span>
-          <p>Locked in your private chat, hard for anyone else to reach</p>
+          <span>Setup</span>
+          <p>Everyone sets up their own</p>
         </div>
         <div class="compare-item">
-          <span>Form</span>
-          <p>A tool you prompt, in your terminal</p>
+          <span>Where</span>
+          <p>In a terminal, for the technical few</p>
         </div>
         <div class="compare-item">
-          <span>Scope</span>
-          <p>One assistant answers a question</p>
+          <span>Context</span>
+          <p>Stuck in one person's private chat</p>
         </div>
       </div>
       <div class="compare-arrow" aria-hidden="true">&rarr;</div>
       <div class="compare-column compare-after">
         <h3>The same agent, on Anima</h3>
         <div class="compare-item">
-          <span>Knowledge</span>
-          <p>Written into a shared knowledge base you own</p>
+          <span>Setup</span>
+          <p>One power user sets it up for the whole team</p>
         </div>
         <div class="compare-item">
-          <span>Form</span>
-          <p>A teammate you @mention, in your Slack</p>
+          <span>Where</span>
+          <p>In Slack, for anyone on the team</p>
         </div>
         <div class="compare-item">
-          <span>Scope</span>
-          <p>A team takes on the whole project</p>
+          <span>Context</span>
+          <p>Shared with the whole team, and yours</p>
         </div>
       </div>
     </div>
     <p class="compare-note">
-      Anima wraps the coding agents you already use: Claude Code, Codex, and Kimi. It is the teammate layer around them, not a model and not a hosted SaaS.
+      Anima wraps the coding agents you already use, like Claude Code and Codex. It is the teammate layer around them, not a model and not a hosted SaaS.
     </p>
   </section>
 
