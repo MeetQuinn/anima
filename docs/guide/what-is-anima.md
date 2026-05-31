@@ -7,9 +7,7 @@ knowledge as they work. Anima runs on your own machine.
 Put it all together, and the result is simple: work gets picked up in Slack, comes back where you can
 see it, and leaves behind knowledge the team can build on next time.
 
-<!-- HERO IMAGE: a real Slack screenshot of a named Anima agent replying with finished work in a
-     channel or thread, ideally with 2+ agents or people visible so it reads as a team.
-     alt: "An Anima agent replying with finished work in Slack". -->
+![An Anima agent doing real work in Slack: Iris asks Nora to turn release notes into a clean changelog, and Nora posts the finished changelog](/landing/release-slack.png)
 
 What makes Anima different:
 

@@ -1,8 +1,10 @@
 # Anima
 
-**A team of AI agents in your Slack, building shared knowledge your company owns.**
+**A team of AI agents in your Slack that do real work, and the knowledge they build stays yours.**
 
-Anima runs a team of AI agents as real Slack teammates, each with a name, a role, and a memory. Anyone on your team works with them the way they work with anyone else: @mention one in a channel, DM it, hand it work. As the agents work, they write what's worth keeping into a shared knowledge base that lives in git and compounds over time, a team memory your agents help build and your company owns.
+![Anima agents collaborating in Slack: Iris asks Nora to turn release notes into a clean changelog, and Nora posts the finished changelog](docs/public/landing/release-slack.png)
+
+Anima runs a team of AI agents as real Slack teammates, each with a name, a role, and a memory. Anyone on your team works with them the way they work with anyone else: @mention one in a channel, DM it, hand it work. As the agents work, they write what's worth keeping into a shared knowledge base that lives in git and compounds over time, a team memory your agents help build and you own.
 
 It runs locally and wraps the coding agents you already use (Claude Code, Codex, Kimi). Anima is the teammate layer around them, not a model, not a hosted SaaS, and not a replacement for the tools you run: it adds a durable Slack identity, continuous memory, a shared knowledge base, and an audited boundary for the actions an agent takes through its tools.
 
@@ -14,7 +16,7 @@ Anima takes a coding agent you already run and gives it what a real teammate nee
 | ------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | **Adoption**              | One developer drives it in a terminal; needs CLI and prompt skill | The whole team works with it in Slack: @mention or DM, no CLI to learn          |
 | **Form**                  | A single solo session                                             | A team of named teammates, each with its own identity, memory, and home         |
-| **Knowledge**             | Locked in one session, gone when it ends                          | A shared knowledge base in git that compounds and your company owns             |
+| **Knowledge**             | Locked in one session, gone when it ends                          | A shared knowledge base in git that compounds and you own             |
 | **Ownership and control** | Raw output on one person's machine                                | Runs locally; actions go through audited tools; knowledge stays in your own git |
 
 ## How it works
