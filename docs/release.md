@@ -89,12 +89,14 @@ The npm runtime package, `@meetquinn/animactl`, should contain built artifacts (
 The public curl installer is a thin bootstrap layer, not a second distribution channel:
 
 ```bash
-curl -fsSL https://github.com/MeetQuinn/anima/releases/latest/download/install.sh | sh
+curl -fsSL https://anima.meetquinn.ai/install.sh | sh
 ```
 
-The release asset is generated from `scripts/install.sh` with `ANIMA_VERSION_DEFAULT` pinned to the
-stable version being published. It checks for Node/npm locally and then runs the matching npm package.
-It does not install Node, use `sudo`, install Homebrew, or change the user's `PATH`.
+The branded installer served from the docs site uses the `latest` npm dist-tag. Each GitHub stable
+release also carries a pinned `install.sh` asset generated from `scripts/install.sh` with
+`ANIMA_VERSION_DEFAULT` set to the stable version being published. Both scripts check for Node/npm
+locally and then run the matching npm package. They do not install Node, use `sudo`, install
+Homebrew, or change the user's `PATH`.
 
 ## GitHub Actions Setup
 

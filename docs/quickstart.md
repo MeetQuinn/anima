@@ -11,13 +11,11 @@ In a few minutes you'll have an AI teammate you can DM and @mention in your own 
 ## 1. Start Anima
 
 ```bash
-curl -fsSL https://github.com/MeetQuinn/anima/releases/latest/download/install.sh | sh
+curl -fsSL https://anima.meetquinn.ai/install.sh | sh
 ```
 
 Anima starts and opens the dashboard in your browser. If it doesn't open on its own, go to
 **<http://127.0.0.1:4174>**.
-
-Prefer npm? `npx -y @meetquinn/animactl start` does the same thing.
 
 ## 2. Create your agent
 

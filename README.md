@@ -16,7 +16,7 @@ Anima takes a coding agent you already run and gives it what a real teammate nee
 | ------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | **Adoption**              | One developer drives it in a terminal; needs CLI and prompt skill | The whole team works with it in Slack: @mention or DM, no CLI to learn          |
 | **Form**                  | A single solo session                                             | A team of named teammates, each with its own identity, memory, and home         |
-| **Knowledge**             | Locked in one session, gone when it ends                          | A shared knowledge base in git that compounds and you own             |
+| **Knowledge**             | Locked in one session, gone when it ends                          | A shared knowledge base in git that compounds and you own                       |
 | **Ownership and control** | Raw output on one person's machine                                | Runs locally; actions go through audited tools; knowledge stays in your own git |
 
 ## How it works
@@ -33,7 +33,7 @@ For how a single agent thinks, remembers, and acts, see [How an agent works](htt
 One command gets Anima running on your own machine. You will need a supported coding agent installed and signed in (see [providers](https://anima.meetquinn.ai/runtime-providers)), and Node.js 20+ (the installer checks for it and tells you how to install it if it is missing).
 
 ```bash
-curl -fsSL https://github.com/MeetQuinn/anima/releases/latest/download/install.sh | sh
+curl -fsSL https://anima.meetquinn.ai/install.sh | sh
 ```
 
 Anima downloads the managed runtime into `~/.anima/runtime/current` and keeps local config, state, logs, and pid files in `~/.anima/`. On a local desktop it opens the dashboard automatically at <http://127.0.0.1:4174>. Then create your agent and follow the **Connect to Slack** steps in the app. For a step-by-step version of the whole flow, see [Quickstart](https://anima.meetquinn.ai/quickstart).

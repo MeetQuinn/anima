@@ -44,7 +44,7 @@ the package version that `npx` downloaded into `~/.anima/runtime/current`, then 
 that pinned runtime:
 
 ```bash
-curl -fsSL https://github.com/MeetQuinn/anima/releases/latest/download/install.sh | sh
+curl -fsSL https://anima.meetquinn.ai/install.sh | sh
 npx -y @meetquinn/animactl start          # first start on stable/latest
 npx -y @meetquinn/animactl dashboard      # launch the local dashboard
 npx -y @meetquinn/animactl restart        # command-line upgrade to stable/latest
@@ -54,13 +54,13 @@ npx -y @meetquinn/animactl stop
 ```
 
 The curl installer is a bootstrap convenience for first-run stable installs. It checks for Node/npm,
-then runs the pinned stable `@meetquinn/animactl` package from the latest GitHub release. `start` is
-the first-run path, or for starting stopped services. On an interactive desktop it launches the
-dashboard automatically; use `--no-browser` for headless scripts. `dashboard` launches the current
-home's dashboard without starting services. `restart` is the command-line upgrade path: it installs
-the package version selected by `npx` into `~/.anima/runtime/current`, then restarts services with
-drain-and-resume. With no version suffix, `npx` selects the `latest` npm dist-tag; use `@canary` or
-an exact version suffix when you want a different target.
+then runs the `latest` npm dist-tag for `@meetquinn/animactl`. `start` is the first-run path, or for
+starting stopped services. On an interactive desktop it launches the dashboard automatically; use
+`--no-browser` for headless scripts. `dashboard` launches the current home's dashboard without
+starting services. `restart` is the command-line upgrade path: it installs the package version
+selected by `npx` into `~/.anima/runtime/current`, then restarts services with drain-and-resume. With
+no version suffix, `npx` selects the `latest` npm dist-tag; use `@canary` or an exact version suffix
+when you want a different target.
 
 The admin CLI exposes the lower-level runtime status/install commands:
 
