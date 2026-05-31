@@ -46,7 +46,8 @@ against the latest `main` snapshot.
 5. Anima dogfood/staging upgrades to that canary and runs it with real usage.
 6. Once the canary has behaved well enough, run the stable publish workflow for the same dogfooded
    source with the next semver version.
-7. CI publishes `@meetquinn/animactl` at that version and updates the `latest` dist-tag.
+7. CI publishes `@meetquinn/animactl` at that version, updates the `latest` dist-tag, creates the
+   matching `vX.Y.Z` GitHub release, and uploads the pinned `install.sh` asset.
 
 Stable releases should be cut from source that already ran in dogfood. Early on, use the manual
 GitHub Actions workflow:
@@ -54,11 +55,13 @@ GitHub Actions workflow:
 1. Open **Actions -> Publish npm -> Run workflow**.
 2. Enter the stable version, for example `0.1.3`.
 3. Run it from the dogfooded branch or commit.
-4. After it publishes successfully, tag the same source as `v0.1.3`.
+4. After it publishes successfully, verify npm `latest`, the `v0.1.3` GitHub release, and the
+   release `install.sh` asset.
 
-The stable workflow publishes `@meetquinn/animactl` to `latest`. The canary path publishes
-`@meetquinn/animactl` to `canary` automatically on future merges to `main` once
-`NPM_CANARY_PUBLISH_ENABLED=true` is set as a repository variable.
+The stable workflow publishes `@meetquinn/animactl` to `latest`. It also creates the GitHub tag and
+release for the same source commit. The canary path publishes `@meetquinn/animactl` to `canary`
+automatically on future merges to `main` once `NPM_CANARY_PUBLISH_ENABLED=true` is set as a
+repository variable.
 
 ## Version Rules
 
@@ -78,9 +81,20 @@ Before publishing a stable release:
 - Confirm the package contents with `npm pack --dry-run`.
 - Confirm no local private data, credentials, `.anima/` homes, or personal paths are included.
 - Confirm the package version and git tag match.
+- Confirm the release installer points at the same stable version.
 
 The npm runtime package, `@meetquinn/animactl`, should contain built artifacts (`dist/server`,
 `dist/shared`, `dist/web`) so users do not need to build Anima to run it.
+
+The public curl installer is a thin bootstrap layer, not a second distribution channel:
+
+```bash
+curl -fsSL https://github.com/MeetQuinn/anima/releases/latest/download/install.sh | sh
+```
+
+The release asset is generated from `scripts/install.sh` with `ANIMA_VERSION_DEFAULT` pinned to the
+stable version being published. It checks for Node/npm locally and then runs the matching npm package.
+It does not install Node, use `sudo`, install Homebrew, or change the user's `PATH`.
 
 ## GitHub Actions Setup
 

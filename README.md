@@ -47,20 +47,21 @@ Anima is the **teammate layer** around your coding agents: a durable Slack ident
 - **A team, not a bot.** Multiple named agents in one team, each with its own identity, provider, memory, and home. Route channels to teammates, or let the team @ whoever they need.
 - **Bring your provider.** Each agent runs on Claude Code, Codex, or Kimi — picked per agent.
 
-## Quick start
+## Quick Start
 
-One command gets Anima running on your own machine. You'll need **Node.js 20+** and a coding-agent
-CLI (Claude Code, Codex, or Kimi) installed and logged in.
+One command gets Anima running on your own machine. You'll need a coding-agent CLI (Claude Code,
+Codex, or Kimi) installed and logged in. The installer checks for **Node.js 20+** and tells you how
+to install it if it is missing.
 
 ```bash
-npx -y @meetquinn/animactl start   # runtime + dashboard at http://127.0.0.1:4174
+curl -fsSL https://github.com/MeetQuinn/anima/releases/latest/download/install.sh | sh
 ```
 
-This downloads the managed runtime into `~/.anima/runtime/current` and stores local config, state,
-logs, and pid files in `~/.anima/`. Then open the dashboard, create your agent, and follow the
-**Connect Slack** steps — the full walkthrough, including Slack app creation and the two tokens, is
-in **[docs/quickstart.md](docs/quickstart.md)**. If owner notification is on, the agent DMs the
-owner to introduce itself. On a local desktop, `start` opens the dashboard automatically.
+The installer downloads the managed runtime into `~/.anima/runtime/current` and stores local config,
+state, logs, and pid files in `~/.anima/`. Then open the dashboard, create your agent, and follow
+the **Connect Slack** steps — the full walkthrough, including Slack app creation and the two tokens,
+is in **[docs/quickstart.md](docs/quickstart.md)**. On a local desktop, Anima opens the dashboard
+automatically at **<http://127.0.0.1:4174>**.
 
 ## Development
 
