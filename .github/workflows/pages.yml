@@ -29,7 +29,7 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - uses: actions/configure-pages@v5
-      - run: DOCS_BASE=/anima/ pnpm docs:build
+      - run: DOCS_BASE=/ pnpm docs:build
       - uses: actions/upload-pages-artifact@v4
         with:
           path: docs/.vitepress/dist
