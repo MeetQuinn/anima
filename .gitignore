@@ -8,3 +8,4 @@ packages/animactl/templates/
 *.tgz
 .DS_Store
 web/.env.local
+docs/public/install.sh

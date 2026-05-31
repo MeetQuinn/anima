@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - main
+    paths:
+      - ".github/workflows/pages.yml"
+      - "docs/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "scripts/install.sh"
+      - "scripts/prepare-docs-public.mjs"
   workflow_dispatch:
 
 permissions:
