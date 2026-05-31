@@ -1,0 +1,62 @@
+import { defineConfig } from "vitepress";
+
+function publicBase(): string {
+  const raw = process.env.DOCS_BASE ?? process.env.VITEPRESS_BASE ?? "/";
+  const prefixed = raw.startsWith("/") ? raw : `/${raw}`;
+  return prefixed.endsWith("/") ? prefixed : `${prefixed}/`;
+}
+
+export default defineConfig({
+  base: publicBase(),
+  description: "AI agent teams that work alongside your human team in Slack.",
+  lang: "en-US",
+  lastUpdated: true,
+  title: "Anima",
+  themeConfig: {
+    editLink: {
+      pattern: "https://github.com/MeetQuinn/anima/edit/main/docs/:path",
+      text: "Edit this page on GitHub",
+    },
+    nav: [
+      { text: "Guide", link: "/guide/what-is-anima" },
+      { text: "Architecture", link: "/architecture/overview" },
+      { text: "Reference", link: "/design" },
+    ],
+    search: {
+      provider: "local",
+    },
+    sidebar: [
+      {
+        text: "Guide",
+        items: [
+          { text: "What is Anima", link: "/guide/what-is-anima" },
+          { text: "Quickstart", link: "/quickstart" },
+          {
+            text: "Working with your agent",
+            link: "/guide/working-with-your-agent",
+          },
+          { text: "How an agent works", link: "/guide/how-an-agent-works" },
+        ],
+      },
+      {
+        text: "Architecture",
+        items: [{ text: "Overview", link: "/architecture/overview" }],
+      },
+      {
+        text: "Reference",
+        items: [
+          { text: "Design", link: "/design" },
+          { text: "Runtime providers", link: "/runtime-providers" },
+          { text: "Deployment", link: "/deployment" },
+          { text: "Service runbook", link: "/service-runbook" },
+          { text: "Release process", link: "/release" },
+          { text: "Activity events", link: "/activity-events" },
+        ],
+      },
+    ],
+    siteTitle: "Anima",
+    socialLinks: [
+      { icon: "github", link: "https://github.com/MeetQuinn/anima" },
+    ],
+  },
+});

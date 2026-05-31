@@ -2,4 +2,5 @@ packages:
   - packages/animactl
   - web
 allowBuilds:
+  esbuild: true
   msw: true
