@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
-import { RefreshCw, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, RefreshCw, X } from 'lucide-react';
 import { fetchServerInfo, fetchProviderUsage, pingHealth } from '@/api/system';
 import { shortIso, formatUptime } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
@@ -67,7 +67,7 @@ function extraValue(e: ProviderUsageExtra): string {
 function planLabel(value: string): string {
   const labels: Record<string, string> = {
     TYPE_FREE: 'Free',
-    TYPE_PURCHASE: 'Purchased',
+    TYPE_PURCHASE: 'Paid',
     TYPE_SUBSCRIPTION: 'Subscription',
     TYPE_TRIAL: 'Trial',
   };
@@ -163,9 +163,7 @@ function ProviderBlock({ row, now }: { row: ProviderUsageRow; now: Date }) {
                   ? 'Unreachable'
                   : 'Unavailable'}
           </span>
-          {row.error?.message &&
-            row.error.type !== 'network_error' &&
-            row.error.type !== 'unknown' && (
+          {row.error?.message && row.error.type !== 'unknown' && (
               <p className="font-mono text-[10px] text-text-subtle leading-relaxed">
                 {row.error.message}
               </p>
@@ -205,6 +203,8 @@ function UsageSkeleton() {
  *           wider drawer — noted for post-launch.
  */
 export default function ServerPanel({ onClose }: Props) {
+  const [providerUsageOpen, setProviderUsageOpen] = useState(false);
+
   // --- Server info ---
   const { data: healthOk } = useQuery({
     queryKey: queryKeys.health(),
@@ -228,6 +228,7 @@ export default function ServerPanel({ onClose }: Props) {
   } = useQuery({
     queryKey: queryKeys.providerUsage(),
     queryFn: fetchProviderUsage,
+    enabled: providerUsageOpen,
     staleTime: 60_000,
   });
 
@@ -362,23 +363,27 @@ export default function ServerPanel({ onClose }: Props) {
           {/* Section 2: Provider Usage */}
           <PanelSection
             title="Provider Usage"
+            open={providerUsageOpen}
+            onOpenChange={setProviderUsageOpen}
             action={
-              <div className="flex items-center gap-2">
-                {usageCheckedAt && (
-                  <span className="font-sans text-[10px] text-text-subtle">
-                    {formatAgo(usageCheckedAt, now)}
-                  </span>
-                )}
-                <button
-                  onClick={() => refetchUsage()}
-                  disabled={usageFetching}
-                  className="flex h-5 w-5 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40"
-                  aria-label="Refresh provider usage"
-                  title="Refresh"
-                >
-                  <RefreshCw className={`h-3 w-3 ${usageFetching ? 'animate-spin' : ''}`} />
-                </button>
-              </div>
+              providerUsageOpen ? (
+                <div className="flex items-center gap-2">
+                  {usageCheckedAt && (
+                    <span className="font-sans text-[10px] text-text-subtle">
+                      {formatAgo(usageCheckedAt, now)}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => refetchUsage()}
+                    disabled={usageFetching}
+                    className="flex h-5 w-5 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40"
+                    aria-label="Refresh provider usage"
+                    title="Refresh"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${usageFetching ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+              ) : undefined
             }
           >
             {usageLoading ? (
@@ -430,21 +435,42 @@ function PanelSection({
   title,
   action,
   children,
+  open,
+  onOpenChange,
 }: {
   title: string;
   action?: React.ReactNode;
   children: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
+  const isCollapsible = open !== undefined && !!onOpenChange;
   return (
     <div className="px-4 py-4 md:px-6 md:py-5">
         {/* Section sub-header */}
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <span className="font-sans text-[10px] font-medium uppercase tracking-widest text-text-subtle">
-            {title}
-          </span>
+        <div className={`${!isCollapsible || open ? 'mb-3' : ''} flex items-center justify-between gap-2`}>
+          {isCollapsible ? (
+            <button
+              type="button"
+              onClick={() => onOpenChange(!open)}
+              aria-expanded={open}
+              className="-ml-1 flex min-h-[24px] items-center gap-1 rounded-sm px-1 font-sans text-[10px] font-medium uppercase tracking-widest text-text-subtle hover:bg-surface-elevated hover:text-text-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            >
+              {open ? (
+                <ChevronDown className="h-3 w-3" />
+              ) : (
+                <ChevronRight className="h-3 w-3" />
+              )}
+              <span>{title}</span>
+            </button>
+          ) : (
+            <span className="font-sans text-[10px] font-medium uppercase tracking-widest text-text-subtle">
+              {title}
+            </span>
+          )}
           {action && <div className="shrink-0">{action}</div>}
         </div>
-        {children}
+        {(!isCollapsible || open) && children}
       </div>
   );
 }

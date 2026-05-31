@@ -65,8 +65,8 @@ test('Kimi usage parser returns top-level and short-window limits', () => {
 
   assert.equal(parsed.error, undefined);
   assert.deepEqual(parsed.windows.map(({ label, remainingPercent, usedPercent }) => [label, remainingPercent, usedPercent]), [
-    ['Weekly', 99, 1],
     ['5h', 99, 1],
+    ['Weekly', 99, 1],
   ]);
 });
 
