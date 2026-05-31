@@ -235,6 +235,48 @@ test('sent messages follow only threads, not whole channels', async () => {
   }
 });
 
+test('sent replies also follow their own message thread root', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-sent-reply-thread-follow-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const sentSubscription = await ensureThreadSubscriptionForSentMessage({
+        agentId: 'scout',
+        channelId: 'C123',
+        messageTs: '1770000020.000123',
+        nowMs: 1_000,
+        threadTs: '1770000010.000001',
+      });
+      assert.equal(sentSubscription?.kind, 'thread');
+      assert.equal(sentSubscription?.threadTs, '1770000010.000001');
+      const state = await loadState();
+      assert.equal(Object.values(state.subscriptions).some((subscription) => subscription.kind === 'channel'), false);
+      assert.ok(Object.values(state.subscriptions).some(
+        (subscription) => subscription.kind === 'thread' && subscription.threadTs === '1770000010.000001',
+      ));
+      assert.ok(Object.values(state.subscriptions).some(
+        (subscription) => subscription.kind === 'thread' && subscription.threadTs === '1770000020.000123',
+      ));
+
+      const replyToSentReply = await slackRuntimeDecision(
+        {
+          channel: 'C123',
+          channel_type: 'channel',
+          text: 'replying to the agent reply as its own thread',
+          thread_ts: '1770000020.000123',
+          ts: '1770000021.000001',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', nowMs: 2_000 },
+      );
+      assert.equal(replyToSentReply.shouldStartRuntime, true);
+      assert.equal(replyToSentReply.reason, 'thread_follow');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('attention nudge suggests muting after repeated wakes without posting', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-attention-nudge-test-'));
   try {

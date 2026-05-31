@@ -303,7 +303,7 @@ export async function ensureThreadSubscriptionForSentMessage(input: {
   const now = new Date(nowMs).toISOString();
   const threadTs = input.threadTs || input.messageTs;
   const store = new SubscriptionStore(input.agentId);
-  return followThread({
+  const primary = await followThread({
     agentId: input.agentId,
     channelId: input.channelId,
     now,
@@ -312,6 +312,18 @@ export async function ensureThreadSubscriptionForSentMessage(input: {
     threadTs,
     unmute: true,
   });
+  if (input.threadTs && input.messageTs !== input.threadTs) {
+    await followThread({
+      agentId: input.agentId,
+      channelId: input.channelId,
+      now,
+      posted: true,
+      store,
+      threadTs: input.messageTs,
+      unmute: true,
+    });
+  }
+  return primary;
 }
 
 function followThread(input: {
