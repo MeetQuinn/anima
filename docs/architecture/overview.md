@@ -1,105 +1,189 @@
 # Architecture overview
 
-> **What this is.** The one-page map of how Anima is built: the components, how a message flows
-> through them, and where each concern lives in the code. It frames the rest of Part 2. Reader: the
-> coding agent in the repo and human contributors. For the product-level introduction, see
-> [What is Anima](../guide/what-is-anima.md); for the single-agent behavior, see [How an agent
-> works](../guide/how-an-agent-works.md).
+Anima's architecture starts with one agent and one loop:
 
----
+**Slack message -> agent inbox -> one agent turn -> agent outbox -> Slack reply.**
+
+That loop is why Anima feels like a teammate in Slack instead of a private terminal session. The
+agent has a durable Slack identity, a continuous working context, and a clear boundary for what it
+receives and what it sends.
 
 ## The shape
 
-Anima runs entirely on your machine. It sits between your Slack workspace and a provider (the coding
-tool that actually runs each agent), keeps agent homes and registered KB files on local disk (the
-shared knowledge base is git-backed by process, not by the server), and records messages, runtime
-events, and its Anima-mediated side effects to an activity/event stream that a local dashboard reads.
+<div class="architecture-map" aria-label="Your team works in Slack, Anima runs on one machine you control, and the provider runs AI work under your account.">
+  <div class="architecture-card architecture-card-slack">
+    <span>Shared surface</span>
+    <strong>Your team in Slack</strong>
+    <p>Channels, DMs, and threads where people talk to the agent and see its replies.</p>
+  </div>
+  <div class="architecture-flow" aria-hidden="true">
+    <span>messages in</span>
+    <strong>↓</strong>
+    <span>replies out</span>
+  </div>
+  <div class="architecture-card architecture-card-anima">
+    <span>Local runtime</span>
+    <strong>Anima on one machine</strong>
+    <p>Slack connection, agent inbox, agent outbox, durable state, and local activity trail.</p>
+  </div>
+  <div class="architecture-flow" aria-hidden="true">
+    <span>agent turn</span>
+    <strong>↓</strong>
+    <span>result</span>
+  </div>
+  <div class="architecture-card architecture-card-provider">
+    <span>AI engine</span>
+    <strong>Your provider account</strong>
+    <p>Claude Code, Codex, Kimi, or another supported provider runs the work.</p>
+  </div>
+</div>
 
+One machine runs Anima for the team. Slack stays the shared surface. The provider does the AI work
+under your account. Anima is the local layer between them.
+
+## The one-agent loop
+
+<div class="agent-loop-diagram" aria-label="A Slack message goes into the agent inbox, the agent runs one turn through the provider, then the agent outbox sends the result back to Slack.">
+  <div class="agent-loop-node agent-loop-slack">
+    <strong>Slack</strong>
+    <span>DM, mention, or followed thread</span>
+  </div>
+  <div class="agent-loop-arrow" aria-hidden="true">↓</div>
+  <div class="agent-loop-node agent-loop-inbox">
+    <strong>Agent inbox</strong>
+    <span>What reached the agent, where it came from, and why it wakes up</span>
+  </div>
+  <div class="agent-loop-arrow" aria-hidden="true">↓</div>
+  <div class="agent-loop-node agent-loop-turn">
+    <strong>One agent turn</strong>
+    <span>The provider runs the work under your account</span>
+  </div>
+  <div class="agent-loop-arrow" aria-hidden="true">↓</div>
+  <div class="agent-loop-node agent-loop-outbox">
+    <strong>Agent outbox</strong>
+    <span>Messages, files, reactions, and asks the agent sends through Anima</span>
+  </div>
+  <div class="agent-loop-arrow" aria-hidden="true">↓</div>
+  <div class="agent-loop-node agent-loop-slack">
+    <strong>Slack</strong>
+    <span>The result returns to the same DM, channel, or thread</span>
+  </div>
+</div>
+
+The useful mental model is simple:
+
+- **Inbox** is what the agent receives. It includes the Slack message, who sent it, where it came
+  from, and the reason Anima is waking the agent.
+- **One agent turn** is the work. The agent reads the inbox item with its existing context and uses
+  the coding tool you connected, such as Claude Code, Codex, or Kimi.
+- **Outbox** is what reaches the team. A reply, file, reaction, or question is not visible until it
+  goes out through Anima.
+
+The dashboard's activity view is built from this boundary: what came in, what the agent did through
+Anima, and what went back out.
+
+## Where it runs
+
+Anima runs on one machine you control. That machine keeps the local runtime, the agent's durable
+state, and the local activity trail. Your teammates do not each install Anima. They work with the
+agent from Slack.
+
+```text
+Your machine
+  Anima runtime
+  Agent state
+  Local activity trail
+
+Your team
+  Slack channels, DMs, and threads
+
+Your provider account
+  Claude Code, Codex, Kimi, or another supported provider
 ```
-  you, in Slack
-     │  a message (DM, @mention, or a channel/thread the agent follows)
-     ▼
-  ANIMA  (the runtime on your machine)
-     │  owns the Slack connection, message routing, and the audit log
-     │  checks eligibility, then queues the message for the agent and wakes it
-     ▼
-  the AGENT runs one turn
-     │  its provider (the coding tool you connect) is the engine
-     │  reads the message with its existing session context
-     │  reads its MEMORY.md / KB files when it needs them, does the work, calls tools
-     │  sends any reply back through the anima tools
-     ▼
-  ANIMA
-     │  posts the reply to the same place in Slack
-     │  records messages, runtime events, and Anima-mediated side effects
-     ▼
-  you, in Slack          (the dashboard shows the whole turn)
-```
 
-## The round trip: a message in, a reply out
+This split matters. Slack is where people talk and see the results. The provider is the coding agent
+you connect, such as Claude Code, Codex, or Kimi; it runs the AI work under your account. Anima is the
+local teammate layer that connects Slack and the provider, keeps the agent continuous, and records the
+Anima-mediated work for review.
 
-1. **Slack to Anima.** A Slack Socket Mode event arrives on that agent's Slack app connection.
-2. **Eligibility first.** Before anything else, Anima applies eligibility: a DM or @mention always
-   reaches the agent; a followed channel or thread reaches it unless muted.
-3. **Enqueue.** If eligible, Anima normalizes the event into a Slack inbox item (a delivery envelope:
-   who, where, when) and enqueues it.
-4. **One turn.** `AgentRuntimeWorker` claims the item and runs one provider turn against the agent's
-   **primary session**. The agent reads the delivery envelope with its existing session context, and
-   reads its `MEMORY.md` or KB files when it needs them.
-5. **Reply and record.** Agent-visible Slack outputs go through the `anima` tools; Anima posts them to
-   the originating channel/DM and records them, with runtime events, to the activity stream the
-   dashboard reads.
+The agent state on your machine is the part that makes the agent durable: its configuration, local
+history, sessions, preferences, and activity trail.
 
-## Core invariants
+## How a message reaches the agent
 
-- **One primary session per agent.** A single continuous session spans all of an agent's DMs,
-  channels, and threads. It is not one session per thread. (`agent:<agentId>:primary` is a concept,
-  not a stored key.)
-- **Anima owns the Slack boundary.** The Slack protocol, message routing, and the audit log live in
-  Anima, not in the agents. Agents reach Slack through Anima's first-class tools; the raw Slack token
-  exists only as an escape hatch for Slack operations that do not yet have a first-class tool.
-- **Agents author the KB, humans govern it.** The shared knowledge base is git-backed files on disk;
-  the files are the source of truth, and any graph/overview is a projection of them.
-- **Anima-mediated side effects are audited.** Every visible Slack side effect that goes through the
-  `anima` tools (message, file, reaction, ask) is recorded, along with runtime events, to the activity
-  stream. That record is what makes "govern = review plus decision" possible. The raw-token escape hatch
-  is not an equivalent audited path, so capabilities promised to users should grow first-class, audited
-  tools over time.
+Anima stays connected to Slack for each agent's Slack app. When a Slack event arrives, Anima decides
+whether it belongs in that agent's inbox.
 
-## Where to change what
+A message reaches the agent when:
 
-A map from concern to its home in the code, for finding the entry point fast.
+- it is a DM to the agent;
+- it @mentions the agent;
+- it appears in a channel or thread the agent follows and has not muted.
 
-| Concern                                      | Home                                                                                                                                                                                    |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Web dashboard UI                             | `web/src/`                                                                                                                                                                              |
-| Frontend API clients                         | `web/src/api/`                                                                                                                                                                          |
-| Local HTTP API routes                        | `server/web/` (shared DTOs in `shared/`)                                                                                                                                                |
-| Agent identity, config, Slack connect, owner | `server/agents/`, `shared/agent-config.ts`; manifest `shared/slack-manifest.ts` + `server/slack/app-manifest.ts`                                                                        |
-| Agent execution (running a turn)             | `server/runtime/` (`runtime-worker.ts`, `runtime-bridge.ts`, `delivery-prompt.ts`, `runtime-session.service.ts`, `followup-appender.ts`, `active-run-control.ts`, `provider-runner.ts`) |
-| Managed runtime / supervisor / upgrade       | `server/runtime-management/`, `server/services/`, `server/cli/services-cli.ts`, `server/cli/animactl.ts`, `server/cli/animactl-npm.ts`, `packages/animactl/bin/`                        |
-| Inbox, routing, attention, mute              | `server/inbox/` (`slack-subscriber.ts`, `slack-subscription.service.ts`, `wake-queue.service.ts`, `reminder-subscriber.ts`); item shape `shared/inbox.ts`                               |
-| Slack-visible tools / audited outputs        | `server/tools/` (`messages.ts`, `reactions.ts`, `file-send.ts`, `ask.ts`); activity append `server/activities/`; message ledger `server/messages/`                                      |
-| Providers                                    | `server/providers/` (`contract.ts`, `factory.ts`, `claude.ts`, `codex.ts`, `kimi.ts`, `*-events.ts`); usage data `server/provider-usage/`                                               |
-| Knowledge base                               | `server/kb/`; routes `server/web/kb-routes.ts`; store `server/storage/schema/kb.store.ts`; contract `shared/kb.ts`; UI `web/src/views/kb/` + `web/src/api/kb.ts`                        |
-| Persisted state                              | typed stores `server/storage/schema/`; JSON/JSONL mechanics `server/storage/json-file.ts`, `json-store.ts`, `jsonl-log.ts`                                                              |
+An agent follows a thread after it is @mentioned there, or after it has already replied there. It keeps
+following that thread until it mutes it; there is no short time window you need to beat.
 
-## Three lines not to conflate
+If the message qualifies, Anima records an inbox item and wakes the agent. If it does not qualify,
+the agent is not asked to spend a turn on it.
 
-These three are easy to blur and should stay separate:
+This is how Anima can feel present in Slack without requiring the agent to speak all the time. It can
+receive context broadly, then choose when to act.
 
-- **Agent execution runtime** (`server/runtime/`) runs an agent's turns.
-- **Managed runtime / service supervisor** (`server/runtime-management/`, `server/services/`,
-  `server/cli/`) starts, stops, and upgrades the whole thing.
-- **Web routes** (`server/web/`) are a local control surface. They are _not_ the owner of the runtime.
+## What happens during one turn
 
-## The rest of Part 2
+An agent turn is one pass through the connected coding agent. Anima hands over the inbox item with the
+agent's existing session context. The provider does the AI work under your account, then the agent
+decides whether to send something back through Anima.
 
-The remaining Part 2 pages are planned, and will land as they are written:
+During the turn, the agent can:
 
-- **Runtime:** the local process, the primary session, the inbox and wake loop.
-- **Routing, attention & audit:** how a message moves and how the audit log is produced.
-- **Knowledge base:** the git-backed KB and its visibility boundary.
-- **Providers:** the provider abstraction and how to add one.
-- **Activity & messages:** the event schema and how it is emitted.
-- **Data model:** how sessions, reminders, subscriptions, and logs persist.
+- read the message and the surrounding delivery context;
+- use its continuous session context;
+- call Anima tools, the Slack-facing actions Anima exposes, when it needs to reply, react, send a file,
+  or ask for a decision;
+- use other configured tools when the agent's role and provider support them.
+
+Some turns are quick replies. Others take longer because the provider is reading files, running tasks,
+or preparing a larger answer. The important boundary stays the same: the work is not visible to your
+team until the agent sends an outbox action.
+
+Plain text the agent produces internally is not a Slack reply. The team only sees an action when the
+agent sends it through the outbox.
+
+## How the outbox keeps the boundary clear
+
+The outbox is the agent's outward boundary. It is where the agent turns private work into visible team
+actions.
+
+Outbox actions include:
+
+- posting a message back to the same Slack DM, channel, or thread;
+- sending a file;
+- adding a reaction;
+- asking a bounded question in Slack, such as approve or reject.
+
+Those Anima-mediated actions are recorded to the local activity trail, along with runtime events. The
+point is reviewability: you can see what the agent received and what it sent through Anima without
+watching every internal step.
+
+## Data boundaries
+
+Anima does not add an Anima cloud to the loop.
+
+- **Slack remains your team's conversation system.** Messages and replies are still Slack messages.
+- **The AI work runs through the provider account you connect.** That provider sees the turns it is
+  asked to run.
+- **Anima state stays on the machine running Anima.** Agent state, local config, logs, and the
+  activity trail live in the selected Anima home on that machine.
+
+That means local control does not remove Slack or provider egress. Slack and the provider are real
+parts of the loop. The promise is that Anima itself is not a hosted service in the middle.
+
+## What to remember
+
+- One controlled machine runs Anima for the team.
+- Slack is the shared surface.
+- The inbox decides what reaches the agent.
+- One provider turn does the work.
+- The outbox is the only way work becomes visible to the team.
+- The local activity trail lets you review the work that went through Anima.

@@ -1,0 +1,144 @@
+.architecture-map {
+  display: grid;
+  gap: 14px;
+  margin: 28px 0 34px;
+  padding: 22px;
+  border: 1px solid rgba(60, 60, 67, 0.14);
+  border-radius: 12px;
+  background:
+    radial-gradient(
+      circle at top left,
+      rgba(179, 64, 31, 0.12),
+      transparent 36%
+    ),
+    var(--vp-c-bg-soft);
+}
+
+.architecture-card {
+  display: grid;
+  gap: 8px;
+  padding: 22px;
+  border: 1px solid rgba(60, 60, 67, 0.12);
+  border-radius: 10px;
+  background: var(--vp-c-bg);
+  box-shadow: 0 12px 30px rgba(31, 29, 26, 0.07);
+}
+
+.architecture-card > span {
+  color: #b3401f;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.architecture-card strong {
+  color: var(--vp-c-text-1);
+  font-size: 20px;
+  line-height: 1.16;
+}
+
+.architecture-card p {
+  margin: 0;
+  color: var(--vp-c-text-2);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.architecture-card-anima {
+  border-color: rgba(179, 64, 31, 0.34);
+  background:
+    linear-gradient(180deg, rgba(179, 64, 31, 0.08), transparent),
+    var(--vp-c-bg);
+}
+
+.architecture-flow {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 10px;
+  align-items: center;
+  color: var(--vp-c-text-3);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.architecture-flow strong {
+  color: #b3401f;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.agent-loop-diagram {
+  display: grid;
+  gap: 12px;
+  max-width: 640px;
+  margin: 28px auto 34px;
+  padding: 22px;
+  border: 1px solid rgba(60, 60, 67, 0.14);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(179, 64, 31, 0.06), rgba(255, 255, 255, 0)),
+    var(--vp-c-bg-soft);
+}
+
+.agent-loop-node {
+  display: grid;
+  gap: 6px;
+  padding: 18px 20px;
+  border: 1px solid rgba(60, 60, 67, 0.12);
+  border-radius: 8px;
+  background: var(--vp-c-bg);
+  box-shadow: 0 10px 24px rgba(31, 29, 26, 0.06);
+}
+
+.agent-loop-node strong {
+  color: var(--vp-c-text-1);
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.agent-loop-node span {
+  color: var(--vp-c-text-2);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.agent-loop-inbox,
+.agent-loop-outbox {
+  border-color: rgba(179, 64, 31, 0.28);
+}
+
+.agent-loop-inbox strong,
+.agent-loop-outbox strong {
+  color: #b3401f;
+}
+
+.agent-loop-arrow {
+  color: var(--vp-c-text-3);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+}
+
+@media (min-width: 860px) {
+  .architecture-map {
+    grid-template-columns: minmax(0, 1fr) 74px minmax(0, 1.1fr) 74px minmax(
+        0,
+        1fr
+      );
+    align-items: stretch;
+  }
+
+  .architecture-flow {
+    grid-template-columns: 1fr;
+    align-self: center;
+  }
+
+  .architecture-flow strong {
+    transform: rotate(-90deg);
+  }
+}

@@ -1,5 +1,6 @@
 import DefaultTheme from "vitepress/theme";
 import { h, onBeforeUnmount, onMounted } from "vue";
+import "./architecture.css";
 import "./landing.css";
 
 const INSTALL_COMMAND = "curl -fsSL https://anima.meetquinn.ai/install.sh | sh";
