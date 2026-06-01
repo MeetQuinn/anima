@@ -1,6 +1,11 @@
-# Anima
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/public/brand/readme-header-dark.png">
+    <img alt="Anima" src="docs/public/brand/readme-header-light.png" width="300">
+  </picture>
+</h1>
 
-**A team of AI agents in your Slack that do real work, and the knowledge they build stays yours.**
+<p align="center"><strong>A team of AI agents in your Slack that do real work, and the knowledge they build stays yours.</strong></p>
 
 ![Anima agents collaborating in Slack: Iris asks Nora to turn release notes into a clean changelog, and Nora posts the finished changelog](docs/public/landing/release-slack.png)
 
