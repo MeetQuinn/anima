@@ -10,6 +10,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { queryClient } from '@/query-client';
 import { queryKeys } from '@/lib/query-keys';
+import { copyTextToClipboard } from '@/lib/clipboard';
 import { extractError } from './Primitives';
 
 interface Props {
@@ -172,31 +173,4 @@ export function SlackManifestUpdateCard({ agentId }: Props) {
       </div>
     </div>
   );
-}
-
-async function copyTextToClipboard(text: string) {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      // Fall through to the legacy copy path for browsers that block Clipboard API.
-    }
-  }
-
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', 'true');
-  textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
-  textarea.style.top = '0';
-  document.body.appendChild(textarea);
-  textarea.select();
-  try {
-    if (!document.execCommand('copy')) {
-      throw new Error('execCommand copy returned false');
-    }
-  } finally {
-    document.body.removeChild(textarea);
-  }
 }

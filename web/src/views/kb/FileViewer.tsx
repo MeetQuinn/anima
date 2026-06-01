@@ -8,6 +8,7 @@ import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { Highlight, themes } from 'prism-react-renderer';
 import { useNavigate } from 'react-router-dom';
 import { buildKbPath, buildKbRawPath } from '@/lib/url-state';
+import { copyTextToClipboard } from '@/lib/clipboard';
 import { formatBytes } from '@/lib/format';
 import { kbDownloadUrl } from '@/api/kb';
 import type { KbFile } from '@shared/kb';
@@ -21,11 +22,13 @@ function CopyButton({ text, variant = 'floating' }: { text: string; variant?: 'f
   const timeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
 
   const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      timeoutRef.current = setTimeout(() => setCopied(false), 2000);
-    });
+    copyTextToClipboard(text)
+      .then(() => {
+        setCopied(true);
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        timeoutRef.current = setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => {});
   }, [text]);
 
   useEffect(() => {
@@ -204,11 +207,13 @@ function CopyPathButton({ filePath }: { filePath: string }) {
   const timeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
 
   const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(filePath).then(() => {
-      setCopied(true);
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      timeoutRef.current = setTimeout(() => setCopied(false), 2000);
-    });
+    copyTextToClipboard(filePath)
+      .then(() => {
+        setCopied(true);
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        timeoutRef.current = setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => {});
   }, [filePath]);
 
   useEffect(() => {
