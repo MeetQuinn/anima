@@ -9,7 +9,11 @@ function publicBase(): string {
 export default defineConfig({
   base: publicBase(),
   description: "AI agent teams that work alongside your human team in Slack.",
-  head: [["link", { rel: "icon", href: "/anima-logo.png" }]],
+  head: [
+    ["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
+    ["link", { rel: "icon", type: "image/x-icon", href: "/favicon.ico" }],
+    ["link", { rel: "apple-touch-icon", href: "/apple-touch-icon.png" }],
+  ],
   lang: "en-US",
   lastUpdated: true,
   title: "Anima",
@@ -18,7 +22,11 @@ export default defineConfig({
       pattern: "https://github.com/MeetQuinn/anima/edit/main/docs/:path",
       text: "Edit this page on GitHub",
     },
-    logo: { src: "/anima-logo.png", alt: "Anima" },
+    logo: {
+      light: "/brand/anima-mark.svg",
+      dark: "/brand/anima-mark-dark.svg",
+      alt: "Anima",
+    },
     nav: [
       { text: "Guide", link: "/guide/quickstart" },
       { text: "Architecture", link: "/architecture/overview" },
