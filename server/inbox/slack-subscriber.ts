@@ -2,6 +2,7 @@ import { App, LogLevel } from '@slack/bolt';
 import type { WebClient } from '@slack/web-api';
 
 import { activityServiceForAgent } from '../activities/activity.service.js';
+import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import { interactiveAskServiceForAgent } from '../asks/interactive-ask.service.js';
 import { errorMessage, slackMessageEventId } from '../ids.js';
 import { createSlackWebClient } from '../slack/client.js';
@@ -43,6 +44,9 @@ export interface SlackInboxSubscriberOptions {
 export class SlackInboxSubscriber {
   private readonly app: App;
   private readonly slackProfiles = new SlackProfileResolver();
+  // Guards the fire-and-forget bot display-info refresh so overlapping inbound
+  // messages don't trigger concurrent syncs.
+  private botDisplayInfoSyncInFlight = false;
 
   constructor(private readonly options: SlackInboxSubscriberOptions) {
     this.app = this.createApp();
@@ -221,6 +225,7 @@ export class SlackInboxSubscriber {
     }
 
     const webClient = client ?? createSlackWebClient(this.options.botToken);
+    this.maybeSyncBotDisplayInfo(webClient);
     const userProfile = await this.slackProfiles.user({
       client: webClient,
       teamId,
@@ -264,6 +269,23 @@ export class SlackInboxSubscriber {
     console.log(JSON.stringify(slackDecisionLog(decision, this.options.agentRuntimeKind, runtimeDecision), null, 2));
   }
 
+  // Opportunistically refresh the bot's own display info (avatar, name,
+  // workspace icon) while we're already handling a message. Throttled to once
+  // per TTL by the service, fire-and-forget so it never blocks or fails message
+  // routing, and guarded against overlapping runs within this process.
+  private maybeSyncBotDisplayInfo(client: WebClient): void {
+    if (this.botDisplayInfoSyncInFlight) return;
+    this.botDisplayInfoSyncInFlight = true;
+    agentSlackServiceForAgent(this.options.queue.agentId)
+      .syncDisplayInfoIfStale({ client, ttlMs: BOT_DISPLAY_INFO_SYNC_TTL_MS })
+      .catch((error: unknown) => {
+        console.warn(`bot display-info sync failed: ${errorMessage(error)}`);
+      })
+      .finally(() => {
+        this.botDisplayInfoSyncInFlight = false;
+      });
+  }
+
   private async slackPermalink(
     event: SlackRawMessageEvent,
     client: WebClient,
@@ -281,6 +303,11 @@ export class SlackInboxSubscriber {
     }
   }
 }
+
+// Refresh the bot's own Slack display info at most once every 6h while handling
+// messages — frequent enough to pick up an avatar/name change soon after it
+// happens, rare enough to add no meaningful Slack API load.
+const BOT_DISPLAY_INFO_SYNC_TTL_MS = 6 * 60 * 60 * 1000;
 
 const SLACK_DIRECTORY_EVENTS = [
   'channel_archive',

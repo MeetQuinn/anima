@@ -228,6 +228,9 @@ export const SlackConfig = z.object({
   appId: z.string().optional(),
   appToken: z.string().default(''),
   avatarUrl: z.string().optional(),
+  // ISO timestamp of the last bot display-info (avatar/name/icon) sync, used to
+  // throttle the automatic refresh that runs while the agent handles messages.
+  botProfileSyncedAt: z.string().optional(),
   botToken: z.string().default(''),
   connected: z.boolean().optional(),
   manifestVersion: z.number().int().nonnegative().default(0),

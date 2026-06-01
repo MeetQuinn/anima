@@ -124,7 +124,31 @@ export class AgentSlackService {
 
   async syncDisplayInfo(): Promise<AgentConfig> {
     const agent = await this.agentService.getConfig();
-    const info = await getSlackDisplayInfo(await this.getWebClient());
+    return this.persistDisplayInfo(agent, await getSlackDisplayInfo(await this.getWebClient()));
+  }
+
+  /**
+   * Refresh the bot's Slack display info (avatar, name, workspace icon) at most
+   * once per `ttlMs`, stamping `slack.botProfileSyncedAt`. When the last sync is
+   * still fresh this is a cheap no-op — it reads the local config only and makes
+   * NO Slack API calls. Best-effort: callers run it fire-and-forget off the
+   * message path and swallow errors. Pass an existing `client` to reuse the
+   * inbound request's WebClient instead of building a new one.
+   */
+  async syncDisplayInfoIfStale(options: { client?: WebClient; ttlMs: number }): Promise<{ synced: boolean }> {
+    const agent = await this.agentService.getConfig();
+    if (!agent.slack.botToken) return { synced: false };
+    if (isWithinTtl(agent.slack.botProfileSyncedAt, options.ttlMs)) return { synced: false };
+    const client = options.client ?? this.webClientForAgent(agent);
+    await this.persistDisplayInfo(agent, await getSlackDisplayInfo(client), nowIso());
+    return { synced: true };
+  }
+
+  private async persistDisplayInfo(
+    agent: AgentConfig,
+    info: Awaited<ReturnType<typeof getSlackDisplayInfo>>,
+    botProfileSyncedAt?: string,
+  ): Promise<AgentConfig> {
     const appId = info.appId ?? appIdFromAppToken(agent.slack.appToken);
     return this.agentService.saveConfig({
       ...agent,
@@ -132,6 +156,7 @@ export class AgentSlackService {
         ...agent.slack,
         ...info,
         ...(appId ? { appId } : {}),
+        ...(botProfileSyncedAt ? { botProfileSyncedAt } : {}),
       },
     });
   }
@@ -240,6 +265,15 @@ export class AgentSlackService {
 
 export function agentSlackServiceForAgent(agentId: string): AgentSlackService {
   return new AgentSlackService(new AgentService(agentId));
+}
+
+// True when `iso` is a valid timestamp within `ttlMs` of now. Unset/unparseable
+// timestamps and a non-positive ttl are treated as stale so a sync still runs.
+function isWithinTtl(iso: string | undefined, ttlMs: number): boolean {
+  if (!iso || ttlMs <= 0) return false;
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return false;
+  return Date.now() - then < ttlMs;
 }
 
 function requireBotToken(agent: AgentConfig): string {

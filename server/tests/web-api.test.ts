@@ -7,6 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { redactAgentConfig } from '../agents/agent-config-ops.js';
+import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { createWebServer } from '../web/app.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
@@ -1511,6 +1512,67 @@ test('web API syncs Slack avatar metadata and exposes app id without secrets', a
       } finally {
         server.close();
       }
+    });
+  } finally {
+    if (previousSlackApiUrl === undefined) {
+      delete process.env.ANIMA_SLACK_API_URL;
+    } else {
+      process.env.ANIMA_SLACK_API_URL = previousSlackApiUrl;
+    }
+    await slackApi.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('syncDisplayInfoIfStale refreshes once then throttles within the TTL', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-sync-throttle-test-'));
+  const slackCalls: Array<{ body: Record<string, string>; method: string }> = [];
+  const slackApi = await startSlackApiMock((method, body) => {
+    slackCalls.push({ method, body: slackRequestBody(body) });
+    if (method === 'auth.test') {
+      return { ok: true, team: 'Anima', team_id: 'T-demo', user_id: 'U-bot' };
+    }
+    if (method === 'users.info') {
+      return { ok: true, user: { id: 'U-bot', profile: { image_72: 'https://example.test/bot.png' } } };
+    }
+    if (method === 'team.info') {
+      return { ok: true, team: { id: 'T-demo', icon: { image_132: 'https://example.test/workspace.png' }, name: 'Anima' } };
+    }
+    throw new Error(`unexpected Slack API method ${method}`);
+  });
+  const previousSlackApiUrl = process.env.ANIMA_SLACK_API_URL;
+  process.env.ANIMA_SLACK_API_URL = slackApi.url;
+  try {
+    await writeConfig(stateDir, [
+      {
+        ...defaultAgentConfig('anima'),
+        slack: { appToken: 'xapp-1-ADEMO123-secret', botToken: 'xoxb-secret-value' },
+      },
+    ]);
+    await withAnimaHome(stateDir, async () => {
+      const service = agentSlackServiceForAgent('anima');
+      const sixHoursMs = 6 * 60 * 60 * 1000;
+
+      // First call: stale (never synced) → hits Slack and stamps the config.
+      const first = await service.syncDisplayInfoIfStale({ ttlMs: sixHoursMs });
+      assert.equal(first.synced, true);
+      assert.deepEqual(slackCalls.map((call) => call.method), ['auth.test', 'users.info', 'team.info']);
+      const stamped = await agentService('anima').getConfig();
+      assert.equal(stamped.slack.avatarUrl, 'https://example.test/bot.png');
+      assert.ok(stamped.slack.botProfileSyncedAt, 'botProfileSyncedAt should be set after a sync');
+
+      // Second call within the TTL: throttled → no further Slack calls.
+      const second = await service.syncDisplayInfoIfStale({ ttlMs: sixHoursMs });
+      assert.equal(second.synced, false);
+      assert.equal(slackCalls.length, 3, 'throttled call must not hit Slack again');
+
+      // ttlMs:0 forces a re-sync regardless of the recent stamp. (team.info is
+      // process-cached per workspace, so it may not be re-issued — the avatar
+      // path auth.test + users.info is what proves the re-sync ran.)
+      const forced = await service.syncDisplayInfoIfStale({ ttlMs: 0 });
+      assert.equal(forced.synced, true);
+      assert.equal(slackCalls.filter((call) => call.method === 'auth.test').length, 2);
+      assert.equal(slackCalls.filter((call) => call.method === 'users.info').length, 2);
     });
   } finally {
     if (previousSlackApiUrl === undefined) {
