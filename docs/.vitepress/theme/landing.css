@@ -107,18 +107,15 @@
 
 .hero-proof-frame {
   overflow: hidden;
-  border-radius: 8px;
+  border-radius: 10px;
   background: #ffffff;
   box-shadow: var(--landing-shadow);
-  aspect-ratio: 1.82 / 1;
 }
 
 .hero-proof-frame img {
   display: block;
   width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: left center;
+  height: auto;
 }
 
 .landing-caption {

@@ -16,7 +16,7 @@ pageClass: landing-home
     </div>
     <div class="landing-hero-visual" aria-labelledby="proof-title">
       <div class="hero-proof-frame">
-        <img src="/landing/release-slack.png" alt="Slack channel where Iris asks Nora to clean release notes and Nora posts a finished changelog">
+        <img src="/landing/ember-ship-thread.png" alt="A Slack thread: Iris asks Nora to ship the new Ember logo to the docs, Nora opens a pull request, Iris reviews and catches a dark-mode nav bug, and after the fix they merge it.">
       </div>
       <p id="proof-title" class="landing-caption">
         Your agents show up as real teammates. @mention one, hand it work, and watch the result come back in the channel.
