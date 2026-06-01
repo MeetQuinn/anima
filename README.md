@@ -7,22 +7,29 @@
 
 <p align="center"><strong>AI teammates in your Slack, building shared team context.</strong></p>
 
-![A Slack thread: Iris asks Nora to ship the new Ember logo to the docs, Nora opens a pull request and flags a dark-mode nav nit for follow-up.](docs/public/landing/ember-ship-thread-full.png)
+<p align="center"><a href="https://anima.meetquinn.ai/"><strong>Website</strong></a></p>
 
-Anima runs a team of AI agents as real Slack teammates, each with a name, a role, and a memory. Anyone on your team works with them the way they work with anyone else: @mention one in a channel, DM it, hand it work. As the agents work, they write what's worth keeping into a shared knowledge base that lives in git and compounds over time, a team memory your agents help build and you own.
-
-It runs locally and wraps the coding agents you already use (Claude Code, Codex, Kimi). Anima is the teammate layer around them, not a model, not a hosted SaaS, and not a replacement for the tools you run: it adds a durable Slack identity, continuous memory, a shared knowledge base, and an audited boundary for the actions an agent takes through its tools.
+Anima runs a team of AI agents as real Slack teammates, each with a name, a role, and a memory. Anyone on your team works with them the way they work with anyone else: @mention one in a channel, DM it, hand it work. It runs locally and wraps the coding agents you already use, adding the teammate layer around them.
 
 ## Why Anima
 
-Anima takes a coding agent you already run and gives it what a real teammate needs: a place to live, a memory, a team, and a record.
+A coding agent on its own is a solo terminal session: one person drives it, and its context dies when the session ends. Anima gives that same agent what a real teammate needs: a place to live, a shared memory, and a team.
 
-|                           | A coding agent on its own                                         | The same agent, on Anima                                                        |
-| ------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| **Adoption**              | One developer drives it in a terminal; needs CLI and prompt skill | The whole team works with it in Slack: @mention or DM, no CLI to learn          |
-| **Form**                  | A single solo session                                             | A team of named teammates, each with its own identity, memory, and home         |
-| **Knowledge**             | Locked in one session, gone when it ends                          | A shared knowledge base in git that compounds and you own                       |
-| **Ownership and control** | Raw output on one person's machine                                | Runs locally; actions go through audited tools; knowledge stays in your own git |
+|             | On its own                                              | On Anima                                                                          |
+| ----------- | ------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| **Context** | Locked in one session, gone when it ends                | A shared knowledge base in git that compounds, owned by your whole team           |
+| **Where**   | One developer in a terminal, needs CLI and prompt skill | In Slack, where your team already works: @mention or DM, no CLI to learn          |
+| **Setup**   | Everyone configures and runs their own                  | One champion sets it up once, and the whole team works with the agents from Slack |
+
+## Features
+
+- **A team of named teammates in Slack.** Each agent has its own identity, role, memory, and home. @mention or DM them like anyone else, or route a channel to one.
+- **Continuous memory.** Each agent keeps a durable `MEMORY.md`, so context carries across DMs, channels, and threads. One continuous teammate, not a fresh session per thread.
+- **Shared knowledge base in git.** Agents write what is worth keeping into plain files that live in your git and compound over time. Your team owns it.
+- **Works with the coding agents you already run.** Wraps Claude Code, Codex, and Kimi. Anima is the teammate layer around them, not a model and not a replacement.
+- **An audited tool boundary.** Agents act through explicit `anima` tools, and those actions are recorded to a local activity trail.
+- **Runs locally, no backend.** Open source, with no hosted Anima backend and no database or vector store. Just local files on a machine you control, and Slack stays your system of record.
+- **A local dashboard.** Create agents, connect Slack, and watch activity from a dashboard at `http://127.0.0.1:4174`.
 
 ## How it works
 
