@@ -1,4 +1,4 @@
-import { appendFile, mkdir, open, readFile, readdir, rename, type FileHandle } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, readdir, rename, unlink, type FileHandle } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 import { cacheDelete, cacheHit, cacheSet, isMissingFile, statOrNull } from './json-file.js';
@@ -9,6 +9,13 @@ export const DEFAULT_JSONL_ROTATE_BYTES = 10 * 1024 * 1024;
 export interface JsonlRotationOptions {
   archiveDir?: string;
   maxBytes?: number;
+  /**
+   * Cap on how many rotated archive segments to retain. After a rotation, the
+   * oldest archives beyond this count are deleted, bounding total disk use at
+   * roughly `(maxArchives + 1) * maxBytes`. Omitted/undefined ⇒ keep all
+   * archives (the historical behavior); `0` ⇒ keep none.
+   */
+  maxArchives?: number;
 }
 
 export class JsonlAppendLog<T> {
@@ -243,6 +250,39 @@ export class JsonlAppendLog<T> {
     await rename(this.path, archivePath);
     cacheDelete(this.path);
     cacheDelete(archivePath);
+    await this.pruneArchives();
+  }
+
+  // Enforce the optional retention cap: keep only the newest `maxArchives`
+  // segments, deleting the oldest. ownArchivePaths() returns ONLY this log's own
+  // segments (scoped by the archive-name pattern, so a shared archive dir never
+  // prunes another log's files), sorted ascending by the timestamp-prefixed
+  // name — oldest at the front. Best-effort: a file already gone is fine; other
+  // errors propagate like rotation itself.
+  private async pruneArchives(): Promise<void> {
+    const maxArchives = this.rotation.maxArchives;
+    if (!Number.isFinite(maxArchives) || Number(maxArchives) < 0) return;
+    const archives = await this.ownArchivePaths();
+    const excess = archives.length - Number(maxArchives);
+    if (excess <= 0) return;
+    for (const path of archives.slice(0, excess)) {
+      try {
+        await unlink(path);
+      } catch (error) {
+        if (!isMissingFile(error)) throw error;
+      }
+      cacheDelete(path);
+    }
+  }
+
+  // Archive segments produced by THIS log only. nextArchivePath() names them
+  // `<13+ digit stamp>-<base>-<3 digit seq>.jsonl`, so we match that exact shape
+  // for this log's base name — never another log sharing the same archive dir.
+  private async ownArchivePaths(): Promise<string[]> {
+    const base = basename(this.path).replace(/\.jsonl$/i, '');
+    const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const own = new RegExp(`^\\d{13,}-${escaped}-\\d{3}\\.jsonl$`);
+    return (await this.archivePaths()).filter((path) => own.test(basename(path)));
   }
 
   private async segmentPaths(): Promise<string[]> {

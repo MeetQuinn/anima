@@ -54,6 +54,10 @@ const MAX_CREATED_AT = 64;
 // Reject oversized request bodies before parsing (~32KB is ample for a stack).
 const BODY_LIMIT_BYTES = 32 * 1024;
 
+// Retention cap: at most this many rotated 10MB segments are kept on disk, so
+// the local diagnostics log can never grow without bound (~1GB worst case).
+const MAX_ARCHIVES = 100;
+
 function truncate(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max)}…[truncated]` : value;
 }
@@ -80,7 +84,12 @@ let cachedLog: JsonlAppendLog<StoredClientError> | undefined;
 function clientErrorLog(): JsonlAppendLog<StoredClientError> {
   const path = join(resolveAnimaHome(), 'logs', 'client-errors.jsonl');
   if (!cachedLog || cachedLog.path !== path) {
-    cachedLog = new JsonlAppendLog<StoredClientError>(path, { maxBytes: DEFAULT_JSONL_ROTATE_BYTES });
+    cachedLog = new JsonlAppendLog<StoredClientError>(path, {
+      maxBytes: DEFAULT_JSONL_ROTATE_BYTES,
+      // Hard disk ceiling: keep at most 100 rotated 10MB segments (~1GB worst
+      // case). A runaway render loop can't fill the disk via diagnostics.
+      maxArchives: MAX_ARCHIVES,
+    });
   }
   return cachedLog;
 }

@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -62,6 +62,79 @@ test('JsonlAppendLog rotates active files and reads archives chronologically', a
     assert.deepEqual(await log.readAll(), [{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
     assert.deepEqual(await log.readTail(1), [{ id: 'c' }]);
     assert.deepEqual(await log.readTail(2), [{ id: 'b' }, { id: 'c' }]);
+  } finally {
+    Date.now = realNow;
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test('JsonlAppendLog keeps every archive by default (no maxArchives)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-jsonl-no-prune-'));
+  const realNow = Date.now;
+  try {
+    // Monotonic clock: each 10MB rotation gets a strictly greater stamp in
+    // production, so archive names sort chronologically. Mirror that here.
+    let now = 1;
+    Date.now = () => now++;
+    const path = join(dir, 'activity.jsonl');
+    const archiveDir = join(dir, 'activity.archive');
+    const log = new JsonlAppendLog<{ id: string }>(path, { archiveDir, maxBytes: 1 });
+
+    // 5 appends ⇒ 4 rotations ⇒ 4 archive segments, none pruned.
+    for (const id of ['a', 'b', 'c', 'd', 'e']) await log.append({ id });
+
+    assert.equal((await readdir(archiveDir)).length, 4);
+    assert.deepEqual((await log.readAll()).map((r) => r.id), ['a', 'b', 'c', 'd', 'e']);
+  } finally {
+    Date.now = realNow;
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test('JsonlAppendLog maxArchives prunes oldest segments past the cap', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-jsonl-prune-'));
+  const realNow = Date.now;
+  try {
+    let now = 1;
+    Date.now = () => now++;
+    const path = join(dir, 'activity.jsonl');
+    const archiveDir = join(dir, 'activity.archive');
+    const log = new JsonlAppendLog<{ id: string }>(path, { archiveDir, maxBytes: 1, maxArchives: 2 });
+
+    // 5 appends ⇒ 4 rotations, but only the newest 2 archives survive.
+    for (const id of ['a', 'b', 'c', 'd', 'e']) await log.append({ id });
+
+    assert.equal((await readdir(archiveDir)).length, 2, 'only maxArchives segments retained');
+    // a, b pruned; c, d archived; e active.
+    assert.deepEqual((await log.readAll()).map((r) => r.id), ['c', 'd', 'e']);
+  } finally {
+    Date.now = realNow;
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test('JsonlAppendLog maxArchives prunes only its own segments in a shared archive dir', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-jsonl-prune-scoped-'));
+  const realNow = Date.now;
+  try {
+    let now = 100;
+    Date.now = () => now++;
+    const archiveDir = join(dir, 'shared.archive');
+    // A foreign segment from another log living in the same archive dir.
+    await mkdir(archiveDir, { recursive: true });
+    const foreign = join(archiveDir, '0000000000001-other-000.jsonl');
+    await writeFile(foreign, `${JSON.stringify({ id: 'foreign' })}\n`, 'utf8');
+
+    const path = join(dir, 'activity.jsonl');
+    const log = new JsonlAppendLog<{ id: string }>(path, { archiveDir, maxBytes: 1, maxArchives: 1 });
+
+    for (const id of ['a', 'b', 'c']) await log.append({ id });
+
+    const names = (await readdir(archiveDir)).sort();
+    // Foreign file untouched; only this log's own newest segment kept.
+    assert.ok(names.includes('0000000000001-other-000.jsonl'), 'foreign archive must survive');
+    const ownArchives = names.filter((n) => /-activity-\d{3}\.jsonl$/.test(n));
+    assert.equal(ownArchives.length, 1, 'only maxArchives of this log kept');
   } finally {
     Date.now = realNow;
     await rm(dir, { force: true, recursive: true });
