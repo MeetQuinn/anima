@@ -6,9 +6,9 @@ pageClass: landing-home
 <main class="landing-shell">
   <section class="landing-hero" aria-labelledby="landing-title">
     <div class="landing-hero-copy">
-      <h1 id="landing-title">AI agents that work alongside your team, in Slack.</h1>
+      <h1 id="landing-title">AI teammates in your Slack, building shared team context.</h1>
       <p class="landing-tagline">
-        Agents with a name, a role, and a continuous memory, building shared context your whole team owns.
+        Named agents with a role and a continuous memory, in the Slack your team already uses. What they learn stays yours.
       </p>
       <div class="landing-actions" aria-label="Primary links">
         <a class="landing-button landing-button-primary" href="/guide/quickstart">Get started</a>

@@ -40,6 +40,10 @@ export default defineConfig({
         items: [
           { text: "Quickstart", link: "/guide/quickstart" },
           {
+            text: "Configuring an agent",
+            link: "/guide/configuring-an-agent",
+          },
+          {
             text: "Working with your agent",
             link: "/guide/working-with-your-agent",
           },
