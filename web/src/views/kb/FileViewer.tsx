@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 import { Copy, Download, ExternalLink, List, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { Highlight, themes } from 'prism-react-renderer';
 import { useNavigate } from 'react-router-dom';
 import { buildKbPath, buildKbRawPath } from '@/lib/url-state';
@@ -319,6 +321,33 @@ export function TocButton({ entries }: { entries: TocEntry[] }) {
 }
 
 // ---------------------------------------------------------------------------
+// Inline HTML sanitization (GitHub-like)
+// ---------------------------------------------------------------------------
+
+// rehype-raw parses embedded HTML in Markdown into the hast tree; rehype-sanitize
+// then strips anything not on this allowlist. We start from the library default
+// (which already blocks <script>, event handlers, and unsafe URL protocols) and
+// widen it to the presentational subset GitHub renders: <picture>/<source> for
+// theme-adaptive images, <details>/<summary>, and the legacy `align` attribute
+// on common block tags. Rendering arbitrary file HTML is an XSS surface, so the
+// sanitizer is mandatory — never feed rehype-raw output to the DOM unsanitized.
+const ALIGN_TAGS = ['div', 'p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'td', 'th'] as const;
+
+const sanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames ?? []), 'picture', 'source', 'details', 'summary'],
+  attributes: {
+    ...defaultSchema.attributes,
+    source: ['srcSet', 'srcset', 'media', 'type', 'sizes', 'width', 'height'],
+    img: [...(defaultSchema.attributes?.img ?? []), 'align', 'width', 'height', 'loading'],
+    details: [...(defaultSchema.attributes?.details ?? []), 'open'],
+    ...Object.fromEntries(
+      ALIGN_TAGS.map((tag) => [tag, [...(defaultSchema.attributes?.[tag] ?? []), 'align']]),
+    ),
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Markdown link resolution
 // ---------------------------------------------------------------------------
 
@@ -350,6 +379,66 @@ function resolveKbHref(
   } catch {
     return null;
   }
+}
+
+// Minimal hast element shape — enough to read a <picture>'s children without
+// pulling the full hast types in.
+type HastElement = {
+  type?: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: HastElement[];
+};
+
+/**
+ * Resolve a relative asset reference (raw HTML `<img src>` / `<source srcset>`)
+ * to the KB raw-bytes endpoint, matching what the Markdown `img` component does.
+ * Absolute URLs, anchors, and root-absolute paths are left untouched.
+ */
+function resolveRawSrc(src: string, kbId: string, currentFilePath: string): string {
+  if (!src || /^[a-z][a-z\d+\-.]*:/i.test(src) || src.startsWith('#') || src.startsWith('/')) {
+    return src;
+  }
+  const resolved = resolveKbHref(src, currentFilePath);
+  return resolved ? buildKbRawPath(kbId, resolved.path) : src;
+}
+
+/**
+ * Decide whether a <picture><source> applies on our always-light content panel.
+ * A `prefers-color-scheme: dark` source never matches (the panel is light); a
+ * `light` one always does; any other media (e.g. width) is evaluated live.
+ */
+function sourceMatchesLight(media: unknown): boolean {
+  if (typeof media !== 'string' || media.trim() === '') return true;
+  if (/prefers-color-scheme:\s*dark/i.test(media)) return false;
+  if (/prefers-color-scheme:\s*light/i.test(media)) return true;
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    try {
+      return window.matchMedia(media).matches;
+    } catch {
+      return true;
+    }
+  }
+  return true;
+}
+
+/** Resolve every candidate URL inside a srcset (hast may store it as an array). */
+function resolveSrcset(
+  srcset: unknown,
+  kbId: string,
+  currentFilePath: string,
+): string | undefined {
+  const raw = Array.isArray(srcset) ? srcset.join(', ') : typeof srcset === 'string' ? srcset : '';
+  if (!raw) return undefined;
+  return raw
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((candidate) => {
+      const [url, ...descriptor] = candidate.split(/\s+/);
+      return [resolveRawSrc(url, kbId, currentFilePath), ...descriptor].join(' ').trim();
+    })
+    .join(', ');
 }
 
 /**
@@ -576,6 +665,42 @@ export function FileContent({
         }
         return <ImageLightbox src={resolvedSrc} alt={alt ?? ''} />;
       },
+      // The KB content panel is always a light surface (the dashboard has no
+      // dark theme for content), so resolve <picture> to its light variant
+      // rather than following the viewer's OS color scheme — otherwise an
+      // OS-dark user gets the dark-mode asset washed out on our light panel.
+      // We collapse the <picture> to the chosen <img> built straight from the
+      // hast node (resolving relative asset paths) instead of routing the inner
+      // <img> through the lightbox.
+      picture: ({ node }: { node?: HastElement }) => {
+        let chosenSrc: string | null = null;
+        let fallback: { src: string; alt: string; width?: string } | null = null;
+        for (const child of node?.children ?? []) {
+          if (child.type !== 'element') continue;
+          const p = child.properties ?? {};
+          if (child.tagName === 'source' && !chosenSrc && sourceMatchesLight(p.media)) {
+            const srcset = resolveSrcset(p.srcSet ?? p.srcset, id, filePath);
+            const first = srcset ? srcset.split(',')[0]?.trim().split(/\s+/)[0] : '';
+            if (first) chosenSrc = first;
+          } else if (child.tagName === 'img' && !fallback) {
+            fallback = {
+              src: resolveRawSrc(typeof p.src === 'string' ? p.src : '', id, filePath),
+              alt: typeof p.alt === 'string' ? p.alt : '',
+              width: p.width != null ? String(p.width) : undefined,
+            };
+          }
+        }
+        const src = chosenSrc ?? fallback?.src;
+        if (!src) return null;
+        return (
+          <img
+            src={src}
+            alt={fallback?.alt ?? ''}
+            width={fallback?.width}
+            className="inline-block h-auto max-w-full"
+          />
+        );
+      },
       table: ({ children, ...props }: React.ComponentPropsWithoutRef<'table'>) => (
         <div className="overflow-x-auto">
           <table {...props}>{children}</table>
@@ -700,6 +825,7 @@ export function FileContent({
         <div className="md-prose">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
             components={markdownComponents}
           >
             {file.content}
