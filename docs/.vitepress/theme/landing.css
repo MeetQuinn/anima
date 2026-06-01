@@ -22,9 +22,9 @@
 
 .landing-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1.16fr) minmax(420px, 0.84fr);
+  grid-template-columns: minmax(0, 1fr) 520px;
   align-items: center;
-  gap: 42px;
+  gap: 44px;
   min-height: 540px;
 }
 
@@ -38,11 +38,11 @@
 }
 
 .landing-hero h1 {
-  max-width: 680px;
+  max-width: 560px;
   margin: 0;
   color: var(--landing-ink);
-  font-size: 64px;
-  line-height: 1;
+  font-size: 52px;
+  line-height: 1.04;
   letter-spacing: 0;
 }
 
