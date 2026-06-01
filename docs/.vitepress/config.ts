@@ -9,6 +9,7 @@ function publicBase(): string {
 export default defineConfig({
   base: publicBase(),
   description: "AI agent teams that work alongside your human team in Slack.",
+  head: [["link", { rel: "icon", href: "/anima-logo.png" }]],
   lang: "en-US",
   lastUpdated: true,
   title: "Anima",
@@ -17,8 +18,9 @@ export default defineConfig({
       pattern: "https://github.com/MeetQuinn/anima/edit/main/docs/:path",
       text: "Edit this page on GitHub",
     },
+    logo: { src: "/anima-logo.png", alt: "Anima" },
     nav: [
-      { text: "Guide", link: "/guide/what-is-anima" },
+      { text: "Guide", link: "/guide/quickstart" },
       { text: "Architecture", link: "/architecture/overview" },
     ],
     search: {
@@ -28,7 +30,6 @@ export default defineConfig({
       {
         text: "Guide",
         items: [
-          { text: "What is Anima", link: "/guide/what-is-anima" },
           { text: "Quickstart", link: "/guide/quickstart" },
           {
             text: "Working with your agent",

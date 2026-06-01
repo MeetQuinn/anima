@@ -6,15 +6,12 @@ pageClass: landing-home
 <main class="landing-shell">
   <section class="landing-hero" aria-labelledby="landing-title">
     <div class="landing-hero-copy">
-      <p class="landing-kicker">Anima</p>
-      <h1 id="landing-title">A team of AI agents in your Slack.</h1>
+      <h1 id="landing-title">AI agents that work alongside your team, in Slack.</h1>
       <p class="landing-tagline">
-        Real teammates that do real work, and the knowledge they build stays yours.
+        Agents with a name, a role, and a continuous memory, building shared context your whole team owns.
       </p>
       <div class="landing-actions" aria-label="Primary links">
         <a class="landing-button landing-button-primary" href="/guide/quickstart">Get started</a>
-        <a class="landing-button landing-button-secondary" href="/guide/what-is-anima">What is Anima?</a>
-        <a class="landing-button landing-button-secondary" href="https://github.com/MeetQuinn/anima">GitHub</a>
       </div>
     </div>
     <div class="landing-hero-visual" aria-labelledby="proof-title">
@@ -27,91 +24,100 @@ pageClass: landing-home
     </div>
   </section>
 
-  <section class="landing-cards" aria-label="What makes Anima different">
-    <article>
-      <span class="card-accent" aria-hidden="true"></span>
-      <h2>Nothing new to adopt, and they do real work</h2>
-      <p>They live in the Slack you already use, with no new app and no commands to learn. And they are not just chat: they work with files, run real tasks, and take work off your plate.</p>
-    </article>
-    <article>
-      <span class="card-accent" aria-hidden="true"></span>
-      <h2>A team, not a single assistant</h2>
-      <p>Multiple named agents, each with a role. They split work, hand off in Slack, and pull in whoever is needed. A team takes on the whole project, where one assistant just answers.</p>
-    </article>
-    <article>
-      <span class="card-accent" aria-hidden="true"></span>
-      <h2>Work becomes shared knowledge you own</h2>
-      <p>As they work, agents write the useful decisions and context into a shared knowledge base. It compounds over time, stays in your hands, and survives as people come and go.</p>
-    </article>
-    <article>
-      <span class="card-accent" aria-hidden="true"></span>
-      <h2>You own it, and it runs on your machine</h2>
-      <p>Open source, with no Anima cloud and nothing phoning home. Slack stays your system of record, and the AI runs through the provider account you connect.</p>
-    </article>
+  <section class="landing-card-section" aria-labelledby="cards-title">
+    <div class="landing-section-heading">
+      <p>Why Anima</p>
+      <h2 id="cards-title">Built for shared AI work.</h2>
+    </div>
+    <div class="landing-cards">
+      <article class="landing-card-featured">
+        <h2>One shared context, not a dozen private chats</h2>
+        <p>More and more work gets done with AI, but it happens in each person's private chat. Anima keeps it in one shared place the whole team can reach, and you own it.</p>
+      </article>
+      <article>
+        <h2>Nothing new to adopt</h2>
+        <p>They live in the Slack you already use: no new app, no commands to learn. And they are the coding agents you already trust (Claude Code, Codex), now where your team works.</p>
+      </article>
+      <article>
+        <h2>A team, not a single assistant</h2>
+        <p>Multiple named agents, each with a role. They split work, hand off in Slack, and pull in whoever is needed. A team takes on the whole project, where one assistant just answers.</p>
+      </article>
+      <article>
+        <h2>You own it, runs locally</h2>
+        <p>Open source, with no hosted Anima backend. No database or vector store to run, just local files on a machine you control. Slack stays your system of record, and the AI runs through your provider account.</p>
+      </article>
+    </div>
   </section>
 
   <section class="landing-compare" aria-labelledby="compare-title">
     <div class="landing-section-heading">
-      <p>Before and after</p>
-      <h2 id="compare-title">The difference is where the work lives.</h2>
+      <p>On its own vs on Anima</p>
+      <h2 id="compare-title">The difference is shared context.</h2>
     </div>
-    <div class="compare-grid">
-      <div class="compare-column compare-before">
-        <h3>A coding agent on its own</h3>
-        <div class="compare-item">
-          <span>Form</span>
-          <p>A tool you prompt, in your terminal</p>
+    <div class="compare-card">
+      <div class="compare-card-header" aria-hidden="true">
+        <span>A coding agent on its own</span>
+        <span></span>
+        <span>The same agent, on Anima</span>
+      </div>
+      <div class="compare-row" data-topic="Context">
+        <div class="compare-cell compare-before">
+          <span>Context</span>
+          <p>Stuck in one person's private chat</p>
         </div>
-        <div class="compare-item">
-          <span>Knowledge</span>
-          <p>Locked in your private chat, gone when you leave</p>
-        </div>
-        <div class="compare-item">
-          <span>Scope</span>
-          <p>One assistant answers a question</p>
+        <div class="compare-arrow" aria-hidden="true">&rarr;</div>
+        <div class="compare-cell compare-after">
+          <span>Context</span>
+          <p>Shared with the whole team</p>
         </div>
       </div>
-      <div class="compare-arrow" aria-hidden="true">&rarr;</div>
-      <div class="compare-column compare-after">
-        <h3>The same agent, on Anima</h3>
-        <div class="compare-item">
-          <span>Form</span>
-          <p>A teammate you @mention, in your Slack</p>
+      <div class="compare-row" data-topic="Where">
+        <div class="compare-cell compare-before">
+          <span>Where</span>
+          <p>In a terminal, for the technical few</p>
         </div>
-        <div class="compare-item">
-          <span>Knowledge</span>
-          <p>Written into a shared knowledge base you own</p>
+        <div class="compare-arrow" aria-hidden="true">&rarr;</div>
+        <div class="compare-cell compare-after">
+          <span>Where</span>
+          <p>In Slack, for anyone on the team</p>
         </div>
-        <div class="compare-item">
-          <span>Scope</span>
-          <p>A team takes on the whole project</p>
+      </div>
+      <div class="compare-row" data-topic="Setup">
+        <div class="compare-cell compare-before">
+          <span>Setup</span>
+          <p>Everyone sets up their own</p>
+        </div>
+        <div class="compare-arrow" aria-hidden="true">&rarr;</div>
+        <div class="compare-cell compare-after">
+          <span>Setup</span>
+          <p>One power user sets it up for the whole team</p>
         </div>
       </div>
     </div>
     <p class="compare-note">
-      Anima wraps the coding agents you already use: Claude Code, Codex, and Kimi. It is the teammate layer around them, not a model and not a hosted SaaS.
+      Your tools, skills, MCP, and extensions stay exactly the same. Anima just adds the teammate layer around them.
     </p>
   </section>
 
   <section class="landing-start" aria-labelledby="start-title">
-    <div class="landing-start-copy">
-      <p class="landing-kicker">Get started</p>
+    <div class="landing-section-heading">
+      <p>Get started</p>
       <h2 id="start-title">One command on your own machine.</h2>
-      <p>Then create your agent and follow the Connect to Slack steps in the dashboard.</p>
     </div>
+    <p class="landing-start-frame">
+      A technical teammate runs the command once; everyone else just works with the agents in Slack, nothing to install.
+    </p>
     <div class="landing-command-row">
       <pre class="landing-command"><code>curl -fsSL https://anima.meetquinn.ai/install.sh | sh</code></pre>
       <button
         class="landing-copy-command"
         type="button"
         aria-label="Copy install command"
-        @click="navigator.clipboard.writeText('curl -fsSL https://anima.meetquinn.ai/install.sh | sh'); $event.currentTarget.textContent = 'Copied'; setTimeout(() => { $event.currentTarget.textContent = 'Copy'; }, 1400)"
+        data-command="curl -fsSL https://anima.meetquinn.ai/install.sh | sh"
       >Copy</button>
     </div>
     <nav class="landing-links" aria-label="Get started links">
-      <a href="/guide/quickstart">Quickstart</a>
-      <a href="/guide/what-is-anima">What is Anima</a>
-      <a href="/architecture/overview">Architecture</a>
+      <a href="/guide/quickstart">Read the Quickstart</a>
     </nav>
   </section>
 </main>
