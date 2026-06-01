@@ -4,6 +4,7 @@ import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 
 import { registerAgentRoutes } from './agent-routes.js';
+import { registerClientErrorRoutes } from './client-error-routes.js';
 import { registerErrorHandler } from './http.js';
 import { registerStaticRoutes } from './static.js';
 import { registerSystemRoutes } from './system-routes.js';
@@ -14,6 +15,7 @@ export async function createWebServer(): Promise<Server> {
 
   registerErrorHandler(fastify);
   registerSystemRoutes(fastify);
+  registerClientErrorRoutes(fastify);
   registerKbRoutes(fastify);
   registerAgentRoutes(fastify);
   registerStaticRoutes(fastify);

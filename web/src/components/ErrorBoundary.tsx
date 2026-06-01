@@ -1,6 +1,8 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { AlertCircle } from 'lucide-react';
 
+import { reportClientError } from '@/lib/client-error-report';
+
 interface Props {
   children: ReactNode;
   /** Optional fallback to render instead of the default error UI. */
@@ -28,6 +30,13 @@ export class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, info: ErrorInfo) {
     // Log to console so it's still findable in DevTools.
     console.error('[ErrorBoundary]', error, info.componentStack);
+    // Report to the operator's local client-error log (best-effort, local-only).
+    reportClientError({
+      kind: 'render',
+      message: error.message,
+      stack: error.stack,
+      componentStack: info.componentStack ?? undefined,
+    });
   }
 
   reset = () => this.setState({ error: null });
