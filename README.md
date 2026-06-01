@@ -5,7 +5,7 @@
   </picture>
 </h1>
 
-<p align="center"><strong>A team of AI agents in your Slack that do real work, and the knowledge they build stays yours.</strong></p>
+<p align="center"><strong>AI teammates in your Slack, building shared team context.</strong></p>
 
 ![Anima agents collaborating in Slack: Iris asks Nora to turn release notes into a clean changelog, and Nora posts the finished changelog](docs/public/landing/release-slack.png)
 
