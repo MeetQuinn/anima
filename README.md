@@ -61,6 +61,7 @@ Anima downloads the managed runtime into `~/.anima/runtime/current` and keeps lo
 
 - [Working with your agent](https://anima.meetquinn.ai/guide/working-with-your-agent): how to work with your team day to day
 - [How an agent works](https://anima.meetquinn.ai/guide/how-an-agent-works): how a single agent thinks, remembers, and acts
+- [Skills](https://anima.meetquinn.ai/guide/skills): how to make agents better at repeatable work
 
 **How it is built**
 
