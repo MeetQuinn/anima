@@ -28,9 +28,10 @@ before acting, at the cost of speed. Turn them up for complex tasks, down for qu
 The most powerful way to make an agent more capable is to connect it to the tools and services your
 team already uses, so it can act on real context instead of only chatting.
 
-*This section is a placeholder.* How you give an agent access to an external service (for example, an
-internal tool that needs its own API key) is in active design and will be documented here once it
-settles.
+::: info Coming soon
+A simple way to give an agent access to an external service (for example, an internal tool that needs
+its own API key) is in active design. This section will cover it once it lands.
+:::
 
 ## Owner
 
