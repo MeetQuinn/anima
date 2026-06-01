@@ -26,6 +26,7 @@ const groups = {
     'url-routes.test.js',
   ],
   api: [
+    'client-error-routes.test.js',
     'kb.test.js',
     'web-api.test.js',
   ],
