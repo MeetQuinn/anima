@@ -40,14 +40,14 @@ export default defineConfig({
         items: [
           { text: "Quickstart", link: "/guide/quickstart" },
           {
-            text: "Configuring an agent",
-            link: "/guide/configuring-an-agent",
-          },
-          {
             text: "Working with your agent",
             link: "/guide/working-with-your-agent",
           },
           { text: "How an agent works", link: "/guide/how-an-agent-works" },
+          {
+            text: "Configuring an agent",
+            link: "/guide/configuring-an-agent",
+          },
         ],
       },
       {
