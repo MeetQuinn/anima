@@ -14,6 +14,148 @@ import { kbDownloadUrl } from '@/api/kb';
 import type { KbFile } from '@shared/kb';
 
 // ---------------------------------------------------------------------------
+// YAML frontmatter
+//
+// react-markdown doesn't understand leading `---`-fenced YAML frontmatter, so
+// it renders as an <hr> followed by run-together `key: value` text. We instead
+// split the frontmatter off and render it as a tidy metadata table (GitHub-
+// style), keeping the body Markdown clean. The parser is intentionally minimal
+// and never throws — anything it can't read leaves the content untouched.
+// ---------------------------------------------------------------------------
+
+interface FrontmatterEntry {
+  key: string;
+  /** Inline scalar value, e.g. `name: foo`. Null when the value is a block. */
+  value: string | null;
+  /** Indented/list lines that follow a bare `key:` (nested map or list). */
+  block: string[] | null;
+}
+
+function stripQuotes(value: string): string {
+  if (value.length >= 2) {
+    const first = value[0];
+    const last = value[value.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      return value.slice(1, -1);
+    }
+  }
+  return value;
+}
+
+function parseTopLevelYaml(inner: string): FrontmatterEntry[] {
+  const lines = inner.split('\n');
+  const entries: FrontmatterEntry[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.trim() === '' || line.trimStart().startsWith('#')) {
+      i++;
+      continue;
+    }
+    // A top-level key has no leading indentation.
+    const match = /^([A-Za-z0-9_][\w .-]*):(?:[ \t]+(.*))?$/.exec(line);
+    if (!match || /^\s/.test(line)) {
+      i++;
+      continue;
+    }
+    const key = match[1];
+    const inlineVal = (match[2] ?? '').trim();
+    if (inlineVal !== '') {
+      entries.push({ key, value: stripQuotes(inlineVal), block: null });
+      i++;
+      continue;
+    }
+    // Bare `key:` — collect the following indented or list lines as its block.
+    const block: string[] = [];
+    i++;
+    while (i < lines.length) {
+      const next = lines[i];
+      if (next.trim() === '') {
+        i++;
+        continue;
+      }
+      if (/^\s/.test(next) || /^-[ \t]/.test(next)) {
+        block.push(next);
+        i++;
+        continue;
+      }
+      break;
+    }
+    entries.push({ key, value: null, block: block.length > 0 ? block : null });
+  }
+  return entries;
+}
+
+function parseFrontmatter(content: string): { entries: FrontmatterEntry[] | null; body: string } {
+  const fenced = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(content);
+  if (!fenced) return { entries: null, body: content };
+  const entries = parseTopLevelYaml(fenced[1]);
+  if (entries.length === 0) return { entries: null, body: content };
+  return { entries, body: content.slice(fenced[0].length) };
+}
+
+function dedentBlock(block: string[]): string[] {
+  const indents = block
+    .filter((line) => line.trim() !== '')
+    .map((line) => /^[ \t]*/.exec(line)?.[0].length ?? 0);
+  const common = indents.length > 0 ? Math.min(...indents) : 0;
+  return block.map((line) => line.slice(common));
+}
+
+function FrontmatterBlockValue({ block }: { block: string[] }) {
+  const dedented = dedentBlock(block);
+  const nonEmpty = dedented.filter((line) => line.trim() !== '');
+  const isList = nonEmpty.length > 0 && nonEmpty.every((line) => /^-[ \t]+/.test(line));
+  if (isList) {
+    return (
+      <ul className="m-0 list-disc space-y-0.5 pl-4">
+        {nonEmpty.map((line, idx) => (
+          <li key={idx} className="font-mono text-[12px] text-text">
+            {stripQuotes(line.replace(/^-[ \t]+/, '').trim())}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  return (
+    <pre className="m-0 whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-text">
+      {dedented.join('\n').trimEnd()}
+    </pre>
+  );
+}
+
+function FrontmatterTable({ entries }: { entries: FrontmatterEntry[] }) {
+  return (
+    <div className="mb-5 overflow-hidden rounded-sm border border-border-soft bg-surface-raised/30">
+      <table className="m-0 w-full border-collapse text-left align-top">
+        <tbody>
+          {entries.map((entry, idx) => (
+            <tr
+              key={entry.key + idx}
+              className={idx > 0 ? 'border-t border-border-soft/70' : undefined}
+            >
+              <th
+                scope="row"
+                className="w-px whitespace-nowrap border-r border-border-soft/70 bg-surface-raised/40 px-3 py-2 align-top font-sans text-[11px] font-semibold uppercase tracking-wide text-text-subtle"
+              >
+                {entry.key}
+              </th>
+              <td className="px-3 py-2 align-top font-mono text-[12px] text-text">
+                {entry.block ? (
+                  <FrontmatterBlockValue block={entry.block} />
+                ) : (
+                  <span className="break-words">{entry.value}</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // CopyButton
 // ---------------------------------------------------------------------------
 
@@ -601,10 +743,16 @@ export function FileContent({
   const rawUrl = buildKbRawPath(id, filePath);
   const navigate = useNavigate();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const headingIdsByLine = useMemo(() => {
-    if (file?.kind !== 'markdown' || !file.content) return new Map<number, string>();
-    return new Map(extractToc(file.content).map((entry) => [entry.line, entry.id]));
+  const { entries: frontmatter, body: markdownBody } = useMemo(() => {
+    if (file?.kind !== 'markdown' || !file.content) return { entries: null, body: '' };
+    return parseFrontmatter(file.content);
   }, [file]);
+  // Map TOC heading ids by line against the same body ReactMarkdown renders
+  // (frontmatter-stripped), so node line numbers line up after the fence is cut.
+  const headingIdsByLine = useMemo(() => {
+    if (file?.kind !== 'markdown' || !markdownBody) return new Map<number, string>();
+    return new Map(extractToc(markdownBody).map((entry) => [entry.line, entry.id]));
+  }, [file, markdownBody]);
 
   // Scroll to hash target after markdown renders.
   useEffect(() => {
@@ -827,13 +975,16 @@ export function FileContent({
   if (file.kind === 'markdown') {
     return (
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+        {/* Rendered outside .md-prose so the metadata table keeps its own
+            styling instead of inheriting the Markdown code-block / table look. */}
+        {frontmatter && <FrontmatterTable entries={frontmatter} />}
         <div className="md-prose">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
             components={markdownComponents}
           >
-            {file.content}
+            {markdownBody}
           </ReactMarkdown>
         </div>
       </div>
