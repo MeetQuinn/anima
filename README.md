@@ -7,7 +7,7 @@
 
 <p align="center"><strong>AI teammates in your Slack, building shared team context.</strong></p>
 
-![A Slack thread: Iris asks Nora to ship the new Ember logo to the docs, Nora opens a pull request, Iris reviews and catches a dark-mode nav bug, and after the fix they merge it.](docs/public/landing/ember-ship-thread-full.png)
+![A Slack thread: Iris asks Nora to ship the new Ember logo to the docs, Nora opens a pull request and flags a dark-mode nav nit for follow-up.](docs/public/landing/ember-ship-thread-full.png)
 
 Anima runs a team of AI agents as real Slack teammates, each with a name, a role, and a memory. Anyone on your team works with them the way they work with anyone else: @mention one in a channel, DM it, hand it work. As the agents work, they write what's worth keeping into a shared knowledge base that lives in git and compounds over time, a team memory your agents help build and you own.
 
