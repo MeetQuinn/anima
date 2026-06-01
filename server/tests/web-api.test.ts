@@ -1585,6 +1585,63 @@ test('syncDisplayInfoIfStale refreshes once then throttles within the TTL', asyn
   }
 });
 
+test('syncDisplayInfoIfStale does not clobber a concurrent config edit made mid-sync', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-sync-race-test-'));
+  // Simulate an operator editing config (here: display name) WHILE the
+  // background sync is in flight — kicked off during the first Slack call so it
+  // commits before the post-call save. A pre-call snapshot save would revert it.
+  let operatorEdit: Promise<unknown> | undefined;
+  const slackApi = await startSlackApiMock((method) => {
+    if (method === 'auth.test') {
+      if (!operatorEdit) {
+        // The mock callback runs outside the test's withAnimaHome async scope,
+        // so re-establish the home before touching agent config.
+        operatorEdit = withAnimaHome(stateDir, () =>
+          agentService('anima').updateProfile({ displayName: 'Edited During Sync' }));
+      }
+      return { ok: true, team: 'Race', team_id: 'T-race', user_id: 'U-bot' };
+    }
+    if (method === 'users.info') {
+      return { ok: true, user: { id: 'U-bot', profile: { image_72: 'https://example.test/raced.png' } } };
+    }
+    if (method === 'team.info') {
+      return { ok: true, team: { id: 'T-race', icon: { image_132: 'https://example.test/raced-ws.png' }, name: 'Race' } };
+    }
+    throw new Error(`unexpected Slack API method ${method}`);
+  });
+  const previousSlackApiUrl = process.env.ANIMA_SLACK_API_URL;
+  process.env.ANIMA_SLACK_API_URL = slackApi.url;
+  try {
+    await writeConfig(stateDir, [
+      {
+        ...defaultAgentConfig('anima'),
+        profile: { displayName: 'Original Name', role: 'tester' },
+        slack: { appToken: 'xapp-1-ADEMO123-secret', botToken: 'xoxb-secret-value' },
+      },
+    ]);
+    await withAnimaHome(stateDir, async () => {
+      const synced = await agentSlackServiceForAgent('anima')
+        .syncDisplayInfoIfStale({ ttlMs: 6 * 60 * 60 * 1000 });
+      assert.equal(synced.synced, true);
+      await operatorEdit; // ensure the concurrent edit settled
+
+      const stored = await agentService('anima').getConfig();
+      // The mid-sync operator edit survives...
+      assert.equal(stored.profile.displayName, 'Edited During Sync');
+      // ...and the sync's new avatar was still applied on top of the latest config.
+      assert.equal(stored.slack.avatarUrl, 'https://example.test/raced.png');
+    });
+  } finally {
+    if (previousSlackApiUrl === undefined) {
+      delete process.env.ANIMA_SLACK_API_URL;
+    } else {
+      process.env.ANIMA_SLACK_API_URL = previousSlackApiUrl;
+    }
+    await slackApi.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('web API reports provider availability', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-provider-availability-test-'));
   await writeConfig(stateDir);

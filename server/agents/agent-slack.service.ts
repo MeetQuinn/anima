@@ -123,8 +123,7 @@ export class AgentSlackService {
   }
 
   async syncDisplayInfo(): Promise<AgentConfig> {
-    const agent = await this.agentService.getConfig();
-    return this.persistDisplayInfo(agent, await getSlackDisplayInfo(await this.getWebClient()));
+    return this.persistDisplayInfo(await getSlackDisplayInfo(await this.getWebClient()));
   }
 
   /**
@@ -140,20 +139,26 @@ export class AgentSlackService {
     if (!agent.slack.botToken) return { synced: false };
     if (isWithinTtl(agent.slack.botProfileSyncedAt, options.ttlMs)) return { synced: false };
     const client = options.client ?? this.webClientForAgent(agent);
-    await this.persistDisplayInfo(agent, await getSlackDisplayInfo(client), nowIso());
+    await this.persistDisplayInfo(await getSlackDisplayInfo(client), nowIso());
     return { synced: true };
   }
 
   private async persistDisplayInfo(
-    agent: AgentConfig,
     info: Awaited<ReturnType<typeof getSlackDisplayInfo>>,
     botProfileSyncedAt?: string,
   ): Promise<AgentConfig> {
-    const appId = info.appId ?? appIdFromAppToken(agent.slack.appToken);
+    // Re-read the latest config AFTER the (slow) Slack API calls, then merge in
+    // only the display fields. The automatic on-message refresh runs fire-and-
+    // forget, so an operator could edit config in the dashboard while a sync is
+    // in flight — saving a pre-call snapshot here would silently clobber that
+    // edit. Reading now closes the seconds-long network window; the residual
+    // sub-call window matches every other AgentService mutator.
+    const latest = await this.agentService.getConfig();
+    const appId = info.appId ?? appIdFromAppToken(latest.slack.appToken);
     return this.agentService.saveConfig({
-      ...agent,
+      ...latest,
       slack: {
-        ...agent.slack,
+        ...latest.slack,
         ...info,
         ...(appId ? { appId } : {}),
         ...(botProfileSyncedAt ? { botProfileSyncedAt } : {}),
