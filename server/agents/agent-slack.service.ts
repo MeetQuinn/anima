@@ -123,15 +123,45 @@ export class AgentSlackService {
   }
 
   async syncDisplayInfo(): Promise<AgentConfig> {
+    return this.persistDisplayInfo(await getSlackDisplayInfo(await this.getWebClient()));
+  }
+
+  /**
+   * Refresh the bot's Slack display info (avatar, name, workspace icon) at most
+   * once per `ttlMs`, stamping `slack.botProfileSyncedAt`. When the last sync is
+   * still fresh this is a cheap no-op — it reads the local config only and makes
+   * NO Slack API calls. Best-effort: callers run it fire-and-forget off the
+   * message path and swallow errors. Pass an existing `client` to reuse the
+   * inbound request's WebClient instead of building a new one.
+   */
+  async syncDisplayInfoIfStale(options: { client?: WebClient; ttlMs: number }): Promise<{ synced: boolean }> {
     const agent = await this.agentService.getConfig();
-    const info = await getSlackDisplayInfo(await this.getWebClient());
-    const appId = info.appId ?? appIdFromAppToken(agent.slack.appToken);
+    if (!agent.slack.botToken) return { synced: false };
+    if (isWithinTtl(agent.slack.botProfileSyncedAt, options.ttlMs)) return { synced: false };
+    const client = options.client ?? this.webClientForAgent(agent);
+    await this.persistDisplayInfo(await getSlackDisplayInfo(client), nowIso());
+    return { synced: true };
+  }
+
+  private async persistDisplayInfo(
+    info: Awaited<ReturnType<typeof getSlackDisplayInfo>>,
+    botProfileSyncedAt?: string,
+  ): Promise<AgentConfig> {
+    // Re-read the latest config AFTER the (slow) Slack API calls, then merge in
+    // only the display fields. The automatic on-message refresh runs fire-and-
+    // forget, so an operator could edit config in the dashboard while a sync is
+    // in flight — saving a pre-call snapshot here would silently clobber that
+    // edit. Reading now closes the seconds-long network window; the residual
+    // sub-call window matches every other AgentService mutator.
+    const latest = await this.agentService.getConfig();
+    const appId = info.appId ?? appIdFromAppToken(latest.slack.appToken);
     return this.agentService.saveConfig({
-      ...agent,
+      ...latest,
       slack: {
-        ...agent.slack,
+        ...latest.slack,
         ...info,
         ...(appId ? { appId } : {}),
+        ...(botProfileSyncedAt ? { botProfileSyncedAt } : {}),
       },
     });
   }
@@ -240,6 +270,15 @@ export class AgentSlackService {
 
 export function agentSlackServiceForAgent(agentId: string): AgentSlackService {
   return new AgentSlackService(new AgentService(agentId));
+}
+
+// True when `iso` is a valid timestamp within `ttlMs` of now. Unset/unparseable
+// timestamps and a non-positive ttl are treated as stale so a sync still runs.
+function isWithinTtl(iso: string | undefined, ttlMs: number): boolean {
+  if (!iso || ttlMs <= 0) return false;
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return false;
+  return Date.now() - then < ttlMs;
 }
 
 function requireBotToken(agent: AgentConfig): string {
