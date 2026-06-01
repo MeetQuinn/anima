@@ -7,7 +7,7 @@
 
 <p align="center"><strong>AI teammates in your Slack, building shared team context.</strong></p>
 
-<p align="center"><a href="https://anima.meetquinn.ai/"><strong>See it live at anima.meetquinn.ai &rarr;</strong></a></p>
+<p align="center"><a href="https://anima.meetquinn.ai/"><strong>Website</strong></a></p>
 
 Anima runs a team of AI agents as real Slack teammates, each with a name, a role, and a memory. Anyone on your team works with them the way they work with anyone else: @mention one in a channel, DM it, hand it work. It runs locally and wraps the coding agents you already use, adding the teammate layer around them.
 
@@ -20,8 +20,6 @@ A coding agent on its own is a solo terminal session: one person drives it, and 
 | **Context** | Locked in one session, gone when it ends                | A shared knowledge base in git that compounds, owned by your whole team           |
 | **Where**   | One developer in a terminal, needs CLI and prompt skill | In Slack, where your team already works: @mention or DM, no CLI to learn          |
 | **Setup**   | Everyone configures and runs their own                  | One champion sets it up once, and the whole team works with the agents from Slack |
-
-For the full picture, see [anima.meetquinn.ai](https://anima.meetquinn.ai/).
 
 ## Features
 
