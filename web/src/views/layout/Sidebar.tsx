@@ -69,6 +69,13 @@ function SortableItem({ id, children }: { id: string; children: React.ReactNode 
   );
 }
 
+// Match a KB only on a full path segment, so `/kb/quinn-curriculum` does not
+// mark `/kb/quinn` active (a bare `startsWith` prefix-matches sibling ids).
+function isKbActive(pathname: string, id: string): boolean {
+  const base = `/kb/${id}`;
+  return pathname === base || pathname.startsWith(`${base}/`);
+}
+
 // ---------------------------------------------------------------------------
 // Sidebar
 // ---------------------------------------------------------------------------
@@ -138,7 +145,7 @@ export default function Sidebar({
     try {
       const updated = await removeKb(id);
       queryClient.invalidateQueries({ queryKey: queryKeys.kbs() });
-      if (pathname.startsWith(`/kb/${id}`)) {
+      if (isKbActive(pathname, id)) {
         navigate(updated.length > 0 ? `/kb/${updated[0].id}` : '/');
       }
     } catch {
@@ -193,7 +200,7 @@ export default function Sidebar({
           <div className="flex flex-1 flex-col items-center overflow-y-auto py-2 gap-2">
             {/* KB — colored initial blocks (ordered) */}
             {orderedKbs.map((kb) => {
-              const active = pathname.startsWith(`/kb/${kb.id}`);
+              const active = isKbActive(pathname, kb.id);
               const color = agentColor((kbIndexMap.get(kb.id) ?? 0) + 6);
               const initial = initialOf(kb.label);
               return (
@@ -358,7 +365,7 @@ export default function Sidebar({
                     strategy={verticalListSortingStrategy}
                   >
                     {orderedKbs.map((kb) => {
-                      const active = pathname.startsWith(`/kb/${kb.id}`);
+                      const active = isKbActive(pathname, kb.id);
                       return (
                         <SortableItem key={kb.id} id={kb.id}>
                           <div
