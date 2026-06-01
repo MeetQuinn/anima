@@ -184,7 +184,7 @@ export function BreadcrumbPath({ filePath }: { filePath: string }) {
       title={filePath}
       aria-label={expanded ? 'Collapse path' : 'Tap to expand full path'}
       className={[
-        'min-w-0 text-left font-mono text-[11px] text-text-subtle',
+        'block w-full min-w-0 text-left font-mono text-[11px] text-text-subtle',
         expanded ? 'whitespace-normal break-all' : 'truncate',
       ].join(' ')}
     >
