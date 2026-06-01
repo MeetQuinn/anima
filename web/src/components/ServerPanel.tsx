@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronRight, ExternalLink, RefreshCw, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, RefreshCw, X } from 'lucide-react';
 import { fetchServerInfo, fetchProviderUsage, pingHealth } from '@/api/system';
 import { shortIso, formatUptime } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
@@ -198,12 +198,15 @@ function UsageSkeleton() {
 // ---------------------------------------------------------------------------
 
 /**
- * Server panel — two sections in one scrollable card:
- *   1. System    — health / home / port / uptime / commit
- *   2. Provider Usage — rate-limit windows + extras per provider (Claude, Codex, Kimi)
+ * Server panel — four blocks in one scrollable card, ordered by glance priority:
+ *   1. Status         — health + folded-in uptime (Restart is the section action)
+ *   2. Provider Usage — rate-limit windows + extras per provider (collapsed + lazy);
+ *                       sits under Status so "healthy?" / "near limits?" read together
+ *   3. Version        — track · version (embeds the commit SHA) + the update check
+ *   4. Home           — the ANIMA_HOME path; a location fact, kept apart from Version
  *
- * Both sections use the PanelSection container for a consistent, extensible
- * layout. Adding a third section = drop another PanelSection in the body.
+ * Each block is a PanelSection for a consistent, extensible layout. Port, Commit,
+ * and the Docs link were cut as redundant/navigation (see #server-panel IA pass).
  *
  * Mobile:   full-screen, z-50 (above MobileTopBar/BottomNav at z-40), bg-page,
  *           safe-area bottom inset, no backdrop.
@@ -266,6 +269,15 @@ export default function ServerPanel({ onClose }: Props) {
   const healthLabel =
     health === 'loading' ? 'Checking…' : health === 'ok' ? 'Healthy' : 'Unreachable';
 
+  // One "which build" line: track folded in front of the version, which already
+  // embeds the commit SHA (so no separate Commit row). e.g. "canary · 0.1.1-canary.75.1.80810fb".
+  const version = info?.version && info.version !== '0.0.0' ? info.version : null;
+  const buildLine = version
+    ? info?.track
+      ? `${info.track} · ${version}`
+      : version
+    : (info?.track ?? null);
+
   // Wait for both health and server info before revealing the card.
   const isReady = healthOk !== undefined && !!info;
 
@@ -309,85 +321,25 @@ export default function ServerPanel({ onClose }: Props) {
         {/* divide-y puts a border between each PanelSection without doubling at the top */}
         <div className="flex-1 overflow-y-auto divide-y divide-border-soft">
 
-          {/* Section 1: System infra */}
-          <PanelSection title="System" action={<RestartButton compact />}>
-            <div className="space-y-4">
-              <LabelRow label="Health">
-                <span className="flex items-center gap-1.5">
-                  <span
-                    aria-hidden
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ background: healthColor }}
-                  />
-                  <span className="font-serif text-[14px] text-text">{healthLabel}</span>
-                </span>
-              </LabelRow>
-
-              {info?.track && (
-                <LabelRow label="Track">
-                  <span className="font-serif text-[14px] text-text">
-                    {info.track}
-                  </span>
-                </LabelRow>
-              )}
-
-              {info?.docsUrl && (
-                <LabelRow label="Docs">
-                  <a
-                    href={info.docsUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 font-serif text-[14px] text-accent hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-                  >
-                    Open docs
-                    <ExternalLink className="h-3 w-3" aria-hidden />
-                  </a>
-                </LabelRow>
-              )}
-
-              {info && (
-                <LabelRow label="Home">
-                  <span
-                    className="min-w-0 break-all font-mono text-[12px] text-text"
-                    title={info.animaHome}
-                  >
-                    {info.animaHome}
-                  </span>
-                </LabelRow>
-              )}
-
-              {info && (
-                <LabelRow label="Port">
-                  <span className="font-serif text-[14px] text-text">
-                    {info.dashboardPort}
-                  </span>
-                </LabelRow>
-              )}
-
+          {/* Section 1: Status — health + folded-in uptime; Restart is the section action */}
+          <PanelSection title="Status" action={<RestartButton compact />}>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span className="flex items-center gap-1.5">
+                <span
+                  aria-hidden
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ background: healthColor }}
+                />
+                <span className="font-serif text-[14px] text-text">{healthLabel}</span>
+              </span>
               {info?.startedAt && (
-                <LabelRow label="Started">
-                  <span className="font-serif text-[14px] text-text">
-                    {shortIso(info.startedAt)}
-                  </span>
-                  <span className="font-sans text-[11px] tracking-wide text-text-subtle">
-                    up {formatUptime(info.startedAt, now)}
-                  </span>
-                </LabelRow>
+                <span
+                  className="font-sans text-[11px] tracking-wide text-text-subtle"
+                  title={shortIso(info.startedAt)}
+                >
+                  · up {formatUptime(info.startedAt, now)}
+                </span>
               )}
-
-              {info?.commit && (
-                <LabelRow label="Commit">
-                  <span className="font-mono text-[12px] text-text">{info.commit}</span>
-                </LabelRow>
-              )}
-
-              {info?.version && info.version !== '0.0.0' && (
-                <LabelRow label="Version">
-                  <span className="font-serif text-[14px] text-text">{info.version}</span>
-                </LabelRow>
-              )}
-
-              <RuntimeUpgradeRow />
             </div>
           </PanelSection>
 
@@ -446,6 +398,32 @@ export default function ServerPanel({ onClose }: Props) {
             )}
           </PanelSection>
 
+          {/* Section 3: Version — which build you're on + the update check.
+              Track is folded in front; the version already embeds the commit SHA. */}
+          <PanelSection title="Version">
+            <div className="space-y-4">
+              {buildLine && (
+                <div className="min-w-0 break-all font-mono text-[12px] text-text">
+                  {buildLine}
+                </div>
+              )}
+              <RuntimeUpgradeRow />
+            </div>
+          </PanelSection>
+
+          {/* Section 4: Home — where your data lives. A location fact, kept apart
+              from Version so the two concerns don't read as one. */}
+          {info && (
+            <PanelSection title="Home">
+              <div
+                className="min-w-0 break-all font-mono text-[12px] text-text"
+                title={info.animaHome}
+              >
+                {info.animaHome}
+              </div>
+            </PanelSection>
+          )}
+
         </div>
       </div>
     </div>,
@@ -503,31 +481,5 @@ function PanelSection({
         </div>
         {(!isCollapsible || open) && children}
       </div>
-  );
-}
-
-/**
- * LabelRow — fixed-width label column + value(s) + optional inline action.
- * Serif for readable values; mono only for code tokens.
- */
-function LabelRow({
-  label,
-  children,
-  action,
-}: {
-  label: string;
-  children: React.ReactNode;
-  action?: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-center gap-3">
-      <span className="w-14 shrink-0 font-sans text-[11px] text-text-subtle">
-        {label}
-      </span>
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
-        {children}
-      </div>
-      {action && <div className="shrink-0">{action}</div>}
-    </div>
   );
 }
