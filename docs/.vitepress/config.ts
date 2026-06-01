@@ -22,7 +22,11 @@ export default defineConfig({
       pattern: "https://github.com/MeetQuinn/anima/edit/main/docs/:path",
       text: "Edit this page on GitHub",
     },
-    logo: { src: "/brand/anima-mark.svg", alt: "Anima" },
+    logo: {
+      light: "/brand/anima-mark.svg",
+      dark: "/brand/anima-mark-dark.svg",
+      alt: "Anima",
+    },
     nav: [
       { text: "Guide", link: "/guide/quickstart" },
       { text: "Architecture", link: "/architecture/overview" },
