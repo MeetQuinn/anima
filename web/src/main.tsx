@@ -5,6 +5,11 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import './index.css';
 import { router } from './router';
 import { queryClient } from './query-client';
+import { installGlobalErrorReporting } from './lib/client-error-report';
+
+// Report uncaught errors / rejections to the operator's local client-error log.
+// Installed first so it captures errors regardless of the fallback UI below.
+installGlobalErrorReporting();
 
 window.addEventListener('error', (event) => {
   const root = document.getElementById('root');
