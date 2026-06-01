@@ -186,7 +186,7 @@ export default function Sidebar({
             title="Expand sidebar"
             className="flex h-14 shrink-0 w-full items-center justify-center border-b border-spine-border hover:bg-spine-elevated/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent transition-colors"
           >
-            <AnimaIcon className="h-4 w-4 text-accent" />
+            <AnimaIcon className="h-4 w-4 text-text-on-spine" />
           </button>
 
           {/* Scrollable nav items */}
@@ -320,7 +320,7 @@ export default function Sidebar({
           ].join(' ')}
         >
           <div className="flex h-14 items-center gap-2.5 border-b border-spine-border px-5">
-            <AnimaIcon className="h-4 w-4 text-accent" />
+            <AnimaIcon className="h-4 w-4 text-text-on-spine" />
             <span className="display text-[18px] font-semibold tracking-tight text-text-on-spine">
               Anima
             </span>
