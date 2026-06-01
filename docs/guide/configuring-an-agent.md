@@ -28,6 +28,9 @@ before acting, at the cost of speed. Turn them up for complex tasks, down for qu
 The most powerful way to make an agent more capable is to connect it to the tools and services your
 team already uses, so it can act on real context instead of only chatting.
 
+For repeatable workflows, start with **[Skills](./skills.md)**: local knowledge packs that teach an
+agent how to handle a kind of work.
+
 ::: info Coming soon
 A simple way to give an agent access to an external service (for example, an internal tool that needs
 its own API key) is in active design. This section will cover it once it lands.

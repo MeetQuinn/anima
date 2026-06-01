@@ -48,6 +48,7 @@ export default defineConfig({
             text: "Configuring an agent",
             link: "/guide/configuring-an-agent",
           },
+          { text: "Skills", link: "/guide/skills" },
         ],
       },
       {

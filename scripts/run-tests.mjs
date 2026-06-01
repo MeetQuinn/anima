@@ -10,6 +10,7 @@ const groups = {
     'agent-config.test.js',
     'agent-seed-memory.test.js',
     'config.test.js',
+    'default-skills.test.js',
     'inbox.test.js',
     'interactive-ask.test.js',
     'messages.test.js',

@@ -8,6 +8,7 @@ import {
   validateAgentConfig,
   validateRunnableAgentConfig,
 } from '../agents/agent-config-ops.js';
+import { ensureDefaultSkills } from '../agents/default-skills.js';
 import { resolveAnimaHome } from '../anima-home.js';
 import { errorMessage } from '../ids.js';
 import { createAgentRuntime } from '../providers/factory.js';
@@ -32,6 +33,7 @@ interface RunningAgentRecord {
 export interface RuntimeHostDependencies {
   animaHome?: string;
   loadAgents?: (opts: RuntimeHostOptions) => Promise<AgentConfig[]>;
+  ensureDefaultSkills?: () => Promise<void>;
   logger?: Pick<Console, 'error' | 'log'>;
   startAgent?: (agent: AgentConfig, animaHome: string) => Promise<RunningAgentHandle>;
   validateAgent?: (agent: AgentConfig) => Promise<void> | void;
@@ -52,6 +54,7 @@ export class RuntimeHost {
   private readonly agentHandles = new Map<string, RunningAgentRecord>();
   private readonly animaHome: string;
   private readonly loadAgents: (opts: RuntimeHostOptions) => Promise<AgentConfig[]>;
+  private readonly ensureDefaultSkills: () => Promise<void>;
   private readonly logger: Pick<Console, 'error' | 'log'>;
   private readonly startAgent: (agent: AgentConfig, animaHome: string) => Promise<RunningAgentHandle>;
   private readonly statusByAgent = new Map<string, string>();
@@ -67,12 +70,18 @@ export class RuntimeHost {
   ) {
     this.animaHome = deps.animaHome ?? resolveAnimaHome();
     this.loadAgents = deps.loadAgents ?? loadRuntimeAgents;
+    this.ensureDefaultSkills = deps.ensureDefaultSkills ?? (async () => {
+      await ensureDefaultSkills();
+    });
     this.logger = deps.logger ?? console;
     this.startAgent = deps.startAgent ?? startAgentFromConfig;
     this.validateAgent = deps.validateAgent ?? validateAgentConfig;
   }
 
   async start(): Promise<void> {
+    await this.ensureDefaultSkills().catch((error: unknown) => {
+      this.logger.error(`Default skill setup failed: ${errorMessage(error)}`);
+    });
     await this.reconcileOnce();
     this.pollTimer = setInterval(() => {
       void this.reconcileOnce().catch((error: unknown) => {
