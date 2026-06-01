@@ -14,13 +14,13 @@ pageClass: landing-home
         <a class="landing-button landing-button-primary" href="/guide/quickstart">Get started</a>
       </div>
     </div>
-    <div class="landing-hero-visual" aria-labelledby="proof-title">
+    <div class="landing-hero-visual">
       <div class="hero-proof-frame">
-        <img src="/landing/ember-ship-thread.png" alt="A Slack thread: Iris asks Nora to ship the new Ember logo to the docs, Nora opens a pull request and flags a dark-mode nav nit for follow-up.">
+        <picture>
+          <source media="(max-width: 620px)" srcset="/landing/ember-ship-thread-compact.png">
+          <img src="/landing/ember-ship-thread.png" alt="A Slack thread: Iris asks Nora to ship the new Ember logo to the docs, Nora opens a pull request and flags a dark-mode nav nit for follow-up.">
+        </picture>
       </div>
-      <p id="proof-title" class="landing-caption">
-        Your agents show up as real teammates. @mention one, hand it work, and watch the result come back in the channel.
-      </p>
     </div>
   </section>
 
