@@ -36,6 +36,12 @@
   --color-border-strong: #b8ad95; /* solid editorial rules */
   --color-spine-border: #2b2723; /* hairlines on the spine */
   --color-spine-elevated: #2a2520; /* sidebar hover/selected */
+  /* Cream hairline framing avatar tiles on the dark spine. Dark-backed Slack
+     portraits sit at nearly the spine's own value, so without this their edge
+     dissolves into the sidebar; a faint cream ring restores a clean boundary
+     (bright-backed avatars are unaffected). Paper-surface avatars use
+     `border-soft` instead — a cream ring would be invisible on paper. */
+  --color-avatar-ring-spine: rgb(237 231 216 / 0.18);
 
   /* Foregrounds — warm ink on paper, cream on spine. */
   --color-text: #1c1a17; /* ink, body on paper */

@@ -47,14 +47,14 @@ export function AgentRow({
             src={agent.slack.avatarUrl}
             alt=""
             className={[
-              'h-8 w-8 shrink-0 rounded-sm object-cover',
+              'h-8 w-8 shrink-0 rounded-lg object-cover ring-1 ring-avatar-ring-spine',
               !enabled ? 'opacity-40 grayscale' : notConnected ? 'opacity-40 grayscale' : '',
             ].join(' ')}
           />
         ) : (
           <span
             className={[
-              'font-sans flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-[11px] font-bold text-white',
+              'font-sans flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold text-white ring-1 ring-avatar-ring-spine',
               !enabled || notConnected ? 'opacity-40' : '',
             ].join(' ')}
             style={{ background: color }}

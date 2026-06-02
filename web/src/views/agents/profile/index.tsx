@@ -326,9 +326,9 @@ export default function Profile() {
             <div className="space-y-3">
               <div className="flex items-center gap-3 overflow-hidden rounded-sm border border-border-soft bg-surface-elevated px-4 py-3">
                 {agent.slack.avatarUrl ? (
-                  <img src={agent.slack.avatarUrl} alt="" className="h-9 w-9 shrink-0 rounded-sm object-cover" />
+                  <img src={agent.slack.avatarUrl} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover ring-1 ring-border-soft" />
                 ) : (
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm bg-muted font-serif text-[17px] font-semibold text-text-muted">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted font-serif text-[17px] font-semibold text-text-muted ring-1 ring-border-soft">
                     {(agent.profile?.displayName ?? agent.id).charAt(0).toUpperCase()}
                   </span>
                 )}

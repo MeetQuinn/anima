@@ -80,11 +80,11 @@ export default function MobileTopBar() {
           <img
             src={agent.slack.avatarUrl}
             alt=""
-            className={['h-6 w-6 shrink-0 rounded-sm object-cover', !connected ? 'opacity-40 grayscale' : ''].join(' ')}
+            className={['h-6 w-6 shrink-0 rounded-lg object-cover ring-1 ring-border-soft', !connected ? 'opacity-40 grayscale' : ''].join(' ')}
           />
         ) : (
           <span
-            className={['font-sans flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-[10px] font-bold text-white', !connected ? 'opacity-40' : ''].join(' ')}
+            className={['font-sans flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold text-white ring-1 ring-border-soft', !connected ? 'opacity-40' : ''].join(' ')}
             style={{ background: color }}
           >
             {initial}
