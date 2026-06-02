@@ -15,6 +15,10 @@ import { createAgentRuntime } from '../providers/factory.js';
 import type { AgentProviderConfig } from '../providers/contract.js';
 import { createSlackWebClient } from '../slack/client.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
+import {
+  AgentRestartCommandStore,
+  type AgentRestartCommand,
+} from './agent-restart-command.store.js';
 import { startRunningAgent, type RunningAgentHandle } from './agent-runner.js';
 import type { RuntimeWorkerConfig } from './types.js';
 
@@ -32,15 +36,18 @@ interface RunningAgentRecord {
 
 export interface RuntimeHostDependencies {
   animaHome?: string;
+  forceRestartTimeoutMs?: number;
   loadAgents?: (opts: RuntimeHostOptions) => Promise<AgentConfig[]>;
   ensureDefaultSkills?: () => Promise<void>;
   logger?: Pick<Console, 'error' | 'log'>;
+  restartCommands?: AgentRestartCommandStore;
   startAgent?: (agent: AgentConfig, animaHome: string) => Promise<RunningAgentHandle>;
   validateAgent?: (agent: AgentConfig) => Promise<void> | void;
 }
 
 const DEFAULT_RECONCILE_INTERVAL_MS = 30_000;
 const CONFIG_WATCH_DEBOUNCE_MS = 150;
+const AGENT_RESTART_FORCE_KILL_AFTER_MS = 5_000;
 
 export async function startRuntimeHost(opts: RuntimeHostOptions = {}): Promise<void> {
   const host = new RuntimeHost(opts);
@@ -56,12 +63,15 @@ export class RuntimeHost {
   private readonly loadAgents: (opts: RuntimeHostOptions) => Promise<AgentConfig[]>;
   private readonly ensureDefaultSkills: () => Promise<void>;
   private readonly logger: Pick<Console, 'error' | 'log'>;
+  private readonly restartCommands: AgentRestartCommandStore;
+  private readonly forceRestartTimeoutMs: number;
   private readonly startAgent: (agent: AgentConfig, animaHome: string) => Promise<RunningAgentHandle>;
   private readonly statusByAgent = new Map<string, string>();
   private readonly validateAgent: (agent: AgentConfig) => Promise<void> | void;
   private pollTimer?: NodeJS.Timeout;
   private reconcile?: Promise<void>;
   private readonly configWatchers = new Map<string, FSWatcher>();
+  private restartCommandWatcher?: FSWatcher;
   private configWatchDebounce?: NodeJS.Timeout;
 
   constructor(
@@ -74,11 +84,15 @@ export class RuntimeHost {
       await ensureDefaultSkills();
     });
     this.logger = deps.logger ?? console;
+    this.restartCommands = deps.restartCommands ?? new AgentRestartCommandStore({ animaHome: this.animaHome });
+    this.forceRestartTimeoutMs = deps.forceRestartTimeoutMs ?? AGENT_RESTART_FORCE_KILL_AFTER_MS;
     this.startAgent = deps.startAgent ?? startAgentFromConfig;
     this.validateAgent = deps.validateAgent ?? validateAgentConfig;
   }
 
   async start(): Promise<void> {
+    await this.restartCommands.ensureDirectory();
+    this.syncRestartCommandWatcher();
     await this.ensureDefaultSkills().catch((error: unknown) => {
       this.logger.error(`Default skill setup failed: ${errorMessage(error)}`);
     });
@@ -100,6 +114,7 @@ export class RuntimeHost {
       this.configWatchDebounce = undefined;
     }
     this.closeConfigWatchers();
+    this.closeRestartCommandWatcher();
     await this.reconcile?.catch((error: unknown) => {
       this.logger.error(`Runtime host reconcile failed while stopping: ${errorMessage(error)}`);
     });
@@ -126,6 +141,7 @@ export class RuntimeHost {
   private async reconcileAgents(): Promise<void> {
     const agents = await this.loadAgents(this.opts);
     this.syncConfigWatchers(agents.map((agent) => agent.id));
+    const pendingRestartAgentIds = new Set(await this.restartCommands.pendingAgentIds());
     const seenAgentIds = new Set<string>();
     for (const agent of agents) {
       seenAgentIds.add(agent.id);
@@ -133,6 +149,13 @@ export class RuntimeHost {
       try {
         await this.validateAgent(agent);
         const skipStatus = agentSkipStatus(agent);
+        const restartCommand = pendingRestartAgentIds.has(agent.id)
+          ? await this.restartCommands.take(agent.id)
+          : undefined;
+        if (restartCommand) {
+          await this.forceRestartAgent(agent, running, skipStatus, restartCommand);
+          continue;
+        }
         if (running) {
           await this.reconcileRunningAgent(agent, running, skipStatus);
           continue;
@@ -152,7 +175,32 @@ export class RuntimeHost {
         });
       }
     }
+    await this.clearMissingRestartCommands(seenAgentIds, pendingRestartAgentIds);
     if (!this.opts.agent) await this.stopMissingAgents(seenAgentIds);
+  }
+
+  private async forceRestartAgent(
+    agent: AgentConfig,
+    running: RunningAgentRecord | undefined,
+    skipStatus: string | undefined,
+    command: AgentRestartCommand,
+  ): Promise<void> {
+    if (skipStatus) {
+      this.logAgentStatus(agent.id, `restart-skip:${skipStatus}`, () => {
+        this.logger.log(`Agent ${agent.id}: restart ${command.requestId} skipped; ${skipStatus}.`);
+      });
+      if (running) await this.reconcileRunningAgent(agent, running, skipStatus);
+      return;
+    }
+    this.logger.log(`Agent ${agent.id}: restart requested by operator (${command.requestId}).`);
+    if (running) {
+      await running.handle.stop({
+        abortReason: command.reason,
+        forceAfterMs: this.forceRestartTimeoutMs,
+      });
+      this.agentHandles.delete(agent.id);
+    }
+    await this.startAndStore(agent);
   }
 
   private async reconcileRunningAgent(
@@ -212,6 +260,17 @@ export class RuntimeHost {
     }
   }
 
+  private async clearMissingRestartCommands(
+    seenAgentIds: Set<string>,
+    pendingRestartAgentIds: Set<string>,
+  ): Promise<void> {
+    for (const agentId of pendingRestartAgentIds) {
+      if (seenAgentIds.has(agentId)) continue;
+      await this.restartCommands.clear(agentId);
+      this.logger.log(`Agent ${agentId}: restart request discarded; agent not found.`);
+    }
+  }
+
   private logAgentStatus(agentId: string, status: string, write: () => void): void {
     if (this.statusByAgent.get(agentId) === status) return;
     this.statusByAgent.set(agentId, status);
@@ -264,6 +323,30 @@ export class RuntimeHost {
   private closeConfigWatchers(): void {
     for (const watcher of this.configWatchers.values()) watcher.close();
     this.configWatchers.clear();
+  }
+
+  private syncRestartCommandWatcher(): void {
+    if (this.restartCommandWatcher) return;
+    const runDir = this.restartCommands.directory();
+    try {
+      const watcher = watch(runDir, { persistent: false }, (_event, filename) => {
+        if (filename && filename.toString() !== this.restartCommands.filename()) return;
+        this.scheduleConfigReconcile();
+      });
+      watcher.on('error', (error: unknown) => {
+        this.logger.error(`Runtime host restart-command watcher failed for ${runDir}: ${errorMessage(error)}`);
+        watcher.close();
+        if (this.restartCommandWatcher === watcher) this.restartCommandWatcher = undefined;
+      });
+      this.restartCommandWatcher = watcher;
+    } catch (error) {
+      this.logger.error(`Runtime host restart-command watcher failed for ${runDir}: ${errorMessage(error)}`);
+    }
+  }
+
+  private closeRestartCommandWatcher(): void {
+    this.restartCommandWatcher?.close();
+    this.restartCommandWatcher = undefined;
   }
 }
 

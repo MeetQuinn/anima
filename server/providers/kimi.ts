@@ -6,10 +6,11 @@ import { nowIso } from '../ids.js';
 import { isRecord, singleLineForActivity, stringField } from '../json.js';
 import { ActiveRuntimeRun } from './active-runtime.js';
 import { runtimeErrorPayload, truncateForActivity } from '../activities/format.js';
-import { startChildProcess, type RunningChildProcess } from './child-process.js';
+import { startChildProcess, terminateChildProcess, type RunningChildProcess } from './child-process.js';
 import { kimiInitializeEvent, recordKimiWireEvent } from './kimi-events.js';
 import {
   providerSessionPayload,
+  type AgentRuntimeCloseOptions,
   type AgentRuntime,
   type AgentRuntimeDrainInput,
   type AgentRuntimeFollowupInput,
@@ -34,8 +35,8 @@ export class KimiCliAgentRuntime implements AgentRuntime {
     this.env = config.env;
   }
 
-  async close(): Promise<void> {
-    await this.resetController();
+  async close(options: AgentRuntimeCloseOptions = {}): Promise<void> {
+    await this.resetController(options.signal, options);
   }
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
@@ -127,12 +128,17 @@ export class KimiCliAgentRuntime implements AgentRuntime {
     return args;
   }
 
-  private async resetController(signal: NodeJS.Signals = 'SIGTERM'): Promise<void> {
+  private async resetController(
+    signal: NodeJS.Signals = 'SIGTERM',
+    options: Pick<AgentRuntimeCloseOptions, 'forceAfterMs'> = {},
+  ): Promise<void> {
     const controller = this.controller;
     if (!controller) return;
     this.controller = undefined;
-    controller.kill(signal);
-    await controller.completion.catch(() => {});
+    await terminateChildProcess(controller, {
+      signal,
+      ...(options.forceAfterMs === undefined ? {} : { forceAfterMs: options.forceAfterMs }),
+    });
   }
 }
 

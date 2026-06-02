@@ -12,7 +12,8 @@ import { loadState } from './helpers/state.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { isFirstClassAnimaCliCommand } from '../activities/format.js';
 import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
-import { startChildProcess } from '../providers/child-process.js';
+import { startChildProcess, terminateChildProcess } from '../providers/child-process.js';
+import { AgentRestartCommandStore } from '../runtime/agent-restart-command.store.js';
 import { RuntimeHost, type RunningAgentHandle } from '../runtime/host.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
 import { withAnimaHome } from './anima-home.js';
@@ -36,6 +37,33 @@ test('child process completion preserves exit details when stream effects fail',
     assert.match(message, /stream effect failed: callback parse failed/);
     return true;
   });
+});
+
+test('child process termination escalates from SIGTERM to SIGKILL', async () => {
+  let ready!: () => void;
+  const childReady = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  const child = startChildProcess({
+    args: [
+      '-e',
+      'process.on("SIGTERM", () => {}); process.stdout.write("ready\\n"); setInterval(() => {}, 1000);',
+    ],
+    bufferOutput: false,
+    command: process.execPath,
+    env: process.env,
+    label: 'stubborn child',
+    onStdoutChunk: async (chunk) => {
+      if (chunk.includes('ready')) ready();
+    },
+  });
+
+  await childReady;
+  const startedAt = Date.now();
+  const result = await terminateChildProcess(child, { forceAfterMs: 50 });
+
+  assert.equal(result.forced, true);
+  assert.ok(Date.now() - startedAt < 1_000, 'termination should not wait for the ignored SIGTERM forever');
 });
 
 test('first-class anima CLI command detection covers plain agent-facing tools', () => {
@@ -176,6 +204,84 @@ test('runtime host stops a running agent after it becomes disabled', async () =>
   assert.deepEqual(host.runningAgentIds(), []);
 
   await host.stop();
+});
+
+test('runtime host force-restarts only the requested agent', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-restart-test-'));
+  try {
+    const restartCommands = new AgentRestartCommandStore({ animaHome: stateDir });
+    const agents = [
+      runtimeHostAgent('alpha', { connected: true }),
+      runtimeHostAgent('bravo', { connected: true }),
+    ];
+    const started: string[] = [];
+    const stopped: Array<{ agentId: string; options: Parameters<RunningAgentHandle['stop']>[0] }> = [];
+    const host = new RuntimeHost({}, {
+      animaHome: stateDir,
+      forceRestartTimeoutMs: 42,
+      loadAgents: async () => agents,
+      logger: silentLogger,
+      restartCommands,
+      startAgent: async (agent) => {
+        started.push(agent.id);
+        return stopHandle(agent.id, [], () => false, (options) => {
+          stopped.push({ agentId: agent.id, options });
+        });
+      },
+      validateAgent: async () => {},
+    });
+
+    await host.reconcileOnce();
+    assert.deepEqual(started, ['alpha', 'bravo']);
+
+    const command = await restartCommands.request('alpha');
+    await host.reconcileOnce();
+
+    assert.deepEqual(started, ['alpha', 'bravo', 'alpha']);
+    assert.deepEqual(stopped, [
+      {
+        agentId: 'alpha',
+        options: {
+          abortReason: command.reason,
+          forceAfterMs: 42,
+        },
+      },
+    ]);
+    assert.deepEqual(host.runningAgentIds(), ['alpha', 'bravo']);
+
+    await host.stop();
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime host does not restart disabled agents from stale commands', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-restart-disabled-test-'));
+  try {
+    const restartCommands = new AgentRestartCommandStore({ animaHome: stateDir });
+    const agents = [runtimeHostAgent('alpha', { connected: true, enabled: false })];
+    const started: string[] = [];
+    const host = new RuntimeHost({}, {
+      animaHome: stateDir,
+      loadAgents: async () => agents,
+      logger: silentLogger,
+      restartCommands,
+      startAgent: async (agent) => {
+        started.push(agent.id);
+        return stopHandle(agent.id, []);
+      },
+      validateAgent: async () => {},
+    });
+
+    await restartCommands.request('alpha');
+    await host.reconcileOnce();
+
+    assert.deepEqual(started, []);
+    assert.deepEqual(await restartCommands.pendingAgentIds(), []);
+    assert.deepEqual(host.runningAgentIds(), []);
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 test('Slack DM and channel events share one primary session', async () => {
@@ -398,11 +504,17 @@ function runtimeHostAgent(
   };
 }
 
-function stopHandle(agentId: string, stopped: string[], isActive = () => false): RunningAgentHandle {
+function stopHandle(
+  agentId: string,
+  stopped: string[],
+  isActive = () => false,
+  onStop?: (options: Parameters<RunningAgentHandle['stop']>[0]) => void,
+): RunningAgentHandle {
   return {
     isActive,
-    async stop() {
+    async stop(options) {
       stopped.push(agentId);
+      onStop?.(options);
     },
   };
 }

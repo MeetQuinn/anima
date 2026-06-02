@@ -4,10 +4,11 @@ import { dirname } from 'node:path';
 import { isRecord, stringField } from '../json.js';
 import { runtimeErrorPayload } from '../activities/format.js';
 import { ActiveRuntimeRun } from './active-runtime.js';
-import { startChildProcess, type RunningChildProcess } from './child-process.js';
+import { startChildProcess, terminateChildProcess, type RunningChildProcess } from './child-process.js';
 import { createClaudeJsonlActivityMapper, parseClaudeRuntimeOutput } from './claude-events.js';
 import {
   CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW,
+  type AgentRuntimeCloseOptions,
   providerSessionPayload,
   type ProviderSessionRecord,
   AgentRuntime,
@@ -50,8 +51,8 @@ export class ClaudeCodeAgentRuntime implements AgentRuntime {
     };
   }
 
-  async close(): Promise<void> {
-    await this.resetController();
+  async close(options: AgentRuntimeCloseOptions = {}): Promise<void> {
+    await this.resetController(options.signal, options);
   }
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
@@ -202,12 +203,17 @@ export class ClaudeCodeAgentRuntime implements AgentRuntime {
     return turn;
   }
 
-  private async resetController(signal: NodeJS.Signals = 'SIGTERM'): Promise<void> {
+  private async resetController(
+    signal: NodeJS.Signals = 'SIGTERM',
+    options: Pick<AgentRuntimeCloseOptions, 'forceAfterMs'> = {},
+  ): Promise<void> {
     const controller = this.controller;
     if (!controller) return;
     this.controller = undefined;
-    controller.kill(signal);
-    await controller.completion.catch(() => {});
+    await terminateChildProcess(controller, {
+      signal,
+      ...(options.forceAfterMs === undefined ? {} : { forceAfterMs: options.forceAfterMs }),
+    });
   }
 
   private claudeArgs(providerSession: ProviderSessionRecord | undefined, systemPromptFilePath: string | undefined): string[] {
