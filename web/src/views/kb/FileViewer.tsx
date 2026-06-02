@@ -1,6 +1,6 @@
 import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Copy, Download, ExternalLink, List, X } from 'lucide-react';
+import { Code2, Copy, Download, ExternalLink, Eye, List, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -724,6 +724,166 @@ function ImageLightbox({ src, alt }: { src: string; alt: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// View mode toggle + raw source view (GitHub-style Preview / Code)
+// ---------------------------------------------------------------------------
+
+type ViewMode = 'preview' | 'code';
+
+const VIEW_MODE_STORAGE_KEY = 'kb-file-view-mode';
+
+// Remember the reader's last choice for the tab session (default Preview on a
+// fresh session). A power user inspecting raw source across several files
+// shouldn't have to re-toggle each time, but newcomers still land on the
+// friendly rendered view first.
+function loadSessionViewMode(): ViewMode {
+  try {
+    return window.sessionStorage.getItem(VIEW_MODE_STORAGE_KEY) === 'code' ? 'code' : 'preview';
+  } catch {
+    return 'preview';
+  }
+}
+
+function saveSessionViewMode(mode: ViewMode): void {
+  try {
+    window.sessionStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+  } catch {
+    // sessionStorage can be unavailable (private mode / disabled) — non-fatal.
+  }
+}
+
+// Parse a `#L<n>` line anchor from a location hash.
+function lineFromHash(hash: string): number | null {
+  const m = /^#L(\d+)$/.exec(hash);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+const VIEW_MODE_OPTIONS = [
+  { value: 'preview' as const, label: 'Preview', Icon: Eye },
+  { value: 'code' as const, label: 'Code', Icon: Code2 },
+];
+
+function ViewModeToggle({ mode, onChange }: { mode: ViewMode; onChange: (mode: ViewMode) => void }) {
+  return (
+    <div
+      role="tablist"
+      aria-label="File view mode"
+      className="chrome inline-flex shrink-0 items-center gap-0.5 rounded-md border border-border-soft bg-surface-raised/40 p-0.5"
+    >
+      {VIEW_MODE_OPTIONS.map(({ value, label, Icon }) => {
+        const active = mode === value;
+        return (
+          <button
+            key={value}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            title={label}
+            onClick={() => onChange(value)}
+            className={[
+              'flex min-h-[28px] items-center gap-1.5 rounded-[5px] px-2 text-[11px] font-medium transition-colors',
+              active ? 'bg-surface text-text shadow-sm' : 'text-text-subtle hover:text-text-muted',
+            ].join(' ')}
+          >
+            <Icon className="h-3.5 w-3.5" strokeWidth={2} />
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// GitHub-style source view: syntax-highlighted lines with a clickable line-number
+// gutter. Clicking a number sets a shareable `#L<n>` hash and highlights the row.
+// Shared by Markdown's Code mode and the json/code/text renderer.
+function CodeView({ body, language }: { body: string; language: string }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [activeLine, setActiveLine] = useState<number | null>(() => lineFromHash(window.location.hash));
+
+  useEffect(() => {
+    function onHashChange() {
+      setActiveLine(lineFromHash(window.location.hash));
+    }
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  // Bring the deep-linked line into view once, after the highlighter paints.
+  useEffect(() => {
+    const target = lineFromHash(window.location.hash);
+    if (target === null) return;
+    const el = scrollRef.current?.querySelector(`#L${target}`);
+    if (!el) return;
+    const t = setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80);
+    return () => clearTimeout(t);
+    // Intentionally mount-only: deep-link landing, not on every hash edit.
+  }, []);
+
+  function selectLine(n: number) {
+    const next = activeLine === n ? null : n;
+    setActiveLine(next);
+    // replaceState keeps the back button clean while updating the shareable URL.
+    const url = next === null ? window.location.pathname + window.location.search : `#L${next}`;
+    window.history.replaceState(null, '', url);
+  }
+
+  return (
+    <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
+      <div className="relative group min-h-0 flex-1 overflow-auto">
+        <CopyButton text={body} />
+        <Highlight code={body.replace(/\n$/, '')} language={language} theme={themes.github}>
+          {({ className, style, tokens, getLineProps, getTokenProps }) => (
+            <pre
+              className={`${className} min-h-full font-mono text-[12.5px] leading-relaxed`}
+              style={{ ...style, background: 'transparent', padding: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+            >
+              <div className="py-4">
+                {tokens.map((line, i) => {
+                  const n = i + 1;
+                  const { className: lineClass, ...lineProps } = getLineProps({ line });
+                  const active = activeLine === n;
+                  return (
+                    <div
+                      key={i}
+                      {...lineProps}
+                      id={`L${n}`}
+                      className={[lineClass ?? '', 'flex px-5', active ? 'bg-accent/10' : ''].join(' ').trim()}
+                    >
+                      <a
+                        href={`#L${n}`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          selectLine(n);
+                        }}
+                        title={`Link to line ${n}`}
+                        className={[
+                          'mr-4 inline-block w-8 shrink-0 select-none text-right tabular-nums transition-colors',
+                          active ? 'text-accent' : 'text-text-subtle/50 hover:text-text-muted',
+                        ].join(' ')}
+                      >
+                        {n}
+                      </a>
+                      <span className="min-w-0 flex-1">
+                        {line.map((token, key) => {
+                          const tokenProps = getTokenProps({ token });
+                          return <span key={key} {...tokenProps} />;
+                        })}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </pre>
+          )}
+        </Highlight>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // FileContent
 // ---------------------------------------------------------------------------
 
@@ -754,9 +914,20 @@ export function FileContent({
     return new Map(extractToc(markdownBody).map((entry) => [entry.line, entry.id]));
   }, [file, markdownBody]);
 
+  // Preview / Code toggle for Markdown. Land in Code mode when deep-linked to a
+  // `#L<n>` source line; otherwise honour the session's last choice.
+  const [mode, setMode] = useState<ViewMode>(() =>
+    lineFromHash(window.location.hash) ? 'code' : loadSessionViewMode(),
+  );
+  const changeMode = useCallback((next: ViewMode) => {
+    setMode(next);
+    saveSessionViewMode(next);
+  }, []);
+  const showAsCode = file?.kind === 'markdown' && mode === 'code';
+
   // Scroll to hash target after markdown renders.
   useEffect(() => {
-    if (file?.kind !== 'markdown') return;
+    if (file?.kind !== 'markdown' || mode !== 'preview') return;
     const hash = window.location.hash.slice(1);
     if (!hash) return;
     const el = document.getElementById(hash);
@@ -765,12 +936,12 @@ export function FileContent({
       const t = setTimeout(() => el.scrollIntoView({ behavior: 'smooth' }), 100);
       return () => clearTimeout(t);
     }
-  }, [file]);
+  }, [file, mode]);
 
   // Keep the hash aligned with the heading closest to the top of the markdown
   // scroller. This preserves shareable anchors while reading long KB docs.
   useEffect(() => {
-    if (file?.kind !== 'markdown') return;
+    if (file?.kind !== 'markdown' || mode !== 'preview') return;
     const scroller = scrollRef.current;
     if (!scroller) return;
     const root: HTMLDivElement = scroller;
@@ -800,7 +971,7 @@ export function FileContent({
       root.removeEventListener('scroll', onScroll);
       if (frame) window.cancelAnimationFrame(frame);
     };
-  }, [file]);
+  }, [file, mode]);
 
   // Memoised so ReactMarkdown sees stable component references (avoids remounting
   // all links on every parent re-render while the file content stays the same).
@@ -974,19 +1145,32 @@ export function FileContent({
 
   if (file.kind === 'markdown') {
     return (
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-        {/* Rendered outside .md-prose so the metadata table keeps its own
-            styling instead of inheriting the Markdown code-block / table look. */}
-        {frontmatter && <FrontmatterTable entries={frontmatter} />}
-        <div className="md-prose">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
-            components={markdownComponents}
-          >
-            {markdownBody}
-          </ReactMarkdown>
+      <div className="flex h-full min-h-0 flex-col">
+        {/* GitHub-style Preview / Code switch. Markdown is the one kind that has
+            both a rendered form and inline source, so it's the only place the
+            toggle appears. */}
+        <div className="flex h-9 shrink-0 items-center justify-end border-b border-border-soft px-3">
+          <ViewModeToggle mode={mode} onChange={changeMode} />
         </div>
+        {showAsCode ? (
+          // Raw source includes frontmatter, matching what GitHub shows.
+          <CodeView body={file.content} language="markdown" />
+        ) : (
+          <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+            {/* Rendered outside .md-prose so the metadata table keeps its own
+                styling instead of inheriting the Markdown code-block / table look. */}
+            {frontmatter && <FrontmatterTable entries={frontmatter} />}
+            <div className="md-prose">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
+                components={markdownComponents}
+              >
+                {markdownBody}
+              </ReactMarkdown>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1002,40 +1186,5 @@ export function FileContent({
     }
   }
 
-  return (
-    // overflow-auto enables both-axis scroll. min-w-max on the <pre> ensures it
-    // expands to the width of the longest line (max-content) rather than being
-    // clipped to the container — this is what makes long JSON values scrollable
-    // instead of visually truncated with no affordance.
-    <div className="min-h-0 flex-1 overflow-auto">
-      <div className="relative group min-h-0 flex-1 overflow-auto">
-        <CopyButton text={body} />
-        <Highlight code={body.replace(/\n$/, '')} language={language} theme={themes.github}>
-          {({ className, style, tokens, getLineProps, getTokenProps }) => (
-            <pre
-              className={`${className} min-h-full font-mono text-[12.5px] leading-relaxed`}
-              style={{ ...style, background: 'transparent', padding: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-            >
-              <div className="px-5 py-4">
-                {tokens.map((line, i) => {
-                  const lineProps = getLineProps({ line });
-                  return (
-                    <div key={i} {...lineProps}>
-                      <span className="mr-4 inline-block w-8 select-none text-right text-text-subtle/50">
-                        {i + 1}
-                      </span>
-                      {line.map((token, key) => {
-                        const tokenProps = getTokenProps({ token });
-                        return <span key={key} {...tokenProps} />;
-                      })}
-                    </div>
-                  );
-                })}
-              </div>
-            </pre>
-          )}
-        </Highlight>
-      </div>
-    </div>
-  );
+  return <CodeView body={body} language={language} />;
 }
