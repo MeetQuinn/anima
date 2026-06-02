@@ -246,6 +246,22 @@ export const SlackConfig = z.object({
 
 export type SlackConfig = z.infer<typeof SlackConfig>;
 
+export const FeishuConfig = z.object({
+  appId: z.string().default(''),
+  appSecret: z.string().default(''),
+  botOpenId: z.string().optional(),
+  encryptKey: z.string().default(''),
+  verificationToken: z.string().default(''),
+  connected: z.boolean().optional(),
+}).transform(({ appId, appSecret, connected: _connected, ...rest }) => ({
+  ...rest,
+  appId,
+  appSecret,
+  connected: Boolean(appId && appSecret),
+}));
+
+export type FeishuConfig = z.infer<typeof FeishuConfig>;
+
 export const AgentOwner = SlackUserCandidate.extend({
   onboardingPromptedAt: z.string().optional(),
 }).strict();
@@ -296,6 +312,7 @@ export function agentConfigSchema(fallbackId: string) {
       profile: AgentProfileInput,
       owner: AgentOwner.optional(),
       provider: AgentProviderConfig.optional(),
+      feishu: FeishuConfig.optional(),
       slack: SlackConfig.optional(),
       homePath: z.string().optional(),
     }).transform((raw) => {
@@ -310,6 +327,7 @@ export function agentConfigSchema(fallbackId: string) {
         },
         ...(raw.owner ? { owner: raw.owner } : {}),
         provider: raw.provider ?? AgentProviderConfig.parse({}),
+        feishu: raw.feishu ?? FeishuConfig.parse({}),
         slack: raw.slack ?? SlackConfig.parse({}),
         homePath: raw.homePath ?? defaultAgentHomePath(id),
       };

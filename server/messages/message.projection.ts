@@ -5,6 +5,7 @@ import type {
 } from '../../shared/messages.js';
 import type {
   ChoiceResponseInboxItem,
+  FeishuInboxItem,
   InboxItem,
   OnboardingInboxItem,
   SlackInboxItem,
@@ -12,6 +13,7 @@ import type {
 
 export function messageFromInboxItem(item: InboxItem): AgentMessageRecord | undefined {
   if (item.kind === 'slack') return slackInboxMessage(item);
+  if (item.kind === 'feishu') return feishuInboxMessage(item);
   if (item.kind === 'reminder') {
     return {
       actor: 'Reminder',
@@ -39,12 +41,13 @@ export function messageFromActivity(activity: Activity): AgentMessageRecord | un
     tool === 'anima.message.send' ||
     tool === 'anima.message.update' ||
     effect === 'slack.message.send' ||
-    effect === 'slack.message.update'
+    effect === 'slack.message.update' ||
+    effect === 'feishu.message.send'
   ) {
     return baseOutboxMessage(activity, payload, {
       isEdit: tool === 'anima.message.update' || effect === 'slack.message.update',
       kind: 'message',
-      messageTs: stringField(payload, 'ts') ?? stringField(payload, 'targetTs'),
+      messageTs: stringField(payload, 'ts') ?? stringField(payload, 'targetTs') ?? stringField(payload, 'messageId'),
       text: stringField(payload, 'text') ?? '',
     });
   }
@@ -114,6 +117,26 @@ function slackInboxMessage(item: SlackInboxItem): AgentMessageRecord {
   };
 }
 
+function feishuInboxMessage(item: FeishuInboxItem): AgentMessageRecord {
+  return {
+    actor: feishuActorLabel(item),
+    actorDisplayName: item.actor?.displayName,
+    actorUserId: item.actor?.openId ?? item.actor?.userId ?? item.actor?.unionId,
+    channelDisplayName: feishuChatDisplayName(item),
+    channelId: item.chatId,
+    channelKind: item.chatType,
+    direction: 'in',
+    kind: 'message',
+    messageId: messageIdForInboxItem(item),
+    messageTs: item.messageId,
+    platform: 'feishu',
+    source: { id: item.id, kind: 'inbox' },
+    text: item.text,
+    ...(item.threadId ? { threadTs: item.threadId } : {}),
+    timestamp: item.receivedAt,
+  };
+}
+
 function onboardingMessage(item: OnboardingInboxItem): AgentMessageRecord {
   return {
     actor: onboardingActorLabel(item),
@@ -167,6 +190,7 @@ function baseOutboxMessage(
     messageId: messageIdForActivity(activity),
     messageTs: entry.messageTs,
     permalink: stringField(payload, 'permalink'),
+    platform: stringField(payload, 'platform'),
     source: { id: activity.activityId, kind: 'activity' },
     threadTs: stringField(payload, 'threadTs'),
     timestamp: activity.createdAt,
@@ -182,6 +206,18 @@ function slackActorLabel(item: SlackInboxItem): string {
     return name && name !== handle ? `${name} (@${handle})` : `@${handle}`;
   }
   return actor?.displayName ?? actor?.realName ?? actor?.userId ?? 'Unknown user';
+}
+
+function feishuActorLabel(item: FeishuInboxItem): string {
+  return item.actor?.displayName
+    ?? item.actor?.openId
+    ?? item.actor?.userId
+    ?? item.actor?.unionId
+    ?? 'Unknown Feishu user';
+}
+
+function feishuChatDisplayName(item: FeishuInboxItem): string {
+  return item.chatType === 'p2p' ? 'Feishu DM' : `Feishu ${item.chatType}`;
 }
 
 function onboardingActorLabel(item: OnboardingInboxItem): string {

@@ -1,9 +1,11 @@
 import type { WebClient } from '@slack/web-api';
 
+import { createFeishuMessageClient } from '../feishu/client.js';
 import {
   ensureThreadSubscriptionForSentMessage,
   recordChannelPost,
 } from '../inbox/slack-subscription.service.js';
+import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
 import { slackMessageContentForText } from './slack-message-format.js';
 import {
@@ -20,11 +22,14 @@ import {
   type SlackThreadSummary,
 } from './slack-target.js';
 import {
+  loadAgentFromOpts,
   resolveToolAgentId,
+  resolveToolItemId,
   slackWebClientForOpts,
   withToolActivity,
   readStdin,
 } from './tool-context.js';
+import type { FeishuInboxItem } from '../../shared/inbox.js';
 
 interface MessageGlobalInput {
   agent?: string;
@@ -50,6 +55,11 @@ export async function runMessageSend(opts: MessageSendInput): Promise<void> {
   const text = await readStdin();
   const agentId = resolveToolAgentId(opts);
   if (!agentId) throw new Error('message send requires current agent context for audit');
+  const feishuItem = await currentFeishuItem(agentId, opts);
+  if (feishuItem && !opts.channel && !opts.threadTs) {
+    await runFeishuMessageSend({ agentId, item: feishuItem, opts, text });
+    return;
+  }
   if (!opts.channel) throw new Error('message send requires --channel');
   const { agent, client } = await slackWebClientForOpts(opts);
   const teamId = agent.slack.teamId || undefined;
@@ -127,6 +137,64 @@ export async function runMessageSend(opts: MessageSendInput): Promise<void> {
       };
     },
   });
+}
+
+async function runFeishuMessageSend(input: {
+  agentId: string;
+  item: FeishuInboxItem;
+  opts: MessageSendInput;
+  text: string;
+}): Promise<void> {
+  const agent = await loadAgentFromOpts(input.opts);
+  if (!agent.feishu.connected) throw new Error(`Agent ${input.agentId} has no Feishu connection configured`);
+  const client = createFeishuMessageClient(agent.feishu);
+  const basePayload = {
+    channel: input.item.chatId,
+    channelDisplayName: feishuChatDisplayName(input.item),
+    channelKind: input.item.chatType,
+    messageId: input.item.messageId,
+    platform: 'feishu',
+    targetTs: input.item.messageId,
+    tool: 'anima.message.send',
+    ...(input.item.threadId ? { threadTs: input.item.threadId } : {}),
+  };
+
+  await withToolActivity({
+    audit: { agentId: input.agentId },
+    basePayload,
+    effectType: 'feishu.message.send',
+    op: async () => {
+      const response = await client.replyText({
+        messageId: input.item.messageId,
+        text: input.text,
+      });
+      console.log(feishuOutputLine({
+        chatId: input.item.chatId,
+        messageId: response.messageId,
+        threadId: response.threadId ?? input.item.threadId,
+      }));
+      return {
+        result: undefined,
+        completedPayload: {
+          ...(response.chatId ? { channel: response.chatId } : {}),
+          ...(response.messageId ? { messageId: response.messageId, ts: response.messageId } : {}),
+          ...(response.threadId ? { threadTs: response.threadId } : {}),
+          status: 'sent',
+          text: input.text,
+        },
+      };
+    },
+  });
+}
+
+async function currentFeishuItem(
+  agentId: string,
+  opts: MessageGlobalInput,
+): Promise<FeishuInboxItem | undefined> {
+  const itemId = await resolveToolItemId(opts);
+  if (!itemId) return undefined;
+  const item = await new WakeQueueService(agentId).find(itemId);
+  return item?.kind === 'feishu' ? item : undefined;
 }
 
 export async function runMessageUpdate(opts: MessageUpdateInput): Promise<void> {
@@ -236,4 +304,19 @@ function slackOutputLine(input: {
   if (input.messageTs) parts.push(`message_ts=${input.messageTs}`);
   const warning = input.warnings?.length ? ` Note: ${input.warnings.join(' ')}` : '';
   return `${input.status} successfully. ${parts.join(', ')}.${warning}`;
+}
+
+function feishuOutputLine(input: {
+  chatId: string;
+  messageId?: string;
+  threadId?: string;
+}): string {
+  const parts = [`feishu chat_id=${input.chatId}`];
+  if (input.threadId) parts.push(`thread_id=${input.threadId}`);
+  if (input.messageId) parts.push(`message_id=${input.messageId}`);
+  return `sent successfully. ${parts.join(', ')}.`;
+}
+
+function feishuChatDisplayName(item: FeishuInboxItem): string {
+  return item.chatType === 'p2p' ? 'Feishu DM' : `Feishu ${item.chatType}`;
 }

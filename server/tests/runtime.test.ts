@@ -492,6 +492,13 @@ function runtimeHostAgent(
       kind: 'claude-code',
       model: options.model ?? 'opus',
     },
+    feishu: {
+      appId: '',
+      appSecret: '',
+      connected: false,
+      encryptKey: '',
+      verificationToken: '',
+    },
     slack: {
       appToken: options.connected ? 'xapp-test' : '',
       botToken: options.connected ? 'xoxb-test' : '',

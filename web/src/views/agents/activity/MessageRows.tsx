@@ -46,12 +46,22 @@ function SlackLink({ href }: { href: string }) {
   );
 }
 
-function actorName(item: SlackInboxItem): string {
-  const displayName = item.actor?.displayName || item.actor?.realName;
-  const handle = item.actor?.handle?.replace(/^@/, '');
-  if (displayName) return displayName;
-  if (handle) return handle;
-  return item.actor?.userId ?? 'Unknown user';
+function actorName(item: InboxItem): string {
+  if (item.kind === 'slack') {
+    const displayName = item.actor?.displayName || item.actor?.realName;
+    const handle = item.actor?.handle?.replace(/^@/, '');
+    if (displayName) return displayName;
+    if (handle) return handle;
+    return item.actor?.userId ?? 'Unknown user';
+  }
+  if (item.kind === 'feishu') {
+    return item.actor?.displayName
+      ?? item.actor?.openId
+      ?? item.actor?.userId
+      ?? item.actor?.unionId
+      ?? 'Unknown Feishu user';
+  }
+  return 'Unknown user';
 }
 
 function inboxItemText(item: InboxItem): string {

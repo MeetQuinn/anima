@@ -47,6 +47,16 @@ export const SlackFileMeta = z.object({
 
 export type SlackFileMeta = z.infer<typeof SlackFileMeta>;
 
+export const FeishuInboxActor = z.object({
+  displayName: z.string().optional(),
+  openId: z.string().optional(),
+  senderType: z.string().optional(),
+  unionId: z.string().optional(),
+  userId: z.string().optional(),
+});
+
+export type FeishuInboxActor = z.infer<typeof FeishuInboxActor>;
+
 const InboxItemBase = z.object({
   handling: InboxItemHandling,
   id: z.string(),
@@ -68,6 +78,23 @@ export const SlackInboxItem = InboxItemBase.extend({
 });
 
 export type SlackInboxItem = z.infer<typeof SlackInboxItem>;
+
+export const FeishuInboxItem = InboxItemBase.extend({
+  actor: FeishuInboxActor.optional(),
+  appId: z.string().optional(),
+  chatId: z.string(),
+  chatType: z.string(),
+  kind: z.literal('feishu'),
+  messageId: z.string(),
+  parentId: z.string().optional(),
+  rawContent: z.string().optional(),
+  rootId: z.string().optional(),
+  tenantKey: z.string().optional(),
+  text: z.string(),
+  threadId: z.string().optional(),
+});
+
+export type FeishuInboxItem = z.infer<typeof FeishuInboxItem>;
 
 export const ReminderInboxItem = InboxItemBase.extend({
   kind: z.literal('reminder'),
@@ -112,6 +139,7 @@ export type ChoiceResponseInboxItem = z.infer<typeof ChoiceResponseInboxItem>;
 
 export const InboxItemSchema = z.discriminatedUnion('kind', [
   SlackInboxItem,
+  FeishuInboxItem,
   ReminderInboxItem,
   OnboardingInboxItem,
   ChoiceResponseInboxItem,
