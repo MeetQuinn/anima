@@ -615,7 +615,7 @@ test('message send warns for unresolved and out-of-channel mentions', async () =
       assert.equal(send.status, 0, send.stderr || send.stdout);
       assert.equal(
         send.stdout.trim(),
-        'sent successfully. channel=#product, message_ts=1770000200.000129. Warning: mention did not resolve: @missing. mentioned users not in #product: @alice.',
+        'sent successfully. channel=#product, message_ts=1770000200.000129. Note: @missing was sent as plain text because it did not match a Slack user. @alice may not be in #product.',
       );
       assert.deepEqual(posts, [{
         blocks: JSON.stringify([{ type: 'markdown', text: 'Heads up <@U123> and @missing.' }]),
@@ -625,8 +625,63 @@ test('message send warns for unresolved and out-of-channel mentions', async () =
 
       const completed = (await activitiesForInboxItemWindow('scout', itemId)).at(-1);
       assert.deepEqual(completed?.payload?.['warnings'], [
-        'mention did not resolve: @missing.',
-        'mentioned users not in #product: @alice.',
+        '@missing was sent as plain text because it did not match a Slack user.',
+        '@alice may not be in #product.',
+      ]);
+    });
+  } finally {
+    await slackApi.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('message send treats literal mention placeholders as text', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-message-literal-mention-test-'));
+  const posts: Array<{ channel: string; text: string }> = [];
+  const slackApi = await startSlackApiMock((method, body) => {
+    if (method === 'users.list') {
+      return {
+        members: [],
+        ok: true,
+      };
+    }
+    if (method === 'conversations.info') {
+      return {
+        channel: { id: 'C-product', is_channel: true, name: 'product', name_normalized: 'product' },
+        ok: true,
+      };
+    }
+    if (method !== 'chat.postMessage') throw new Error(`unexpected method ${method}`);
+    posts.push(slackRequestBody(body) as { channel: string; text: string });
+    return {
+      ok: true,
+      channel: 'C-product',
+      ts: '1770000200.000130',
+    };
+  });
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeSlackConfig(stateDir);
+      const itemId = await ingestSlackThread(stateDir);
+
+      const send = await runNode([cliPath, 'message', 'send', '--channel', 'C-product'], {
+        env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_INBOX_ITEM_ID: itemId, ANIMA_SLACK_API_URL: slackApi.url },
+        input: 'Use "@mention" as literal text, but still warn for @missing.',
+      });
+      assert.equal(send.status, 0, send.stderr || send.stdout);
+      assert.equal(
+        send.stdout.trim(),
+        'sent successfully. channel=#product, message_ts=1770000200.000130. Note: @missing was sent as plain text because it did not match a Slack user.',
+      );
+      assert.deepEqual(posts, [{
+        blocks: JSON.stringify([{ type: 'markdown', text: 'Use "@mention" as literal text, but still warn for @missing.' }]),
+        channel: 'C-product',
+        text: 'Use "@mention" as literal text, but still warn for @missing.',
+      }]);
+
+      const completed = (await activitiesForInboxItemWindow('scout', itemId)).at(-1);
+      assert.deepEqual(completed?.payload?.['warnings'], [
+        '@missing was sent as plain text because it did not match a Slack user.',
       ]);
     });
   } finally {

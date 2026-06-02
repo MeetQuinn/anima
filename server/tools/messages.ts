@@ -234,6 +234,6 @@ function slackOutputLine(input: {
   const parts = [slackOutputTarget(input.target)];
   if (input.thread) parts.push(`thread_ts=${input.thread.threadTs}`);
   if (input.messageTs) parts.push(`message_ts=${input.messageTs}`);
-  const warning = input.warnings?.length ? ` Warning: ${input.warnings.join(' ')}` : '';
+  const warning = input.warnings?.length ? ` Note: ${input.warnings.join(' ')}` : '';
   return `${input.status} successfully. ${parts.join(', ')}.${warning}`;
 }

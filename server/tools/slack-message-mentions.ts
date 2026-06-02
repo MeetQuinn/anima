@@ -33,6 +33,7 @@ export type SlackMentionResolutionFailure = {
 };
 
 const BROADCAST_MENTION_HANDLES = new Set(['channel', 'everyone', 'here']);
+const LITERAL_READABLE_MENTION_HANDLES = new Set(['mention', 'mentions']);
 const SLACK_USER_ID_HANDLE = /^u[A-Z0-9]+$/i;
 
 export async function slackTextForPostMessage(input: {
@@ -51,7 +52,13 @@ export async function slackTextForPostMessage(input: {
   }
   await Promise.all(
     extractReadableSlackUserMentions(input.text).map(async (handle) => {
-      if (BROADCAST_MENTION_HANDLES.has(handle) || SLACK_USER_ID_HANDLE.test(handle)) return;
+      if (
+        BROADCAST_MENTION_HANDLES.has(handle)
+        || LITERAL_READABLE_MENTION_HANDLES.has(handle)
+        || SLACK_USER_ID_HANDLE.test(handle)
+      ) {
+        return;
+      }
       try {
         const user = await new SlackWorkspaceDirectoryService({
           client: input.client,
@@ -97,7 +104,7 @@ export async function mentionWarningsForTarget(input: {
 }): Promise<string[]> {
   const warnings = input.slackText.unresolved
     .filter((mention) => mention.type === 'user')
-    .map((mention) => `mention did not resolve: ${mention.label}.`);
+    .map((mention) => `${mention.label} was sent as plain text because it did not match a Slack user.`);
   if (input.target.channelKind !== 'channel') return warnings;
   const mentionedUsers = mentionedUserLabels(input.slackText);
   if (!mentionedUsers.size) return warnings;
@@ -116,7 +123,7 @@ export async function mentionWarningsForTarget(input: {
     .filter(([userId]) => !memberIds.has(userId))
     .map(([, label]) => label);
   if (missing.length) {
-    warnings.push(`mentioned users not in ${input.target.channelDisplayName}: ${missing.join(', ')}.`);
+    warnings.push(`${missing.join(', ')} may not be in ${input.target.channelDisplayName}.`);
   }
   return warnings;
 }
