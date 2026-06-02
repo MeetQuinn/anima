@@ -68,12 +68,16 @@ When you need to take the wheel:
   - **Rotate session**: the current item keeps running, but the next item starts with a fresh
     context. The old session is archived. Reach for this when a session has gotten cluttered and you
     want a clean slate without losing history.
+  - **Restart agent**: forces a hung agent to stop and start over right away. Use it only when an
+    agent is wedged. The item it is working on right now is dropped and is not retried, so re-run it
+    afterward. Memory, notes, and config are kept, and queued items stay queued.
   - **Remove agent**: stops the agent and deletes its local Anima config. Its home files (memory,
     notes) are left untouched.
 
-::: tip Restarting does not lose work
-When a restart is needed, agents that are mid-task save their place and pick up right where they left
-off afterward. Nothing in flight is thrown away.
+::: tip "Restart agent" is not the graceful restart
+**Restart agent** above is the hung-agent escape hatch: anything in flight is dropped. Restarting the
+whole Anima service (for example, after an update) is different. There, agents finish or save their
+place first, so nothing in flight is lost. Don't read one as the other.
 :::
 
 ## The profile
