@@ -48,10 +48,6 @@ export default defineConfig({
             link: "/guide/using-the-dashboard",
           },
           { text: "How an agent works", link: "/guide/how-an-agent-works" },
-          {
-            text: "Configuring an agent",
-            link: "/guide/configuring-an-agent",
-          },
           { text: "Skills", link: "/guide/skills" },
         ],
       },
