@@ -43,6 +43,10 @@ export default defineConfig({
             text: "Working with your agent",
             link: "/guide/working-with-your-agent",
           },
+          {
+            text: "Using the dashboard",
+            link: "/guide/using-the-dashboard",
+          },
           { text: "How an agent works", link: "/guide/how-an-agent-works" },
           {
             text: "Configuring an agent",
