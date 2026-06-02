@@ -79,9 +79,9 @@ export function registerMessageCommands(program: Command): void {
   // Failure: human-readable error to stderr; exit 1.
   message
     .command('send')
-    .description('Post a Slack message (top-level or in a thread).\nMessage body is read from stdin.')
-    .option('--channel <channel>', 'channel ID (e.g. C123ABC) or name (e.g. prod)\nDM: D-prefixed channel ID (e.g. D123ABC)')
-    .option('--thread-ts <ts>', 'reply inside this thread; omit to post top-level')
+    .description('Post a Slack or Feishu message.\nMessage body is read from stdin.')
+    .option('--channel <channel>', 'Slack channel/DM target, or Feishu chat_id (oc_...)')
+    .option('--thread-ts <ts>', 'Slack thread timestamp, or Feishu topic message_id; omit to post top-level/chat message')
     .action(async (_, command) => {
       const opts = MessageSendSchema.parse(command.optsWithGlobals());
       await runMessageSend(opts);
