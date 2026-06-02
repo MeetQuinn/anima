@@ -90,8 +90,8 @@ The settings at the top are editable in place:
 - **Home**: the folder that holds the agent's memory and notes.
 - **Owner**: the person responsible for the agent.
 
-It also shows a couple of read-only facts: when the agent was **created** and how many past sessions
-have been **archived**.
+It also shows a few read-only facts: when the agent was **created**, when it was **last active** (the
+last time it did anything), and how many past sessions have been **archived**.
 
 Changes are saved as soon as you make them, and the agent applies them the next time it is idle. If it
 is mid-item, you will see a note that the change will apply once the current item finishes, so you are
@@ -112,9 +112,8 @@ Further down, the **This session** block shows how the agent's current working s
   which case it shows a dash.)
 - **Compactions**: how many times the session has compacted so far.
 - **Started**, with how long the session has been up.
-- **Latest activity**: when the agent last did something.
 
-<!-- TODO(screenshot): the This session block (Context + Compactions + Started + Latest activity). Demo data. -->
+<!-- TODO(screenshot): the This session block (Context + Compactions + Started). Demo data. -->
 
 Last, the profile lists the agent's **Skills** (see [Skills](./skills.md)).
 
