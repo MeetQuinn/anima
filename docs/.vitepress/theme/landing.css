@@ -633,28 +633,3 @@
     max-width: 300px;
   }
 }
-
-/* ── Chinese locale (zh-Hans) ───────────────────────────────────────────────
-   VitePress sets <html lang="zh-Hans"> on the zh locale. Two adjustments:
-   1. A CJK font fallback. The base stack is Inter (Latin-only), so Chinese
-      glyphs otherwise fall back to the OS default unpredictably; pin a known
-      CJK chain after Inter so Latin and Chinese both render intentionally.
-   2. Looser display line-heights. The hero/section headings are tuned tight
-      for Latin (1.04–1.08); CJK glyphs are taller and read cramped at those
-      values, so relax them a touch on the Chinese page only. */
-html[lang="zh-Hans"] {
-  --vp-font-family-base:
-    "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
-    "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    sans-serif;
-}
-
-html[lang="zh-Hans"] .landing-hero h1 {
-  line-height: 1.22;
-}
-
-html[lang="zh-Hans"] .landing-cards h2,
-html[lang="zh-Hans"] .landing-section-heading h2,
-html[lang="zh-Hans"] .landing-start h2 {
-  line-height: 1.28;
-}
