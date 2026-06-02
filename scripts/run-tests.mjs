@@ -14,6 +14,7 @@ const groups = {
     'inbox.test.js',
     'interactive-ask.test.js',
     'messages.test.js',
+    'message-transport.test.js',
     'prompt-attachments.test.js',
     'reminders.test.js',
     'runtime.test.js',
