@@ -1,6 +1,21 @@
 import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Code2, Copy, Download, ExternalLink, Eye, List, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  Code2,
+  Copy,
+  Download,
+  ExternalLink,
+  Eye,
+  Info,
+  Lightbulb,
+  List,
+  Megaphone,
+  OctagonAlert,
+  WrapText,
+  X,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -488,11 +503,107 @@ const sanitizeSchema = {
     source: ['srcSet', 'srcset', 'media', 'type', 'sizes', 'width', 'height'],
     img: [...(defaultSchema.attributes?.img ?? []), 'align', 'width', 'height', 'loading'],
     details: [...(defaultSchema.attributes?.details ?? []), 'open'],
+    // GitHub-style alert blockquotes: the rehypeGithubAlerts transform tags the
+    // <blockquote> with these classes; restrict the allowlist to exactly them.
+    blockquote: [
+      ...(defaultSchema.attributes?.blockquote ?? []),
+      [
+        'className',
+        'markdown-alert',
+        'markdown-alert-note',
+        'markdown-alert-tip',
+        'markdown-alert-important',
+        'markdown-alert-warning',
+        'markdown-alert-caution',
+      ],
+    ],
     ...Object.fromEntries(
       ALIGN_TAGS.map((tag) => [tag, [...(defaultSchema.attributes?.[tag] ?? []), 'align']]),
     ),
   },
 };
+
+// ---------------------------------------------------------------------------
+// GitHub-style alert blockquotes  ( > [!NOTE] / [!TIP] / [!IMPORTANT] / … )
+// ---------------------------------------------------------------------------
+
+type AlertType = 'note' | 'tip' | 'important' | 'warning' | 'caution';
+
+const ALERT_META: Record<AlertType, { label: string; Icon: LucideIcon }> = {
+  note: { label: 'Note', Icon: Info },
+  tip: { label: 'Tip', Icon: Lightbulb },
+  important: { label: 'Important', Icon: Megaphone },
+  warning: { label: 'Warning', Icon: AlertTriangle },
+  caution: { label: 'Caution', Icon: OctagonAlert },
+};
+
+const ALERT_MARKER = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i;
+
+// Minimal hast types — enough to walk/mutate without pulling in @types/hast.
+interface HastNode {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+}
+
+function alertTypeFromClassName(className: unknown): AlertType | null {
+  const list = Array.isArray(className) ? className : typeof className === 'string' ? className.split(/\s+/) : [];
+  if (!list.includes('markdown-alert')) return null;
+  for (const type of Object.keys(ALERT_META) as AlertType[]) {
+    if (list.includes(`markdown-alert-${type}`)) return type;
+  }
+  return null;
+}
+
+// rehype transform: a blockquote whose first line is `[!NOTE]` (etc.) becomes a
+// classed alert. We only tag the <blockquote> + strip the marker text; the React
+// `blockquote` component renders the icon + title so the icon stays a real
+// lucide glyph (not injected markup that sanitize would have to allow). Runs
+// AFTER rehype-raw and BEFORE rehype-sanitize, which keeps the classes (allowlisted).
+function rehypeGithubAlerts() {
+  function transform(bq: HastNode) {
+    const firstPara = bq.children?.find((c) => c.type === 'element' && c.tagName === 'p');
+    const lead = firstPara?.children?.[0];
+    if (!firstPara || !lead || lead.type !== 'text' || typeof lead.value !== 'string') return;
+    const m = ALERT_MARKER.exec(lead.value);
+    if (!m) return;
+    const type = m[1].toLowerCase() as AlertType;
+
+    // Strip the marker (and an optional following newline) from the lead text.
+    const rest = lead.value.slice(m[0].length).replace(/^[^\S\n]*\n?/, '');
+    if (rest) {
+      lead.value = rest;
+    } else {
+      // Marker was alone in its text node: drop it plus a trailing soft-break /
+      // <br>, and remove the paragraph entirely if nothing remains.
+      firstPara.children!.shift();
+      const next = firstPara.children![0];
+      if (next && next.type === 'text' && typeof next.value === 'string' && /^\s+$/.test(next.value)) {
+        firstPara.children!.shift();
+      } else if (next && next.type === 'element' && next.tagName === 'br') {
+        firstPara.children!.shift();
+      }
+      if (firstPara.children!.length === 0) {
+        bq.children = bq.children!.filter((c) => c !== firstPara);
+      }
+    }
+
+    bq.properties = bq.properties ?? {};
+    bq.properties.className = ['markdown-alert', `markdown-alert-${type}`];
+  }
+
+  function walk(node: HastNode) {
+    if (!node.children) return;
+    for (const child of node.children) {
+      if (child.type === 'element' && child.tagName === 'blockquote') transform(child);
+      walk(child);
+    }
+  }
+
+  return (tree: HastNode) => walk(tree);
+}
 
 // ---------------------------------------------------------------------------
 // Markdown link resolution
@@ -751,6 +862,25 @@ function saveSessionViewMode(mode: ViewMode): void {
   }
 }
 
+const CODE_WRAP_STORAGE_KEY = 'kb-code-wrap';
+
+// Wrap defaults ON; only an explicit 'off' disables it.
+function loadSessionWrap(): boolean {
+  try {
+    return window.sessionStorage.getItem(CODE_WRAP_STORAGE_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
+
+function saveSessionWrap(wrap: boolean): void {
+  try {
+    window.sessionStorage.setItem(CODE_WRAP_STORAGE_KEY, wrap ? 'on' : 'off');
+  } catch {
+    // non-fatal
+  }
+}
+
 // Parse a `#L<n>` line anchor from a location hash.
 function lineFromHash(hash: string): number | null {
   const m = /^#L(\d+)$/.exec(hash);
@@ -801,6 +931,17 @@ function ViewModeToggle({ mode, onChange }: { mode: ViewMode; onChange: (mode: V
 function CodeView({ body, language }: { body: string; language: string }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [activeLine, setActiveLine] = useState<number | null>(() => lineFromHash(window.location.hash));
+  // Soft-wrap toggle. Default ON (long lines wrap, no horizontal scroll);
+  // turning it off gives GitHub-style no-wrap + horizontal scroll. Remembered
+  // per tab session like the view mode.
+  const [wrap, setWrap] = useState<boolean>(loadSessionWrap);
+  const toggleWrap = useCallback(() => {
+    setWrap((prev) => {
+      const next = !prev;
+      saveSessionWrap(next);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     function onHashChange() {
@@ -832,12 +973,33 @@ function CodeView({ body, language }: { body: string; language: string }) {
   return (
     <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
       <div className="relative group min-h-0 flex-1 overflow-auto">
+        <button
+          type="button"
+          onClick={toggleWrap}
+          aria-pressed={wrap}
+          title={wrap ? 'Disable soft wrap' : 'Enable soft wrap'}
+          className={[
+            'chrome absolute right-12 top-2 z-10 flex h-7 items-center gap-1 rounded-sm px-2 text-[11px] transition-opacity',
+            'opacity-0 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100',
+            wrap
+              ? 'bg-accent/10 text-accent hover:bg-accent/15'
+              : 'bg-surface-elevated/80 text-text-subtle hover:bg-surface-elevated hover:text-text',
+          ].join(' ')}
+        >
+          <WrapText className="h-3 w-3" />
+        </button>
         <CopyButton text={body} />
         <Highlight code={body.replace(/\n$/, '')} language={language} theme={themes.github}>
           {({ className, style, tokens, getLineProps, getTokenProps }) => (
             <pre
-              className={`${className} min-h-full font-mono text-[12.5px] leading-relaxed`}
-              style={{ ...style, background: 'transparent', padding: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+              className={`${className} min-h-full font-mono text-[12.5px] leading-relaxed ${wrap ? '' : 'w-max'}`}
+              style={{
+                ...style,
+                background: 'transparent',
+                padding: 0,
+                whiteSpace: wrap ? 'pre-wrap' : 'pre',
+                wordBreak: wrap ? 'break-word' : 'normal',
+              }}
             >
               <div className="py-4">
                 {tokens.map((line, i) => {
@@ -849,7 +1011,14 @@ function CodeView({ body, language }: { body: string; language: string }) {
                       key={i}
                       {...lineProps}
                       id={`L${n}`}
-                      className={[lineClass ?? '', 'flex px-5', active ? 'bg-accent/10' : ''].join(' ').trim()}
+                      className={[
+                        lineClass ?? '',
+                        'flex px-5',
+                        wrap ? '' : 'min-w-full',
+                        active ? 'bg-accent/10' : '',
+                      ]
+                        .join(' ')
+                        .trim()}
                     >
                       <a
                         href={`#L${n}`}
@@ -865,7 +1034,7 @@ function CodeView({ body, language }: { body: string; language: string }) {
                       >
                         {n}
                       </a>
-                      <span className="min-w-0 flex-1">
+                      <span className={wrap ? 'min-w-0 flex-1' : 'shrink-0'}>
                         {line.map((token, key) => {
                           const tokenProps = getTokenProps({ token });
                           return <span key={key} {...tokenProps} />;
@@ -1025,6 +1194,27 @@ export function FileContent({
           />
         );
       },
+      // GitHub-style alert: rehypeGithubAlerts tagged the blockquote; render the
+      // lucide icon + title here so the glyph is a real React element. Plain
+      // blockquotes fall through to the default rendering.
+      blockquote: ({
+        node,
+        children,
+        ...props
+      }: React.ComponentPropsWithoutRef<'blockquote'> & { node?: HastElement }) => {
+        const alert = alertTypeFromClassName(node?.properties?.className);
+        if (!alert) return <blockquote {...props}>{children}</blockquote>;
+        const { label, Icon } = ALERT_META[alert];
+        return (
+          <blockquote className={`markdown-alert markdown-alert-${alert}`}>
+            <p className="markdown-alert-title">
+              <Icon className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+              {label}
+            </p>
+            {children}
+          </blockquote>
+        );
+      },
       table: ({ children, ...props }: React.ComponentPropsWithoutRef<'table'>) => (
         <div className="overflow-x-auto">
           <table {...props}>{children}</table>
@@ -1052,7 +1242,25 @@ export function FileContent({
               )}
               <CopyButton text={codeText} variant="inline" />
             </div>
-            <pre>{children}</pre>
+            {/* Syntax-highlight the fenced block with the same Prism pipeline the
+                Code view uses, so rendered Markdown matches GitHub instead of
+                showing flat monospace. Unknown languages fall back to plain. */}
+            <Highlight code={codeText.replace(/\n$/, '')} language={lang || 'text'} theme={themes.github}>
+              {({ className, style, tokens, getLineProps, getTokenProps }) => (
+                <pre
+                  className={`${className} font-mono text-[0.82em] leading-[1.55]`}
+                  style={{ ...style, background: 'transparent', margin: 0 }}
+                >
+                  {tokens.map((line, i) => (
+                    <div key={i} {...getLineProps({ line })}>
+                      {line.map((token, key) => (
+                        <span key={key} {...getTokenProps({ token })} />
+                      ))}
+                    </div>
+                  ))}
+                </pre>
+              )}
+            </Highlight>
           </div>
         );
       },
@@ -1163,7 +1371,7 @@ export function FileContent({
             <div className="md-prose">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
+                rehypePlugins={[rehypeRaw, rehypeGithubAlerts, [rehypeSanitize, sanitizeSchema]]}
                 components={markdownComponents}
               >
                 {markdownBody}
