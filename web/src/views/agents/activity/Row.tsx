@@ -188,7 +188,12 @@ export function Row({
             className={
               register === 'chrome'
                 ? 'mt-0.5 font-sans text-[12px] leading-[1.55] text-text-muted'
-                : 'mt-1 font-serif text-[15px] leading-[1.65] text-text'
+                : // Cap the editorial reading measure. Without this the body
+                  // tracks the full content column (~1000px+ on wide screens →
+                  // ~140ch/line), which fights the editorial reading surface
+                  // (KB content is likewise capped). ~68ch keeps a comfortable
+                  // line length; the avatar/timestamp rail is unaffected.
+                  'mt-1 max-w-[68ch] font-serif text-[15px] leading-[1.65] text-text'
             }
           >
             {expandable && expanded ? expandableBody!.full : body}
