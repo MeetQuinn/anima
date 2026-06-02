@@ -556,13 +556,15 @@ const sanitizeSchema = {
     source: ['srcSet', 'srcset', 'media', 'type', 'sizes', 'width', 'height'],
     img: [...(defaultSchema.attributes?.img ?? []), 'align', 'width', 'height', 'loading'],
     details: [...(defaultSchema.attributes?.details ?? []), 'open'],
-    // KaTeX: remark-math emits <span class="math math-inline"> / <div class="math
-    // math-display"> wrappers holding the raw LaTeX. rehypeKatex runs AFTER
-    // rehypeSanitize (see rehypePlugins) and turns these into rendered KaTeX, so
-    // its large span/MathML output never has to be allowlisted here — we only
-    // preserve the wrapper classes sanitize would otherwise strip.
-    span: [...(defaultSchema.attributes?.span ?? []), ['className', 'math', 'math-inline', 'math-display']],
-    div: [...(defaultSchema.attributes?.div ?? []), ['className', 'math', 'math-inline', 'math-display']],
+    // KaTeX needs no extra allowlist here. remark-math emits the LaTeX on
+    // <code class="language-math math-inline|math-display"> elements; rehypeKatex
+    // runs AFTER rehypeSanitize (see rehypePlugins) and keys off `language-math`,
+    // which the default schema already preserves on <code> (the same language-*
+    // allowance fenced-code highlighting relies on). Inline vs display is derived
+    // structurally (inline <code> vs <pre>), not from the math-inline/display
+    // classes sanitize strips, so both render correctly with the default schema.
+    // KaTeX runs with trust:false (no \href / raw HTML). Verified: inline +
+    // display math both produce .katex / .katex-display output.
     // GitHub-style alert blockquotes: the rehypeGithubAlerts transform tags the
     // <blockquote> with these classes; restrict the allowlist to exactly them.
     blockquote: [
