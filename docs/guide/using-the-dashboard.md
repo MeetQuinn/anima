@@ -76,8 +76,8 @@ When you need to take the wheel:
 
 ::: tip "Restart agent" is not the graceful restart
 **Restart agent** above is the hung-agent escape hatch: anything in flight is dropped. Restarting the
-whole Anima service (for example, after an update) is different. There, agents finish or save their
-place first, so nothing in flight is lost. Don't read one as the other.
+whole Anima service (for example, after [an update](./updating-anima.md)) is different. There, agents
+finish or save their place first, so nothing in flight is lost. Don't read one as the other.
 :::
 
 ## The profile
