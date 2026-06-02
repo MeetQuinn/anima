@@ -148,7 +148,7 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
                 confirm({
                   title: 'Restart this agent?',
                   description:
-                    'Use this only if the agent is hung. It is forced to stop and start over immediately. Any item it is working on right now is dropped and is not retried, so re-run it manually afterward. Memory, notes, and config are kept; queued items stay queued.',
+                    'Use this only if the agent is hung. It will be forced to stop and start over immediately. Any item it is working on right now is dropped and is not retried, so re-run it manually afterward. Memory, notes, and config are kept; queued items stay queued.',
                   variant: 'warn',
                   confirmLabel: 'Restart',
                   busyLabel: 'Restarting…',
