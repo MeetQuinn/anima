@@ -257,9 +257,14 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
 
   if (normalized === 'anima.message.read') {
     const ch = pickString(payload, ['channelName']);
-    const id = pickString(payload, ['channelId']);
+    const display = pickString(payload, ['channelDisplayName']);
+    const id = pickString(payload, ['channelId', 'channel']);
     const count = payload['messageCount'];
-    const dest = ch ? `#${ch}` : id || '?';
+    const dest = ch
+      ? `#${ch.replace(/^#/, '')}`
+      : display
+        ? display
+        : id || '?';
     const slice = readSliceLabel(payload);
     const countStr = count !== undefined ? `${count} messages` : undefined;
     const target = [dest, slice, countStr].filter(Boolean).join(' · ');

@@ -47,7 +47,11 @@ function SlackLink({ href }: { href: string }) {
 }
 
 function actorName(item: SlackInboxItem): string {
-  return item.actor?.handle?.replace(/^@/, '') || item.actor?.displayName || 'Unknown user';
+  const displayName = item.actor?.displayName || item.actor?.realName;
+  const handle = item.actor?.handle?.replace(/^@/, '');
+  if (displayName) return displayName;
+  if (handle) return handle;
+  return item.actor?.userId ?? 'Unknown user';
 }
 
 function inboxItemText(item: InboxItem): string {
