@@ -39,6 +39,7 @@ export default defineConfig({
         text: "Guide",
         items: [
           { text: "Quickstart", link: "/guide/quickstart" },
+          { text: "Updating Anima", link: "/guide/updating-anima" },
           {
             text: "Working with your agent",
             link: "/guide/working-with-your-agent",
