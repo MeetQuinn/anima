@@ -191,9 +191,10 @@ export function Row({
                 : // Cap the editorial reading measure. Without this the body
                   // tracks the full content column (~1000px+ on wide screens →
                   // ~140ch/line), which fights the editorial reading surface
-                  // (KB content is likewise capped). ~68ch keeps a comfortable
-                  // line length; the avatar/timestamp rail is unaffected.
-                  'mt-1 max-w-[68ch] font-serif text-[15px] leading-[1.65] text-text'
+                  // (KB content is likewise capped). ~80ch keeps lines in the
+                  // comfortable reading range without leaving the right side
+                  // looking too empty; the avatar/timestamp rail is unaffected.
+                  'mt-1 max-w-[80ch] font-serif text-[15px] leading-[1.65] text-text'
             }
           >
             {expandable && expanded ? expandableBody!.full : body}
