@@ -1,6 +1,6 @@
 import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Copy, Download, ExternalLink, List, X } from 'lucide-react';
+import { Code2, Copy, Download, ExternalLink, Eye, List, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -759,6 +759,11 @@ function lineFromHash(hash: string): number | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+const VIEW_MODE_OPTIONS = [
+  { value: 'preview' as const, label: 'Preview', Icon: Eye },
+  { value: 'code' as const, label: 'Code', Icon: Code2 },
+];
+
 function ViewModeToggle({ mode, onChange }: { mode: ViewMode; onChange: (mode: ViewMode) => void }) {
   return (
     <div
@@ -766,7 +771,7 @@ function ViewModeToggle({ mode, onChange }: { mode: ViewMode; onChange: (mode: V
       aria-label="File view mode"
       className="chrome inline-flex shrink-0 items-center gap-0.5 rounded-md border border-border-soft bg-surface-raised/40 p-0.5"
     >
-      {(['preview', 'code'] as const).map((value) => {
+      {VIEW_MODE_OPTIONS.map(({ value, label, Icon }) => {
         const active = mode === value;
         return (
           <button
@@ -774,13 +779,15 @@ function ViewModeToggle({ mode, onChange }: { mode: ViewMode; onChange: (mode: V
             type="button"
             role="tab"
             aria-selected={active}
+            title={label}
             onClick={() => onChange(value)}
             className={[
-              'flex min-h-[28px] items-center rounded-[5px] px-2.5 text-[11px] font-medium transition-colors',
+              'flex min-h-[28px] items-center gap-1.5 rounded-[5px] px-2 text-[11px] font-medium transition-colors',
               active ? 'bg-surface text-text shadow-sm' : 'text-text-subtle hover:text-text-muted',
             ].join(' ')}
           >
-            {value === 'preview' ? 'Preview' : 'Code'}
+            <Icon className="h-3.5 w-3.5" strokeWidth={2} />
+            {label}
           </button>
         );
       })}
