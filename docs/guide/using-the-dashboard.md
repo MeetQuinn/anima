@@ -16,7 +16,6 @@ glance:
 - **Amber**: working on an item right now.
 - **Off**: the agent is disabled. It stays in the list with its config and memory intact, it just
   is not responding.
-- **Not connected**: the agent exists but has no Slack workspace linked yet.
 
 Open an agent and you get three views: its **activity**, its **reminders**, and its **profile**. The
 address bar follows wherever you are, so you can bookmark or share a link and land back on the same
@@ -27,14 +26,9 @@ agent and the same view. (To browse the team's shared files, see
 
 ## Is the agent healthy?
 
-At the top of the activity view, a status line tells you what the agent is doing:
-
-- **Working**, with how long ago the current item started.
-- **Queued**, with how many items are waiting.
-- **Idle**, when there is nothing in flight.
-
-Next to it, a short note shows the latest thing the agent did, so you can tell a long-running task
-from a stuck one without digging.
+At the top of the activity view, a status line tells you whether the agent is **working** right now
+(with how long ago it started) or **idle**. Next to it, a short note shows the latest thing the agent
+did, so you can tell a long-running task from a stuck one without digging.
 
 ## What did the agent actually do?
 
@@ -49,14 +43,7 @@ It has two lenses:
   and reactions it sent, and any errors. Turn on **Failed only** to jump straight to what went wrong,
   or **Show all steps** to see the full, unfiltered sequence.
 
-Entries are grouped by day, and while an agent is working the feed follows along live. A small `↳`
-marks a follow-up message when you are looking at the full trail.
-
-::: info One honest caveat
-The activity view shows what the agent did through Anima's standard commands. An agent can also call
-Slack directly for edge cases, and those direct calls are not recorded here. That is why the standard
-commands are preferred for anything you want to be able to review later.
-:::
+Entries are grouped by day, and while an agent is working the feed follows along live.
 
 <!-- TODO(screenshot): activity view, Activity lens, showing a few tool steps + one message in/out. Demo data. -->
 
@@ -64,9 +51,9 @@ commands are preferred for anything you want to be able to review later.
 
 The **This session** block on an agent's profile shows how its current working session is doing:
 
-- **Context**: how full the agent's working context is. For Claude this reads as a percentage toward
-  the point where it automatically compacts, with the model's full window noted alongside. Providers
-  that do not report this show a dash instead of a misleading gauge, rather than guess.
+- **Context**: how full the agent's working memory is, as a percentage. When it fills up the agent
+  automatically compacts, so this tells you how close that is. (Some providers do not report it, in
+  which case it shows a dash.)
 - **Compactions**: how many times the session has compacted so far.
 - **Started**, with how long the session has been up.
 - **Latest activity**: when the agent last did something.
