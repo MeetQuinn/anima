@@ -1,4 +1,4 @@
-import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Children, isValidElement, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   AlertTriangle,
@@ -19,8 +19,12 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import rehypeRaw from 'rehype-raw';
+import rehypeKatex from 'rehype-katex';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
+import DOMPurify from 'dompurify';
+import 'katex/dist/katex.min.css';
 import { Highlight, themes } from 'prism-react-renderer';
 import { useNavigate } from 'react-router-dom';
 import { buildKbPath, buildKbRawPath } from '@/lib/url-state';
@@ -553,6 +557,15 @@ const sanitizeSchema = {
     source: ['srcSet', 'srcset', 'media', 'type', 'sizes', 'width', 'height'],
     img: [...(defaultSchema.attributes?.img ?? []), 'align', 'width', 'height', 'loading'],
     details: [...(defaultSchema.attributes?.details ?? []), 'open'],
+    // KaTeX needs no extra allowlist here. remark-math emits the LaTeX on
+    // <code class="language-math math-inline|math-display"> elements; rehypeKatex
+    // runs AFTER rehypeSanitize (see rehypePlugins) and keys off `language-math`,
+    // which the default schema already preserves on <code> (the same language-*
+    // allowance fenced-code highlighting relies on). Inline vs display is derived
+    // structurally (inline <code> vs <pre>), not from the math-inline/display
+    // classes sanitize strips, so both render correctly with the default schema.
+    // KaTeX runs with trust:false (no \href / raw HTML). Verified: inline +
+    // display math both produce .katex / .katex-display output.
     // GitHub-style alert blockquotes: the rehypeGithubAlerts transform tags the
     // <blockquote> with these classes; restrict the allowlist to exactly them.
     blockquote: [
@@ -653,6 +666,110 @@ function rehypeGithubAlerts() {
   }
 
   return (tree: HastNode) => walk(tree);
+}
+
+// ---------------------------------------------------------------------------
+// MermaidBlock — render a ```mermaid fenced block as a diagram.
+// ---------------------------------------------------------------------------
+
+// `mermaid` is heavy (~0.5MB), so it is imported lazily the first time a
+// diagram actually renders — it never enters the main KB bundle otherwise.
+//
+// SECURITY: the diagram source is untrusted KB content and the rendered SVG is
+// injected via dangerouslySetInnerHTML (it never passes through the markdown
+// sanitize pipeline), so it must be made safe on two independent layers:
+//   1. mermaid: securityLevel:'strict' (strips scripts / click handlers / raw
+//      anchors) AND htmlLabels:false so node labels render as native SVG <text>
+//      instead of <foreignObject> HTML. Strict mode alone is NOT enough — it
+//      still emits <foreignObject> wrappers that can carry <img> and other HTML
+//      from a crafted label (verified), which would load external resources.
+//   2. sanitizeMermaidSvg(): a DOMPurify svg-only pass that drops <foreignObject>
+//      and every embedded-resource / script / link vector outright, so even if a
+//      diagram type ignores htmlLabels:false the injected markup can never load
+//      external content or run code. This is the hard guarantee; htmlLabels:false
+//      is what keeps flowchart labels rendering as real text under that guarantee.
+let mermaidReady: Promise<typeof import('mermaid').default> | null = null;
+function loadMermaid() {
+  if (!mermaidReady) {
+    mermaidReady = import('mermaid').then(({ default: mermaid }) => {
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        theme: 'neutral',
+        htmlLabels: false,
+        flowchart: { htmlLabels: false },
+      });
+      return mermaid;
+    });
+  }
+  return mermaidReady;
+}
+
+// Strip <foreignObject> (HTML-in-SVG) and every external-resource / script / link
+// vector from mermaid's SVG before it is injected. mermaid's own theme <style>,
+// <path>, <text>, <g>, markers, etc. are preserved by the svg profile, so the
+// diagram still renders fully styled; a malicious HTML label degrades to inert
+// escaped text. Verified against <img src=x onerror=…>, <script>, and
+// click "javascript:…" payloads — none survive.
+function sanitizeMermaidSvg(svg: string): string {
+  return DOMPurify.sanitize(svg, {
+    USE_PROFILES: { svg: true, svgFilters: true },
+    FORBID_TAGS: [
+      'foreignObject', 'img', 'image', 'script', 'iframe', 'object',
+      'embed', 'a', 'audio', 'video', 'source', 'link', 'base',
+    ],
+    FORBID_ATTR: ['href', 'xlink:href', 'src', 'onerror', 'onload', 'onclick'],
+  });
+}
+
+function MermaidBlock({ code }: { code: string }) {
+  const reactId = useId();
+  // Single state set only from the async resolution, so there's no synchronous
+  // setState in the effect (and no flicker: the prior diagram stays until the
+  // next one resolves). `svg: null, failed: false` is the loading state.
+  const [state, setState] = useState<{ svg: string | null; failed: boolean }>({
+    svg: null,
+    failed: false,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    // mermaid requires a DOM-id-safe string; React's useId contains ':'.
+    const renderId = `mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+    loadMermaid()
+      .then((mermaid) => mermaid.render(renderId, code))
+      .then(({ svg }) => {
+        if (!cancelled) setState({ svg, failed: false });
+      })
+      .catch(() => {
+        if (!cancelled) setState({ svg: null, failed: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [code, reactId]);
+
+  const { svg, failed } = state;
+
+  // On parse/render failure, fall back to showing the raw source so the
+  // author can still read and fix it (matches GitHub's behavior).
+  if (failed) {
+    return (
+      <pre className="font-mono text-[0.82em] leading-[1.55] text-text-muted" style={{ background: 'transparent', margin: 0 }}>
+        {code}
+      </pre>
+    );
+  }
+  if (svg === null) {
+    return <div className="px-3 py-4 text-[0.82em] text-text-subtle">Rendering diagram…</div>;
+  }
+  return (
+    <div
+      className="flex justify-center overflow-x-auto px-3 py-3 [&_svg]:max-w-full [&_svg]:h-auto"
+      // svg-only sanitized (no foreignObject / img / script / event attrs / active links) — see sanitizeMermaidSvg
+      dangerouslySetInnerHTML={{ __html: sanitizeMermaidSvg(svg) }}
+    />
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1280,6 +1397,19 @@ export function FileContent({
           const m = cls.match(/language-(\S+)/);
           if (m) lang = m[1];
         }
+        if (lang === 'mermaid') {
+          return (
+            <div className="kb-markdown-code-block group">
+              <div className="chrome flex min-h-9 items-center justify-between gap-2 border-b border-border-soft/70 bg-surface-raised/45 px-2 py-1">
+                <span className="rounded-sm px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-text-subtle">
+                  mermaid
+                </span>
+                <CopyButton text={codeText} variant="inline" />
+              </div>
+              <MermaidBlock code={codeText.replace(/\n$/, '')} />
+            </div>
+          );
+        }
         return (
           <div className="kb-markdown-code-block group">
             <div className="chrome flex min-h-9 items-center justify-between gap-2 border-b border-border-soft/70 bg-surface-raised/45 px-2 py-1">
@@ -1420,8 +1550,15 @@ export function FileContent({
             {frontmatter && <FrontmatterTable entries={frontmatter} />}
             <div className="md-prose">
               <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeRaw, rehypeGithubAlerts, [rehypeSanitize, sanitizeSchema]]}
+                remarkPlugins={[remarkGfm, remarkMath]}
+                rehypePlugins={[
+                  rehypeRaw,
+                  rehypeGithubAlerts,
+                  [rehypeSanitize, sanitizeSchema],
+                  // KaTeX last: it renders trusted markup from the (already
+                  // sanitized) LaTeX text, so its output bypasses sanitize.
+                  rehypeKatex,
+                ]}
                 components={markdownComponents}
               >
                 {markdownBody}
