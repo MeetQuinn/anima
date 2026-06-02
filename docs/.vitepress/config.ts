@@ -39,7 +39,6 @@ export default defineConfig({
         text: "Guide",
         items: [
           { text: "Quickstart", link: "/guide/quickstart" },
-          { text: "Updating Anima", link: "/guide/updating-anima" },
           {
             text: "Working with your agent",
             link: "/guide/working-with-your-agent",
@@ -48,6 +47,7 @@ export default defineConfig({
             text: "Using the dashboard",
             link: "/guide/using-the-dashboard",
           },
+          { text: "Updating Anima", link: "/guide/updating-anima" },
           { text: "How an agent works", link: "/guide/how-an-agent-works" },
           { text: "Skills", link: "/guide/skills" },
         ],
