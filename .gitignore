@@ -9,3 +9,4 @@ packages/animactl/templates/
 .DS_Store
 web/.env.local
 docs/public/install.sh
+docs/.vitepress/cache/
