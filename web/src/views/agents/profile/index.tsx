@@ -16,7 +16,7 @@ import { useNow } from '@/hooks/useNow';
 
 import { providerCatalog } from '@shared/provider-catalog';
 import { useParams } from 'react-router-dom';
-import { shortIso } from '@/lib/format';
+import { formatRelative, shortIso } from '@/lib/format';
 import { Field, ReadonlyValue, Section, extractError } from './Primitives';
 import {
   InlineTextRow,
@@ -241,6 +241,20 @@ export default function Profile() {
                 title={new Date(createdAt).toLocaleString()}
               >
                 {shortIso(createdAt)}
+              </span>
+            ) : (
+              <ReadonlyValue />
+            )}
+          </Field>
+          {/* Last active — overall last activity (survives session rotation),
+              distinct from the current-session "Latest activity" once shown here. */}
+          <Field label="Last active">
+            {session?.updatedAt ? (
+              <span
+                className="font-serif text-[15px] text-text"
+                title={new Date(session.updatedAt).toLocaleString()}
+              >
+                {formatRelative(session.updatedAt, now)}
               </span>
             ) : (
               <ReadonlyValue />

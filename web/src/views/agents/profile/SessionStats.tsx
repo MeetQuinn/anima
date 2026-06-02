@@ -1,4 +1,4 @@
-import { formatRelative, formatTokens, formatUptime, shortIso } from '@/lib/format';
+import { formatTokens, formatUptime, shortIso } from '@/lib/format';
 import { Field, ReadonlyValue } from './Primitives';
 import type { AgentSessionSummary, ProviderSessionStatsSummary } from '@shared/snapshot';
 
@@ -81,7 +81,6 @@ export function SessionSection({
   session?: AgentSessionSummary;
   now: Date;
 }) {
-  const lastTurnIso = session?.current?.updatedAt;
   const startedAt = session?.currentStartedAt ?? session?.createdAt;
   return (
     <div className="divide-y divide-border-soft">
@@ -108,18 +107,6 @@ export function SessionSection({
               up {formatUptime(startedAt, now)}
             </span>
           </div>
-        ) : (
-          <ReadonlyValue />
-        )}
-      </Field>
-      <Field label="Latest activity">
-        {lastTurnIso ? (
-          <span
-            className="font-serif text-[15px] text-text"
-            title={new Date(lastTurnIso).toLocaleString()}
-          >
-            {formatRelative(lastTurnIso, now)}
-          </span>
         ) : (
           <ReadonlyValue />
         )}
