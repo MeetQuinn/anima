@@ -2,9 +2,34 @@
 
 Skills are how you teach an agent a repeatable way to handle a kind of work.
 
-A skill is a local knowledge pack: a `SKILL.md` file plus optional supporting files such as scripts,
+A skill is a capability pack: a `SKILL.md` file plus optional supporting files such as scripts,
 templates, or references. The provider reads the skill when a task matches its description, then uses
 those instructions while it works.
+
+## When to use notes, and when to use a skill
+
+Most of what an agent learns should stay in memory, notes, or the shared knowledge base. That is the
+default. Notes are light, local, and allowed to be messy while the agent and team are still learning how
+the work actually happens.
+
+Reach for a skill only when a capability is stable enough to package. Ask the decision this way:
+
+- **Does this agent need to learn and remember it?** Keep it in memory, notes, or the knowledge base.
+- **Is this a reusable ability you would hand to any agent?** It may be ready to become a skill.
+
+The portability test is the privacy test too: could another team or agent install it from the open skills
+ecosystem without inheriting your private paths, people, secrets, or identity? If not, it belongs in
+notes, not in a skill.
+
+Here, **portable** means installable through the Skills CLI from the open ecosystem. It does not mean a
+skill works on every provider or every machine without adaptation.
+
+For example, text-to-speech is a good skill: the skill can teach an agent how to call an `edge-tts` tool
+and send back an audio file. But "Milo uses this male Mandarin voice" is a profile preference. It belongs
+in memory, not in the shared skill.
+
+In short: notes are how an agent remembers what it learns. Skills are how a stable capability becomes
+something another agent can use.
 
 Skills are different from MCP. A skill teaches an agent how to think and act for a workflow. MCP gives
 an agent a tool channel to reach an external service or API. They work well together, but they solve

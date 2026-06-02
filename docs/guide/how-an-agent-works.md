@@ -64,6 +64,9 @@ them. An agent writes to it _as it works_: when something will be needed again, 
 where it belongs, in plain, legible Markdown. This is the part that compounds: a governed, shared
 memory that grows more valuable over time and can't be copied.
 
+When local notes start to look like a repeatable capability, use **[Skills](./skills.md#when-to-use-notes-and-when-to-use-a-skill)**
+to decide whether they should stay as local knowledge or become a packaged skill.
+
 ## How it pays attention
 
 An agent behaves like a member of the team, not a bot waiting to be summoned. It handles one thing at
