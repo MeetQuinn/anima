@@ -1,6 +1,7 @@
 import { WakeQueueService } from './wake-queue.service.js';
 import { ReminderInboxSubscriber } from './reminder-subscriber.js';
-import { SlackInboxSubscriber } from './slack-subscriber.js';
+import { MessageTransportRunner } from '../transports/message-transport.js';
+import { SlackMessageTransport } from '../transports/slack-message-transport.js';
 
 export interface InboxSubscriberOptions {
   agentRuntimeKind: string;
@@ -11,17 +12,19 @@ export interface InboxSubscriberOptions {
 
 export class InboxSubscriber {
   private readonly reminders: ReminderInboxSubscriber;
-  private readonly slack: SlackInboxSubscriber;
+  private readonly transports: MessageTransportRunner;
 
   constructor(options: InboxSubscriberOptions) {
     this.reminders = new ReminderInboxSubscriber(options.queue);
-    this.slack = new SlackInboxSubscriber(options);
+    this.transports = new MessageTransportRunner([
+      new SlackMessageTransport(options),
+    ]);
   }
 
   async start(): Promise<void> {
     this.reminders.start();
     try {
-      await this.slack.start();
+      await this.transports.start();
     } catch (error) {
       await this.reminders.stop();
       throw error;
@@ -30,7 +33,7 @@ export class InboxSubscriber {
 
   async stop(): Promise<void> {
     await Promise.allSettled([
-      this.slack.stop(),
+      this.transports.stop(),
       this.reminders.stop(),
     ]);
   }
