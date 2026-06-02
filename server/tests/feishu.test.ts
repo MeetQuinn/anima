@@ -10,7 +10,7 @@ import {
   shouldWakeFeishuRuntime,
   type FeishuReceiveMessageEvent,
 } from '../feishu/events.js';
-import { createFeishuMessageClient } from '../feishu/client.js';
+import { createFeishuMessageClient, fetchFeishuTenantAccessToken } from '../feishu/client.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import { messageFromInboxItem } from '../messages/message.projection.js';
 import { runMessageSend } from '../tools/messages.js';
@@ -131,9 +131,51 @@ test('Feishu delivery prompt is platform-aware', () => {
         'Use `anima message send --channel oc_test_chat` to post back to this Feishu chat.',
         'Use `anima message send --channel oc_test_chat --thread-ts om_test_message` to reply in this message\'s topic.',
         'Use `anima message send --channel <chat_id>` to send to an explicit Feishu chat.',
+        'Feishu API access: use `FEISHU_TENANT_ACCESS_TOKEN`, `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, and `FEISHU_API_BASE_URL` from env when you need Feishu APIs. Do not print these values.',
       ].join('\n'),
     ].join('\n\n'),
   );
+});
+
+test('mints Feishu tenant access token from app credentials', async () => {
+  const result = await fetchFeishuTenantAccessToken({
+    appId: 'cli_test',
+    appSecret: 'feishu-secret',
+    connected: true,
+    encryptKey: '',
+    verificationToken: '',
+  }, {
+    apiBaseUrl: 'https://feishu.example/open-apis/',
+    async fetch(url, init) {
+      assert.equal(url, 'https://feishu.example/open-apis/auth/v3/tenant_access_token/internal');
+      assert.equal(init.method, 'POST');
+      assert.equal(init.headers['Content-Type'], 'application/json');
+      assert.deepEqual(JSON.parse(init.body), {
+        app_id: 'cli_test',
+        app_secret: 'feishu-secret',
+      });
+      return {
+        async json() {
+          return {
+            code: 0,
+            expire: 7200,
+            tenant_access_token: 't-tenant',
+          };
+        },
+        ok: true,
+        status: 200,
+        async text() {
+          return '';
+        },
+      };
+    },
+    nowMs: () => Date.parse('2026-06-03T00:00:00.000Z'),
+  });
+
+  assert.deepEqual(result, {
+    expiresAt: '2026-06-03T02:00:00.000Z',
+    tenantAccessToken: 't-tenant',
+  });
 });
 
 test('Feishu inbox messages project into the message ledger', () => {

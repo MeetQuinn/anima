@@ -14,7 +14,7 @@ import { isFirstClassAnimaCliCommand } from '../activities/format.js';
 import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
 import { startChildProcess, terminateChildProcess } from '../providers/child-process.js';
 import { AgentRestartCommandStore } from '../runtime/agent-restart-command.store.js';
-import { RuntimeHost, type RunningAgentHandle } from '../runtime/host.js';
+import { managedProviderEnvForAgent, RuntimeHost, type RunningAgentHandle } from '../runtime/host.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
 import { withAnimaHome } from './anima-home.js';
 
@@ -145,6 +145,38 @@ test('runtime host starts after Slack connection and reloads idle agents after c
   assert.deepEqual(host.runningAgentIds(), ['scout']);
 
   await host.stop();
+});
+
+test('managed provider env injects Feishu credentials and tenant token when connected', async () => {
+  const scout = runtimeHostAgent('scout', { connected: true });
+  scout.feishu = {
+    appId: 'cli_test',
+    appSecret: 'feishu-secret',
+    botOpenId: 'ou_bot',
+    connected: true,
+    encryptKey: '',
+    verificationToken: '',
+  };
+
+  const env = await managedProviderEnvForAgent(scout, '/tmp/anima-home', 'xoxb-test', {
+    async fetchFeishuTenantAccessToken(config) {
+      assert.equal(config.appId, 'cli_test');
+      assert.equal(config.appSecret, 'feishu-secret');
+      return {
+        expiresAt: '2026-06-03T01:00:00.000Z',
+        tenantAccessToken: 't-tenant',
+      };
+    },
+  });
+
+  assert.equal(env.ANIMA_HOME, '/tmp/anima-home');
+  assert.equal(env.SLACK_BOT_TOKEN, 'xoxb-test');
+  assert.equal(env.FEISHU_API_BASE_URL, 'https://open.feishu.cn/open-apis');
+  assert.equal(env.FEISHU_APP_ID, 'cli_test');
+  assert.equal(env.FEISHU_APP_SECRET, 'feishu-secret');
+  assert.equal(env.FEISHU_BOT_OPEN_ID, 'ou_bot');
+  assert.equal(env.FEISHU_TENANT_ACCESS_TOKEN, 't-tenant');
+  assert.equal(env.FEISHU_TENANT_ACCESS_TOKEN_EXPIRES_AT, '2026-06-03T01:00:00.000Z');
 });
 
 test('runtime host defers config reload until the running agent is idle', async () => {

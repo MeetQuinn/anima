@@ -79,6 +79,7 @@ function buildFeishuDeliveryPrompt(event: FeishuInboxItem): string {
       `Use \`anima message send --channel ${event.chatId}\` to post back to this Feishu chat.`,
       `Use \`anima message send --channel ${event.chatId} --thread-ts ${event.messageId}\` to reply in this message's topic.`,
       'Use `anima message send --channel <chat_id>` to send to an explicit Feishu chat.',
+      'Feishu API access: use `FEISHU_TENANT_ACCESS_TOKEN`, `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, and `FEISHU_API_BASE_URL` from env when you need Feishu APIs. Do not print these values.',
     ].join('\n'),
   ].join('\n\n');
 }

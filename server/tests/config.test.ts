@@ -329,6 +329,14 @@ test('agent provider env patch rejects Anima-managed launch keys', async () => {
         }),
         /SLACK_BOT_TOKEN is managed by Anima/,
       );
+      await assert.rejects(
+        agentService('anima').updateProvider({
+          env: {
+            FEISHU_APP_SECRET: 'bad-secret',
+          },
+        }),
+        /FEISHU_APP_SECRET is managed by Anima/,
+      );
     });
   } finally {
     await rm(configDir, { force: true, recursive: true });
