@@ -4,7 +4,7 @@ import type { AgentConfig } from '../../shared/agent-config.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
-import { resolveAgentIdFrom, resolveItemIdFrom } from '../cli/shared.js';
+import { resolveAgentIdFrom } from '../cli/shared.js';
 import { errorMessage } from '../ids.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import { findToolAuditRuntimeItem } from '../runtime/active-item.js';
@@ -61,11 +61,14 @@ export function resolveToolAgentId(opts: { agent?: string }): string | undefined
 }
 
 export async function resolveToolItemId(opts: { agent?: string; item?: string }): Promise<string | undefined> {
-  const explicit = resolveItemIdFrom(opts.item);
+  const explicit = opts.item?.trim() || undefined;
   if (explicit) return explicit;
+  const envItemId = process.env.ANIMA_INBOX_ITEM_ID?.trim() || undefined;
   const agentId = resolveAgentIdFrom(opts.agent);
-  if (!agentId) return undefined;
-  return (await findToolAuditRuntimeItem(agentId))?.itemId;
+  if (!agentId) return envItemId;
+  const current = await findToolAuditRuntimeItem(agentId);
+  if (current && !current.settledAt && current.itemId !== envItemId) return current.itemId;
+  return envItemId ?? current?.itemId;
 }
 
 export async function loadAgentFromOpts(opts: object): Promise<AgentConfig> {

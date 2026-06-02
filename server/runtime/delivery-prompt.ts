@@ -74,7 +74,10 @@ function buildFeishuDeliveryPrompt(event: FeishuInboxItem): string {
   const envelope = `${feishuMessageEnvelope(event)} ${feishuActorLabel(event)}: ${event.text}`;
   return [
     `New Feishu message:\n\n${envelope}`,
-    'Reply target:\nUse `anima message send` without Slack `--channel` flags to reply to this Feishu message.',
+    [
+      'Reply target:',
+      'Use `anima message send` without Slack `--channel` flags to reply to this Feishu message.',
+    ].join('\n'),
   ].join('\n\n');
 }
 

@@ -40,15 +40,17 @@ export async function findActiveRuntimeItem(agentId: string): Promise<ActiveRunt
 
 export async function findToolAuditRuntimeItem(agentId: string): Promise<ActiveRuntimeItemRecord | undefined> {
   const candidates = (await new WakeQueueService(agentId).list())
-    .filter((event) => event.handling.workerId && (
-      event.handling.status === 'running' ||
-      event.handling.status === 'completed' ||
-      event.handling.status === 'failed'
-    ))
+    .filter((event) => event.handling.workerId);
+  const running = candidates
+    .filter((event) => event.handling.status === 'running' && !event.handling.settledAt)
+    .sort((a, b) => (b.handling.startedAt ?? b.handling.updatedAt).localeCompare(a.handling.startedAt ?? a.handling.updatedAt))[0];
+  if (running) return runtimeRecordFromEvent(agentId, running);
+
+  const settledCandidates = candidates
+    .filter((event) => event.handling.status === 'completed' || event.handling.status === 'failed')
     .sort((a, b) => b.handling.updatedAt.localeCompare(a.handling.updatedAt));
-  for (const event of candidates) {
+  for (const event of settledCandidates) {
     const record = runtimeRecordFromEvent(agentId, event);
-    if (event.handling.status === 'running' && !record.settledAt) return record;
     if (!record.settledAt) continue;
     if (Date.now() - Date.parse(record.settledAt) > TOOL_AUDIT_SETTLED_ITEM_GRACE_MS) continue;
     return record;
