@@ -12,6 +12,8 @@ When a new version is available, the **Server** button in the sidebar shows a sm
 **Server** panel and find the **Version** section: an available update shows your current version, the
 new one, and an **Upgrade & restart** button (with a **Release notes** link, if the release has them).
 
+![The Version section of the Server panel with an update available. The current version reads stable and 0.1.3, and an Update available card shows the version pair 0.1.3 to 0.1.4, an Upgrade & restart button, and a Release notes link below it.](/guide/dashboard/update-available.png)
+
 Click **Upgrade & restart**. Anima installs and verifies the new version in the background while your
 current version keeps running, then restarts at a safe point. Any agent that was working finishes or
 saves its place first and resumes where it left off, so nothing in flight is lost. The dashboard
