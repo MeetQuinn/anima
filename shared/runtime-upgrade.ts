@@ -52,6 +52,7 @@ export const RuntimeUpgradeStatusResponse = z.object({
   latestOnTrack: z.string().optional(),
   operation: RuntimeUpgradeOperation,
   releaseTrack: RuntimeReleaseTrack,
+  releaseNotesUrl: z.string().url().optional(),
   state: z.enum(['current', 'available', 'error']),
   updateAvailable: z.boolean(),
 });

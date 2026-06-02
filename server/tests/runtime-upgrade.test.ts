@@ -48,6 +48,7 @@ test('runtime upgrade status is track-scoped and includes idle gate state', asyn
       assert.equal(status.currentVersion, '0.1.1-canary.4.1.0688e3f');
       assert.equal(status.releaseTrack, 'canary');
       assert.equal(status.latestOnTrack, '0.1.1-canary.5.1.723b529');
+      assert.equal(status.releaseNotesUrl, undefined);
       assert.equal(status.state, 'available');
       assert.equal(status.updateAvailable, true);
       assert.equal(status.gate.state, 'idle');
@@ -264,6 +265,7 @@ test('runtime upgrade status returns cached state immediately and refreshes in b
 
       const status = await service.status();
       assert.equal(status.latestOnTrack, '0.1.2');
+      assert.equal(status.releaseNotesUrl, 'https://github.com/MeetQuinn/anima/releases/tag/v0.1.2');
       assert.equal(status.state, 'available');
       assert.equal(lookupCalls, 1);
 
@@ -303,6 +305,7 @@ test('runtime upgrade checkNow refreshes npm dist-tag before returning', async (
       assert.equal(lookupCalls, 1);
       assert.equal(status.checkedAt, '2026-05-29T09:00:00.000Z');
       assert.equal(status.latestOnTrack, '0.1.1-canary.22.1.d153e32');
+      assert.equal(status.releaseNotesUrl, undefined);
       assert.equal(status.state, 'available');
       assert.equal(status.updateAvailable, true);
       assert.equal((await checkStore.read()).latestOnTrack, '0.1.1-canary.22.1.d153e32');

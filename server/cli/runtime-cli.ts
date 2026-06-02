@@ -224,6 +224,7 @@ export function printUpgradeStatus(status: RuntimeUpgradeStatusResponse): void {
   console.log(`releaseTrack: ${status.releaseTrack}`);
   console.log(`latestOnTrack: ${status.latestOnTrack ?? 'unknown'}`);
   console.log(`update: ${status.updateAvailable ? 'available' : 'none'}`);
+  if (status.releaseNotesUrl) console.log(`releaseNotes: ${status.releaseNotesUrl}`);
   console.log(`checkedAt: ${status.checkedAt}`);
   if (status.checkError) console.log(`checkError: ${status.checkError.type}: ${status.checkError.message}`);
   console.log(`gate: ${status.gate.state}${status.gate.blockers.length ? ` (${status.gate.blockers.length} blockers)` : ''}`);
