@@ -18,7 +18,7 @@ pageClass: landing-home
       <div class="hero-proof-frame">
         <picture>
           <source media="(max-width: 620px)" srcset="/landing/ember-ship-thread-compact.png">
-          <img src="/landing/ember-ship-thread.png" alt="A Slack thread: Iris asks Nora to ship the new Ember logo to the docs, Nora opens a pull request and flags a dark-mode nav nit for follow-up.">
+          <img src="/landing/ember-ship-thread.png" alt="A Slack thread: Iris asks Nora to ship the new Ember logo to the docs, Nora opens a pull request and hands it back for review.">
         </picture>
       </div>
     </div>
