@@ -15,6 +15,7 @@ import { makeSlackEvent } from './helpers/slack.js';
 import { ingestEvent } from './helpers/inbox.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { recordRuntimeEvent } from '../runtime/activity.js';
+import { AgentRestartCommandStore } from '../runtime/agent-restart-command.store.js';
 import { persistProviderSession } from '../runtime/runtime-bridge.js';
 import { setActiveRuntimeItem } from '../runtime/active-item.js';
 import { recordLifetimeTokenUsageForItem, tokenDeltaForActivities } from '../runtime/usage.js';
@@ -588,6 +589,63 @@ test('web API stop endpoint writes stopRequestedAt onto the item record', async 
 
       const item = await new WakeQueueService('anima').find(ctx.item.id);
       assert.ok(item?.handling.stopRequestedAt, 'expected stopRequestedAt to be set on the item record');
+    } finally {
+      server.close();
+    }
+  });
+  await rm(stateDir, { force: true, recursive: true });
+});
+
+test('web API restart endpoint writes an operator restart command', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-restart-test-'));
+  await writeConfig(stateDir);
+  await withAnimaHome(stateDir, async () => {
+    const server = await createWebServer();
+    try {
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected TCP address');
+
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/agents/anima/restart`, {
+        method: 'POST',
+      });
+      assert.equal(response.status, 202);
+      const body = (await response.json()) as { ok?: boolean; requestId?: string };
+      assert.equal(body.ok, true);
+      assert.ok(body.requestId);
+
+      const store = new AgentRestartCommandStore();
+      assert.deepEqual(await store.pendingAgentIds(), ['anima']);
+      const command = await store.take('anima');
+      assert.equal(command?.agentId, 'anima');
+      assert.equal(command?.reason, 'operator_restart');
+      assert.equal(command?.requestId, body.requestId);
+    } finally {
+      server.close();
+    }
+  });
+  await rm(stateDir, { force: true, recursive: true });
+});
+
+test('web API restart endpoint rejects disabled agents', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-restart-disabled-test-'));
+  await writeConfig(stateDir, [{ ...defaultAgentConfig('anima'), enabled: false }]);
+  await withAnimaHome(stateDir, async () => {
+    const server = await createWebServer();
+    try {
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected TCP address');
+
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/agents/anima/restart`, {
+        method: 'POST',
+      });
+      assert.equal(response.status, 409);
+      const body = (await response.json()) as { error?: string };
+      assert.equal(body.error, 'Agent is disabled. Enable it to run.');
+      assert.deepEqual(await new AgentRestartCommandStore().pendingAgentIds(), []);
     } finally {
       server.close();
     }
@@ -1884,6 +1942,7 @@ function testRuntime() {
 }
 
 type TestAgentConfig = Omit<ReturnType<typeof defaultAgentConfig>, 'slack'> & {
+  enabled?: boolean;
   homePath?: string;
   profile?: { displayName?: string; role?: string };
   slack?: ReturnType<typeof defaultAgentConfig>['slack'] & { appId?: string; manifestVersion?: number; teamId?: string };

@@ -389,9 +389,11 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
         ? 'Runtime restarted'
         : reason === 'user_stop'
           ? 'Stopped by user'
-          : reason === 'idle_timeout'
-            ? 'Idle timeout'
-            : 'Runtime stopped';
+          : reason === 'operator_restart'
+            ? 'Restarted by operator'
+            : reason === 'idle_timeout'
+              ? 'Idle timeout'
+              : 'Runtime stopped';
     return {
       title,
       target: reason === 'idle_timeout' ? idleTimeoutTarget(payload) : undefined,

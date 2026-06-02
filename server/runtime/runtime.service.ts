@@ -1,6 +1,7 @@
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { WakeQueueService, type InboxItem } from '../inbox/wake-queue.service.js';
 import type { AgentStatusSummary } from '../../shared/snapshot.js';
+import { defaultAgentRestartCommandStore } from './agent-restart-command.store.js';
 import { findActiveRuntimeItem } from './active-item.js';
 
 export class RuntimeServiceError extends Error {
@@ -27,6 +28,14 @@ export class RuntimeService {
     const running = latestRunningItem(await queue.listRunnable());
     if (!running) throw new RuntimeServiceError(409, `No running item for agent ${agentId}`);
     await queue.requestStop(running.id);
+  }
+
+  async restartAgent(agentId: string): Promise<{ requestId: string }> {
+    const agent = await defaultAgentRegistryService.serviceFor(agentId).getConfig().catch(() => undefined);
+    if (!agent) throw new RuntimeServiceError(404, 'Agent not found');
+    if (!agent.enabled) throw new RuntimeServiceError(409, 'Agent is disabled. Enable it to run.');
+    const command = await defaultAgentRestartCommandStore.request(agentId);
+    return { requestId: command.requestId };
   }
 
   private async statusForAgent(agentId: string): Promise<AgentStatusSummary> {

@@ -37,6 +37,12 @@ interface AgentRuntimeWorkerOptions extends RuntimeWorkerConfig {
   workerId?: string;
 }
 
+export interface AgentRuntimeWorkerCloseOptions {
+  abortReason?: ItemStopReason;
+  drainActive?: boolean;
+  forceAfterMs?: number;
+}
+
 export class AgentRuntimeWorker {
   private readonly workerIsAlive: (workerId: string) => boolean;
   private readonly workerId: string;
@@ -96,15 +102,17 @@ export class AgentRuntimeWorker {
       });
   }
 
-  async close(options: { drainActive?: boolean } = {}): Promise<void> {
+  async close(options: AgentRuntimeWorkerCloseOptions = {}): Promise<void> {
     this.closing = true;
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = undefined;
     }
     if (!options.drainActive) {
-      this.activeItem?.abortController.abort('shutdown');
-      await this.options.agentRuntime.close?.();
+      this.activeItem?.abortController.abort(options.abortReason ?? 'shutdown');
+      await this.options.agentRuntime.close?.(
+        options.forceAfterMs === undefined ? undefined : { forceAfterMs: options.forceAfterMs },
+      );
     }
     while (this.activeDrain) {
       await this.activeDrain.catch((error: unknown) => {
@@ -332,7 +340,11 @@ function isoFromMs(value: number): string {
 
 function abortReasonOf(signal: AbortSignal): ItemStopReason | undefined {
   const reason = signal.reason;
-  return reason === 'idle_timeout' || reason === 'restart_drain' || reason === 'shutdown' || reason === 'user_stop'
+  return reason === 'idle_timeout' ||
+    reason === 'operator_restart' ||
+    reason === 'restart_drain' ||
+    reason === 'shutdown' ||
+    reason === 'user_stop'
     ? reason
     : undefined;
 }

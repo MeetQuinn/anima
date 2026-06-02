@@ -47,7 +47,7 @@ export interface RuntimeFailedPayload extends RuntimePayload {
 }
 
 export interface RuntimeAbortedPayload {
-  reason: 'idle_timeout' | 'shutdown' | 'user_stop' | (string & {});
+  reason: 'idle_timeout' | 'operator_restart' | 'shutdown' | 'user_stop' | (string & {});
   timeoutMs?: number;
 }
 

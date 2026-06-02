@@ -9,6 +9,11 @@ export interface RunningChildProcess {
   writeStdin(input: string): void;
 }
 
+export interface ChildProcessTerminationOptions {
+  forceAfterMs?: number;
+  signal?: NodeJS.Signals;
+}
+
 export function startChildProcess(input: {
   args: string[];
   bufferOutput?: boolean;
@@ -93,6 +98,28 @@ export function startChildProcess(input: {
       child.stdin.write(chunk);
     },
   };
+}
+
+export async function terminateChildProcess(
+  child: Pick<RunningChildProcess, 'completion' | 'kill'>,
+  options: ChildProcessTerminationOptions = {},
+): Promise<{ forced: boolean }> {
+  let forced = false;
+  child.kill(options.signal ?? 'SIGTERM');
+  const forceAfterMs = options.forceAfterMs;
+  const forceTimer =
+    forceAfterMs !== undefined
+      ? setTimeout(() => {
+          forced = true;
+          child.kill('SIGKILL');
+        }, Math.max(0, forceAfterMs))
+      : undefined;
+  try {
+    await child.completion.catch(() => {});
+    return { forced };
+  } finally {
+    if (forceTimer) clearTimeout(forceTimer);
+  }
 }
 
 function childProcessExitError(

@@ -84,6 +84,13 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
       return reply.status(202).send({ ok: true });
     },
   );
+  fastify.post<{ Params: { agentId: string } }>(
+    '/api/agents/:agentId/restart',
+    async (request, reply) => {
+      const result = await defaultRuntimeService.restartAgent(request.params.agentId);
+      return reply.status(202).send({ ok: true, ...result });
+    },
+  );
 
   // -------------------------------------------------------------------------
   // Activities

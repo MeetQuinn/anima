@@ -1006,6 +1006,65 @@ test('runtime worker idle watchdog aborts a item that produces no activity', asy
   }
 });
 
+test('runtime worker records operator restart aborts without requeueing the active item', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-operator-restart-test-'));
+  const runtime = new AbortableRuntime();
+  const coordinator = { agentId: 'scout', stateDir };
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+    worker = new AgentRuntimeWorker({
+      agentId: 'scout',
+      agentRuntime: runtime,
+      queue: queueFor('scout'),
+      idleTimeoutMs: 60_000,
+      pollIntervalMs: 10_000,
+      stateDir,
+      workerId: 'test-worker',
+    }, silentLogger);
+    const decision = await enqueueInbox(
+      makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-operator-restart',
+        teamId: 'T-demo',
+        text: 'restart me',
+        ts: '1770000010.000001',
+        userId: 'U1',
+      }),
+      coordinator,
+    );
+    const drain = worker.drainOnce();
+    await waitFor(() => runtime.calls.length === 1);
+    const queued = await enqueueInbox(
+      makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-after-operator-restart',
+        teamId: 'T-demo',
+        text: 'preserve me',
+        ts: '1770000010.000002',
+        userId: 'U1',
+      }),
+      coordinator,
+    );
+
+    await worker.close({ abortReason: 'operator_restart' });
+    await drain;
+
+    const item = await queueFor('scout').find(decision.ctx.item.id);
+    assert.equal(item?.handling.status, 'failed');
+    assert.equal(item?.handling.resumeReason, undefined);
+    const queuedItem = await queueFor('scout').find(queued.ctx.item.id);
+    assert.equal(queuedItem?.handling.status, 'queued');
+    const activities = allActivities(await loadState());
+    const aborted = activities.find((activity) => activity.type === 'runtime.aborted');
+    assert.equal(aborted?.payload?.['reason'], 'operator_restart');
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('runtime worker idle watchdog resets on provider activity effects', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-idle-activity-test-'));
   const runtime = new ActivityBeforeFinishRuntime();

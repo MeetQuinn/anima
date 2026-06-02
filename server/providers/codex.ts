@@ -1,10 +1,11 @@
 import { nowIso } from '../ids.js';
 import { runtimeErrorPayload } from '../activities/format.js';
 import { ActiveRuntimeRun } from './active-runtime.js';
-import { startChildProcess } from './child-process.js';
+import { startChildProcess, terminateChildProcess } from './child-process.js';
 import { CodexAppServerController } from './codex-app-server.js';
 import {
   providerSessionPayload,
+  type AgentRuntimeCloseOptions,
   type AgentRuntime,
   type AgentRuntimeDrainInput,
   type AgentRuntimeFollowupInput,
@@ -28,8 +29,8 @@ export class CodexCliAgentRuntime implements AgentRuntime {
     this.env = config.env;
   }
 
-  async close(): Promise<void> {
-    await this.resetController();
+  async close(options: AgentRuntimeCloseOptions = {}): Promise<void> {
+    await this.resetController(options.signal, options);
   }
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
@@ -114,12 +115,17 @@ export class CodexCliAgentRuntime implements AgentRuntime {
     return controller;
   }
 
-  private async resetController(signal: NodeJS.Signals = 'SIGTERM'): Promise<void> {
+  private async resetController(
+    signal: NodeJS.Signals = 'SIGTERM',
+    options: Pick<AgentRuntimeCloseOptions, 'forceAfterMs'> = {},
+  ): Promise<void> {
     const controller = this.controller;
     if (!controller) return;
     this.controller = undefined;
-    controller.kill(signal);
-    await controller.completion.catch(() => {});
+    await terminateChildProcess(controller, {
+      signal,
+      ...(options.forceAfterMs === undefined ? {} : { forceAfterMs: options.forceAfterMs }),
+    });
   }
 
   private threadParams(input: AgentRuntimeInput): Record<string, unknown> {

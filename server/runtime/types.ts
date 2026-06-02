@@ -15,4 +15,9 @@ export interface RuntimeItemContext {
   homePath: string;
 }
 
-export type ItemStopReason = 'idle_timeout' | 'restart_drain' | 'shutdown' | 'user_stop';
+export type ItemStopReason =
+  | 'idle_timeout'
+  | 'operator_restart'
+  | 'restart_drain'
+  | 'shutdown'
+  | 'user_stop';
