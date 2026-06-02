@@ -26,7 +26,7 @@ function FilterToggle({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <label className="chrome inline-flex cursor-pointer items-center gap-1.5 text-[11px] tracking-wide text-text-muted hover:text-text">
+    <label className="chrome inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-[11px] tracking-wide text-text-muted hover:text-text">
       <input
         type="checkbox"
         checked={checked}
@@ -187,7 +187,7 @@ export default function AgentHeader() {
           <AgentActionsMenu />
         </div>
       </div>
-      <nav className="hidden items-center border-b border-border-soft px-8 md:flex">
+      <nav className="hidden flex-wrap items-center gap-y-1 border-b border-border-soft px-8 md:flex">
         <div className="flex flex-1 items-center gap-1">
           {TABS.map((t) => {
             const active = tab === t.id;
@@ -208,7 +208,7 @@ export default function AgentHeader() {
           })}
         </div>
         {tab === 'activity' && (
-          <div className="flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-3">
             {lens === 'activity' && (
               <>
                 <FilterToggle label="Failed only" checked={failedOnly} onChange={setFailedOnly} />

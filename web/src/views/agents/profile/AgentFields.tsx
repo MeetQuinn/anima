@@ -100,7 +100,7 @@ export function InlineTextRow({
         <div className="flex flex-wrap items-center gap-2">
           <EditAffordance onEdit={begin}>
             {value ? (
-              <span className="block break-all font-serif text-[13px] md:text-[15px] text-text">{value}</span>
+              <span className="block break-words font-serif text-[13px] md:text-[15px] text-text">{value}</span>
             ) : (
               <span className="font-serif italic text-[14px] text-text-subtle">
                 {placeholder ?? '—'}
@@ -205,7 +205,7 @@ export function HomeRow({
         {pendingPath !== null ? (
           <div className="space-y-3">
             <div>
-              <span className="block break-all font-mono text-[13px] text-text">{pendingPath}</span>
+              <span className="block break-words font-mono text-[13px] text-text">{pendingPath}</span>
               <span className="font-sans text-[11px] tracking-wide text-text-muted">
                 Applies automatically when this agent is idle.
               </span>
@@ -246,7 +246,7 @@ export function HomeRow({
               className="group -mx-2 -my-1 flex min-w-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-1 outline-none transition-colors hover:bg-surface-elevated focus-visible:bg-surface-elevated"
             >
               {value ? (
-                <span className="block break-all font-serif text-[13px] md:text-[15px] text-text">{value}</span>
+                <span className="block break-words font-serif text-[13px] md:text-[15px] text-text">{value}</span>
               ) : (
                 <span className="font-serif italic text-[14px] text-text-subtle">
                   Not configured
