@@ -20,7 +20,8 @@ Anima starts and opens the dashboard in your browser. If it doesn't open on its 
 ## 2. Create your agent
 
 In the dashboard, give your agent a **name** and a **role**, and pick the **provider** it runs on (the
-coding tool you signed into). The **role** is a short job description: what the agent is responsible for.
+coding agent you signed into, such as Claude Code or Codex). The **role** is a short job description:
+what the agent is responsible for.
 Then click **Create agent**.
 
 ## 3. Connect to Slack
