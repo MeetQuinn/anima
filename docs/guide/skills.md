@@ -3,8 +3,8 @@
 Skills are how you teach an agent a repeatable way to handle a kind of work.
 
 A skill is a capability pack: a `SKILL.md` file plus optional supporting files such as scripts,
-templates, or references. The provider reads the skill when a task matches its description, then uses
-those instructions while it works.
+templates, or references. The provider (the coding agent your agent runs on, such as Claude Code or
+Codex) reads the skill when a task matches its description, then uses those instructions while it works.
 
 ## When to use notes, and when to use a skill
 
@@ -65,6 +65,9 @@ Anima includes a default `find-skills` skill so agents have a clear path for cap
 you ask for a specialized capability, the agent should search for an existing skill before assuming the
 capability is unsupported.
 
+Most teammates never touch skills directly. They talk to the agent in Slack; the person who runs the
+agent's machine is the one who reviews and installs skills.
+
 The search uses the open skills ecosystem through the Skills CLI:
 
 ```bash
@@ -88,6 +91,8 @@ applies to the next task or the next restarted provider session, not to a task a
 If an agent does not seem to pick up a new skill, start a fresh task or restart the agent runtime.
 
 ## Third-party skill safety
+
+Skills come from an open, community ecosystem, not from Anima. Anima does not host, curate, or vet them.
 
 Skills can include instructions and supporting scripts. Treat third-party skills like code:
 
