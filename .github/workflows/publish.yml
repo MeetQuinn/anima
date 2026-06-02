@@ -50,12 +50,15 @@ jobs:
               exit 1
             fi
           else
+            LATEST_STABLE="$(npm view @meetquinn/animactl@latest version 2>/dev/null || true)"
+            export LATEST_STABLE
             VERSION="$(node <<'NODE'
           const fs = require('node:fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const [major, minor, patch] = pkg.version.split('-')[0].split('.').map(Number);
+          const baseVersion = process.env.LATEST_STABLE || pkg.version;
+          const [major, minor, patch] = baseVersion.split('-')[0].split('.').map(Number);
           if (![major, minor, patch].every(Number.isInteger)) {
-            throw new Error(`package.json version is not a simple semver: ${pkg.version}`);
+            throw new Error(`canary base version is not a simple semver: ${baseVersion}`);
           }
           const run = process.env.GITHUB_RUN_NUMBER;
           const attempt = process.env.GITHUB_RUN_ATTEMPT;
