@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Download, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Download, ExternalLink, RefreshCw } from 'lucide-react';
 import { fetchAgents } from '@/api/agents';
 import {
   applyRuntimeUpgrade,
@@ -203,6 +203,7 @@ export default function RuntimeUpgradeRow() {
       <AvailableCard
         currentVersion={status.currentVersion}
         target={target}
+        releaseNotesUrl={status.releaseNotesUrl}
         error={applyError}
         onUpgrade={requestUpgrade}
         action={checkAction}
@@ -249,6 +250,7 @@ export default function RuntimeUpgradeRow() {
 function AvailableCard({
   currentVersion,
   target,
+  releaseNotesUrl,
   error,
   onUpgrade,
   action,
@@ -256,6 +258,7 @@ function AvailableCard({
 }: {
   currentVersion: string;
   target: string;
+  releaseNotesUrl?: string;
   error: string | null;
   onUpgrade: () => void;
   action?: React.ReactNode;
@@ -292,6 +295,17 @@ function AvailableCard({
           <Download aria-hidden className="h-3 w-3" />
           Upgrade &amp; restart
         </button>
+        {releaseNotesUrl && (
+          <a
+            href={releaseNotesUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-1.5 flex items-center justify-center gap-1 font-sans text-[11px] text-text-subtle transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            <ExternalLink aria-hidden className="h-3 w-3" />
+            Release notes
+          </a>
+        )}
         {error && <p className="mt-1.5 font-sans text-[11px] text-health-error">{error}</p>}
         {checkFailed && (
           <p className="mt-1.5 font-sans text-[11px] text-text-subtle">

@@ -50,6 +50,7 @@ const DEFAULT_CHECK_TTL_MS = 60 * 60 * 1000;
 const DEFAULT_VERIFY_TIMEOUT_MS = 60_000;
 const VERIFY_POLL_MS = 1_000;
 const UPGRADE_AFTER_RESPONSE_DELAY_MS = 250;
+const GITHUB_RELEASE_TAG_BASE_URL = 'https://github.com/MeetQuinn/anima/releases/tag/';
 const OPERATION_IDLE: RuntimeUpgradeOperationType = { status: 'idle' };
 
 export interface RuntimeUpgradeServiceOptions {
@@ -134,6 +135,7 @@ export class RuntimeUpgradeService {
     const latestOnTrack = usableCache?.latestOnTrack;
     const checkError = usableCache?.checkError;
     const updateAvailable = latestOnTrack ? compareRuntimeVersions(latestOnTrack, currentVersion) > 0 : false;
+    const releaseNotesUrl = runtimeReleaseNotesUrl({ latestOnTrack, releaseTrack, updateAvailable });
     return {
       checkedAt,
       ...(checkError ? { checkError } : {}),
@@ -142,6 +144,7 @@ export class RuntimeUpgradeService {
       ...(latestOnTrack ? { latestOnTrack } : {}),
       operation,
       releaseTrack,
+      ...(releaseNotesUrl ? { releaseNotesUrl } : {}),
       state: checkError ? 'error' : updateAvailable ? 'available' : 'current',
       updateAvailable,
     };
@@ -255,6 +258,11 @@ export class RuntimeUpgradeService {
     const latestOnTrack = input.check.releaseTrack === input.releaseTrack ? input.check.latestOnTrack : undefined;
     const checkError = input.check.releaseTrack === input.releaseTrack ? input.check.checkError : undefined;
     const updateAvailable = latestOnTrack ? compareRuntimeVersions(latestOnTrack, input.currentVersion) > 0 : false;
+    const releaseNotesUrl = runtimeReleaseNotesUrl({
+      latestOnTrack,
+      releaseTrack: input.releaseTrack,
+      updateAvailable,
+    });
     return {
       checkedAt: input.check.checkedAt,
       ...(checkError ? { checkError } : {}),
@@ -263,6 +271,7 @@ export class RuntimeUpgradeService {
       ...(latestOnTrack ? { latestOnTrack } : {}),
       operation: input.operation,
       releaseTrack: input.releaseTrack,
+      ...(releaseNotesUrl ? { releaseNotesUrl } : {}),
       state: checkError ? 'error' : updateAvailable ? 'available' : 'current',
       updateAvailable,
     };
@@ -603,6 +612,15 @@ function runtimeUpgradeCheckCacheFromUnknown(value: unknown): RuntimeUpgradeChec
     ...(typeof latestOnTrack === 'string' && latestOnTrack ? { latestOnTrack } : {}),
     releaseTrack,
   };
+}
+
+function runtimeReleaseNotesUrl(input: {
+  latestOnTrack?: string;
+  releaseTrack: RuntimeReleaseTrack;
+  updateAvailable: boolean;
+}): string | undefined {
+  if (!input.updateAvailable || input.releaseTrack !== 'stable' || !input.latestOnTrack) return undefined;
+  return `${GITHUB_RELEASE_TAG_BASE_URL}v${encodeURIComponent(input.latestOnTrack)}`;
 }
 
 function runtimeUpgradeCheckErrorFromUnknown(value: unknown): RuntimeUpgradeCheckError | undefined {
