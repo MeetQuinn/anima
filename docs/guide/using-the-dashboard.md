@@ -84,7 +84,7 @@ doing. It reads from the top down.
 The settings at the top are editable in place:
 
 - **Name** and **Role**: how the agent is addressed and what it is responsible for. The role is the
-  biggest lever on how useful the agent is. (See [Configuring an agent](./configuring-an-agent.md).)
+  biggest lever on how useful the agent is.
 - **Provider**, **model**, and **reasoning effort**: the engine the agent runs on and how hard it
   thinks.
 - **Home**: the folder that holds the agent's memory and notes.
