@@ -7,6 +7,15 @@ the fact, step in when you need to, and tune how it runs.
 The dashboard runs on your own machine, alongside the rest of Anima. It updates on its own, so you
 never refresh. You do not talk to agents here. Think of it as the cockpit, not the conversation.
 
+## Opening the dashboard
+
+On a local desktop, Anima opens the dashboard for you when it starts. To open it yourself at any time,
+visit **http://127.0.0.1:4174**. That is the default address. If you changed the dashboard port in
+your config, use the port you set.
+
+If you are setting Anima up for the first time, the [Quickstart](./quickstart.md) walks through the
+whole flow, including connecting Slack.
+
 ## Finding your way around
 
 The sidebar lists your agents. Each one carries a small status dot so you can read the room at a
