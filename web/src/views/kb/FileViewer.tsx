@@ -9,6 +9,7 @@ import {
   Eye,
   Info,
   Lightbulb,
+  Link2,
   List,
   Megaphone,
   OctagonAlert,
@@ -309,8 +310,9 @@ function makeHeading(
         onClick={() => {
           replaceLocationHash(id);
         }}
-        className={['cursor-pointer', className].filter(Boolean).join(' ')}
+        className={['group relative cursor-pointer', className].filter(Boolean).join(' ')}
       >
+        <HeadingAnchor id={id} />
         {children}
       </Tag>
     );
@@ -329,8 +331,56 @@ function makeHeadingComponents(idsByLine: Map<number, string>) {
 }
 
 // ---------------------------------------------------------------------------
-// CopyLinkButton
+// HeadingAnchor — GitHub-style hover link affordance on rendered headings.
+// Reveals a chain icon on hover/focus; click copies the full deep-link URL to
+// the clipboard and sets the location hash. Sits inside a `group` heading.
 // ---------------------------------------------------------------------------
+
+function headingHref(id: string): string {
+  const { origin, pathname, search } = window.location;
+  return `${origin}${pathname}${search}#${id}`;
+}
+
+function HeadingAnchor({ id }: { id: string }) {
+  const [copied, setCopied] = useState(false);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
+
+  const handleCopy = useCallback(
+    (event: React.MouseEvent) => {
+      // Don't let the click bubble to the heading's own hash handler twice.
+      event.stopPropagation();
+      event.preventDefault();
+      replaceLocationHash(id);
+      copyTextToClipboard(headingHref(id))
+        .then(() => {
+          setCopied(true);
+          if (timeoutRef.current) clearTimeout(timeoutRef.current);
+          timeoutRef.current = setTimeout(() => setCopied(false), 1500);
+        })
+        .catch(() => {});
+    },
+    [id],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
+
+  return (
+    <a
+      href={`#${id}`}
+      onClick={handleCopy}
+      aria-label={copied ? 'Link copied' : 'Copy link to this section'}
+      title={copied ? 'Link copied!' : 'Copy link to this section'}
+      contentEditable={false}
+      className="absolute right-full top-[0.1em] mr-1 inline-flex items-center px-1 text-text-subtle no-underline opacity-0 transition-opacity duration-100 hover:text-accent focus-visible:opacity-100 group-hover:opacity-100"
+    >
+      <Link2 className="h-[0.7em] w-[0.7em]" strokeWidth={2.5} aria-hidden="true" />
+    </a>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // BreadcrumbPath
