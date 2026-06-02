@@ -360,6 +360,48 @@ body::before {
   color: var(--color-text-muted);
   font-style: italic;
 }
+/* GitHub-style alerts ( > [!NOTE] / [!TIP] / [!IMPORTANT] / [!WARNING] / [!CAUTION] ).
+   Tagged by the rehypeGithubAlerts transform; the React blockquote component
+   renders the lucide icon + title. Colors are GitHub's light-mode hues — the KB
+   content panel is always a light surface, so they read correctly as-is. */
+.md-prose .markdown-alert {
+  border-left-width: 0.25rem;
+  border-left-color: var(--alert-color);
+  padding: 0.6em 1em;
+  color: var(--color-text);
+  font-style: normal;
+}
+.md-prose .markdown-alert > :first-child {
+  margin-top: 0;
+}
+.md-prose .markdown-alert > :last-child {
+  margin-bottom: 0;
+}
+.md-prose .markdown-alert .markdown-alert-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  margin: 0 0 0.4em;
+  font-weight: 600;
+  font-style: normal;
+  line-height: 1.2;
+  color: var(--alert-color);
+}
+.md-prose .markdown-alert-note {
+  --alert-color: #0969da;
+}
+.md-prose .markdown-alert-tip {
+  --alert-color: #1a7f37;
+}
+.md-prose .markdown-alert-important {
+  --alert-color: #8250df;
+}
+.md-prose .markdown-alert-warning {
+  --alert-color: #9a6700;
+}
+.md-prose .markdown-alert-caution {
+  --alert-color: #cf222e;
+}
 .md-prose code {
   font-family: var(--font-mono);
   font-size: 0.86em;
