@@ -201,6 +201,17 @@ export async function rotateAgentSession(
   );
 }
 
+// Hard-restart a hung agent. The in-flight item is dropped (not requeued);
+// memory, notes, config, and queued items are preserved. Backend returns 202
+// with a requestId; a 409 ("Agent is disabled. Enable it to run.") surfaces
+// via apiRequest's thrown error if the agent is disabled.
+export async function restartAgent(agentId: string): Promise<{ ok: boolean; requestId: string }> {
+  return apiRequest(
+    `/api/agents/${encodeURIComponent(agentId)}/restart`,
+    jsonInit('POST'),
+  );
+}
+
 export async function fetchAgentActivities(
   agentId: string,
   limit = 100,

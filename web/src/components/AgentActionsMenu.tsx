@@ -6,9 +6,9 @@
  * they appear above everything regardless of containing context.
  */
 import { useEffect, useRef, useState } from 'react';
-import { MoreHorizontal, Power, PowerOff, RotateCcw, Trash2 } from 'lucide-react';
+import { MoreHorizontal, Power, PowerOff, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { disableAgent, enableAgent, removeAgent, rotateAgentSession, fetchAgents, refreshDashboardData } from '@/api/agents';
+import { disableAgent, enableAgent, removeAgent, restartAgent, rotateAgentSession, fetchAgents, refreshDashboardData } from '@/api/agents';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button } from './ui/button';
 import { useConfirm } from '@/hooks/useConfirm';
@@ -135,6 +135,32 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
             >
               <RotateCcw className="h-3.5 w-3.5 shrink-0" />
               Rotate session
+            </button>
+            {/* Restart — recovery for a hung agent. Greyed when disabled: a
+                disabled agent has nothing running to restart. The 409 backstop
+                still surfaces in the confirm modal if state changes under us. */}
+            <button
+              disabled={!enabled}
+              title={!enabled ? 'Agent is disabled. Enable it to run.' : undefined}
+              className="flex min-h-[44px] w-full items-center gap-2.5 px-3 text-left font-sans text-[13px] text-text-muted hover:bg-surface-elevated hover:text-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-muted"
+              onClick={() => {
+                setMenuOpen(false);
+                confirm({
+                  title: 'Restart this agent?',
+                  description:
+                    'Use this only if the agent is hung. It will be forced to stop and start over immediately. Any item it is working on right now is dropped and is not retried, so re-run it manually afterward. Memory, notes, and config are kept; queued items stay queued.',
+                  variant: 'warn',
+                  confirmLabel: 'Restart',
+                  busyLabel: 'Restarting…',
+                  onConfirm: async () => {
+                    await restartAgent(agentId);
+                    refreshDashboardData();
+                  },
+                });
+              }}
+            >
+              <RefreshCw className="h-3.5 w-3.5 shrink-0" />
+              Restart agent
             </button>
             {/* Divider */}
             <div className="my-1 h-px bg-border-soft" />
