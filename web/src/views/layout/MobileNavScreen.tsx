@@ -212,12 +212,12 @@ export default function MobileNavScreen({
                           <img
                             src={agent.slack.avatarUrl}
                             alt=""
-                            className="h-6 w-6 shrink-0 rounded-sm object-cover"
+                            className="h-6 w-6 shrink-0 rounded-lg object-cover ring-1 ring-border-soft"
                             style={{ opacity: enabled ? 1 : 0.45 }}
                           />
                         ) : (
                           <span
-                            className="font-sans flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-[10px] font-bold text-white"
+                            className="font-sans flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold text-white ring-1 ring-border-soft"
                             style={{ background: color, opacity: enabled ? 1 : 0.45 }}
                           >
                             {initial}

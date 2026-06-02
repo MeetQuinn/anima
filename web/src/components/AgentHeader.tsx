@@ -146,11 +146,11 @@ export default function AgentHeader() {
           <img
             src={agent.slack.avatarUrl}
             alt=""
-            className="h-7 w-7 shrink-0 rounded-sm object-cover"
+            className="h-7 w-7 shrink-0 rounded-lg object-cover ring-1 ring-border-soft"
           />
         ) : (
           <span
-            className="font-sans flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-[11px] font-bold text-white"
+            className="font-sans flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold text-white ring-1 ring-border-soft"
             style={{ background: color }}
           >
             {initial}
