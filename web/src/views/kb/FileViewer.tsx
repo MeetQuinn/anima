@@ -23,6 +23,7 @@ import remarkMath from 'remark-math';
 import rehypeRaw from 'rehype-raw';
 import rehypeKatex from 'rehype-katex';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
+import DOMPurify from 'dompurify';
 import 'katex/dist/katex.min.css';
 import { Highlight, themes } from 'prism-react-renderer';
 import { useNavigate } from 'react-router-dom';
@@ -673,18 +674,52 @@ function rehypeGithubAlerts() {
 
 // `mermaid` is heavy (~0.5MB), so it is imported lazily the first time a
 // diagram actually renders — it never enters the main KB bundle otherwise.
-// securityLevel:'strict' makes mermaid escape labels and forbid inline HTML /
-// click handlers, so the SVG we inject from user KB content carries no script
-// surface (it never passes through the markdown sanitize pipeline).
+//
+// SECURITY: the diagram source is untrusted KB content and the rendered SVG is
+// injected via dangerouslySetInnerHTML (it never passes through the markdown
+// sanitize pipeline), so it must be made safe on two independent layers:
+//   1. mermaid: securityLevel:'strict' (strips scripts / click handlers / raw
+//      anchors) AND htmlLabels:false so node labels render as native SVG <text>
+//      instead of <foreignObject> HTML. Strict mode alone is NOT enough — it
+//      still emits <foreignObject> wrappers that can carry <img> and other HTML
+//      from a crafted label (verified), which would load external resources.
+//   2. sanitizeMermaidSvg(): a DOMPurify svg-only pass that drops <foreignObject>
+//      and every embedded-resource / script / link vector outright, so even if a
+//      diagram type ignores htmlLabels:false the injected markup can never load
+//      external content or run code. This is the hard guarantee; htmlLabels:false
+//      is what keeps flowchart labels rendering as real text under that guarantee.
 let mermaidReady: Promise<typeof import('mermaid').default> | null = null;
 function loadMermaid() {
   if (!mermaidReady) {
     mermaidReady = import('mermaid').then(({ default: mermaid }) => {
-      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'neutral' });
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        theme: 'neutral',
+        htmlLabels: false,
+        flowchart: { htmlLabels: false },
+      });
       return mermaid;
     });
   }
   return mermaidReady;
+}
+
+// Strip <foreignObject> (HTML-in-SVG) and every external-resource / script / link
+// vector from mermaid's SVG before it is injected. mermaid's own theme <style>,
+// <path>, <text>, <g>, markers, etc. are preserved by the svg profile, so the
+// diagram still renders fully styled; a malicious HTML label degrades to inert
+// escaped text. Verified against <img src=x onerror=…>, <script>, and
+// click "javascript:…" payloads — none survive.
+function sanitizeMermaidSvg(svg: string): string {
+  return DOMPurify.sanitize(svg, {
+    USE_PROFILES: { svg: true, svgFilters: true },
+    FORBID_TAGS: [
+      'foreignObject', 'img', 'image', 'script', 'iframe', 'object',
+      'embed', 'a', 'audio', 'video', 'source', 'link', 'base',
+    ],
+    FORBID_ATTR: ['href', 'xlink:href', 'src', 'onerror', 'onload', 'onclick'],
+  });
 }
 
 function MermaidBlock({ code }: { code: string }) {
@@ -731,8 +766,8 @@ function MermaidBlock({ code }: { code: string }) {
   return (
     <div
       className="flex justify-center overflow-x-auto px-3 py-3 [&_svg]:max-w-full [&_svg]:h-auto"
-      // mermaid-rendered SVG (securityLevel:'strict' — labels escaped, no inline HTML/scripts)
-      dangerouslySetInnerHTML={{ __html: svg }}
+      // svg-only sanitized (no foreignObject / img / script / event attrs / active links) — see sanitizeMermaidSvg
+      dangerouslySetInnerHTML={{ __html: sanitizeMermaidSvg(svg) }}
     />
   );
 }
