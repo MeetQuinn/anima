@@ -56,22 +56,6 @@ Entries are grouped by day, and while an agent is working the feed follows along
 
 <!-- TODO(screenshot): activity view, Activity lens, showing a few tool steps + one message in/out. Demo data. -->
 
-## Session vitals
-
-The **This session** block on an agent's profile shows how its current working session is doing:
-
-- **Context**: how full the agent's working memory is, as a percentage. When it fills up the agent
-  automatically compacts, so this tells you how close that is. (Some providers do not report it, in
-  which case it shows a dash.)
-- **Compactions**: how many times the session has compacted so far.
-- **Started**, with how long the session has been up.
-- **Latest activity**: when the agent last did something.
-
-The profile also records a few lifetime facts: when the agent was **created**, its **owner**, and how
-many past sessions have been **archived**.
-
-<!-- TODO(screenshot): the This session block (Context gauge + Compactions + Started + Latest activity). Demo data. -->
-
 ## Stepping in
 
 When you need to take the wheel:
@@ -92,9 +76,12 @@ When a restart is needed, agents that are mid-task save their place and pick up 
 off afterward. Nothing in flight is thrown away.
 :::
 
-## Tuning an agent
+## The profile
 
-Everything on the profile is editable in place. The main dials:
+The profile is where you see and change how an agent is set up, and check how its current session is
+doing. It reads from the top down.
+
+The settings at the top are editable in place:
 
 - **Name** and **Role**: how the agent is addressed and what it is responsible for. The role is the
   biggest lever on how useful the agent is. (See [Configuring an agent](./configuring-an-agent.md).)
@@ -103,17 +90,33 @@ Everything on the profile is editable in place. The main dials:
 - **Home**: the folder that holds the agent's memory and notes.
 - **Owner**: the person responsible for the agent.
 
+It also shows a couple of read-only facts: when the agent was **created** and how many past sessions
+have been **archived**.
+
 Changes are saved as soon as you make them, and the agent applies them the next time it is idle. If it
 is mid-item, you will see a note that the change will apply once the current item finishes, so you are
 never left guessing. Changing the provider asks you to confirm, then the agent reloads itself.
 Switching to a different provider starts a fresh session, but MEMORY.md, notes, and activity history
 stay intact.
 
-The **Slack** section shows the workspace and handle the agent posts as. From here you can re-pull the
-agent's avatar from Slack with **Sync avatar from Slack**, or open its Slack app settings to change the
-icon at the source.
+Below that, the **Slack** section shows the workspace and handle the agent posts as. You can re-pull
+the agent's avatar from Slack with **Sync avatar from Slack**, or open its Slack app settings to change
+the icon at the source.
 
 <!-- TODO(screenshot): profile top block (Name / Role / Provider / Home / Owner) with the apply-when-idle notice. Demo data. -->
+
+Further down, the **This session** block shows how the agent's current working session is doing:
+
+- **Context**: how full the agent's working memory is, as a percentage. When it fills up the agent
+  automatically compacts, so this tells you how close that is. (Some providers do not report it, in
+  which case it shows a dash.)
+- **Compactions**: how many times the session has compacted so far.
+- **Started**, with how long the session has been up.
+- **Latest activity**: when the agent last did something.
+
+<!-- TODO(screenshot): the This session block (Context + Compactions + Started + Latest activity). Demo data. -->
+
+Last, the profile lists the agent's **Skills** (see [Skills](./skills.md)).
 
 ## Reminders
 
