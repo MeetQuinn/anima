@@ -76,7 +76,9 @@ function buildFeishuDeliveryPrompt(event: FeishuInboxItem): string {
     `New Feishu message:\n\n${envelope}`,
     [
       'Reply target:',
-      'Use `anima message send` without Slack `--channel` flags to reply to this Feishu message.',
+      `Use \`anima message send --channel ${event.chatId}\` to post back to this Feishu chat.`,
+      `Use \`anima message send --channel ${event.chatId} --thread-ts ${event.messageId}\` to reply in this message's topic.`,
+      'Use `anima message send --channel <chat_id>` to send to an explicit Feishu chat.',
     ].join('\n'),
   ].join('\n\n');
 }

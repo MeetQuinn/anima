@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   feishuReceiveMessageEventFromData,
@@ -7,8 +10,12 @@ import {
   shouldWakeFeishuRuntime,
   type FeishuReceiveMessageEvent,
 } from '../feishu/events.js';
+import { createFeishuMessageClient } from '../feishu/client.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import { messageFromInboxItem } from '../messages/message.projection.js';
+import { runMessageSend } from '../tools/messages.js';
+import { withAnimaHome } from './anima-home.js';
+import type { FeishuConfig } from '../../shared/agent-config.js';
 
 function makeFeishuEvent(overrides: Omit<Partial<FeishuReceiveMessageEvent>, 'message' | 'sender'> & {
   message?: Partial<FeishuReceiveMessageEvent['message']>;
@@ -119,7 +126,12 @@ test('Feishu delivery prompt is platform-aware', () => {
     buildCodeAgentDeliveryPrompt(item),
     [
       'New Feishu message:\n\n[platform=feishu chat=p2p chat_id=oc_test_chat message_id=om_test_message time=2026-06-02T14:20:00.000Z user_id=ou_alice] ou_alice: hello from Feishu',
-      'Reply target:\nUse `anima message send` without Slack `--channel` flags to reply to this Feishu message.',
+      [
+        'Reply target:',
+        'Use `anima message send --channel oc_test_chat` to post back to this Feishu chat.',
+        'Use `anima message send --channel oc_test_chat --thread-ts om_test_message` to reply in this message\'s topic.',
+        'Use `anima message send --channel <chat_id>` to send to an explicit Feishu chat.',
+      ].join('\n'),
     ].join('\n\n'),
   );
 });
@@ -135,3 +147,181 @@ test('Feishu inbox messages project into the message ledger', () => {
   assert.equal(message?.channelDisplayName, 'Feishu DM');
   assert.equal(message?.messageTs, 'om_test_message');
 });
+
+test('Feishu text sends can post ordinary chat messages', async () => {
+  const config: FeishuConfig = {
+    appId: 'cli_test',
+    appSecret: 'secret',
+    connected: true,
+    encryptKey: '',
+    verificationToken: '',
+  };
+  let capturedCreate: unknown;
+
+  const client = createFeishuMessageClient(config, {
+    createClient() {
+      return {
+        im: {
+          message: {
+            async create(input) {
+              capturedCreate = input;
+              return { data: { chat_id: 'oc_test_chat', message_id: 'om_reply' } };
+            },
+            async reply() {
+              throw new Error('unexpected reply call');
+            },
+          },
+        },
+      };
+    },
+  });
+
+  const result = await client.sendText({ chatId: 'oc_test_chat', text: 'hello reply' });
+
+  assert.deepEqual(capturedCreate, {
+    data: {
+      content: JSON.stringify({ text: 'hello reply' }),
+      msg_type: 'text',
+      receive_id: 'oc_test_chat',
+    },
+    params: {
+      receive_id_type: 'chat_id',
+    },
+  });
+  assert.deepEqual(result, {
+    chatId: 'oc_test_chat',
+    messageId: 'om_reply',
+  });
+});
+
+test('Feishu text replies can post in a message topic', async () => {
+  const config: FeishuConfig = {
+    appId: 'cli_test',
+    appSecret: 'secret',
+    connected: true,
+    encryptKey: '',
+    verificationToken: '',
+  };
+  let capturedReply: unknown;
+
+  const client = createFeishuMessageClient(config, {
+    createClient() {
+      return {
+        im: {
+          message: {
+            async create() {
+              throw new Error('unexpected create call');
+            },
+            async reply(input) {
+              capturedReply = input;
+              return { data: { chat_id: 'oc_test_chat', message_id: 'om_reply', thread_id: 'omt_topic' } };
+            },
+          },
+        },
+      };
+    },
+  });
+
+  const result = await client.replyText({
+    messageId: 'om_test_message',
+    replyInThread: true,
+    text: 'topic reply',
+  });
+
+  assert.deepEqual(capturedReply, {
+    data: {
+      content: JSON.stringify({ text: 'topic reply' }),
+      msg_type: 'text',
+      reply_in_thread: true,
+    },
+    path: {
+      message_id: 'om_test_message',
+    },
+  });
+  assert.deepEqual(result, {
+    chatId: 'oc_test_chat',
+    messageId: 'om_reply',
+    threadId: 'omt_topic',
+  });
+});
+
+test('message send can target a Feishu chat explicitly', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-explicit-chat-test-'));
+  const sent: Array<{ chatId: string; text: string }> = [];
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir);
+      await runMessageSend(
+        { agent: 'scout', channel: 'oc_target_chat', text: 'ordinary chat message' },
+        {
+          createFeishuMessageClient() {
+            return {
+              async replyText() {
+                throw new Error('unexpected topic reply');
+              },
+              async sendText(input) {
+                sent.push(input);
+                return { chatId: input.chatId, messageId: 'om_sent' };
+              },
+            };
+          },
+        },
+      );
+    });
+
+    assert.deepEqual(sent, [{ chatId: 'oc_target_chat', text: 'ordinary chat message' }]);
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('message send can target a Feishu topic explicitly', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-explicit-topic-test-'));
+  const replies: Array<{ messageId: string; replyInThread: boolean; text: string }> = [];
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir);
+      await runMessageSend(
+        { agent: 'scout', channel: 'oc_target_chat', text: 'topic message', threadTs: 'om_topic_root' },
+        {
+          createFeishuMessageClient() {
+            return {
+              async replyText(input) {
+                replies.push(input);
+                return { chatId: 'oc_target_chat', messageId: 'om_sent', threadId: 'omt_topic' };
+              },
+              async sendText() {
+                throw new Error('unexpected ordinary send');
+              },
+            };
+          },
+        },
+      );
+    });
+
+    assert.deepEqual(replies, [{ messageId: 'om_topic_root', replyInThread: true, text: 'topic message' }]);
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+async function writeFeishuConfig(configDir: string): Promise<void> {
+  const agentDir = join(configDir, 'agents', 'scout');
+  const homePath = join(configDir, 'home');
+  await mkdir(agentDir, { recursive: true });
+  await mkdir(homePath, { recursive: true });
+  await writeFile(join(configDir, 'config.json'), `${JSON.stringify({}, null, 2)}\n`, 'utf8');
+  await writeFile(
+    join(agentDir, 'config.json'),
+    `${JSON.stringify({
+      feishu: {
+        appId: 'cli_test',
+        appSecret: 'secret',
+      },
+      homePath,
+      id: 'scout',
+      provider: { kind: 'codex-cli', model: 'gpt-5.5' },
+    }, null, 2)}\n`,
+    'utf8',
+  );
+}
