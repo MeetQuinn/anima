@@ -1,5 +1,6 @@
 import type {
   ChoiceResponseInboxItem,
+  FeishuInboxItem,
   InboxItem,
   OnboardingInboxItem,
   ReminderInboxItem,
@@ -59,11 +60,22 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
   if (event.kind === 'choice_response') {
     return buildChoiceResponseDeliveryPrompt(event);
   }
+  if (event.kind === 'feishu') {
+    return buildFeishuDeliveryPrompt(event);
+  }
   if (event.id.startsWith('agent-onboarding:')) {
     return buildLegacyOnboardingSlackDeliveryPrompt(event);
   }
 
   return buildSlackDeliveryPrompt(event);
+}
+
+function buildFeishuDeliveryPrompt(event: FeishuInboxItem): string {
+  const envelope = `${feishuMessageEnvelope(event)} ${feishuActorLabel(event)}: ${event.text}`;
+  return [
+    `New Feishu message:\n\n${envelope}`,
+    'Reply target:\nUse `anima message send` without Slack `--channel` flags to reply to this Feishu message.',
+  ].join('\n\n');
 }
 
 function buildSlackDeliveryPrompt(event: SlackEvent): string {
@@ -167,6 +179,13 @@ function messageEnvelope(event: SlackEvent): string {
   return `[channel=${displayRef}${channelIdPart}${threadPart} message_ts=${event.messageTs} time=${event.receivedAt}${userPart}${userTimePart}]`;
 }
 
+function feishuMessageEnvelope(event: FeishuInboxItem): string {
+  const threadPart = event.threadId ? ` thread_id=${event.threadId}` : '';
+  const actorUserId = event.actor?.openId ?? event.actor?.userId;
+  const userPart = actorUserId ? ` user_id=${actorUserId}` : '';
+  return `[platform=feishu chat=${event.chatType} chat_id=${event.chatId}${threadPart} message_id=${event.messageId} time=${event.receivedAt}${userPart}]`;
+}
+
 function actorLabel(event: SlackEvent): string {
   const { actor } = event;
   const displayName = actor?.displayName ?? actor?.realName;
@@ -177,6 +196,14 @@ function actorLabel(event: SlackEvent): string {
     return `${displayName} (${handle})`;
   }
   return displayName ?? handle ?? (actor?.userId ? `@${actor.userId}` : '@unknown');
+}
+
+function feishuActorLabel(event: FeishuInboxItem): string {
+  return event.actor?.displayName
+    ?? event.actor?.openId
+    ?? event.actor?.userId
+    ?? event.actor?.unionId
+    ?? '@unknown';
 }
 
 function readableOwnerLabel(owner: OnboardingInboxItem['operator']): string {

@@ -379,6 +379,7 @@ async function startAgentFromConfig(agent: AgentConfig, animaHome: string): Prom
     ),
     appToken: server.appToken,
     botToken: server.botToken,
+    feishu: server.feishu,
     ...(server.runtime.idleTimeoutMs !== undefined ? { idleTimeoutMs: server.runtime.idleTimeoutMs } : {}),
   });
 }
@@ -396,6 +397,14 @@ function runtimeFingerprint(agent: AgentConfig): string {
       role: agent.profile.role,
     },
     provider: agent.provider,
+    feishu: {
+      appId: agent.feishu.appId,
+      appSecret: agent.feishu.appSecret,
+      botOpenId: agent.feishu.botOpenId,
+      connected: agent.feishu.connected,
+      encryptKey: agent.feishu.encryptKey,
+      verificationToken: agent.feishu.verificationToken,
+    },
     slack: {
       appToken: agent.slack.appToken,
       botToken: agent.slack.botToken,
@@ -452,6 +461,7 @@ function runtimeServerConfigForAgent(agent: AgentConfig): {
   appToken: string;
   botToken: string;
   config: RuntimeWorkerConfig;
+  feishu: AgentConfig['feishu'];
   runtime: AgentProviderConfig;
 } {
   const slack = agent.slack;
@@ -466,6 +476,7 @@ function runtimeServerConfigForAgent(agent: AgentConfig): {
     appToken,
     botToken,
     config,
+    feishu: agent.feishu,
     runtime,
   };
 }

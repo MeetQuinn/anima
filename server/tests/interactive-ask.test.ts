@@ -319,6 +319,13 @@ async function writeAgentConfig(
     ...(overrides.operator ? { operator: overrides.operator } : {}),
     profile: { displayName: 'Scout', role: 'Engineering agent' },
     provider: { kind: 'codex-cli', model: 'gpt-5.3-codex' },
+    feishu: {
+      appId: '',
+      appSecret: '',
+      connected: false,
+      encryptKey: '',
+      verificationToken: '',
+    },
     slack: {
       appToken: overrides.slack?.appToken ?? '',
       botToken: overrides.slack?.botToken ?? '',

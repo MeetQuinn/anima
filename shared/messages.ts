@@ -52,6 +52,7 @@ export interface AgentMessageRecord {
   messageTs?: string;
   optionLabel?: string;
   permalink?: string;
+  platform?: string;
   question?: string;
   reaction?: AgentMessageReaction;
   reminderId?: string;

@@ -3,6 +3,7 @@ import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { InboxSubscriber } from '../inbox/subscriber.js';
 import { addProcessingReaction, removeProcessingReactions, slackReactionClient } from './processing-reactions.js';
 import type { AgentRuntime } from '../providers/contract.js';
+import type { FeishuConfig } from '../../shared/agent-config.js';
 import { AgentRuntimeWorker, type AgentRuntimeWorkerCloseOptions } from './runtime-worker.js';
 import type { RuntimeWorkerConfig } from './types.js';
 import { recordLifetimeTokenUsageForItem } from './usage.js';
@@ -11,6 +12,7 @@ interface RunningAgentOptions extends RuntimeWorkerConfig {
   agentRuntime: AgentRuntime;
   appToken: string;
   botToken: string;
+  feishu?: FeishuConfig;
   idleTimeoutMs?: number;
 }
 
@@ -42,6 +44,7 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
     agentRuntimeKind: options.agentRuntime.kind,
     appToken: options.appToken,
     botToken: options.botToken,
+    ...(options.feishu ? { feishu: options.feishu } : {}),
     queue,
   });
   try {

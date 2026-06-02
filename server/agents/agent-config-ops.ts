@@ -4,6 +4,7 @@ import { isAbsolute, resolve } from 'node:path';
 
 import {
   ANIMA_MANAGED_PROVIDER_ENV_KEYS,
+  FeishuConfig,
   AgentProviderConfig,
   agentConfigSchema,
   agentIdFromName,
@@ -49,6 +50,7 @@ export function agentConfigFromCreateInput(input: AgentCreateRequest): AgentConf
       role: input.role,
     },
     provider: AgentProviderConfig.parse(input.provider),
+    feishu: FeishuConfig.parse({}),
     slack: {
       appToken: '',
       botToken: '',
@@ -138,6 +140,7 @@ function isAnimaManagedProviderEnvKey(key: string): boolean {
 export function redactAgentConfig(agent: AgentConfig): AgentConfig {
   return {
     ...agent,
+    feishu: { ...agent.feishu, appSecret: '', encryptKey: '', verificationToken: '' },
     provider: redactProviderEnv(agent.provider),
     slack: { ...agent.slack, appToken: '', botToken: '' },
   };

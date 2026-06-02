@@ -11,6 +11,7 @@ const groups = {
     'agent-seed-memory.test.js',
     'config.test.js',
     'default-skills.test.js',
+    'feishu.test.js',
     'inbox.test.js',
     'interactive-ask.test.js',
     'messages.test.js',
