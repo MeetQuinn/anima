@@ -8,6 +8,7 @@ import type { WebClient } from '@slack/web-api';
 import { SlackProfileResolver } from '../inbox/slack-profiles.js';
 import { SlackWorkspaceDirectoryService } from '../slack/workspace-directory.service.js';
 import { resolveSlackChannelArgument } from '../tools/slack-channel-resolver.js';
+import { mentionWarningsForTarget, slackTextForPostMessage } from '../tools/slack-message-mentions.js';
 import {
   extractReadableSlackChannelMentions,
   extractReadableSlackUserMentions,
@@ -67,6 +68,33 @@ test('Slack text helpers convert raw user ids outside code spans', () => {
     replaceReadableSlackUserMentions('cc `please @alice` and @alice', new Map([['alice', 'U123']])),
     'cc `please @alice` and <@U123>',
   );
+});
+
+test('Slack message mentions treat generic placeholders as literal text', async () => {
+  const client = fakeSlackApi({
+    users: {
+      list: async () => ({
+        members: [{ id: 'U123', name: 'alice', profile: { display_name: 'Alice' } }],
+        ok: true,
+      }),
+    },
+  });
+
+  const slackText = await slackTextForPostMessage({
+    client,
+    text: 'Use "@mention" as literal text, cc @alice, and still flag @missing.',
+  });
+  assert.equal(slackText.text, 'Use "@mention" as literal text, cc <@U123>, and still flag @missing.');
+  assert.deepEqual(slackText.resolved, [{ id: 'U123', label: '@alice', type: 'user' }]);
+  assert.deepEqual(slackText.unresolved.map((mention) => mention.label), ['@missing']);
+
+  const warnings = await mentionWarningsForTarget({
+    channelId: 'D123',
+    client,
+    slackText,
+    target: { channelDisplayName: 'DM with @alice', channelKind: 'dm' },
+  });
+  assert.deepEqual(warnings, ['@missing was sent as plain text because it did not match a Slack user.']);
 });
 
 test('Slack workspace directory resolves username and display name handles', async () => {
