@@ -13,6 +13,11 @@ import { resolveAnimaHome } from '../anima-home.js';
 import { errorMessage } from '../ids.js';
 import { createAgentRuntime } from '../providers/factory.js';
 import type { AgentProviderConfig } from '../providers/contract.js';
+import {
+  FEISHU_OPEN_API_BASE_URL,
+  fetchFeishuTenantAccessToken,
+  type FeishuTenantAccessToken,
+} from '../feishu/client.js';
 import { createSlackWebClient } from '../slack/client.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
 import {
@@ -359,6 +364,7 @@ async function startAgentFromConfig(agent: AgentConfig, animaHome: string): Prom
   await validateRunnableAgentConfig(agent);
   const server = runtimeServerConfigForAgent(agent);
   await validateSlackConnectionForStart(agent.id, server);
+  const managedEnv = await managedProviderEnvForAgent(agent, animaHome, server.botToken);
   console.log(
     [
       `Starting Anima agent ${server.config.agentId}.`,
@@ -370,12 +376,7 @@ async function startAgentFromConfig(agent: AgentConfig, animaHome: string): Prom
   return startRunningAgent({
     ...server.config,
     agentRuntime: createAgentRuntime(
-      runtimeWithEnv(server.runtime, {
-        ANIMA_HOME: animaHome,
-        ANIMA_RUNTIME_HOME: animaHome,
-        ANIMA_SLACK_BOT_TOKEN: server.botToken,
-        SLACK_BOT_TOKEN: server.botToken,
-      }),
+      runtimeWithEnv(server.runtime, managedEnv),
     ),
     appToken: server.appToken,
     botToken: server.botToken,
@@ -479,6 +480,33 @@ function runtimeServerConfigForAgent(agent: AgentConfig): {
     feishu: agent.feishu,
     runtime,
   };
+}
+
+export async function managedProviderEnvForAgent(
+  agent: AgentConfig,
+  animaHome: string,
+  botToken: string,
+  deps: {
+    fetchFeishuTenantAccessToken?: (config: AgentConfig['feishu']) => Promise<FeishuTenantAccessToken>;
+  } = {},
+): Promise<Record<string, string>> {
+  const env: Record<string, string> = {
+    ANIMA_HOME: animaHome,
+    ANIMA_RUNTIME_HOME: animaHome,
+    ANIMA_SLACK_BOT_TOKEN: botToken,
+    SLACK_BOT_TOKEN: botToken,
+  };
+  if (!agent.feishu.connected) return env;
+
+  env.FEISHU_API_BASE_URL = FEISHU_OPEN_API_BASE_URL;
+  env.FEISHU_APP_ID = agent.feishu.appId;
+  env.FEISHU_APP_SECRET = agent.feishu.appSecret;
+  if (agent.feishu.botOpenId) env.FEISHU_BOT_OPEN_ID = agent.feishu.botOpenId;
+
+  const token = await (deps.fetchFeishuTenantAccessToken ?? fetchFeishuTenantAccessToken)(agent.feishu);
+  env.FEISHU_TENANT_ACCESS_TOKEN = token.tenantAccessToken;
+  if (token.expiresAt) env.FEISHU_TENANT_ACCESS_TOKEN_EXPIRES_AT = token.expiresAt;
+  return env;
 }
 
 function runtimeWorkerConfigForAgent(agent: AgentConfig): RuntimeWorkerConfig {

@@ -1,6 +1,9 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 
 import type { FeishuConfig } from '../../shared/agent-config.js';
+import { asRecord, numberField, stringField } from '../json.js';
+
+export const FEISHU_OPEN_API_BASE_URL = 'https://open.feishu.cn/open-apis';
 
 export interface FeishuTextSendInput {
   chatId: string;
@@ -22,6 +25,31 @@ export interface FeishuTextSendResult {
 export interface FeishuMessageClient {
   replyText(input: FeishuTextReplyInput): Promise<FeishuTextSendResult>;
   sendText(input: FeishuTextSendInput): Promise<FeishuTextSendResult>;
+}
+
+export interface FeishuTenantAccessToken {
+  expiresAt?: string;
+  tenantAccessToken: string;
+}
+
+type FetchLike = (
+  url: string,
+  init: {
+    body: string;
+    headers: Record<string, string>;
+    method: 'POST';
+  },
+) => Promise<{
+  json(): Promise<unknown>;
+  ok: boolean;
+  status: number;
+  text(): Promise<string>;
+}>;
+
+interface FeishuTenantAccessTokenDeps {
+  apiBaseUrl?: string;
+  fetch?: FetchLike;
+  nowMs?: () => number;
 }
 
 interface FeishuSdkMessageCreateInput {
@@ -65,6 +93,52 @@ interface FeishuSdkClient {
 
 interface FeishuMessageClientDeps {
   createClient?(config: FeishuConfig): FeishuSdkClient;
+}
+
+export async function fetchFeishuTenantAccessToken(
+  config: FeishuConfig,
+  deps: FeishuTenantAccessTokenDeps = {},
+): Promise<FeishuTenantAccessToken> {
+  if (!config.appId || !config.appSecret) {
+    throw new Error('Feishu appId and appSecret are required to mint a tenant_access_token');
+  }
+  const fetchImpl: FetchLike = deps.fetch ?? ((url, init) => fetch(url, init));
+  const response = await fetchImpl(
+    `${trimTrailingSlash(deps.apiBaseUrl ?? FEISHU_OPEN_API_BASE_URL)}/auth/v3/tenant_access_token/internal`,
+    {
+      body: JSON.stringify({
+        app_id: config.appId,
+        app_secret: config.appSecret,
+      }),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Feishu tenant_access_token request failed with HTTP ${response.status}: ${await response.text()}`);
+  }
+
+  const payload = asRecord(await response.json());
+  const data = asRecord(payload?.data);
+  const code = numberField(payload, 'code');
+  if (code !== undefined && code !== 0) {
+    throw new Error(`Feishu tenant_access_token request failed: ${stringField(payload, 'msg') ?? `code ${code}`}`);
+  }
+  const tenantAccessToken = stringField(payload, 'tenant_access_token')
+    ?? stringField(data, 'tenant_access_token');
+  if (!tenantAccessToken) {
+    throw new Error('Feishu tenant_access_token response did not include tenant_access_token');
+  }
+  const expireSeconds = numberField(payload, 'expire') ?? numberField(data, 'expire');
+  const expiresAt = expireSeconds !== undefined
+    ? new Date((deps.nowMs?.() ?? Date.now()) + expireSeconds * 1000).toISOString()
+    : undefined;
+  return {
+    ...(expiresAt ? { expiresAt } : {}),
+    tenantAccessToken,
+  };
 }
 
 export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMessageClientDeps = {}): FeishuMessageClient {
@@ -133,4 +207,8 @@ export function createFeishuWsClient(config: FeishuConfig): lark.WSClient {
     domain: lark.Domain.Feishu,
     source: 'anima',
   });
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, '');
 }
