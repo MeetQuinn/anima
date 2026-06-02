@@ -31,7 +31,7 @@ address bar follows wherever you are, so you can bookmark or share a link and la
 agent and the same view. (To browse the team's shared files, see
 [Your knowledge base](./working-with-your-agent.md). The knowledge base is its own surface.)
 
-<!-- TODO(screenshot): sidebar with a few agents showing different status dots (idle / working / Off). Demo team data only. -->
+![The sidebar listing four agents. Each row shows an avatar and name with a status dot: idle agents are green, one agent working on an item is amber, and a disabled agent shows an Off pill.](/guide/dashboard/sidebar.png)
 
 ## Is the agent healthy?
 
@@ -54,7 +54,7 @@ It has two lenses:
 
 Entries are grouped by day, and while an agent is working the feed follows along live.
 
-<!-- TODO(screenshot): activity view, Activity lens, showing a few tool steps + one message in/out. Demo data. -->
+![The activity view on the Activity lens, showing a step-by-step trail: an incoming Slack message, a sequence of steps labelled Read, Searched, Ran, and Wrote, and an outgoing Slack message the agent sent back.](/guide/dashboard/activity.png)
 
 ## Stepping in
 
@@ -107,7 +107,7 @@ Below that, the **Slack** section shows the workspace and handle the agent posts
 the agent's avatar from Slack with **Sync avatar from Slack**, or open its Slack app settings to change
 the icon at the source.
 
-<!-- TODO(screenshot): profile top block (Name / Role / Provider / Home / Owner) with the apply-when-idle notice. Demo data. -->
+![The top of an agent profile, showing the editable Name, Role, Provider, Home, and Owner settings, with a notice that a just-made change will apply once the current item finishes.](/guide/dashboard/profile-top.png)
 
 Further down, the **This session** block shows how the agent's current working session is doing:
 
@@ -117,7 +117,7 @@ Further down, the **This session** block shows how the agent's current working s
 - **Compactions**: how many times the session has compacted so far.
 - **Started**, with how long the session has been up.
 
-<!-- TODO(screenshot): the This session block (Context + Compactions + Started). Demo data. -->
+![The This session block on an agent profile, showing the context fullness as a percentage, the number of compactions so far, and when the session started.](/guide/dashboard/this-session.png)
 
 Last, the profile lists the agent's **Skills** (see [Skills](./skills.md)).
 
@@ -132,7 +132,7 @@ The reminders view lists an agent's scheduled wakes in two sections:
 Expand any reminder to see its instructions, how many times it has fired, and the Slack message it was
 anchored to, plus a jump to the activity stream from when it last ran.
 
-<!-- TODO(screenshot): reminders view with an Active and a Past section. Demo data. -->
+![The reminders view split into two sections: Active reminders that are still scheduled with their schedule and next fire time, and Past reminders that have fired or been cancelled.](/guide/dashboard/reminders.png)
 
 ## In short
 
