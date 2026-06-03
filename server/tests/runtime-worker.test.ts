@@ -223,7 +223,7 @@ test('runtime worker appends queued follow-up messages into an active runtime', 
     await waitFor(() => runtime.followups.length === 1);
     assert.equal(runtime.followups[0]?.activeItemId, first.ctx.item.id);
     assert.equal(runtime.followups[0]?.itemId, second.ctx.item.id);
-    await waitForInboxItemStatus('scout', second.ctx.item.id, 'completed');
+    await waitForInboxItemAppendedTo('scout', second.ctx.item.id, first.ctx.item.id);
     await waitFor(() => reactionCalls.includes('add:D-user:1770000011.000001:eyes'));
     assert.deepEqual(reactionCalls, [
       'add:D-user:1770000010.000001:eyes',
@@ -246,7 +246,7 @@ test('runtime worker appends queued follow-up messages into an active runtime', 
     await waitFor(() => runtime.followups.length === 2);
     assert.equal(runtime.followups[1]?.activeItemId, first.ctx.item.id);
     assert.equal(runtime.followups[1]?.itemId, third.ctx.item.id);
-    await waitForInboxItemStatus('scout', third.ctx.item.id, 'completed');
+    await waitForInboxItemAppendedTo('scout', third.ctx.item.id, first.ctx.item.id);
     await waitFor(() => reactionCalls.includes('add:D-user:1770000012.000001:eyes'));
     assert.deepEqual(reactionCalls, [
       'add:D-user:1770000010.000001:eyes',
@@ -258,6 +258,8 @@ test('runtime worker appends queued follow-up messages into an active runtime', 
     runtime.finishNext();
     assert.equal(await drain, 1);
     assert.equal((await queueFor('scout').listRunnable()).find((item) => item.id === first.ctx.item.id)?.handling.status, 'completed');
+    assert.equal((await queueFor('scout').find(second.ctx.item.id))?.handling.status, 'completed');
+    assert.equal((await queueFor('scout').find(third.ctx.item.id))?.handling.status, 'completed');
     await waitFor(() => settledTurnIds.length === 3);
     assert.deepEqual(reactionCalls, [
       'add:D-user:1770000010.000001:eyes',
@@ -330,11 +332,12 @@ test('runtime worker appends newly queued inbound follow-ups into an active runt
     assert.equal(runtime.followups[0]?.itemId, second.ctx.item.id);
     await waitFor(() => followupSignals.length === 1);
     assert.deepEqual(followupSignals, [`${first.ctx.item.id}:${second.ctx.item.id}`]);
-    await waitForInboxItemStatus('scout', second.ctx.item.id, 'completed');
+    await waitForInboxItemAppendedTo('scout', second.ctx.item.id, first.ctx.item.id);
 
     runtime.finishNext();
     assert.equal(await drain, 1);
     assert.equal((await queueFor('scout').find(first.ctx.item.id))?.handling.status, 'completed');
+    assert.equal((await queueFor('scout').find(second.ctx.item.id))?.handling.status, 'completed');
     });
   } finally {
     await worker?.close();
@@ -395,6 +398,68 @@ test('runtime worker queues inbound work while active when follow-up append is r
     assert.equal(await drain, 2);
     assert.equal((await queueFor('scout').find(first.ctx.item.id))?.handling.status, 'completed');
     assert.equal((await queueFor('scout').find(second.ctx.item.id))?.handling.status, 'completed');
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker requeues appended follow-ups when the parent turn fails', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-worker-followup-parent-failure-test-'));
+  const runtime = new FailingFollowupRuntime();
+  const coordinator = ({
+    agentId: 'scout',
+    stateDir,
+  });
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+    worker = new AgentRuntimeWorker({
+      agentId: 'scout',
+      agentRuntime: runtime,
+      queue: queueFor('scout'),
+      pollIntervalMs: 10_000,
+      stateDir,
+      workerId: 'test-worker',
+    }, silentLogger);
+    const first = await enqueueInbox(
+      makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-followup-failure-first',
+        teamId: 'T-demo',
+        text: 'first',
+        ts: '1770000010.000001',
+        userId: 'U1',
+      }),
+      coordinator,
+    );
+    const drain = worker.drainOnce();
+    await waitFor(() => runtime.calls.length === 1);
+
+    const second = await enqueueInbox(
+      makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-followup-failure-second',
+        teamId: 'T-demo',
+        text: 'second',
+        ts: '1770000011.000001',
+        userId: 'U1',
+      }),
+      coordinator,
+    );
+
+    await waitFor(() => runtime.followups.length === 1);
+    await waitForInboxItemAppendedTo('scout', second.ctx.item.id, first.ctx.item.id);
+
+    runtime.failNext();
+    assert.equal(await drain, 2);
+    assert.equal((await queueFor('scout').find(first.ctx.item.id))?.handling.status, 'failed');
+    assert.equal(runtime.calls[1]?.itemId, second.ctx.item.id);
+    const followup = await queueFor('scout').find(second.ctx.item.id);
+    assert.equal(followup?.handling.status, 'completed');
+    assert.equal(followup?.handling.appendedToItemId, undefined);
+    assert.equal(followup?.handling.appendedAt, undefined);
     });
   } finally {
     await worker?.close();
@@ -657,6 +722,36 @@ class FollowupRuntime extends ControlledRuntime {
   }
 }
 
+class FailingFollowupRuntime implements AgentRuntime {
+  readonly kind = 'failing-followup';
+  readonly calls: AgentRuntimeInput[] = [];
+  readonly followups: AgentRuntimeFollowupInput[] = [];
+  private readonly rejecters: Array<(error: unknown) => void> = [];
+
+  async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
+    this.calls.push(input);
+    if (this.calls.length > 1) return { text: `completed ${input.itemId}` };
+    return new Promise((_, reject) => {
+      this.rejecters.push(reject);
+    });
+  }
+
+  async appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<{ accepted: boolean; text: string }> {
+    this.followups.push(input);
+    return { accepted: true, text: `appended ${input.itemId}` };
+  }
+
+  async close(): Promise<void> {
+    while (this.rejecters.length > 0) this.rejecters.shift()?.(new Error('closed'));
+  }
+
+  failNext(): void {
+    const reject = this.rejecters.shift();
+    assert.ok(reject, 'Expected an active runtime call');
+    reject(new Error('parent turn failed'));
+  }
+}
+
 class RejectingFollowupRuntime extends ControlledRuntime {
   readonly followups: AgentRuntimeFollowupInput[] = [];
 
@@ -698,6 +793,25 @@ async function waitForInboxItemStatus(
     if (item?.handling.status === status) return;
     if (Date.now() - startedAt > timeoutMs) {
       throw new Error(`Timed out waiting for item ${itemId} to reach ${status}; current status is ${item?.handling.status ?? 'missing'}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+async function waitForInboxItemAppendedTo(
+  agentId: string,
+  itemId: string,
+  parentItemId: string,
+  timeoutMs = 1000,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (true) {
+    const item = await queueFor(agentId).find(itemId);
+    if (item?.handling.status === 'running' && item.handling.appendedToItemId === parentItemId) return;
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error(
+        `Timed out waiting for item ${itemId} to append to ${parentItemId}; current status is ${item?.handling.status ?? 'missing'}, appendedToItemId=${item?.handling.appendedToItemId ?? 'missing'}`,
+      );
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }

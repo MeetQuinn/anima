@@ -112,6 +112,18 @@ export class WakeQueueStore {
     }));
   }
 
+  async completeAppendedTo(parentItemId: string): Promise<InboxItem[]> {
+    return this.updateAppendedTo(parentItemId, (item, now) => ({
+      ...item,
+      handling: {
+        ...item.handling,
+        completedAt: now,
+        status: 'completed',
+        updatedAt: now,
+      },
+    }));
+  }
+
   async claimQueued(input: {
     itemId: string;
     workerId: string;
@@ -133,6 +145,18 @@ export class WakeQueueStore {
 
   async fail(itemId: string): Promise<void> {
     await this.replaceItemWithTimestamp(itemId, (item, now) => ({
+      ...item,
+      handling: {
+        ...item.handling,
+        failedAt: now,
+        status: 'failed',
+        updatedAt: now,
+      },
+    }));
+  }
+
+  async failAppendedTo(parentItemId: string): Promise<InboxItem[]> {
+    return this.updateAppendedTo(parentItemId, (item, now) => ({
       ...item,
       handling: {
         ...item.handling,
@@ -178,6 +202,13 @@ export class WakeQueueStore {
     await this.replaceItemWithTimestamp(itemId, (item, now) => requeuedItem(item, now, options));
   }
 
+  async requeueAppendedTo(
+    parentItemId: string,
+    options: { resumeReason?: 'runtime_restart' } = {},
+  ): Promise<InboxItem[]> {
+    return this.updateAppendedTo(parentItemId, (item, now) => requeuedItem(item, now, options));
+  }
+
   async requestStop(itemId: string): Promise<InboxItem> {
     const now = nowIso();
     const item = await this.findOrThrow(itemId);
@@ -203,6 +234,27 @@ export class WakeQueueStore {
       handling: {
         ...item.handling,
         startedAt: input.startedAt ?? item.handling.startedAt ?? timestamp,
+        status: 'running',
+        updatedAt: timestamp,
+        workerId: input.workerId,
+      },
+    });
+  }
+
+  async markAppended(input: {
+    itemId: string;
+    parentItemId: string;
+    workerId: string;
+  }): Promise<InboxItem> {
+    const timestamp = nowIso();
+    const item = await this.findOrThrow(input.itemId);
+    return this.replaceItem({
+      ...item,
+      handling: {
+        ...item.handling,
+        appendedAt: timestamp,
+        appendedToItemId: input.parentItemId,
+        startedAt: item.handling.startedAt ?? timestamp,
         status: 'running',
         updatedAt: timestamp,
         workerId: input.workerId,
@@ -241,6 +293,28 @@ export class WakeQueueStore {
     if (!item) throw new Error(`Wake queue item not found: ${itemId}`);
     return item;
   }
+
+  private async updateAppendedTo(
+    parentItemId: string,
+    update: (item: InboxItem, now: string) => InboxItem,
+  ): Promise<InboxItem[]> {
+    const now = nowIso();
+    const current = await this.store.read();
+    const updated: InboxItem[] = [];
+    const next: WakeQueueFile = {};
+    for (const [itemId, rawItem] of Object.entries(current)) {
+      const item = InboxItemSchema.parse(rawItem);
+      if (item.handling.status === 'running' && item.handling.appendedToItemId === parentItemId) {
+        const nextItem = InboxItemSchema.parse(update(item, now));
+        next[itemId] = nextItem;
+        updated.push(nextItem);
+      } else {
+        next[itemId] = item;
+      }
+    }
+    if (updated.length > 0) await this.store.write(next);
+    return updated;
+  }
 }
 
 function itemSortAt(item: InboxItem): string {
@@ -261,6 +335,8 @@ function requeuedItem(
   const handling = { ...item.handling };
   delete handling.startedAt;
   delete handling.workerId;
+  delete handling.appendedAt;
+  delete handling.appendedToItemId;
   delete handling.settledAt;
   delete handling.drainRequestedAt;
   delete handling.drainTimeoutMs;

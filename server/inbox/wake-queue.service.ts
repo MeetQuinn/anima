@@ -1,4 +1,4 @@
-import type { InboxItem } from '../../shared/inbox.js';
+import { isPrimaryRunningInboxItem, type InboxItem } from '../../shared/inbox.js';
 import { errorMessage } from '../ids.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import { WakeQueueStore } from '../storage/schema/wake-queue.store.js';
@@ -59,7 +59,7 @@ export class WakeQueueService {
 
   async claimNext(workerId: string): Promise<InboxItem | undefined> {
     const items = await this.listRunnable();
-    if (items.some((item) => item.handling.status === 'running')) return undefined;
+    if (items.some((item) => isPrimaryRunningInboxItem(item))) return undefined;
     return this.claimFirstQueued(workerId, items);
   }
 
@@ -100,13 +100,32 @@ export class WakeQueueService {
     await this.pruneOldSettled();
   }
 
+  async completeAppendedTo(parentItemId: string): Promise<InboxItem[]> {
+    const items = await this.store.completeAppendedTo(parentItemId);
+    await this.pruneOldSettled();
+    return items;
+  }
+
   async fail(itemId: string): Promise<void> {
     await this.store.fail(itemId);
     await this.pruneOldSettled();
   }
 
+  async failAppendedTo(parentItemId: string): Promise<InboxItem[]> {
+    const items = await this.store.failAppendedTo(parentItemId);
+    await this.pruneOldSettled();
+    return items;
+  }
+
   requeue(itemId: string, options: { resumeReason?: 'runtime_restart' } = {}): Promise<void> {
     return this.store.requeue(itemId, options);
+  }
+
+  requeueAppendedTo(
+    parentItemId: string,
+    options: { resumeReason?: 'runtime_restart' } = {},
+  ): Promise<InboxItem[]> {
+    return this.store.requeueAppendedTo(parentItemId, options);
   }
 
   requestStop(itemId: string): Promise<InboxItem> {
@@ -130,6 +149,14 @@ export class WakeQueueService {
     workerId: string;
   }): Promise<InboxItem> {
     return this.store.markRunning(input);
+  }
+
+  markAppended(input: {
+    itemId: string;
+    parentItemId: string;
+    workerId: string;
+  }): Promise<InboxItem> {
+    return this.store.markAppended(input);
   }
 
   async markSettled(input: {

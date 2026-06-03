@@ -105,7 +105,11 @@ async function recordFollowupAppendSuccess(
   text: string | undefined,
 ): Promise<void> {
   input.onFollowupAccepted();
-  await input.queue.complete(context.item.id);
+  await input.queue.markAppended({
+    itemId: context.item.id,
+    parentItemId: input.activeContext.item.id,
+    workerId: input.workerId,
+  });
   await input.onFollowupAppended(context, text);
   input.logger.log(JSON.stringify({
     activeItemId: input.activeContext.item.id,

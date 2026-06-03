@@ -1,5 +1,6 @@
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { WakeQueueService, type InboxItem } from '../inbox/wake-queue.service.js';
+import { isAppendedRunningInboxItem } from '../../shared/inbox.js';
 import { clearRestartDrain, requestRestartDrain } from './restart-drain.js';
 
 export const DEFAULT_RESTART_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -111,6 +112,7 @@ export async function listRestartBlockers(options: {
   for (const agentId of await defaultAgentRegistryService.listAgentIds()) {
     for (const item of await new WakeQueueService(agentId).list()) {
       if (!statuses.has(item.handling.status)) continue;
+      if (isAppendedRunningInboxItem(item)) continue;
       blockers.push({ agentId, item });
     }
   }

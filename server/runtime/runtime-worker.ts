@@ -148,6 +148,7 @@ export class AgentRuntimeWorker {
     const handle = this.registerActiveItem(item.id, itemAbort);
     let followupLoop: Promise<void> | undefined;
     let followupError: unknown;
+    let appendedFollowupsSettled = false;
     try {
       context = await runtimeContextForItemId(item.id, this.options);
       const activeContext = context;
@@ -212,6 +213,8 @@ export class AgentRuntimeWorker {
         workerId: this.workerId,
       }, null, 2));
       await this.queue.complete(item.id);
+      await this.queue.completeAppendedTo(item.id);
+      appendedFollowupsSettled = true;
     } catch (error) {
       if (!itemAbort.signal.aborted) itemAbort.abort('failed');
       await followupLoop;
@@ -221,7 +224,7 @@ export class AgentRuntimeWorker {
       const abortReason = itemAbort.signal.aborted ? abortReasonOf(itemAbort.signal) : undefined;
       let itemSettled = false;
       if (abortReason && context) {
-        await this.settleAbortedItem(context, abortReason);
+        appendedFollowupsSettled = await this.settleAbortedItem(context, abortReason);
         itemSettled = true;
       } else if (context && !runtimeFailureRecorded) {
         await recordFinalRuntimeFailure({
@@ -231,7 +234,10 @@ export class AgentRuntimeWorker {
           retryAttempts: 0,
         });
       }
-      if (!itemSettled) await this.queue.fail(item.id);
+      if (!itemSettled) {
+        await this.queue.fail(item.id);
+        await this.queue.requeueAppendedTo(item.id);
+      }
       if (abortReason === 'restart_drain') {
         this.logger.log(JSON.stringify({
           agentRuntime: this.options.agentRuntime.kind,
@@ -251,7 +257,12 @@ export class AgentRuntimeWorker {
         });
       }
       this.releaseActiveItem();
-      if (context) await this.notifySettledItems([context, ...handle.appendedFollowups]);
+      if (context) {
+        await this.notifySettledItems([
+          context,
+          ...(appendedFollowupsSettled ? handle.appendedFollowups : []),
+        ]);
+      }
     }
   }
 
@@ -320,7 +331,7 @@ export class AgentRuntimeWorker {
     }
   }
 
-  private async settleAbortedItem(context: RuntimeItemContext, abortReason: ItemStopReason): Promise<void> {
+  private async settleAbortedItem(context: RuntimeItemContext, abortReason: ItemStopReason): Promise<boolean> {
     await recordRuntimeAborted(
       { agentId: this.options.agentId },
       abortReason,
@@ -328,9 +339,12 @@ export class AgentRuntimeWorker {
     );
     if (abortReason === 'restart_drain') {
       await this.queue.requeue(context.item.id, { resumeReason: 'runtime_restart' });
-      return;
+      await this.queue.requeueAppendedTo(context.item.id);
+      return false;
     }
     await this.queue.fail(context.item.id);
+    await this.queue.failAppendedTo(context.item.id);
+    return true;
   }
 }
 
