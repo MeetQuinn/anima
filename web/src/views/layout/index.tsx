@@ -129,7 +129,13 @@ export default function Layout() {
         />
       ) : (
         /* ── Desktop + Mobile Screen 2: agent detail (+ kb) ── */
-        <div className="flex h-dvh w-screen overflow-hidden bg-page text-text">
+        /* The dark `bg-page` spine is the desktop sidebar backdrop. On mobile the
+           sidebar is hidden and `<main>` (paper) is the only visible surface, so the
+           dark shell has no purpose there — and during the iOS / in-app-webview
+           toolbar transition it briefly peeks through the bottom dvh gap as a black
+           band (same family as the #128 html/body fix, second source). Keep it paper
+           on mobile, dark spine on desktop. */
+        <div className="flex h-dvh w-screen overflow-hidden bg-surface text-text md:bg-page">
           <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-surface">
             {/* Fixed mobile top bar (Screen 2 only; returns null when no agent) */}
