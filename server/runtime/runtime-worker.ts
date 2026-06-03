@@ -20,6 +20,7 @@ import {
 import { startActiveRunControl, type ActiveRunHandle } from './active-run-control.js';
 import { appendQueuedFollowupsUntilFinished } from './followup-appender.js';
 import { recordFinalRuntimeFailure, runProviderWithCrashRetries } from './provider-runner.js';
+import type { AgentRuntimeHandleSnapshot } from '../../shared/snapshot.js';
 
 // Executor for one agent: claims queued inbox items, runs the provider runtime,
 // appends follow-up items into the active run, and settles item lifecycle state.
@@ -92,6 +93,21 @@ export class AgentRuntimeWorker {
 
   isActive(): boolean {
     return Boolean(this.activeItem);
+  }
+
+  health(): AgentRuntimeHandleSnapshot {
+    const active = this.activeItem;
+    const provider = this.options.agentRuntime.health?.();
+    return {
+      ...(active ? {
+        activeItemId: active.itemId,
+        activeItemStartedAt: isoFromMs(active.startedAt),
+      } : {}),
+      processId: process.pid,
+      ...(provider?.child ? { providerChild: provider.child } : {}),
+      providerChildExpected: provider?.childExpected ?? false,
+      workerId: this.workerId,
+    };
   }
 
   private tick(): void {

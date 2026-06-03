@@ -6,6 +6,7 @@ import { parseLocation } from '@/lib/url-state';
 import { stopItem, fetchAgents, fetchAgentStatuses, refreshDashboardData } from '@/api/agents';
 import { agentColor, initialOf } from '@/lib/avatars';
 import AgentActionsMenu from '@/components/AgentActionsMenu';
+import { AgentHealthIndicator } from '@/components/AgentHealthIndicator';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
 
@@ -46,6 +47,7 @@ export default function MobileTopBar() {
   const color = idx >= 0 ? agentColor(idx) : 'var(--color-health-idle)';
   const enabled = agent?.enabled !== false;
   const connected = agent ? agentHasConnectedTransport(agent) : false;
+  const showRuntimeHealth = enabled && connected;
 
   const handleStop = async () => {
     if (!currentItemId || stopping || !agentId) return;
@@ -103,21 +105,21 @@ export default function MobileTopBar() {
               Not connected
             </span>
           )}
-          {/* Status dot: amber when running or disabled, idle-grey when dormant, green when active+idle */}
-          <span
-            className="inline-block h-2 w-2 shrink-0 rounded-full"
-            style={{
-              background:
-                isRunning || !enabled
-                  ? 'var(--color-health-warn)'
-                  : !connected
-                    ? 'var(--color-health-idle)'
-                    : 'var(--color-health-ok)',
-            }}
-          />
+          {!enabled && (
+            <span className="font-sans shrink-0 rounded-sm border border-text-muted/30 px-1 py-0.5 text-[9px] uppercase tracking-[0.08em] text-text-muted">
+              Off
+            </span>
+          )}
+          {showRuntimeHealth && (
+            <AgentHealthIndicator
+              health={status?.health}
+              isRunning={isRunning}
+              density="header"
+            />
+          )}
         </div>
 
-        {/* Stop item — only visible when an item is active */}
+        {/* Stop — only visible while the agent has active work */}
         {currentItemId && (
           <div className="flex flex-col items-end gap-0.5">
             <button

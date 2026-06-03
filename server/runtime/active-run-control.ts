@@ -11,6 +11,7 @@ export interface ActiveRunHandle {
   // Follow-up inbox items are completed as soon as they are appended, but their
   // processing reactions should stay visible until the active provider run ends.
   readonly appendedFollowups: RuntimeItemContext[];
+  readonly itemId: string;
   readonly startedAt: number;
   noteActivity(): void;
   release(): void;
@@ -62,6 +63,10 @@ class ActiveRunController implements ActiveRunHandle {
 
   get abortController(): AbortController {
     return this.input.abortController;
+  }
+
+  get itemId(): string {
+    return this.input.itemId;
   }
 
   noteActivity(): void {

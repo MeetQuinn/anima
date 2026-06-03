@@ -15,6 +15,7 @@ import { makeSlackEvent } from './helpers/slack.js';
 import { ingestEvent } from './helpers/inbox.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { recordRuntimeEvent } from '../runtime/activity.js';
+import { AgentHealthStore } from '../runtime/agent-health.store.js';
 import { AgentRestartCommandStore } from '../runtime/agent-restart-command.store.js';
 import { persistProviderSession } from '../runtime/runtime-bridge.js';
 import { setActiveRuntimeItem } from '../runtime/active-item.js';
@@ -493,6 +494,18 @@ test('web snapshot includes unfiltered agent queue statuses', async () => {
         itemId: running.item.id,
         workerId: 'worker-1',
       });
+      await new AgentHealthStore({ animaHome: stateDir }).writeHealth({
+        agentId: 'milo',
+        runtime: {
+          activeItemId: running.item.id,
+          activeItemStartedAt: '2026-05-20T08:00:00.000Z',
+          processId: process.pid,
+          providerChildExpected: false,
+          workerId: 'worker-1',
+        },
+        state: 'healthy',
+        updatedAt: '2026-05-20T08:00:01.000Z',
+      });
 
       const queued = await ingestEvent(
         makeSlackEvent({
@@ -534,6 +547,17 @@ test('web snapshot includes unfiltered agent queue statuses', async () => {
           agentId: 'milo',
           currentItemStartedAt: '2026-05-20T08:00:00.000Z',
           currentItemId: running.item.id,
+          health: {
+            runtime: {
+              activeItemId: running.item.id,
+              activeItemStartedAt: '2026-05-20T08:00:00.000Z',
+              processId: process.pid,
+              providerChildExpected: false,
+              workerId: 'worker-1',
+            },
+            state: 'healthy',
+            updatedAt: '2026-05-20T08:00:01.000Z',
+          },
           queueDepth: 1,
           itemCount: 2,
         });
@@ -542,6 +566,127 @@ test('web snapshot includes unfiltered agent queue statuses', async () => {
       }
       const miloSession = await agentService('milo').getSession();
       assert.equal(miloSession?.createdAt, running.session.createdAt);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('web status marks a running item unhealthy when no live worker identity matches', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-stale-worker-test-'));
+  try {
+    await writeConfig(stateDir, [
+      defaultAgentConfig('milo'),
+    ]);
+    await withAnimaHome(stateDir, async () => {
+      const running = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'C-demo',
+          teamId: 'T-demo',
+          text: 'Run for Milo.',
+          ts: '1770000000.000012',
+          userId: 'U1',
+        }),
+        { agentId: 'milo', stateDir },
+      );
+      await new WakeQueueService('milo').claimNext('worker-dead');
+      await setActiveRuntimeItem({
+        agentId: 'milo',
+        startedAt: '2026-05-20T08:00:00.000Z',
+        itemId: running.item.id,
+        workerId: 'worker-dead',
+      });
+      await new AgentHealthStore({ animaHome: stateDir }).writeHealth({
+        agentId: 'milo',
+        runtime: {
+          activeItemId: running.item.id,
+          activeItemStartedAt: '2026-05-20T08:00:00.000Z',
+          processId: process.pid,
+          providerChildExpected: false,
+          workerId: 'worker-other',
+        },
+        state: 'healthy',
+        updatedAt: '2026-05-20T08:00:01.000Z',
+      });
+
+      const server = await createWebServer();
+      try {
+        server.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        const address = server.address();
+        if (!address || typeof address === 'string') {
+          throw new Error('Expected API server to listen on a TCP address.');
+        }
+        const statusesRes = await fetch(`http://127.0.0.1:${address.port}/api/agent-statuses`);
+        assert.equal(statusesRes.status, 200);
+        const statuses = (await statusesRes.json()) as Array<{
+          agentId: string;
+          health?: { reason?: string; state?: string };
+        }>;
+        const status = statuses.find((s) => s.agentId === 'milo');
+        assert.equal(status?.health?.state, 'unhealthy');
+        assert.equal(status?.health?.reason, 'stale_running_item');
+      } finally {
+        server.close();
+      }
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('web status does not carry stale failed restart onto healthy agents', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-stale-restart-test-'));
+  try {
+    await writeConfig(stateDir, [
+      defaultAgentConfig('milo'),
+    ]);
+    await withAnimaHome(stateDir, async () => {
+      const healthStore = new AgentHealthStore({ animaHome: stateDir });
+      await healthStore.writeHealth({
+        agentId: 'milo',
+        reason: 'restart_failed',
+        restart: {
+          completedAt: '2026-06-03T19:30:00.000Z',
+          outcome: 'failed',
+          reason: 'restart_failed',
+          requestId: 'restart-1',
+          requestedAt: '2026-06-03T19:29:00.000Z',
+        },
+        state: 'unhealthy',
+        updatedAt: '2026-06-03T19:30:00.000Z',
+      });
+      await healthStore.writeHealth({
+        agentId: 'milo',
+        runtime: {
+          processId: process.pid,
+          providerChildExpected: false,
+          workerId: `milo:${process.pid}:healthy`,
+        },
+        state: 'healthy',
+        updatedAt: '2026-06-03T19:31:00.000Z',
+      });
+
+      const server = await createWebServer();
+      try {
+        server.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        const address = server.address();
+        if (!address || typeof address === 'string') {
+          throw new Error('Expected API server to listen on a TCP address.');
+        }
+        const statusesRes = await fetch(`http://127.0.0.1:${address.port}/api/agent-statuses`);
+        assert.equal(statusesRes.status, 200);
+        const statuses = (await statusesRes.json()) as Array<{
+          agentId: string;
+          health?: { restart?: { outcome?: string }; state?: string };
+        }>;
+        const status = statuses.find((s) => s.agentId === 'milo');
+        assert.equal(status?.health?.state, 'healthy');
+        assert.equal(status?.health?.restart?.outcome, undefined);
+      } finally {
+        server.close();
+      }
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

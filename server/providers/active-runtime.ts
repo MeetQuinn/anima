@@ -20,4 +20,8 @@ export class ActiveRuntimeRun {
   accepts(input: { activeItemId: string }): boolean {
     return this.activeItemId === input.activeItemId;
   }
+
+  isActive(): boolean {
+    return Boolean(this.activeItemId);
+  }
 }

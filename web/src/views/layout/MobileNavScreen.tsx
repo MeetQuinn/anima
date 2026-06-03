@@ -12,6 +12,7 @@ import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import ServerPanel from '@/components/ServerPanel';
+import { AgentHealthIndicator } from '@/components/AgentHealthIndicator';
 import { AgentCreateModal, AddKbModal } from './Sidebar';
 import { agentColor, initialOf } from '@/lib/avatars';
 import {
@@ -104,6 +105,7 @@ export default function MobileNavScreen({
   const runningIds = new Set(
     statuses.filter((s) => s.currentItemId || s.queueDepth > 0).map((s) => s.agentId),
   );
+  const statusByAgentId = new Map(statuses.map((status) => [status.agentId, status]));
 
   return (
     <div className="flex h-dvh flex-col bg-surface md:hidden">
@@ -200,11 +202,12 @@ export default function MobileNavScreen({
                   const isRunning = runningIds.has(agent.id);
                   const enabled = agent.enabled !== false;
                   const notConnected = enabled && !agentHasConnectedTransport(agent);
+                  const status = statusByAgentId.get(agent.id);
                   const platformLabel = agentPlatformLabel(agent);
                   const showPlatformLabel = showAgentPlatforms && platformLabel !== null;
                   const isSelected = agent.id === lastSelectedId;
-                  const showStatusDot = enabled && !notConnected;
-                  const showRightMeta = showPlatformLabel || !enabled || showStatusDot;
+                  const showRuntimeHealth = enabled && !notConnected;
+                  const showRightMeta = showPlatformLabel || !enabled || showRuntimeHealth;
 
                   return (
                     <MobileSortableItem key={agent.id} id={agent.id}>
@@ -259,14 +262,10 @@ export default function MobileNavScreen({
                               <span className="font-sans shrink-0 rounded-sm border border-text-muted/30 px-1 py-0.5 text-[9px] uppercase tracking-[0.08em] text-text-muted">
                                 Off
                               </span>
-                            ) : showStatusDot ? (
-                              <span
-                                className="inline-block h-2 w-2 shrink-0 rounded-full"
-                                style={{
-                                  background: isRunning
-                                    ? 'var(--color-health-warn)'
-                                    : 'var(--color-health-ok)',
-                                }}
+                            ) : showRuntimeHealth ? (
+                              <AgentHealthIndicator
+                                health={status?.health}
+                                isRunning={isRunning}
                               />
                             ) : null}
                           </span>

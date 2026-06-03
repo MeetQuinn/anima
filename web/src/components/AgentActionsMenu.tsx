@@ -8,11 +8,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { MoreHorizontal, Power, PowerOff, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { disableAgent, enableAgent, removeAgent, restartAgent, rotateAgentSession, fetchAgents, refreshDashboardData } from '@/api/agents';
+import {
+  disableAgent,
+  enableAgent,
+  fetchAgentStatuses,
+  fetchAgents,
+  removeAgent,
+  restartAgent,
+  rotateAgentSession,
+  refreshDashboardData,
+} from '@/api/agents';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button } from './ui/button';
+import { agentHealthSummaryText } from './AgentHealthIndicator';
 import { useConfirm } from '@/hooks/useConfirm';
-import { queryKeys } from '@/lib/query-keys';
+import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 
 
 
@@ -27,6 +37,11 @@ import { queryKeys } from '@/lib/query-keys';
  */
 export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?: string }) {
   const { data: agents = [] } = useQuery({ queryKey: queryKeys.agents(), queryFn: fetchAgents });
+  const { data: statuses = [] } = useQuery({
+    queryKey: queryKeys.agentStatuses(),
+    queryFn: fetchAgentStatuses,
+    refetchInterval: refetchIntervals.agentStatuses,
+  });
   const { agentId } = useParams<{ agentId: string }>();
   const navigate = useNavigate();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -51,6 +66,9 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
   const agent = agents.find((a) => a.id === agentId);
   if (!agent) return null;
   const enabled = agent.enabled !== false;
+  const healthSummary = agentHealthSummaryText(
+    statuses.find((status) => status.agentId === agentId)?.health,
+  );
 
   async function handleToggleEnabled(nextEnabled: boolean) {
     if (!agentId || toggling) return;
@@ -88,7 +106,7 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
                   setMenuOpen(false);
                   confirm({
                     title: 'Disable this agent?',
-                    description: 'If it is running now, it will stop after the current item finishes. Memory and session are preserved.',
+                    description: 'If it is running now, it will stop after the current work finishes. Memory and session are preserved.',
                     variant: 'error',
                     confirmLabel: 'Disable',
                     busyLabel: 'Saving...',
@@ -122,7 +140,7 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
                 setMenuOpen(false);
                 confirm({
                   title: 'Rotate primary session?',
-                  description: 'The current item keeps running. The next item starts fresh, and the current provider session is archived.',
+                  description: 'The current work keeps running. Future work starts fresh, and the current provider session is archived.',
                   variant: 'warn',
                   confirmLabel: 'Confirm',
                   busyLabel: 'Rotating…',
@@ -147,8 +165,19 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
                 setMenuOpen(false);
                 confirm({
                   title: 'Restart this agent?',
-                  description:
-                    'Use this only if the agent is hung. It will be forced to stop and start over immediately. Any item it is working on right now is dropped and is not retried, so re-run it manually afterward. Memory, notes, and config are kept; queued items stay queued.',
+                  description: (
+                    <>
+                      Use this only if the agent is hung. It will be forced to stop and start over
+                      immediately. Any current work is dropped and is not retried, so re-run it
+                      manually afterward. Memory, notes, and config are kept; queued work stays
+                      queued.
+                      {healthSummary && (
+                        <span className="mt-2 block font-sans text-[12px] text-text-muted">
+                          Current health: {healthSummary}
+                        </span>
+                      )}
+                    </>
+                  ),
                   variant: 'warn',
                   confirmLabel: 'Restart',
                   busyLabel: 'Restarting…',

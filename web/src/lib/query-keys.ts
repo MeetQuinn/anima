@@ -1,3 +1,5 @@
+import type { AgentStatusSummary } from '@shared/snapshot';
+
 // Centralised TanStack Query key factory.
 // All cache keys live here — cache dependencies are grep-able and typos are
 // caught by the type checker.
@@ -29,6 +31,19 @@ export const queryKeys = {
 };
 
 export const refetchIntervals = {
-  agentStatuses: 5_000,
+  agentStatuses: (query: { state: { data?: unknown } }) =>
+    hasTransientAgentStatus(query.state.data) ? 2_000 : 5_000,
   agentActivities: 3_000,
 } as const;
+
+function hasTransientAgentStatus(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  return (value as AgentStatusSummary[]).some((status) => {
+    const health = status.health;
+    return Boolean(
+      health?.state === 'starting' ||
+      health?.reason === 'restart_pending' ||
+      health?.restart?.outcome === 'pending',
+    );
+  });
+}

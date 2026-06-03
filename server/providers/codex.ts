@@ -10,6 +10,7 @@ import {
   type AgentRuntimeDrainInput,
   type AgentRuntimeFollowupInput,
   type AgentRuntimeFollowupResult,
+  type AgentRuntimeHealth,
   type AgentRuntimeInput,
   type AgentRuntimeResult,
   type CodexCliAgentProviderConfig,
@@ -31,6 +32,13 @@ export class CodexCliAgentRuntime implements AgentRuntime {
 
   async close(options: AgentRuntimeCloseOptions = {}): Promise<void> {
     await this.resetController(options.signal, options);
+  }
+
+  health(): AgentRuntimeHealth {
+    return {
+      ...(this.controller ? { child: this.controller.snapshot() } : {}),
+      childExpected: this.activeRun.isActive(),
+    };
   }
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {

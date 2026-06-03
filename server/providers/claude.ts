@@ -15,6 +15,7 @@ import {
   AgentRuntimeDrainInput,
   AgentRuntimeFollowupInput,
   AgentRuntimeFollowupResult,
+  AgentRuntimeHealth,
   AgentRuntimeInput,
   AgentRuntimeResult,
   ClaudeCodeAgentProviderConfig,
@@ -53,6 +54,13 @@ export class ClaudeCodeAgentRuntime implements AgentRuntime {
 
   async close(options: AgentRuntimeCloseOptions = {}): Promise<void> {
     await this.resetController(options.signal, options);
+  }
+
+  health(): AgentRuntimeHealth {
+    return {
+      ...(this.controller ? { child: this.controller.snapshot() } : {}),
+      childExpected: this.activeRun.isActive(),
+    };
   }
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
@@ -326,6 +334,10 @@ class ClaudeStreamJsonController {
 
   hasStartedSession(): boolean {
     return this.startedSession;
+  }
+
+  snapshot() {
+    return this.child.snapshot();
   }
 
   startTurn(

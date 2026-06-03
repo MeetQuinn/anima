@@ -1,6 +1,8 @@
 import { agentColor, initialOf } from '@/lib/avatars';
+import { AgentHealthIndicator } from '@/components/AgentHealthIndicator';
 import { agentHasConnectedTransport, agentPlatformLabel } from '@shared/agent-transports';
 import type { AgentConfig } from '@shared/agent-config';
+import type { AgentStatusSummary } from '@shared/snapshot';
 
 // ---------------------------------------------------------------------------
 // Agent row — name + status only; actions live on the Profile detail pane.
@@ -11,6 +13,7 @@ export function AgentRow({
   active,
   isRunning,
   enabled,
+  status,
   showPlatform,
   onClick,
 }: {
@@ -19,6 +22,7 @@ export function AgentRow({
   active: boolean;
   isRunning: boolean;
   enabled: boolean;
+  status?: AgentStatusSummary;
   showPlatform: boolean;
   onClick: () => void;
 }) {
@@ -31,7 +35,8 @@ export function AgentRow({
   const notConnected = enabled && !agentHasConnectedTransport(agent);
   const platformLabel = agentPlatformLabel(agent);
   const showPlatformLabel = showPlatform && platformLabel !== null;
-  const hasRightMeta = showPlatformLabel || !enabled || !notConnected;
+  const showRuntimeHealth = enabled && !notConnected;
+  const hasRightMeta = showPlatformLabel || !enabled || showRuntimeHealth;
   return (
     <div
       className={[
@@ -96,13 +101,11 @@ export function AgentRow({
                   >
                     Off
                   </span>
-                ) : !notConnected ? (
-                  <span
-                    className="inline-block h-2 w-2 shrink-0 rounded-full"
-                    style={{
-                      background: isRunning ? 'var(--color-health-warn)' : 'var(--color-health-ok)',
-                    }}
-                    title={isRunning ? 'working' : 'idle'}
+                ) : showRuntimeHealth ? (
+                  <AgentHealthIndicator
+                    health={status?.health}
+                    isRunning={isRunning}
+                    surface="spine"
                   />
                 ) : null}
               </span>

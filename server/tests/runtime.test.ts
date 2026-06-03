@@ -13,6 +13,7 @@ import { activityServiceForAgent } from '../activities/activity.service.js';
 import { isFirstClassAnimaCliCommand } from '../activities/format.js';
 import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
 import { startChildProcess, terminateChildProcess } from '../providers/child-process.js';
+import { AgentHealthStore } from '../runtime/agent-health.store.js';
 import { AgentRestartCommandStore } from '../runtime/agent-restart-command.store.js';
 import { managedProviderEnvForAgent, RuntimeHost, type RunningAgentHandle } from '../runtime/host.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
@@ -327,6 +328,201 @@ test('runtime host force-restarts only the requested agent', async () => {
   }
 });
 
+test('runtime host writes recovered restart health snapshots', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-health-restart-test-'));
+  try {
+    const restartCommands = new AgentRestartCommandStore({ animaHome: stateDir });
+    const healthStore = new AgentHealthStore({ animaHome: stateDir });
+    const agents = [runtimeHostAgent('alpha', { connected: true })];
+    let generation = 0;
+    const host = new RuntimeHost({}, {
+      animaHome: stateDir,
+      healthStore,
+      loadAgents: async () => agents,
+      logger: silentLogger,
+      restartCommands,
+      startAgent: async (agent) => {
+        generation += 1;
+        return healthHandle(agent.id, generation);
+      },
+      validateAgent: async () => {},
+    });
+
+    await host.reconcileOnce();
+    const started = await healthStore.get('alpha');
+    assert.equal(started?.state, 'healthy');
+    assert.equal(started?.runtime?.workerId, `alpha:${process.pid}:1`);
+    assert.equal(started?.runtime?.providerChildExpected, false);
+
+    const command = await restartCommands.request('alpha');
+    await host.reconcileOnce();
+
+    const restarted = await healthStore.get('alpha');
+    assert.equal(restarted?.state, 'healthy');
+    assert.equal(restarted?.runtime?.workerId, `alpha:${process.pid}:2`);
+    assert.equal(restarted?.restart?.requestId, command.requestId);
+    assert.equal(restarted?.restart?.outcome, 'recovered');
+    assert.equal(restarted?.restart?.workerPid, process.pid);
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('agent health store clears stale failed restart on later healthy writes', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-health-store-restart-test-'));
+  try {
+    const healthStore = new AgentHealthStore({ animaHome: stateDir });
+    await healthStore.writeHealth({
+      agentId: 'alpha',
+      reason: 'restart_failed',
+      restart: {
+        completedAt: '2026-06-03T19:30:00.000Z',
+        outcome: 'failed',
+        reason: 'restart_failed',
+        requestId: 'restart-1',
+        requestedAt: '2026-06-03T19:29:00.000Z',
+      },
+      state: 'unhealthy',
+      updatedAt: '2026-06-03T19:30:00.000Z',
+    });
+
+    await healthStore.writeHealth({
+      agentId: 'alpha',
+      runtime: {
+        processId: process.pid,
+        providerChildExpected: false,
+        workerId: `alpha:${process.pid}:healthy`,
+      },
+      state: 'healthy',
+      updatedAt: '2026-06-03T19:31:00.000Z',
+    });
+
+    const snapshot = await healthStore.get('alpha');
+    assert.equal(snapshot?.state, 'healthy');
+    assert.equal(snapshot?.restart, undefined);
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime host restart clears only the requested stale running item', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-stale-restart-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const restartCommands = new AgentRestartCommandStore({ animaHome: stateDir });
+      const healthStore = new AgentHealthStore({ animaHome: stateDir });
+      const agents = [
+        runtimeHostAgent('alpha', { connected: true }),
+        runtimeHostAgent('bravo', { connected: true }),
+      ];
+      const started: string[] = [];
+      const stopped: string[] = [];
+      let alphaGeneration = 0;
+      const host = new RuntimeHost({}, {
+        animaHome: stateDir,
+        healthStore,
+        loadAgents: async () => agents,
+        logger: silentLogger,
+        restartCommands,
+        startAgent: async (agent) => {
+          started.push(agent.id);
+          if (agent.id === 'alpha') {
+            alphaGeneration += 1;
+            return healthHandle(agent.id, alphaGeneration, stopped);
+          }
+          return healthHandle(agent.id, 1, stopped);
+        },
+        validateAgent: async () => {},
+      });
+
+      await host.reconcileOnce();
+
+      const alphaPrimary = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'C-alpha',
+          teamId: 'T-demo',
+          text: 'stale alpha turn',
+          ts: '1770000100.000001',
+          userId: 'U1',
+        }),
+        { agentId: 'alpha', stateDir },
+      );
+      const alphaAppended = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'C-alpha',
+          teamId: 'T-demo',
+          text: 'alpha follow-up already appended',
+          ts: '1770000100.000002',
+          userId: 'U1',
+        }),
+        { agentId: 'alpha', stateDir },
+      );
+      const alphaQueued = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'C-alpha',
+          teamId: 'T-demo',
+          text: 'alpha queued follow-up',
+          ts: '1770000100.000003',
+          userId: 'U1',
+        }),
+        { agentId: 'alpha', stateDir },
+      );
+      const alphaQueue = new WakeQueueService('alpha');
+      await alphaQueue.markRunning({
+        itemId: alphaPrimary.item.id,
+        startedAt: '2026-06-03T18:33:50.000Z',
+        workerId: 'dead-worker',
+      });
+      await alphaQueue.markAppended({
+        itemId: alphaAppended.item.id,
+        parentItemId: alphaPrimary.item.id,
+        workerId: 'dead-worker',
+      });
+
+      const bravoPrimary = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'C-bravo',
+          teamId: 'T-demo',
+          text: 'bravo active turn',
+          ts: '1770000100.000004',
+          userId: 'U1',
+        }),
+        { agentId: 'bravo', stateDir },
+      );
+      await new WakeQueueService('bravo').markRunning({
+        itemId: bravoPrimary.item.id,
+        startedAt: '2026-06-03T18:34:00.000Z',
+        workerId: `bravo:${process.pid}:1`,
+      });
+
+      await restartCommands.request('alpha');
+      await host.reconcileOnce();
+
+      assert.deepEqual(started, ['alpha', 'bravo', 'alpha']);
+      assert.deepEqual(stopped, ['alpha']);
+      assert.deepEqual(host.runningAgentIds(), ['alpha', 'bravo']);
+
+      const failedAlpha = await alphaQueue.find(alphaPrimary.item.id);
+      const requeuedAlpha = await alphaQueue.find(alphaAppended.item.id);
+      const stillQueuedAlpha = await alphaQueue.find(alphaQueued.item.id);
+      assert.equal(failedAlpha?.handling.status, 'failed');
+      assert.equal(requeuedAlpha?.handling.status, 'queued');
+      assert.equal(stillQueuedAlpha?.handling.status, 'queued');
+
+      const bravoAfter = await new WakeQueueService('bravo').find(bravoPrimary.item.id);
+      assert.equal(bravoAfter?.handling.status, 'running');
+      assert.equal(bravoAfter?.handling.workerId, `bravo:${process.pid}:1`);
+
+      const alphaHealth = await healthStore.get('alpha');
+      assert.equal(alphaHealth?.state, 'healthy');
+      assert.equal(alphaHealth?.restart?.outcome, 'recovered');
+      assert.equal(alphaHealth?.runtime?.workerId, `alpha:${process.pid}:2`);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('runtime host does not restart disabled agents from stale commands', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-restart-disabled-test-'));
   try {
@@ -597,10 +793,32 @@ function stopHandle(
   onStop?: (options: Parameters<RunningAgentHandle['stop']>[0]) => void,
 ): RunningAgentHandle {
   return {
+    health() {
+      return {
+        processId: process.pid,
+        providerChildExpected: false,
+        workerId: `${agentId}:${process.pid}`,
+      };
+    },
     isActive,
     async stop(options) {
       stopped.push(agentId);
       onStop?.(options);
+    },
+  };
+}
+
+function healthHandle(agentId: string, generation: number, stopped: string[] = []): RunningAgentHandle {
+  return {
+    health() {
+      return {
+        processId: process.pid,
+        providerChildExpected: false,
+        workerId: `${agentId}:${process.pid}:${generation}`,
+      };
+    },
+    async stop() {
+      stopped.push(agentId);
     },
   };
 }
