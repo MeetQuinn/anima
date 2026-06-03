@@ -75,11 +75,16 @@ export class CodexCliAgentRuntime implements AgentRuntime {
     const controller = this.controller;
     if (!controller) return { accepted: false };
     const turnId = await controller.waitForActiveTurnId();
-    await controller.request('turn/steer', {
-      expectedTurnId: turnId,
-      input: [codexTextInput(input.prompt)],
-      threadId: controller.threadId,
-    });
+    try {
+      await controller.request('turn/steer', {
+        expectedTurnId: turnId,
+        input: [codexTextInput(input.prompt)],
+        threadId: controller.threadId,
+      });
+    } catch (error) {
+      if (isCodexTurnSteerDesyncError(error)) await this.resetController();
+      throw error;
+    }
     return { accepted: true, text: `appended to ${turnId}` };
   }
 
@@ -146,4 +151,9 @@ export class CodexCliAgentRuntime implements AgentRuntime {
 
 function codexTextInput(text: string): Record<string, unknown> {
   return { text, text_elements: [], type: 'text' };
+}
+
+function isCodexTurnSteerDesyncError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /expected active turn id/i.test(message) || /no active turn to steer/i.test(message);
 }

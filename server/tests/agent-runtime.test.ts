@@ -306,6 +306,83 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
   }
 });
 
+test('codex-cli resets app-server when follow-up steer sees a different active turn', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'codex-steer-mismatch-calls.jsonl');
+      const fakeCodex = join(stateDir, 'codex');
+      await writeFile(
+        fakeCodex,
+        [
+          '#!/usr/bin/env node',
+          "import { appendFileSync } from 'node:fs';",
+          "import readline from 'node:readline';",
+          "const rl = readline.createInterface({ input: process.stdin });",
+          "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
+          "rl.on('line', (line) => {",
+          "  const msg = JSON.parse(line);",
+          "  appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + '\\n');",
+          "  if (msg.method === 'initialize') {",
+          "    send({ id: msg.id, result: { userAgent: 'fake-codex' } });",
+          "    return;",
+          "  }",
+          "  if (msg.method === 'initialized') return;",
+          "  if (msg.method === 'thread/start') {",
+          "    send({ id: msg.id, result: { thread: { id: 'codex-thread-mismatch', cwd: process.cwd(), cliVersion: 'test' } } });",
+          "    return;",
+          "  }",
+          "  if (msg.method === 'turn/start') {",
+          "    send({ id: msg.id, result: { turn: { id: 'turn-old', status: 'inProgress', items: [], itemsView: 'full', error: null, startedAt: 1, completedAt: null, durationMs: null } } });",
+          "    return;",
+          "  }",
+          "  if (msg.method === 'turn/steer') {",
+          "    send({ id: msg.id, error: { code: -32600, message: 'expected active turn id `turn-old` but found `turn-new`' } });",
+          "  }",
+          "});",
+        ].join('\n'),
+        'utf8',
+      );
+      await chmod(fakeCodex, 0o755);
+
+      const firstCtx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-codex-mismatch',
+          teamId: 'T-demo',
+          text: 'first message',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+      const secondCtx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-codex-mismatch',
+          teamId: 'T-demo',
+          text: 'second message',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'codex-cli',
+      });
+      const runPromise = runtime.run(await runtimeInput(runtime, firstCtx, await loadState()));
+      await waitFor(async () => (await readFile(callsPath, 'utf8')).includes('"method":"turn/start"'));
+      await assert.rejects(
+        runtime.appendToActiveRun(await runtimeFollowupInput(runtime, firstCtx, secondCtx, await loadState())),
+        /expected active turn id `turn-old` but found `turn-new`/,
+      );
+      await assert.rejects(withTimeout(runPromise, 1_000), /Codex app-server runtime terminated by SIGTERM/);
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('codex-cli records subagent delegation from session response items when app-server omits them', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
   let runtime: AgentRuntime | undefined;
