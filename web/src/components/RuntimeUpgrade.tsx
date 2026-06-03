@@ -134,7 +134,19 @@ export default function RuntimeUpgradeRow() {
   if (!status) return null;
 
   const op = status.operation.status;
-  const target = status.operation.targetVersion ?? status.latestOnTrack;
+  // What a *forward* update would move you to: always the latest on the track.
+  // NOT status.operation.targetVersion — that is the last *completed* operation's
+  // target, which is historical and can be older than the current version. Reusing
+  // it here surfaced a phantom "downgrade" (e.g. 135 → 132) on the available card.
+  const availableTarget = status.latestOnTrack ?? status.operation.targetVersion;
+  // What a live server-side operation is installing — authoritative only while that
+  // operation is actually running/scheduled. For a client-initiated apply the server
+  // op has not yet flipped to running, so fall back to availableTarget; the
+  // "Updating to…" label then never echoes the stale completed-op target.
+  const serverInProgress = op === 'scheduled' || op === 'running';
+  const inProgressTarget = serverInProgress
+    ? status.operation.targetVersion ?? availableTarget
+    : availableTarget;
   const inProgress = phase === 'applying' || op === 'scheduled' || op === 'running';
   const completedAt = status.operation.completedAt;
   const failureFresh = op === 'failed' && isFailureFresh(completedAt);
@@ -172,7 +184,7 @@ export default function RuntimeUpgradeRow() {
       <UpdateLabelRow>
         <RefreshCw aria-hidden className="h-3 w-3 animate-spin text-accent" />
         <span className="font-serif text-[14px] text-text">
-          {target ? `Updating to ${target}…` : 'Updating…'}
+          {inProgressTarget ? `Updating to ${inProgressTarget}…` : 'Updating…'}
         </span>
       </UpdateLabelRow>
     );
@@ -209,11 +221,11 @@ export default function RuntimeUpgradeRow() {
         {checkFailed && <CheckFailedLabel />}
       </UpdateLabelRow>
     );
-  } else if (status.state === 'available' && target) {
+  } else if (status.state === 'available' && availableTarget) {
     content = (
       <AvailableCard
         currentVersion={status.currentVersion}
-        target={target}
+        target={availableTarget}
         releaseNotesUrl={status.releaseNotesUrl}
         error={applyError}
         onUpgrade={requestUpgrade}
@@ -240,16 +252,16 @@ export default function RuntimeUpgradeRow() {
   return (
     <>
       {content}
-      {phase === 'confirming' && target && (
+      {phase === 'confirming' && availableTarget && (
         <BusyConfirmModal
           kind="upgrade"
           runningNames={runningNames}
-          target={target}
+          target={availableTarget}
           onCancel={() => setPhase('idle')}
           onConfirm={() => void performUpgrade()}
         />
       )}
-      {phase === 'applying' && <UpgradeOverlay target={target} />}
+      {phase === 'applying' && <UpgradeOverlay target={availableTarget} />}
     </>
   );
 }
