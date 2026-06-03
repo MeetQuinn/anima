@@ -29,10 +29,32 @@ export const ANIMA_MANAGED_PROVIDER_ENV_KEYS = [
 ] as const;
 
 export function agentIdFromName(name: string): string {
-  return name
+  const normalized = name.normalize('NFKC').trim();
+  const ascii = normalized
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
+  if (ascii) return ascii;
+
+  const unicodeWordChars = Array.from(normalized).filter((char) => /[\p{L}\p{N}]/u.test(char));
+  if (unicodeWordChars.length === 0) return '';
+
+  const encoded = unicodeWordChars
+    .slice(0, 8)
+    .map((char) => char.codePointAt(0)?.toString(16))
+    .filter((value): value is string => Boolean(value))
+    .join('-');
+  const suffix = unicodeWordChars.length > 8 ? `-${hashForAgentId(normalized)}` : '';
+  return `u-${encoded}${suffix}`;
+}
+
+function hashForAgentId(value: string): string {
+  let hash = 0x811c9dc5;
+  for (const char of value) {
+    hash ^= char.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(36);
 }
 
 const AgentProviderCreateRequest = z.object({

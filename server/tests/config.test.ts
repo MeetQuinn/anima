@@ -15,11 +15,30 @@ import {
   readManagedRuntimeStatus,
   resolveManagedAnimaHome,
 } from '../runtime-management/managed-runtime.js';
-import { AgentCreateRequest, PROVIDER_IDLE_TIMEOUT_MS_DEFAULT } from '../../shared/agent-config.js';
+import { AgentCreateRequest, agentIdFromName, PROVIDER_IDLE_TIMEOUT_MS_DEFAULT } from '../../shared/agent-config.js';
 import { providerCatalogEntry } from '../../shared/provider-catalog.js';
 import { withAnimaHome } from './anima-home.js';
 
 const agentService = (agentId: string) => defaultAgentRegistryService.serviceFor(agentId);
+
+test('agent creation accepts unicode-only display names with URL-safe generated ids', () => {
+  assert.equal(agentIdFromName('小羊'), 'u-5c0f-7f8a');
+  assert.equal(agentIdFromName('Ａｒｉａ'), 'aria');
+  assert.equal(agentIdFromName('✨'), '');
+
+  assert.equal(
+    AgentCreateRequest.parse({
+      name: '小羊',
+      homePath: 'agents/u-5c0f-7f8a',
+      role: 'Feishu test agent.',
+      provider: {
+        kind: 'codex-cli',
+        model: 'gpt-5.5',
+      },
+    }).name,
+    '小羊',
+  );
+});
 
 test('anima home resolution prefers ANIMA_HOME env, then local .anima, then ~/.anima', async () => {
   const rootDir = await mkdtemp(join(tmpdir(), 'anima-home-resolve-test-'));
