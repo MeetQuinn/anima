@@ -1,4 +1,5 @@
 import { agentColor, initialOf } from '@/lib/avatars';
+import { agentHasConnectedTransport, agentTransportLabel } from '@shared/agent-transports';
 import type { AgentConfig } from '@shared/agent-config';
 
 // ---------------------------------------------------------------------------
@@ -22,10 +23,11 @@ export function AgentRow({
   const color = agentColor(index);
   const displayName = agent.profile?.displayName ?? agent.id;
   const initial = initialOf(displayName);
-  // A not-connected agent is enabled but has no Slack workspace linked.
-  // slack.connected is derived server-side from real token presence and survives
-  // redaction (tokens are always "" on the wire, so !botToken fires for everyone).
-  const notConnected = enabled && agent.slack?.connected !== true;
+  // Connected is transport-level: Slack or Feishu credentials can make an
+  // agent reachable. Raw secrets are redacted on the wire, so use the derived
+  // connected flags instead of token fields.
+  const notConnected = enabled && !agentHasConnectedTransport(agent);
+  const transportLabel = agentTransportLabel(agent);
   return (
     <div
       className={[
@@ -96,6 +98,11 @@ export function AgentRow({
           {notConnected && (
             <div className="font-sans mt-0.5 text-[10px] leading-tight text-health-warn/80">
               Not connected
+            </div>
+          )}
+          {!notConnected && transportLabel !== 'Slack' && (
+            <div className="font-sans mt-0.5 text-[10px] leading-tight text-text-on-spine-subtle">
+              {transportLabel}
             </div>
           )}
         </div>

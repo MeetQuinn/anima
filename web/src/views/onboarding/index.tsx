@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { awaitAgentsRefresh, createAgent, refreshDashboardData, updateAgentProfile } from '@/api/agents';
-import { fetchProviderAvailability } from '@/api/system';
+import { fetchProviderAvailability, fetchWorkspacePlatform, saveWorkspacePlatform } from '@/api/system';
 import {
   DEFAULT_REASONING_EFFORT,
   DEFAULT_PROVIDER_KIND,
@@ -23,19 +23,28 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import DirectoryPicker from '@/components/DirectoryPicker';
 import { SlackConnectStepper } from '@/views/agents/profile/SlackConnectStepper';
+import { FeishuConnectStepper } from '@/views/agents/profile/FeishuConnectStepper';
 import { OwnerPickerForm } from '@/views/agents/profile/OwnerPickerForm';
 import { queryKeys } from '@/lib/query-keys';
+import type { WorkspacePlatform } from '@shared/server-settings';
+
+const WORKSPACE_PLATFORM_LABELS: Record<WorkspacePlatform, string> = {
+  feishu: 'Feishu',
+  slack: 'Slack',
+};
 
 // ---------------------------------------------------------------------------
 // Step indicator
 // ---------------------------------------------------------------------------
 
 function StepDot({
+  last = false,
   n,
   current,
   done,
   onClick,
 }: {
+  last?: boolean;
   n: number;
   current: number;
   done: boolean;
@@ -59,7 +68,7 @@ function StepDot({
       >
         {n}
       </span>
-      {n < 3 && (
+      {!last && (
         <span className={['h-px w-8 transition-colors', n < current ? 'bg-health-ok/40' : 'bg-border-soft'].join(' ')} />
       )}
     </div>
@@ -76,17 +85,125 @@ interface AgentCreateFlowProps {
   onComplete?: (agentId: string) => void;
 }
 
-type FlowStep = 1 | 2 | 3;
+type FlowStep = 'agent' | 'connect' | 'owner' | 'platform';
+
+function WorkspacePlatformStep({
+  error,
+  onChange,
+  onContinue,
+  saving,
+  value,
+}: {
+  error?: string;
+  onChange: (platform: WorkspacePlatform) => void;
+  onContinue: () => void;
+  saving: boolean;
+  value: WorkspacePlatform;
+}) {
+  return (
+    <div className="px-6 py-6">
+      <div className="space-y-3">
+        <PlatformOption
+          description="For teams that work in Slack. Agents use a Slack app to receive and send messages."
+          label="Slack"
+          platform="slack"
+          selected={value === 'slack'}
+          onSelect={() => onChange('slack')}
+        />
+        <PlatformOption
+          description="For teams that work in Feishu. Agents use a self-built Feishu app over a long-lived connection."
+          label="Feishu"
+          platform="feishu"
+          selected={value === 'feishu'}
+          onSelect={() => onChange('feishu')}
+        />
+      </div>
+      {error && (
+        <p className="font-sans mt-3 text-[12px] text-health-error">{error}</p>
+      )}
+      <Button className="mt-6 w-full" onClick={onContinue} disabled={saving}>
+        {saving ? 'Saving…' : 'Continue →'}
+      </Button>
+    </div>
+  );
+}
+
+function PlatformOption({
+  description,
+  label,
+  onSelect,
+  platform,
+  selected,
+}: {
+  description: string;
+  label: string;
+  onSelect: () => void;
+  platform: WorkspacePlatform;
+  selected: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={[
+        'w-full rounded-sm border px-4 py-3 text-left transition-colors',
+        selected
+          ? 'border-accent bg-accent-soft/50'
+          : 'border-border-soft bg-surface hover:bg-surface-elevated',
+      ].join(' ')}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <PlatformIcon platform={platform} />
+          <div className="min-w-0">
+            <div className="font-serif text-[15px] font-semibold text-text">{label}</div>
+            <p className="font-sans mt-1 text-[12px] leading-relaxed text-text-muted">{description}</p>
+          </div>
+        </div>
+        <span
+          aria-hidden
+          className={[
+            'mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border',
+            selected ? 'border-accent bg-accent' : 'border-border-strong',
+          ].join(' ')}
+        >
+          {selected && <span className="h-1.5 w-1.5 rounded-full bg-surface" />}
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function PlatformIcon({ platform }: { platform: WorkspacePlatform }) {
+  return (
+    <span
+      aria-hidden
+      className={[
+        'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-sm font-sans text-[13px] font-semibold shadow-sm ring-1 ring-border-soft',
+        platform === 'slack'
+          ? 'bg-[#4A154B] text-white'
+          : 'bg-[#1B6FFF] text-white',
+      ].join(' ')}
+    >
+      {platform === 'slack' ? '#' : 'F'}
+    </span>
+  );
+}
 
 export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFlowProps) {
+  const queryClient = useQueryClient();
   // Optional preview param for dev/screenshot use
   const previewStepRaw = typeof window !== 'undefined'
     ? Number(new URLSearchParams(window.location.search).get('_previewStep') ?? 0)
     : 0;
   const previewStep: FlowStep | undefined =
-    previewStepRaw === 2 ? 2 : previewStepRaw === 3 ? 3 : undefined;
+    previewStepRaw === 2 ? 'connect' : previewStepRaw === 3 ? 'owner' : undefined;
 
-  const [step, setStep] = useState<FlowStep>(previewStep ?? 1);
+  const [step, setStep] = useState<FlowStep>(previewStep ?? (firstRun ? 'platform' : 'agent'));
+  const [workspacePlatform, setWorkspacePlatform] = useState<WorkspacePlatform>('slack');
+  const [workspacePlatformTouched, setWorkspacePlatformTouched] = useState(false);
+  const [platformSaving, setPlatformSaving] = useState(false);
+  const [platformError, setPlatformError] = useState<string | undefined>();
 
   // Step 1 state
   const [name, setName] = useState('');
@@ -117,8 +234,17 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     queryKey: queryKeys.providerAvailability(),
     queryFn: fetchProviderAvailability,
   });
+  const { data: savedWorkspacePlatform } = useQuery({
+    queryKey: queryKeys.workspacePlatform(),
+    queryFn: fetchWorkspacePlatform,
+  });
 
   const providerOptions = useMemo(() => providerCatalog(), []);
+  const stepOrder = useMemo<FlowStep[]>(() => {
+    const tail: FlowStep[] = workspacePlatform === 'slack' ? ['connect', 'owner'] : ['connect'];
+    return firstRun ? ['platform', 'agent', ...tail] : ['agent', ...tail];
+  }, [firstRun, workspacePlatform]);
+  const currentStepIndex = Math.max(0, stepOrder.indexOf(step));
   const derivedId = agentIdFromName(name.trim());
 
   // Display helpers — Base UI SelectValue shows raw value before items register;
@@ -152,6 +278,19 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     setTimeout(() => nameInputRef.current?.focus(), 50);
   }, []);
 
+  useEffect(() => {
+    if (!savedWorkspacePlatform) return;
+    if (workspacePlatformTouched) return;
+    const timer = setTimeout(() => setWorkspacePlatform(savedWorkspacePlatform), 0);
+    return () => clearTimeout(timer);
+  }, [savedWorkspacePlatform, workspacePlatformTouched]);
+
+  useEffect(() => {
+    if (stepOrder.includes(step)) return;
+    const timer = setTimeout(() => setStep(stepOrder[stepOrder.length - 1] ?? 'agent'), 0);
+    return () => clearTimeout(timer);
+  }, [step, stepOrder]);
+
   const handleClose = useCallback(async () => {
     if (createdAgentId) {
       refreshDashboardData();
@@ -179,6 +318,22 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     setEffort(DEFAULT_REASONING_EFFORT);
   }
 
+  async function handlePlatformContinue() {
+    if (platformSaving) return;
+    setPlatformSaving(true);
+    setPlatformError(undefined);
+    try {
+      const savedPlatform = await saveWorkspacePlatform(workspacePlatform);
+      setWorkspacePlatform(savedPlatform);
+      queryClient.setQueryData(queryKeys.workspacePlatform(), savedPlatform);
+      setStep('agent');
+    } catch (err) {
+      setPlatformError(err instanceof Error ? err.message : 'Failed to save workspace platform');
+    } finally {
+      setPlatformSaving(false);
+    }
+  }
+
   async function handleCreate() {
     setNameTouched(true);
     if (!derivedId || !role.trim() || !selectedProviderReady) return;
@@ -190,7 +345,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
       try {
         await updateAgentProfile(createdAgentId, { displayName: name.trim(), role: role.trim() });
         refreshDashboardData();
-        setStep(2);
+        setStep('connect');
       } catch (err) {
         setCreateError(err instanceof Error ? err.message : 'Failed to update agent');
       } finally {
@@ -212,7 +367,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
         provider,
       });
       setCreatedAgentId(agent.id);
-      setStep(2);
+      setStep('connect');
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : 'Failed to create agent');
     } finally {
@@ -224,7 +379,12 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     // Await the agents refetch so AgentReconciler sees the new agent before
     // we navigate — otherwise it redirects to a different agent (stale cache).
     await awaitAgentsRefresh();
-    setStep(3);
+    setStep('owner');
+  }
+
+  async function handleFeishuConnected() {
+    await awaitAgentsRefresh();
+    if (createdAgentId) onComplete?.(createdAgentId);
   }
 
   function handleOwnerComplete() {
@@ -232,8 +392,9 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
   }
 
   const stepTitle =
-    step === 1 ? 'Create your agent' :
-    step === 2 ? 'Connect to Slack' :
+    step === 'platform' ? 'Choose workspace platform' :
+    step === 'agent' ? 'Create your agent' :
+    step === 'connect' ? `Connect to ${WORKSPACE_PLATFORM_LABELS[workspacePlatform]}` :
     'Pick an owner';
   const createDisabledReason = (() => {
     if (creating) return undefined;
@@ -290,9 +451,16 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
         <div className="flex items-center gap-3">
           {/* Step indicator */}
           <div className="flex items-center gap-1">
-            <StepDot n={1} current={step} done={step > 1} onClick={step > 1 ? () => setStep(1) : undefined} />
-            <StepDot n={2} current={step} done={step > 2} />
-            <StepDot n={3} current={step} done={false} />
+            {stepOrder.map((entry, index) => (
+              <StepDot
+                key={entry}
+                n={index + 1}
+                current={currentStepIndex + 1}
+                done={index < currentStepIndex}
+                last={index === stepOrder.length - 1}
+                onClick={index < currentStepIndex ? () => setStep(entry) : undefined}
+              />
+            ))}
           </div>
           {/* Step title */}
           <span className="font-serif text-[15px] font-semibold text-text">{stepTitle}</span>
@@ -309,8 +477,22 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
         )}
       </div>
 
-      {/* ---- Step 1 — Create agent + home ---- */}
-      {step === 1 && (
+      {/* ---- Step: Workspace platform ---- */}
+      {step === 'platform' && (
+        <WorkspacePlatformStep
+          error={platformError}
+          onChange={(next) => {
+            setWorkspacePlatformTouched(true);
+            setWorkspacePlatform(next);
+          }}
+          onContinue={() => void handlePlatformContinue()}
+          saving={platformSaving}
+          value={workspacePlatform}
+        />
+      )}
+
+      {/* ---- Step: Create agent + home ---- */}
+      {step === 'agent' && (
         <div className="px-6 py-6">
           <div className="space-y-4">
             {/* Name */}
@@ -479,15 +661,20 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
         </div>
       )}
 
-      {/* ---- Step 2 — Connect Slack ---- */}
-      {step === 2 && createdAgentId && (
+      {/* ---- Step: Connect platform ---- */}
+      {step === 'connect' && createdAgentId && workspacePlatform === 'slack' && (
         <div className="px-6 py-6">
           <SlackConnectStepper agentId={createdAgentId} onConnect={handleSlackConnected} />
         </div>
       )}
+      {step === 'connect' && createdAgentId && workspacePlatform === 'feishu' && (
+        <div className="px-6 py-6">
+          <FeishuConnectStepper agentId={createdAgentId} onConnect={() => void handleFeishuConnected()} />
+        </div>
+      )}
 
-      {/* ---- Step 3 — Pick Owner ---- */}
-      {step === 3 && createdAgentId && (
+      {/* ---- Step: Pick Owner ---- */}
+      {step === 'owner' && createdAgentId && workspacePlatform === 'slack' && (
         <div className="px-6 py-6">
           <OwnerPickerForm
             agentId={createdAgentId}
@@ -520,7 +707,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
               <span className="font-serif text-[26px] font-semibold text-text">Anima</span>
             </div>
             <p className="font-sans mt-2 max-w-sm text-balance text-[13px] leading-relaxed text-text-muted">
-              An AI agent team that works alongside your human team in Slack, building up shared knowledge over time.
+              An AI agent team that works alongside your human team in chat, building up shared knowledge over time.
             </p>
           </div>
           {card}

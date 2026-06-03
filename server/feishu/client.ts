@@ -22,7 +22,23 @@ export interface FeishuTextSendResult {
   threadId?: string;
 }
 
+export interface FeishuReactionAddInput {
+  emojiType: string;
+  messageId: string;
+}
+
+export interface FeishuReactionAddResult {
+  reactionId: string;
+}
+
+export interface FeishuReactionRemoveInput {
+  messageId: string;
+  reactionId: string;
+}
+
 export interface FeishuMessageClient {
+  addReaction(input: FeishuReactionAddInput): Promise<FeishuReactionAddResult>;
+  removeReaction(input: FeishuReactionRemoveInput): Promise<void>;
   replyText(input: FeishuTextReplyInput): Promise<FeishuTextSendResult>;
   sendText(input: FeishuTextSendInput): Promise<FeishuTextSendResult>;
 }
@@ -82,11 +98,39 @@ interface FeishuSdkMessageReplyResult {
   };
 }
 
+interface FeishuSdkReactionCreateInput {
+  data: {
+    reaction_type: {
+      emoji_type: string;
+    };
+  };
+  path: {
+    message_id: string;
+  };
+}
+
+interface FeishuSdkReactionCreateResult {
+  data?: {
+    reaction_id?: string;
+  };
+}
+
+interface FeishuSdkReactionDeleteInput {
+  path: {
+    message_id: string;
+    reaction_id: string;
+  };
+}
+
 interface FeishuSdkClient {
   im: {
     message: {
       create(input: FeishuSdkMessageCreateInput): Promise<FeishuSdkMessageReplyResult>;
       reply(input: FeishuSdkMessageReplyInput): Promise<FeishuSdkMessageReplyResult>;
+    };
+    messageReaction: {
+      create(input: FeishuSdkReactionCreateInput): Promise<FeishuSdkReactionCreateResult>;
+      delete(input: FeishuSdkReactionDeleteInput): Promise<unknown>;
     };
   };
 }
@@ -150,6 +194,29 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
     source: 'anima',
   });
   return {
+    async addReaction(input) {
+      const response = await client.im.messageReaction.create({
+        data: {
+          reaction_type: { emoji_type: input.emojiType },
+        },
+        path: {
+          message_id: input.messageId,
+        },
+      });
+      const reactionId = response.data?.reaction_id;
+      if (!reactionId) {
+        throw new Error('Feishu reaction create response did not include reaction_id');
+      }
+      return { reactionId };
+    },
+    async removeReaction(input) {
+      await client.im.messageReaction.delete({
+        path: {
+          message_id: input.messageId,
+          reaction_id: input.reactionId,
+        },
+      });
+    },
     async replyText(input) {
       const response = await client.im.message.reply({
         data: {

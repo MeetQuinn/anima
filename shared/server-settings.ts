@@ -11,3 +11,6 @@ export type ReleaseTrack = z.infer<typeof ReleaseTrack>;
 
 export const ServerTrack = z.enum(['dev', 'canary', 'stable']);
 export type ServerTrack = z.infer<typeof ServerTrack>;
+
+export const WorkspacePlatform = z.enum(['slack', 'feishu']);
+export type WorkspacePlatform = z.infer<typeof WorkspacePlatform>;

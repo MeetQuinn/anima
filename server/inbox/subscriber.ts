@@ -7,8 +7,8 @@ import { SlackMessageTransport } from '../transports/slack-message-transport.js'
 
 export interface InboxSubscriberOptions {
   agentRuntimeKind: string;
-  appToken: string;
-  botToken: string;
+  appToken?: string;
+  botToken?: string;
   feishu?: FeishuConfig;
   queue: WakeQueueService;
 }
@@ -19,15 +19,21 @@ export class InboxSubscriber {
 
   constructor(options: InboxSubscriberOptions) {
     this.reminders = new ReminderInboxSubscriber(options.queue);
+    const transports = [
+      ...(options.appToken && options.botToken ? [new SlackMessageTransport({
+        agentRuntimeKind: options.agentRuntimeKind,
+        appToken: options.appToken,
+        botToken: options.botToken,
+        queue: options.queue,
+      })] : []),
+      ...(options.feishu?.connected ? [new FeishuMessageTransport({
+        agentRuntimeKind: options.agentRuntimeKind,
+        config: options.feishu,
+        queue: options.queue,
+      })] : []),
+    ];
     this.transports = new MessageTransportRunner(
-      [
-        new SlackMessageTransport(options),
-        ...(options.feishu?.connected ? [new FeishuMessageTransport({
-          agentRuntimeKind: options.agentRuntimeKind,
-          config: options.feishu,
-          queue: options.queue,
-        })] : []),
-      ],
+      transports,
     );
   }
 

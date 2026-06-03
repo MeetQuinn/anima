@@ -86,6 +86,10 @@ export function normalizeFeishuMessage(input: {
   return result;
 }
 
+export function isFeishuEvent(event: unknown): event is FeishuInboxItem {
+  return Boolean(event && typeof event === 'object' && (event as { kind?: unknown }).kind === 'feishu');
+}
+
 export function shouldWakeFeishuRuntime(event: FeishuReceiveMessageEvent, botOpenId?: string): boolean {
   if (event.message.chat_type === 'p2p') return true;
   const mentions = event.message.mentions ?? [];

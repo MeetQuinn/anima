@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ExternalLink, RotateCcw, X } from 'lucide-react';
+import { ExternalLink, MessageCircle, RotateCcw, X } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import {
   fetchAgent,
@@ -11,6 +11,7 @@ import {
   updateAgentProfile,
   updateAgentProvider,
 } from '@/api/agents';
+import { fetchWorkspacePlatform } from '@/api/system';
 import { queryKeys } from '@/lib/query-keys';
 import { useNow } from '@/hooks/useNow';
 
@@ -27,11 +28,29 @@ import {
 } from './AgentFields';
 import { SessionSection } from './SessionStats';
 import { SlackConnectStepper } from './SlackConnectStepper';
+import { FeishuConnectStepper } from './FeishuConnectStepper';
 import { SlackManifestUpdateCard } from './SlackManifestUpdateCard';
 import { SkillsSection } from './SkillsSection';
 import { OwnerPickerForm } from './OwnerPickerForm';
+import {
+  agentFeishuConnected,
+  agentHasConnectedTransport,
+  agentSlackConnected,
+  agentTransportLabel,
+} from '@shared/agent-transports';
 
 type PendingRestart = { kind: string; model: string; effort?: string };
+
+function FeishuMeta({ label, value }: { label: string; value?: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="chrome text-[10px] tracking-[0.1em] text-text-subtle">{label}</div>
+      <div className="mt-0.5 break-all font-mono text-[12px] text-text">
+        {value || '—'}
+      </div>
+    </div>
+  );
+}
 
 export default function Profile() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -48,6 +67,10 @@ export default function Profile() {
     retry: false,
   });
   const { data: agentStatuses = [] } = useQuery({ queryKey: queryKeys.agentStatuses(), queryFn: fetchAgentStatuses });
+  const { data: workspacePlatform = 'slack' } = useQuery({
+    queryKey: queryKeys.workspacePlatform(),
+    queryFn: fetchWorkspacePlatform,
+  });
 
   const currentItemId = agentStatuses.find((s) => s.agentId === agentId)?.currentItemId;
 
@@ -110,6 +133,12 @@ export default function Profile() {
   );
   const sessionsArchived = session?.archived?.length ?? 0;
   const createdAt = agent.createdAt ?? session?.createdAt;
+  const slackConnected = agentSlackConnected(agent);
+  const feishuConnected = agentFeishuConnected(agent);
+  const transportConnected = agentHasConnectedTransport(agent);
+  const platformLabel = agentTransportLabel(agent);
+  const showFeishuSetup = feishuConnected || (!transportConnected && workspacePlatform === 'feishu');
+  const showSlackSetup = !feishuConnected && (slackConnected || (!transportConnected && workspacePlatform === 'slack'));
 
   // Per-row commit: sends only the changed fields to the owning profile/provider API.
   async function commitProfile(
@@ -232,6 +261,9 @@ export default function Profile() {
             env={agent.provider.env}
             onCommit={commitProviderEnv}
           />
+          <Field label="Platform">
+            <ReadonlyValue value={platformLabel} />
+          </Field>
 
           {/* Lifetime facts */}
           <Field label="Created">
@@ -276,7 +308,7 @@ export default function Profile() {
                     <span className="font-sans text-[13px] text-text-muted"> @{agent.owner.handle}</span>
                   )}
                 </span>
-                {agent.slack?.connected === true && (
+                {slackConnected && (
                   <button
                     type="button"
                     onClick={() => setOwnerPickerOpen(true)}
@@ -286,7 +318,7 @@ export default function Profile() {
                   </button>
                 )}
               </div>
-            ) : agent.slack?.connected === true ? (
+            ) : slackConnected ? (
               <button
                 type="button"
                 onClick={() => setOwnerPickerOpen(true)}
@@ -300,7 +332,7 @@ export default function Profile() {
           </Field>
 
           {/* Owner picker modal */}
-          {ownerPickerOpen && agent.slack?.connected === true && (
+          {ownerPickerOpen && slackConnected && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-page/70 backdrop-blur-sm">
               <div className="relative w-full max-w-md rounded-sm border border-border-soft bg-surface shadow-deep">
                 <div className="flex items-center justify-between border-b border-border-soft px-5 py-4">
@@ -327,7 +359,7 @@ export default function Profile() {
               </div>
             </div>
           )}
-          {agent.slack?.connected === true && (
+          {transportConnected && (
             <Field label="Sessions archived">
               <ReadonlyValue value={String(sessionsArchived)} mono />
             </Field>
@@ -335,8 +367,9 @@ export default function Profile() {
         </div>
 
         {/* ── SLACK ─────────────────────────────────────────────────────────── */}
-        <Section title="Slack">
-          {agent.slack?.connected === true ? (
+        {showSlackSetup && (
+          <Section title="Slack">
+            {slackConnected ? (
             <div className="space-y-3">
               <div className="flex items-center gap-3 overflow-hidden rounded-sm border border-border-soft bg-surface-elevated px-4 py-3">
                 {agent.slack.avatarUrl ? (
@@ -382,10 +415,53 @@ export default function Profile() {
               onConnect={() => refreshAgentData(agentId)}
             />
           )}
-        </Section>
+          </Section>
+        )}
+
+        {/* ── FEISHU ────────────────────────────────────────────────────────── */}
+        {showFeishuSetup && (
+          <Section title="Feishu">
+            {feishuConnected ? (
+              <div className="space-y-3">
+              <div className="rounded-sm border border-border-soft bg-surface-elevated px-4 py-3">
+                <div className="flex items-start gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent ring-1 ring-border-soft">
+                    <MessageCircle className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-serif text-[15px] font-semibold leading-snug text-text">
+                        Feishu
+                      </span>
+                      <span className="font-sans rounded-sm border border-health-ok/30 bg-health-ok-soft px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-health-ok">
+                        Connected
+                      </span>
+                    </div>
+                    <div className="mt-2 grid gap-2 text-[12px] md:grid-cols-2">
+                      <FeishuMeta label="App ID" value={agent.feishu.appId} />
+                      <FeishuMeta label="Bot Open ID" value={agent.feishu.botOpenId} />
+                      <FeishuMeta label="Credentials" value="Configured" />
+                      <FeishuMeta label="Delivery" value="Long-lived connection" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <p className="font-sans text-[12px] leading-relaxed text-text-muted">
+                Feishu credentials are stored in the agent config and injected by Anima
+                at runtime. Secret values are hidden in the dashboard.
+              </p>
+              </div>
+            ) : (
+              <FeishuConnectStepper
+                agentId={agentId}
+                onConnect={() => refreshAgentData(agentId)}
+              />
+            )}
+          </Section>
+        )}
 
         {/* ── THIS SESSION ──────────────────────────────────────────────────── */}
-        {agent.slack?.connected === true && (
+        {transportConnected && (
           <Section title="This session">
             <SessionSection stats={stats} session={session ?? undefined} now={now} />
           </Section>

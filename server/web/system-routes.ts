@@ -12,7 +12,7 @@ import {
   RuntimeUpgradeConflictError,
   RuntimeUpgradeUnavailableError,
 } from '../runtime-management/runtime-upgrade.js';
-import { SidebarOrder } from '../../shared/server-settings.js';
+import { SidebarOrder, WorkspacePlatform } from '../../shared/server-settings.js';
 import { HttpError } from './http.js';
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -64,6 +64,23 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
       return reply.status(400).send({ error: 'Invalid sidebar order payload' });
     }
     return { sidebarOrder: await defaultServerSettingsService.setSidebarOrder(parsed.data) };
+  });
+
+  // Workspace platform — global default inherited by newly-created agents.
+  fastify.get('/api/workspace-platform', async () => {
+    return { platform: await defaultServerSettingsService.getWorkspacePlatform() };
+  });
+
+  fastify.put('/api/workspace-platform', async (request, reply) => {
+    const parsed = WorkspacePlatform.safeParse(
+      typeof request.body === 'object' && request.body !== null && 'platform' in request.body
+        ? (request.body as { platform?: unknown }).platform
+        : request.body,
+    );
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid workspace platform payload' });
+    }
+    return { platform: await defaultServerSettingsService.setWorkspacePlatform(parsed.data) };
   });
 }
 

@@ -2,8 +2,12 @@ import { errorMessage } from '../ids.js';
 import type { InboxItem } from '../inbox/wake-queue.service.js';
 import { createSlackWebClient } from '../slack/client.js';
 import { isSlackEvent } from '../inbox/slack-events.js';
+import { createFeishuMessageClient, type FeishuMessageClient } from '../feishu/client.js';
+import { isFeishuEvent } from '../feishu/events.js';
+import type { FeishuConfig } from '../../shared/agent-config.js';
 
 const DEFAULT_PROCESSING_REACTION = 'eyes';
+const DEFAULT_FEISHU_PROCESSING_REACTION = 'OneSecond';
 
 interface SlackProcessingReaction {
   channel: string;
@@ -90,4 +94,59 @@ function processingReactionForEvent(event: InboxItem, name: string): SlackProces
 
 function isIgnoredReactionError(error: unknown, code: string): boolean {
   return errorMessage(error).includes(code);
+}
+
+export interface FeishuProcessingReactionClient {
+  add(messageId: string): Promise<void>;
+  remove(messageId: string): Promise<void>;
+}
+
+export function feishuProcessingReactionClient(
+  config: FeishuConfig,
+  deps: { client?: FeishuMessageClient; emojiType?: string } = {},
+): FeishuProcessingReactionClient {
+  const client = deps.client ?? createFeishuMessageClient(config);
+  const emojiType = deps.emojiType ?? DEFAULT_FEISHU_PROCESSING_REACTION;
+  const reactionIds = new Map<string, string>();
+  return {
+    async add(messageId) {
+      if (reactionIds.has(messageId)) return;
+      const { reactionId } = await client.addReaction({ emojiType, messageId });
+      reactionIds.set(messageId, reactionId);
+    },
+    async remove(messageId) {
+      const reactionId = reactionIds.get(messageId);
+      if (!reactionId) return;
+      reactionIds.delete(messageId);
+      await client.removeReaction({ messageId, reactionId });
+    },
+  };
+}
+
+export async function addFeishuProcessingReaction(input: {
+  context: { item: InboxItem };
+  feishuClient?: FeishuProcessingReactionClient;
+  logger?: Pick<Console, 'error'>;
+}): Promise<void> {
+  const item = input.context.item;
+  if (!isFeishuEvent(item) || !input.feishuClient) return;
+  try {
+    await input.feishuClient.add(item.messageId);
+  } catch (error) {
+    input.logger?.error(`Feishu processing reaction add failed for item ${item.id}: ${errorMessage(error)}`);
+  }
+}
+
+export async function removeFeishuProcessingReaction(input: {
+  context: { item: InboxItem };
+  feishuClient?: FeishuProcessingReactionClient;
+  logger?: Pick<Console, 'error'>;
+}): Promise<void> {
+  const item = input.context.item;
+  if (!isFeishuEvent(item) || !input.feishuClient) return;
+  try {
+    await input.feishuClient.remove(item.messageId);
+  } catch (error) {
+    input.logger?.error(`Feishu processing reaction remove failed for item ${item.id}: ${errorMessage(error)}`);
+  }
 }

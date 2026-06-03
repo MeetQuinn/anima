@@ -5,7 +5,7 @@
 // rhythm comes from typography + day separators.
 
 import type { Activity as ActivityRecord, AgentActivityFeedPage } from '@shared/activity';
-import type { ChoiceResponseInboxItem, InboxItem, SlackInboxItem } from '@shared/inbox';
+import type { ChoiceResponseInboxItem, FeishuInboxItem, InboxItem, SlackInboxItem } from '@shared/inbox';
 import type { AgentMessageHistoryPage, AgentMessageRecord } from '@shared/messages';
 
 // Hidden by default. Toggled on by "show all steps".
@@ -201,7 +201,7 @@ export function buildActivityFeed(
 
     if (activity.type === 'runtime.steer_failed') continue;
 
-    // Slack external effects → outbound message/file/reaction items.
+    // External message/file/reaction effects → outbound feed items.
     if (activity.type === 'tool.call.completed' || activity.type === 'external.effect.completed') {
       const tool = activity.payload?.['tool'];
       const effect = activity.payload?.['effect'];
@@ -209,7 +209,8 @@ export function buildActivityFeed(
         tool === 'anima.message.send' ||
         tool === 'anima.message.update' ||
         effect === 'slack.message.send' ||
-        effect === 'slack.message.update'
+        effect === 'slack.message.update' ||
+        effect === 'feishu.message.send'
       ) {
         const text = activity.payload?.['text'];
         items.push({
@@ -452,6 +453,21 @@ function inboxItemForMessage(message: AgentMessageRecord): InboxItem {
       threadTs: message.threadTs ?? '',
     };
   }
+  if (message.platform === 'feishu') {
+    return {
+      ...base,
+      actor: {
+        ...(message.actorDisplayName ? { displayName: message.actorDisplayName } : {}),
+        ...(message.actorUserId ? { openId: message.actorUserId } : {}),
+      },
+      chatId: message.channelId ?? '',
+      chatType: message.channelKind ?? 'group',
+      kind: 'feishu',
+      messageId: message.messageTs ?? message.messageId,
+      text: message.text,
+      ...(message.threadTs ? { threadId: message.threadTs } : {}),
+    };
+  }
   return {
     ...base,
     actor: {
@@ -487,13 +503,16 @@ function activityForMessage(message: AgentMessageRecord): ActivityRecord {
     dmHandle: message.dmHandle,
     dmUserId: message.dmUserId,
     permalink: message.permalink,
+    platform: message.platform,
     status: 'completed',
     text: message.text,
     threadTs: message.threadTs,
     ts: message.messageTs,
   };
   if (message.kind === 'message') {
-    payload['effect'] = message.isEdit ? 'slack.message.update' : 'slack.message.send';
+    payload['effect'] = message.platform === 'feishu'
+      ? 'feishu.message.send'
+      : message.isEdit ? 'slack.message.update' : 'slack.message.send';
   } else if (message.kind === 'file') {
     payload['effect'] = 'slack.file.send';
     payload['caption'] = message.text.split(/\r?\nFiles:/)[0] ?? '';
@@ -565,6 +584,7 @@ function surfaceChipForEvent(event: InboxItem, wakeMeta?: ReminderWakeMeta): Sur
     return { kind: 'reminder', label };
   }
   if (event.kind === 'choice_response') return surfaceChipForChoice(event);
+  if (event.kind === 'feishu') return surfaceChipForFeishu(event);
   if (event.kind !== 'slack') return { kind: 'onboarding', label: 'Onboarding' };
   return surfaceChipForSlack(event);
 }
@@ -602,6 +622,13 @@ function surfaceChipForSlack(event: SlackInboxItem): SurfaceChip {
   return { kind: 'channel', label: channel };
 }
 
+function surfaceChipForFeishu(event: FeishuInboxItem): SurfaceChip {
+  const label = event.chatType === 'p2p' ? 'Feishu DM' : `Feishu ${event.chatType || 'chat'}`;
+  if (event.threadId) return { kind: 'thread', label: `${label} · topic` };
+  if (event.chatType === 'p2p') return { kind: 'dm', label };
+  return { kind: 'channel', label };
+}
+
 function surfaceChipForChoice(event: ChoiceResponseInboxItem): SurfaceChip {
   const channelId = event.channelId ?? 'unknown-channel';
   const channelName = event.channelName;
@@ -634,6 +661,15 @@ function surfaceChipForOutbound(activity: ActivityRecord): SurfaceChip {
     typeof payload['channelKind'] === 'string' ? payload['channelKind'] : '';
   const payloadDmHandle = typeof payload['dmHandle'] === 'string' ? payload['dmHandle'] : '';
   const payloadThreadTs = typeof payload['threadTs'] === 'string' ? payload['threadTs'] : '';
+  const platform = typeof payload['platform'] === 'string' ? payload['platform'] : '';
+
+  if (platform === 'feishu') {
+    const kind = payloadChannelKind || (payloadChannel.startsWith('oc_') ? 'group' : 'chat');
+    const base = kind === 'p2p' ? 'Feishu DM' : `Feishu ${kind}`;
+    if (payloadThreadTs) return { kind: 'thread', label: `${base} · topic` };
+    if (kind === 'p2p') return { kind: 'dm', label: base };
+    return { kind: 'channel', label: base };
+  }
 
   // Cross-surface send (or reminder item with no inbound context).
   if (payloadDmHandle) return { kind: 'dm', label: `@${payloadDmHandle.replace(/^@/, '')}` };
@@ -754,7 +790,7 @@ function buildChildFeedItems(
   for (const activity of activities) {
     if (activity.type === 'runtime.steer_failed') continue;
 
-    // Outbound Slack effects → typed rows (same as main loop).
+    // Outbound external effects → typed rows (same as main loop).
     if (
       activity.type === 'tool.call.completed' ||
       activity.type === 'external.effect.completed'
@@ -765,7 +801,8 @@ function buildChildFeedItems(
         tool === 'anima.message.send' ||
         tool === 'anima.message.update' ||
         effect === 'slack.message.send' ||
-        effect === 'slack.message.update'
+        effect === 'slack.message.update' ||
+        effect === 'feishu.message.send'
       ) {
         const text = activity.payload?.['text'];
         items.push({

@@ -14,6 +14,7 @@ import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import ServerPanel from '@/components/ServerPanel';
 import { AgentCreateModal, AddKbModal } from './Sidebar';
 import { agentColor, initialOf } from '@/lib/avatars';
+import { agentHasConnectedTransport, agentTransportLabel } from '@shared/agent-transports';
 
 const MOBILE_SCROLL_KEY = 'mobile-nav-scroll';
 
@@ -193,7 +194,8 @@ export default function MobileNavScreen({
                   const initial = initialOf(name);
                   const isRunning = runningIds.has(agent.id);
                   const enabled = agent.enabled !== false;
-                  const notConnected = enabled && agent.slack?.connected !== true;
+                  const notConnected = enabled && !agentHasConnectedTransport(agent);
+                  const transportLabel = agentTransportLabel(agent);
                   const isSelected = agent.id === lastSelectedId;
 
                   return (
@@ -238,9 +240,16 @@ export default function MobileNavScreen({
                         ) : notConnected ? (
                           <span
                             className="font-sans ml-auto shrink-0 rounded-sm border border-health-warn/40 px-1 py-0.5 text-[9px] uppercase tracking-[0.08em] text-health-warn"
-                            title="not connected to Slack"
+                            title="not connected to a message transport"
                           >
-                            No Slack
+                            No transport
+                          </span>
+                        ) : transportLabel !== 'Slack' ? (
+                          <span
+                            className="font-sans ml-auto shrink-0 rounded-sm border border-text-muted/30 px-1 py-0.5 text-[9px] uppercase tracking-[0.08em] text-text-muted"
+                            title={`connected to ${transportLabel}`}
+                          >
+                            {transportLabel}
                           </span>
                         ) : (
                           <span

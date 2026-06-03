@@ -68,8 +68,9 @@ test('buildPath: agentId with no tab emits the canonical-pending form', () => {
 // ---------------------------------------------------------------------------
 
 // All agents in SNAPSHOT are connected (slack.connected = true) — the normal case.
-// Tokens are always redacted to "" on the wire; slack.connected is the durable signal.
+// Tokens are always redacted to "" on the wire; connected is the durable signal.
 const CONNECTED = { connected: true as const };
+const FEISHU_CONNECTED = { connected: true as const };
 const SNAPSHOT: ReconcileSnapshot = {
   agents: [
     { id: 'anima', slack: CONNECTED },
@@ -161,7 +162,7 @@ test('reconcileLocation: returns null when there are no agents at all (nothing t
 const NC_SNAPSHOT: ReconcileSnapshot = {
   agents: [
     { id: 'anima', slack: CONNECTED },
-    { id: 'new-agent' }, // no slack object → slack.connected !== true → not-connected
+    { id: 'new-agent' }, // no transport connected → not-connected
   ],
   agentStatuses: [
     { agentId: 'anima', queueDepth: 0 },
@@ -216,6 +217,21 @@ test('reconcileLocation: connected agent activity is left alone (no-op)', () => 
   assert.equal(
     reconcileLocation(NC_SNAPSHOT, { agentId: 'anima', tab: 'activity' }),
     null,
+  );
+});
+
+test('reconcileLocation: Feishu-connected agent defaults to activity', () => {
+  const feishuOnly: ReconcileSnapshot = {
+    agents: [{ id: 'xiaoyang', feishu: FEISHU_CONNECTED }],
+    agentStatuses: [{ agentId: 'xiaoyang', queueDepth: 0 }],
+  };
+  assert.deepEqual(
+    reconcileLocation(feishuOnly, { agentId: 'xiaoyang', tab: null }),
+    { agentId: 'xiaoyang', tab: DEFAULT_TAB },
+  );
+  assert.deepEqual(
+    reconcileLocation(feishuOnly, { agentId: null, tab: null }),
+    { agentId: 'xiaoyang', tab: DEFAULT_TAB },
   );
 });
 

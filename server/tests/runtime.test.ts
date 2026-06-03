@@ -147,6 +147,31 @@ test('runtime host starts after Slack connection and reloads idle agents after c
   await host.stop();
 });
 
+test('runtime host starts Feishu-connected agents without Slack tokens', async () => {
+  const scout = runtimeHostAgent('scout', { connected: false, feishuConnected: true });
+  const started: string[] = [];
+  const stopped: string[] = [];
+  const host = new RuntimeHost({}, {
+    animaHome: '/tmp/anima-home',
+    loadAgents: async () => [scout],
+    logger: silentLogger,
+    startAgent: async (agent) => {
+      started.push(agent.id);
+      return stopHandle(agent.id, stopped);
+    },
+    validateAgent: async () => {},
+  });
+
+  await host.reconcileOnce();
+  await host.reconcileOnce();
+
+  assert.deepEqual(started, ['scout']);
+  assert.deepEqual(host.runningAgentIds(), ['scout']);
+
+  await host.stop();
+  assert.deepEqual(stopped, ['scout']);
+});
+
 test('managed provider env injects Feishu credentials and tenant token when connected', async () => {
   const scout = runtimeHostAgent('scout', { connected: true });
   scout.feishu = {
@@ -177,6 +202,21 @@ test('managed provider env injects Feishu credentials and tenant token when conn
   assert.equal(env.FEISHU_BOT_OPEN_ID, 'ou_bot');
   assert.equal(env.FEISHU_TENANT_ACCESS_TOKEN, 't-tenant');
   assert.equal(env.FEISHU_TENANT_ACCESS_TOKEN_EXPIRES_AT, '2026-06-03T01:00:00.000Z');
+});
+
+test('managed provider env omits Slack tokens when no Slack bot token is configured', async () => {
+  const scout = runtimeHostAgent('scout', { connected: false, feishuConnected: true });
+  const env = await managedProviderEnvForAgent(scout, '/tmp/anima-home', undefined, {
+    async fetchFeishuTenantAccessToken() {
+      return { tenantAccessToken: 't-tenant' };
+    },
+  });
+
+  assert.equal(env.ANIMA_HOME, '/tmp/anima-home');
+  assert.equal(env.ANIMA_RUNTIME_HOME, '/tmp/anima-home');
+  assert.equal(env.SLACK_BOT_TOKEN, undefined);
+  assert.equal(env.ANIMA_SLACK_BOT_TOKEN, undefined);
+  assert.equal(env.FEISHU_TENANT_ACCESS_TOKEN, 't-tenant');
 });
 
 test('runtime host defers config reload until the running agent is idle', async () => {
@@ -509,7 +549,14 @@ test('inbox queue does not bootstrap home memory', async () => {
 
 function runtimeHostAgent(
   id: string,
-  options: { connected: boolean; enabled?: boolean; homePath?: string; model?: string; role?: string },
+  options: {
+    connected: boolean;
+    enabled?: boolean;
+    feishuConnected?: boolean;
+    homePath?: string;
+    model?: string;
+    role?: string;
+  },
 ): AgentConfig {
   return {
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -525,9 +572,9 @@ function runtimeHostAgent(
       model: options.model ?? 'opus',
     },
     feishu: {
-      appId: '',
-      appSecret: '',
-      connected: false,
+      appId: options.feishuConnected ? 'cli-test' : '',
+      appSecret: options.feishuConnected ? 'feishu-secret' : '',
+      connected: options.feishuConnected ?? false,
       encryptKey: '',
       verificationToken: '',
     },

@@ -7,7 +7,7 @@ import { z } from 'zod';
 
 import { resolveAnimaHome } from '../../anima-home.js';
 import { JsonStore } from '../json-store.js';
-import { ReleaseTrack, ServerTrack, SidebarOrder } from '../../../shared/server-settings.js';
+import { ReleaseTrack, ServerTrack, SidebarOrder, WorkspacePlatform } from '../../../shared/server-settings.js';
 
 export const ServerConfig = z.object({
   dashboardHost: z.string().min(1).optional(),
@@ -15,6 +15,7 @@ export const ServerConfig = z.object({
   releaseTrack: ReleaseTrack.optional(),
   sidebarOrder: SidebarOrder.optional(),
   track: ServerTrack.optional(),
+  workspacePlatform: WorkspacePlatform.optional(),
 }).strict();
 
 export type ServerConfig = z.infer<typeof ServerConfig>;

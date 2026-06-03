@@ -814,6 +814,26 @@ test('web API serves the web app and agents API', async () => {
       const orderRead = await fetch(`http://127.0.0.1:${address.port}/api/sidebar-order`);
       assert.equal(orderRead.status, 200);
       assert.deepEqual(await orderRead.json(), { sidebarOrder: { agents: ['anima'], kbs: ['team'] } });
+
+      const platformReadDefault = await fetch(`http://127.0.0.1:${address.port}/api/workspace-platform`);
+      assert.equal(platformReadDefault.status, 200);
+      assert.deepEqual(await platformReadDefault.json(), { platform: 'slack' });
+      const platformWrite = await fetch(`http://127.0.0.1:${address.port}/api/workspace-platform`, {
+        body: JSON.stringify({ platform: 'feishu' }),
+        headers: { 'content-type': 'application/json' },
+        method: 'PUT',
+      });
+      assert.equal(platformWrite.status, 200);
+      assert.deepEqual(await platformWrite.json(), { platform: 'feishu' });
+      const platformRead = await fetch(`http://127.0.0.1:${address.port}/api/workspace-platform`);
+      assert.equal(platformRead.status, 200);
+      assert.deepEqual(await platformRead.json(), { platform: 'feishu' });
+      const platformInvalid = await fetch(`http://127.0.0.1:${address.port}/api/workspace-platform`, {
+        body: JSON.stringify({ platform: 'lark' }),
+        headers: { 'content-type': 'application/json' },
+        method: 'PUT',
+      });
+      assert.equal(platformInvalid.status, 400);
     } finally {
       server.close();
     }
@@ -966,6 +986,35 @@ test('web API mutates agent configs with redacted responses', async () => {
       assert.equal(connectLocal.status, 200);
       const connectLocalBody = (await connectLocal.json()) as { slack?: { connected?: boolean } };
       assert.equal(connectLocalBody.slack?.connected, true);
+
+      const connectFeishu = await fetch(`${base}/api/agents/local-agent/feishu/connect`, {
+        body: JSON.stringify({
+          appId: 'cli_demo',
+          appSecret: 'feishu-secret',
+          botOpenId: 'ou_demo',
+          verificationToken: 'verify-token',
+        }),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+      });
+      assert.equal(connectFeishu.status, 200);
+      const connectFeishuBody = (await connectFeishu.json()) as {
+        feishu?: {
+          appId?: string;
+          appSecret?: string;
+          botOpenId?: string;
+          connected?: boolean;
+          verificationToken?: string;
+        };
+      };
+      assert.equal(connectFeishuBody.feishu?.connected, true);
+      assert.equal(connectFeishuBody.feishu?.appId, 'cli_demo');
+      assert.equal(connectFeishuBody.feishu?.botOpenId, 'ou_demo');
+      assert.equal(connectFeishuBody.feishu?.appSecret, '');
+      assert.equal(connectFeishuBody.feishu?.verificationToken, '');
+      const storedFeishu = await agentService('local-agent').getConfig();
+      assert.equal(storedFeishu.feishu.appSecret, 'feishu-secret');
+      assert.equal(storedFeishu.feishu.verificationToken, 'verify-token');
 
       const createWithSlack = await fetch(`${base}/api/agents`, {
         body: JSON.stringify({
