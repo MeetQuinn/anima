@@ -13,8 +13,10 @@ import {
   compareRuntimeVersions,
   runRuntimeUpgradeWorker,
   RuntimeUpgradeConflictError,
+  RuntimeUpgradeUnavailableError,
   RuntimeUpgradeService,
 } from '../runtime-management/runtime-upgrade.js';
+import { serverConfigStore } from '../storage/schema/server.store.js';
 
 test('runtime version compare handles prerelease canaries', () => {
   assert.equal(compareRuntimeVersions('0.1.1-canary.5.1.723b529', '0.1.1-canary.4.1.0688e3f') > 0, true);
@@ -95,6 +97,64 @@ test('runtime upgrade status clears failed operations superseded by the current 
       assert.equal(status.updateAvailable, false);
       assert.equal(status.operation.status, 'idle');
       assert.equal((await operationStore.read()).status, 'idle');
+    });
+  } finally {
+    await rm(rootDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime upgrade status is unsupported on dev/source runtime and skips npm checks', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'anima-runtime-upgrade-dev-status-'));
+  try {
+    await withAnimaHome(rootDir, async () => {
+      await serverConfigStore.write({ track: 'dev' });
+      const checkStore = new RuntimeUpgradeCheckStore();
+      await checkStore.write({
+        checkedAt: '2026-06-03T08:00:00.000Z',
+        latestOnTrack: '0.1.3',
+        releaseTrack: 'stable',
+      });
+      let lookupCalls = 0;
+      const status = await new RuntimeUpgradeService({
+        checkStore,
+        checkTtlMs: 0,
+        distTagLookup: async () => {
+          lookupCalls += 1;
+          return '0.1.4';
+        },
+        packageVersion: async () => '0.1.4-dev',
+      }).status();
+
+      assert.equal(status.state, 'unsupported');
+      assert.equal(status.updateAvailable, false);
+      assert.equal(status.latestOnTrack, undefined);
+      assert.match(status.unsupportedReason ?? '', /dev\/source/);
+      assert.equal(lookupCalls, 0);
+    });
+  } finally {
+    await rm(rootDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime upgrade apply is unavailable on dev/source runtime', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'anima-runtime-upgrade-dev-apply-'));
+  try {
+    await withAnimaHome(rootDir, async () => {
+      await serverConfigStore.write({ track: 'dev' });
+      let lookupCalls = 0;
+      const service = new RuntimeUpgradeService({
+        distTagLookup: async () => {
+          lookupCalls += 1;
+          return '0.1.4';
+        },
+        packageVersion: async () => '0.1.4-dev',
+      });
+
+      await assert.rejects(
+        () => service.prepareApply({ animactlScript: join(rootDir, 'dist', 'server', 'cli', 'animactl.js') }),
+        RuntimeUpgradeUnavailableError,
+      );
+      assert.equal(lookupCalls, 0);
     });
   } finally {
     await rm(rootDir, { force: true, recursive: true });

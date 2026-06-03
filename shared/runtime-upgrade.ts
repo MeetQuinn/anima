@@ -53,8 +53,9 @@ export const RuntimeUpgradeStatusResponse = z.object({
   operation: RuntimeUpgradeOperation,
   releaseTrack: RuntimeReleaseTrack,
   releaseNotesUrl: z.string().url().optional(),
-  state: z.enum(['current', 'available', 'error']),
+  state: z.enum(['current', 'available', 'error', 'unsupported']),
   updateAvailable: z.boolean(),
+  unsupportedReason: z.string().optional(),
 });
 export type RuntimeUpgradeStatusResponse = z.infer<typeof RuntimeUpgradeStatusResponse>;
 

@@ -186,6 +186,17 @@ export default function RuntimeUpgradeRow() {
         onRetry={requestUpgrade}
       />
     );
+  } else if (status.state === 'unsupported') {
+    content = (
+      <UpdateLabelRow>
+        <span
+          className="font-serif text-[14px] text-text-muted"
+          title={status.unsupportedReason}
+        >
+          Managed updates unavailable
+        </span>
+      </UpdateLabelRow>
+    );
   } else if (status.state === 'error') {
     content = (
       <UpdateLabelRow action={checkAction}>
