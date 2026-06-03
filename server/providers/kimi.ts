@@ -211,7 +211,7 @@ class KimiWireController {
     try {
       this.writeUserMessage(method, text);
     } catch (error) {
-      this.abortCurrentTurn(error);
+      this.clearCurrentTurn();
       throw error;
     }
     return result;
@@ -428,10 +428,14 @@ class KimiWireController {
   private abortCurrentTurn(error: unknown): void {
     const turn = this.currentTurn;
     if (!turn) return;
+    this.clearCurrentTurn();
+    turn.reject(error);
+  }
+
+  private clearCurrentTurn(): void {
     this.currentTurn = undefined;
     this.activeToolIds.clear();
     this.resolveQuiescentWaitersIfReady();
-    turn.reject(error);
   }
 
   private async finishCurrentTurn(): Promise<void> {
