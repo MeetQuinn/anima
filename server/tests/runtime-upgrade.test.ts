@@ -9,6 +9,7 @@ import { withAnimaHome } from './anima-home.js';
 import { defaultServerSettingsService } from '../settings/settings.service.js';
 import {
   RuntimeUpgradeCheckStore,
+  RuntimeUpgradeOperationStore,
   compareRuntimeVersions,
   runRuntimeUpgradeWorker,
   RuntimeUpgradeConflictError,
@@ -54,6 +55,46 @@ test('runtime upgrade status is track-scoped and includes idle gate state', asyn
       assert.equal(status.gate.state, 'idle');
       assert.deepEqual(status.gate.blockers, []);
       assert.equal(status.operation.status, 'idle');
+    });
+  } finally {
+    await rm(rootDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime upgrade status clears failed operations superseded by the current version', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'anima-runtime-upgrade-superseded-fail-'));
+  try {
+    await withAnimaHome(rootDir, async () => {
+      await defaultServerSettingsService.setReleaseTrack('canary');
+      const checkStore = new RuntimeUpgradeCheckStore();
+      await checkStore.write({
+        checkedAt: '2026-06-03T07:11:49.902Z',
+        latestOnTrack: '0.1.4-canary.124.1.6ded17e',
+        releaseTrack: 'canary',
+      });
+      const operationStore = new RuntimeUpgradeOperationStore();
+      await operationStore.write({
+        completedAt: '2026-06-03T06:58:03.887Z',
+        currentVersion: '0.1.4-canary.108.1.e8cc04e',
+        error: 'services restart exited with code 1',
+        previousVersion: '0.1.4-canary.108.1.e8cc04e',
+        rollback: 'succeeded',
+        startedAt: '2026-06-03T06:57:58.598Z',
+        status: 'failed',
+        targetVersion: '0.1.4-canary.123.1.004dcde',
+      });
+
+      const status = await new RuntimeUpgradeService({
+        checkStore,
+        checkTtlMs: Number.MAX_SAFE_INTEGER,
+        operationStore,
+        packageVersion: async () => '0.1.4-canary.124.1.6ded17e',
+      }).status();
+
+      assert.equal(status.state, 'current');
+      assert.equal(status.updateAvailable, false);
+      assert.equal(status.operation.status, 'idle');
+      assert.equal((await operationStore.read()).status, 'idle');
     });
   } finally {
     await rm(rootDir, { force: true, recursive: true });
