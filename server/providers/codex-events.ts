@@ -87,6 +87,11 @@ export interface CodexSubagentSpawnOutput {
   subRunId: string;
 }
 
+export interface CodexSubagentSpawnPair {
+  output: CodexSubagentSpawnOutput;
+  spawn: CodexSubagentSpawnCall;
+}
+
 export function codexSubagentSpawnCallFromRawResponseItem(
   item: Record<string, unknown> | undefined,
 ): CodexSubagentSpawnCall | undefined {
@@ -120,6 +125,41 @@ export function codexSubagentSpawnOutputFromRawResponseItem(
     ...(name ? { name } : {}),
     subRunId,
   };
+}
+
+export function codexSubagentSpawnPairsFromSessionJsonl(contents: string, turnId: string): CodexSubagentSpawnPair[] {
+  const pending = new Map<string, CodexSubagentSpawnCall>();
+  const pairs: CodexSubagentSpawnPair[] = [];
+  let inTurn = false;
+
+  for (const line of contents.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const record = parseJsonRecord(line);
+    if (!record) continue;
+    const type = stringField(record, 'type');
+    const payload = asRecord(record['payload']);
+    const payloadTurnId = stringField(payload, 'turn_id') ?? stringField(payload, 'turnId');
+    if ((type === 'turn_context' || type === 'event_msg') && payloadTurnId === turnId) {
+      inTurn = true;
+    }
+    if (type === 'event_msg' && inTurn && payloadTurnId === turnId && stringField(payload, 'type') === 'task_complete') {
+      break;
+    }
+    if (!inTurn || type !== 'response_item') continue;
+    const spawn = codexSubagentSpawnCallFromRawResponseItem(payload);
+    if (spawn) {
+      pending.set(spawn.parentToolCallId, spawn);
+      continue;
+    }
+    const output = codexSubagentSpawnOutputFromRawResponseItem(payload);
+    if (!output) continue;
+    const matched = pending.get(output.callId);
+    if (!matched) continue;
+    pending.delete(output.callId);
+    pairs.push({ output, spawn: matched });
+  }
+
+  return pairs;
 }
 
 export function runtimeEventFromAppServerItem(
