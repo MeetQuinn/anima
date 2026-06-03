@@ -4,6 +4,7 @@ import { emojiGlyph } from '@/lib/emoji';
 import { dateLabel, clockHM } from '@/lib/format';
 import { Row, SurfaceText, COLOR_OUTBOUND } from './Row';
 import type { ActivityFeedItem, SubagentStream } from '@/lib/activity-feed';
+import { shortenModelLabel, subagentDelegationLabel } from '@/lib/activity-feed';
 import type { Activity as ActivityRecord } from '@shared/activity';
 import { ChevronRight } from 'lucide-react';
 import { MessageOutRow, FileOutRow } from './MessageRows';
@@ -115,7 +116,13 @@ export function StepRow({
     fullText.trim() !== previewText
   );
 
-  const secondaryText = isOutput ? previewText : row.target;
+  // For the "Delegated to subagent" row the tool payload carries no target, so
+  // surface which subagent type + model the parent delegated to (e.g.
+  // "Explore · Haiku"), derived from the attached subagent streams.
+  const delegationLabel = hasSubagents
+    ? subagentDelegationLabel(item.subagentStreams!)
+    : undefined;
+  const secondaryText = isOutput ? previewText : (row.target ?? delegationLabel);
   const secondary = (
     <span className="inline-flex min-w-0 items-center gap-2 overflow-hidden">
       {secondaryText ? (
@@ -212,7 +219,9 @@ function SubagentStreamSection({
   stream: SubagentStream;
   showHeader: boolean;
 }) {
-  const label = [stream.name, stream.role].filter(Boolean).join(' · ');
+  const label = [stream.name, stream.role, shortenModelLabel(stream.model)]
+    .filter(Boolean)
+    .join(' · ');
   return (
     <div className="py-0.5">
       {showHeader && label && (

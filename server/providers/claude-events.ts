@@ -807,11 +807,18 @@ async function ingestClaudeSubagentLog(
   }
   let emitted = false;
 
+  // The subagent's model is not in its meta.json — it lives on the assistant
+  // lines of the subagent transcript. Resolve it once and stamp it onto every
+  // child activity's linkage so the dashboard can show which model the parent
+  // delegated to (alongside the subagent type from meta.json's agentType).
+  const subagentModel = claudeSubagentModelFromContents(contents);
+
   for (const line of contents.split(/\r?\n/)) {
     const parsed = parseClaudeJsonlLine(line);
     if (!parsed) continue;
     const linkage = claudeSubagentLinkage(parsed, result.agentId, metadata, result.parentToolCallId);
     if (!hasSubagentLinkage(linkage)) continue;
+    if (subagentModel) linkage['model'] = subagentModel;
 
     for (const tool of providerToolCallsFromClaudeEvent(parsed, linkage)) {
       const providerToolId = stringField(tool, 'providerToolId');
@@ -854,6 +861,17 @@ async function ingestClaudeSubagentLog(
   }
   if (emitted) state.ingestedSubagentLogs.add(logKey);
   return emitted;
+}
+
+function claudeSubagentModelFromContents(contents: string): string | undefined {
+  for (const line of contents.split(/\r?\n/)) {
+    const parsed = parseClaudeJsonlLine(line);
+    if (!parsed) continue;
+    const message = isRecord(parsed['message']) ? parsed['message'] : undefined;
+    const model = stringField(message, 'model') ?? stringField(parsed, 'model');
+    if (model) return model;
+  }
+  return undefined;
 }
 
 function parseClaudeJsonlLine(line: string): Record<string, unknown> | undefined {

@@ -427,7 +427,7 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
         '  setTimeout(() => {',
         '    writeFileSync(process.env.CLAUDE_RESULT_SUBAGENT_LOG, [',
         '      JSON.stringify({ agentId: "claude-child-result", type: "user", message: { role: "user", content: "Read the child file." }, cwd: process.env.CLAUDE_SUBAGENT_CWD, sessionId: "claude-session-1" }),',
-        '      JSON.stringify({ agentId: "claude-child-result", attributionAgent: "general-purpose", type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_child_result_read", name: "Read", input: { file_path: "/tmp/child-result.md" } }] }, cwd: process.env.CLAUDE_SUBAGENT_CWD, sessionId: "claude-session-1" }),',
+        '      JSON.stringify({ agentId: "claude-child-result", attributionAgent: "general-purpose", type: "assistant", message: { model: "claude-haiku-4-5-test", content: [{ type: "tool_use", id: "toolu_child_result_read", name: "Read", input: { file_path: "/tmp/child-result.md" } }] }, cwd: process.env.CLAUDE_SUBAGENT_CWD, sessionId: "claude-session-1" }),',
         '      JSON.stringify({ agentId: "claude-child-result", type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_child_result_read", content: "child result contents", is_error: false }] }, cwd: process.env.CLAUDE_SUBAGENT_CWD, sessionId: "claude-session-1" }),',
         '      JSON.stringify({ agentId: "claude-child-result", attributionAgent: "general-purpose", type: "assistant", message: { content: [{ type: "text", text: "child result summary" }] }, cwd: process.env.CLAUDE_SUBAGENT_CWD, sessionId: "claude-session-1" }),',
         '    ].join("\\n") + "\\n", "utf8");',
@@ -518,8 +518,12 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
     assert.equal(resultChildTools[0]?.payload?.['subRunId'], 'claude-child-result');
     assert.equal(resultChildTools[0]?.payload?.['role'], 'general-purpose');
     assert.equal(resultChildTools[0]?.payload?.['name'], 'result child');
+    // Subagent model is read from the transcript assistant line and stamped onto
+    // every child activity so the dashboard can show what the parent delegated to.
+    assert.equal(resultChildTools[0]?.payload?.['model'], 'claude-haiku-4-5-test');
     const resultChildText = firstActivities.find((activity) => activity.type === 'agent.text' && activity.payload?.['subRunId'] === 'claude-child-result');
     assert.equal(resultChildText?.payload?.['text'], 'child result summary');
+    assert.equal(resultChildText?.payload?.['model'], 'claude-haiku-4-5-test');
     assert.equal(resultChildText?.payload?.['parentToolCallId'], 'toolu_result_task');
     assert.equal(
       allActivities(stateAfterFirst).some((activity) => activity.payload?.['providerToolId'] === 'toolu_anima_1'),
