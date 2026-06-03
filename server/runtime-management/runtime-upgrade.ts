@@ -116,12 +116,13 @@ export class RuntimeUpgradeService {
   }
 
   async status(): Promise<RuntimeUpgradeStatusResponse> {
-    const [currentVersion, releaseTrack, gate, operation] = await Promise.all([
+    const [currentVersion, releaseTrack, gate, storedOperation] = await Promise.all([
       this.packageVersion(),
       this.settings.getReleaseTrack(),
       runtimeUpgradeGate(),
       this.operationStore.read(),
     ]);
+    const operation = await this.operationForStatus(storedOperation, currentVersion);
 
     const cached = await this.checkStore.read();
     if (shouldRefreshRuntimeCheck(cached, releaseTrack, this.now(), this.checkTtlMs)) {
@@ -151,11 +152,12 @@ export class RuntimeUpgradeService {
   }
 
   async checkNow(): Promise<RuntimeUpgradeStatusResponse> {
-    const [currentVersion, releaseTrack, operation] = await Promise.all([
+    const [currentVersion, releaseTrack, storedOperation] = await Promise.all([
       this.packageVersion(),
       this.settings.getReleaseTrack(),
       this.operationStore.read(),
     ]);
+    const operation = await this.operationForStatus(storedOperation, currentVersion);
     const refreshed = await this.refreshCheckCache(releaseTrack);
     return this.statusFromCheck({
       check: refreshed,
@@ -258,6 +260,7 @@ export class RuntimeUpgradeService {
     const latestOnTrack = input.check.releaseTrack === input.releaseTrack ? input.check.latestOnTrack : undefined;
     const checkError = input.check.releaseTrack === input.releaseTrack ? input.check.checkError : undefined;
     const updateAvailable = latestOnTrack ? compareRuntimeVersions(latestOnTrack, input.currentVersion) > 0 : false;
+    const operation = await this.operationForStatus(input.operation, input.currentVersion);
     const releaseNotesUrl = runtimeReleaseNotesUrl({
       latestOnTrack,
       releaseTrack: input.releaseTrack,
@@ -269,12 +272,21 @@ export class RuntimeUpgradeService {
       currentVersion: input.currentVersion,
       gate,
       ...(latestOnTrack ? { latestOnTrack } : {}),
-      operation: input.operation,
+      operation,
       releaseTrack: input.releaseTrack,
       ...(releaseNotesUrl ? { releaseNotesUrl } : {}),
       state: checkError ? 'error' : updateAvailable ? 'available' : 'current',
       updateAvailable,
     };
+  }
+
+  private async operationForStatus(
+    operation: RuntimeUpgradeOperationType,
+    currentVersion: string,
+  ): Promise<RuntimeUpgradeOperationType> {
+    if (!isSupersededFailedOperation(operation, currentVersion)) return operation;
+    await this.operationStore.write(OPERATION_IDLE);
+    return OPERATION_IDLE;
   }
 }
 
@@ -575,6 +587,11 @@ function runtimeUpgradeBlocker(blocker: RestartBlocker): RuntimeUpgradeGateBlock
     status: info.status,
     ...(info.summary ? { summary: info.summary } : {}),
   };
+}
+
+function isSupersededFailedOperation(operation: RuntimeUpgradeOperationType, currentVersion: string): boolean {
+  if (operation.status !== 'failed' || !operation.targetVersion) return false;
+  return compareRuntimeVersions(currentVersion, operation.targetVersion) > 0;
 }
 
 function shouldRefreshRuntimeCheck(
