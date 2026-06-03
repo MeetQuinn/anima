@@ -54,7 +54,7 @@ function hiddenRuntimeEvent(eventType: string): boolean {
 }
 
 export interface SurfaceChip {
-  kind: 'channel' | 'thread' | 'dm' | 'reminder' | 'onboarding';
+  kind: 'channel' | 'thread' | 'dm' | 'reminder' | 'onboarding' | 'agent';
   label: string;
 }
 
@@ -220,6 +220,18 @@ export function buildActivityFeed(
           timestamp: activity.createdAt,
           surface: surfaceChipForOutbound(activity),
           isEdit: tool === 'anima.message.update' || effect === 'slack.message.update',
+        });
+        continue;
+      }
+      if (effect === 'agent.relay.send') {
+        const text = activity.payload?.['text'];
+        items.push({
+          kind: 'message-out',
+          activity,
+          text: typeof text === 'string' ? text : '',
+          timestamp: activity.createdAt,
+          surface: surfaceChipForOutbound(activity),
+          isEdit: false,
         });
         continue;
       }
@@ -609,6 +621,7 @@ function surfaceChipForEvent(event: InboxItem, wakeMeta?: ReminderWakeMeta): Sur
   }
   if (event.kind === 'choice_response') return surfaceChipForChoice(event);
   if (event.kind === 'feishu') return surfaceChipForFeishu(event);
+  if (event.kind === 'agent_message') return { kind: 'agent', label: 'relay' };
   if (event.kind !== 'slack') return { kind: 'onboarding', label: 'Onboarding' };
   return surfaceChipForSlack(event);
 }
