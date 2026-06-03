@@ -66,6 +66,9 @@ importers:
 
   packages/animactl:
     dependencies:
+      '@larksuiteoapi/node-sdk':
+        specifier: ^1.66.1
+        version: 1.66.1
       '@slack/bolt':
         specifier: ^4.7.2
         version: 4.7.2(@types/express@5.0.6)
