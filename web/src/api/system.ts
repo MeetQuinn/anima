@@ -2,7 +2,7 @@ import { apiRequest, jsonInit } from './client';
 import type { ProviderAvailability } from '@shared/provider-catalog';
 import type { ProviderUsageResponse } from '@shared/provider-usage';
 import type { ServerInfo } from '@shared/server-info';
-import type { SidebarOrder } from '@shared/server-settings';
+import type { SidebarOrder, WorkspacePlatform } from '@shared/server-settings';
 import type {
   RuntimeUpgradeApplyResponse,
   RuntimeUpgradeStatusResponse,
@@ -25,6 +25,19 @@ export async function saveSidebarOrder(order: SidebarOrder): Promise<SidebarOrde
     jsonInit('PUT', order),
   );
   return body.sidebarOrder;
+}
+
+export async function fetchWorkspacePlatform(): Promise<WorkspacePlatform> {
+  const body = await apiRequest<{ platform: WorkspacePlatform }>('/api/workspace-platform');
+  return body.platform;
+}
+
+export async function saveWorkspacePlatform(platform: WorkspacePlatform): Promise<WorkspacePlatform> {
+  const body = await apiRequest<{ platform: WorkspacePlatform }>(
+    '/api/workspace-platform',
+    jsonInit('PUT', { platform }),
+  );
+  return body.platform;
 }
 
 export async function fetchProviderAvailability(): Promise<ProviderAvailability[]> {

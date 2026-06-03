@@ -7,8 +7,8 @@ import AgentHeader from '@/components/AgentHeader';
  * matched tab view via <Outlet>. Lives at route `/agents/:agentId`.
  *
  * All agents (connected or not) use the same tabbed layout. Not-connected
- * agents land on Profile via reconcileLocation — which shows the inline
- * Connect Slack form.
+ * agents land on Profile via reconcileLocation — which shows the connection
+ * surface.
  */
 export default function AgentLayout() {
   const { agentId } = useParams<{ agentId: string }>();

@@ -3,6 +3,7 @@ import { queryKeys } from '@/lib/query-keys';
 import { apiRequest, jsonInit } from './client';
 import type {
   AgentConfig,
+  AgentConnectFeishuRequest,
   AgentConnectSlackRequest,
   AgentCreateRequest,
   AgentSetOwnerRequest,
@@ -119,6 +120,13 @@ export async function connectAgentSlack(
   input: AgentConnectSlackRequest,
 ): Promise<AgentConfig> {
   return apiRequest(`/api/agents/${encodeURIComponent(id)}/slack/connect`, jsonInit('POST', input));
+}
+
+export async function connectAgentFeishu(
+  id: string,
+  input: AgentConnectFeishuRequest,
+): Promise<AgentConfig> {
+  return apiRequest(`/api/agents/${encodeURIComponent(id)}/feishu/connect`, jsonInit('POST', input));
 }
 
 export async function fetchAgentSlackManifestUpdate(id: string): Promise<AgentSlackManifestUpdateInfo> {

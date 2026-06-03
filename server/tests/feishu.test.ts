@@ -213,6 +213,14 @@ test('Feishu text sends can post ordinary chat messages', async () => {
               throw new Error('unexpected reply call');
             },
           },
+          messageReaction: {
+            async create() {
+              throw new Error('unexpected reaction create call');
+            },
+            async delete() {
+              throw new Error('unexpected reaction delete call');
+            },
+          },
         },
       };
     },
@@ -259,6 +267,14 @@ test('Feishu text replies can post in a message topic', async () => {
               return { data: { chat_id: 'oc_test_chat', message_id: 'om_reply', thread_id: 'omt_topic' } };
             },
           },
+          messageReaction: {
+            async create() {
+              throw new Error('unexpected reaction create call');
+            },
+            async delete() {
+              throw new Error('unexpected reaction delete call');
+            },
+          },
         },
       };
     },
@@ -298,6 +314,12 @@ test('message send can target a Feishu chat explicitly', async () => {
         {
           createFeishuMessageClient() {
             return {
+              async addReaction() {
+                throw new Error('unexpected reaction add');
+              },
+              async removeReaction() {
+                throw new Error('unexpected reaction remove');
+              },
               async replyText() {
                 throw new Error('unexpected topic reply');
               },
@@ -328,6 +350,12 @@ test('message send can target a Feishu topic explicitly', async () => {
         {
           createFeishuMessageClient() {
             return {
+              async addReaction() {
+                throw new Error('unexpected reaction add');
+              },
+              async removeReaction() {
+                throw new Error('unexpected reaction remove');
+              },
               async replyText(input) {
                 replies.push(input);
                 return { chatId: 'oc_target_chat', messageId: 'om_sent', threadId: 'omt_topic' };

@@ -1,4 +1,9 @@
-import type { ReleaseTrack, ServerTrack, SidebarOrder } from '../../shared/server-settings.js';
+import type {
+  ReleaseTrack,
+  ServerTrack,
+  SidebarOrder,
+  WorkspacePlatform,
+} from '../../shared/server-settings.js';
 import {
   serverConfigStore,
   type ServerConfig,
@@ -45,6 +50,11 @@ export class ServerSettingsService {
     return config.track ?? config.releaseTrack ?? 'stable';
   }
 
+  async getWorkspacePlatform(): Promise<WorkspacePlatform> {
+    const config = await this.store.read();
+    return config.workspacePlatform ?? 'slack';
+  }
+
   async setReleaseTrack(releaseTrack: ReleaseTrack): Promise<ReleaseTrack> {
     const config = await this.store.read();
     await this.store.write({ ...config, releaseTrack, track: releaseTrack });
@@ -55,6 +65,12 @@ export class ServerSettingsService {
     const config = await this.store.read();
     await this.store.write({ ...config, sidebarOrder });
     return sidebarOrder;
+  }
+
+  async setWorkspacePlatform(workspacePlatform: WorkspacePlatform): Promise<WorkspacePlatform> {
+    const config = await this.store.read();
+    await this.store.write({ ...config, workspacePlatform });
+    return workspacePlatform;
   }
 }
 

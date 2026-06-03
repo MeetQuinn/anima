@@ -33,7 +33,13 @@ export class AgentConfigError extends Error {
 }
 
 export function isAgentRunnable(agent: AgentConfig): boolean {
-  return Boolean(agent.provider && agent.slack.appToken && agent.slack.botToken);
+  return Boolean(
+    agent.provider
+    && (
+      (agent.slack.connected && agent.slack.appToken && agent.slack.botToken)
+      || agent.feishu.connected
+    ),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -182,7 +188,7 @@ export async function validateAgentConfig(agent: AgentConfig): Promise<void> {
 export async function validateRunnableAgentConfig(agent: AgentConfig): Promise<void> {
   await validateAgentConfig(agent);
   if (!isAgentRunnable(agent)) {
-    throw new Error(`Agent ${agent.id}: provider and Slack tokens are required to run`);
+    throw new Error(`Agent ${agent.id}: provider and at least one connected platform are required to run`);
   }
 }
 

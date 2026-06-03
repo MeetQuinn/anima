@@ -124,10 +124,10 @@ test('server skips tokenless local agents and stays idle', async () => {
 
     const server = await runAnimactlUntil(['server'], {
       env: { ANIMA_HOME: configDir },
-      until: ({ stdout }) => /Agent anima: idle \/ awaiting Slack connection/.test(stdout),
+      until: ({ stdout }) => /Agent anima: idle \/ awaiting platform connection/.test(stdout),
     });
 
-    assert.match(server.stdout, /Agent anima: idle \/ awaiting Slack connection/);
+    assert.match(server.stdout, /Agent anima: idle \/ awaiting platform connection/);
     assert.doesNotMatch(server.stderr, /No agents started/);
     assert.doesNotMatch(server.stderr, /failed to start/);
   } finally {
@@ -158,10 +158,10 @@ test('server --agent only loads the requested agent', async () => {
 
     const server = await runAnimactlUntil(['--agent', 'scout', 'server'], {
       env: { ANIMA_HOME: configDir },
-      until: ({ stdout }) => /Agent scout: idle \/ awaiting Slack connection/.test(stdout),
+      until: ({ stdout }) => /Agent scout: idle \/ awaiting platform connection/.test(stdout),
     });
 
-    assert.match(server.stdout, /Agent scout: idle \/ awaiting Slack connection/);
+    assert.match(server.stdout, /Agent scout: idle \/ awaiting platform connection/);
     assert.doesNotMatch(server.stderr, /No agents started/);
     assert.doesNotMatch(server.stderr + server.stdout, /broken/);
   } finally {

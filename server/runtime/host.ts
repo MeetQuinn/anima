@@ -363,14 +363,18 @@ export async function loadRuntimeAgents(opts: RuntimeHostOptions = {}): Promise<
 async function startAgentFromConfig(agent: AgentConfig, animaHome: string): Promise<RunningAgentHandle> {
   await validateRunnableAgentConfig(agent);
   const server = runtimeServerConfigForAgent(agent);
-  await validateSlackConnectionForStart(agent.id, server);
-  const managedEnv = await managedProviderEnvForAgent(agent, animaHome, server.botToken);
+  if (server.slack) await validateSlackConnectionForStart(agent.id, server.slack);
+  const managedEnv = await managedProviderEnvForAgent(agent, animaHome, server.slack?.botToken);
+  const outputLines = [
+    server.slack ? 'Slack output: send enabled.' : undefined,
+    server.feishu.connected ? 'Feishu output: send enabled.' : undefined,
+  ].filter((line): line is string => Boolean(line));
   console.log(
     [
       `Starting Anima agent ${server.config.agentId}.`,
       `State dir: ${server.config.stateDir}`,
       'Reply policy: DMs and @mentions always wake; member channels and involved threads wake unless muted.',
-      'Slack output: send enabled.',
+      ...outputLines,
     ].join('\n'),
   );
   return startRunningAgent({
@@ -378,8 +382,7 @@ async function startAgentFromConfig(agent: AgentConfig, animaHome: string): Prom
     agentRuntime: createAgentRuntime(
       runtimeWithEnv(server.runtime, managedEnv),
     ),
-    appToken: server.appToken,
-    botToken: server.botToken,
+    ...(server.slack ? { appToken: server.slack.appToken, botToken: server.slack.botToken } : {}),
     feishu: server.feishu,
     ...(server.runtime.idleTimeoutMs !== undefined ? { idleTimeoutMs: server.runtime.idleTimeoutMs } : {}),
   });
@@ -451,41 +454,38 @@ async function validateSlackConnectionForStart(
 
 function agentSkipStatus(agent: AgentConfig): string | undefined {
   if (!agent.enabled) return 'disabled';
-  if (agent.slack.connected !== true || !agent.slack.appToken || !agent.slack.botToken) {
-    return 'idle / awaiting Slack connection';
-  }
   if (isAgentRunnable(agent)) return undefined;
+  if (!agent.slack.connected && !agent.feishu.connected) return 'idle / awaiting platform connection';
   return 'idle / incomplete config';
 }
 
 function runtimeServerConfigForAgent(agent: AgentConfig): {
-  appToken: string;
-  botToken: string;
   config: RuntimeWorkerConfig;
   feishu: AgentConfig['feishu'];
   runtime: AgentProviderConfig;
+  slack?: { appToken: string; botToken: string };
 } {
   const slack = agent.slack;
   const config = runtimeWorkerConfigForAgent(agent);
   const botToken = slack.botToken;
   const appToken = slack.appToken;
   const runtime = agent.provider;
-  if (!botToken) throw new Error(`Agent ${agent.id}: slack.botToken is required`);
-  if (!appToken) throw new Error(`Agent ${agent.id}: slack.appToken is required`);
   if (!runtime) throw new Error(`Agent ${agent.id}: provider is required`);
+  const connectedSlack = slack.connected && botToken && appToken
+    ? { appToken, botToken }
+    : undefined;
   return {
-    appToken,
-    botToken,
     config,
     feishu: agent.feishu,
     runtime,
+    ...(connectedSlack ? { slack: connectedSlack } : {}),
   };
 }
 
 export async function managedProviderEnvForAgent(
   agent: AgentConfig,
   animaHome: string,
-  botToken: string,
+  botToken?: string,
   deps: {
     fetchFeishuTenantAccessToken?: (config: AgentConfig['feishu']) => Promise<FeishuTenantAccessToken>;
   } = {},
@@ -493,9 +493,11 @@ export async function managedProviderEnvForAgent(
   const env: Record<string, string> = {
     ANIMA_HOME: animaHome,
     ANIMA_RUNTIME_HOME: animaHome,
-    ANIMA_SLACK_BOT_TOKEN: botToken,
-    SLACK_BOT_TOKEN: botToken,
   };
+  if (botToken) {
+    env.ANIMA_SLACK_BOT_TOKEN = botToken;
+    env.SLACK_BOT_TOKEN = botToken;
+  }
   if (!agent.feishu.connected) return env;
 
   env.FEISHU_API_BASE_URL = FEISHU_OPEN_API_BASE_URL;

@@ -268,6 +268,16 @@ export const FeishuConfig = z.object({
 
 export type FeishuConfig = z.infer<typeof FeishuConfig>;
 
+export const AgentConnectFeishuRequest = z.object({
+  appId: z.string().trim().min(1),
+  appSecret: z.string().trim().min(1),
+  botOpenId: z.string().trim().optional(),
+  encryptKey: z.string().trim().optional(),
+  verificationToken: z.string().trim().optional(),
+}).strict();
+
+export type AgentConnectFeishuRequest = z.infer<typeof AgentConnectFeishuRequest>;
+
 export const AgentOwner = SlackUserCandidate.extend({
   onboardingPromptedAt: z.string().optional(),
 }).strict();

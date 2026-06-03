@@ -3,6 +3,8 @@
 // Shared between the frontend (Vite, via @shared/url-routes) and the backend
 // test suite (NodeNext, via ../shared/url-routes.js). No server-only imports.
 
+import { agentHasConnectedTransport } from './agent-transports.js';
+
 export type AgentTab = 'activity' | 'profile' | 'reminders';
 
 export const AGENT_TABS: readonly AgentTab[] = ['activity', 'profile', 'reminders'] as const;
@@ -111,9 +113,14 @@ export function buildKbRawPath(id: string, filePath: string): string {
  * full route context.
  */
 export interface ReconcileSnapshot {
-  // slack.connected is derived server-side from real token presence (tokens are
-  // always redacted to "" on the wire, so !botToken is an unreliable signal).
-  agents: ReadonlyArray<{ id: string; slack?: { connected?: boolean } }>;
+  // transport connected flags are derived server-side from real credential
+  // presence. Tokens/secrets are always redacted to "" on the wire, so checking
+  // raw token fields is unreliable.
+  agents: ReadonlyArray<{
+    feishu?: { connected?: boolean };
+    id: string;
+    slack?: { connected?: boolean };
+  }>;
   agentStatuses: ReadonlyArray<{ agentId: string; currentItemId?: string; queueDepth: number }>;
   selectedAgentId?: string;
 }
@@ -149,7 +156,7 @@ export function reconcileLocation(
     const pick = active?.agentId ?? snapshot.selectedAgentId ?? snapshot.agents[0]?.id ?? null;
     if (pick && knownIds.has(pick)) {
       const pickedAgent = snapshot.agents.find((a) => a.id === pick);
-      const tab = pickedAgent?.slack?.connected === true ? DEFAULT_TAB : 'profile';
+      const tab = pickedAgent && agentHasConnectedTransport(pickedAgent) ? DEFAULT_TAB : 'profile';
       return { agentId: pick, tab };
     }
     return null;
@@ -157,12 +164,13 @@ export function reconcileLocation(
 
   // Valid agentId from here.
   const agent = snapshot.agents.find((a) => a.id === current.agentId);
-  const notConnected = !!agent && agent.slack?.connected !== true;
+  const notConnected = !!agent && !agentHasConnectedTransport(agent);
 
-  // Not-connected agents with no tab: default to Profile so the Connect Slack
-  // form is immediately visible. Explicit tab choices (activity, reminders) are
-  // honoured — the sidebar always navigates to /agents/:id (no tab), so this
-  // branch fires on every sidebar click without catching in-page tab switches.
+  // Not-connected agents with no tab: default to Profile so the connection
+  // surface is immediately visible. Explicit tab choices (activity, reminders)
+  // are honoured — the sidebar always navigates to /agents/:id (no tab), so
+  // this branch fires on every sidebar click without catching in-page tab
+  // switches.
   if (notConnected && current.tab === null) {
     return { agentId: current.agentId, tab: 'profile' };
   }

@@ -22,6 +22,7 @@ import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import { agentColor, initialOf } from '@/lib/avatars';
+import { agentHasConnectedTransport } from '@shared/agent-transports';
 import { AgentRow } from './sidebar/AgentRow';
 import { AgentCreateModal } from '@/views/onboarding';
 import {
@@ -237,7 +238,7 @@ export default function Sidebar({
               const active = agentId === agent.id;
               const isRunning = runningIds.has(agent.id);
               const enabled = agent.enabled !== false;
-              const notConnected = enabled && agent.slack?.connected !== true;
+              const notConnected = enabled && !agentHasConnectedTransport(agent);
               const color = agentColor(agentIndexMap.get(agent.id) ?? 0);
               const displayName = agent.profile?.displayName ?? agent.id;
               const initial = initialOf(displayName);

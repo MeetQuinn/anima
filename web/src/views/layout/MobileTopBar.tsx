@@ -7,6 +7,7 @@ import { stopItem, fetchAgents, fetchAgentStatuses, refreshDashboardData } from 
 import { agentColor, initialOf } from '@/lib/avatars';
 import AgentActionsMenu from '@/components/AgentActionsMenu';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
+import { agentHasConnectedTransport } from '@shared/agent-transports';
 
 /**
  * Fixed top bar shown on Screen 2 (agent detail) on mobile only.
@@ -44,7 +45,7 @@ export default function MobileTopBar() {
   const initial = agent ? initialOf(displayName) : '?';
   const color = idx >= 0 ? agentColor(idx) : 'var(--color-health-idle)';
   const enabled = agent?.enabled !== false;
-  const connected = agent?.slack?.connected === true;
+  const connected = agent ? agentHasConnectedTransport(agent) : false;
 
   const handleStop = async () => {
     if (!currentItemId || stopping || !agentId) return;
