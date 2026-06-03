@@ -1,11 +1,24 @@
 export interface AgentTransportSnapshot {
-  feishu?: { connected?: boolean };
-  slack?: { connected?: boolean };
+  feishu?: {
+    appId?: string;
+    botOpenId?: string;
+    connected?: boolean;
+  };
+  slack?: {
+    appId?: string;
+    avatarUrl?: string;
+    botUserId?: string;
+    connected?: boolean;
+    teamId?: string;
+    workspaceIconUrl?: string;
+    workspaceName?: string;
+  };
 }
 
 export type AgentTransportKind = 'slack' | 'feishu';
+export type AgentPlatformLabel = 'Slack' | 'Feishu';
 
-const TRANSPORT_LABELS: Record<AgentTransportKind, string> = {
+const TRANSPORT_LABELS: Record<AgentTransportKind, AgentPlatformLabel> = {
   feishu: 'Feishu',
   slack: 'Slack',
 };
@@ -42,11 +55,48 @@ export function agentHasMultipleConnectedTransports(agent: AgentTransportSnapsho
   return agentConnectedTransportKinds(agent).length > 1;
 }
 
-export function agentTransportDisplayLabel(kind: AgentTransportKind): string {
+export function agentConfiguredPlatformKind(agent: AgentTransportSnapshot): AgentTransportKind | undefined {
+  const connectedKind = agentPrimaryTransportKind(agent);
+  if (connectedKind) return connectedKind;
+
+  if (hasString(agent.feishu?.appId) || hasString(agent.feishu?.botOpenId)) return 'feishu';
+  if (
+    hasString(agent.slack?.appId)
+    || hasString(agent.slack?.botUserId)
+    || hasString(agent.slack?.teamId)
+    || hasString(agent.slack?.workspaceIconUrl)
+    || hasString(agent.slack?.workspaceName)
+    || hasString(agent.slack?.avatarUrl)
+  ) {
+    return 'slack';
+  }
+  return undefined;
+}
+
+export function agentTransportDisplayLabel(kind: AgentTransportKind): AgentPlatformLabel {
   return TRANSPORT_LABELS[kind];
+}
+
+export function agentPlatformLabel(agent: AgentTransportSnapshot): AgentPlatformLabel | null {
+  const kind = agentConfiguredPlatformKind(agent);
+  return kind ? agentTransportDisplayLabel(kind) : null;
 }
 
 export function agentTransportLabel(agent: AgentTransportSnapshot): string {
   const kind = agentPrimaryTransportKind(agent);
   return kind ? agentTransportDisplayLabel(kind) : 'Not connected';
+}
+
+export function agentsHaveMixedPlatforms(agents: readonly AgentTransportSnapshot[]): boolean {
+  const kinds = new Set<AgentTransportKind>();
+  for (const agent of agents) {
+    const kind = agentConfiguredPlatformKind(agent);
+    if (kind) kinds.add(kind);
+    if (kinds.size > 1) return true;
+  }
+  return false;
+}
+
+function hasString(value: string | undefined): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
 }
