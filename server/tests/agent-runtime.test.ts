@@ -1474,6 +1474,70 @@ test('kimi-cli wire transport starts a turn and appends subscription follow-up i
   }
 });
 
+test('kimi-cli closed stdin startup failure stays on provider promise', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  const unhandledRejections: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown) => {
+    unhandledRejections.push(reason);
+  };
+  process.on('unhandledRejection', onUnhandledRejection);
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const fakeKimi = join(stateDir, 'kimi');
+      await writeFile(
+        fakeKimi,
+        [
+          '#!/usr/bin/env node',
+          "process.stdin.setEncoding('utf8');",
+          "let buffer = '';",
+          'process.stdin.on("data", (chunk) => {',
+          '  buffer += chunk;',
+          '  const lines = buffer.split(/\\r?\\n/);',
+          '  buffer = lines.pop() || "";',
+          '  for (const line of lines) {',
+          '    if (!line.trim()) continue;',
+          '    const msg = JSON.parse(line);',
+          '    if (msg.method === "initialize") {',
+          '      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocol_version: "1.10", server: { name: "Kimi Code CLI", version: "1.44.0" }, capabilities: {} } }) + "\\n");',
+          '      process.exit(0);',
+          '    }',
+          '  }',
+          '});',
+        ].join('\n'),
+        'utf8',
+      );
+      await chmod(fakeKimi, 0o755);
+
+      const ctx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-kimi-closed',
+          teamId: 'T-demo',
+          text: 'Start Kimi.',
+          ts: '1770000700.000001',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir),
+        kind: 'kimi-cli',
+      });
+      await assert.rejects(
+        runtime.run(await runtimeInput(runtime, ctx, await loadState())),
+        /Kimi wire runtime (stdin is closed|exited before completing active turn)/,
+      );
+      await tick();
+      assert.deepEqual(unhandledRejections, []);
+    });
+  } finally {
+    process.off('unhandledRejection', onUnhandledRejection);
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 1000): Promise<void> {
   const startedAt = Date.now();
   while (!(await waitForPredicate(predicate))) {
@@ -1515,4 +1579,8 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
   } finally {
     if (timeout) clearTimeout(timeout);
   }
+}
+
+function tick(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
