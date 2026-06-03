@@ -69,7 +69,16 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
         "    send({ id: msg.id, result: { thread: { id: 'codex-thread-1', cwd: process.cwd(), cliVersion: 'test' } } });",
         "    return;",
         "  }",
-        "  if (msg.method === 'thread/resume') process.exit(36);",
+        "  if (msg.method === 'thread/resume') {",
+        "    if (msg.params.threadId !== 'codex-child-raw') process.exit(36);",
+        "    send({ id: msg.id, result: { thread: { id: 'codex-child-raw', agentNickname: 'Rawson', agentRole: 'explorer' }, model: 'gpt-5.5', modelProvider: 'openai' } });",
+        "    return;",
+        "  }",
+        "  if (msg.method === 'thread/unsubscribe') {",
+        "    if (msg.params.threadId !== 'codex-child-raw') process.exit(360);",
+        "    send({ id: msg.id, result: { status: 'ok' } });",
+        "    return;",
+        "  }",
         "  if (msg.method === 'turn/start') {",
         "    turnCount += 1;",
         "    const prompt = msg.params.input[0].text;",
@@ -109,6 +118,8 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
         "      send({ method: 'account/rateLimits/updated', params: { rateLimits: { limitId: 'primary', limitName: 'Primary', primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 1770000000 }, secondary: null, planType: 'pro', rateLimitReachedType: null } } });",
         "      send({ method: 'model/rerouted', params: { threadId: 'codex-thread-1', turnId: 'turn-1', fromModel: 'gpt-test', toModel: 'gpt-fallback', reason: 'unavailable' } });",
         "      send({ method: 'warning', params: { threadId: 'codex-thread-1', message: 'non-fatal warning' } });",
+        "      send({ method: 'rawResponseItem/completed', params: { threadId: 'codex-thread-1', turnId: 'turn-1', item: { type: 'function_call', namespace: 'multi_agent_v1', name: 'spawn_agent', call_id: 'call_spawn_raw', arguments: JSON.stringify({ agent_type: 'explorer', message: 'inspect a subtask' }) } } });",
+        "      send({ method: 'rawResponseItem/completed', params: { threadId: 'codex-thread-1', turnId: 'turn-1', item: { type: 'function_call_output', call_id: 'call_spawn_raw', output: JSON.stringify({ agent_id: 'codex-child-raw', nickname: 'Rawson' }) } } });",
         "      send({ method: 'item/agentMessage/delta', params: { threadId: 'codex-thread-1', turnId: 'turn-1', itemId: 'item-1', delta: 'handled first' } });",
         "      return;",
         "    }",
@@ -166,6 +177,10 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
       { accepted: true, text: 'appended to turn-1' },
     );
     assert.equal((await runPromise).text, 'handled first + appended second');
+    await waitFor(async () =>
+      (await activitiesForInboxItemWindow('anima', firstCtx.item.id))
+        .some((activity) => activity.type === 'agent.text' && activity.payload?.['subRunId'] === 'codex-child-raw'),
+    );
 
     const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string });
     assert.ok(calls.some((call) => call.method === 'turn/steer'));
@@ -193,6 +208,15 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
     const childText = activities.find((activity) => activity.type === 'agent.text' && activity.payload?.['subRunId'] === 'codex-child-1');
     assert.equal(childText?.payload?.['text'], 'child draft');
     assert.equal(childText?.payload?.['parentToolCallId'], 'task-parent-1');
+    const rawSubagentParent = activities.find((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'call_spawn_raw');
+    assert.equal(rawSubagentParent?.payload?.['providerToolName'], 'Agent');
+    assert.equal(rawSubagentParent?.payload?.['tool'], 'codex.agent');
+    const rawSubagentChild = activities.find((activity) => activity.type === 'agent.text' && activity.payload?.['subRunId'] === 'codex-child-raw');
+    assert.equal(rawSubagentChild?.payload?.['text'], 'Started subagent Rawson');
+    assert.equal(rawSubagentChild?.payload?.['parentToolCallId'], 'call_spawn_raw');
+    assert.equal(rawSubagentChild?.payload?.['name'], 'Rawson');
+    assert.equal(rawSubagentChild?.payload?.['role'], 'explorer');
+    assert.equal(rawSubagentChild?.payload?.['model'], 'gpt-5.5');
     assert.equal(
       activities.some((activity) => activity.payload?.['providerToolId'] === 'cmd-anima-1'),
       false,
@@ -245,7 +269,14 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
     const finalCalls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string });
     assert.equal(finalCalls.filter((call) => call.method === 'initialize').length, 1);
     assert.equal(finalCalls.filter((call) => call.method === 'thread/start').length, 1);
-    assert.equal(finalCalls.some((call) => call.method === 'thread/resume'), false);
+    assert.deepEqual(
+      finalCalls.filter((call) => call.method === 'thread/resume').map((call) => (call as { params?: Record<string, unknown> }).params?.['threadId']),
+      ['codex-child-raw'],
+    );
+    assert.deepEqual(
+      finalCalls.filter((call) => call.method === 'thread/unsubscribe').map((call) => (call as { params?: Record<string, unknown> }).params?.['threadId']),
+      ['codex-child-raw'],
+    );
 
     const fourthCtx = await ingestEvent(
       makeSlackEvent({
@@ -264,7 +295,10 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
     const postRotateCalls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string });
     assert.equal(postRotateCalls.filter((call) => call.method === 'initialize').length, 2);
     assert.equal(postRotateCalls.filter((call) => call.method === 'thread/start').length, 2);
-    assert.equal(postRotateCalls.some((call) => call.method === 'thread/resume'), false);
+    assert.deepEqual(
+      postRotateCalls.filter((call) => call.method === 'thread/resume').map((call) => (call as { params?: Record<string, unknown> }).params?.['threadId']),
+      ['codex-child-raw'],
+    );
     });
   } finally {
     await runtime?.close?.();
