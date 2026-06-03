@@ -112,7 +112,15 @@ body {
     'SOFT' 0,
     'WONK' 0;
   font-feature-settings: 'ss01', 'ss02';
-  background: var(--color-page);
+  /* Root backdrop. The dark "spine" colour (--color-page) is painted
+     explicitly via the .bg-page utility on the desktop shell/sidebar; this
+     root background is only ever visible in one place: the strip iOS Chrome
+     (and Safari) momentarily expose at the bottom when their dynamic toolbar
+     animates faster than `dvh` repaints. On mobile every view's bottom edge is
+     paper (--color-surface), so painting the root surface makes that transient
+     gap blend in instead of flashing black. Desktop never shows it (the
+     h-dvh w-screen shell covers the viewport). */
+  background: var(--color-surface);
   color: var(--color-text);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -120,7 +128,10 @@ body {
 
 body {
   margin: 0;
-  min-height: 100vh;
+  /* dvh, not vh: vh resolves to the *largest* viewport on iOS (toolbar hidden),
+     leaving a body taller than the visible area whose surplus shows the root
+     background. dvh tracks the live viewport so there is no overflow strip. */
+  min-height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
 }
