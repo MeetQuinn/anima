@@ -494,6 +494,7 @@ test('codex-cli app-server transport fails when process exits before turn comple
 test('claude-code runtime streams activity, persists Claude session metadata, and resumes it', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
   const previousClaudeProjectsDir = process.env.CLAUDE_PROJECTS_DIR;
+  let runtime: AgentRuntime | undefined;
   try {
     await withAnimaHome(stateDir, async () => {
     const callsPath = join(stateDir, 'claude-calls.jsonl');
@@ -623,7 +624,7 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
       config,
     );
 
-    const runtime = createAgentRuntime({
+    runtime = createAgentRuntime({
       env: {
         CALLS_PATH: callsPath,
         ...runtimeTestEnv(stateDir, {
@@ -753,8 +754,10 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
     assert.equal(stats?.payload?.['maxOutputTokens'], 32000);
     assert.equal(stats?.payload?.['permissionDenialCount'], 1);
     await runtime.close?.();
+    runtime = undefined;
     });
   } finally {
+    await runtime?.close?.();
     if (previousClaudeProjectsDir === undefined) delete process.env.CLAUDE_PROJECTS_DIR;
     else process.env.CLAUDE_PROJECTS_DIR = previousClaudeProjectsDir;
     await rm(stateDir, { force: true, recursive: true });
@@ -1194,14 +1197,21 @@ test('claude-code follow-up append waits for compact and tool gates before writi
       const activities = await activitiesForInboxItemWindow('anima', firstCtx.item.id);
       return activities.some((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'toolu_gate_1');
     });
-    assert.deepEqual(
-      await runtime.appendToActiveRun(await runtimeFollowupInput(runtime, firstCtx, secondCtx, await loadState())),
-      { accepted: true, text: 'appended to Claude stream-json stdin' },
-    );
+    let appendSettled = false;
+    const appendPromise = runtime.appendToActiveRun(
+      await runtimeFollowupInput(runtime, firstCtx, secondCtx, await loadState()),
+    ).finally(() => {
+      appendSettled = true;
+    });
 
     await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(appendSettled, false);
     assert.equal((await readFile(callsPath, 'utf8')).trim().split('\n').length, 1);
     await writeFile(releasePath, '1', 'utf8');
+    assert.deepEqual(
+      await withTimeout(appendPromise, 2_000),
+      { accepted: true, text: 'appended to Claude stream-json stdin' },
+    );
     assert.equal((await withTimeout(runPromise, 2_000)).text, 'gated done');
 
     const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { message: { content: Array<{ text: string }> } });

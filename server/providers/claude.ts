@@ -149,7 +149,7 @@ export class ClaudeCodeAgentRuntime implements AgentRuntime {
     const controller = this.controller;
     if (!this.activeRun.accepts(input)) return { accepted: false };
     if (!controller) return { accepted: false };
-    controller.writeUserMessage(input.prompt);
+    await controller.writeUserMessage(input.prompt);
     return { accepted: true, text: 'appended to Claude stream-json stdin' };
   }
 
@@ -195,7 +195,7 @@ export class ClaudeCodeAgentRuntime implements AgentRuntime {
     const controller = await this.ensureController(input);
     const turn = controller.startTurn(input, jsonlMapper);
     try {
-      controller.writeUserMessage(prompt);
+      await controller.writeUserMessage(prompt);
     } catch (error) {
       controller.abortCurrentTurn(error);
       throw error;
@@ -288,7 +288,11 @@ class ClaudeStreamJsonController {
     reject(error: unknown): void;
     resolve(value: string): void;
   };
-  private readonly queuedMessages: string[] = [];
+  private readonly queuedMessages: Array<{
+    reject(error: unknown): void;
+    resolve(): void;
+    text: string;
+  }> = [];
   private readonly quiescentWaiters = new Set<{
     cleanup(): void;
     reject(error: unknown): void;
@@ -299,7 +303,9 @@ class ClaudeStreamJsonController {
   constructor(private readonly child: RunningChildProcess) {
     child.completion
       .then(({ stderr, stdout }) => {
+        const exitError = new Error('Claude Code runtime exited before queued input reached stdin');
         this.rejectQuiescentWaiters(new Error('Claude Code runtime exited before drain reached a quiescent point'));
+        this.rejectQueuedMessages(exitError);
         const stderrOutput = stderr || this.stderrText;
         if (claudeSessionNotFound(stderrOutput)) {
           this.rejectCurrentTurn(new ClaudeSessionNotFoundError(stderrOutput));
@@ -309,6 +315,7 @@ class ClaudeStreamJsonController {
       })
       .catch((error) => {
         this.rejectQuiescentWaiters(error);
+        this.rejectQueuedMessages(error);
         this.rejectCurrentTurn(error);
       });
   }
@@ -337,12 +344,14 @@ class ClaudeStreamJsonController {
     });
   }
 
-  writeUserMessage(text: string): void {
+  writeUserMessage(text: string): Promise<void> {
     if (this.inputGateClosed()) {
-      this.queuedMessages.push(text);
-      return;
+      return new Promise((resolve, reject) => {
+        this.queuedMessages.push({ reject, resolve, text });
+      });
     }
     this.sendUserMessage(text);
+    return Promise.resolve();
   }
 
   abortCurrentTurn(error: unknown): void {
@@ -463,8 +472,13 @@ class ClaudeStreamJsonController {
     while (this.queuedMessages.length > 0) {
       const message = this.queuedMessages.shift();
       if (!message) continue;
-      this.sendUserMessage(message);
-      flushed += 1;
+      try {
+        this.sendUserMessage(message.text);
+        message.resolve();
+        flushed += 1;
+      } catch (error) {
+        message.reject(error);
+      }
     }
     return flushed;
   }
@@ -506,6 +520,13 @@ class ClaudeStreamJsonController {
 
   private rejectQuiescentWaiters(error: unknown): void {
     for (const waiter of [...this.quiescentWaiters]) waiter.reject(error);
+  }
+
+  private rejectQueuedMessages(error: unknown): void {
+    while (this.queuedMessages.length > 0) {
+      const message = this.queuedMessages.shift();
+      message?.reject(error);
+    }
   }
 }
 
