@@ -6,6 +6,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { buildKbPath } from '@/lib/url-state';
 import { formatBytes } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
+import { useIsMobile } from '@/hooks/use-mobile';
+import type { KbTreeNode } from '@shared/kb';
 
 import { TreeRow, ancestorsOf, matchesFilter } from './FileTree';
 import { FileContent, BreadcrumbPath, FileToolbar, TocButton, extractToc } from './FileViewer';
@@ -24,6 +26,19 @@ function cacheExpandedDirs(kbId: string, expanded: Set<string>): void {
   expandedDirsByKb.set(kbId, [...expanded]);
 }
 
+// Does a file with this exact path exist anywhere in the tree? Used to confirm a
+// remembered "last viewed" file is still present before resuming to it.
+function fileNodeExists(nodes: KbTreeNode[], path: string): boolean {
+  for (const node of nodes) {
+    if (node.type === 'file') {
+      if (node.path === path) return true;
+    } else if (node.children && fileNodeExists(node.children, path)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export default function Kb() {
   // Route params: id from /kb/:id, splat (*) for the file path.
   const { id: idParam, '*': splatPath } = useParams<{ id: string; '*'?: string }>();
@@ -35,6 +50,7 @@ export default function Kb() {
 
 function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
 
   const [expanded, setExpanded] = useState<Set<string>>(() => restoredExpandedDirs(id, filePath));
   const [filterQuery, setFilterQuery] = useState('');
@@ -102,6 +118,24 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
     enabled: !filePath && !!readmePath,
     refetchInterval: 30_000,
   });
+
+  // Desktop "resume where you left off": when the URL points at a KB root (no
+  // file) but this tab session remembers the last file viewed in this KB, jump
+  // back to that file so the tree highlight and the content panel agree instead
+  // of showing a stale tree selection next to the README. Tab-session memory
+  // only (lastViewedFileByKb) — a hard reload has no memory and lands on the
+  // README. Mobile keeps its file-list-first flow (one panel at a time, so the
+  // desktop side-by-side desync this fixes doesn't exist there).
+  const rememberedFile = !filePath ? (lastViewedFileByKb.get(id) ?? null) : null;
+  const resumeTarget = useMemo<string | null>(() => {
+    if (isMobile || !rememberedFile || !tree) return null;
+    return fileNodeExists(tree.nodes, rememberedFile) ? rememberedFile : null;
+  }, [isMobile, rememberedFile, tree]);
+
+  useEffect(() => {
+    if (!resumeTarget) return;
+    navigate(buildKbPath({ id, filePath: resumeTarget }), { replace: true });
+  }, [resumeTarget, id, navigate]);
 
   // TOC entries for the currently selected markdown file — used by TocButton in the header.
   const toc = useMemo(() => {
@@ -455,7 +489,9 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
                 />
               </div>
             </div>
-          ) : treeLoading ? (
+          ) : treeLoading || resumeTarget ? (
+            /* Loading, or about to redirect to the remembered file — hold the
+               README so it doesn't flash before the resume redirect fires. */
             <div className="flex h-full flex-col items-start justify-start p-8">
               <div className="font-sans text-[13px] text-text-subtle">Loading files…</div>
             </div>
