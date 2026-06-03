@@ -81,6 +81,7 @@ export interface SubagentStream {
   subRunId: string;
   name?: string;
   role?: string;
+  model?: string;
   depth: number;
   items: ActivityFeedItem[];
 }
@@ -688,10 +689,23 @@ function buildSubagentStreams(
       first && typeof first.payload?.['name'] === 'string' ? first.payload['name'] : undefined;
     const role =
       first && typeof first.payload?.['role'] === 'string' ? first.payload['role'] : undefined;
+    // The model the parent delegated this subagent to. Stamped onto child
+    // activity payloads from the subagent transcript (see claude-events.ts).
+    // First non-empty wins so a single missing line can't blank the label.
+    const model = childActivities
+      .map((a) => (typeof a.payload?.['model'] === 'string' ? a.payload['model'] : undefined))
+      .find((m): m is string => Boolean(m));
     const depth =
       first && typeof first.payload?.['depth'] === 'number' ? first.payload['depth'] : 1;
     const items = buildChildFeedItems(childActivities, showHidden);
-    streams.push({ subRunId, ...(name ? { name } : {}), ...(role ? { role } : {}), depth, items });
+    streams.push({
+      subRunId,
+      ...(name ? { name } : {}),
+      ...(role ? { role } : {}),
+      ...(model ? { model } : {}),
+      depth,
+      items,
+    });
   }
   // Sort streams by earliest activity timestamp so concurrent fan-out renders
   // in spawn order rather than Map insertion order.
@@ -701,6 +715,34 @@ function buildSubagentStreams(
     return aTs.localeCompare(bTs);
   });
   return streams;
+}
+
+/**
+ * Shorten a raw provider model id to a human label for the activity feed.
+ * Claude ids (`claude-haiku-4-5-20251001`) collapse to the family name; other
+ * providers (e.g. Codex `gpt-5-codex`) keep their id minus a trailing date
+ * stamp. Returns undefined when no model is known so callers can omit it.
+ */
+export function shortenModelLabel(model: string | undefined): string | undefined {
+  if (!model) return undefined;
+  const m = model.toLowerCase();
+  if (m.includes('haiku')) return 'Haiku';
+  if (m.includes('sonnet')) return 'Sonnet';
+  if (m.includes('opus')) return 'Opus';
+  return model.replace(/-\d{8}$/, '');
+}
+
+/**
+ * Compose the "delegated to which subagent" summary for the parent step row:
+ * `<type> · <model>` per stream, de-duplicated so a fan-out of identical
+ * subagents reads once. Returns undefined when neither type nor model is known.
+ */
+export function subagentDelegationLabel(streams: SubagentStream[]): string | undefined {
+  const parts = streams
+    .map((s) => [s.role, shortenModelLabel(s.model)].filter(Boolean).join(' · '))
+    .filter(Boolean);
+  const distinct = Array.from(new Set(parts));
+  return distinct.length > 0 ? distinct.join(', ') : undefined;
 }
 
 /** Build a flat list of feed items from child activities (no further nesting). */
