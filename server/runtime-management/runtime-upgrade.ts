@@ -35,6 +35,7 @@ import {
   type RuntimeUpgradeStatusResponse,
 } from '../../shared/runtime-upgrade.js';
 import type { ServerInfo } from '../../shared/server-info.js';
+import type { ServerTrack } from '../../shared/server-settings.js';
 
 export {
   compareRuntimeVersions,
@@ -52,6 +53,7 @@ const VERIFY_POLL_MS = 1_000;
 const UPGRADE_AFTER_RESPONSE_DELAY_MS = 250;
 const GITHUB_RELEASE_TAG_BASE_URL = 'https://github.com/MeetQuinn/anima/releases/tag/';
 const OPERATION_IDLE: RuntimeUpgradeOperationType = { status: 'idle' };
+const MANAGED_UPGRADE_UNSUPPORTED_REASON = 'Managed updates are unavailable on dev/source runtimes.';
 
 export interface RuntimeUpgradeServiceOptions {
   checkStore?: RuntimeUpgradeCheckStore;
@@ -116,13 +118,22 @@ export class RuntimeUpgradeService {
   }
 
   async status(): Promise<RuntimeUpgradeStatusResponse> {
-    const [currentVersion, releaseTrack, gate, storedOperation] = await Promise.all([
+    const [currentVersion, releaseTrack, track, gate, storedOperation] = await Promise.all([
       this.packageVersion(),
       this.settings.getReleaseTrack(),
+      this.settings.getTrack(),
       runtimeUpgradeGate(),
       this.operationStore.read(),
     ]);
     const operation = await this.operationForStatus(storedOperation, currentVersion);
+    if (!managedRuntimeUpgradeSupported(track)) {
+      return unsupportedRuntimeUpgradeStatus({
+        currentVersion,
+        gate,
+        operation,
+        releaseTrack,
+      });
+    }
 
     const cached = await this.checkStore.read();
     if (shouldRefreshRuntimeCheck(cached, releaseTrack, this.now(), this.checkTtlMs)) {
@@ -152,12 +163,21 @@ export class RuntimeUpgradeService {
   }
 
   async checkNow(): Promise<RuntimeUpgradeStatusResponse> {
-    const [currentVersion, releaseTrack, storedOperation] = await Promise.all([
+    const [currentVersion, releaseTrack, track, storedOperation] = await Promise.all([
       this.packageVersion(),
       this.settings.getReleaseTrack(),
+      this.settings.getTrack(),
       this.operationStore.read(),
     ]);
     const operation = await this.operationForStatus(storedOperation, currentVersion);
+    if (!managedRuntimeUpgradeSupported(track)) {
+      return unsupportedRuntimeUpgradeStatus({
+        currentVersion,
+        gate: await runtimeUpgradeGate(),
+        operation,
+        releaseTrack,
+      });
+    }
     const refreshed = await this.refreshCheckCache(releaseTrack);
     return this.statusFromCheck({
       check: refreshed,
@@ -174,11 +194,15 @@ export class RuntimeUpgradeService {
     logPath?: string;
     previousStartedAt?: string;
   }): Promise<PreparedRuntimeUpgrade> {
-    const [currentVersion, releaseTrack, operation] = await Promise.all([
+    const [currentVersion, releaseTrack, track, operation] = await Promise.all([
       this.packageVersion(),
       this.settings.getReleaseTrack(),
+      this.settings.getTrack(),
       this.operationStore.read(),
     ]);
+    if (!managedRuntimeUpgradeSupported(track)) {
+      throw new RuntimeUpgradeUnavailableError(MANAGED_UPGRADE_UNSUPPORTED_REASON);
+    }
     if (operation.status === 'scheduled' || operation.status === 'running') {
       throw new RuntimeUpgradeConflictError(`Runtime upgrade already ${operation.status}`);
     }
@@ -592,6 +616,28 @@ function runtimeUpgradeBlocker(blocker: RestartBlocker): RuntimeUpgradeGateBlock
 function isSupersededFailedOperation(operation: RuntimeUpgradeOperationType, currentVersion: string): boolean {
   if (operation.status !== 'failed' || !operation.targetVersion) return false;
   return compareRuntimeVersions(currentVersion, operation.targetVersion) > 0;
+}
+
+function managedRuntimeUpgradeSupported(track: ServerTrack): boolean {
+  return track === 'stable' || track === 'canary';
+}
+
+function unsupportedRuntimeUpgradeStatus(input: {
+  currentVersion: string;
+  gate: RuntimeUpgradeGate;
+  operation: RuntimeUpgradeOperationType;
+  releaseTrack: RuntimeReleaseTrack;
+}): RuntimeUpgradeStatusResponse {
+  return {
+    checkedAt: '1970-01-01T00:00:00.000Z',
+    currentVersion: input.currentVersion,
+    gate: input.gate,
+    operation: input.operation,
+    releaseTrack: input.releaseTrack,
+    state: 'unsupported',
+    updateAvailable: false,
+    unsupportedReason: MANAGED_UPGRADE_UNSUPPORTED_REASON,
+  };
 }
 
 function shouldRefreshRuntimeCheck(
