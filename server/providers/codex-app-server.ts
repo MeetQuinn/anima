@@ -1,8 +1,13 @@
+import { readdir, readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
 import { asRecord, stringField } from '../json.js';
 import { type RunningChildProcess } from './child-process.js';
 import {
   codexContextStatsFromTokenUsage,
   codexReasoningEventFromNotification,
+  codexSubagentSpawnPairsFromSessionJsonl,
   codexSubagentSpawnCallFromRawResponseItem,
   codexSubagentSpawnOutputFromRawResponseItem,
   codexRuntimeEventFromNotification,
@@ -56,6 +61,8 @@ export class CodexAppServerController {
   private readonly textByTurn = new Map<string, string>();
   private readonly activeProviderToolIds = new Set<string>();
   private readonly pendingSubagentSpawns = new Map<string, PendingCodexSubagentSpawn>();
+  private readonly recordedSubagentChildren = new Set<string>();
+  private readonly recordedSubagentParents = new Set<string>();
   private readonly providerToolsById = new Map<string, Record<string, unknown>>();
   private readonly quiescentWaiters = new Set<{
     cleanup(): void;
@@ -63,6 +70,7 @@ export class CodexAppServerController {
     resolve(): void;
   }>();
   private currentTurn?: ActiveCodexTurn;
+  private sessionFilePath?: string;
   threadId = '';
   readonly completion: Promise<{ stdout: string; stderr: string }>;
 
@@ -156,6 +164,7 @@ export class CodexAppServerController {
         this.textByTurn.delete(turnId);
       }
       this.linkedTextByItem.clear();
+      this.pendingSubagentSpawns.clear();
       this.activeProviderToolIds.clear();
       this.resolveQuiescentWaitersIfReady();
     }
@@ -332,6 +341,7 @@ export class CodexAppServerController {
       const stats = codexSessionStatsFromTurn(turn, this.runtimeKind);
       const input = this.currentTurn?.input ?? this.activeInput;
       if (input) await this.flushLinkedAgentText(input);
+      if (input) void this.recordSessionFileSubagentSpawns(input, turnId).catch(() => undefined);
       if (stats && input) await input.effects.recordEvent(stats);
       this.completedTurns.add(turnId);
       if (this.currentTurn?.turnId === turnId) this.currentTurn.completed.resolve();
@@ -386,12 +396,7 @@ export class CodexAppServerController {
     const spawnCall = codexSubagentSpawnCallFromRawResponseItem(item);
     if (spawnCall) {
       this.pendingSubagentSpawns.set(spawnCall.parentToolCallId, spawnCall);
-      await input.effects.recordToolStarted({
-        provider: 'codex-cli',
-        providerToolId: spawnCall.parentToolCallId,
-        providerToolName: 'Agent',
-        tool: 'codex.agent',
-      });
+      await this.recordSubagentParentTool(input, spawnCall);
       return true;
     }
 
@@ -404,11 +409,39 @@ export class CodexAppServerController {
     return true;
   }
 
+  private async recordSessionFileSubagentSpawns(input: AgentRuntimeInput, turnId: string): Promise<void> {
+    if (!this.threadId) return;
+    const session = await readCodexSessionFile(this.threadId, input.env, this.sessionFilePath).catch(() => undefined);
+    if (!session) return;
+    this.sessionFilePath = session.path;
+    for (const pair of codexSubagentSpawnPairsFromSessionJsonl(session.contents, turnId)) {
+      await this.recordSubagentParentTool(input, pair.spawn);
+      await this.recordSpawnedSubagent(input, pair.spawn, pair.output);
+    }
+  }
+
+  private async recordSubagentParentTool(
+    input: AgentRuntimeInput,
+    spawn: PendingCodexSubagentSpawn,
+  ): Promise<void> {
+    if (this.recordedSubagentParents.has(spawn.parentToolCallId)) return;
+    this.recordedSubagentParents.add(spawn.parentToolCallId);
+    await input.effects.recordToolStarted({
+      provider: 'codex-cli',
+      providerToolId: spawn.parentToolCallId,
+      providerToolName: 'Agent',
+      tool: 'codex.agent',
+    });
+  }
+
   private async recordSpawnedSubagent(
     input: AgentRuntimeInput,
     spawn: PendingCodexSubagentSpawn,
     spawnOutput: { name?: string; subRunId: string },
   ): Promise<void> {
+    const childKey = `${spawn.parentToolCallId}:${spawnOutput.subRunId}`;
+    if (this.recordedSubagentChildren.has(childKey)) return;
+    this.recordedSubagentChildren.add(childKey);
     const childMetadata = await this.readSubagentThreadMetadata(spawnOutput.subRunId).catch(() => ({}));
     const name = stringField(childMetadata, 'name') ?? spawnOutput.name;
     const role = stringField(childMetadata, 'role') ?? spawn.role;
@@ -437,6 +470,40 @@ export class CodexAppServerController {
     }
     return codexThreadMetadataFromResumeResponse(result);
   }
+}
+
+async function readCodexSessionFile(
+  threadId: string,
+  env: NodeJS.ProcessEnv,
+  cachedPath: string | undefined,
+): Promise<{ contents: string; path: string } | undefined> {
+  if (cachedPath) {
+    return { contents: await readFile(cachedPath, 'utf8'), path: cachedPath };
+  }
+  const path = await findCodexSessionFile(codexSessionsRoot(env), threadId);
+  return path ? { contents: await readFile(path, 'utf8'), path } : undefined;
+}
+
+async function findCodexSessionFile(root: string, threadId: string): Promise<string | undefined> {
+  const stack: Array<{ depth: number; path: string }> = [{ depth: 0, path: root }];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+    const entries = await readdir(current.path, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const path = join(current.path, entry.name);
+      if (entry.isFile() && entry.name.endsWith('.jsonl') && entry.name.includes(threadId)) {
+        return path;
+      }
+      if (entry.isDirectory() && current.depth < 4) stack.push({ depth: current.depth + 1, path });
+    }
+  }
+  return undefined;
+}
+
+function codexSessionsRoot(env: NodeJS.ProcessEnv): string {
+  const codexHome = env.CODEX_HOME?.trim() || join(homedir(), '.codex');
+  return join(codexHome, 'sessions');
 }
 
 function deferred<T>(): Deferred<T> {

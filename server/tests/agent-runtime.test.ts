@@ -306,6 +306,130 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
   }
 });
 
+test('codex-cli records subagent delegation from session response items when app-server omits them', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const codexHome = join(stateDir, 'codex-home');
+      const sessionDir = join(codexHome, 'sessions', '2026', '06', '03');
+      await mkdir(sessionDir, { recursive: true });
+      await writeFile(
+        join(sessionDir, 'rollout-2026-06-03T07-13-00-codex-parent-session.jsonl'),
+        [
+          JSON.stringify({
+            timestamp: '2026-06-03T07:12:59.815Z',
+            type: 'turn_context',
+            payload: { model: 'gpt-5.5', turn_id: 'turn-session-file' },
+          }),
+          JSON.stringify({
+            timestamp: '2026-06-03T07:13:19.582Z',
+            type: 'response_item',
+            payload: {
+              arguments: JSON.stringify({ agent_type: 'explorer', message: 'inspect a delegated task' }),
+              call_id: 'call_from_session',
+              name: 'spawn_agent',
+              namespace: 'multi_agent_v1',
+              type: 'function_call',
+            },
+          }),
+          JSON.stringify({
+            timestamp: '2026-06-03T07:13:19.695Z',
+            type: 'response_item',
+            payload: {
+              call_id: 'call_from_session',
+              output: JSON.stringify({ agent_id: 'codex-child-from-session', nickname: 'Gauss' }),
+              type: 'function_call_output',
+            },
+          }),
+          JSON.stringify({
+            timestamp: '2026-06-03T07:13:48.070Z',
+            type: 'event_msg',
+            payload: { completed_at: 1780470828, turn_id: 'turn-session-file', type: 'task_complete' },
+          }),
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+
+      const fakeCodex = join(stateDir, 'codex');
+      await writeFile(
+        fakeCodex,
+        [
+          '#!/usr/bin/env node',
+          "import readline from 'node:readline';",
+          "const rl = readline.createInterface({ input: process.stdin });",
+          "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
+          "rl.on('line', (line) => {",
+          "  const msg = JSON.parse(line);",
+          "  if (msg.method === 'initialize') {",
+          "    send({ id: msg.id, result: { userAgent: 'fake-codex' } });",
+          "    return;",
+          "  }",
+          "  if (msg.method === 'initialized') return;",
+          "  if (msg.method === 'thread/start') {",
+          "    send({ id: msg.id, result: { thread: { id: 'codex-parent-session', cwd: process.cwd(), cliVersion: 'test' } } });",
+          "    return;",
+          "  }",
+          "  if (msg.method === 'thread/resume') {",
+          "    if (msg.params.threadId !== 'codex-child-from-session') process.exit(44);",
+          "    send({ id: msg.id, result: { thread: { id: 'codex-child-from-session', agentNickname: 'Gauss', agentRole: 'explorer' }, model: 'gpt-5.5' } });",
+          "    return;",
+          "  }",
+          "  if (msg.method === 'thread/unsubscribe') {",
+          "    send({ id: msg.id, result: { status: 'ok' } });",
+          "    return;",
+          "  }",
+          "  if (msg.method === 'turn/start') {",
+          "    send({ id: msg.id, result: { turn: { id: 'turn-session-file', status: 'inProgress', items: [], itemsView: 'full', error: null, startedAt: 1, completedAt: null, durationMs: null } } });",
+          "    send({ method: 'item/agentMessage/delta', params: { threadId: 'codex-parent-session', turnId: 'turn-session-file', itemId: 'item-parent', delta: 'parent handled' } });",
+          "    send({ method: 'turn/completed', params: { threadId: 'codex-parent-session', turn: { id: 'turn-session-file', status: 'completed', model: 'gpt-5.5', items: [], itemsView: 'full', error: null, startedAt: 1, completedAt: 2, durationMs: 1000 } } });",
+          "  }",
+          "});",
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      await chmod(fakeCodex, 0o755);
+
+      const ctx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-anima',
+          teamId: 'T-demo',
+          text: 'spawn session-file subagent',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CODEX_HOME: codexHome }),
+        kind: 'codex-cli',
+        model: 'gpt-test',
+        reasoningEffort: 'xhigh',
+      });
+
+      assert.equal((await runtime.run(await runtimeInput(runtime, ctx, await loadState()))).text, 'parent handled');
+      await waitFor(async () =>
+        (await activitiesForInboxItemWindow('anima', ctx.item.id))
+          .some((activity) => activity.type === 'agent.text' && activity.payload?.['subRunId'] === 'codex-child-from-session'),
+      );
+      const activities = await activitiesForInboxItemWindow('anima', ctx.item.id);
+      const parent = activities.find((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'call_from_session');
+      assert.equal(parent?.payload?.['providerToolName'], 'Agent');
+      assert.equal(parent?.payload?.['tool'], 'codex.agent');
+      const child = activities.find((activity) => activity.type === 'agent.text' && activity.payload?.['subRunId'] === 'codex-child-from-session');
+      assert.equal(child?.payload?.['text'], 'Started subagent Gauss');
+      assert.equal(child?.payload?.['parentToolCallId'], 'call_from_session');
+      assert.equal(child?.payload?.['name'], 'Gauss');
+      assert.equal(child?.payload?.['role'], 'explorer');
+      assert.equal(child?.payload?.['model'], 'gpt-5.5');
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('codex-cli app-server transport fails when process exits before turn completion', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
   try {
