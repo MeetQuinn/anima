@@ -9,6 +9,10 @@ import { clockHM, dateKey, formatRelativeShort } from '@/lib/format';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useActivityFilters, type ActivityLens, type ActivityDir } from '@/hooks/useActivityFilters';
 import { useNow } from '@/hooks/useNow';
+import {
+  agentHealthReasonText,
+  agentHealthRecoveredFresh,
+} from '@/components/AgentHealthIndicator';
 import { MessageInRow, MessageOutRow, FileOutRow } from './MessageRows';
 import { ReactOutRow, StepRow, WorkingIndicator, DaySection } from './AuditRows';
 import type { Activity as ActivityRecord, AgentActivityFeedEvent } from '@shared/activity';
@@ -105,12 +109,33 @@ function ActivityStatusSummary({
   if (!status) return null;
   const running = Boolean(status.currentItemId);
   const queued = status.queueDepth > 0;
-  const state = running ? 'Working' : queued ? 'Queued' : 'Idle';
-  const dot = running
-    ? 'var(--color-health-warn)'
-    : queued
-      ? 'var(--color-health-idle)'
-      : 'var(--color-health-ok)';
+  const health = status.health;
+  const restartFailed = health?.state !== 'healthy' && health?.restart?.outcome === 'failed';
+  const unhealthy = health?.state === 'unhealthy' || restartFailed;
+  const recovered = !unhealthy && health ? agentHealthRecoveredFresh(health, now.getTime()) : false;
+  const starting = !unhealthy && !recovered && health?.state === 'starting';
+  const unknown = !unhealthy && !recovered && !starting && health?.state === 'unknown';
+  const state = unhealthy
+    ? 'Needs attention'
+    : recovered
+      ? 'Recovered'
+      : starting
+        ? health?.reason === 'restart_pending' ? 'Restarting' : 'Starting'
+        : unknown
+          ? 'Health unavailable'
+          : running ? 'Working' : queued ? 'Queued' : 'Idle';
+  const dot = unhealthy
+    ? 'var(--color-health-error)'
+    : recovered
+      ? 'var(--color-health-ok)'
+      : starting || unknown
+        ? 'var(--color-health-idle)'
+        : running
+          ? 'var(--color-health-warn)'
+          : queued
+            ? 'var(--color-health-idle)'
+            : 'var(--color-health-ok)';
+  const reason = unhealthy ? agentHealthReasonText(health?.restart?.reason ?? health?.reason) : undefined;
   const latest = latestActivity && isNarrativeStep(latestActivity)
     ? activityRow(latestActivity)
     : undefined;
@@ -122,7 +147,12 @@ function ActivityStatusSummary({
           <span aria-hidden className="h-2 w-2 rounded-full" style={{ background: dot }} />
           {state}
         </span>
-        {running && status.currentItemStartedAt && (
+        {reason && (
+          <span className="font-sans text-[11px] text-health-error">
+            {reason}
+          </span>
+        )}
+        {!unhealthy && !recovered && running && status.currentItemStartedAt && (
           <span className="font-sans text-[11px] text-text-subtle">
             started {formatRelativeShort(status.currentItemStartedAt, now)}
           </span>
@@ -371,7 +401,7 @@ export default function Activity() {
     return () => { cancelAnimationFrame(outer); cancelAnimationFrame(inner); };
   }, [agentId, activitiesData, messagesData, lens, dir]);
 
-  // Always scroll to bottom when a new work item starts.
+  // Always scroll to bottom when new work starts.
   useEffect(() => {
     if (!currentItemId) return;
     isAtBottomRef.current = true;

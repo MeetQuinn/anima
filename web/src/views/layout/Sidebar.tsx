@@ -96,6 +96,7 @@ export default function Sidebar({
   const navigate = useNavigate();
   const { agentId } = parseLocation(pathname);
   const setAgentId = (id: string | null) => navigate(id ? `/agents/${id}` : '/');
+  const statusByAgentId = new Map(statuses.map((status) => [status.agentId, status]));
   const runningIds = new Set(
     statuses.filter((s) => s.currentItemId || s.queueDepth > 0).map((s) => s.agentId),
   );
@@ -450,19 +451,23 @@ export default function Sidebar({
                   items={orderedAgents.map((a) => a.id)}
                   strategy={verticalListSortingStrategy}
                 >
-                  {orderedAgents.map((agent) => (
-                    <SortableItem key={agent.id} id={agent.id}>
-                      <AgentRow
-                        agent={agent}
-                        index={agentIndexMap.get(agent.id) ?? 0}
-                        active={agentId === agent.id}
-                        isRunning={runningIds.has(agent.id)}
-                        enabled={agent.enabled !== false}
-                        showPlatform={showAgentPlatforms}
-                        onClick={() => setAgentId(agent.id)}
-                      />
-                    </SortableItem>
-                  ))}
+                  {orderedAgents.map((agent) => {
+                    const status = statusByAgentId.get(agent.id);
+                    return (
+                      <SortableItem key={agent.id} id={agent.id}>
+                        <AgentRow
+                          agent={agent}
+                          index={agentIndexMap.get(agent.id) ?? 0}
+                          active={agentId === agent.id}
+                          isRunning={runningIds.has(agent.id)}
+                          enabled={agent.enabled !== false}
+                          {...(status ? { status } : {})}
+                          showPlatform={showAgentPlatforms}
+                          onClick={() => setAgentId(agent.id)}
+                        />
+                      </SortableItem>
+                    );
+                  })}
                 </SortableContext>
               </DndContext>
               {orderedAgents.length === 0 && (

@@ -15,6 +15,7 @@ import {
   type AgentRuntimeDrainInput,
   type AgentRuntimeFollowupInput,
   type AgentRuntimeFollowupResult,
+  type AgentRuntimeHealth,
   type AgentRuntimeInput,
   type AgentRuntimeResult,
   type KimiCliAgentProviderConfig,
@@ -37,6 +38,13 @@ export class KimiCliAgentRuntime implements AgentRuntime {
 
   async close(options: AgentRuntimeCloseOptions = {}): Promise<void> {
     await this.resetController(options.signal, options);
+  }
+
+  health(): AgentRuntimeHealth {
+    return {
+      ...(this.controller ? { child: this.controller.snapshot() } : {}),
+      childExpected: this.activeRun.isActive(),
+    };
   }
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
@@ -244,6 +252,10 @@ class KimiWireController {
 
   kill(signal: NodeJS.Signals = 'SIGTERM'): void {
     this.child.kill(signal);
+  }
+
+  snapshot() {
+    return this.child.snapshot();
   }
 
   waitForQuiescent(signal?: AbortSignal): Promise<void> {

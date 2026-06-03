@@ -7,8 +7,10 @@ import { parseLocation, AGENT_TABS, DEFAULT_TAB, type AgentTab } from '@/lib/url
 import { agentColor, initialOf } from '@/lib/avatars';
 import { Button } from './ui/button';
 import AgentActionsMenu from './AgentActionsMenu';
-import { queryKeys } from '@/lib/query-keys';
+import { AgentHealthIndicator } from './AgentHealthIndicator';
+import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useActivityFilters, type ActivityLens, type ActivityDir } from '@/hooks/useActivityFilters';
+import { agentHasConnectedTransport } from '@shared/agent-transports';
 
 const TABS: { id: AgentTab; label: string }[] = [
   { id: 'activity', label: 'Activity' },
@@ -96,7 +98,11 @@ function LensPill({
 
 export default function AgentHeader() {
   const { data: agents = [] } = useQuery({ queryKey: queryKeys.agents(), queryFn: fetchAgents });
-  const { data: agentStatuses = [] } = useQuery({ queryKey: queryKeys.agentStatuses(), queryFn: fetchAgentStatuses });
+  const { data: agentStatuses = [] } = useQuery({
+    queryKey: queryKeys.agentStatuses(),
+    queryFn: fetchAgentStatuses,
+    refetchInterval: refetchIntervals.agentStatuses,
+  });
   const { agentId } = useParams<{ agentId: string }>();
   const { pathname } = useLocation();
   const navigate = useNavigate();
@@ -121,6 +127,8 @@ export default function AgentHeader() {
   const initial = initialOf(displayName);
   const status = agentStatuses.find((s) => s.agentId === agent.id);
   const currentItemId = status?.currentItemId;
+  const connected = agentHasConnectedTransport(agent);
+  const showRuntimeHealth = agent.enabled !== false && connected;
 
   const handleStop = async () => {
     if (!currentItemId || stopping) return;
@@ -167,6 +175,13 @@ export default function AgentHeader() {
             {role}
           </span>
         )}
+        {showRuntimeHealth && (
+          <AgentHealthIndicator
+            health={status?.health}
+            isRunning={Boolean(currentItemId)}
+            density="header"
+          />
+        )}
         <div className="ml-auto flex items-center gap-1">
           {currentItemId && (
             <>
@@ -175,7 +190,7 @@ export default function AgentHeader() {
                 size="xs"
                 onClick={handleStop}
                 disabled={stopping}
-                title={`Stop item ${currentItemId}`}
+                title="Stop current work"
               >
                 {stopping ? 'Stopping…' : 'Stop'}
               </Button>

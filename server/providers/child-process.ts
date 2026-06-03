@@ -1,11 +1,13 @@
 import { spawn } from 'node:child_process';
 
 import { errorMessage } from '../ids.js';
+import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
 
 export interface RunningChildProcess {
   completion: Promise<{ stdout: string; stderr: string }>;
   endStdin(): void;
   kill(signal?: NodeJS.Signals): void;
+  snapshot(): ProviderChildHealthSnapshot;
   writeStdin(input: string): void;
 }
 
@@ -25,6 +27,7 @@ export function startChildProcess(input: {
   onStdoutChunk?: (chunk: string) => Promise<void>;
   signal?: AbortSignal;
 }): RunningChildProcess {
+  const startedAt = new Date().toISOString();
   const child = spawn(input.command, input.args, {
     cwd: input.cwd ?? process.cwd(),
     env: input.env,
@@ -43,6 +46,11 @@ export function startChildProcess(input: {
 
   const stdoutChunks: Buffer[] = [];
   const stderrChunks: Buffer[] = [];
+  let exitedAt: string | undefined;
+  let exitCode: number | null | undefined;
+  let exitSignal: NodeJS.Signals | null | undefined;
+  let lastStderrAt: string | undefined;
+  let lastStdoutAt: string | undefined;
   const bufferOutput = input.bufferOutput ?? true;
   let streamEffects = Promise.resolve();
   let streamEffectError: unknown;
@@ -56,18 +64,25 @@ export function startChildProcess(input: {
   }
   child.stdout.on('data', (chunk: Buffer | string) => {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    lastStdoutAt = new Date().toISOString();
     if (bufferOutput) stdoutChunks.push(buffer);
     enqueueStreamEffect(input.onStdoutChunk ? () => input.onStdoutChunk?.(buffer.toString('utf8')) ?? Promise.resolve() : undefined);
   });
   child.stderr.on('data', (chunk: Buffer | string) => {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    lastStderrAt = new Date().toISOString();
     if (bufferOutput) stderrChunks.push(buffer);
     enqueueStreamEffect(input.onStderrChunk ? () => input.onStderrChunk?.(buffer.toString('utf8')) ?? Promise.resolve() : undefined);
   });
 
   const completion = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
     child.on('error', reject);
-    child.on('close', (code, signal) => resolve({ code, signal }));
+    child.on('close', (code, signal) => {
+      exitedAt = new Date().toISOString();
+      exitCode = code;
+      exitSignal = signal;
+      resolve({ code, signal });
+    });
   }).then(async (exit) => {
     await streamEffects;
 
@@ -93,11 +108,37 @@ export function startChildProcess(input: {
     kill(signal: NodeJS.Signals = 'SIGTERM') {
       child.kill(signal);
     },
+    snapshot() {
+      return {
+        alive: !exitedAt && isProcessAlive(child.pid),
+        command: input.command,
+        exited: Boolean(exitedAt),
+        ...(exitedAt ? { exitedAt } : {}),
+        ...(exitCode !== undefined ? { exitCode } : {}),
+        label: input.label,
+        ...(lastStderrAt ? { lastStderrAt } : {}),
+        ...(lastStdoutAt ? { lastStdoutAt } : {}),
+        ...(child.pid ? { pid: child.pid } : {}),
+        ...(exitSignal !== undefined ? { signal: exitSignal } : {}),
+        startedAt,
+        stdinWritable: !child.stdin.destroyed && child.stdin.writable,
+      };
+    },
     writeStdin(chunk: string) {
       if (child.stdin.destroyed || !child.stdin.writable) throw new Error(`${input.label} stdin is closed`);
       child.stdin.write(chunk);
     },
   };
+}
+
+function isProcessAlive(pid: number | undefined): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'EPERM');
+  }
 }
 
 export async function terminateChildProcess(

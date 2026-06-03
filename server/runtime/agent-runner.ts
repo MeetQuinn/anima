@@ -11,6 +11,7 @@ import {
 } from './processing-reactions.js';
 import type { AgentRuntime } from '../providers/contract.js';
 import type { FeishuConfig } from '../../shared/agent-config.js';
+import type { AgentRuntimeHandleSnapshot } from '../../shared/snapshot.js';
 import { AgentRuntimeWorker, type AgentRuntimeWorkerCloseOptions } from './runtime-worker.js';
 import type { RuntimeWorkerConfig } from './types.js';
 import { recordLifetimeTokenUsageForItem } from './usage.js';
@@ -24,6 +25,7 @@ interface RunningAgentOptions extends RuntimeWorkerConfig {
 }
 
 export interface RunningAgentHandle {
+  health?(): AgentRuntimeHandleSnapshot;
   isActive?(): boolean;
   stop(options?: AgentRuntimeWorkerCloseOptions): Promise<void>;
 }
@@ -68,6 +70,9 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
     throw error;
   }
   return {
+    health() {
+      return worker.health();
+    },
     isActive() {
       return worker.isActive();
     },

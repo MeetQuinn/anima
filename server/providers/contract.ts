@@ -4,6 +4,7 @@ import type {
   CodexCliAgentProviderConfig,
   KimiCliAgentProviderConfig,
 } from '../../shared/agent-config.js';
+import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
 
 export type {
   AgentProviderConfig,
@@ -78,10 +79,16 @@ export interface AgentRuntimeCloseOptions {
   signal?: NodeJS.Signals;
 }
 
+export interface AgentRuntimeHealth {
+  child?: ProviderChildHealthSnapshot;
+  childExpected: boolean;
+}
+
 export interface AgentRuntime {
   readonly env?: Record<string, string>;
   readonly kind: string;
   close?(options?: AgentRuntimeCloseOptions): Promise<void>;
+  health?(): AgentRuntimeHealth;
   run(input: AgentRuntimeInput): Promise<AgentRuntimeResult>;
   appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<AgentRuntimeFollowupResult>;
   requestDrain?(input: AgentRuntimeDrainInput): Promise<void>;

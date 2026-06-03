@@ -22,6 +22,7 @@ import {
 } from './codex-events.js';
 import type { AgentRuntimeInput } from './contract.js';
 import { truncateForActivity } from '../activities/format.js';
+import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
 
 interface CodexThread {
   id: string;
@@ -214,6 +215,10 @@ export class CodexAppServerController {
 
   kill(signal?: NodeJS.Signals): void {
     this.child.kill(signal);
+  }
+
+  snapshot(): ProviderChildHealthSnapshot {
+    return this.child.snapshot();
   }
 
   private notify(method: string): void {
