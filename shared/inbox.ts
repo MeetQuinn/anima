@@ -6,6 +6,8 @@ export const InboxItemStatus = z.enum(['queued', 'running', 'completed', 'failed
 export type InboxItemStatus = z.infer<typeof InboxItemStatus>;
 
 export const InboxItemHandling = z.object({
+  appendedAt: z.string().optional(),
+  appendedToItemId: z.string().optional(),
   completedAt: z.string().optional(),
   createdAt: z.string(),
   drainRequestedAt: z.string().optional(),
@@ -146,3 +148,11 @@ export const InboxItemSchema = z.discriminatedUnion('kind', [
 ]);
 
 export type InboxItem = z.infer<typeof InboxItemSchema>;
+
+export function isAppendedRunningInboxItem(item: InboxItem): boolean {
+  return item.handling.status === 'running' && Boolean(item.handling.appendedToItemId);
+}
+
+export function isPrimaryRunningInboxItem(item: InboxItem): boolean {
+  return item.handling.status === 'running' && !item.handling.appendedToItemId;
+}

@@ -1,4 +1,5 @@
 import { WakeQueueService, type InboxItem } from '../inbox/wake-queue.service.js';
+import { isPrimaryRunningInboxItem } from '../../shared/inbox.js';
 
 export interface ActiveRuntimeItemRecord {
   agentId: string;
@@ -32,7 +33,7 @@ export async function clearActiveRuntimeItem(input: {
 
 export async function findActiveRuntimeItem(agentId: string): Promise<ActiveRuntimeItemRecord | undefined> {
   const running = (await new WakeQueueService(agentId).list())
-    .filter((event) => event.handling.status === 'running' && event.handling.workerId && !event.handling.settledAt)
+    .filter((event) => isPrimaryRunningInboxItem(event) && event.handling.workerId && !event.handling.settledAt)
     .sort((a, b) => (b.handling.startedAt ?? b.handling.updatedAt).localeCompare(a.handling.startedAt ?? a.handling.updatedAt))[0];
   if (!running?.handling.workerId) return undefined;
   return runtimeRecordFromEvent(agentId, running);
@@ -42,7 +43,7 @@ export async function findToolAuditRuntimeItem(agentId: string): Promise<ActiveR
   const candidates = (await new WakeQueueService(agentId).list())
     .filter((event) => event.handling.workerId);
   const running = candidates
-    .filter((event) => event.handling.status === 'running' && !event.handling.settledAt)
+    .filter((event) => isPrimaryRunningInboxItem(event) && !event.handling.settledAt)
     .sort((a, b) => (b.handling.startedAt ?? b.handling.updatedAt).localeCompare(a.handling.startedAt ?? a.handling.updatedAt))[0];
   if (running) return runtimeRecordFromEvent(agentId, running);
 

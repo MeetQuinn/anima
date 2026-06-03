@@ -1,5 +1,6 @@
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { WakeQueueService, type InboxItem } from '../inbox/wake-queue.service.js';
+import { isPrimaryRunningInboxItem } from '../../shared/inbox.js';
 import type { AgentStatusSummary } from '../../shared/snapshot.js';
 import { defaultAgentRestartCommandStore } from './agent-restart-command.store.js';
 import { findActiveRuntimeItem } from './active-item.js';
@@ -58,7 +59,7 @@ export const defaultRuntimeService = new RuntimeService();
 
 function latestRunningItem(items: InboxItem[]): InboxItem | undefined {
   return items
-    .filter((item) => item.handling.status === 'running')
+    .filter((item) => isPrimaryRunningInboxItem(item))
     .sort((a, b) => {
       const aTime = a.handling.startedAt ?? a.handling.updatedAt;
       const bTime = b.handling.startedAt ?? b.handling.updatedAt;
