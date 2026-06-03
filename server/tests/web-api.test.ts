@@ -922,6 +922,24 @@ test('web API mutates agent configs with redacted responses', async () => {
       assert.doesNotMatch(seedMemory, /local-agent/);
       assert.match(seedMemory, /parent and ancestor directories/);
 
+      const chineseHomePath = join(homeDir, 'u-5c0f-7f8a');
+      const chineseNameCreate = await fetch(`${base}/api/agents`, {
+        body: JSON.stringify({
+          name: '小羊',
+          homePath: chineseHomePath,
+          role: 'Feishu test agent.',
+          provider: testRuntime(),
+        }),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+      });
+      assert.equal(chineseNameCreate.status, 200);
+      const chineseNameBody = (await chineseNameCreate.json()) as { id?: string; profile?: { displayName?: string }; homePath?: string };
+      assert.equal(chineseNameBody.id, 'u-5c0f-7f8a');
+      assert.equal(chineseNameBody.profile?.displayName, '小羊');
+      assert.equal(chineseNameBody.homePath, chineseHomePath);
+      assert.match(await readFile(join(chineseHomePath, 'MEMORY.md'), 'utf8'), /# 小羊/);
+
       const defaultHomeCreate = await fetch(`${base}/api/agents`, {
         body: JSON.stringify({
           name: 'Default Home Agent',
