@@ -48,6 +48,25 @@ export interface FeishuTenantAccessToken {
   tenantAccessToken: string;
 }
 
+export interface FeishuRegisterAppInput {
+  appPreset?: {
+    avatar?: string | string[];
+    desc?: string;
+    name?: string;
+  };
+  onQRCodeReady(info: { expireIn: number; url: string }): void;
+  onStatusChange?(info: { interval?: number; status: 'polling' | 'slow_down' | 'domain_switched' }): void;
+  signal?: AbortSignal;
+  source?: string;
+}
+
+export interface FeishuRegisterAppResult {
+  appId: string;
+  appSecret: string;
+  tenantBrand?: 'feishu' | 'lark';
+  userOpenId?: string;
+}
+
 type FetchLike = (
   url: string,
   init: {
@@ -182,6 +201,22 @@ export async function fetchFeishuTenantAccessToken(
   return {
     ...(expiresAt ? { expiresAt } : {}),
     tenantAccessToken,
+  };
+}
+
+export async function registerFeishuApp(input: FeishuRegisterAppInput): Promise<FeishuRegisterAppResult> {
+  const result = await lark.registerApp({
+    ...(input.appPreset ? { appPreset: input.appPreset } : {}),
+    onQRCodeReady: input.onQRCodeReady,
+    onStatusChange: input.onStatusChange,
+    ...(input.signal ? { signal: input.signal } : {}),
+    source: input.source ?? 'anima',
+  });
+  return {
+    appId: result.client_id,
+    appSecret: result.client_secret,
+    ...(result.user_info?.tenant_brand ? { tenantBrand: result.user_info.tenant_brand } : {}),
+    ...(result.user_info?.open_id ? { userOpenId: result.user_info.open_id } : {}),
   };
 }
 

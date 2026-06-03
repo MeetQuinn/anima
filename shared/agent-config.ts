@@ -300,6 +300,21 @@ export const AgentConnectFeishuRequest = z.object({
 
 export type AgentConnectFeishuRequest = z.infer<typeof AgentConnectFeishuRequest>;
 
+export const AgentFeishuRegisterAppStatus = z.object({
+  agent: z.unknown().optional(),
+  error: z.object({
+    code: z.string().optional(),
+    description: z.string().optional(),
+    message: z.string().optional(),
+  }).optional(),
+  expireIn: z.number().optional(),
+  registrationId: z.string(),
+  state: z.enum(['starting', 'waiting', 'slow_down', 'domain_switched', 'connected', 'failed']),
+  verificationUrl: z.string().optional(),
+}).strict();
+
+export type AgentFeishuRegisterAppStatus = z.infer<typeof AgentFeishuRegisterAppStatus>;
+
 export const AgentOwner = SlackUserCandidate.extend({
   onboardingPromptedAt: z.string().optional(),
 }).strict();
