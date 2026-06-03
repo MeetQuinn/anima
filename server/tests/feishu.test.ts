@@ -11,6 +11,8 @@ import {
   type FeishuReceiveMessageEvent,
 } from '../feishu/events.js';
 import { createFeishuMessageClient, fetchFeishuTenantAccessToken } from '../feishu/client.js';
+import { AgentFeishuService } from '../agents/agent-feishu.service.js';
+import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import { messageFromInboxItem } from '../messages/message.projection.js';
 import { runMessageSend } from '../tools/messages.js';
@@ -176,6 +178,55 @@ test('mints Feishu tenant access token from app credentials', async () => {
     expiresAt: '2026-06-03T02:00:00.000Z',
     tenantAccessToken: 't-tenant',
   });
+});
+
+test('Feishu app registration stores returned app credentials without using scanner user as bot id', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-register-app-test-'));
+  const homePath = join(stateDir, 'home');
+  await mkdir(homePath, { recursive: true });
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await defaultAgentRegistryService.createAgent({
+        homePath,
+        name: 'Feishu Scout',
+        provider: { kind: 'codex-cli', model: 'gpt-5.5' },
+        role: 'Feishu registration test agent.',
+      });
+
+      let resolveRegister: ((result: { appId: string; appSecret: string; userOpenId: string }) => void) | undefined;
+      const registerPromise = new Promise<{ appId: string; appSecret: string; userOpenId: string }>((resolve) => {
+        resolveRegister = resolve;
+      });
+      const service = new AgentFeishuService('feishu-scout', {
+        async registerFeishuApp(input) {
+          input.onQRCodeReady({ expireIn: 600, url: 'https://accounts.feishu.cn/verify?registration=test' });
+          return registerPromise;
+        },
+      });
+
+      const started = await service.startAppRegistration();
+      assert.equal(started.state, 'waiting');
+      assert.equal(started.verificationUrl, 'https://accounts.feishu.cn/verify?registration=test');
+      assert.equal(started.expireIn, 600);
+
+      resolveRegister?.({
+        appId: 'cli_generated',
+        appSecret: 'generated-secret',
+        userOpenId: 'ou_scanning_user_not_bot',
+      });
+
+      const completed = await waitForRegistration(service, started.registrationId, 'connected');
+      assert.equal(completed.agent?.feishu.connected, true);
+      assert.equal(completed.agent?.feishu.appId, 'cli_generated');
+      assert.equal(completed.agent?.feishu.botOpenId, undefined);
+
+      const stored = await defaultAgentRegistryService.serviceFor('feishu-scout').getConfig();
+      assert.equal(stored.feishu.appSecret, 'generated-secret');
+      assert.equal(stored.feishu.botOpenId, undefined);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 test('Feishu inbox messages project into the message ledger', () => {
@@ -394,4 +445,19 @@ async function writeFeishuConfig(configDir: string): Promise<void> {
     }, null, 2)}\n`,
     'utf8',
   );
+}
+
+async function waitForRegistration(
+  service: AgentFeishuService,
+  registrationId: string,
+  state: 'connected' | 'failed',
+) {
+  const deadline = Date.now() + 2_000;
+  let last = await service.registrationStatus(registrationId);
+  while (Date.now() < deadline) {
+    last = await service.registrationStatus(registrationId);
+    if (last.state === state) return last;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Timed out waiting for registration ${registrationId} to reach ${state}; last state ${last.state}`);
 }

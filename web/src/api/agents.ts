@@ -4,6 +4,7 @@ import { apiRequest, jsonInit } from './client';
 import type {
   AgentConfig,
   AgentConnectFeishuRequest,
+  AgentFeishuRegisterAppStatus,
   AgentConnectSlackRequest,
   AgentCreateRequest,
   AgentSetOwnerRequest,
@@ -127,6 +128,21 @@ export async function connectAgentFeishu(
   input: AgentConnectFeishuRequest,
 ): Promise<AgentConfig> {
   return apiRequest(`/api/agents/${encodeURIComponent(id)}/feishu/connect`, jsonInit('POST', input));
+}
+
+export async function startAgentFeishuAppRegistration(
+  id: string,
+): Promise<AgentFeishuRegisterAppStatus> {
+  return apiRequest(`/api/agents/${encodeURIComponent(id)}/feishu/register-app`, jsonInit('POST'));
+}
+
+export async function fetchAgentFeishuAppRegistration(
+  id: string,
+  registrationId: string,
+): Promise<AgentFeishuRegisterAppStatus> {
+  return apiRequest(
+    `/api/agents/${encodeURIComponent(id)}/feishu/register-app/${encodeURIComponent(registrationId)}`,
+  );
 }
 
 export async function fetchAgentSlackManifestUpdate(id: string): Promise<AgentSlackManifestUpdateInfo> {
