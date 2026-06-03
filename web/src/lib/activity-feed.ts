@@ -461,6 +461,16 @@ function inboxItemForMessage(message: AgentMessageRecord): InboxItem {
       text: message.text,
     };
   }
+  if (message.platform === 'local') {
+    return {
+      ...base,
+      fromAgentId: message.actorUserId ?? message.channelId ?? '',
+      fromName: message.actor ?? message.actorDisplayName ?? message.actorUserId ?? 'Agent',
+      kind: 'agent_message',
+      text: message.text,
+      ...(message.threadTs ? { replyTo: message.threadTs } : {}),
+    };
+  }
   if (message.kind === 'choice_response') {
     return {
       ...base,
@@ -545,7 +555,10 @@ function activityForMessage(message: AgentMessageRecord): ActivityRecord {
     threadTs: message.threadTs,
     ts: message.messageTs,
   };
-  if (message.kind === 'message') {
+  if (message.platform === 'local') {
+    payload['effect'] = 'agent.relay.send';
+    payload['messageId'] = message.messageTs;
+  } else if (message.kind === 'message') {
     payload['effect'] = message.platform === 'feishu'
       ? 'feishu.message.send'
       : message.isEdit ? 'slack.message.update' : 'slack.message.send';

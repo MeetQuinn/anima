@@ -8,6 +8,7 @@ import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
+import { messageServiceForAgent } from '../messages/message.service.js';
 import { runRelaySend } from '../tools/relay.js';
 import type { AgentMessageInboxItem } from '../../shared/inbox.js';
 import { withAnimaHome } from './anima-home.js';
@@ -86,6 +87,29 @@ test('relay send rejects unknown and self targets', async () => {
     // Neither should have written anything to a real inbox.
     const items = await new WakeQueueService(nora).list();
     assert.equal(items.filter((i) => i.kind === 'agent_message').length, 0);
+  });
+});
+
+test('relay send projects into both agents’ Messages ledgers', async () => {
+  await withTwoAgents(async ({ milo, nora }) => {
+    await runRelaySend({ agent: milo, to: nora, text: 'can you review PR #128?' });
+
+    // Recipient sees an inbound local message identified by sender.
+    const inbound = (await messageServiceForAgent(nora).list()).entries
+      .find((m) => m.platform === 'local');
+    assert.ok(inbound, 'recipient ledger should hold the inbound relay message');
+    assert.equal(inbound!.direction, 'in');
+    assert.equal(inbound!.actor, 'Milo');
+    assert.equal(inbound!.actorUserId, milo);
+    assert.equal(inbound!.text, 'can you review PR #128?');
+
+    // Sender sees the outbound counterpart addressed to the recipient.
+    const outbound = (await messageServiceForAgent(milo).list()).entries
+      .find((m) => m.platform === 'local');
+    assert.ok(outbound, 'sender ledger should hold the outbound relay message');
+    assert.equal(outbound!.direction, 'out');
+    assert.equal(outbound!.dmHandle, 'Nora');
+    assert.equal(outbound!.text, 'can you review PR #128?');
   });
 });
 
