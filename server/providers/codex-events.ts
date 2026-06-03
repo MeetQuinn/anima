@@ -76,6 +76,52 @@ export function providerToolCallsFromAppServerItem(item: Record<string, unknown>
   return [];
 }
 
+export interface CodexSubagentSpawnCall {
+  parentToolCallId: string;
+  role?: string;
+}
+
+export interface CodexSubagentSpawnOutput {
+  callId: string;
+  name?: string;
+  subRunId: string;
+}
+
+export function codexSubagentSpawnCallFromRawResponseItem(
+  item: Record<string, unknown> | undefined,
+): CodexSubagentSpawnCall | undefined {
+  if (!item) return undefined;
+  if (stringField(item, 'type') !== 'function_call') return undefined;
+  if (stringField(item, 'namespace') !== 'multi_agent_v1') return undefined;
+  if (stringField(item, 'name') !== 'spawn_agent') return undefined;
+  const parentToolCallId = stringField(item, 'call_id');
+  if (!parentToolCallId) return undefined;
+  const args = parseJsonRecord(stringField(item, 'arguments'));
+  const role = stringField(args, 'agent_type');
+  return {
+    parentToolCallId,
+    ...(role ? { role } : {}),
+  };
+}
+
+export function codexSubagentSpawnOutputFromRawResponseItem(
+  item: Record<string, unknown> | undefined,
+): CodexSubagentSpawnOutput | undefined {
+  if (!item) return undefined;
+  if (stringField(item, 'type') !== 'function_call_output') return undefined;
+  const callId = stringField(item, 'call_id');
+  if (!callId) return undefined;
+  const output = outputRecordFromRawResponseItem(item);
+  const subRunId = stringField(output, 'agent_id') ?? stringField(output, 'thread_id') ?? stringField(output, 'id');
+  if (!subRunId) return undefined;
+  const name = stringField(output, 'nickname') ?? stringField(output, 'agent_nickname') ?? stringField(output, 'name');
+  return {
+    callId,
+    ...(name ? { name } : {}),
+    subRunId,
+  };
+}
+
 export function runtimeEventFromAppServerItem(
   method: string | undefined,
   item: Record<string, unknown> | undefined,
@@ -417,6 +463,22 @@ function sanitizeRawResponseItem(item: Record<string, unknown> | undefined): Rec
   const tools = Array.isArray(item['tools']) ? item['tools'] : undefined;
   if (tools) payload['toolCount'] = tools.length;
   return payload;
+}
+
+function outputRecordFromRawResponseItem(item: Record<string, unknown>): Record<string, unknown> | undefined {
+  const direct = asRecord(item['output']);
+  if (direct) return direct;
+  const output = stringField(item, 'output');
+  return parseJsonRecord(output);
+}
+
+function parseJsonRecord(value: string | undefined): Record<string, unknown> | undefined {
+  if (!value) return undefined;
+  try {
+    return asRecord(JSON.parse(value));
+  } catch {
+    return undefined;
+  }
 }
 
 function sanitizeRateLimits(rateLimits: Record<string, unknown> | undefined): Record<string, unknown> {

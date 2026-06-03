@@ -3,6 +3,8 @@ import { type RunningChildProcess } from './child-process.js';
 import {
   codexContextStatsFromTokenUsage,
   codexReasoningEventFromNotification,
+  codexSubagentSpawnCallFromRawResponseItem,
+  codexSubagentSpawnOutputFromRawResponseItem,
   codexRuntimeEventFromNotification,
   codexSubagentLinkageFromRecord,
   codexSessionStatsFromTurn,
@@ -38,6 +40,11 @@ interface LinkedAgentText {
   text: string;
 }
 
+interface PendingCodexSubagentSpawn {
+  parentToolCallId: string;
+  role?: string;
+}
+
 export class CodexAppServerController {
   private activeInput?: AgentRuntimeInput;
   private buffer = '';
@@ -48,6 +55,7 @@ export class CodexAppServerController {
   private readonly linkedTextByItem = new Map<string, LinkedAgentText>();
   private readonly textByTurn = new Map<string, string>();
   private readonly activeProviderToolIds = new Set<string>();
+  private readonly pendingSubagentSpawns = new Map<string, PendingCodexSubagentSpawn>();
   private readonly providerToolsById = new Map<string, Record<string, unknown>>();
   private readonly quiescentWaiters = new Set<{
     cleanup(): void;
@@ -256,6 +264,9 @@ export class CodexAppServerController {
       this.acceptAgentMessageDelta(message.params);
       return;
     }
+    if (message.method === 'rawResponseItem/completed') {
+      if (await this.acceptRawResponseItem(message.params)) return;
+    }
     const runtimeEvent = codexRuntimeEventFromNotification(message, this.runtimeKind);
     const reasoningEvent = codexReasoningEventFromNotification(message, this.runtimeKind);
     if (runtimeEvent) {
@@ -367,6 +378,65 @@ export class CodexAppServerController {
     }
     this.linkedTextByItem.clear();
   }
+
+  private async acceptRawResponseItem(params: Record<string, unknown> | undefined): Promise<boolean> {
+    const input = this.currentTurn?.input ?? this.activeInput;
+    if (!input) return false;
+    const item = recordParam(params, 'item');
+    const spawnCall = codexSubagentSpawnCallFromRawResponseItem(item);
+    if (spawnCall) {
+      this.pendingSubagentSpawns.set(spawnCall.parentToolCallId, spawnCall);
+      await input.effects.recordToolStarted({
+        provider: 'codex-cli',
+        providerToolId: spawnCall.parentToolCallId,
+        providerToolName: 'Agent',
+        tool: 'codex.agent',
+      });
+      return true;
+    }
+
+    const spawnOutput = codexSubagentSpawnOutputFromRawResponseItem(item);
+    if (!spawnOutput) return false;
+    const spawn = this.pendingSubagentSpawns.get(spawnOutput.callId);
+    if (!spawn) return false;
+    this.pendingSubagentSpawns.delete(spawnOutput.callId);
+    void this.recordSpawnedSubagent(input, spawn, spawnOutput).catch(() => undefined);
+    return true;
+  }
+
+  private async recordSpawnedSubagent(
+    input: AgentRuntimeInput,
+    spawn: PendingCodexSubagentSpawn,
+    spawnOutput: { name?: string; subRunId: string },
+  ): Promise<void> {
+    const childMetadata = await this.readSubagentThreadMetadata(spawnOutput.subRunId).catch(() => ({}));
+    const name = stringField(childMetadata, 'name') ?? spawnOutput.name;
+    const role = stringField(childMetadata, 'role') ?? spawn.role;
+    const model = stringField(childMetadata, 'model');
+    await input.effects.recordAgentText(
+      name ? `Started subagent ${name}` : 'Started subagent',
+      {
+        eventType: 'codex.subagent.delegated',
+        depth: 1,
+        parentToolCallId: spawn.parentToolCallId,
+        subRunId: spawnOutput.subRunId,
+        ...(name ? { name } : {}),
+        ...(role ? { role } : {}),
+        ...(model ? { model } : {}),
+      },
+    );
+  }
+
+  private async readSubagentThreadMetadata(threadId: string): Promise<Record<string, unknown>> {
+    const result = asRecord(await this.request('thread/resume', { threadId }));
+    try {
+      await this.request('thread/unsubscribe', { threadId });
+    } catch {
+      // Best-effort only: the metadata lookup has already completed, and old
+      // app-server builds may not expose unsubscribe for resumed threads.
+    }
+    return codexThreadMetadataFromResumeResponse(result);
+  }
 }
 
 function deferred<T>(): Deferred<T> {
@@ -393,4 +463,16 @@ function turnIdFromResponse(value: unknown): string {
   const id = turn['id'];
   if (typeof id !== 'string' || !id) throw new Error('Codex app-server turn response missing id');
   return id;
+}
+
+function codexThreadMetadataFromResumeResponse(value: Record<string, unknown> | undefined): Record<string, unknown> {
+  const thread = asRecord(value?.['thread']);
+  const name = stringField(thread, 'agentNickname') ?? stringField(thread, 'agent_nickname');
+  const role = stringField(thread, 'agentRole') ?? stringField(thread, 'agent_role');
+  const model = stringField(value, 'model');
+  return {
+    ...(name ? { name } : {}),
+    ...(role ? { role } : {}),
+    ...(model ? { model } : {}),
+  };
 }
