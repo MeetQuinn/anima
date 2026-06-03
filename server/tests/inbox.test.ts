@@ -12,12 +12,18 @@ import { loadState } from './helpers/state.js';
 
 function memoryWakeQueueStore(initial: WakeQueueFile = {}) {
   let state = { ...initial };
+  let previousUpdate = Promise.resolve();
   return {
     async read() {
       return state;
     },
-    async write(value: WakeQueueFile) {
-      state = value;
+    async update(op: (current: WakeQueueFile) => WakeQueueFile | Promise<WakeQueueFile>) {
+      const currentUpdate = previousUpdate.then(async () => {
+        state = await op(state);
+        return state;
+      });
+      previousUpdate = currentUpdate.then(() => undefined, () => undefined);
+      return currentUpdate;
     },
   };
 }
@@ -115,6 +121,54 @@ test('wake queue enqueue does not fail when message ledger write fails', async (
   assert.equal(decision.queued, true);
   assert.deepEqual((await queue.list()).map((item) => item.id), [event.id]);
   assert.match(warnings[0] ?? '', /ledger down/);
+});
+
+test('wake queue completion racing with enqueue does not resurrect running state', async () => {
+  const first = makeSlackEvent({
+    channelId: 'C-product',
+    eventId: 'evt-active',
+    handling: {
+      createdAt: '2026-06-03T20:21:00.000Z',
+      queuedAt: '2026-06-03T20:21:00.000Z',
+      startedAt: '2026-06-03T20:21:23.913Z',
+      status: 'running',
+      updatedAt: '2026-06-03T20:21:23.913Z',
+      workerId: 'pedro:62674',
+    },
+    teamId: 'T-demo',
+    text: 'hot channel work',
+    ts: '1780517479.126499',
+    userId: 'U1',
+  });
+  const second = makeSlackEvent({
+    channelId: 'C-product',
+    eventId: 'evt-followup',
+    teamId: 'T-demo',
+    text: 'queued behind completed work',
+    ts: '1780517480.126499',
+    userId: 'U2',
+  });
+  const queue = new WakeQueueService(
+    'pedro',
+    new WakeQueueStore('pedro', memoryWakeQueueStore({ [first.id]: first })),
+    { recordInboxItem: async () => undefined },
+  );
+
+  await Promise.all([
+    queue.complete(first.id),
+    queue.enqueue(second),
+  ]);
+
+  const completed = await queue.find(first.id);
+  assert.equal(completed?.handling.status, 'completed');
+  assert.ok(completed?.handling.completedAt);
+  assert.equal(completed?.handling.workerId, 'pedro:62674');
+
+  const queued = await queue.find(second.id);
+  assert.equal(queued?.handling.status, 'queued');
+  const next = await queue.claimNext('pedro:next');
+  assert.equal(next?.id, second.id);
+  assert.equal(next?.handling.status, 'running');
 });
 
 test('wake queue retention waits for legacy message backfill before pruning settled items', async () => {
