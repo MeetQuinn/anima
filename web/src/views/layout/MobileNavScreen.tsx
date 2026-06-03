@@ -14,7 +14,11 @@ import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import ServerPanel from '@/components/ServerPanel';
 import { AgentCreateModal, AddKbModal } from './Sidebar';
 import { agentColor, initialOf } from '@/lib/avatars';
-import { agentHasConnectedTransport, agentTransportLabel } from '@shared/agent-transports';
+import {
+  agentHasConnectedTransport,
+  agentPlatformLabel,
+  agentsHaveMixedPlatforms,
+} from '@shared/agent-transports';
 
 const MOBILE_SCROLL_KEY = 'mobile-nav-scroll';
 
@@ -68,6 +72,7 @@ export default function MobileNavScreen({
   // resting hint that an update exists. Reuses the panel's deduped query (no extra
   // request); clears once the user upgrades.
   const updateAvailable = useUpdateAvailable();
+  const showAgentPlatforms = agentsHaveMixedPlatforms(orderedAgents);
 
   // Restore scroll position when returning from detail screen.
   useEffect(() => {
@@ -195,8 +200,11 @@ export default function MobileNavScreen({
                   const isRunning = runningIds.has(agent.id);
                   const enabled = agent.enabled !== false;
                   const notConnected = enabled && !agentHasConnectedTransport(agent);
-                  const transportLabel = agentTransportLabel(agent);
+                  const platformLabel = agentPlatformLabel(agent);
+                  const showPlatformLabel = showAgentPlatforms && platformLabel !== null;
                   const isSelected = agent.id === lastSelectedId;
+                  const showStatusDot = enabled && !notConnected;
+                  const showRightMeta = showPlatformLabel || !enabled || showStatusDot;
 
                   return (
                     <MobileSortableItem key={agent.id} id={agent.id}>
@@ -225,41 +233,43 @@ export default function MobileNavScreen({
                             {initial}
                           </span>
                         )}
-                        <span
-                          className={[
-                            'flex-1 truncate font-serif text-[15px] font-medium leading-tight',
-                            enabled ? 'text-text' : 'text-text-muted',
-                          ].join(' ')}
-                        >
-                          {name}
+                        <span className="min-w-0 flex-1">
+                          <span
+                            className={[
+                              'block truncate font-serif text-[15px] font-medium leading-tight',
+                              enabled ? 'text-text' : 'text-text-muted',
+                            ].join(' ')}
+                          >
+                            {name}
+                          </span>
+                          {notConnected && (
+                            <span className="font-sans mt-0.5 block text-[10px] leading-tight text-health-warn/80">
+                              Not connected
+                            </span>
+                          )}
                         </span>
-                        {!enabled ? (
-                          <span className="font-sans ml-auto shrink-0 rounded-sm border border-text-muted/30 px-1 py-0.5 text-[9px] uppercase tracking-[0.08em] text-text-muted">
-                            Off
+                        {showRightMeta && (
+                          <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                            {showPlatformLabel && (
+                              <span className="font-sans text-[9px] uppercase tracking-[0.08em] text-text-muted">
+                                {platformLabel}
+                              </span>
+                            )}
+                            {!enabled ? (
+                              <span className="font-sans shrink-0 rounded-sm border border-text-muted/30 px-1 py-0.5 text-[9px] uppercase tracking-[0.08em] text-text-muted">
+                                Off
+                              </span>
+                            ) : showStatusDot ? (
+                              <span
+                                className="inline-block h-2 w-2 shrink-0 rounded-full"
+                                style={{
+                                  background: isRunning
+                                    ? 'var(--color-health-warn)'
+                                    : 'var(--color-health-ok)',
+                                }}
+                              />
+                            ) : null}
                           </span>
-                        ) : notConnected ? (
-                          <span
-                            className="font-sans ml-auto shrink-0 rounded-sm border border-health-warn/40 px-1 py-0.5 text-[9px] uppercase tracking-[0.08em] text-health-warn"
-                            title="not connected to a message transport"
-                          >
-                            No transport
-                          </span>
-                        ) : transportLabel !== 'Slack' ? (
-                          <span
-                            className="font-sans ml-auto shrink-0 rounded-sm border border-text-muted/30 px-1 py-0.5 text-[9px] uppercase tracking-[0.08em] text-text-muted"
-                            title={`connected to ${transportLabel}`}
-                          >
-                            {transportLabel}
-                          </span>
-                        ) : (
-                          <span
-                            className="inline-block h-2 w-2 shrink-0 rounded-full"
-                            style={{
-                              background: isRunning
-                                ? 'var(--color-health-warn)'
-                                : 'var(--color-health-ok)',
-                            }}
-                          />
                         )}
                       </button>
                     </MobileSortableItem>
