@@ -31,6 +31,7 @@
     "README.md"
   ],
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.66.1",
     "@slack/bolt": "^4.7.2",
     "@slack/web-api": "^7.15.2",
     "commander": "^14.0.3",
