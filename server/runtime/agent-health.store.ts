@@ -18,6 +18,7 @@ import type {
 const AGENT_HEALTH_FILE = 'agent-health-snapshots.json';
 
 const AgentHealthStateSchema: z.ZodType<AgentHealthState> = z.enum([
+  'degraded',
   'healthy',
   'starting',
   'unhealthy',
@@ -29,6 +30,7 @@ const AgentHealthReasonSchema: z.ZodType<AgentHealthReason> = z.enum([
   'provider_child_exited',
   'provider_auth_failed',
   'provider_quota_exhausted',
+  'provider_error',
   'provider_rate_limited',
   'stale_running_item',
   'restart_pending',
@@ -91,6 +93,9 @@ const AgentHealthStoreSchema = z.object({
 interface AgentHealthStoreFile {
   snapshots: Record<string, AgentRuntimeHealthSummary>;
 }
+
+export const PROVIDER_RATE_LIMIT_GRACE_MS = 60_000;
+export const PROVIDER_RATE_LIMIT_RED_STALE_MS = 5 * 60_000;
 
 export class AgentHealthStore {
   private readonly store: JsonStore<AgentHealthStoreFile>;
@@ -172,6 +177,24 @@ export class AgentHealthStore {
     });
   }
 
+  async writeProviderFailure(input: {
+    agentId: string;
+    reason: AgentHealthReason;
+    runtime?: AgentRuntimeHandleSnapshot;
+    updatedAt: string;
+  }): Promise<void> {
+    await this.store.update((current) => {
+      const previous = current.snapshots[input.agentId];
+      const snapshot = providerFailureSnapshot(previous, input);
+      return {
+        snapshots: {
+          ...current.snapshots,
+          [input.agentId]: snapshot,
+        },
+      };
+    });
+  }
+
   async clear(agentId: string): Promise<void> {
     await this.store.update((current) => {
       if (!current.snapshots[agentId]) return current;
@@ -200,6 +223,9 @@ function carriedProviderFailure(
   if (input.clearProviderFailure) return undefined;
   if (input.state !== 'healthy') return undefined;
   if (!previous?.reason || !isProviderFailureReason(previous.reason)) return undefined;
+  if (previous.reason === 'provider_rate_limited') {
+    return carriedRateLimit(previous, input);
+  }
   return {
     reason: previous.reason,
     ...(input.runtime ? { runtime: input.runtime } : previous.runtime ? { runtime: previous.runtime } : {}),
@@ -211,7 +237,87 @@ function carriedProviderFailure(
 function isProviderFailureReason(reason: AgentHealthReason): boolean {
   return reason === 'provider_auth_failed'
     || reason === 'provider_quota_exhausted'
+    || reason === 'provider_error'
     || reason === 'provider_rate_limited';
+}
+
+function providerFailureSnapshot(
+  previous: AgentRuntimeHealthSummary | undefined,
+  input: {
+    reason: AgentHealthReason;
+    runtime?: AgentRuntimeHandleSnapshot;
+    updatedAt: string;
+  },
+): AgentRuntimeHealthSummary {
+  if (input.reason !== 'provider_rate_limited') {
+    return {
+      reason: input.reason,
+      ...(input.runtime ? { runtime: input.runtime } : {}),
+      state: 'unhealthy',
+      updatedAt: input.updatedAt,
+    };
+  }
+
+  const sameRateLimit = previous?.reason === 'provider_rate_limited';
+  const firstObservedAt = sameRateLimit ? previous.updatedAt : input.updatedAt;
+  const elapsedMs = Date.parse(input.updatedAt) - Date.parse(firstObservedAt);
+  const shouldEscalate =
+    sameRateLimit &&
+    Number.isFinite(elapsedMs) &&
+    elapsedMs >= PROVIDER_RATE_LIMIT_GRACE_MS;
+
+  return {
+    reason: 'provider_rate_limited',
+    ...(input.runtime ? { runtime: input.runtime } : previous?.runtime ? { runtime: previous.runtime } : {}),
+    state: shouldEscalate ? 'unhealthy' : 'degraded',
+    updatedAt: shouldEscalate ? input.updatedAt : firstObservedAt,
+  };
+}
+
+function carriedRateLimit(
+  previous: AgentRuntimeHealthSummary,
+  input: {
+    runtime?: AgentRuntimeHandleSnapshot;
+    updatedAt: string;
+  },
+): AgentRuntimeHealthSummary | undefined {
+  const ageMs = Date.parse(input.updatedAt) - Date.parse(previous.updatedAt);
+  const finiteAge = Number.isFinite(ageMs) ? ageMs : 0;
+  const runtime = input.runtime ? { runtime: input.runtime } : previous.runtime ? { runtime: previous.runtime } : {};
+
+  if (previous.state === 'degraded') {
+    if (finiteAge < PROVIDER_RATE_LIMIT_GRACE_MS) {
+      return {
+        reason: 'provider_rate_limited',
+        ...runtime,
+        state: 'degraded',
+        updatedAt: previous.updatedAt,
+      };
+    }
+    return {
+      ...runtime,
+      state: 'unknown',
+      updatedAt: input.updatedAt,
+    };
+  }
+
+  if (previous.state === 'unhealthy') {
+    if (finiteAge < PROVIDER_RATE_LIMIT_RED_STALE_MS) {
+      return {
+        reason: 'provider_rate_limited',
+        ...runtime,
+        state: 'unhealthy',
+        updatedAt: previous.updatedAt,
+      };
+    }
+    return {
+      ...runtime,
+      state: 'unknown',
+      updatedAt: input.updatedAt,
+    };
+  }
+
+  return undefined;
 }
 
 function carriedRestart(

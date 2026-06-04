@@ -10,6 +10,7 @@ import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useActivityFilters, type ActivityLens, type ActivityDir } from '@/hooks/useActivityFilters';
 import { useNow } from '@/hooks/useNow';
 import {
+  agentHealthDegradedText,
   agentHealthReasonText,
   agentHealthRecoveredFresh,
 } from '@/components/AgentHealthIndicator';
@@ -114,28 +115,35 @@ function ActivityStatusSummary({
   const unhealthy = health?.state === 'unhealthy' || restartFailed;
   const recovered = !unhealthy && health ? agentHealthRecoveredFresh(health, now.getTime()) : false;
   const starting = !unhealthy && !recovered && health?.state === 'starting';
-  const unknown = !unhealthy && !recovered && !starting && health?.state === 'unknown';
+  const degraded = !unhealthy && !recovered && !starting && health?.state === 'degraded';
+  const unknown = !unhealthy && !recovered && !starting && !degraded && health?.state === 'unknown';
   const state = unhealthy
     ? 'Needs attention'
     : recovered
       ? 'Recovered'
       : starting
         ? health?.reason === 'restart_pending' ? 'Restarting' : 'Starting'
-        : unknown
-          ? 'Health unavailable'
-          : running ? 'Working' : queued ? 'Queued' : 'Idle';
+        : degraded
+          ? 'Retrying'
+          : unknown
+            ? 'Health unavailable'
+            : running ? 'Working' : queued ? 'Queued' : 'Idle';
   const dot = unhealthy
     ? 'var(--color-health-error)'
     : recovered
       ? 'var(--color-health-ok)'
-      : starting || unknown
+      : starting || degraded || unknown
         ? 'var(--color-health-idle)'
         : running
           ? 'var(--color-health-warn)'
           : queued
             ? 'var(--color-health-idle)'
             : 'var(--color-health-ok)';
-  const reason = unhealthy ? agentHealthReasonText(health?.restart?.reason ?? health?.reason) : undefined;
+  const reason = unhealthy
+    ? agentHealthReasonText(health?.restart?.reason ?? health?.reason)
+    : degraded
+      ? agentHealthDegradedText(health?.reason)
+      : undefined;
   const latest = latestActivity && isNarrativeStep(latestActivity)
     ? activityRow(latestActivity)
     : undefined;
@@ -148,7 +156,7 @@ function ActivityStatusSummary({
           {state}
         </span>
         {reason && (
-          <span className="font-sans text-[11px] text-health-error">
+          <span className={['font-sans text-[11px]', unhealthy ? 'text-health-error' : 'text-text-muted'].join(' ')}>
             {reason}
           </span>
         )}

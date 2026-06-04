@@ -64,6 +64,7 @@ export interface RuntimeHostDependencies {
 const DEFAULT_RECONCILE_INTERVAL_MS = 30_000;
 const DEFAULT_HEALTH_INTERVAL_MS = 5_000;
 const STARTING_TIMEOUT_MS = 30_000;
+const RUNTIME_CHILD_HEALTH_DEBOUNCE_MS = 10_000;
 const CONFIG_WATCH_DEBOUNCE_MS = 150;
 const AGENT_RESTART_FORCE_KILL_AFTER_MS = 5_000;
 
@@ -373,7 +374,7 @@ export class RuntimeHost {
     }
 
     const runtime = running.handle.health?.();
-    const health = healthForRuntime(runtime);
+    const health = await this.healthForRuntimeWithSensitivity(agent.id, runtime);
     const restart = recoveredCommand
       ? health.state === 'healthy'
         ? restartStatus(recoveredCommand, 'recovered', runtime)
@@ -385,8 +386,37 @@ export class RuntimeHost {
       ...(restart ? { restart } : {}),
       ...(runtime ? { runtime } : {}),
       state: health.state,
-      updatedAt: nowIso(),
+      updatedAt: health.updatedAt ?? nowIso(),
     });
+  }
+
+  private async healthForRuntimeWithSensitivity(
+    agentId: string,
+    runtime: AgentRuntimeHandleSnapshot | undefined,
+  ): Promise<RuntimeHealthSnapshot> {
+    const health = healthForRuntime(runtime);
+    if (!isTransientRuntimeChildReason(health.reason)) return health;
+
+    const previous = await this.healthStore.get(agentId);
+    if (previous?.reason === health.reason && previous.state === 'unhealthy') return health;
+    if (previous?.reason === health.reason && previous.state === 'degraded') {
+      const observedAt = Date.parse(previous.updatedAt);
+      const ageMs = Date.now() - observedAt;
+      if (Number.isFinite(ageMs) && ageMs < RUNTIME_CHILD_HEALTH_DEBOUNCE_MS) {
+        return {
+          reason: health.reason,
+          state: 'degraded',
+          updatedAt: previous.updatedAt,
+        };
+      }
+      return health;
+    }
+
+    return {
+      reason: health.reason,
+      state: 'degraded',
+      updatedAt: nowIso(),
+    };
   }
 
   private async resolveMissingHandleHealth(agentId: string): Promise<void> {
@@ -746,10 +776,13 @@ function runtimeWithEnv(config: AgentProviderConfig, env: Record<string, string>
   };
 }
 
-function healthForRuntime(runtime: AgentRuntimeHandleSnapshot | undefined): {
+interface RuntimeHealthSnapshot {
   reason?: AgentHealthReason;
-  state: 'healthy' | 'unhealthy';
-} {
+  state: 'degraded' | 'healthy' | 'unhealthy';
+  updatedAt?: string;
+}
+
+function healthForRuntime(runtime: AgentRuntimeHandleSnapshot | undefined): RuntimeHealthSnapshot {
   if (!runtime) return { reason: 'start_failed', state: 'unhealthy' };
   if (!runtime.providerChildExpected) return { state: 'healthy' };
   const child = runtime.providerChild;
@@ -758,6 +791,10 @@ function healthForRuntime(runtime: AgentRuntimeHandleSnapshot | undefined): {
     return { reason: 'provider_child_exited', state: 'unhealthy' };
   }
   return { state: 'healthy' };
+}
+
+function isTransientRuntimeChildReason(reason: AgentHealthReason | undefined): reason is 'provider_child_missing' | 'provider_child_exited' {
+  return reason === 'provider_child_missing' || reason === 'provider_child_exited';
 }
 
 async function staleRunningItemForAgent(

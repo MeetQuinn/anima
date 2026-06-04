@@ -23,7 +23,9 @@ const MOBILE_SCROLL_KEY = 'mobile-nav-scroll';
 
 // Single colored dot helpers — mirrors the desktop sidebar logic.
 function mobileDotColor(health: AgentRuntimeHealthSummary | undefined, isRunning: boolean): string {
-  if (!health || health.state === 'unknown' || health.state === 'starting') return 'var(--color-health-idle)';
+  if (!health || health.state === 'unknown' || health.state === 'starting' || health.state === 'degraded') {
+    return 'var(--color-health-idle)';
+  }
   if (health.state === 'unhealthy') return 'var(--color-health-error)';
   return isRunning ? 'var(--color-health-warn)' : 'var(--color-health-ok)';
 }
@@ -31,6 +33,7 @@ function mobileDotColor(health: AgentRuntimeHealthSummary | undefined, isRunning
 function mobileDotTitle(health: AgentRuntimeHealthSummary | undefined, isRunning: boolean): string {
   if (!health || health.state === 'unknown') return 'health unavailable';
   if (health.state === 'starting') return 'starting';
+  if (health.state === 'degraded') return 'retrying';
   if (health.state === 'unhealthy') return 'needs attention';
   return isRunning ? 'working' : 'idle';
 }

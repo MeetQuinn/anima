@@ -87,10 +87,9 @@ export async function recordFinalRuntimeFailure(input: {
   if (providerReason) {
     const healthReason = providerFailureHealthReason(providerReason);
     if (healthReason) {
-      await defaultAgentHealthStore.writeHealth({
+      await defaultAgentHealthStore.writeProviderFailure({
         agentId: input.agentId,
         reason: healthReason,
-        state: 'unhealthy',
         updatedAt: nowIso(),
       });
     }

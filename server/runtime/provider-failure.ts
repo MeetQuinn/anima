@@ -15,9 +15,12 @@ export function classifyProviderFailureReason(input: {
   subtype?: string;
 }): ProviderFailureReason {
   const text = [input.message, input.subtype].filter(Boolean).join(' ');
+  const status = statusCode(input.status);
+  if (status === 401 || status === 403) return 'provider_auth_failed';
+  if (status === 429) return 'provider_rate_limited';
   if (providerAuthFailed(input.status, text)) return 'provider_auth_failed';
   if (providerQuotaExhausted(text)) return 'provider_quota_exhausted';
-  if (input.status === 429 || /\b(rate limit|rate-limit|rate_limit|too many requests|throttl)/i.test(text)) {
+  if (/\b(rate limit|rate-limit|rate_limit|too many requests)\b/i.test(text)) {
     return 'provider_rate_limited';
   }
   return 'provider_error';
@@ -38,6 +41,7 @@ export function providerFailureReasonFromError(error: unknown): ProviderFailureR
 export function providerFailureHealthReason(reason: ProviderFailureReason): AgentHealthReason | undefined {
   if (reason === 'provider_auth_failed') return 'provider_auth_failed';
   if (reason === 'provider_quota_exhausted') return 'provider_quota_exhausted';
+  if (reason === 'provider_error') return 'provider_error';
   if (reason === 'provider_rate_limited') return 'provider_rate_limited';
   return undefined;
 }
@@ -45,11 +49,17 @@ export function providerFailureHealthReason(reason: ProviderFailureReason): Agen
 function providerAuthFailed(status: unknown, text: string): boolean {
   return status === 401
     || status === 403
-    || /\b(auth|authentication|unauthorized|forbidden|login|sign.?in|api key|token expired|expired token|invalid key)\b/i.test(text);
+    || /\b(authentication|unauthorized|forbidden|api key|token expired|expired token|invalid key)\b/i.test(text);
 }
 
 function providerQuotaExhausted(text: string): boolean {
-  return /\b(out of tokens|quota|usage limit|plan limit|capacity|credit balance|credits exhausted|insufficient credits|subscription)\b/i.test(text);
+  return /\b(out of tokens|quota|usage limit|plan limit|credit balance|credits exhausted|insufficient credits)\b/i.test(text);
+}
+
+function statusCode(status: unknown): number | undefined {
+  if (typeof status === 'number' && Number.isInteger(status)) return status;
+  if (typeof status === 'string' && /^[0-9]{3}$/.test(status)) return Number.parseInt(status, 10);
+  return undefined;
 }
 
 function stringProperty(value: unknown, key: string): string | undefined {

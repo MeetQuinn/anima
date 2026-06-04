@@ -895,9 +895,11 @@ class FatalProviderRuntime implements AgentRuntime {
   readonly kind = 'claude-code';
   readonly calls: AgentRuntimeInput[] = [];
 
+  constructor(private readonly message = 'Invalid API key') {}
+
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
     this.calls.push(input);
-    throw new Error('Invalid API key');
+    throw new Error(this.message);
   }
 
   async appendToActiveRun(_input: AgentRuntimeFollowupInput): Promise<{ accepted: boolean }> {
@@ -938,6 +940,51 @@ test('runtime worker leaves queued work untouched while a restart drain marker i
     });
   } finally {
     await withAnimaHome(stateDir, async () => clearRestartDrain().catch(() => undefined));
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker records generic provider errors as unhealthy', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-provider-generic-test-'));
+  const runtime = new FatalProviderRuntime('opaque provider failure');
+  const coordinator = { agentId: 'scout', stateDir };
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+    worker = new AgentRuntimeWorker({
+      agentId: 'scout',
+      agentRuntime: runtime,
+      queue: queueFor('scout'),
+      pollIntervalMs: 10_000,
+      stateDir,
+      workerId: 'test-worker',
+    }, silentLogger);
+    const decision = await enqueueInbox(
+      makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-provider-generic',
+        teamId: 'T-demo',
+        text: 'provider failed',
+        ts: '1770000011.000001',
+        userId: 'U1',
+      }),
+      coordinator,
+    );
+
+    assert.equal(await worker.drainOnce(), 1);
+    assert.equal((await queueFor('scout').find(decision.ctx.item.id))?.handling.status, 'failed');
+    assert.equal(runtime.calls.length, 1);
+
+    const failed = allActivities(await loadState()).find((activity) => activity.type === 'runtime.failed');
+    assert.equal(failed?.payload?.['failureSource'], 'provider');
+    assert.equal(failed?.payload?.['providerReason'], 'provider_error');
+    assert.equal(failed?.payload?.['retryable'], false);
+    const health = await new AgentHealthStore({ animaHome: stateDir }).get('scout');
+    assert.equal(health?.state, 'unhealthy');
+    assert.equal(health?.reason, 'provider_error');
+    });
+  } finally {
     await worker?.close();
     await rm(stateDir, { force: true, recursive: true });
   }
