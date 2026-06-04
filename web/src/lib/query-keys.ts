@@ -42,6 +42,7 @@ function hasTransientAgentStatus(value: unknown): boolean {
     const health = status.health;
     return Boolean(
       health?.state === 'starting' ||
+      health?.state === 'degraded' ||
       health?.reason === 'restart_pending' ||
       health?.restart?.outcome === 'pending',
     );

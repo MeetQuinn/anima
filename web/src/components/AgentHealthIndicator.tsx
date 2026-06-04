@@ -85,13 +85,15 @@ export function AgentHealthIndicator({
 export function agentHealthReasonText(reason: AgentHealthReason | undefined): string {
   switch (reason) {
     case 'provider_child_missing':
-      return 'The agent stopped running. Restart the agent.';
+      return "This agent couldn't reconnect to its model. Restart the agent.";
     case 'provider_child_exited':
-      return 'The agent stopped unexpectedly. Restart the agent.';
+      return "This agent's model stopped unexpectedly. Restart the agent.";
     case 'provider_auth_failed':
       return "This agent can't reach its model. Check the model sign-in or API key in its provider settings.";
     case 'provider_quota_exhausted':
       return "This agent's model plan is out of capacity. Check your plan or quota with the model provider, and it should pick back up.";
+    case 'provider_error':
+      return "This agent ran into a problem with its model and couldn't complete its last turn.";
     case 'provider_rate_limited':
       return "This agent is being rate-limited by its model provider and can't complete work right now. It should recover on its own; if it keeps happening, check your plan's rate limits.";
     case 'restart_failed':
@@ -104,6 +106,18 @@ export function agentHealthReasonText(reason: AgentHealthReason | undefined): st
       return "The agent couldn't start. Check its settings, or restart the agent.";
     default:
       return 'Health unavailable.';
+  }
+}
+
+export function agentHealthDegradedText(reason: AgentHealthReason | undefined): string {
+  switch (reason) {
+    case 'provider_child_missing':
+    case 'provider_child_exited':
+      return 'This agent lost its connection to its model and is reconnecting.';
+    case 'provider_rate_limited':
+      return "This agent hit its model provider's rate limit and is retrying automatically.";
+    default:
+      return 'This agent is retrying automatically.';
   }
 }
 
@@ -125,6 +139,7 @@ export function agentHealthProviderAction(health: AgentRuntimeHealthSummary | un
 }
 
 export function agentHealthBlocksRestart(health: AgentRuntimeHealthSummary | undefined): boolean {
+  if (health?.state === 'degraded') return true;
   const reason = activeHealthReason(health);
   return reason === 'provider_auth_failed'
     || reason === 'provider_quota_exhausted'
@@ -138,6 +153,7 @@ export function agentHealthSummaryText(health: AgentRuntimeHealthSummary | undef
     return agentHealthReasonText(health.restart.reason ?? health.reason);
   }
   if (health.state === 'starting') return health.reason === 'restart_pending' ? 'Restart pending' : 'Starting';
+  if (health.state === 'degraded') return agentHealthDegradedText(health.reason);
   if (health.state === 'unhealthy') return agentHealthReasonText(health.reason);
   if (health.state === 'unknown') return 'Health unavailable';
   return null;
@@ -159,7 +175,7 @@ function healthDisplay(
   holdStarting: boolean,
 ): {
   icon?: typeof AlertTriangle;
-  kind: 'healthy' | 'recovered' | 'starting' | 'unhealthy' | 'unknown';
+  kind: 'degraded' | 'healthy' | 'recovered' | 'starting' | 'unhealthy' | 'unknown';
   label: string;
   title: string;
 } {
@@ -212,6 +228,14 @@ function healthDisplay(
       kind: 'unknown',
       label: 'Health unavailable',
       title: 'Health unavailable',
+    };
+  }
+  if (health.state === 'degraded') {
+    return {
+      icon: CircleDashed,
+      kind: 'degraded',
+      label: 'Retrying',
+      title: agentHealthDegradedText(health.reason),
     };
   }
   return {
