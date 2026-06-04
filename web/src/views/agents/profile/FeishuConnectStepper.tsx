@@ -278,7 +278,7 @@ function registrationMessage(status: AgentFeishuRegisterAppStatus): { body: stri
   };
 }
 
-function CredentialField({
+export function CredentialField({
   label,
   onChange,
   optional = false,
