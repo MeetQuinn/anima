@@ -1,0 +1,35 @@
+{
+  "name": "@meetquinn/anima-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "cd .. && rm -rf dist/server dist/shared && tsc -p tsconfig.json",
+    "build:web": "pnpm --dir ../web build",
+    "type-check": "cd .. && tsc -p tsconfig.json --noEmit",
+    "test": "pnpm test:fast",
+    "test:api": "pnpm build && pnpm build:web && pnpm test:api:dist",
+    "test:api:dist": "cd .. && node scripts/run-tests.mjs api",
+    "test:fast": "pnpm build && pnpm build:web && pnpm test:fast:dist",
+    "test:fast:dist": "cd .. && node scripts/run-tests.mjs fast",
+    "test:runtime": "pnpm build && pnpm test:runtime:dist",
+    "test:runtime:dist": "cd .. && node scripts/run-tests.mjs runtime",
+    "test:unit": "pnpm build && pnpm test:unit:dist",
+    "test:unit:dist": "cd .. && node scripts/run-tests.mjs unit"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.66.1",
+    "@slack/bolt": "^4.7.2",
+    "@slack/web-api": "^7.15.2",
+    "commander": "^14.0.3",
+    "fastify": "^5.8.5",
+    "ignore": "^7.0.5",
+    "luxon": "^3.7.2",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/luxon": "^3.7.1",
+    "@types/node": "^24.10.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -39,15 +39,15 @@
     "examples/"
   ],
   "scripts": {
-    "build": "rm -rf dist packages/animactl/dist && tsc -p tsconfig.json && pnpm build:ui && node scripts/prepare-animactl-package.mjs",
-    "build:server": "rm -rf dist/server dist/shared && tsc -p tsconfig.json",
+    "build": "rm -rf packages/animactl/dist && pnpm --dir server build && pnpm build:ui && node scripts/prepare-animactl-package.mjs",
+    "build:server": "pnpm --dir server build",
     "docs:prepare": "node scripts/prepare-docs-public.mjs",
     "docs:build": "pnpm docs:prepare && vitepress build docs",
     "docs:dev": "pnpm docs:prepare && vitepress dev docs --host 127.0.0.1 --port 14175",
     "docs:preview": "pnpm docs:prepare && vitepress preview docs --host 127.0.0.1 --port 14175",
     "prepare": "husky",
     "lint": "pnpm --dir web lint",
-    "type-check": "tsc -p tsconfig.json --noEmit && cd web && npx tsc -b --dry",
+    "type-check": "pnpm --dir server type-check && pnpm --dir web type-check",
     "build:ui": "cd web && pnpm build",
     "pack:check": "pnpm build && npm pack --dry-run --ignore-scripts",
     "pack:tarball": "rm -f meetquinn-anima-*.tgz anima-*.tgz && npm pack",
@@ -61,13 +61,13 @@
     "dev:services:status": "node scripts/ensure-dev-anima-home.mjs && ANIMA_HOME=./.anima-dev node dist/server/cli/animactl.js services status",
     "dev:services:stop": "node scripts/ensure-dev-anima-home.mjs && ANIMA_HOME=./.anima-dev node dist/server/cli/animactl.js services stop",
     "test": "pnpm test:fast",
-    "test:fast": "pnpm build:server && node scripts/run-tests.mjs fast",
-    "test:fast:dist": "node scripts/run-tests.mjs fast",
-    "test:unit": "pnpm build:server && node scripts/run-tests.mjs unit",
-    "test:api": "pnpm build:server && node scripts/run-tests.mjs api",
-    "test:runtime": "pnpm build:server && node scripts/run-tests.mjs runtime",
+    "test:fast": "pnpm --dir server test:fast",
+    "test:fast:dist": "pnpm --dir server test:fast:dist",
+    "test:unit": "pnpm --dir server test:unit",
+    "test:api": "pnpm --dir server test:api",
+    "test:runtime": "pnpm --dir server test:runtime",
     "test:all": "pnpm build && node scripts/run-tests.mjs all",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "pnpm --dir server type-check"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
