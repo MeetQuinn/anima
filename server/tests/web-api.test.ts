@@ -693,6 +693,46 @@ test('web status does not carry stale failed restart onto healthy agents', async
   }
 });
 
+test('web status surfaces provider failure health reasons', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-provider-health-test-'));
+  try {
+    await writeConfig(stateDir, [
+      defaultAgentConfig('milo'),
+    ]);
+    await withAnimaHome(stateDir, async () => {
+      await new AgentHealthStore({ animaHome: stateDir }).writeHealth({
+        agentId: 'milo',
+        reason: 'provider_quota_exhausted',
+        state: 'unhealthy',
+        updatedAt: '2026-06-04T01:20:00.000Z',
+      });
+
+      const server = await createWebServer();
+      try {
+        server.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        const address = server.address();
+        if (!address || typeof address === 'string') {
+          throw new Error('Expected API server to listen on a TCP address.');
+        }
+        const statusesRes = await fetch(`http://127.0.0.1:${address.port}/api/agent-statuses`);
+        assert.equal(statusesRes.status, 200);
+        const statuses = (await statusesRes.json()) as Array<{
+          agentId: string;
+          health?: { reason?: string; state?: string };
+        }>;
+        const status = statuses.find((s) => s.agentId === 'milo');
+        assert.equal(status?.health?.state, 'unhealthy');
+        assert.equal(status?.health?.reason, 'provider_quota_exhausted');
+      } finally {
+        server.close();
+      }
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('web API stop endpoint writes stopRequestedAt onto the item record', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-stop-test-'));
   await writeConfig(stateDir);

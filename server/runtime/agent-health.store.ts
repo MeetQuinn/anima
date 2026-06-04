@@ -27,6 +27,9 @@ const AgentHealthStateSchema: z.ZodType<AgentHealthState> = z.enum([
 const AgentHealthReasonSchema: z.ZodType<AgentHealthReason> = z.enum([
   'provider_child_missing',
   'provider_child_exited',
+  'provider_auth_failed',
+  'provider_quota_exhausted',
+  'provider_rate_limited',
   'stale_running_item',
   'restart_pending',
   'restart_failed',
@@ -135,6 +138,7 @@ export class AgentHealthStore {
 
   async writeHealth(input: {
     agentId: string;
+    clearProviderFailure?: boolean;
     reason?: AgentHealthReason;
     restart?: AgentRestartStatusSummary;
     runtime?: AgentRuntimeHandleSnapshot;
@@ -143,6 +147,15 @@ export class AgentHealthStore {
   }): Promise<void> {
     await this.store.update((current) => {
       const previous = current.snapshots[input.agentId];
+      const providerFailure = carriedProviderFailure(previous, input);
+      if (providerFailure) {
+        return {
+          snapshots: {
+            ...current.snapshots,
+            [input.agentId]: providerFailure,
+          },
+        };
+      }
       const restart = input.restart ?? carriedRestart(previous, input.state);
       return {
         snapshots: {
@@ -171,6 +184,34 @@ export class AgentHealthStore {
   private animaHome(): string {
     return this.options.animaHome ?? resolveAnimaHome();
   }
+}
+
+function carriedProviderFailure(
+  previous: AgentRuntimeHealthSummary | undefined,
+  input: {
+    clearProviderFailure?: boolean;
+    reason?: AgentHealthReason;
+    restart?: AgentRestartStatusSummary;
+    runtime?: AgentRuntimeHandleSnapshot;
+    state: AgentHealthState;
+    updatedAt: string;
+  },
+): AgentRuntimeHealthSummary | undefined {
+  if (input.clearProviderFailure) return undefined;
+  if (input.state !== 'healthy') return undefined;
+  if (!previous?.reason || !isProviderFailureReason(previous.reason)) return undefined;
+  return {
+    reason: previous.reason,
+    ...(input.runtime ? { runtime: input.runtime } : previous.runtime ? { runtime: previous.runtime } : {}),
+    state: 'unhealthy',
+    updatedAt: input.updatedAt,
+  };
+}
+
+function isProviderFailureReason(reason: AgentHealthReason): boolean {
+  return reason === 'provider_auth_failed'
+    || reason === 'provider_quota_exhausted'
+    || reason === 'provider_rate_limited';
 }
 
 function carriedRestart(

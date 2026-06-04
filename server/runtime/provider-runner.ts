@@ -1,7 +1,9 @@
-import { errorMessage } from '../ids.js';
+import { errorMessage, nowIso } from '../ids.js';
 import { recordRuntimeActivity, recordRuntimeEvent } from './activity.js';
+import { defaultAgentHealthStore } from './agent-health.store.js';
 import { runtimeErrorPayload } from '../activities/format.js';
 import { buildProviderCrashRetryDeliveryPrompt } from './delivery-prompt.js';
+import { providerFailureHealthReason, providerFailureReasonFromError } from './provider-failure.js';
 import type { AgentRuntime, AgentRuntimeInput, AgentRuntimeResult } from '../providers/contract.js';
 
 const PROVIDER_CRASH_MAX_RETRIES = 3;
@@ -62,6 +64,9 @@ export async function recordFinalRuntimeFailure(input: {
   retryAttempts: number;
 }): Promise<void> {
   const processCrash = isProviderCrashError(input.error);
+  const providerReason = input.providerFailure
+    ? processCrash ? 'process_crash' : providerFailureReasonFromError(input.error)
+    : undefined;
   await recordRuntimeActivity(
     { agentId: input.agentId },
     input.agentRuntime.kind,
@@ -72,13 +77,24 @@ export async function recordFinalRuntimeFailure(input: {
         ? {
             failureSource: 'provider',
             maxRetries: PROVIDER_CRASH_MAX_RETRIES,
-            providerReason: processCrash ? 'process_crash' : 'provider_error',
+            providerReason,
             retryAttempts: input.retryAttempts,
             retryable: processCrash && input.retryAttempts < PROVIDER_CRASH_MAX_RETRIES,
           }
-        : {}),
+      : {}),
     },
   );
+  if (providerReason) {
+    const healthReason = providerFailureHealthReason(providerReason);
+    if (healthReason) {
+      await defaultAgentHealthStore.writeHealth({
+        agentId: input.agentId,
+        reason: healthReason,
+        state: 'unhealthy',
+        updatedAt: nowIso(),
+      });
+    }
+  }
 }
 
 function retryNoticeFor(retryCount: number, previousError: unknown): string | undefined {

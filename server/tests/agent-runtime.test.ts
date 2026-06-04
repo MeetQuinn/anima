@@ -1040,7 +1040,7 @@ test('claude-code runtime does not retry non-transient provider protocol errors'
     assert.equal(activities.some((activity) => activity.type === 'agent.text'), false);
     const failed = activities.find((activity) => activity.type === 'runtime.failed');
     assert.equal(failed?.payload?.['failureSource'], 'provider');
-    assert.equal(failed?.payload?.['providerReason'], 'api_status_401');
+    assert.equal(failed?.payload?.['providerReason'], 'provider_auth_failed');
     assert.equal(failed?.payload?.['retryable'], false);
     assert.ok(activities.some((activity) => activity.type === 'runtime.event' && activity.payload?.['eventType'] === 'assistant'));
     await runtime.close?.();
