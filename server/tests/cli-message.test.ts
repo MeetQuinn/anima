@@ -1203,10 +1203,10 @@ test('server preflights Socket Mode token before constructing the Slack app', as
       'utf8',
     );
 
-    const server = await runNode([adminCliPath, '--agent', 'scout', 'server'], {
+    const server = await runNodeUntilOutput([adminCliPath, '--agent', 'scout', 'server'], {
       env: { ...process.env, ANIMA_HOME: stateDir, ANIMA_SLACK_API_URL: slackApi.url },
+      match: /apps\.connections\.open failed/,
     });
-    assert.notEqual(server.status, 0);
     assert.match(server.stderr || server.stdout, /apps\.connections\.open failed/);
     assert.doesNotMatch(server.stderr + server.stdout, /SocketModeClient/);
   } finally {
@@ -1310,6 +1310,74 @@ async function runNode(
   child.stdin.end(options.input);
   const [status] = (await once(child, 'exit')) as [number | null];
   return { status, stderr, stdout };
+}
+
+async function runNodeUntilOutput(
+  args: string[],
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string; match: RegExp; timeoutMs?: number },
+): Promise<{ status: number | null; stderr: string; stdout: string }> {
+  const child = spawn(process.execPath, args, {
+    cwd: options.cwd,
+    env: options.env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  let exitStatus: number | null = null;
+  let exited = false;
+  let resolveMatch: (() => void) | undefined;
+  const match = new Promise<void>((resolve) => {
+    resolveMatch = resolve;
+  });
+  const checkMatch = () => {
+    if (options.match.test(stdout) || options.match.test(stderr) || options.match.test(stdout + stderr)) {
+      resolveMatch?.();
+    }
+  };
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    stdout += chunk;
+    checkMatch();
+  });
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk;
+    checkMatch();
+  });
+  child.stdin.end(options.input);
+  const exit = (once(child, 'exit') as Promise<[number | null]>).then(([status]) => {
+    exitStatus = status;
+    exited = true;
+  });
+  const timeoutMs = options.timeoutMs ?? 5_000;
+  let timeout: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error(`timed out waiting for output matching ${options.match}`));
+    }, timeoutMs);
+  });
+  try {
+    const result = await Promise.race([
+      match.then(() => 'matched' as const),
+      exit.then(() => 'exited' as const),
+      timedOut,
+    ]);
+    if (result !== 'matched') {
+      throw new Error(`process exited before output matched ${options.match}\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+    }
+    return { status: exitStatus, stderr, stdout };
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (!exited) {
+      child.kill('SIGTERM');
+      const force = setTimeout(() => child.kill('SIGKILL'), 1_000);
+      try {
+        await exit;
+      } finally {
+        clearTimeout(force);
+      }
+    }
+  }
 }
 
 async function startSlackApiMock(
