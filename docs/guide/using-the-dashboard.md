@@ -60,17 +60,17 @@ Entries are grouped by day, and while an agent is working the feed follows along
 
 When you need to take the wheel:
 
-- **Stop** halts the item an agent is working on right now. It appears while the agent is busy.
+- **Stop** halts the work an agent is doing right now. It appears while the agent is busy.
 - The **More actions** menu (the `⋯` on an agent) holds the rest:
-  - **Disable when idle**: the agent stops after its current item finishes, then sits out until you
-    turn it back on. Memory and session are preserved. This is the reversible pause, distinct from
-    removing the agent.
-  - **Rotate session**: the current item keeps running, but the next item starts with a fresh
+  - **Disable**: pauses the agent until you turn it back on. If the agent is idle, this happens
+    right away. If the agent is running, stop the agent first, then disable it. Memory and session
+    are preserved. This is the reversible pause, distinct from removing the agent.
+  - **Rotate session**: the current work keeps running, but the next turn starts with a fresh
     context. The old session is archived. Reach for this when a session has gotten cluttered and you
     want a clean slate without losing history.
   - **Restart agent**: forces a hung agent to stop and start over right away. Use it only when an
-    agent is wedged. The item it is working on right now is dropped and is not retried, so re-run it
-    afterward. Memory, notes, and config are kept, and queued items stay queued.
+    agent is wedged. The work it is doing right now is dropped and is not retried, so re-run it
+    afterward. Memory, notes, and config are kept, and queued work stays queued.
   - **Remove agent**: stops the agent and deletes its local Anima config. Its home files (memory,
     notes) are left untouched.
 
