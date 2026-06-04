@@ -1,6 +1,7 @@
 import { createBrowserRouter } from 'react-router-dom';
 import Layout from './views/layout';
 import AgentLayout from './views/agents/layout';
+import RouteErrorBoundary from './components/RouteErrorBoundary';
 
 // ---------------------------------------------------------------------------
 // Route tree
@@ -18,10 +19,14 @@ export const router = createBrowserRouter([
   {
     path: 'onboarding',
     lazy: () => import('./views/onboarding').then((m) => ({ Component: m.OnboardingPage })),
+    errorElement: <RouteErrorBoundary />,
   },
   {
     path: '/',
     element: <Layout />,
+    // Chunk-load errors from lazy children bubble up to the nearest errorElement.
+    // This catches stale-asset failures after a runtime upgrade and reloads.
+    errorElement: <RouteErrorBoundary />,
     children: [
       // Agent detail — nested tabs
       {
