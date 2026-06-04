@@ -40,6 +40,8 @@ interface Props {
   onPhaseChange?: (phase: FeishuOnboardingPhase) => void;
   /** Forces a phase for dev/screenshot preview; disables live wiring. */
   previewPhase?: FeishuOnboardingPhase;
+  /** Forces the fallback reason in preview so both body variants are shootable. */
+  previewFallbackReason?: 'slow' | 'failed';
 }
 
 export function FeishuOnboardingConnect({
@@ -49,6 +51,7 @@ export function FeishuOnboardingConnect({
   onConnect,
   onPhaseChange,
   previewPhase,
+  previewFallbackReason,
 }: Props) {
   const isPreview = previewPhase !== undefined;
   const [phase, setPhase] = useState<FeishuOnboardingPhase>(previewPhase ?? 'creating');
@@ -65,11 +68,24 @@ export function FeishuOnboardingConnect({
   const [appId, setAppId] = useState('');
   const [appSecret, setAppSecret] = useState('');
   const [saving, setSaving] = useState(false);
+  // Why we landed on the fallback: 'slow' (auto-creation past the 10s threshold,
+  // or the user chose existing-app early) vs 'failed' (hard create failure). The
+  // reason picks the body line so we never claim "taking longer" on a failure.
+  const [fallbackReason, setFallbackReason] = useState<'slow' | 'failed'>(
+    previewFallbackReason ?? 'slow',
+  );
 
   const startedRef = useRef(false);
   const slowTimerRef = useRef<number | null>(null);
 
-  const revealFallback = useCallback(() => {
+  const revealFallback = useCallback((reason: 'slow' | 'failed' = 'slow') => {
+    // Once the fallback shows, the slow timer is moot — clear it so a late tick
+    // can't flip a 'failed' reason back to 'slow'.
+    if (slowTimerRef.current !== null) {
+      window.clearTimeout(slowTimerRef.current);
+      slowTimerRef.current = null;
+    }
+    setFallbackReason(reason);
     setPhase((prev) => (prev === 'connected' ? prev : 'fallback'));
   }, []);
 
@@ -80,7 +96,7 @@ export function FeishuOnboardingConnect({
 
     // If auto-creation stalls past the slow threshold, surface the fallback so
     // the user is never stranded on a spinner.
-    slowTimerRef.current = window.setTimeout(revealFallback, SLOW_THRESHOLD_MS);
+    slowTimerRef.current = window.setTimeout(() => revealFallback('slow'), SLOW_THRESHOLD_MS);
 
     void startAgentFeishuAppRegistration(agentId, { botName: agentName?.trim() || undefined })
       .then((next) => {
@@ -97,7 +113,7 @@ export function FeishuOnboardingConnect({
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : 'Could not start Feishu app setup');
-        revealFallback();
+        revealFallback('failed');
       });
 
     return () => {
@@ -125,7 +141,7 @@ export function FeishuOnboardingConnect({
           if (next.state === 'connected') handleConnected();
           if (next.state === 'failed') {
             setError(next.error?.description ?? next.error?.message);
-            revealFallback();
+            revealFallback('failed');
           }
         })
         .catch((err) => {
@@ -174,7 +190,7 @@ export function FeishuOnboardingConnect({
         <WorkingState
           phase={phase}
           verificationUrl={verificationUrl}
-          onUseExisting={revealFallback}
+          onUseExisting={() => revealFallback('slow')}
         />
       )}
 
@@ -182,6 +198,7 @@ export function FeishuOnboardingConnect({
         <FallbackState
           appId={appId}
           appSecret={appSecret}
+          reason={fallbackReason}
           saving={saving}
           verificationUrl={verificationUrl}
           onAppId={setAppId}
@@ -212,11 +229,10 @@ function WorkingState({
   phase: 'creating' | 'authorizing';
   verificationUrl?: string;
 }) {
-  // COPY SLOTS — placeholder pending Iris's final per-screen microcopy.
   const title = phase === 'creating' ? 'Creating your Feishu app' : 'Waiting for you in Feishu';
   const body =
     phase === 'creating'
-      ? 'We opened Feishu in a new tab. Confirm the app there to create it and validate message delivery. Keep this tab open while we finish.'
+      ? 'We opened Feishu in a new tab. Confirm the app there to finish creating it. Keep this tab open while we finish.'
       : 'Confirm the new app in the Feishu tab we opened. This page updates on its own once you are done.';
 
   return (
@@ -266,6 +282,7 @@ function FallbackState({
   onAppId,
   onAppSecret,
   onSubmit,
+  reason,
   saving,
   verificationUrl,
 }: {
@@ -274,10 +291,15 @@ function FallbackState({
   onAppId: (v: string) => void;
   onAppSecret: (v: string) => void;
   onSubmit: () => void;
+  reason: 'slow' | 'failed';
   saving: boolean;
   verificationUrl?: string;
 }) {
   const disabled = saving || !appId.trim() || !appSecret.trim();
+  const body =
+    reason === 'failed'
+      ? "We couldn't finish creating the new app. Connect an app you already have to continue."
+      : 'This is taking longer than usual. You can keep waiting in the Feishu tab, or connect an app you already have.';
   return (
     <div className="space-y-3">
       <div className="space-y-3 rounded-sm border border-border-soft bg-surface px-4 py-3">
@@ -285,11 +307,7 @@ function FallbackState({
           <div className="font-serif text-[14px] font-semibold text-text">
             Connect an existing Feishu app
           </div>
-          <p className="mt-1 font-serif text-[12px] leading-snug text-text-muted">
-            {/* COPY SLOT — placeholder pending Iris. */}
-            Automatic setup is taking longer than usual. You can keep waiting in the Feishu tab, or
-            connect an app you already have.
-          </p>
+          <p className="mt-1 font-serif text-[12px] leading-snug text-text-muted">{body}</p>
         </div>
         <CredentialField label="App ID" placeholder="cli_..." value={appId} onChange={onAppId} />
         <CredentialField
@@ -300,7 +318,7 @@ function FallbackState({
           onChange={onAppSecret}
         />
         <p className="font-sans text-[12px] leading-snug text-text-muted">
-          Get these from your app&apos;s Credentials &amp; Basic Info page in the Feishu Open Platform
+          Find these on your app&apos;s Credentials &amp; Basic Info page in the Feishu Open Platform
           Developer Console.
         </p>
         <Button className="w-full" onClick={onSubmit} disabled={disabled}>
@@ -343,8 +361,7 @@ function ConnectedState() {
       </span>
       <div className="mt-4 font-serif text-[16px] font-semibold text-text">Your agent is live</div>
       <p className="mt-1.5 max-w-sm text-balance font-serif text-[13px] leading-relaxed text-text-muted">
-        {/* COPY SLOT — placeholder pending Iris. */}
-        Feishu is connected and message delivery is working. Taking you to your agent now.
+        Feishu is connected. Taking you to your agent now.
       </p>
     </div>
   );
