@@ -9,13 +9,14 @@ import type { AgentRuntimeHealthSummary, AgentStatusSummary } from '@shared/snap
 
 // Maps health state → a single sidebar dot color. The dot is the only health
 // signal in the sidebar; full labels and reason text live in the activity strip.
-function sidebarDotColor(health: AgentRuntimeHealthSummary | undefined, isRunning: boolean): string {
+// Exported so the collapsed avatar rail in Sidebar.tsx can use the same mapping.
+export function sidebarDotColor(health: AgentRuntimeHealthSummary | undefined, isRunning: boolean): string {
   if (!health || health.state === 'unknown' || health.state === 'starting') return 'var(--color-health-idle)';
   if (health.state === 'unhealthy') return 'var(--color-health-error)';
   return isRunning ? 'var(--color-health-warn)' : 'var(--color-health-ok)';
 }
 
-function sidebarDotTitle(health: AgentRuntimeHealthSummary | undefined, isRunning: boolean): string {
+export function sidebarDotTitle(health: AgentRuntimeHealthSummary | undefined, isRunning: boolean): string {
   if (!health || health.state === 'unknown') return 'health unavailable';
   if (health.state === 'starting') return 'starting';
   if (health.state === 'unhealthy') return 'needs attention';
