@@ -103,24 +103,11 @@ export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 overflow-hidden rounded-sm border border-border-soft bg-surface">
-        <SetupModeButton
-          active={setupMode === 'create'}
-          label="Create a new bot"
-          onClick={() => setSetupMode('create')}
-        />
-        <SetupModeButton
-          active={setupMode === 'existing'}
-          label="Use an existing bot"
-          onClick={() => setSetupMode('existing')}
-        />
-      </div>
-
       {setupMode === 'create' && (
         <>
           <div className="rounded-sm border border-border-soft bg-surface-elevated px-4 py-3">
             <div className="font-serif text-[14px] font-semibold text-text">
-              Create and prefill a Feishu app
+              Create a Feishu app
             </div>
             <p className="font-serif mt-1 text-[13px] leading-snug text-text-muted">
               Anima opens a Feishu authorization link, saves the returned credentials, then validates
@@ -153,40 +140,56 @@ export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
           {registration && (
             <RegistrationStatusCard status={registration} />
           )}
+          <button
+            type="button"
+            className="font-sans text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
+            onClick={() => setSetupMode('existing')}
+          >
+            Use an existing bot
+          </button>
         </>
       )}
 
       {setupMode === 'existing' && (
-        <div className="space-y-3 rounded-sm border border-border-soft bg-surface px-4 py-3">
-          <div className="font-serif text-[14px] font-semibold text-text">
-            Use existing Feishu app credentials
+        <div className="space-y-3">
+          <button
+            type="button"
+            className="font-sans text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
+            onClick={() => setSetupMode('create')}
+          >
+            Create a new bot
+          </button>
+          <div className="space-y-3 rounded-sm border border-border-soft bg-surface px-4 py-3">
+            <div className="font-serif text-[14px] font-semibold text-text">
+              Use existing Feishu app credentials
+            </div>
+            <CredentialField
+              label="App ID"
+              placeholder="cli_..."
+              value={appId}
+              onChange={setAppId}
+            />
+            <CredentialField
+              label="App Secret"
+              placeholder="App secret"
+              secret
+              value={appSecret}
+              onChange={setAppSecret}
+            />
+            <p className="font-sans text-[12px] leading-snug text-text-muted">
+              Get these from your app&apos;s Credentials &amp; Basic Info page in the Feishu Open Platform Developer Console.
+            </p>
+            <Button className="w-full" onClick={() => void handleConnect()} disabled={disabled}>
+              {saving ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Saving…
+                </span>
+              ) : (
+                'Save Feishu connection'
+              )}
+            </Button>
           </div>
-          <CredentialField
-            label="App ID"
-            placeholder="cli_..."
-            value={appId}
-            onChange={setAppId}
-          />
-          <CredentialField
-            label="App Secret"
-            placeholder="App secret"
-            secret
-            value={appSecret}
-            onChange={setAppSecret}
-          />
-          <p className="font-sans text-[12px] leading-snug text-text-muted">
-            Get these from your app&apos;s Credentials &amp; Basic Info page in the Feishu Open Platform Developer Console.
-          </p>
-          <Button className="w-full" onClick={() => void handleConnect()} disabled={disabled}>
-            {saving ? (
-              <span className="inline-flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Saving…
-              </span>
-            ) : (
-              'Save Feishu connection'
-            )}
-          </Button>
         </div>
       )}
 
@@ -201,31 +204,6 @@ export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
         </div>
       )}
     </div>
-  );
-}
-
-function SetupModeButton({
-  active,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={[
-        'px-3 py-2.5 text-center font-sans text-[12px] font-medium transition-colors',
-        active
-          ? 'bg-surface-elevated text-text'
-          : 'text-text-muted hover:bg-surface-elevated/60 hover:text-text',
-      ].join(' ')}
-    >
-      {label}
-    </button>
   );
 }
 

@@ -61,7 +61,7 @@ function StepDot({
           done
             ? 'border-health-ok bg-health-ok-soft text-health-ok'
             : isActive
-              ? 'border-accent bg-accent/10 text-accent'
+              ? 'border-accent bg-accent text-white'
               : 'border-border-soft text-text-subtle',
           onClick ? 'cursor-pointer hover:opacity-60' : '',
         ].join(' ')}
@@ -90,10 +90,12 @@ type FlowStep = 'agent' | 'connect' | 'owner' | 'platform';
 function WorkspacePlatformStep({
   error,
   onSelect,
+  onConfirm,
   saving,
   value,
 }: {
   error?: string;
+  onConfirm: () => void;
   onSelect: (platform: WorkspacePlatform) => void;
   saving: boolean;
   value: WorkspacePlatform;
@@ -119,6 +121,9 @@ function WorkspacePlatformStep({
       {error && (
         <p className="font-sans mt-3 text-[12px] text-health-error">{error}</p>
       )}
+      <Button className="mt-6 w-full" onClick={onConfirm} disabled={saving}>
+        {saving ? 'Saving…' : 'Confirm'}
+      </Button>
     </div>
   );
 }
@@ -357,10 +362,8 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     setEffort(DEFAULT_REASONING_EFFORT);
   }
 
-  async function handlePlatformSelect(next: WorkspacePlatform) {
+  async function persistPlatform(next: WorkspacePlatform) {
     if (platformSaving) return;
-    setWorkspacePlatformTouched(true);
-    setWorkspacePlatform(next);
     setPlatformSaving(true);
     setPlatformError(undefined);
     try {
@@ -373,6 +376,12 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     } finally {
       setPlatformSaving(false);
     }
+  }
+
+  function handlePlatformSelect(next: WorkspacePlatform) {
+    if (platformSaving) return;
+    setWorkspacePlatformTouched(true);
+    setWorkspacePlatform(next);
   }
 
   async function handleCreate() {
@@ -522,7 +531,8 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
       {step === 'platform' && (
         <WorkspacePlatformStep
           error={platformError}
-          onSelect={(next) => void handlePlatformSelect(next)}
+          onConfirm={() => void persistPlatform(workspacePlatform)}
+          onSelect={handlePlatformSelect}
           saving={platformSaving}
           value={workspacePlatform}
         />
