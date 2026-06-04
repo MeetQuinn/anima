@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, X } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, Loader2, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { awaitAgentsRefresh, createAgent, refreshDashboardData, updateAgentProfile } from '@/api/agents';
@@ -23,7 +23,10 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import DirectoryPicker from '@/components/DirectoryPicker';
 import { SlackConnectStepper } from '@/views/agents/profile/SlackConnectStepper';
-import { FeishuConnectStepper } from '@/views/agents/profile/FeishuConnectStepper';
+import {
+  FeishuOnboardingConnect,
+  type FeishuOnboardingPhase,
+} from '@/views/agents/profile/FeishuOnboardingConnect';
 import { OwnerPickerForm } from '@/views/agents/profile/OwnerPickerForm';
 import { queryKeys } from '@/lib/query-keys';
 import type { WorkspacePlatform } from '@shared/server-settings';
@@ -89,106 +92,110 @@ type FlowStep = 'agent' | 'connect' | 'owner' | 'platform';
 
 function WorkspacePlatformStep({
   error,
-  onSelect,
-  onConfirm,
+  onChoose,
   saving,
   value,
 }: {
   error?: string;
-  onConfirm: () => void;
-  onSelect: (platform: WorkspacePlatform) => void;
+  onChoose: (platform: WorkspacePlatform) => void;
   saving: boolean;
   value: WorkspacePlatform;
 }) {
+  // Platform is a one-time, remembered workspace choice. Click a card to pick
+  // and advance in a single action (no separate Confirm) so first-run stays
+  // fast. The pending highlight only appears on the card being saved.
   return (
-    <div className="px-6 py-6">
-      <div className="space-y-3">
-        <PlatformOption
+    <div>
+      <div className="grid grid-cols-2 gap-3">
+        <PlatformCard
           label="Slack"
           platform="slack"
-          saving={saving}
-          selected={value === 'slack'}
-          onSelect={() => onSelect('slack')}
+          disabled={saving}
+          pending={saving && value === 'slack'}
+          enterClassName="animate-in fade-in slide-in-from-bottom-3 fill-mode-both duration-500 delay-150 motion-reduce:animate-none"
+          onChoose={() => onChoose('slack')}
         />
-        <PlatformOption
+        <PlatformCard
           label="Feishu"
           platform="feishu"
-          saving={saving}
-          selected={value === 'feishu'}
-          onSelect={() => onSelect('feishu')}
+          disabled={saving}
+          pending={saving && value === 'feishu'}
+          enterClassName="animate-in fade-in slide-in-from-bottom-3 fill-mode-both duration-500 delay-200 motion-reduce:animate-none"
+          onChoose={() => onChoose('feishu')}
         />
       </div>
       {error && (
-        <p className="font-sans mt-3 text-[12px] text-health-error">{error}</p>
+        <p className="font-sans mt-4 text-center text-[12px] text-health-error">{error}</p>
       )}
-      <Button className="mt-6 w-full" onClick={onConfirm} disabled={saving}>
-        {saving ? 'Saving…' : 'Confirm'}
-      </Button>
     </div>
   );
 }
 
-function PlatformOption({
+// Faint brand-tinted hover glow so each card has its own identity through
+// light, not words. Resting state stays neutral; the warm accent is reserved
+// for the chosen (pending) state, so hover and selected never collide.
+const PLATFORM_BRAND_HOVER: Record<WorkspacePlatform, string> = {
+  slack:
+    'hover:border-[#4A154B]/45 hover:shadow-[0_10px_26px_-12px_rgba(74,21,75,0.55)]',
+  feishu:
+    'hover:border-[#3370FF]/45 hover:shadow-[0_10px_26px_-12px_rgba(51,112,255,0.55)]',
+};
+
+function PlatformCard({
+  disabled,
+  enterClassName,
   label,
-  onSelect,
+  onChoose,
+  pending,
   platform,
-  saving,
-  selected,
 }: {
+  disabled: boolean;
+  enterClassName?: string;
   label: string;
-  onSelect: () => void;
+  onChoose: () => void;
+  pending: boolean;
   platform: WorkspacePlatform;
-  saving: boolean;
-  selected: boolean;
 }) {
   return (
     <button
       type="button"
-      onClick={onSelect}
-      disabled={saving}
+      onClick={onChoose}
+      disabled={disabled}
       className={[
-        'w-full rounded-sm border px-4 py-3 text-left transition-colors',
-        selected
-          ? 'border-accent bg-accent-soft/50'
-          : 'border-border-soft bg-surface hover:bg-surface-elevated',
-        saving ? 'cursor-wait opacity-70' : '',
+        'group relative flex flex-col items-center gap-3.5 rounded-lg border px-4 py-8 text-center transition-all duration-200',
+        enterClassName ?? '',
+        pending
+          ? 'border-accent bg-accent-soft/40 shadow-sm'
+          : `border-border-soft bg-surface hover:-translate-y-0.5 hover:bg-surface-elevated ${PLATFORM_BRAND_HOVER[platform]}`,
+        disabled && !pending ? 'opacity-50' : '',
+        disabled ? 'cursor-wait' : 'cursor-pointer active:translate-y-0 active:scale-[0.98]',
       ].join(' ')}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-3">
-          <PlatformIcon platform={platform} />
-          <div className="min-w-0">
-            <div className="font-serif text-[15px] font-semibold text-text">{label}</div>
-          </div>
-        </div>
-        <span
-          aria-hidden
-          className={[
-            'mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border',
-            selected ? 'border-accent bg-accent' : 'border-border-strong',
-          ].join(' ')}
-        >
-          {selected && <span className="h-1.5 w-1.5 rounded-full bg-surface" />}
+      <span
+        aria-hidden
+        className="flex h-12 w-12 items-center justify-center rounded-md bg-white shadow-sm ring-1 ring-border-soft transition-transform duration-200 group-hover:scale-105"
+      >
+        {platform === 'slack' ? (
+          <SlackAppIcon className="h-7 w-7" />
+        ) : (
+          <FeishuAppIcon className="h-7 w-7" />
+        )}
+      </span>
+      <span className="font-sans text-[13px] font-medium tracking-wide text-text-muted">
+        {label}
+      </span>
+      {pending && (
+        <span className="absolute right-2.5 top-2.5" aria-hidden>
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
         </span>
-      </div>
+      )}
     </button>
   );
 }
 
-function PlatformIcon({ platform }: { platform: WorkspacePlatform }) {
+function SlackAppIcon({ className = 'h-5 w-5' }: { className?: string }) {
   return (
-    <span
-      aria-hidden
-      className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-sm bg-white shadow-sm ring-1 ring-border-soft"
-    >
-      {platform === 'slack' ? <SlackAppIcon /> : <FeishuAppIcon />}
-    </span>
-  );
-}
-
-function SlackAppIcon() {
-  return (
-    <svg className="h-5 w-5" viewBox="0 0 2447.6 2452.5" xmlns="http://www.w3.org/2000/svg">
+    <svg className={className} viewBox="0 0 2447.6 2452.5" xmlns="http://www.w3.org/2000/svg">
       <g clipRule="evenodd" fillRule="evenodd">
         <path
           d="m897.4 0c-135.3.1-244.8 109.9-244.7 245.2-.1 135.3 109.5 245.1 244.8 245.2h244.8v-245.1c.1-135.3-109.5-245.1-244.9-245.3.1 0 .1 0 0 0m0 654h-652.6c-135.3.1-244.9 109.9-244.8 245.2-.2 135.3 109.4 245.1 244.7 245.3h652.7c135.3-.1 244.9-109.9 244.8-245.2.1-135.4-109.5-245.2-244.8-245.3z"
@@ -211,40 +218,44 @@ function SlackAppIcon() {
   );
 }
 
-function FeishuAppIcon() {
+// Feishu's CURRENT brand mark (the blue+teal flying bird; Feishu rebranded
+// away from the older origami paper-plane+pen-tip around 2021). The official
+// colored vector isn't published publicly — icon CDNs carry only the "Lark"
+// wordmark or monochrome glyphs — so this is the official raster pulled from
+// feishu.cn (256px, transparent), served from /public. Swap to the official
+// brand-kit SVG if/when we obtain one; the interface stays the same.
+function FeishuAppIcon({ className = 'h-5 w-5' }: { className?: string }) {
   return (
-    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-      <path
-        d="M24 .237l-5.902 6.377a.204.204 0 00-.047.163 1.135 1.135 0 01-.312 1.051 1.146 1.146 0 01-1.649 0l-4.694 4.688.461 6.207L17.136 24 24 .237z"
-        fill="#38F"
-      />
-      <path
-        d="M23.925.4l-5.833 6.302a.19.19 0 00-.041.17 1.16 1.16 0 01-.685 1.29 1.14 1.14 0 01-1.255-.252l-4.62 4.62a.082.082 0 000 .074l.455 6.105L23.68.936 23.925.4z"
-        fill="#005DE0"
-      />
-      <path
-        d="M23.742 0l-6.376 5.895a.169.169 0 01-.163.047 1.16 1.16 0 00-1.052.32 1.14 1.14 0 000 1.64l-4.7 4.702-6.173-.461L0 6.865 23.742 0z"
-        fill="#46EBD5"
-      />
-      <path
-        d="M23.6.068l-6.302 5.84a.19.19 0 01-.17.041 1.14 1.14 0 00-1.024 1.94l-4.613 4.62a.082.082 0 01-.074 0l-6.105-.455L23.064.32 23.6.068z"
-        fill="#00D0B6"
-      />
-    </svg>
+    <img
+      src="/feishu-logo.png"
+      alt="Feishu"
+      className={className}
+      draggable={false}
+    />
   );
 }
 
 export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFlowProps) {
   const queryClient = useQueryClient();
-  // Optional preview param for dev/screenshot use
-  const previewStepRaw = typeof window !== 'undefined'
-    ? Number(new URLSearchParams(window.location.search).get('_previewStep') ?? 0)
-    : 0;
+  // Optional preview params for dev/screenshot use
+  const previewSearch = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search)
+    : new URLSearchParams();
+  const previewStepRaw = Number(previewSearch.get('_previewStep') ?? 0);
+  const previewFeishuPhase = (previewSearch.get('_previewFeishu') as FeishuOnboardingPhase | null) ?? undefined;
+  const previewPlatform = (previewSearch.get('_previewPlatform') as WorkspacePlatform | null) ?? undefined;
+  const previewStepName = previewSearch.get('_previewStep');
   const previewStep: FlowStep | undefined =
-    previewStepRaw === 2 ? 'connect' : previewStepRaw === 3 ? 'owner' : undefined;
+    previewFeishuPhase ? 'connect'
+      : previewStepName === 'platform' ? 'platform'
+        : previewStepRaw === 1 ? 'agent'
+          : previewStepRaw === 2 ? 'connect'
+            : previewStepRaw === 3 ? 'owner' : undefined;
 
   const [step, setStep] = useState<FlowStep>(previewStep ?? (firstRun ? 'platform' : 'agent'));
-  const [workspacePlatform, setWorkspacePlatform] = useState<WorkspacePlatform>('slack');
+  const [workspacePlatform, setWorkspacePlatform] = useState<WorkspacePlatform>(
+    previewFeishuPhase ? 'feishu' : previewPlatform ?? 'slack',
+  );
   const [workspacePlatformTouched, setWorkspacePlatformTouched] = useState(false);
   const [platformSaving, setPlatformSaving] = useState(false);
   const [platformError, setPlatformError] = useState<string | undefined>();
@@ -265,11 +276,20 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
   const [showPicker, setShowPicker] = useState(false);
 
   // Create state
-  const [createdAgentId, setCreatedAgentId] = useState<string | null>(null);
+  const [createdAgentId, setCreatedAgentId] = useState<string | null>(
+    previewFeishuPhase ? 'preview-agent' : null,
+  );
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
+  // Feishu connect sub-phase, reported up by FeishuOnboardingConnect.
+  const [feishuPhase, setFeishuPhase] = useState<FeishuOnboardingPhase | undefined>(previewFeishuPhase);
+
   const nameInputRef = useRef<HTMLInputElement>(null);
+  // Tab opened synchronously inside the Feishu submit handler so the browser
+  // treats it as user-initiated (popup-safe); FeishuOnboardingConnect points it
+  // at the Feishu authorization URL once registration returns one.
+  const feishuAuthWindowRef = useRef<Window | null>(null);
 
   const {
     data: providerAvailability,
@@ -284,11 +304,18 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
   });
 
   const providerOptions = useMemo(() => providerCatalog(), []);
-  const stepOrder = useMemo<FlowStep[]>(() => {
+  // Platform is a pre-step fork, not a numbered step. Each platform gets its own
+  // numbered sequence (Slack: agent → connect → owner; Feishu: agent → connect),
+  // so the two flows no longer share a stepper count.
+  const numberedSteps = useMemo<FlowStep[]>(() => {
     const tail: FlowStep[] = workspacePlatform === 'slack' ? ['connect', 'owner'] : ['connect'];
-    return firstRun ? ['platform', 'agent', ...tail] : ['agent', ...tail];
-  }, [firstRun, workspacePlatform]);
-  const currentStepIndex = Math.max(0, stepOrder.indexOf(step));
+    return ['agent', ...tail];
+  }, [workspacePlatform]);
+  const onPlatformFork = step === 'platform';
+  const currentStepIndex = Math.max(0, numberedSteps.indexOf(step));
+  // When Feishu reaches its connected moment, the whole sequence reads done so
+  // the success check never sits under an active (red) step dot.
+  const feishuAllDone = workspacePlatform === 'feishu' && feishuPhase === 'connected';
   const derivedId = agentIdFromName(name.trim());
 
   // Display helpers — Base UI SelectValue shows raw value before items register;
@@ -318,22 +345,28 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     }, 0);
   }, [providerAvailability, providerKind, providerOptions]);
 
+  // Auto-focus the name field whenever we land on the agent step. Keyed to
+  // `step` (not mount): on first-run the component mounts on the platform fork,
+  // so the input doesn't exist yet — focus only once it's rendered.
   useEffect(() => {
-    setTimeout(() => nameInputRef.current?.focus(), 50);
-  }, []);
+    if (step !== 'agent') return;
+    const t = setTimeout(() => nameInputRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, [step]);
 
   useEffect(() => {
+    if (previewPlatform || previewFeishuPhase) return;
     if (!savedWorkspacePlatform) return;
     if (workspacePlatformTouched) return;
     const timer = setTimeout(() => setWorkspacePlatform(savedWorkspacePlatform), 0);
     return () => clearTimeout(timer);
-  }, [savedWorkspacePlatform, workspacePlatformTouched]);
+  }, [savedWorkspacePlatform, workspacePlatformTouched, previewPlatform, previewFeishuPhase]);
 
   useEffect(() => {
-    if (stepOrder.includes(step)) return;
-    const timer = setTimeout(() => setStep(stepOrder[stepOrder.length - 1] ?? 'agent'), 0);
+    if (step === 'platform' || numberedSteps.includes(step)) return;
+    const timer = setTimeout(() => setStep(numberedSteps[numberedSteps.length - 1] ?? 'agent'), 0);
     return () => clearTimeout(timer);
-  }, [step, stepOrder]);
+  }, [step, numberedSteps]);
 
   const handleClose = useCallback(async () => {
     if (createdAgentId) {
@@ -367,7 +400,13 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     setPlatformSaving(true);
     setPlatformError(undefined);
     try {
-      const savedPlatform = await saveWorkspacePlatform(next);
+      // Keep the chosen-card "settle" beat visible even when the save is
+      // instant (e.g. local dev), so the selection registers before the next
+      // step slides in. Sub-250ms reads as polish, not friction.
+      const [savedPlatform] = await Promise.all([
+        saveWorkspacePlatform(next),
+        new Promise((resolve) => setTimeout(resolve, 220)),
+      ]);
       setWorkspacePlatform(savedPlatform);
       queryClient.setQueryData(queryKeys.workspacePlatform(), savedPlatform);
       setStep('agent');
@@ -378,15 +417,26 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     }
   }
 
-  function handlePlatformSelect(next: WorkspacePlatform) {
+  // Click-to-advance: pick the platform and persist in one action (no Confirm).
+  function handlePlatformChoose(next: WorkspacePlatform) {
     if (platformSaving) return;
     setWorkspacePlatformTouched(true);
     setWorkspacePlatform(next);
+    void persistPlatform(next);
   }
 
   async function handleCreate() {
     setNameTouched(true);
     if (!derivedId || !role.trim() || !selectedProviderReady) return;
+
+    // Feishu auto-start: open the authorization tab synchronously, inside this
+    // click, so the browser does not block it. FeishuOnboardingConnect points it
+    // at the real auth URL once registration returns one. A no-URL/failed start
+    // closes it back down via the fallback path.
+    if (workspacePlatform === 'feishu') {
+      feishuAuthWindowRef.current = window.open('', '_blank');
+    }
+
     setCreating(true);
     setCreateError(null);
 
@@ -499,19 +549,34 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
       {/* ---- Card header row ---- */}
       <div className="flex items-center justify-between border-b border-border-soft px-6 py-4">
         <div className="flex items-center gap-3">
-          {/* Step indicator */}
-          <div className="flex items-center gap-1">
-            {stepOrder.map((entry, index) => (
-              <StepDot
-                key={entry}
-                n={index + 1}
-                current={currentStepIndex + 1}
-                done={index < currentStepIndex}
-                last={index === stepOrder.length - 1}
-                onClick={index < currentStepIndex ? () => setStep(entry) : undefined}
-              />
-            ))}
-          </div>
+          {/* Very weak escape hatch back to the platform choice. Only on the
+              first numbered step during first-run — that's the one step whose
+              "back" target (the platform fork) has no step dot. Platform is a
+              remembered global choice, so this stays deliberately faint. */}
+          {step === 'agent' && firstRun && (
+            <button
+              onClick={() => setStep('platform')}
+              className="-ml-1.5 flex h-7 w-7 items-center justify-center rounded-sm text-text-subtle transition-colors hover:bg-surface-elevated hover:text-text-muted"
+              title="Back to platform"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+          )}
+          {/* Step indicator — hidden on the platform fork (a pre-step choice) */}
+          {!onPlatformFork && (
+            <div className="flex items-center gap-1">
+              {numberedSteps.map((entry, index) => (
+                <StepDot
+                  key={entry}
+                  n={index + 1}
+                  current={feishuAllDone ? numberedSteps.length + 1 : currentStepIndex + 1}
+                  done={feishuAllDone || index < currentStepIndex}
+                  last={index === numberedSteps.length - 1}
+                  onClick={index < currentStepIndex ? () => setStep(entry) : undefined}
+                />
+              ))}
+            </div>
+          )}
           {/* Step title */}
           <span className="font-serif text-[15px] font-semibold text-text">{stepTitle}</span>
         </div>
@@ -527,20 +592,12 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
         )}
       </div>
 
-      {/* ---- Step: Workspace platform ---- */}
-      {step === 'platform' && (
-        <WorkspacePlatformStep
-          error={platformError}
-          onConfirm={() => void persistPlatform(workspacePlatform)}
-          onSelect={handlePlatformSelect}
-          saving={platformSaving}
-          value={workspacePlatform}
-        />
-      )}
+      {/* Platform fork renders as its own welcome surface (see firstRun shell),
+          not inside this card chrome. */}
 
       {/* ---- Step: Create agent + home ---- */}
       {step === 'agent' && (
-        <div className="px-6 py-6">
+        <div className="animate-in fade-in slide-in-from-right-4 fill-mode-both duration-300 motion-reduce:animate-none px-6 py-6">
           <div className="space-y-4">
             {/* Name */}
             <div>
@@ -716,9 +773,12 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
       )}
       {step === 'connect' && createdAgentId && workspacePlatform === 'feishu' && (
         <div className="px-6 py-6">
-          <FeishuConnectStepper
+          <FeishuOnboardingConnect
             agentId={createdAgentId}
             agentName={name.trim()}
+            getAuthWindow={() => feishuAuthWindowRef.current}
+            previewPhase={previewFeishuPhase}
+            onPhaseChange={setFeishuPhase}
             onConnect={() => void handleFeishuConnected()}
           />
         </div>
@@ -750,19 +810,55 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
       // the page scrolls when content (e.g. Slack connect steps) is taller than
       // the viewport.
       <div className="fixed inset-0 overflow-y-auto bg-surface">
-        <div className="flex min-h-full w-full flex-col items-center justify-center gap-6 px-4 pt-8 pb-[20vh]">
-          {/* Wordmark above the card — shown on both steps; tagline only on step 1 */}
-          <div className="text-center">
-            <div className="flex items-center justify-center gap-2">
-              <AnimaIcon className="h-6 w-6 text-accent" />
-              <span className="font-serif text-[26px] font-semibold text-text">Anima</span>
+        {onPlatformFork ? (
+          // Platform fork = the brand arrival moment. No card chrome: the
+          // wordmark, the positioning line, and the two choices breathe on the
+          // open surface so the first screen reads as arriving somewhere, not a
+          // dialog. Everything bends to staying fast (one click advances).
+          <div className="flex min-h-full w-full flex-col items-center justify-center px-4 py-12">
+            <div className="flex w-full max-w-md flex-col items-center text-center">
+              <div className="animate-in fade-in slide-in-from-bottom-2 fill-mode-both duration-500 motion-reduce:animate-none flex items-center justify-center gap-2.5">
+                <AnimaIcon className="h-8 w-8 text-accent" />
+                <span className="font-serif text-[34px] font-semibold leading-none text-text">Anima</span>
+              </div>
+              <p className="animate-in fade-in slide-in-from-bottom-2 fill-mode-both duration-500 delay-75 motion-reduce:animate-none mt-4 max-w-sm text-balance font-serif text-[15px] leading-relaxed text-text-muted">
+                AI teammates in your chat, building shared team context.
+              </p>
+
+              {/* Clear boundary: the brand arrival above, the actual choice
+                  below. A faint rule + the question caption bound tightly to the
+                  cards so the two blocks no longer blur together. */}
+              <span
+                aria-hidden
+                className="animate-in fade-in fill-mode-both duration-500 delay-100 motion-reduce:animate-none mt-11 h-px w-8 bg-border-strong/50"
+              />
+              <p className="animate-in fade-in fill-mode-both duration-500 delay-100 motion-reduce:animate-none mt-5 font-sans text-[11px] font-semibold uppercase tracking-[0.18em] text-text-subtle">
+                Where does your team work?
+              </p>
+              <div className="mt-3 w-full">
+                <WorkspacePlatformStep
+                  error={platformError}
+                  onChoose={handlePlatformChoose}
+                  saving={platformSaving}
+                  value={workspacePlatform}
+                />
+              </div>
             </div>
-            <p className="font-sans mt-2 max-w-sm text-balance text-[13px] leading-relaxed text-text-muted">
-              An AI agent team that works alongside your human team in chat, building up shared knowledge over time.
-            </p>
           </div>
-          {card}
-        </div>
+        ) : (
+          // fixed inset-0 + overflow-y-auto sidesteps body { overflow: hidden }
+          // so the page scrolls when content (e.g. Slack connect steps) is
+          // taller than the viewport.
+          <div className="flex min-h-full w-full flex-col items-center justify-center gap-6 px-4 py-12">
+            {/* Compact wordmark above the working steps (the arrival/tagline
+                moment lives on the platform fork only). */}
+            <div className="animate-in fade-in fill-mode-both duration-500 motion-reduce:animate-none flex items-center justify-center gap-2">
+              <AnimaIcon className="h-6 w-6 text-accent" />
+              <span className="font-serif text-[22px] font-semibold text-text">Anima</span>
+            </div>
+            {card}
+          </div>
+        )}
       </div>
     );
   }
