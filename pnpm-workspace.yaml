@@ -1,5 +1,7 @@
 packages:
   - packages/animactl
+  - server
+  - shared
   - web
 allowBuilds:
   esbuild: true
