@@ -733,6 +733,148 @@ test('web status surfaces provider failure health reasons', async () => {
   }
 });
 
+test('agent diagnostics endpoint returns allowlisted support state without secrets or message bodies', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-diagnostics-test-'));
+  try {
+    await writeConfig(stateDir, [
+      {
+        ...defaultAgentConfig('anima'),
+        profile: {
+          displayName: 'Anima',
+          role: 'Do not leak role copy.',
+        },
+      },
+    ]);
+    await withAnimaHome(stateDir, async () => {
+      await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-diag',
+          teamId: 'T-demo',
+          text: 'Do not leak incoming text.',
+          ts: '1770000000.000030',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+      await activityServiceForAgent('anima').record({
+        payload: {
+          command: 'cat /tmp/secret-file',
+          error: 'Do not leak tool error.',
+          status: 'completed',
+          text: 'Do not leak tool text.',
+          tool: 'anima.message.send',
+        },
+        type: 'tool.call.completed',
+      });
+      await activityServiceForAgent('anima').record({
+        payload: {
+          error: 'Do not leak runtime error.',
+          failureSource: 'provider',
+          maxRetries: 1,
+          providerReason: 'quota_exhausted',
+          reason: 'Do not leak free text reason.',
+          retryAttempts: 1,
+          retryable: false,
+          runtimeKind: 'claude-code',
+        },
+        type: 'runtime.failed',
+      });
+      await new AgentHealthStore({ animaHome: stateDir }).writeHealth({
+        agentId: 'anima',
+        runtime: {
+          processId: process.pid,
+          providerChild: {
+            alive: true,
+            command: 'claude --resume /private/raw-command-secret',
+            exited: false,
+            label: 'claude-code',
+            pid: process.pid,
+            startedAt: '2026-06-04T08:00:00.000Z',
+            stdinWritable: true,
+          },
+          providerChildExpected: true,
+          workerId: 'worker-diagnostics',
+        },
+        state: 'healthy',
+        updatedAt: '2026-06-04T08:00:00.000Z',
+      });
+      await mkdir(join(stateDir, 'logs'), { recursive: true });
+      await writeFile(join(stateDir, 'logs', 'agent.log'), [
+        '[2026-06-04T08:01:00.000Z] Agent anima: restart requested requestId=restart-1',
+        '[2026-06-04T08:01:01.000Z] Agent anima: provider error xoxb-log-secret',
+        '[2026-06-04T08:01:02.000Z] Agent anima: failed payload {"text":"Do not leak log message body.","token":"xoxb-log-payload"}',
+        '[2026-06-04T08:01:03.000Z] Agent anima: SLACK_BOT_TOKEN=xoxb-env-secret',
+      ].join('\n'), 'utf8');
+      await writeFile(join(stateDir, 'logs', 'web.log'), [
+        '[2026-06-04T08:01:04.000Z] web: health error for dashboard',
+      ].join('\n'), 'utf8');
+
+      const server = await createWebServer();
+      try {
+        server.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        const address = server.address();
+        if (!address || typeof address === 'string') {
+          throw new Error('Expected API server to listen on a TCP address.');
+        }
+        const diagnosticsRes = await fetch(`http://127.0.0.1:${address.port}/api/agents/anima/diagnostics`);
+        assert.equal(diagnosticsRes.status, 200);
+        const body = (await diagnosticsRes.json()) as {
+          agent?: {
+            provider?: Record<string, unknown>;
+          };
+          logs?: { lines?: Array<{ message?: string }> };
+          recentActivity?: Array<Record<string, unknown>>;
+          redaction?: { mode?: string };
+          status?: {
+            health?: {
+              runtime?: {
+                providerChild?: {
+                  command?: string;
+                };
+              };
+              state?: string;
+            };
+            queueDepth?: number;
+          };
+        };
+        assert.equal(body.redaction?.mode, 'allowlist');
+        assert.equal(body.status?.queueDepth, 1);
+        assert.equal(body.status?.health?.state, 'healthy');
+        assert.equal(body.status?.health?.runtime?.providerChild?.command, 'claude-code');
+        assert.equal(body.agent?.provider && 'env' in body.agent.provider, false);
+        assert.ok(body.recentActivity?.some((activity) => activity.providerReason === 'quota_exhausted'));
+        assert.ok(body.logs?.lines?.some((line) => /restart requested/.test(line.message ?? '')));
+        assert.ok((body.logs?.lines?.length ?? 0) <= 80);
+
+        const serialized = JSON.stringify(body);
+        assert.doesNotMatch(serialized, /CODEX_SECRET/);
+        assert.doesNotMatch(serialized, /runtime-secret-value/);
+        assert.doesNotMatch(serialized, /xapp-secret-value/);
+        assert.doesNotMatch(serialized, /xoxb-secret-value/);
+        assert.doesNotMatch(serialized, /xoxb-log-secret/);
+        assert.doesNotMatch(serialized, /xoxb-log-payload/);
+        assert.doesNotMatch(serialized, /xoxb-env-secret/);
+        assert.doesNotMatch(serialized, /SLACK_BOT_TOKEN/);
+        assert.doesNotMatch(serialized, /Do not leak incoming text/);
+        assert.doesNotMatch(serialized, /Do not leak tool text/);
+        assert.doesNotMatch(serialized, /Do not leak tool error/);
+        assert.doesNotMatch(serialized, /Do not leak runtime error/);
+        assert.doesNotMatch(serialized, /Do not leak free text reason/);
+        assert.doesNotMatch(serialized, /Do not leak log message body/);
+        assert.doesNotMatch(serialized, /Do not leak role copy/);
+        assert.doesNotMatch(serialized, /cat \/tmp\/secret-file/);
+        assert.doesNotMatch(serialized, /raw-command-secret/);
+        assert.doesNotMatch(serialized, /claude --resume/);
+      } finally {
+        server.close();
+      }
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('web API stop endpoint writes stopRequestedAt onto the item record', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-stop-test-'));
   await writeConfig(stateDir);
@@ -774,6 +916,54 @@ test('web API stop endpoint writes stopRequestedAt onto the item record', async 
 
       const item = await new WakeQueueService('anima').find(ctx.item.id);
       assert.ok(item?.handling.stopRequestedAt, 'expected stopRequestedAt to be set on the item record');
+    } finally {
+      server.close();
+    }
+  });
+  await rm(stateDir, { force: true, recursive: true });
+});
+
+test('web API blocks disabling a running agent and disables idle agents immediately', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-disable-running-test-'));
+  await writeConfig(stateDir);
+  await withAnimaHome(stateDir, async () => {
+    const server = await createWebServer();
+    try {
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected TCP address');
+
+      const ctx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-disable',
+          teamId: 'T-demo',
+          text: 'keep me running',
+          ts: '1770000025.000001',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+      await new WakeQueueService('anima').markRunning({
+        itemId: ctx.item.id,
+        startedAt: '2026-05-20T10:00:00.000Z',
+        workerId: 'test-worker',
+      });
+
+      const url = `http://127.0.0.1:${address.port}/api/agents/anima/disable`;
+      const blocked = await fetch(url, { method: 'POST' });
+      assert.equal(blocked.status, 409);
+      assert.deepEqual(await blocked.json(), {
+        error: 'Agent is running. Stop the agent before disabling.',
+      });
+      assert.equal((await agentService('anima').getConfig()).enabled, true);
+
+      await new WakeQueueService('anima').complete(ctx.item.id);
+      const disabled = await fetch(url, { method: 'POST' });
+      assert.equal(disabled.status, 200);
+      const body = (await disabled.json()) as { enabled?: boolean };
+      assert.equal(body.enabled, false);
+      assert.equal((await agentService('anima').getConfig()).enabled, false);
     } finally {
       server.close();
     }
