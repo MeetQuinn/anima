@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
 
 import { errorMessage } from '../ids.js';
@@ -15,6 +16,7 @@ export function createAdminCliProgram(): Command {
   program
     .name('animactl')
     .description('Operate Anima server and web services')
+    .version(readAdminCliVersion())
     .option('--agent <id>')
     .showHelpAfterError()
     .configureHelp({ sortSubcommands: true });
@@ -30,3 +32,12 @@ main().catch((error) => {
   console.error(errorMessage(error));
   process.exitCode = 1;
 });
+
+function readAdminCliVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as { version?: unknown };
+    return typeof pkg.version === 'string' && pkg.version ? pkg.version : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}

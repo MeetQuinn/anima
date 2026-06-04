@@ -10,6 +10,16 @@ import { cleanServiceEnv } from '../services/env.js';
 
 const animactl = resolve('dist/server/cli/animactl.js');
 
+test('animactl --version prints the package version', async () => {
+  const pkg = JSON.parse(await readFile('package.json', 'utf8')) as { version?: unknown };
+  const expectedVersion = typeof pkg.version === 'string' ? pkg.version : 'unknown';
+
+  const version = await runAnimactl(['--version']);
+
+  assert.equal(version.status, 0, version.stderr || version.stdout);
+  assert.equal(version.stdout.trim(), expectedVersion);
+});
+
 test('cleanServiceEnv strips runtime item context before spawning services', () => {
   const env = cleanServiceEnv({
     ANIMA_AGENT_ID: 'milo',
