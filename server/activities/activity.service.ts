@@ -26,6 +26,10 @@ export class ActivityService {
     return this.store.readAll();
   }
 
+  readLastN(n: number): Promise<Activity[]> {
+    return this.store.readLastN(n);
+  }
+
   readSince(createdAt: string): Promise<Activity[]> {
     return this.store.readSince(createdAt);
   }

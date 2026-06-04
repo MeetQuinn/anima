@@ -6,11 +6,22 @@
  * they appear above everything regardless of containing context.
  */
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, MoreHorizontal, Power, PowerOff, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  Clipboard,
+  ClipboardCheck,
+  MoreHorizontal,
+  Power,
+  PowerOff,
+  RefreshCw,
+  RotateCcw,
+  Trash2,
+} from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import {
   disableAgent,
   enableAgent,
+  fetchAgentDiagnostics,
   fetchAgentStatuses,
   fetchAgents,
   removeAgent,
@@ -26,6 +37,7 @@ import {
   agentHealthSummaryText,
 } from './AgentHealthIndicator';
 import { useConfirm } from '@/hooks/useConfirm';
+import { formatAgentDiagnostics } from '@/lib/diagnostics';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 
 
@@ -49,9 +61,12 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
   const { agentId } = useParams<{ agentId: string }>();
   const navigate = useNavigate();
   const menuRef = useRef<HTMLDivElement>(null);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { confirm, modal } = useConfirm();
 
   const [menuOpen, setMenuOpen] = useState(false);
+  const [copyingDiagnostics, setCopyingDiagnostics] = useState(false);
+  const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
   const [toggling, setToggling] = useState(false);
 
   // Click-outside to close the dropdown.
@@ -66,11 +81,17 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
     return () => document.removeEventListener('mousedown', handle);
   }, [menuOpen]);
 
+  useEffect(() => () => {
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+  }, []);
+
   if (!agentId) return null;
   const agent = agents.find((a) => a.id === agentId);
   if (!agent) return null;
   const enabled = agent.enabled !== false;
-  const health = statuses.find((status) => status.agentId === agentId)?.health;
+  const status = statuses.find((candidate) => candidate.agentId === agentId);
+  const running = Boolean(status?.currentItemId);
+  const health = status?.health;
   const healthSummary = agentHealthSummaryText(health);
   const providerAction = agentHealthProviderAction(health);
   const restartBlocked = agentHealthBlocksRestart(health);
@@ -86,6 +107,25 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
       // instant enable case that skips the confirm modal.
     } finally {
       setToggling(false);
+    }
+  }
+
+  async function handleCopyDiagnostics() {
+    if (!agentId || copyingDiagnostics) return;
+    setCopyingDiagnostics(true);
+    try {
+      const diagnostics = await fetchAgentDiagnostics(agentId);
+      await writeClipboard(formatAgentDiagnostics(diagnostics));
+      setDiagnosticsCopied(true);
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = setTimeout(() => {
+        setDiagnosticsCopied(false);
+        copiedTimerRef.current = null;
+      }, 2500);
+    } catch (error) {
+      console.error('[AgentActionsMenu] failed to copy diagnostics', error);
+    } finally {
+      setCopyingDiagnostics(false);
     }
   }
 
@@ -105,26 +145,34 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
           <div className="absolute right-0 top-full z-10 mt-1 min-w-[180px] rounded-sm border border-border-soft bg-surface py-1 shadow-deep">
             {/* Disable / Enable — top, state-labeled, frequent + reversible */}
             {enabled ? (
-              <button
-                className="flex min-h-[44px] w-full items-center gap-2.5 px-3 text-left font-sans text-[13px] text-text-muted hover:bg-surface-elevated hover:text-text"
-                onClick={() => {
-                  setMenuOpen(false);
-                  confirm({
-                    title: 'Disable this agent?',
-                    description: 'If it is running now, it will stop after the current work finishes. Memory and session are preserved.',
-                    variant: 'error',
-                    confirmLabel: 'Disable',
-                    busyLabel: 'Saving...',
-                    onConfirm: async () => {
-                      await disableAgent(agentId);
-                      refreshDashboardData();
-                    },
-                  });
-                }}
-              >
-                <PowerOff className="h-3.5 w-3.5 shrink-0" />
-                Disable when idle
-              </button>
+              running ? (
+                <div
+                  role="menuitem"
+                  aria-disabled="true"
+                  title="Agent is running. Stop the agent before disabling."
+                  className="flex min-h-[44px] w-full cursor-not-allowed items-start gap-2.5 px-3 py-2 text-left font-sans text-[13px] text-text-muted opacity-50"
+                >
+                  <PowerOff className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span className="flex min-w-0 flex-col">
+                    <span>Disable</span>
+                    <span className="mt-0.5 text-[11px] leading-tight">
+                      Agent is running. Stop the agent before disabling.
+                    </span>
+                  </span>
+                </div>
+              ) : (
+                <button
+                  disabled={toggling}
+                  className="flex min-h-[44px] w-full items-center gap-2.5 px-3 text-left font-sans text-[13px] text-text-muted hover:bg-surface-elevated hover:text-text disabled:opacity-50"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    void handleToggleEnabled(false);
+                  }}
+                >
+                  <PowerOff className="h-3.5 w-3.5 shrink-0" />
+                  {toggling ? 'Saving...' : 'Disable'}
+                </button>
+              )
             ) : (
               <button
                 disabled={toggling}
@@ -218,6 +266,20 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
                 Restart agent
               </button>
             )}
+            <button
+              disabled={copyingDiagnostics}
+              className="flex min-h-[44px] w-full items-center gap-2.5 px-3 text-left font-sans text-[13px] text-text-muted hover:bg-surface-elevated hover:text-text disabled:opacity-50"
+              onClick={() => {
+                void handleCopyDiagnostics();
+              }}
+            >
+              {diagnosticsCopied ? (
+                <ClipboardCheck className="h-3.5 w-3.5 shrink-0 text-health-ok" />
+              ) : (
+                <Clipboard className="h-3.5 w-3.5 shrink-0" />
+              )}
+              {diagnosticsCopied ? 'Copied' : 'Copy diagnostics'}
+            </button>
             {/* Divider */}
             <div className="my-1 h-px bg-border-soft" />
             {/* Remove agent — destructive, bottom */}
@@ -250,4 +312,28 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
       {modal}
     </>
   );
+}
+
+async function writeClipboard(value: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return;
+    } catch {
+      // Fall through to the local textarea fallback when browser permissions
+      // reject the async clipboard API.
+    }
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = value;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand('copy');
+  } finally {
+    textarea.remove();
+  }
 }

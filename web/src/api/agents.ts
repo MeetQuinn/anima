@@ -15,6 +15,7 @@ import type {
 } from '@shared/agent-config';
 import type { Reminder } from '@shared/reminder';
 import type { Activity, AgentActivityFeedEvent, AgentActivityFeedPage } from '@shared/activity';
+import type { AgentDiagnosticsBundle } from '@shared/diagnostics';
 import type { InboxItem } from '@shared/inbox';
 import type { AgentMessageDirection, AgentMessageHistoryPage } from '@shared/messages';
 import type {
@@ -184,6 +185,10 @@ export async function fetchAgent(agentId: string): Promise<AgentConfig> {
 
 export async function fetchAgentStatuses(): Promise<AgentStatusSummary[]> {
   return apiRequest('/api/agent-statuses');
+}
+
+export async function fetchAgentDiagnostics(agentId: string): Promise<AgentDiagnosticsBundle> {
+  return apiRequest(`/api/agents/${encodeURIComponent(agentId)}/diagnostics`);
 }
 
 // Invalidates all active queries so the UI re-fetches without a full page reload.
