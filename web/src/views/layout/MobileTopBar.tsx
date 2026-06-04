@@ -6,7 +6,6 @@ import { parseLocation } from '@/lib/url-state';
 import { stopItem, fetchAgents, fetchAgentStatuses, refreshDashboardData } from '@/api/agents';
 import { agentColor, initialOf } from '@/lib/avatars';
 import AgentActionsMenu from '@/components/AgentActionsMenu';
-import { AgentHealthIndicator } from '@/components/AgentHealthIndicator';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
 
@@ -40,14 +39,12 @@ export default function MobileTopBar() {
   const agent = idx >= 0 ? agents[idx] : undefined;
   const status = agentStatuses.find((s) => s.agentId === agentId);
   const currentItemId = status?.currentItemId;
-  const isRunning = Boolean(currentItemId);
 
   const displayName = agent?.profile?.displayName?.trim() || agentId;
   const initial = agent ? initialOf(displayName) : '?';
   const color = idx >= 0 ? agentColor(idx) : 'var(--color-health-idle)';
   const enabled = agent?.enabled !== false;
   const connected = agent ? agentHasConnectedTransport(agent) : false;
-  const showRuntimeHealth = enabled && connected;
 
   const handleStop = async () => {
     if (!currentItemId || stopping || !agentId) return;
@@ -109,13 +106,6 @@ export default function MobileTopBar() {
             <span className="font-sans shrink-0 rounded-sm border border-text-muted/30 px-1 py-0.5 text-[9px] uppercase tracking-[0.08em] text-text-muted">
               Off
             </span>
-          )}
-          {showRuntimeHealth && (
-            <AgentHealthIndicator
-              health={status?.health}
-              isRunning={isRunning}
-              density="header"
-            />
           )}
         </div>
 

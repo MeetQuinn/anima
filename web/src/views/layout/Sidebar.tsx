@@ -22,7 +22,7 @@ import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import { agentColor, initialOf } from '@/lib/avatars';
-import { agentHasConnectedTransport, agentsHaveMixedPlatforms } from '@shared/agent-transports';
+import { agentHasConnectedTransport } from '@shared/agent-transports';
 import { AgentRow } from './sidebar/AgentRow';
 import { AgentCreateModal } from '@/views/onboarding';
 import {
@@ -102,8 +102,6 @@ export default function Sidebar({
   );
 
   const { orderedAgents, orderedKbs, agentIndexMap, kbIndexMap, sensors, reorderAgents, reorderKbs } = useSidebarOrder();
-  const showAgentPlatforms = agentsHaveMixedPlatforms(orderedAgents);
-
   // Knowledge Base add modal
   const [showAddModal, setShowAddModal] = useState(false);
 
@@ -462,7 +460,6 @@ export default function Sidebar({
                           isRunning={runningIds.has(agent.id)}
                           enabled={agent.enabled !== false}
                           {...(status ? { status } : {})}
-                          showPlatform={showAgentPlatforms}
                           onClick={() => setAgentId(agent.id)}
                         />
                       </SortableItem>

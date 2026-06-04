@@ -12,16 +12,28 @@ import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import ServerPanel from '@/components/ServerPanel';
-import { AgentHealthIndicator } from '@/components/AgentHealthIndicator';
+import type { AgentRuntimeHealthSummary } from '@shared/snapshot';
 import { AgentCreateModal, AddKbModal } from './Sidebar';
 import { agentColor, initialOf } from '@/lib/avatars';
 import {
   agentHasConnectedTransport,
-  agentPlatformLabel,
-  agentsHaveMixedPlatforms,
 } from '@shared/agent-transports';
 
 const MOBILE_SCROLL_KEY = 'mobile-nav-scroll';
+
+// Single colored dot helpers — mirrors the desktop sidebar logic.
+function mobileDotColor(health: AgentRuntimeHealthSummary | undefined, isRunning: boolean): string {
+  if (!health || health.state === 'unknown' || health.state === 'starting') return 'var(--color-health-idle)';
+  if (health.state === 'unhealthy') return 'var(--color-health-error)';
+  return isRunning ? 'var(--color-health-warn)' : 'var(--color-health-ok)';
+}
+
+function mobileDotTitle(health: AgentRuntimeHealthSummary | undefined, isRunning: boolean): string {
+  if (!health || health.state === 'unknown') return 'health unavailable';
+  if (health.state === 'starting') return 'starting';
+  if (health.state === 'unhealthy') return 'needs attention';
+  return isRunning ? 'working' : 'idle';
+}
 
 // ---------------------------------------------------------------------------
 // MobileSortableItem — drag wrapper for mobile rows.
@@ -73,8 +85,6 @@ export default function MobileNavScreen({
   // resting hint that an update exists. Reuses the panel's deduped query (no extra
   // request); clears once the user upgrades.
   const updateAvailable = useUpdateAvailable();
-  const showAgentPlatforms = agentsHaveMixedPlatforms(orderedAgents);
-
   // Restore scroll position when returning from detail screen.
   useEffect(() => {
     const saved = sessionStorage.getItem(MOBILE_SCROLL_KEY);
@@ -203,11 +213,9 @@ export default function MobileNavScreen({
                   const enabled = agent.enabled !== false;
                   const notConnected = enabled && !agentHasConnectedTransport(agent);
                   const status = statusByAgentId.get(agent.id);
-                  const platformLabel = agentPlatformLabel(agent);
-                  const showPlatformLabel = showAgentPlatforms && platformLabel !== null;
                   const isSelected = agent.id === lastSelectedId;
                   const showRuntimeHealth = enabled && !notConnected;
-                  const showRightMeta = showPlatformLabel || !enabled || showRuntimeHealth;
+                  const showRightMeta = !enabled || showRuntimeHealth;
 
                   return (
                     <MobileSortableItem key={agent.id} id={agent.id}>
@@ -253,19 +261,16 @@ export default function MobileNavScreen({
                         </span>
                         {showRightMeta && (
                           <span className="ml-auto flex shrink-0 items-center gap-1.5">
-                            {showPlatformLabel && (
-                              <span className="font-sans text-[9px] uppercase tracking-[0.08em] text-text-muted">
-                                {platformLabel}
-                              </span>
-                            )}
                             {!enabled ? (
                               <span className="font-sans shrink-0 rounded-sm border border-text-muted/30 px-1 py-0.5 text-[9px] uppercase tracking-[0.08em] text-text-muted">
                                 Off
                               </span>
                             ) : showRuntimeHealth ? (
-                              <AgentHealthIndicator
-                                health={status?.health}
-                                isRunning={isRunning}
+                              <span
+                                aria-hidden
+                                className="h-2 w-2 shrink-0 rounded-full"
+                                title={mobileDotTitle(status?.health, isRunning)}
+                                style={{ background: mobileDotColor(status?.health, isRunning) }}
                               />
                             ) : null}
                           </span>
