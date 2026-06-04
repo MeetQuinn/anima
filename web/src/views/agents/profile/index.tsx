@@ -454,6 +454,7 @@ export default function Profile() {
             ) : (
               <FeishuConnectStepper
                 agentId={agentId}
+                agentName={agent.profile.displayName}
                 onConnect={() => refreshAgentData(agentId)}
               />
             )}

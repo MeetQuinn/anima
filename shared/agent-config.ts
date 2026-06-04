@@ -300,6 +300,12 @@ export const AgentConnectFeishuRequest = z.object({
 
 export type AgentConnectFeishuRequest = z.infer<typeof AgentConnectFeishuRequest>;
 
+export const AgentFeishuRegisterAppRequest = z.object({
+  botName: z.string().optional(),
+}).strict();
+
+export type AgentFeishuRegisterAppRequest = z.infer<typeof AgentFeishuRegisterAppRequest>;
+
 export const AgentFeishuRegisterAppStatus = z.object({
   agent: z.unknown().optional(),
   error: z.object({

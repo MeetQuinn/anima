@@ -12,15 +12,18 @@ import type { AgentFeishuRegisterAppStatus } from '@shared/agent-config';
 
 interface Props {
   agentId: string;
+  agentName?: string;
   onConnect?: () => void;
 }
 
-export function FeishuConnectStepper({ agentId, onConnect }: Props) {
+type SetupMode = 'create' | 'existing';
+
+export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
+  const defaultBotName = agentName?.trim() || 'Anima {user}';
+  const [setupMode, setSetupMode] = useState<SetupMode>('create');
+  const [botName, setBotName] = useState(defaultBotName);
   const [appId, setAppId] = useState('');
   const [appSecret, setAppSecret] = useState('');
-  const [botOpenId, setBotOpenId] = useState('');
-  const [verificationToken, setVerificationToken] = useState('');
-  const [encryptKey, setEncryptKey] = useState('');
   const [registration, setRegistration] = useState<AgentFeishuRegisterAppStatus | null>(null);
   const [registering, setRegistering] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -62,7 +65,9 @@ export function FeishuConnectStepper({ agentId, onConnect }: Props) {
     setError(undefined);
     setSaved(false);
     try {
-      const next = await startAgentFeishuAppRegistration(agentId);
+      const next = await startAgentFeishuAppRegistration(agentId, {
+        botName: botName.trim() || undefined,
+      });
       setRegistration(next);
       if (next.state === 'connected') {
         setSaved(true);
@@ -84,11 +89,9 @@ export function FeishuConnectStepper({ agentId, onConnect }: Props) {
       await connectAgentFeishu(agentId, {
         appId: appId.trim(),
         appSecret: appSecret.trim(),
-        botOpenId: botOpenId.trim() || undefined,
-        encryptKey: encryptKey.trim() || undefined,
-        verificationToken: verificationToken.trim() || undefined,
       });
       setSaved(true);
+      setAppSecret('');
       refreshDashboardData();
       onConnect?.();
     } catch (err) {
@@ -100,39 +103,64 @@ export function FeishuConnectStepper({ agentId, onConnect }: Props) {
 
   return (
     <div className="space-y-5">
-      <div className="rounded-sm border border-border-soft bg-surface-elevated px-4 py-3">
-        <div className="font-serif text-[14px] font-semibold text-text">
-          Create and prefill a Feishu app
-        </div>
-        <p className="font-serif mt-1 text-[13px] leading-snug text-text-muted">
-          Anima opens a Feishu authorization link, saves the returned credentials, then validates
-          message delivery. You may still need to confirm bot permissions and event delivery in Feishu.
-        </p>
-        <Button
-          className="mt-3 w-full"
-          onClick={() => void handleRegisterApp()}
-          disabled={registering || !!registrationActive}
-        >
-          {registering || registration?.state === 'starting' ? (
-            <span className="inline-flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Creating Feishu app…
-            </span>
-          ) : (
-            'Create Feishu app'
-          )}
-        </Button>
+      <div className="grid grid-cols-2 overflow-hidden rounded-sm border border-border-soft bg-surface">
+        <SetupModeButton
+          active={setupMode === 'create'}
+          label="Create a new bot"
+          onClick={() => setSetupMode('create')}
+        />
+        <SetupModeButton
+          active={setupMode === 'existing'}
+          label="Use an existing bot"
+          onClick={() => setSetupMode('existing')}
+        />
       </div>
 
-      {registration && (
-        <RegistrationStatusCard status={registration} />
+      {setupMode === 'create' && (
+        <>
+          <div className="rounded-sm border border-border-soft bg-surface-elevated px-4 py-3">
+            <div className="font-serif text-[14px] font-semibold text-text">
+              Create and prefill a Feishu app
+            </div>
+            <p className="font-serif mt-1 text-[13px] leading-snug text-text-muted">
+              Anima opens a Feishu authorization link, saves the returned credentials, then validates
+              message delivery. You may still need to confirm bot permissions and event delivery in Feishu.
+            </p>
+            <div className="mt-3">
+              <CredentialField
+                label="Bot name"
+                placeholder="Bot name"
+                value={botName}
+                onChange={setBotName}
+              />
+            </div>
+            <Button
+              className="mt-3 w-full"
+              onClick={() => void handleRegisterApp()}
+              disabled={registering || !!registrationActive}
+            >
+              {registering || registration?.state === 'starting' ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Creating Feishu app…
+                </span>
+              ) : (
+                'Create Feishu app'
+              )}
+            </Button>
+          </div>
+
+          {registration && (
+            <RegistrationStatusCard status={registration} />
+          )}
+        </>
       )}
 
-      <details className="rounded-sm border border-border-soft bg-surface px-4 py-3">
-        <summary className="cursor-pointer font-serif text-[13px] font-semibold text-text">
-          Use existing Feishu app credentials
-        </summary>
-        <div className="mt-4 space-y-3">
+      {setupMode === 'existing' && (
+        <div className="space-y-3 rounded-sm border border-border-soft bg-surface px-4 py-3">
+          <div className="font-serif text-[14px] font-semibold text-text">
+            Use existing Feishu app credentials
+          </div>
           <CredentialField
             label="App ID"
             placeholder="cli_..."
@@ -146,37 +174,9 @@ export function FeishuConnectStepper({ agentId, onConnect }: Props) {
             value={appSecret}
             onChange={setAppSecret}
           />
-          <details className="rounded-sm border border-border-soft bg-surface-elevated px-3 py-2">
-            <summary className="cursor-pointer font-sans text-[12px] font-medium text-text-muted">
-              Advanced optional fields
-            </summary>
-            <div className="mt-3 space-y-3">
-              <CredentialField
-                label="Bot Open ID"
-                optional
-                placeholder="ou_..."
-                value={botOpenId}
-                onChange={setBotOpenId}
-              />
-              <CredentialField
-                label="Verification Token"
-                optional
-                placeholder="Event subscription token"
-                secret
-                value={verificationToken}
-                onChange={setVerificationToken}
-              />
-              <CredentialField
-                label="Encrypt Key"
-                optional
-                placeholder="Encrypted event key"
-                secret
-                value={encryptKey}
-                onChange={setEncryptKey}
-              />
-            </div>
-          </details>
-
+          <p className="font-sans text-[12px] leading-snug text-text-muted">
+            Get these from your app&apos;s Credentials &amp; Basic Info page in the Feishu Open Platform Developer Console.
+          </p>
           <Button className="w-full" onClick={() => void handleConnect()} disabled={disabled}>
             {saving ? (
               <span className="inline-flex items-center gap-2">
@@ -188,7 +188,7 @@ export function FeishuConnectStepper({ agentId, onConnect }: Props) {
             )}
           </Button>
         </div>
-      </details>
+      )}
 
       {error && (
         <p className="font-sans text-[12px] text-health-error">{error}</p>
@@ -201,6 +201,31 @@ export function FeishuConnectStepper({ agentId, onConnect }: Props) {
         </div>
       )}
     </div>
+  );
+}
+
+function SetupModeButton({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        'px-3 py-2.5 text-center font-sans text-[12px] font-medium transition-colors',
+        active
+          ? 'bg-surface-elevated text-text'
+          : 'text-text-muted hover:bg-surface-elevated/60 hover:text-text',
+      ].join(' ')}
+    >
+      {label}
+    </button>
   );
 }
 

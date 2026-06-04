@@ -89,14 +89,12 @@ type FlowStep = 'agent' | 'connect' | 'owner' | 'platform';
 
 function WorkspacePlatformStep({
   error,
-  onChange,
-  onContinue,
+  onSelect,
   saving,
   value,
 }: {
   error?: string;
-  onChange: (platform: WorkspacePlatform) => void;
-  onContinue: () => void;
+  onSelect: (platform: WorkspacePlatform) => void;
   saving: boolean;
   value: WorkspacePlatform;
 }) {
@@ -104,52 +102,51 @@ function WorkspacePlatformStep({
     <div className="px-6 py-6">
       <div className="space-y-3">
         <PlatformOption
-          description="For teams that work in Slack. Agents use a Slack app to receive and send messages."
           label="Slack"
           platform="slack"
+          saving={saving}
           selected={value === 'slack'}
-          onSelect={() => onChange('slack')}
+          onSelect={() => onSelect('slack')}
         />
         <PlatformOption
-          description="For teams that work in Feishu. Agents use a self-built Feishu app over a long-lived connection."
           label="Feishu"
           platform="feishu"
+          saving={saving}
           selected={value === 'feishu'}
-          onSelect={() => onChange('feishu')}
+          onSelect={() => onSelect('feishu')}
         />
       </div>
       {error && (
         <p className="font-sans mt-3 text-[12px] text-health-error">{error}</p>
       )}
-      <Button className="mt-6 w-full" onClick={onContinue} disabled={saving}>
-        {saving ? 'Saving…' : 'Continue →'}
-      </Button>
     </div>
   );
 }
 
 function PlatformOption({
-  description,
   label,
   onSelect,
   platform,
+  saving,
   selected,
 }: {
-  description: string;
   label: string;
   onSelect: () => void;
   platform: WorkspacePlatform;
+  saving: boolean;
   selected: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onSelect}
+      disabled={saving}
       className={[
         'w-full rounded-sm border px-4 py-3 text-left transition-colors',
         selected
           ? 'border-accent bg-accent-soft/50'
           : 'border-border-soft bg-surface hover:bg-surface-elevated',
+        saving ? 'cursor-wait opacity-70' : '',
       ].join(' ')}
     >
       <div className="flex items-start justify-between gap-3">
@@ -157,7 +154,6 @@ function PlatformOption({
           <PlatformIcon platform={platform} />
           <div className="min-w-0">
             <div className="font-serif text-[15px] font-semibold text-text">{label}</div>
-            <p className="font-sans mt-1 text-[12px] leading-relaxed text-text-muted">{description}</p>
           </div>
         </div>
         <span
@@ -361,12 +357,14 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     setEffort(DEFAULT_REASONING_EFFORT);
   }
 
-  async function handlePlatformContinue() {
+  async function handlePlatformSelect(next: WorkspacePlatform) {
     if (platformSaving) return;
+    setWorkspacePlatformTouched(true);
+    setWorkspacePlatform(next);
     setPlatformSaving(true);
     setPlatformError(undefined);
     try {
-      const savedPlatform = await saveWorkspacePlatform(workspacePlatform);
+      const savedPlatform = await saveWorkspacePlatform(next);
       setWorkspacePlatform(savedPlatform);
       queryClient.setQueryData(queryKeys.workspacePlatform(), savedPlatform);
       setStep('agent');
@@ -435,7 +433,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
   }
 
   const stepTitle =
-    step === 'platform' ? 'Choose workspace platform' :
+    step === 'platform' ? 'Where does your team work?' :
     step === 'agent' ? 'Create your agent' :
     step === 'connect' ? `Connect to ${WORKSPACE_PLATFORM_LABELS[workspacePlatform]}` :
     'Pick an owner';
@@ -524,11 +522,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
       {step === 'platform' && (
         <WorkspacePlatformStep
           error={platformError}
-          onChange={(next) => {
-            setWorkspacePlatformTouched(true);
-            setWorkspacePlatform(next);
-          }}
-          onContinue={() => void handlePlatformContinue()}
+          onSelect={(next) => void handlePlatformSelect(next)}
           saving={platformSaving}
           value={workspacePlatform}
         />
@@ -712,7 +706,11 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
       )}
       {step === 'connect' && createdAgentId && workspacePlatform === 'feishu' && (
         <div className="px-6 py-6">
-          <FeishuConnectStepper agentId={createdAgentId} onConnect={() => void handleFeishuConnected()} />
+          <FeishuConnectStepper
+            agentId={createdAgentId}
+            agentName={name.trim()}
+            onConnect={() => void handleFeishuConnected()}
+          />
         </div>
       )}
 

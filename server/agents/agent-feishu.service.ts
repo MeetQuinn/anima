@@ -1,4 +1,4 @@
-import type { AgentConnectFeishuRequest } from '../../shared/agent-config.js';
+import type { AgentConnectFeishuRequest, AgentFeishuRegisterAppRequest } from '../../shared/agent-config.js';
 import { registerFeishuApp, type FeishuRegisterAppResult } from '../feishu/client.js';
 import { defaultAgentRegistryService } from './agent.service.js';
 import { randomUUID } from 'crypto';
@@ -56,8 +56,14 @@ export class AgentFeishuService {
     });
   }
 
-  async startAppRegistration(): Promise<FeishuAppRegistrationStatus> {
+  async startAppRegistration(input: AgentFeishuRegisterAppRequest = {}): Promise<FeishuAppRegistrationStatus> {
     this.abortActiveRegistration();
+    const agent = await defaultAgentRegistryService.serviceFor(this.agentId).getConfig();
+    const requestedBotName = input.botName?.trim();
+    const fallbackBotName = input.botName === undefined
+      ? agent.profile.displayName.trim() || 'Anima {user}'
+      : 'Anima {user}';
+    const botName = requestedBotName || fallbackBotName;
     const registrationId = randomUUID();
     const abortController = new AbortController();
     const session: FeishuAppRegistrationSession = {
@@ -77,7 +83,7 @@ export class AgentFeishuService {
     void register({
       appPreset: {
         desc: 'An Anima agent that works alongside your team in chat.',
-        name: 'Anima {user}',
+        name: botName,
       },
       onQRCodeReady(info) {
         session.expireIn = info.expireIn;
