@@ -405,6 +405,54 @@ test('agent health store clears stale failed restart on later healthy writes', a
   }
 });
 
+test('agent health store keeps provider failures until a successful provider turn clears them', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-health-store-provider-failure-test-'));
+  try {
+    const healthStore = new AgentHealthStore({ animaHome: stateDir });
+    await healthStore.writeHealth({
+      agentId: 'alpha',
+      reason: 'provider_quota_exhausted',
+      state: 'unhealthy',
+      updatedAt: '2026-06-04T01:00:00.000Z',
+    });
+
+    await healthStore.writeHealth({
+      agentId: 'alpha',
+      runtime: {
+        processId: process.pid,
+        providerChildExpected: false,
+        workerId: `alpha:${process.pid}:healthy`,
+      },
+      state: 'healthy',
+      updatedAt: '2026-06-04T01:01:00.000Z',
+    });
+
+    const stillBlocked = await healthStore.get('alpha');
+    assert.equal(stillBlocked?.state, 'unhealthy');
+    assert.equal(stillBlocked?.reason, 'provider_quota_exhausted');
+    assert.equal(stillBlocked?.runtime?.workerId, `alpha:${process.pid}:healthy`);
+
+    await healthStore.writeHealth({
+      agentId: 'alpha',
+      clearProviderFailure: true,
+      runtime: {
+        processId: process.pid,
+        providerChildExpected: false,
+        workerId: `alpha:${process.pid}:cleared`,
+      },
+      state: 'healthy',
+      updatedAt: '2026-06-04T01:02:00.000Z',
+    });
+
+    const cleared = await healthStore.get('alpha');
+    assert.equal(cleared?.state, 'healthy');
+    assert.equal(cleared?.reason, undefined);
+    assert.equal(cleared?.runtime?.workerId, `alpha:${process.pid}:cleared`);
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('runtime host restart clears only the requested stale running item', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-stale-restart-test-'));
   try {

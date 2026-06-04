@@ -18,6 +18,7 @@ import type {
   AgentRuntimeFollowupInput,
 } from '../providers/contract.js';
 import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
+import { AgentHealthStore } from '../runtime/agent-health.store.js';
 import { clearRestartDrain, requestRestartDrain } from '../services/restart-drain.js';
 import { runtimeContextForItemId } from '../runtime/context.js';
 import type { RuntimeWorkerConfig, RuntimeItemContext } from '../runtime/types.js';
@@ -1350,8 +1351,11 @@ test('runtime worker records non-crash provider errors without retrying', async 
     );
     const failed = activities.find((activity) => activity.type === 'runtime.failed');
     assert.equal(failed?.payload?.['failureSource'], 'provider');
-    assert.equal(failed?.payload?.['providerReason'], 'provider_error');
+    assert.equal(failed?.payload?.['providerReason'], 'provider_auth_failed');
     assert.equal(failed?.payload?.['retryable'], false);
+    const health = await new AgentHealthStore({ animaHome: stateDir }).get('scout');
+    assert.equal(health?.state, 'unhealthy');
+    assert.equal(health?.reason, 'provider_auth_failed');
     });
   } finally {
     await worker?.close();

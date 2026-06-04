@@ -27,6 +27,9 @@ export type AgentHealthState = 'healthy' | 'starting' | 'unhealthy' | 'unknown';
 export type AgentHealthReason =
   | 'provider_child_missing'
   | 'provider_child_exited'
+  | 'provider_auth_failed'
+  | 'provider_quota_exhausted'
+  | 'provider_rate_limited'
   | 'stale_running_item'
   | 'restart_pending'
   | 'restart_failed'

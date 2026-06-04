@@ -1,6 +1,6 @@
 import type { AgentRuntime } from '../providers/contract.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
-import { errorMessage } from '../ids.js';
+import { errorMessage, nowIso } from '../ids.js';
 import { PROVIDER_IDLE_TIMEOUT_MS_DEFAULT } from '../../shared/agent-config.js';
 import type { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { isRestartDrainActive } from '../services/restart-drain.js';
@@ -20,6 +20,7 @@ import {
 import { startActiveRunControl, type ActiveRunHandle } from './active-run-control.js';
 import { appendQueuedFollowupsUntilFinished } from './followup-appender.js';
 import { recordFinalRuntimeFailure, runProviderWithCrashRetries } from './provider-runner.js';
+import { defaultAgentHealthStore } from './agent-health.store.js';
 import type { AgentRuntimeHandleSnapshot } from '../../shared/snapshot.js';
 
 // Executor for one agent: claims queued inbox items, runs the provider runtime,
@@ -228,6 +229,13 @@ export class AgentRuntimeWorker {
         text: result.text,
         workerId: this.workerId,
       }, null, 2));
+      await defaultAgentHealthStore.writeHealth({
+        agentId: this.options.agentId,
+        clearProviderFailure: true,
+        runtime: this.health(),
+        state: 'healthy',
+        updatedAt: nowIso(),
+      });
       await this.queue.complete(item.id);
       await this.queue.completeAppendedTo(item.id);
       appendedFollowupsSettled = true;

@@ -6,7 +6,7 @@
  * they appear above everything regardless of containing context.
  */
 import { useEffect, useRef, useState } from 'react';
-import { MoreHorizontal, Power, PowerOff, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
+import { AlertTriangle, MoreHorizontal, Power, PowerOff, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import {
   disableAgent,
@@ -20,7 +20,11 @@ import {
 } from '@/api/agents';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button } from './ui/button';
-import { agentHealthSummaryText } from './AgentHealthIndicator';
+import {
+  agentHealthBlocksRestart,
+  agentHealthProviderAction,
+  agentHealthSummaryText,
+} from './AgentHealthIndicator';
 import { useConfirm } from '@/hooks/useConfirm';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 
@@ -66,9 +70,10 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
   const agent = agents.find((a) => a.id === agentId);
   if (!agent) return null;
   const enabled = agent.enabled !== false;
-  const healthSummary = agentHealthSummaryText(
-    statuses.find((status) => status.agentId === agentId)?.health,
-  );
+  const health = statuses.find((status) => status.agentId === agentId)?.health;
+  const healthSummary = agentHealthSummaryText(health);
+  const providerAction = agentHealthProviderAction(health);
+  const restartBlocked = agentHealthBlocksRestart(health);
 
   async function handleToggleEnabled(nextEnabled: boolean) {
     if (!agentId || toggling) return;
@@ -154,43 +159,65 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
               <RotateCcw className="h-3.5 w-3.5 shrink-0" />
               Rotate session
             </button>
-            {/* Restart — recovery for a hung agent. Greyed when disabled: a
+            {/* Restart — recovery for a hung agent. Provider failures suppress
+                this action because restart is not the remedy for account,
+                quota, or provider retry problems. Auth failures get an in-app
+                settings action; quota/rate guidance stays in the health banner.
+                Greyed when disabled: a
                 disabled agent has nothing running to restart. The 409 backstop
                 still surfaces in the confirm modal if state changes under us. */}
-            <button
-              disabled={!enabled}
-              title={!enabled ? 'Agent is disabled. Enable it to run.' : undefined}
-              className="flex min-h-[44px] w-full items-center gap-2.5 px-3 text-left font-sans text-[13px] text-text-muted hover:bg-surface-elevated hover:text-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-muted"
-              onClick={() => {
-                setMenuOpen(false);
-                confirm({
-                  title: 'Restart this agent?',
-                  description: (
-                    <>
-                      Use this only if the agent is hung. It will be forced to stop and start over
-                      immediately. Any current work is dropped and is not retried, so re-run it
-                      manually afterward. Memory, notes, and config are kept; queued work stays
-                      queued.
-                      {healthSummary && (
-                        <span className="mt-2 block font-sans text-[12px] text-text-muted">
-                          Current health: {healthSummary}
-                        </span>
-                      )}
-                    </>
-                  ),
-                  variant: 'warn',
-                  confirmLabel: 'Restart',
-                  busyLabel: 'Restarting…',
-                  onConfirm: async () => {
-                    await restartAgent(agentId);
-                    refreshDashboardData();
-                  },
-                });
-              }}
-            >
-              <RefreshCw className="h-3.5 w-3.5 shrink-0" />
-              Restart agent
-            </button>
+            {providerAction ? (
+              <button
+                className="flex min-h-[44px] w-full items-start gap-2.5 px-3 py-2 text-left font-sans text-[13px] text-text-muted hover:bg-surface-elevated hover:text-text"
+                onClick={() => {
+                  setMenuOpen(false);
+                  navigate(`/agents/${agentId}/profile`);
+                }}
+              >
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-health-error" />
+                <span className="flex min-w-0 flex-col">
+                  <span className="text-text">{providerAction.label}</span>
+                  <span className="mt-0.5 text-[11px] leading-tight text-text-muted">
+                    {providerAction.description}
+                  </span>
+                </span>
+              </button>
+            ) : restartBlocked ? null : (
+              <button
+                disabled={!enabled}
+                title={!enabled ? 'Agent is disabled. Enable it to run.' : undefined}
+                className="flex min-h-[44px] w-full items-center gap-2.5 px-3 text-left font-sans text-[13px] text-text-muted hover:bg-surface-elevated hover:text-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-muted"
+                onClick={() => {
+                  setMenuOpen(false);
+                  confirm({
+                    title: 'Restart this agent?',
+                    description: (
+                      <>
+                        Use this only if the agent is hung. It will be forced to stop and start over
+                        immediately. Any current work is dropped and is not retried, so re-run it
+                        manually afterward. Memory, notes, and config are kept; queued work stays
+                        queued.
+                        {healthSummary && (
+                          <span className="mt-2 block font-sans text-[12px] text-text-muted">
+                            Current health: {healthSummary}
+                          </span>
+                        )}
+                      </>
+                    ),
+                    variant: 'warn',
+                    confirmLabel: 'Restart',
+                    busyLabel: 'Restarting…',
+                    onConfirm: async () => {
+                      await restartAgent(agentId);
+                      refreshDashboardData();
+                    },
+                  });
+                }}
+              >
+                <RefreshCw className="h-3.5 w-3.5 shrink-0" />
+                Restart agent
+              </button>
+            )}
             {/* Divider */}
             <div className="my-1 h-px bg-border-soft" />
             {/* Remove agent — destructive, bottom */}

@@ -88,6 +88,12 @@ export function agentHealthReasonText(reason: AgentHealthReason | undefined): st
       return 'The agent stopped running. Restart the agent.';
     case 'provider_child_exited':
       return 'The agent stopped unexpectedly. Restart the agent.';
+    case 'provider_auth_failed':
+      return "This agent can't reach its model. Check the model sign-in or API key in its provider settings.";
+    case 'provider_quota_exhausted':
+      return "This agent's model plan is out of capacity. Check your plan or quota with the model provider, and it should pick back up.";
+    case 'provider_rate_limited':
+      return "This agent is being rate-limited by its model provider and can't complete work right now. It should recover on its own; if it keeps happening, check your plan's rate limits.";
     case 'restart_failed':
       return 'Restart failed. Try again or check the logs.';
     case 'restart_pending':
@@ -101,6 +107,30 @@ export function agentHealthReasonText(reason: AgentHealthReason | undefined): st
   }
 }
 
+export function agentHealthProviderAction(health: AgentRuntimeHealthSummary | undefined): {
+  description: string;
+  kind: 'settings';
+  label: string;
+} | null {
+  switch (activeHealthReason(health)) {
+    case 'provider_auth_failed':
+      return {
+        description: "The model sign-in or API key isn't working.",
+        kind: 'settings',
+        label: 'Check provider settings',
+      };
+    default:
+      return null;
+  }
+}
+
+export function agentHealthBlocksRestart(health: AgentRuntimeHealthSummary | undefined): boolean {
+  const reason = activeHealthReason(health);
+  return reason === 'provider_auth_failed'
+    || reason === 'provider_quota_exhausted'
+    || reason === 'provider_rate_limited';
+}
+
 export function agentHealthSummaryText(health: AgentRuntimeHealthSummary | undefined): string | null {
   if (!health) return null;
   if (agentHealthRecoveredFresh(health, Date.now())) return 'Recovered';
@@ -111,6 +141,15 @@ export function agentHealthSummaryText(health: AgentRuntimeHealthSummary | undef
   if (health.state === 'unhealthy') return agentHealthReasonText(health.reason);
   if (health.state === 'unknown') return 'Health unavailable';
   return null;
+}
+
+function activeHealthReason(health: AgentRuntimeHealthSummary | undefined): AgentHealthReason | undefined {
+  if (!health) return undefined;
+  if (health.state !== 'healthy' && health.restart?.outcome === 'failed') {
+    return health.restart.reason ?? health.reason;
+  }
+  if (health.state === 'unhealthy') return health.reason;
+  return undefined;
 }
 
 function healthDisplay(

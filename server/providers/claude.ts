@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 
 import { isRecord, stringField } from '../json.js';
 import { runtimeErrorPayload } from '../activities/format.js';
+import { classifyProviderFailureReason } from '../runtime/provider-failure.js';
 import { ActiveRuntimeRun } from './active-runtime.js';
 import { startChildProcess, terminateChildProcess, type RunningChildProcess } from './child-process.js';
 import { createClaudeJsonlActivityMapper, parseClaudeRuntimeOutput } from './claude-events.js';
@@ -563,6 +564,8 @@ function claudeProviderErrorFromResult(
 }
 
 function claudeProviderErrorReason(input: { message: string; status: unknown; subtype: string | undefined }): string {
+  const classified = classifyProviderFailureReason(input);
+  if (classified !== 'provider_error') return classified;
   if (typeof input.status === 'number') return `api_status_${input.status}`;
   if (input.subtype?.startsWith('error')) return input.subtype;
   return 'provider_error';
