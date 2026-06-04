@@ -1,12 +1,28 @@
 import { agentColor, initialOf } from '@/lib/avatars';
-import { AgentHealthIndicator } from '@/components/AgentHealthIndicator';
-import { agentHasConnectedTransport, agentPlatformLabel } from '@shared/agent-transports';
+import { agentHasConnectedTransport } from '@shared/agent-transports';
 import type { AgentConfig } from '@shared/agent-config';
-import type { AgentStatusSummary } from '@shared/snapshot';
+import type { AgentRuntimeHealthSummary, AgentStatusSummary } from '@shared/snapshot';
 
 // ---------------------------------------------------------------------------
 // Agent row — name + status only; actions live on the Profile detail pane.
 // ---------------------------------------------------------------------------
+
+// Maps health state → a single sidebar dot color. The dot is the only health
+// signal in the sidebar; full labels and reason text live in the activity strip.
+// Exported so the collapsed avatar rail in Sidebar.tsx can use the same mapping.
+export function sidebarDotColor(health: AgentRuntimeHealthSummary | undefined, isRunning: boolean): string {
+  if (!health || health.state === 'unknown' || health.state === 'starting') return 'var(--color-health-idle)';
+  if (health.state === 'unhealthy') return 'var(--color-health-error)';
+  return isRunning ? 'var(--color-health-warn)' : 'var(--color-health-ok)';
+}
+
+export function sidebarDotTitle(health: AgentRuntimeHealthSummary | undefined, isRunning: boolean): string {
+  if (!health || health.state === 'unknown') return 'health unavailable';
+  if (health.state === 'starting') return 'starting';
+  if (health.state === 'unhealthy') return 'needs attention';
+  return isRunning ? 'working' : 'idle';
+}
+
 export function AgentRow({
   agent,
   index,
@@ -14,7 +30,6 @@ export function AgentRow({
   isRunning,
   enabled,
   status,
-  showPlatform,
   onClick,
 }: {
   agent: AgentConfig;
@@ -23,7 +38,6 @@ export function AgentRow({
   isRunning: boolean;
   enabled: boolean;
   status?: AgentStatusSummary;
-  showPlatform: boolean;
   onClick: () => void;
 }) {
   const color = agentColor(index);
@@ -33,10 +47,8 @@ export function AgentRow({
   // agent reachable. Raw secrets are redacted on the wire, so use the derived
   // connected flags instead of token fields.
   const notConnected = enabled && !agentHasConnectedTransport(agent);
-  const platformLabel = agentPlatformLabel(agent);
-  const showPlatformLabel = showPlatform && platformLabel !== null;
   const showRuntimeHealth = enabled && !notConnected;
-  const hasRightMeta = showPlatformLabel || !enabled || showRuntimeHealth;
+  const hasRightMeta = !enabled || showRuntimeHealth;
   return (
     <div
       className={[
@@ -88,11 +100,6 @@ export function AgentRow({
             </span>
             {hasRightMeta && (
               <span className="ml-auto flex shrink-0 items-center gap-1.5">
-                {showPlatformLabel && (
-                  <span className="font-sans text-[9px] uppercase tracking-[0.08em] text-text-on-spine-subtle">
-                    {platformLabel}
-                  </span>
-                )}
                 {!enabled ? (
                   // OFF badge: pill with background so it reads as a status chip, not bare text
                   <span
@@ -102,10 +109,14 @@ export function AgentRow({
                     Off
                   </span>
                 ) : showRuntimeHealth ? (
-                  <AgentHealthIndicator
-                    health={status?.health}
-                    isRunning={isRunning}
-                    surface="spine"
+                  // Single colored dot — color encodes all health states.
+                  // Labels and reason text live in the activity strip; the dot
+                  // is the sidebar's only ambient signal.
+                  <span
+                    aria-hidden
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    title={sidebarDotTitle(status?.health, isRunning)}
+                    style={{ background: sidebarDotColor(status?.health, isRunning) }}
                   />
                 ) : null}
               </span>

@@ -22,8 +22,8 @@ import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import { agentColor, initialOf } from '@/lib/avatars';
-import { agentHasConnectedTransport, agentsHaveMixedPlatforms } from '@shared/agent-transports';
-import { AgentRow } from './sidebar/AgentRow';
+import { agentHasConnectedTransport } from '@shared/agent-transports';
+import { AgentRow, sidebarDotColor, sidebarDotTitle } from './sidebar/AgentRow';
 import { AgentCreateModal } from '@/views/onboarding';
 import {
   AddKbModal,
@@ -102,8 +102,6 @@ export default function Sidebar({
   );
 
   const { orderedAgents, orderedKbs, agentIndexMap, kbIndexMap, sensors, reorderAgents, reorderKbs } = useSidebarOrder();
-  const showAgentPlatforms = agentsHaveMixedPlatforms(orderedAgents);
-
   // Knowledge Base add modal
   const [showAddModal, setShowAddModal] = useState(false);
 
@@ -244,6 +242,8 @@ export default function Sidebar({
               const color = agentColor(agentIndexMap.get(agent.id) ?? 0);
               const displayName = agent.profile?.displayName ?? agent.id;
               const initial = initialOf(displayName);
+              const collapsedStatus = statusByAgentId.get(agent.id);
+              const showCollapsedDot = enabled && !notConnected;
               return (
                 <div key={agent.id} className="relative w-full flex justify-center">
                   {active && (
@@ -277,12 +277,16 @@ export default function Sidebar({
                         {initial}
                       </span>
                     )}
-                    {/* Status dot — only when running */}
-                    {enabled && !notConnected && isRunning && (
+                    {/* Status dot — color encodes all health states, same
+                        mapping as the expanded AgentRow dot. Always shown for
+                        enabled + connected agents so a red unhealthy/provider-
+                        failure agent is never invisible in the collapsed rail. */}
+                    {showCollapsedDot && (
                       <span
+                        aria-hidden
                         className="absolute right-0.5 bottom-0.5 h-2 w-2 shrink-0 rounded-full border border-page"
-                        style={{ background: 'var(--color-health-warn)' }}
-                        title="working"
+                        title={sidebarDotTitle(collapsedStatus?.health, isRunning)}
+                        style={{ background: sidebarDotColor(collapsedStatus?.health, isRunning) }}
                       />
                     )}
                   </button>
@@ -462,7 +466,6 @@ export default function Sidebar({
                           isRunning={runningIds.has(agent.id)}
                           enabled={agent.enabled !== false}
                           {...(status ? { status } : {})}
-                          showPlatform={showAgentPlatforms}
                           onClick={() => setAgentId(agent.id)}
                         />
                       </SortableItem>
