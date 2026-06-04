@@ -5,7 +5,7 @@ import {
   agentFeishuServiceForAgent,
   type FeishuAppRegistrationStatus,
 } from '../agents/agent-feishu.service.js';
-import { AgentConnectFeishuRequest } from '../../shared/agent-config.js';
+import { AgentConnectFeishuRequest, AgentFeishuRegisterAppRequest } from '../../shared/agent-config.js';
 
 export function registerAgentFeishuRoutes(fastify: FastifyInstance): void {
   fastify.post<{ Params: { agentId: string } }>(
@@ -21,7 +21,9 @@ export function registerAgentFeishuRoutes(fastify: FastifyInstance): void {
     '/api/agents/:agentId/feishu/register-app',
     async (request) =>
       redactFeishuRegistrationStatus(
-        await agentFeishuServiceForAgent(request.params.agentId).startAppRegistration(),
+        await agentFeishuServiceForAgent(request.params.agentId).startAppRegistration(
+          AgentFeishuRegisterAppRequest.parse(request.body ?? {}),
+        ),
       ),
   );
   fastify.get<{ Params: { agentId: string; registrationId: string } }>(
