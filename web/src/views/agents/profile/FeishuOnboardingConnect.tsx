@@ -87,6 +87,7 @@ export function FeishuOnboardingConnect({
 
   const startedRef = useRef(false);
   const slowTimerRef = useRef<number | null>(null);
+  const authWindowNavigatedRef = useRef(false);
 
   const revealFallback = useCallback((reason: 'slow' | 'failed' = 'slow') => {
     // Once the fallback shows, the slow timer is moot — clear it so a late tick
@@ -114,6 +115,7 @@ export function FeishuOnboardingConnect({
         const authWindow = getAuthWindow?.();
         if (next.verificationUrl && authWindow) {
           authWindow.location.href = next.verificationUrl;
+          authWindowNavigatedRef.current = true;
         }
         if (next.state === 'connected') {
           handleConnected();
@@ -145,8 +147,9 @@ export function FeishuOnboardingConnect({
           if (cancelled) return;
           setRegistration(next);
           const authWindow = getAuthWindow?.();
-          if (next.verificationUrl && authWindow && authWindow.location.href === 'about:blank') {
+          if (next.verificationUrl && authWindow && !authWindowNavigatedRef.current) {
             authWindow.location.href = next.verificationUrl;
+            authWindowNavigatedRef.current = true;
           }
           if (next.state === 'connected') handleConnected();
           if (next.state === 'failed') {
