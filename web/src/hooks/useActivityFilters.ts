@@ -54,11 +54,36 @@ function readStoredLens(): ActivityLens {
 
 let _lens: ActivityLens = readStoredLens();
 
-function getLens(): ActivityLens { return _lens; }
+// Transient, NON-persisted override. The post-onboarding first landing forces the
+// activity view so the "agent is alive" payoff is what greets a fresh connect —
+// but the user's stored steady-state preference must be left untouched (day-to-day
+// default stays conversation / their last choice). So this lives only in memory:
+// it survives navigation within the session, is gone on reload, and any explicit
+// lens choice (setLensGlobal) drops it and persists the real preference.
+let _lensOverride: ActivityLens | null = null;
+
+function getLens(): ActivityLens { return _lensOverride ?? _lens; }
 
 function setLensGlobal(v: ActivityLens): void {
+  // An explicit user choice clears the transient override and becomes the
+  // persisted preference.
+  _lensOverride = null;
   _lens = v;
   try { localStorage.setItem(LENS_STORAGE_KEY, v); } catch { /* ignore */ }
+  lensListeners.forEach((l) => l());
+}
+
+/** Force a lens for this session without persisting it (first-landing only). */
+export function applyLensOverride(v: ActivityLens): void {
+  if (_lensOverride === v) return;
+  _lensOverride = v;
+  lensListeners.forEach((l) => l());
+}
+
+/** Drop any transient override so the stored preference applies again. */
+export function clearLensOverride(): void {
+  if (_lensOverride === null) return;
+  _lensOverride = null;
   lensListeners.forEach((l) => l());
 }
 
