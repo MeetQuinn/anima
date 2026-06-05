@@ -27,7 +27,7 @@ export function registerMessageHistoryCommands(program: Command): void {
 
   program
     .command('outbox')
-    .description('Show recent Slack messages, files, and reactions sent by this agent.')
+    .description('Show recent messages, files, and reactions sent by this agent.')
     .option('--limit <n>', 'max entries to return (default: 20; hard cap: 500)')
     .option('--before <iso>', 'page older than this ISO timestamp')
     .option('--since <iso>', 'only include entries at or after this ISO timestamp')
