@@ -635,6 +635,58 @@ test('runtime worker reclaims items owned by an exited worker', async () => {
   }
 });
 
+test('runtime worker reclaims running items from a previous worker generation in the same supervisor', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-replaced-worker-recovery-test-'));
+  const runtime = new ControlledRuntime();
+  const coordinator = ({
+    agentId: 'scout',
+    stateDir,
+  });
+  const newWorkerId = `scout:new-worker:${process.pid}`;
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+    worker = new AgentRuntimeWorker({
+      agentId: 'scout',
+      agentRuntime: runtime,
+      queue: queueFor('scout'),
+      stateDir,
+      workerId: newWorkerId,
+      workerIsAlive: () => true,
+    }, silentLogger);
+    const decision = await enqueueInbox(
+      makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-replaced-supervisor-worker',
+        teamId: 'T-demo',
+        text: 'recover replaced worker',
+        ts: '1770000010.000001',
+        userId: 'U1',
+      }),
+      coordinator,
+    );
+
+    const oldWorkerId = `scout:${process.pid}`;
+    const claimed = await queueFor('scout').claimNext(oldWorkerId);
+    assert.equal(claimed?.handling.status, 'running');
+    assert.equal(claimed?.handling.workerId, oldWorkerId);
+
+    const drain = worker.drainOnce();
+    await waitFor(() => runtime.calls.length === 1);
+    assert.equal(runtime.calls[0]?.itemId, decision.ctx.item.id);
+    runtime.finishNext();
+    assert.equal(await drain, 1);
+
+    const recovered = (await queueFor('scout').listRunnable())[0];
+    assert.equal(recovered?.handling.status, 'completed');
+    assert.equal(recovered?.handling.workerId, newWorkerId);
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('runtime worker injects provider env while preserving Anima-managed env', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-env-test-'));
   const runtime = new ControlledRuntime({

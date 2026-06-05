@@ -123,6 +123,150 @@ test('wake queue enqueue does not fail when message ledger write fails', async (
   assert.match(warnings[0] ?? '', /ledger down/);
 });
 
+test('wake queue recovery leaves fresh live-worker running items alone', async () => {
+  const event = makeSlackEvent({
+    channelId: 'D-user',
+    eventId: 'evt-fresh-live-worker',
+    handling: {
+      createdAt: '2026-06-05T12:00:00.000Z',
+      queuedAt: '2026-06-05T12:00:00.000Z',
+      startedAt: '2026-06-05T12:05:00.000Z',
+      status: 'running',
+      updatedAt: '2026-06-05T12:05:00.000Z',
+      workerId: 'scout:current:12345',
+    },
+    teamId: 'T-demo',
+    text: 'fresh running work',
+    ts: '1780661100.000001',
+    userId: 'U1',
+  });
+  const queue = new WakeQueueService(
+    'scout',
+    new WakeQueueStore('scout', memoryWakeQueueStore({ [event.id]: event })),
+    { recordInboxItem: async () => undefined },
+  );
+
+  const recovered = await queue.recoverInterrupted({
+    currentWorkerId: 'scout:current:12345',
+    isWorkerAlive: () => true,
+    now: new Date('2026-06-05T12:10:00.000Z'),
+    staleRunningMs: 30 * 60 * 1000,
+  });
+
+  assert.deepEqual(recovered, []);
+  assert.equal((await queue.find(event.id))?.handling.status, 'running');
+});
+
+test('wake queue recovery requeues live items from a previous worker generation in the same process', async () => {
+  const event = makeSlackEvent({
+    channelId: 'D-user',
+    eventId: 'evt-replaced-worker-generation',
+    handling: {
+      createdAt: '2026-06-05T12:00:00.000Z',
+      queuedAt: '2026-06-05T12:00:00.000Z',
+      startedAt: '2026-06-05T12:05:00.000Z',
+      status: 'running',
+      updatedAt: '2026-06-05T12:05:00.000Z',
+      workerId: 'scout:old-worker:12345',
+    },
+    teamId: 'T-demo',
+    text: 'fresh running work owned by a replaced worker',
+    ts: '1780661101.000001',
+    userId: 'U1',
+  });
+  const queue = new WakeQueueService(
+    'scout',
+    new WakeQueueStore('scout', memoryWakeQueueStore({ [event.id]: event })),
+    { recordInboxItem: async () => undefined },
+  );
+
+  const recovered = await queue.recoverInterrupted({
+    currentWorkerId: 'scout:new-worker:12345',
+    isWorkerAlive: () => true,
+    now: new Date('2026-06-05T12:10:00.000Z'),
+    staleRunningMs: 30 * 60 * 1000,
+  });
+
+  assert.equal(recovered.length, 1);
+  assert.equal(recovered[0]?.id, event.id);
+  assert.equal(recovered[0]?.handling.status, 'queued');
+});
+
+test('wake queue recovery leaves fresh live-worker items from another process alone', async () => {
+  const event = makeSlackEvent({
+    channelId: 'D-user',
+    eventId: 'evt-other-live-worker-process',
+    handling: {
+      createdAt: '2026-06-05T12:00:00.000Z',
+      queuedAt: '2026-06-05T12:00:00.000Z',
+      startedAt: '2026-06-05T12:05:00.000Z',
+      status: 'running',
+      updatedAt: '2026-06-05T12:05:00.000Z',
+      workerId: 'scout:other-worker:12345',
+    },
+    teamId: 'T-demo',
+    text: 'fresh running work owned by another live process',
+    ts: '1780661102.000001',
+    userId: 'U1',
+  });
+  const queue = new WakeQueueService(
+    'scout',
+    new WakeQueueStore('scout', memoryWakeQueueStore({ [event.id]: event })),
+    { recordInboxItem: async () => undefined },
+  );
+
+  const recovered = await queue.recoverInterrupted({
+    currentWorkerId: 'scout:new-worker:67890',
+    isWorkerAlive: () => true,
+    now: new Date('2026-06-05T12:10:00.000Z'),
+    staleRunningMs: 30 * 60 * 1000,
+  });
+
+  assert.deepEqual(recovered, []);
+  assert.equal((await queue.find(event.id))?.handling.status, 'running');
+});
+
+test('wake queue recovery requeues stale live-worker running items', async () => {
+  const event = makeSlackEvent({
+    channelId: 'D-user',
+    eventId: 'evt-stale-live-worker',
+    handling: {
+      createdAt: '2026-06-05T10:00:00.000Z',
+      queuedAt: '2026-06-05T10:00:00.000Z',
+      startedAt: '2026-06-05T10:05:00.000Z',
+      status: 'running',
+      updatedAt: '2026-06-05T10:05:00.000Z',
+      workerId: 'scout:12345',
+    },
+    teamId: 'T-demo',
+    text: 'stale running work',
+    ts: '1780653900.000001',
+    userId: 'U1',
+  });
+  const queue = new WakeQueueService(
+    'scout',
+    new WakeQueueStore('scout', memoryWakeQueueStore({ [event.id]: event })),
+    { recordInboxItem: async () => undefined },
+  );
+
+  const recovered = await queue.recoverInterrupted({
+    isWorkerAlive: () => true,
+    now: new Date('2026-06-05T10:40:00.000Z'),
+    staleRunningMs: 30 * 60 * 1000,
+  });
+
+  assert.equal(recovered.length, 1);
+  assert.equal(recovered[0]?.id, event.id);
+  assert.equal(recovered[0]?.handling.status, 'queued');
+  assert.equal(recovered[0]?.handling.workerId, undefined);
+  assert.equal(recovered[0]?.handling.startedAt, undefined);
+
+  const claimed = await queue.claimNext('scout:new-worker');
+  assert.equal(claimed?.id, event.id);
+  assert.equal(claimed?.handling.status, 'running');
+  assert.equal(claimed?.handling.workerId, 'scout:new-worker');
+});
+
 test('wake queue completion racing with enqueue does not resurrect running state', async () => {
   const first = makeSlackEvent({
     channelId: 'C-product',

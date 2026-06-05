@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { AgentRuntime } from '../providers/contract.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { errorMessage, nowIso } from '../ids.js';
@@ -26,6 +28,7 @@ import type { AgentRuntimeHandleSnapshot } from '../../shared/snapshot.js';
 // Executor for one agent: claims queued inbox items, runs the provider runtime,
 // appends follow-up items into the active run, and settles item lifecycle state.
 const IDLE_TIMEOUT_MS_DEFAULT = PROVIDER_IDLE_TIMEOUT_MS_DEFAULT;
+const STALE_RUNNING_RECOVERY_MS = 30 * 60 * 1000;
 
 interface AgentRuntimeWorkerOptions extends RuntimeWorkerConfig {
   agentRuntime: AgentRuntime;
@@ -61,7 +64,7 @@ export class AgentRuntimeWorker {
     private readonly logger: Pick<Console, 'error' | 'log'> = console,
   ) {
     this.workerIsAlive = options.workerIsAlive ?? isWorkerAlive;
-    this.workerId = options.workerId ?? `${options.agentId}:${process.pid}`;
+    this.workerId = options.workerId ?? `${options.agentId}:${randomUUID()}:${process.pid}`;
     this.idleTimeoutMs = options.idleTimeoutMs ?? IDLE_TIMEOUT_MS_DEFAULT;
     this.queue = options.queue;
     this.runtimeBridge = new AgentRuntimeBridge(options.agentRuntime);
@@ -140,7 +143,11 @@ export class AgentRuntimeWorker {
   }
 
   private async recoverInterruptedItems(): Promise<void> {
-    const recovered = await this.queue.recoverInterrupted({ isWorkerAlive: this.workerIsAlive });
+    const recovered = await this.queue.recoverInterrupted({
+      currentWorkerId: this.workerId,
+      isWorkerAlive: this.workerIsAlive,
+      staleRunningMs: STALE_RUNNING_RECOVERY_MS,
+    });
     if (recovered.length === 0) return;
     this.logger.log(JSON.stringify({
       agentId: this.options.agentId,
