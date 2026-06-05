@@ -245,6 +245,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
   const previewFeishuPhase = (previewSearch.get('_previewFeishu') as FeishuOnboardingPhase | null) ?? undefined;
   const previewFallbackReason =
     (previewSearch.get('_previewFallbackReason') as 'slow' | 'failed' | null) ?? undefined;
+  const previewQrPromoted = previewSearch.get('_previewQrPromoted') === '1';
   const previewPlatform = (previewSearch.get('_previewPlatform') as WorkspacePlatform | null) ?? undefined;
   const previewStepName = previewSearch.get('_previewStep');
   const previewStep: FlowStep | undefined =
@@ -781,6 +782,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
             getAuthWindow={() => feishuAuthWindowRef.current}
             previewPhase={previewFeishuPhase}
             previewFallbackReason={previewFallbackReason}
+            previewPopupBlocked={previewQrPromoted}
             onPhaseChange={setFeishuPhase}
             onConnect={() => void handleFeishuConnected()}
           />
