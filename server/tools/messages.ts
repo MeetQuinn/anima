@@ -1,6 +1,9 @@
 import type { WebClient } from '@slack/web-api';
 
 import { createFeishuMessageClient as createDefaultFeishuMessageClient } from '../feishu/client.js';
+import type { FeishuReceiveIdType } from '../feishu/client.js';
+import { defaultAgentRegistryService } from '../agents/agent.service.js';
+import { nowIso } from '../ids.js';
 import {
   ensureThreadSubscriptionForSentMessage,
   recordChannelPost,
@@ -29,7 +32,7 @@ import {
   withToolActivity,
   readStdin,
 } from './tool-context.js';
-import type { FeishuInboxItem } from '../../shared/inbox.js';
+import type { FeishuInboxItem, FeishuOnboardingInboxItem } from '../../shared/inbox.js';
 
 interface MessageGlobalInput {
   agent?: string;
@@ -52,6 +55,13 @@ type SlackPostMessagePayload = Parameters<WebClient['chat']['postMessage']>[0];
 type SlackUpdateMessagePayload = Parameters<WebClient['chat']['update']>[0];
 type FeishuMessageClientFactory = typeof createDefaultFeishuMessageClient;
 
+interface FeishuSendTarget {
+  displayName: string;
+  receiveId: string;
+  receiveIdType: FeishuReceiveIdType;
+  surfaceKind?: string;
+}
+
 interface MessageSendDeps {
   createFeishuMessageClient?: FeishuMessageClientFactory;
 }
@@ -61,18 +71,16 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
   const agentId = resolveToolAgentId(opts);
   if (!agentId) throw new Error('message send requires current agent context for audit');
   const feishuItem = await currentFeishuItem(agentId, opts);
-  const feishuChatId = feishuChatIdFromChannelArg(opts.channel);
-  if (feishuChatId) {
+  const feishuTarget = feishuTargetFromChannelArg(opts.channel, feishuItem);
+  if (feishuTarget) {
     const agent = await loadAgentFromOpts(opts);
     if (agent.feishu.connected) {
       await runFeishuMessageSend({
         agentId,
-        chatId: feishuChatId,
-        chatDisplayName: feishuItem ? feishuChatDisplayName(feishuItem) : 'Feishu chat',
-        chatKind: feishuItem?.chatType,
         createFeishuMessageClient: deps.createFeishuMessageClient ?? createDefaultFeishuMessageClient,
         item: feishuItem,
         opts,
+        target: feishuTarget,
         text,
         threadMessageId: opts.threadTs,
       });
@@ -160,12 +168,10 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
 
 async function runFeishuMessageSend(input: {
   agentId: string;
-  chatId: string;
-  chatDisplayName: string;
-  chatKind?: string;
   createFeishuMessageClient: FeishuMessageClientFactory;
-  item?: FeishuInboxItem;
+  item?: FeishuInboxItem | FeishuOnboardingInboxItem;
   opts: MessageSendInput;
+  target: FeishuSendTarget;
   text: string;
   threadMessageId?: string;
 }): Promise<void> {
@@ -173,11 +179,13 @@ async function runFeishuMessageSend(input: {
   if (!agent.feishu.connected) throw new Error(`Agent ${input.agentId} has no Feishu connection configured`);
   const client = input.createFeishuMessageClient(agent.feishu);
   const basePayload = {
-    channel: input.chatId,
-    channelDisplayName: input.chatDisplayName,
-    ...(input.chatKind ? { channelKind: input.chatKind } : {}),
-    ...(input.item?.messageId ? { sourceMessageId: input.item.messageId } : {}),
+    ...(input.target.receiveIdType === 'chat_id' ? { channel: input.target.receiveId } : {}),
+    channelDisplayName: input.target.displayName,
+    ...(input.target.surfaceKind ? { channelKind: input.target.surfaceKind } : {}),
+    ...(input.item?.kind === 'feishu' && input.item.messageId ? { sourceMessageId: input.item.messageId } : {}),
     platform: 'feishu',
+    receiveId: input.target.receiveId,
+    receiveIdType: input.target.receiveIdType,
     ...(input.threadMessageId ? { targetTs: input.threadMessageId, threadTs: input.threadMessageId } : {}),
     tool: 'anima.message.send',
   };
@@ -194,12 +202,20 @@ async function runFeishuMessageSend(input: {
             text: input.text,
           })
         : await client.sendText({
-            chatId: input.chatId,
+            receiveId: input.target.receiveId,
+            receiveIdType: input.target.receiveIdType,
             text: input.text,
           });
+      await recordFeishuOwnerGreetingDelivery({
+        agentId: input.agentId,
+        item: input.item,
+        response,
+      });
       console.log(feishuOutputLine({
-        chatId: input.chatId,
         messageId: response.messageId,
+        receiveId: input.target.receiveId,
+        receiveIdType: input.target.receiveIdType,
+        responseChatId: response.chatId,
         threadId: response.threadId ?? input.threadMessageId,
       }));
       return {
@@ -219,15 +235,61 @@ async function runFeishuMessageSend(input: {
 async function currentFeishuItem(
   agentId: string,
   opts: MessageGlobalInput,
-): Promise<FeishuInboxItem | undefined> {
+): Promise<FeishuInboxItem | FeishuOnboardingInboxItem | undefined> {
   const itemId = await resolveToolItemId(opts);
   if (!itemId) return undefined;
   const item = await new WakeQueueService(agentId).find(itemId);
-  return item?.kind === 'feishu' ? item : undefined;
+  return item?.kind === 'feishu' || item?.kind === 'feishu_onboarding' ? item : undefined;
 }
 
-function feishuChatIdFromChannelArg(channel?: string): string | undefined {
-  return channel?.startsWith('oc_') ? channel : undefined;
+function feishuTargetFromChannelArg(
+  channel: string | undefined,
+  item: FeishuInboxItem | FeishuOnboardingInboxItem | undefined,
+): FeishuSendTarget | undefined {
+  if (!channel) return undefined;
+  if (channel.startsWith('oc_')) {
+    const feishuItem = item?.kind === 'feishu' ? item : undefined;
+    return {
+      displayName: feishuItem ? feishuChatDisplayName(feishuItem) : 'Feishu chat',
+      receiveId: channel,
+      receiveIdType: 'chat_id',
+      surfaceKind: feishuItem?.chatType,
+    };
+  }
+  if (channel.startsWith('ou_')) {
+    return {
+      displayName: 'Feishu owner',
+      receiveId: channel,
+      receiveIdType: 'open_id',
+      surfaceKind: 'open_id',
+    };
+  }
+  return undefined;
+}
+
+async function recordFeishuOwnerGreetingDelivery(input: {
+  agentId: string;
+  item?: FeishuInboxItem | FeishuOnboardingInboxItem;
+  response: {
+    chatId?: string;
+    messageId?: string;
+  };
+}): Promise<void> {
+  if (input.item?.kind !== 'feishu_onboarding') return;
+  if (!input.response.chatId && !input.response.messageId) return;
+
+  const service = defaultAgentRegistryService.serviceFor(input.agentId);
+  const current = await service.getConfig();
+  if (current.feishu.ownerOpenId !== input.item.owner.openId) return;
+  await service.saveConfig({
+    ...current,
+    feishu: {
+      ...current.feishu,
+      ...(input.response.chatId ? { ownerGreetingChatId: input.response.chatId } : {}),
+      ownerGreetingDeliveredAt: nowIso(),
+      ...(input.response.messageId ? { ownerGreetingMessageId: input.response.messageId } : {}),
+    },
+  });
 }
 
 export async function runMessageUpdate(opts: MessageUpdateInput): Promise<void> {
@@ -340,11 +402,16 @@ function slackOutputLine(input: {
 }
 
 function feishuOutputLine(input: {
-  chatId: string;
   messageId?: string;
+  receiveId: string;
+  receiveIdType: FeishuReceiveIdType;
+  responseChatId?: string;
   threadId?: string;
 }): string {
-  const parts = [`feishu chat_id=${input.chatId}`];
+  const parts = input.receiveIdType === 'chat_id'
+    ? [`feishu chat_id=${input.receiveId}`]
+    : [`feishu receive_id_type=open_id`, `receive_id=${input.receiveId}`];
+  if (input.responseChatId && input.responseChatId !== input.receiveId) parts.push(`chat_id=${input.responseChatId}`);
   if (input.threadId) parts.push(`thread_id=${input.threadId}`);
   if (input.messageId) parts.push(`message_id=${input.messageId}`);
   return `sent successfully. ${parts.join(', ')}.`;

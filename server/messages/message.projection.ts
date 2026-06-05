@@ -6,6 +6,7 @@ import type {
 import type {
   ChoiceResponseInboxItem,
   FeishuInboxItem,
+  FeishuOnboardingInboxItem,
   InboxItem,
   OnboardingInboxItem,
   SlackInboxItem,
@@ -27,6 +28,7 @@ export function messageFromInboxItem(item: InboxItem): AgentMessageRecord | unde
     };
   }
   if (item.kind === 'onboarding') return onboardingMessage(item);
+  if (item.kind === 'feishu_onboarding') return feishuOnboardingMessage(item);
   if (item.kind === 'choice_response') return choiceResponseMessage(item);
   return undefined;
 }
@@ -147,6 +149,22 @@ function onboardingMessage(item: OnboardingInboxItem): AgentMessageRecord {
     direction: 'in',
     kind: 'onboarding',
     messageId: messageIdForInboxItem(item),
+    source: { id: item.id, kind: 'inbox' },
+    text: item.text,
+    timestamp: item.receivedAt,
+  };
+}
+
+function feishuOnboardingMessage(item: FeishuOnboardingInboxItem): AgentMessageRecord {
+  return {
+    actor: 'Feishu owner',
+    actorUserId: item.owner.openId,
+    channelDisplayName: 'Feishu owner',
+    channelKind: item.target.receiveIdType,
+    direction: 'in',
+    kind: 'onboarding',
+    messageId: messageIdForInboxItem(item),
+    platform: 'feishu',
     source: { id: item.id, kind: 'inbox' },
     text: item.text,
     timestamp: item.receivedAt,

@@ -13,10 +13,12 @@ import {
 import { createFeishuMessageClient, fetchFeishuTenantAccessToken } from '../feishu/client.js';
 import { AgentFeishuService } from '../agents/agent-feishu.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
+import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import { messageFromInboxItem } from '../messages/message.projection.js';
 import { runMessageSend } from '../tools/messages.js';
 import { withAnimaHome } from './anima-home.js';
+import type { FeishuTextSendInput } from '../feishu/client.js';
 import type { FeishuConfig } from '../../shared/agent-config.js';
 
 function makeFeishuEvent(overrides: Omit<Partial<FeishuReceiveMessageEvent>, 'message' | 'sender'> & {
@@ -226,6 +228,49 @@ test('Feishu app registration stores returned app credentials without using scan
       const stored = await defaultAgentRegistryService.serviceFor('feishu-scout').getConfig();
       assert.equal(stored.feishu.appSecret, 'generated-secret');
       assert.equal(stored.feishu.botOpenId, undefined);
+      assert.equal(stored.feishu.ownerOpenId, 'ou_scanning_user_not_bot');
+      assert.match(stored.feishu.ownerGreetingPromptedAt ?? '', /^\d{4}-/);
+
+      const items = await new WakeQueueService('feishu-scout').list();
+      const onboarding = items.find((item) => item.kind === 'feishu_onboarding');
+      assert.equal(onboarding?.kind, 'feishu_onboarding');
+      assert.equal(onboarding?.kind === 'feishu_onboarding' ? onboarding.owner.openId : undefined, 'ou_scanning_user_not_bot');
+      assert.equal(onboarding?.kind === 'feishu_onboarding' ? onboarding.target.receiveId : undefined, 'ou_scanning_user_not_bot');
+      assert.equal(onboarding?.kind === 'feishu_onboarding' ? onboarding.target.receiveIdType : undefined, 'open_id');
+      assert.match(onboarding?.kind === 'feishu_onboarding' ? onboarding.text : '', /Your owner is the person who connected you to Feishu/);
+      assert.match(onboarding?.kind === 'feishu_onboarding' ? onboarding.text : '', /introduce yourself to your owner/);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('manual Feishu credentials path clears registerApp owner greeting metadata', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-manual-connect-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir, {
+        ownerGreetingChatId: 'oc_owner_dm',
+        ownerGreetingDeliveredAt: '2026-01-01T00:00:00.000Z',
+        ownerGreetingMessageId: 'om_owner_hello',
+        ownerGreetingPromptedAt: '2026-01-01T00:00:00.000Z',
+        ownerOpenId: 'ou_register_owner',
+        ownerTenantBrand: 'feishu',
+      });
+
+      const connected = await new AgentFeishuService('scout').connect({
+        appId: 'manual-app',
+        appSecret: 'manual-secret',
+      });
+
+      assert.equal(connected.feishu.appId, 'manual-app');
+      assert.equal(connected.feishu.appSecret, 'manual-secret');
+      assert.equal(connected.feishu.ownerOpenId, undefined);
+      assert.equal(connected.feishu.ownerGreetingPromptedAt, undefined);
+      assert.equal(connected.feishu.ownerGreetingChatId, undefined);
+      assert.equal(connected.feishu.ownerGreetingMessageId, undefined);
+      assert.equal(connected.feishu.ownerGreetingDeliveredAt, undefined);
+      assert.deepEqual(await new WakeQueueService('scout').list(), []);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
@@ -306,6 +351,39 @@ test('Feishu inbox messages project into the message ledger', () => {
   assert.equal(message?.messageTs, 'om_test_message');
 });
 
+test('Feishu onboarding prompt targets the owner open_id without requiring an owner name', () => {
+  const text = buildCodeAgentDeliveryPrompt({
+    handling: {
+      createdAt: '2026-01-01T00:00:00.000Z',
+      queuedAt: '2026-01-01T00:00:00.000Z',
+      status: 'queued',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    },
+    id: 'feishu-onboarding:scout:ou_owner',
+    kind: 'feishu_onboarding',
+    owner: {
+      openId: 'ou_owner',
+      tenantBrand: 'feishu',
+    },
+    receivedAt: '2026-01-01T00:00:00.000Z',
+    target: {
+      platform: 'feishu',
+      receiveId: 'ou_owner',
+      receiveIdType: 'open_id',
+    },
+    text: [
+      "You've been set up here. Your owner is the person who connected you to Feishu.",
+      'Start by reading your MEMORY.md — its Onboarding section walks you through getting set up — then reply here to introduce yourself to your owner.',
+    ].join('\n\n'),
+  });
+
+  assert.match(text, /^Agent onboarding:/);
+  assert.match(text, /\[owner=feishu-owner channel=ou_owner time=2026-01-01T00:00:00\.000Z\]/);
+  assert.match(text, /Your owner is the person who connected you to Feishu/);
+  assert.match(text, /Use `anima message send --channel ou_owner` to reply to your owner/);
+  assert.doesNotMatch(text, /Slack|Lark|<@|ou_owner.*owner is/);
+});
+
 test('Feishu text sends can post ordinary chat messages', async () => {
   const config: FeishuConfig = {
     appId: 'cli_test',
@@ -357,6 +435,64 @@ test('Feishu text sends can post ordinary chat messages', async () => {
   assert.deepEqual(result, {
     chatId: 'oc_test_chat',
     messageId: 'om_reply',
+  });
+});
+
+test('Feishu text sends can target a user open_id', async () => {
+  const config: FeishuConfig = {
+    appId: 'cli_test',
+    appSecret: 'secret',
+    connected: true,
+    encryptKey: '',
+    verificationToken: '',
+  };
+  let capturedCreate: unknown;
+
+  const client = createFeishuMessageClient(config, {
+    createClient() {
+      return {
+        im: {
+          message: {
+            async create(input) {
+              capturedCreate = input;
+              return { data: { chat_id: 'oc_owner_dm', message_id: 'om_owner_hello' } };
+            },
+            async reply() {
+              throw new Error('unexpected reply call');
+            },
+          },
+          messageReaction: {
+            async create() {
+              throw new Error('unexpected reaction create call');
+            },
+            async delete() {
+              throw new Error('unexpected reaction delete call');
+            },
+          },
+        },
+      };
+    },
+  });
+
+  const result = await client.sendText({
+    receiveId: 'ou_owner',
+    receiveIdType: 'open_id',
+    text: 'hello owner',
+  });
+
+  assert.deepEqual(capturedCreate, {
+    data: {
+      content: JSON.stringify({ text: 'hello owner' }),
+      msg_type: 'text',
+      receive_id: 'ou_owner',
+    },
+    params: {
+      receive_id_type: 'open_id',
+    },
+  });
+  assert.deepEqual(result, {
+    chatId: 'oc_owner_dm',
+    messageId: 'om_owner_hello',
   });
 });
 
@@ -421,7 +557,7 @@ test('Feishu text replies can post in a message topic', async () => {
 
 test('message send can target a Feishu chat explicitly', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-explicit-chat-test-'));
-  const sent: Array<{ chatId: string; text: string }> = [];
+  const sent: FeishuTextSendInput[] = [];
   try {
     await withAnimaHome(stateDir, async () => {
       await writeFeishuConfig(stateDir);
@@ -441,7 +577,7 @@ test('message send can target a Feishu chat explicitly', async () => {
               },
               async sendText(input) {
                 sent.push(input);
-                return { chatId: input.chatId, messageId: 'om_sent' };
+                return { chatId: 'oc_target_chat', messageId: 'om_sent' };
               },
             };
           },
@@ -449,8 +585,82 @@ test('message send can target a Feishu chat explicitly', async () => {
       );
     });
 
-    assert.deepEqual(sent, [{ chatId: 'oc_target_chat', text: 'ordinary chat message' }]);
+    assert.deepEqual(sent, [{
+      receiveId: 'oc_target_chat',
+      receiveIdType: 'chat_id',
+      text: 'ordinary chat message',
+    }]);
   } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('message send can target a Feishu owner open_id and record greeting delivery', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-owner-send-test-'));
+  const sent: FeishuTextSendInput[] = [];
+  const previousItemId = process.env.ANIMA_INBOX_ITEM_ID;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir, {
+        ownerGreetingPromptedAt: '2026-01-01T00:00:00.000Z',
+        ownerOpenId: 'ou_owner',
+      });
+      const now = '2026-01-01T00:00:00.000Z';
+      await new WakeQueueService('scout').enqueue({
+        handling: { createdAt: now, queuedAt: now, status: 'queued', updatedAt: now },
+        id: 'feishu-onboarding:scout:ou_owner',
+        kind: 'feishu_onboarding',
+        owner: { openId: 'ou_owner' },
+        receivedAt: now,
+        target: {
+          platform: 'feishu',
+          receiveId: 'ou_owner',
+          receiveIdType: 'open_id',
+        },
+        text: 'Feishu owner greeting prompt',
+      });
+      process.env.ANIMA_INBOX_ITEM_ID = 'feishu-onboarding:scout:ou_owner';
+
+      await runMessageSend(
+        { agent: 'scout', channel: 'ou_owner', text: 'hello owner' },
+        {
+          createFeishuMessageClient() {
+            return {
+              async addReaction() {
+                throw new Error('unexpected reaction add');
+              },
+              async removeReaction() {
+                throw new Error('unexpected reaction remove');
+              },
+              async replyText() {
+                throw new Error('unexpected topic reply');
+              },
+              async sendText(input) {
+                sent.push(input);
+                return { chatId: 'oc_owner_dm', messageId: 'om_owner_hello' };
+              },
+            };
+          },
+        },
+      );
+
+      const stored = await defaultAgentRegistryService.serviceFor('scout').getConfig();
+      assert.equal(stored.feishu.ownerGreetingChatId, 'oc_owner_dm');
+      assert.equal(stored.feishu.ownerGreetingMessageId, 'om_owner_hello');
+      assert.match(stored.feishu.ownerGreetingDeliveredAt ?? '', /^\d{4}-/);
+    });
+
+    assert.deepEqual(sent, [{
+      receiveId: 'ou_owner',
+      receiveIdType: 'open_id',
+      text: 'hello owner',
+    }]);
+  } finally {
+    if (previousItemId === undefined) {
+      delete process.env.ANIMA_INBOX_ITEM_ID;
+    } else {
+      process.env.ANIMA_INBOX_ITEM_ID = previousItemId;
+    }
     await rm(stateDir, { force: true, recursive: true });
   }
 });
@@ -491,7 +701,7 @@ test('message send can target a Feishu topic explicitly', async () => {
   }
 });
 
-async function writeFeishuConfig(configDir: string): Promise<void> {
+async function writeFeishuConfig(configDir: string, feishu: Partial<FeishuConfig> = {}): Promise<void> {
   const agentDir = join(configDir, 'agents', 'scout');
   const homePath = join(configDir, 'home');
   await mkdir(agentDir, { recursive: true });
@@ -503,6 +713,7 @@ async function writeFeishuConfig(configDir: string): Promise<void> {
       feishu: {
         appId: 'cli_test',
         appSecret: 'secret',
+        ...feishu,
       },
       homePath,
       id: 'scout',

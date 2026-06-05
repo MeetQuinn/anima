@@ -1,6 +1,7 @@
 import type {
   ChoiceResponseInboxItem,
   FeishuInboxItem,
+  FeishuOnboardingInboxItem,
   InboxItem,
   OnboardingInboxItem,
   ReminderInboxItem,
@@ -60,6 +61,9 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
   if (event.kind === 'choice_response') {
     return buildChoiceResponseDeliveryPrompt(event);
   }
+  if (event.kind === 'feishu_onboarding') {
+    return buildFeishuOnboardingDeliveryPrompt(event);
+  }
   if (event.kind === 'feishu') {
     return buildFeishuDeliveryPrompt(event);
   }
@@ -82,6 +86,16 @@ function buildFeishuDeliveryPrompt(event: FeishuInboxItem): string {
       'Feishu API access: use `FEISHU_TENANT_ACCESS_TOKEN`, `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, and `FEISHU_API_BASE_URL` from env when you need Feishu APIs. Do not print these values.',
     ].join('\n'),
   ].join('\n\n');
+}
+
+function buildFeishuOnboardingDeliveryPrompt(event: FeishuOnboardingInboxItem): string {
+  return `Agent onboarding:
+
+[owner=feishu-owner channel=${event.target.receiveId} time=${event.receivedAt}]
+${event.text}
+
+Reply target:
+Use \`anima message send --channel ${event.target.receiveId}\` to reply to your owner.`;
 }
 
 function buildSlackDeliveryPrompt(event: SlackEvent): string {

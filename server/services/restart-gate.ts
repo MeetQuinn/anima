@@ -182,7 +182,9 @@ function itemStatusAt(item: InboxItem): string {
 }
 
 function itemSummary(item: InboxItem): string {
-  if (item.kind === 'slack' || item.kind === 'onboarding') return truncate(item.text);
+  if (item.kind === 'slack' || item.kind === 'onboarding' || item.kind === 'feishu_onboarding') {
+    return truncate(item.text);
+  }
   if (item.kind === 'choice_response') {
     const actor = item.answeredBy.handle ?? item.answeredBy.displayName ?? item.answeredBy.slackUserId;
     return truncate(`${actor}: ${item.optionLabel}`);

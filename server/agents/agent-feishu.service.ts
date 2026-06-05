@@ -1,5 +1,7 @@
-import type { AgentConnectFeishuRequest, AgentFeishuRegisterAppRequest } from '../../shared/agent-config.js';
+import type { AgentConfig, AgentConnectFeishuRequest, AgentFeishuRegisterAppRequest } from '../../shared/agent-config.js';
 import { registerFeishuApp, type FeishuRegisterAppResult } from '../feishu/client.js';
+import { nowIso } from '../ids.js';
+import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { defaultAgentRegistryService } from './agent.service.js';
 import { randomUUID } from 'crypto';
 
@@ -51,6 +53,12 @@ export class AgentFeishuService {
         appSecret: input.appSecret,
         botOpenId: input.botOpenId || undefined,
         encryptKey: input.encryptKey ?? '',
+        ownerGreetingChatId: undefined,
+        ownerGreetingDeliveredAt: undefined,
+        ownerGreetingMessageId: undefined,
+        ownerGreetingPromptedAt: undefined,
+        ownerOpenId: undefined,
+        ownerTenantBrand: undefined,
         verificationToken: input.verificationToken ?? '',
       },
     });
@@ -135,11 +143,72 @@ export class AgentFeishuService {
     session: FeishuAppRegistrationSession,
     result: FeishuRegisterAppResult,
   ): Promise<void> {
-    session.agent = await this.connect({
-      appId: result.appId,
-      appSecret: result.appSecret,
-    });
+    session.agent = await this.connectRegisteredApp(result);
     session.state = 'connected';
+  }
+
+  private async connectRegisteredApp(result: FeishuRegisterAppResult) {
+    const service = defaultAgentRegistryService.serviceFor(this.agentId);
+    const current = await service.getConfig();
+    const ownerOpenId = result.userOpenId?.trim() || undefined;
+    const ownerChanged = ownerOpenId !== current.feishu.ownerOpenId;
+    const saved = await service.saveConfig({
+      ...current,
+      feishu: {
+        ...current.feishu,
+        appId: result.appId,
+        appSecret: result.appSecret,
+        ...(ownerChanged ? {
+          ownerGreetingChatId: undefined,
+          ownerGreetingDeliveredAt: undefined,
+          ownerGreetingMessageId: undefined,
+          ownerGreetingPromptedAt: undefined,
+        } : {}),
+        ownerOpenId,
+        ownerTenantBrand: result.tenantBrand,
+      },
+    });
+
+    const ownerGreetingPromptedAt = await this.ensureOwnerOnboardingPrompt(saved);
+    if (!ownerGreetingPromptedAt || saved.feishu.ownerGreetingPromptedAt === ownerGreetingPromptedAt) {
+      return saved;
+    }
+    const latest = await service.getConfig();
+    return service.saveConfig({
+      ...latest,
+      feishu: {
+        ...latest.feishu,
+        ownerGreetingPromptedAt,
+      },
+    });
+  }
+
+  private async ensureOwnerOnboardingPrompt(agent: AgentConfig): Promise<string | undefined> {
+    const ownerOpenId = agent.feishu.ownerOpenId?.trim();
+    if (!ownerOpenId) return undefined;
+    if (agent.feishu.ownerGreetingPromptedAt) return agent.feishu.ownerGreetingPromptedAt;
+
+    const now = nowIso();
+    await new WakeQueueService(agent.id).enqueue({
+      handling: { createdAt: now, queuedAt: now, status: 'queued', updatedAt: now },
+      id: `feishu-onboarding:${agent.id}:${ownerOpenId}`,
+      kind: 'feishu_onboarding',
+      owner: {
+        openId: ownerOpenId,
+        ...(agent.feishu.ownerTenantBrand ? { tenantBrand: agent.feishu.ownerTenantBrand } : {}),
+      },
+      receivedAt: now,
+      target: {
+        platform: 'feishu',
+        receiveId: ownerOpenId,
+        receiveIdType: 'open_id',
+      },
+      text: [
+        "You've been set up here. Your owner is the person who connected you to Feishu.",
+        'Start by reading your MEMORY.md — its Onboarding section walks you through getting set up — then reply here to introduce yourself to your owner.',
+      ].join('\n\n'),
+    });
+    return now;
   }
 }
 
