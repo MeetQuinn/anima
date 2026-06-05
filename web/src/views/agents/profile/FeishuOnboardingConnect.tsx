@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Check, ExternalLink, Loader2 } from 'lucide-react';
+import { QRCode } from 'react-qr-code';
 
 import {
   connectAgentFeishu,
@@ -8,8 +9,14 @@ import {
   startAgentFeishuAppRegistration,
 } from '@/api/agents';
 import { Button } from '@/components/ui/button';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { CredentialField } from './FeishuConnectStepper';
 import type { AgentFeishuRegisterAppStatus } from '@shared/agent-config';
+
+// A real Feishu authorization URL is only known at runtime. For dev/screenshot
+// preview (no live registration), encode a stand-in so the QR/affordances render.
+const PREVIEW_VERIFICATION_URL =
+  'https://applink.feishu.cn/client/web_app/open?preview=onboarding-qr';
 
 // ---------------------------------------------------------------------------
 // FeishuOnboardingConnect
@@ -42,6 +49,8 @@ interface Props {
   previewPhase?: FeishuOnboardingPhase;
   /** Forces the fallback reason in preview so both body variants are shootable. */
   previewFallbackReason?: 'slow' | 'failed';
+  /** Forces the popup-blocked promoted QR state in preview for screenshots. */
+  previewPopupBlocked?: boolean;
 }
 
 export function FeishuOnboardingConnect({
@@ -52,6 +61,7 @@ export function FeishuOnboardingConnect({
   onPhaseChange,
   previewPhase,
   previewFallbackReason,
+  previewPopupBlocked,
 }: Props) {
   const isPreview = previewPhase !== undefined;
   const [phase, setPhase] = useState<FeishuOnboardingPhase>(previewPhase ?? 'creating');
@@ -178,7 +188,15 @@ export function FeishuOnboardingConnect({
     }
   }
 
-  const verificationUrl = registration?.verificationUrl;
+  // The same held URL backs every scan/deep-link surface; in preview there is no
+  // live registration, so fall back to a stand-in so the affordances are shootable.
+  const verificationUrl = registration?.verificationUrl ?? (isPreview ? PREVIEW_VERIFICATION_URL : undefined);
+
+  // The auth tab is opened synchronously by the parent on submit; if the browser
+  // blocked it, that ref is null. When blocked we promote the QR (the desktop→
+  // phone bridge) since the tab path the body describes never happened.
+  const authWindow = getAuthWindow?.();
+  const popupBlocked = isPreview ? Boolean(previewPopupBlocked) : !authWindow || authWindow.closed;
 
   // -------------------------------------------------------------------------
   // Render
@@ -189,6 +207,7 @@ export function FeishuOnboardingConnect({
       {(phase === 'creating' || phase === 'authorizing') && (
         <WorkingState
           phase={phase}
+          popupBlocked={popupBlocked}
           verificationUrl={verificationUrl}
           onUseExisting={() => revealFallback('slow')}
         />
@@ -223,15 +242,26 @@ export function FeishuOnboardingConnect({
 function WorkingState({
   onUseExisting,
   phase,
+  popupBlocked,
   verificationUrl,
 }: {
   onUseExisting: () => void;
   phase: 'creating' | 'authorizing';
+  popupBlocked: boolean;
   verificationUrl?: string;
 }) {
-  const title = phase === 'creating' ? 'Creating your Feishu app' : 'Waiting for you in Feishu';
-  const body =
-    phase === 'creating'
+  // Once we have an auth URL we are in the authorizing phase. If the popup was
+  // blocked the QR is promoted, and the tab-centric body would be false (no tab
+  // opened) — so swap to the locked promoted heading/body for that case only.
+  const promoted = phase === 'authorizing' && popupBlocked && Boolean(verificationUrl);
+  const title = promoted
+    ? 'Continue in the Feishu app'
+    : phase === 'creating'
+      ? 'Creating your Feishu app'
+      : 'Waiting for you in Feishu';
+  const body = promoted
+    ? 'The Feishu tab did not open. Continue on your phone instead.'
+    : phase === 'creating'
       ? 'We opened Feishu in a new tab. Confirm the app there to finish creating it. Keep this tab open while we finish.'
       : 'Confirm the new app in the Feishu tab we opened. This page updates on its own once you are done.';
 
@@ -246,15 +276,7 @@ function WorkingState({
       </p>
 
       {phase === 'authorizing' && verificationUrl && (
-        <a
-          className="mt-4 inline-flex items-center gap-1.5 rounded-sm border border-border-soft bg-surface px-3 py-2 font-sans text-[12px] font-medium text-text transition-colors hover:border-accent"
-          href={verificationUrl}
-          rel="noreferrer"
-          target="_blank"
-        >
-          Reopen the Feishu tab
-          <ExternalLink className="h-3 w-3" aria-hidden />
-        </a>
+        <FeishuConnectAffordances popupBlocked={popupBlocked} verificationUrl={verificationUrl} />
       )}
 
       <div className="mt-6 flex w-full items-center gap-3">
@@ -268,6 +290,85 @@ function WorkingState({
         </button>
         <span className="h-px flex-1 bg-border-soft" />
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Scan / deep-link affordances. One held verification URL, surfaced by context:
+//   - mobile  → a tap deep-link (you cannot scan your own screen)
+//   - desktop → "Reopen the Feishu tab" + a modest QR, co-equal beneath the
+//               passive primary; the QR is affordance-sized, not a hero graphic,
+//               so the waiting-truth stays the visual anchor
+//   - desktop, popup blocked → the QR is promoted (the desktop→phone bridge)
+// The "then confirm" clause in the helper is load-bearing: scan is not completion.
+// ---------------------------------------------------------------------------
+
+function FeishuConnectAffordances({
+  popupBlocked,
+  verificationUrl,
+}: {
+  popupBlocked: boolean;
+  verificationUrl: string;
+}) {
+  const isMobile = useIsMobile();
+
+  if (isMobile) {
+    return (
+      <div className="mt-5 flex w-full flex-col items-center gap-2">
+        <Button
+          className="w-full"
+          render={<a href={verificationUrl} rel="noreferrer" target="_blank" />}
+        >
+          Open Feishu
+          <ExternalLink className="h-4 w-4" aria-hidden />
+        </Button>
+        <p className="max-w-xs text-balance font-sans text-[12px] leading-snug text-text-muted">
+          We will open the Feishu app. Confirm the new app there to continue.
+        </p>
+      </div>
+    );
+  }
+
+  // Promoted QR runs a touch larger than the co-equal default, but both stay
+  // modest so the QR never dominates the passive waiting-truth above it.
+  const qrSize = popupBlocked ? 128 : 104;
+
+  return (
+    <div className="mt-5 flex flex-col items-center gap-3">
+      {!popupBlocked && (
+        <a
+          className="inline-flex items-center gap-1.5 rounded-sm border border-border-soft bg-surface px-3 py-2 font-sans text-[12px] font-medium text-text transition-colors hover:border-accent"
+          href={verificationUrl}
+          rel="noreferrer"
+          target="_blank"
+        >
+          Reopen the Feishu tab
+          <ExternalLink className="h-3 w-3" aria-hidden />
+        </a>
+      )}
+
+      <div className="flex flex-col items-center gap-1.5">
+        <span className="rounded-sm border border-border-soft bg-white p-2.5">
+          <QRCode value={verificationUrl} size={qrSize} bgColor="#ffffff" fgColor="#1c1a17" level="M" />
+        </span>
+        <span className="font-sans text-[12px] font-medium text-text">Or scan with Feishu</span>
+        <p className="max-w-[16rem] text-balance font-sans text-[11px] leading-snug text-text-muted">
+          Scan this with the Feishu app, then confirm the new app on your phone.
+        </p>
+      </div>
+
+      {popupBlocked && (
+        <a
+          className="inline-flex items-center gap-1.5 font-sans text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
+          href={verificationUrl}
+          rel="noreferrer"
+          target="_blank"
+        >
+          Or open the Feishu tab
+          <ExternalLink className="h-3 w-3" aria-hidden />
+        </a>
+      )}
     </div>
   );
 }
