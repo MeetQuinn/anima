@@ -34,7 +34,7 @@ void _fileSendTypeCheck;
 export function registerFileCommands(program: Command): void {
   const file = program
     .command('file')
-    .description('Send files to Slack and download received files.');
+    .description('Send files to Slack or Feishu and download received Slack files.');
 
   // Input:   anima file fetch <fileId>
   // Output:  local path to the downloaded file.
@@ -61,12 +61,12 @@ export function registerFileCommands(program: Command): void {
   // Input:   anima file send --channel <id> [--thread-ts <ts>] [--caption <text> | stdin] <path>...
   // Output:  uploaded successfully. (channel=#<name> | dm=<handle>)[, thread_ts=<ts>], files=<N>.
   // Failure: human-readable error to stderr; exit 1.
-  //          Fails closed before any Slack call when --channel/path missing, path is not a file,
+  //          Fails closed before any platform call when --channel/path missing, path is not a file,
   //          or no active runtime item (so partial uploads can't escape the audit).
   file
     .command('send <paths...>')
-    .description('Upload one or more local files to Slack.\nFails before any upload if a path is missing or not a file.')
-    .option('--channel <channel>', 'channel ID (e.g. C123ABC) or name (e.g. prod)\nDM: D-prefixed channel ID (e.g. D123ABC) or @handle (e.g. @alice)')
+    .description('Upload one or more local files to Slack or Feishu.\nFails before any upload if a path is missing or not a file.')
+    .option('--channel <channel>', 'Slack channel/DM target, Feishu chat_id (oc_...), or Feishu open_id (ou_...)')
     .option('--thread-ts <ts>', 'reply inside this thread; omit to post top-level')
     .option('--caption <text>', 'optional caption for the uploaded files; or pass via stdin heredoc')
     .action(async (paths: string[], _, command) => {

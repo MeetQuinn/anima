@@ -28,6 +28,26 @@ export interface FeishuTextSendResult {
   threadId?: string;
 }
 
+export type FeishuUploadedFileKind = 'file' | 'image';
+
+export interface FeishuFileUploadInput {
+  bytes: Buffer;
+  filename: string;
+  mimetype: string;
+}
+
+export interface FeishuUploadedFile {
+  fileKey: string;
+  kind: FeishuUploadedFileKind;
+}
+
+export interface FeishuFileSendInput {
+  file: FeishuUploadedFile;
+  receiveId: string;
+  receiveIdType: FeishuReceiveIdType;
+  threadMessageId?: string;
+}
+
 export interface FeishuMessageListInput {
   chatId: string;
   cursor?: string;
@@ -90,7 +110,9 @@ export interface FeishuMessageClient {
   listMessages(input: FeishuMessageListInput): Promise<FeishuMessageListResult>;
   removeReaction(input: FeishuReactionRemoveInput): Promise<void>;
   replyText(input: FeishuTextReplyInput): Promise<FeishuTextSendResult>;
+  sendUploadedFile(input: FeishuFileSendInput): Promise<FeishuTextSendResult>;
   sendText(input: FeishuTextSendInput): Promise<FeishuTextSendResult>;
+  uploadFile(input: FeishuFileUploadInput): Promise<FeishuUploadedFile>;
 }
 
 export interface FeishuTenantAccessToken {
@@ -140,7 +162,7 @@ interface FeishuTenantAccessTokenDeps {
 interface FeishuSdkMessageCreateInput {
   data: {
     content: string;
-    msg_type: 'text';
+    msg_type: 'file' | 'image' | 'text';
     receive_id: string;
   };
   params: {
@@ -151,7 +173,7 @@ interface FeishuSdkMessageCreateInput {
 interface FeishuSdkMessageReplyInput {
   data: {
     content: string;
-    msg_type: 'text';
+    msg_type: 'file' | 'image' | 'text';
     reply_in_thread: boolean;
   };
   path: {
@@ -183,6 +205,37 @@ interface FeishuSdkMessageListResult {
     items?: FeishuSdkListedMessage[];
     page_token?: string;
   };
+}
+
+type FeishuSdkFileType = 'doc' | 'mp4' | 'opus' | 'pdf' | 'ppt' | 'stream' | 'xls';
+
+interface FeishuSdkFileCreateInput {
+  data: {
+    file: Buffer;
+    file_name: string;
+    file_type: FeishuSdkFileType;
+  };
+}
+
+interface FeishuSdkFileCreateResult {
+  data?: {
+    file_key?: string;
+  };
+  file_key?: string;
+}
+
+interface FeishuSdkImageCreateInput {
+  data: {
+    image: Buffer;
+    image_type: 'message';
+  };
+}
+
+interface FeishuSdkImageCreateResult {
+  data?: {
+    image_key?: string;
+  };
+  image_key?: string;
 }
 
 interface FeishuSdkListedMessage {
@@ -240,6 +293,12 @@ interface FeishuSdkReactionDeleteInput {
 
 interface FeishuSdkClient {
   im: {
+    file?: {
+      create(input: FeishuSdkFileCreateInput): Promise<FeishuSdkFileCreateResult | null>;
+    };
+    image?: {
+      create(input: FeishuSdkImageCreateInput): Promise<FeishuSdkImageCreateResult | null>;
+    };
     message: {
       create(input: FeishuSdkMessageCreateInput): Promise<FeishuSdkMessageReplyResult>;
       list?(input: FeishuSdkMessageListInput): Promise<FeishuSdkMessageListResult>;
@@ -319,13 +378,13 @@ export async function registerFeishuApp(input: FeishuRegisterAppInput): Promise<
 }
 
 export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMessageClientDeps = {}): FeishuMessageClient {
-  const client = deps.createClient?.(config) ?? new lark.Client({
+  const client: FeishuSdkClient = deps.createClient?.(config) ?? (new lark.Client({
     appId: config.appId,
     appSecret: config.appSecret,
     appType: lark.AppType.SelfBuild,
     domain: lark.Domain.Feishu,
     source: 'anima',
-  });
+  }) as unknown as FeishuSdkClient);
   return {
     async addReaction(input) {
       const response = await client.im.messageReaction.create({
@@ -369,6 +428,40 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
         ...(response.data?.page_token ? { nextCursor: response.data.page_token } : {}),
       };
     },
+    async uploadFile(input) {
+      if (isFeishuImageUpload(input)) {
+        if (!client.im.image?.create) {
+          throw new Error('Feishu SDK client does not support image.create');
+        }
+        const response = await client.im.image.create({
+          data: {
+            image: input.bytes,
+            image_type: 'message',
+          },
+        });
+        const fileKey = response?.data?.image_key ?? response?.image_key;
+        if (!fileKey) {
+          throw new Error('Feishu image upload response did not include image_key');
+        }
+        return { fileKey, kind: 'image' };
+      }
+
+      if (!client.im.file?.create) {
+        throw new Error('Feishu SDK client does not support file.create');
+      }
+      const response = await client.im.file.create({
+        data: {
+          file: input.bytes,
+          file_name: input.filename,
+          file_type: feishuFileTypeFor(input),
+        },
+      });
+      const fileKey = response?.data?.file_key ?? response?.file_key;
+      if (!fileKey) {
+        throw new Error('Feishu file upload response did not include file_key');
+      }
+      return { fileKey, kind: 'file' };
+    },
     async replyText(input) {
       const response = await client.im.message.reply({
         data: {
@@ -380,6 +473,38 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
           message_id: input.messageId,
         },
       });
+      return {
+        ...(response.data?.chat_id ? { chatId: response.data.chat_id } : {}),
+        ...(response.data?.message_id ? { messageId: response.data.message_id } : {}),
+        ...(response.data?.thread_id ? { threadId: response.data.thread_id } : {}),
+      };
+    },
+    async sendUploadedFile(input) {
+      const msgType = input.file.kind;
+      const content = input.file.kind === 'image'
+        ? { image_key: input.file.fileKey }
+        : { file_key: input.file.fileKey };
+      const response = input.threadMessageId
+        ? await client.im.message.reply({
+            data: {
+              content: JSON.stringify(content),
+              msg_type: msgType,
+              reply_in_thread: true,
+            },
+            path: {
+              message_id: input.threadMessageId,
+            },
+          })
+        : await client.im.message.create({
+            data: {
+              content: JSON.stringify(content),
+              msg_type: msgType,
+              receive_id: input.receiveId,
+            },
+            params: {
+              receive_id_type: input.receiveIdType,
+            },
+          });
       return {
         ...(response.data?.chat_id ? { chatId: response.data.chat_id } : {}),
         ...(response.data?.message_id ? { messageId: response.data.message_id } : {}),
@@ -485,4 +610,57 @@ export function createFeishuWsClient(config: FeishuConfig): lark.WSClient {
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
+}
+
+function isFeishuImageUpload(input: FeishuFileUploadInput): boolean {
+  return isFeishuImageMimetype(input.mimetype) || isFeishuImageName(input.filename);
+}
+
+function isFeishuImageMimetype(mimetype: string): boolean {
+  return [
+    'image/bmp',
+    'image/gif',
+    'image/ico',
+    'image/jpeg',
+    'image/png',
+    'image/tiff',
+    'image/vnd.microsoft.icon',
+    'image/webp',
+    'image/x-icon',
+  ].includes(mimetype.toLowerCase());
+}
+
+function isFeishuImageName(filename: string): boolean {
+  return /\.(bmp|gif|ico|jpe?g|png|tiff?|webp)$/i.test(filename);
+}
+
+function feishuFileTypeFor(input: FeishuFileUploadInput): FeishuSdkFileType {
+  const name = input.filename.toLowerCase();
+  const mimetype = input.mimetype.toLowerCase();
+  if (name.endsWith('.pdf') || mimetype === 'application/pdf') return 'pdf';
+  if (
+    /\.(doc|docx)$/i.test(name)
+    || mimetype === 'application/msword'
+    || mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  ) {
+    return 'doc';
+  }
+  if (
+    /\.(xls|xlsx|csv)$/i.test(name)
+    || mimetype === 'application/vnd.ms-excel'
+    || mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    || mimetype === 'text/csv'
+  ) {
+    return 'xls';
+  }
+  if (
+    /\.(ppt|pptx)$/i.test(name)
+    || mimetype === 'application/vnd.ms-powerpoint'
+    || mimetype === 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+  ) {
+    return 'ppt';
+  }
+  if (name.endsWith('.opus') || mimetype === 'audio/opus') return 'opus';
+  if (name.endsWith('.mp4') || mimetype === 'video/mp4') return 'mp4';
+  return 'stream';
 }

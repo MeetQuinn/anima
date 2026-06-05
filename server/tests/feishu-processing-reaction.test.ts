@@ -47,8 +47,14 @@ function fakeFeishuClient() {
     async replyText() {
       return {};
     },
+    async sendUploadedFile() {
+      return {};
+    },
     async sendText() {
       return {};
+    },
+    async uploadFile() {
+      return { fileKey: 'file_key', kind: 'file' };
     },
   };
   return { calls, client };
@@ -118,8 +124,14 @@ test('feishu processing reaction add swallows client errors', async () => {
     async replyText() {
       return {};
     },
+    async sendUploadedFile() {
+      return {};
+    },
     async sendText() {
       return {};
+    },
+    async uploadFile() {
+      return { fileKey: 'file_key', kind: 'file' };
     },
   };
   const feishuClient = feishuProcessingReactionClient(FEISHU_CONFIG, { client });
