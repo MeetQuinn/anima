@@ -135,6 +135,12 @@ export interface FeishuTenantAccessToken {
   tenantAccessToken: string;
 }
 
+export interface FeishuBotInfo {
+  appName?: string;
+  avatarUrl?: string;
+  openId?: string;
+}
+
 export interface FeishuRegisterAppInput {
   appPreset?: {
     avatar?: string | string[];
@@ -322,6 +328,7 @@ interface FeishuSdkMessageResourceGetResult {
 }
 
 interface FeishuSdkClient {
+  request?(input: { method: 'GET'; url: string }): Promise<unknown>;
   im: {
     file?: {
       create(input: FeishuSdkFileCreateInput): Promise<FeishuSdkFileCreateResult | null>;
@@ -410,14 +417,38 @@ export async function registerFeishuApp(input: FeishuRegisterAppInput): Promise<
   };
 }
 
+export async function fetchFeishuBotInfo(
+  config: FeishuConfig,
+  deps: FeishuMessageClientDeps = {},
+): Promise<FeishuBotInfo> {
+  const client = feishuSdkClient(config, deps);
+  if (!client.request) {
+    throw new Error('Feishu SDK client does not support generic request');
+  }
+  const response = asRecord(await client.request({
+    method: 'GET',
+    url: '/open-apis/bot/v3/info',
+  }));
+  const code = numberField(response, 'code');
+  if (code !== undefined && code !== 0) {
+    throw new Error(`Feishu bot info request failed: ${stringField(response, 'msg') ?? `code ${code}`}`);
+  }
+  const bot = asRecord(response?.bot) ?? asRecord(asRecord(response?.data)?.bot);
+  if (!bot) {
+    throw new Error('Feishu bot info response did not include bot');
+  }
+  const appName = stringField(bot, 'app_name');
+  const avatarUrl = stringField(bot, 'avatar_url');
+  const openId = stringField(bot, 'open_id');
+  return {
+    ...(appName ? { appName } : {}),
+    ...(avatarUrl ? { avatarUrl } : {}),
+    ...(openId ? { openId } : {}),
+  };
+}
+
 export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMessageClientDeps = {}): FeishuMessageClient {
-  const client: FeishuSdkClient = deps.createClient?.(config) ?? (new lark.Client({
-    appId: config.appId,
-    appSecret: config.appSecret,
-    appType: lark.AppType.SelfBuild,
-    domain: lark.Domain.Feishu,
-    source: 'anima',
-  }) as unknown as FeishuSdkClient);
+  const client: FeishuSdkClient = feishuSdkClient(config, deps);
   return {
     async addReaction(input) {
       const response = await client.im.messageReaction.create({
@@ -586,6 +617,16 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
       };
     },
   };
+}
+
+function feishuSdkClient(config: FeishuConfig, deps: FeishuMessageClientDeps): FeishuSdkClient {
+  return deps.createClient?.(config) ?? (new lark.Client({
+    appId: config.appId,
+    appSecret: config.appSecret,
+    appType: lark.AppType.SelfBuild,
+    domain: lark.Domain.Feishu,
+    source: 'anima',
+  }) as unknown as FeishuSdkClient);
 }
 
 function feishuConversationMessagesFromSdk(items: FeishuSdkListedMessage[] | undefined): FeishuConversationMessage[] {

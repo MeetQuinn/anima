@@ -33,6 +33,11 @@ export function registerAgentFeishuRoutes(fastify: FastifyInstance): void {
         await agentFeishuServiceForAgent(request.params.agentId).registrationStatus(request.params.registrationId),
       ),
   );
+  fastify.post<{ Params: { agentId: string } }>(
+    '/api/agents/:agentId/feishu/sync-avatar',
+    async (request) =>
+      redactAgentConfig(await agentFeishuServiceForAgent(request.params.agentId).syncDisplayInfo()),
+  );
 }
 
 function redactFeishuRegistrationStatus(status: FeishuAppRegistrationStatus): FeishuAppRegistrationStatus {

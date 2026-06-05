@@ -330,6 +330,10 @@ export async function syncAgentAvatar(agentId: string): Promise<AgentConfig> {
   return apiRequest(`/api/agents/${encodeURIComponent(agentId)}/slack/sync-avatar`, { method: 'POST' });
 }
 
+export async function syncAgentFeishuAvatar(agentId: string): Promise<AgentConfig> {
+  return apiRequest(`/api/agents/${encodeURIComponent(agentId)}/feishu/sync-avatar`, { method: 'POST' });
+}
+
 export async function stopItem(agentId: string): Promise<void> {
   await apiRequest(`/api/agents/${encodeURIComponent(agentId)}/stop`, { method: 'POST' });
 }

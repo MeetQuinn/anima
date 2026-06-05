@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { parseLocation } from '@/lib/url-state';
 import { stopItem, fetchAgents, fetchAgentStatuses, refreshDashboardData } from '@/api/agents';
 import { agentColor, initialOf } from '@/lib/avatars';
+import { agentAvatarUrl } from '@/lib/agent-avatar';
 import AgentActionsMenu from '@/components/AgentActionsMenu';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
@@ -41,6 +42,7 @@ export default function MobileTopBar() {
   const currentItemId = status?.currentItemId;
 
   const displayName = agent?.profile?.displayName?.trim() || agentId;
+  const avatarUrl = agentAvatarUrl(agent);
   const initial = agent ? initialOf(displayName) : '?';
   const color = idx >= 0 ? agentColor(idx) : 'var(--color-health-idle)';
   const enabled = agent?.enabled !== false;
@@ -76,9 +78,9 @@ export default function MobileTopBar() {
         </button>
 
         {/* Agent avatar — greyscale when not connected, matching desktop sidebar */}
-        {agent?.slack?.avatarUrl ? (
+        {avatarUrl ? (
           <img
-            src={agent.slack.avatarUrl}
+            src={avatarUrl}
             alt=""
             className={['h-6 w-6 shrink-0 rounded-lg object-cover ring-1 ring-border-soft', !connected ? 'opacity-40 grayscale' : ''].join(' ')}
           />

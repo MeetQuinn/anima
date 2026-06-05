@@ -1,5 +1,6 @@
 import { createFeishuEventDispatcher, createFeishuWsClient } from '../feishu/client.js';
 import { feishuMessageMentionsBot, feishuReceiveMessageEventFromData, normalizeFeishuMessage } from '../feishu/events.js';
+import { agentFeishuServiceForAgent } from '../agents/agent-feishu.service.js';
 import { feishuRuntimeDecision, type FeishuRuntimeDecision } from '../inbox/slack-subscription.service.js';
 import { WakeQueueService, type WakeQueueEnqueueResult } from '../inbox/wake-queue.service.js';
 import type { FeishuConfig } from '../../shared/agent-config.js';
@@ -23,6 +24,7 @@ export interface FeishuMessageTransportDeps {
 
 export class FeishuMessageTransport implements MessageTransport {
   readonly kind = 'feishu';
+  private displayInfoSyncInFlight = false;
   private wsClient?: FeishuWsClient;
 
   constructor(
@@ -66,6 +68,7 @@ export class FeishuMessageTransport implements MessageTransport {
       console.log(JSON.stringify(feishuIgnoredLog(this.options.agentRuntimeKind), null, 2));
       return;
     }
+    this.maybeSyncDisplayInfo();
     const duplicate = Boolean(await this.options.queue.find(event.id));
     const runtimeDecision = await feishuRuntimeDecision(event, {
       agentId: this.options.queue.agentId,
@@ -79,7 +82,23 @@ export class FeishuMessageTransport implements MessageTransport {
     const decision = await this.options.queue.enqueue(event);
     console.log(JSON.stringify(feishuDecisionLog(decision, this.options.agentRuntimeKind, runtimeDecision), null, 2));
   }
+
+  private maybeSyncDisplayInfo(): void {
+    if (this.displayInfoSyncInFlight) return;
+    this.displayInfoSyncInFlight = true;
+    void agentFeishuServiceForAgent(this.options.queue.agentId)
+      .syncDisplayInfoIfStale({ ttlMs: FEISHU_DISPLAY_INFO_SYNC_TTL_MS })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`Feishu display-info sync failed: ${message}`);
+      })
+      .finally(() => {
+        this.displayInfoSyncInFlight = false;
+      });
+  }
 }
+
+const FEISHU_DISPLAY_INFO_SYNC_TTL_MS = 6 * 60 * 60 * 1000;
 
 function feishuDecisionLog(
   decision: WakeQueueEnqueueResult,

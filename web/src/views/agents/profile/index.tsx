@@ -7,6 +7,7 @@ import {
   fetchAgentStatuses,
   refreshAgentData,
   syncAgentAvatar,
+  syncAgentFeishuAvatar,
   updateAgentHome,
   updateAgentProfile,
   updateAgentProvider,
@@ -84,6 +85,7 @@ export default function Profile() {
 
   // Avatar sync.
   const [syncingAvatar, setSyncingAvatar] = useState(false);
+  const [syncingFeishuAvatar, setSyncingFeishuAvatar] = useState(false);
 
   // Owner picker (reset when agent changes via key prop on OwnerPickerForm).
   const [ownerPickerOpen, setOwnerPickerOpen] = useState(false);
@@ -180,6 +182,19 @@ export default function Profile() {
       // silent — avatar sync is best-effort
     } finally {
       setSyncingAvatar(false);
+    }
+  }
+
+  async function handleSyncFeishuAvatar() {
+    if (!agentId || syncingFeishuAvatar) return;
+    setSyncingFeishuAvatar(true);
+    try {
+      await syncAgentFeishuAvatar(agentId);
+      refreshAgentData(agentId);
+    } catch {
+      // silent — avatar sync is best-effort
+    } finally {
+      setSyncingFeishuAvatar(false);
     }
   }
 
@@ -425,17 +440,36 @@ export default function Profile() {
               <div className="space-y-3">
               <div className="rounded-sm border border-border-soft bg-surface-elevated px-4 py-3">
                 <div className="flex items-start gap-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent ring-1 ring-border-soft">
-                    <MessageCircle className="h-4 w-4" />
-                  </span>
+                  {agent.feishu.avatarUrl ? (
+                    <img src={agent.feishu.avatarUrl} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover ring-1 ring-border-soft" />
+                  ) : (
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent ring-1 ring-border-soft">
+                      <MessageCircle className="h-4 w-4" />
+                    </span>
+                  )}
                   <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-serif text-[15px] font-semibold leading-snug text-text">
-                        Feishu
-                      </span>
-                      <span className="font-sans rounded-sm border border-health-ok/30 bg-health-ok-soft px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-health-ok">
-                        Connected
-                      </span>
+                    <div className="flex items-start gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-serif text-[15px] font-semibold leading-snug text-text">
+                            Feishu
+                          </span>
+                          <span className="font-sans rounded-sm border border-health-ok/30 bg-health-ok-soft px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-health-ok">
+                            Connected
+                          </span>
+                        </div>
+                        {agent.feishu.avatarUrl && (
+                          <div className="font-sans mt-0.5 text-[13px] text-text-muted">Synced from your Feishu app</div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => void handleSyncFeishuAvatar()}
+                        disabled={syncingFeishuAvatar}
+                        title="Sync avatar from Feishu"
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-page hover:opacity-100 disabled:opacity-20"
+                      >
+                        <RotateCcw className={`h-3.5 w-3.5 ${syncingFeishuAvatar ? 'animate-spin' : ''}`} />
+                      </button>
                     </div>
                     <div className="mt-2 grid gap-2 text-[12px] md:grid-cols-2">
                       <FeishuMeta label="App ID" value={agent.feishu.appId} />
