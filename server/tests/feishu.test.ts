@@ -16,10 +16,17 @@ import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import { messageFromInboxItem } from '../messages/message.projection.js';
+import { runFileSend } from '../tools/file-send.js';
 import { runMessageRead } from '../tools/message-read.js';
 import { runMessageSend } from '../tools/messages.js';
 import { withAnimaHome } from './anima-home.js';
-import type { FeishuMessageListInput, FeishuTextSendInput } from '../feishu/client.js';
+import { allActivities, loadState } from './helpers/state.js';
+import type {
+  FeishuFileSendInput,
+  FeishuFileUploadInput,
+  FeishuMessageListInput,
+  FeishuTextSendInput,
+} from '../feishu/client.js';
 import type { FeishuConfig } from '../../shared/agent-config.js';
 
 function makeFeishuEvent(overrides: Omit<Partial<FeishuReceiveMessageEvent>, 'message' | 'sender'> & {
@@ -691,8 +698,14 @@ test('message read can fetch Feishu chat history explicitly', async () => {
               async replyText() {
                 throw new Error('unexpected topic reply');
               },
+              async sendUploadedFile() {
+                throw new Error('unexpected file send');
+              },
               async sendText() {
                 throw new Error('unexpected send');
+              },
+              async uploadFile() {
+                throw new Error('unexpected file upload');
               },
             };
           },
@@ -736,9 +749,15 @@ test('message send can target a Feishu chat explicitly', async () => {
               async replyText() {
                 throw new Error('unexpected topic reply');
               },
+              async sendUploadedFile() {
+                throw new Error('unexpected file send');
+              },
               async sendText(input) {
                 sent.push(input);
                 return { chatId: 'oc_target_chat', messageId: 'om_sent' };
+              },
+              async uploadFile() {
+                throw new Error('unexpected file upload');
               },
             };
           },
@@ -799,9 +818,15 @@ test('message send can target a Feishu owner open_id and record greeting deliver
               async replyText() {
                 throw new Error('unexpected topic reply');
               },
+              async sendUploadedFile() {
+                throw new Error('unexpected file send');
+              },
               async sendText(input) {
                 sent.push(input);
                 return { chatId: 'oc_owner_dm', messageId: 'om_owner_hello' };
+              },
+              async uploadFile() {
+                throw new Error('unexpected file upload');
               },
             };
           },
@@ -853,8 +878,14 @@ test('message send can target a Feishu topic explicitly', async () => {
                 replies.push(input);
                 return { chatId: 'oc_target_chat', messageId: 'om_sent', threadId: 'omt_topic' };
               },
+              async sendUploadedFile() {
+                throw new Error('unexpected file send');
+              },
               async sendText() {
                 throw new Error('unexpected ordinary send');
+              },
+              async uploadFile() {
+                throw new Error('unexpected file upload');
               },
             };
           },
@@ -864,6 +895,255 @@ test('message send can target a Feishu topic explicitly', async () => {
 
     assert.deepEqual(replies, [{ messageId: 'om_topic_root', replyInThread: true, text: 'topic message' }]);
   } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('Feishu file uploads use image and file SDK endpoints', async () => {
+  const config: FeishuConfig = {
+    appId: 'cli_test',
+    appSecret: 'secret',
+    connected: true,
+    encryptKey: '',
+    verificationToken: '',
+  };
+  let capturedImage: unknown;
+  let capturedFile: unknown;
+
+  const client = createFeishuMessageClient(config, {
+    createClient() {
+      return {
+        im: {
+          file: {
+            async create(input) {
+              capturedFile = input;
+              return { data: { file_key: 'file_key_doc' } };
+            },
+          },
+          image: {
+            async create(input) {
+              capturedImage = input;
+              return { data: { image_key: 'image_key_photo' } };
+            },
+          },
+          message: {
+            async create() {
+              throw new Error('unexpected create call');
+            },
+            async reply() {
+              throw new Error('unexpected reply call');
+            },
+          },
+          messageReaction: {
+            async create() {
+              throw new Error('unexpected reaction create call');
+            },
+            async delete() {
+              throw new Error('unexpected reaction delete call');
+            },
+          },
+        },
+      };
+    },
+  });
+
+  const image = await client.uploadFile({
+    bytes: Buffer.from('fake-image'),
+    filename: 'photo.png',
+    mimetype: 'image/png',
+  });
+  const file = await client.uploadFile({
+    bytes: Buffer.from('fake-pdf'),
+    filename: 'report.pdf',
+    mimetype: 'application/pdf',
+  });
+
+  assert.deepEqual(image, { fileKey: 'image_key_photo', kind: 'image' });
+  assert.deepEqual(file, { fileKey: 'file_key_doc', kind: 'file' });
+  assert.deepEqual(capturedImage, {
+    data: {
+      image: Buffer.from('fake-image'),
+      image_type: 'message',
+    },
+  });
+  assert.deepEqual(capturedFile, {
+    data: {
+      file: Buffer.from('fake-pdf'),
+      file_name: 'report.pdf',
+      file_type: 'pdf',
+    },
+  });
+});
+
+test('Feishu uploaded files can be sent to chats and topics', async () => {
+  const config: FeishuConfig = {
+    appId: 'cli_test',
+    appSecret: 'secret',
+    connected: true,
+    encryptKey: '',
+    verificationToken: '',
+  };
+  const creates: unknown[] = [];
+  const replies: unknown[] = [];
+
+  const client = createFeishuMessageClient(config, {
+    createClient() {
+      return {
+        im: {
+          message: {
+            async create(input) {
+              creates.push(input);
+              return { data: { chat_id: 'oc_test_chat', message_id: 'om_file' } };
+            },
+            async reply(input) {
+              replies.push(input);
+              return { data: { chat_id: 'oc_test_chat', message_id: 'om_image', thread_id: 'omt_topic' } };
+            },
+          },
+          messageReaction: {
+            async create() {
+              throw new Error('unexpected reaction create call');
+            },
+            async delete() {
+              throw new Error('unexpected reaction delete call');
+            },
+          },
+        },
+      };
+    },
+  });
+
+  const fileResult = await client.sendUploadedFile({
+    file: { fileKey: 'file_key_report', kind: 'file' },
+    receiveId: 'oc_test_chat',
+    receiveIdType: 'chat_id',
+  });
+  const imageResult = await client.sendUploadedFile({
+    file: { fileKey: 'image_key_photo', kind: 'image' },
+    receiveId: 'oc_test_chat',
+    receiveIdType: 'chat_id',
+    threadMessageId: 'om_topic_root',
+  });
+
+  assert.deepEqual(creates, [{
+    data: {
+      content: JSON.stringify({ file_key: 'file_key_report' }),
+      msg_type: 'file',
+      receive_id: 'oc_test_chat',
+    },
+    params: {
+      receive_id_type: 'chat_id',
+    },
+  }]);
+  assert.deepEqual(replies, [{
+    data: {
+      content: JSON.stringify({ image_key: 'image_key_photo' }),
+      msg_type: 'image',
+      reply_in_thread: true,
+    },
+    path: {
+      message_id: 'om_topic_root',
+    },
+  }]);
+  assert.deepEqual(fileResult, { chatId: 'oc_test_chat', messageId: 'om_file' });
+  assert.deepEqual(imageResult, { chatId: 'oc_test_chat', messageId: 'om_image', threadId: 'omt_topic' });
+});
+
+test('file send can upload to a Feishu chat explicitly', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-file-send-test-'));
+  const logLines: string[] = [];
+  const order: string[] = [];
+  const uploads: FeishuFileUploadInput[] = [];
+  const fileSends: FeishuFileSendInput[] = [];
+  const captions: FeishuTextSendInput[] = [];
+  const originalLog = console.log;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir);
+      const localPath = join(stateDir, 'evidence.png');
+      await writeFile(localPath, Buffer.from('fake-png-bytes'));
+
+      console.log = (...args: unknown[]) => {
+        logLines.push(args.map(String).join(' '));
+      };
+      await runFileSend(
+        {
+          agent: 'scout',
+          caption: 'see attached',
+          channel: 'oc_target_chat',
+          paths: [localPath],
+        },
+        {
+          createFeishuMessageClient() {
+            return {
+              async addReaction() {
+                throw new Error('unexpected reaction add');
+              },
+              async listMessages() {
+                throw new Error('unexpected message read');
+              },
+              async removeReaction() {
+                throw new Error('unexpected reaction remove');
+              },
+              async replyText() {
+                throw new Error('unexpected topic reply');
+              },
+              async sendUploadedFile(input) {
+                order.push('send-file');
+                fileSends.push(input);
+                return { chatId: 'oc_target_chat', messageId: 'om_file' };
+              },
+              async sendText(input) {
+                order.push('caption');
+                captions.push(input);
+                return { chatId: 'oc_target_chat', messageId: 'om_caption' };
+              },
+              async uploadFile(input) {
+                order.push('upload');
+                uploads.push(input);
+                return { fileKey: 'image_key_evidence', kind: 'image' };
+              },
+            };
+          },
+        },
+      );
+
+      const completed = allActivities(await loadState()).at(-1);
+      assert.equal(completed?.type, 'external.effect.completed');
+      assert.equal(completed?.payload?.['effect'], 'feishu.file.send');
+      assert.equal(completed?.payload?.['tool'], 'anima.file.send');
+      assert.equal(completed?.payload?.['platform'], 'feishu');
+      assert.equal(completed?.payload?.['receiveId'], 'oc_target_chat');
+      assert.equal(completed?.payload?.['receiveIdType'], 'chat_id');
+      assert.equal(completed?.payload?.['fileCount'], 1);
+      assert.equal(completed?.payload?.['caption'], 'see attached');
+      assert.equal(completed?.payload?.['captionMessageId'], 'om_caption');
+      const completedUploads = completed?.payload?.['uploads'] as Array<Record<string, unknown>>;
+      assert.equal(completedUploads.length, 1);
+      assert.equal(completedUploads[0]?.['fileId'], 'image_key_evidence');
+      assert.equal(completedUploads[0]?.['kind'], 'image');
+      assert.equal(completedUploads[0]?.['messageId'], 'om_file');
+      assert.equal(completedUploads[0]?.['mimetype'], 'image/png');
+    });
+
+    assert.deepEqual(order, ['upload', 'send-file', 'caption']);
+    assert.equal(uploads.length, 1);
+    assert.equal(uploads[0]?.filename, 'evidence.png');
+    assert.equal(uploads[0]?.mimetype, 'image/png');
+    assert.equal(uploads[0]?.bytes.toString(), 'fake-png-bytes');
+    assert.deepEqual(fileSends, [{
+      file: { fileKey: 'image_key_evidence', kind: 'image' },
+      receiveId: 'oc_target_chat',
+      receiveIdType: 'chat_id',
+    }]);
+    assert.deepEqual(captions, [{
+      receiveId: 'oc_target_chat',
+      receiveIdType: 'chat_id',
+      text: 'see attached',
+    }]);
+    assert.match(logLines.join('\n'), /uploaded successfully\. feishu chat_id=oc_target_chat, files=1\./);
+  } finally {
+    console.log = originalLog;
     await rm(stateDir, { force: true, recursive: true });
   }
 });
