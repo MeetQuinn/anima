@@ -1,4 +1,5 @@
 import { agentColor, initialOf } from '@/lib/avatars';
+import { agentAvatarUrl } from '@/lib/agent-avatar';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
 import type { AgentConfig } from '@shared/agent-config';
 import type { AgentRuntimeHealthSummary, AgentStatusSummary } from '@shared/snapshot';
@@ -45,6 +46,7 @@ export function AgentRow({
 }) {
   const color = agentColor(index);
   const displayName = agent.profile?.displayName ?? agent.id;
+  const avatarUrl = agentAvatarUrl(agent);
   const initial = initialOf(displayName);
   // Connected is transport-level: Slack or Feishu credentials can make an
   // agent reachable. Raw secrets are redacted on the wire, so use the derived
@@ -68,9 +70,9 @@ export function AgentRow({
         onClick={onClick}
         className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-inset"
       >
-        {agent.slack?.avatarUrl ? (
+        {avatarUrl ? (
           <img
-            src={agent.slack.avatarUrl}
+            src={avatarUrl}
             alt=""
             className={[
               'h-8 w-8 shrink-0 rounded-lg object-cover ring-1 ring-avatar-ring-spine',

@@ -15,6 +15,7 @@ import ServerPanel from '@/components/ServerPanel';
 import type { AgentRuntimeHealthSummary } from '@shared/snapshot';
 import { AgentCreateModal, AddKbModal } from './Sidebar';
 import { agentColor, initialOf } from '@/lib/avatars';
+import { agentAvatarUrl } from '@/lib/agent-avatar';
 import {
   agentHasConnectedTransport,
 } from '@shared/agent-transports';
@@ -211,6 +212,7 @@ export default function MobileNavScreen({
                 {orderedAgents.map((agent) => {
                   const color = agentColor(agentIndexMap.get(agent.id) ?? 0);
                   const name = agent.profile?.displayName ?? agent.id;
+                  const avatarUrl = agentAvatarUrl(agent);
                   const initial = initialOf(name);
                   const isRunning = runningIds.has(agent.id);
                   const enabled = agent.enabled !== false;
@@ -232,9 +234,9 @@ export default function MobileNavScreen({
                         {isSelected && (
                           <span aria-hidden className="absolute left-0 top-2 bottom-2 w-0.5 bg-accent" />
                         )}
-                        {agent.slack?.avatarUrl ? (
+                        {avatarUrl ? (
                           <img
-                            src={agent.slack.avatarUrl}
+                            src={avatarUrl}
                             alt=""
                             className="h-6 w-6 shrink-0 rounded-lg object-cover ring-1 ring-border-soft"
                             style={{ opacity: enabled ? 1 : 0.45 }}

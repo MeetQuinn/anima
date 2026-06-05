@@ -1,11 +1,17 @@
 import type { AgentConfig, AgentConnectFeishuRequest, AgentFeishuRegisterAppRequest } from '../../shared/agent-config.js';
-import { registerFeishuApp, type FeishuRegisterAppResult } from '../feishu/client.js';
+import {
+  fetchFeishuBotInfo,
+  registerFeishuApp,
+  type FeishuBotInfo,
+  type FeishuRegisterAppResult,
+} from '../feishu/client.js';
 import { nowIso } from '../ids.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { defaultAgentRegistryService } from './agent.service.js';
 import { randomUUID } from 'crypto';
 
 type RegisterFeishuApp = typeof registerFeishuApp;
+type GetFeishuBotInfo = (config: AgentConfig['feishu']) => Promise<FeishuBotInfo>;
 
 export type FeishuAppRegistrationState =
   | 'starting'
@@ -36,6 +42,7 @@ interface FeishuAppRegistrationSession extends FeishuAppRegistrationStatus {
 const registrationSessions = new Map<string, FeishuAppRegistrationSession>();
 
 interface AgentFeishuServiceDeps {
+  getFeishuBotInfo?: GetFeishuBotInfo;
   registerFeishuApp?: RegisterFeishuApp;
 }
 
@@ -45,7 +52,7 @@ export class AgentFeishuService {
   async connect(input: AgentConnectFeishuRequest) {
     const service = defaultAgentRegistryService.serviceFor(this.agentId);
     const current = await service.getConfig();
-    return service.saveConfig({
+    const saved = await service.saveConfig({
       ...current,
       feishu: {
         ...current.feishu,
@@ -62,6 +69,23 @@ export class AgentFeishuService {
         verificationToken: input.verificationToken ?? '',
       },
     });
+    // Legacy/API callers may already know the bot open_id. Keep that connect
+    // path fast; explicit/profile/background sync can still refresh avatar.
+    if (input.botOpenId?.trim()) return saved;
+    return this.syncDisplayInfoForAgent(saved).catch(() => saved);
+  }
+
+  async syncDisplayInfo(): Promise<AgentConfig> {
+    const agent = await defaultAgentRegistryService.serviceFor(this.agentId).getConfig();
+    return this.syncDisplayInfoForAgent(agent);
+  }
+
+  async syncDisplayInfoIfStale(options: { ttlMs: number }): Promise<{ synced: boolean }> {
+    const agent = await defaultAgentRegistryService.serviceFor(this.agentId).getConfig();
+    if (!agent.feishu.connected) return { synced: false };
+    if (isWithinTtl(agent.feishu.botProfileSyncedAt, options.ttlMs)) return { synced: false };
+    await this.syncDisplayInfoForAgent(agent);
+    return { synced: true };
   }
 
   async startAppRegistration(input: AgentFeishuRegisterAppRequest = {}): Promise<FeishuAppRegistrationStatus> {
@@ -168,10 +192,11 @@ export class AgentFeishuService {
         ownerTenantBrand: result.tenantBrand,
       },
     });
+    const synced = await this.syncDisplayInfoForAgent(saved).catch(() => saved);
 
-    const ownerGreetingPromptedAt = await this.ensureOwnerOnboardingPrompt(saved);
-    if (!ownerGreetingPromptedAt || saved.feishu.ownerGreetingPromptedAt === ownerGreetingPromptedAt) {
-      return saved;
+    const ownerGreetingPromptedAt = await this.ensureOwnerOnboardingPrompt(synced);
+    if (!ownerGreetingPromptedAt || synced.feishu.ownerGreetingPromptedAt === ownerGreetingPromptedAt) {
+      return synced;
     }
     const latest = await service.getConfig();
     return service.saveConfig({
@@ -181,6 +206,25 @@ export class AgentFeishuService {
         ownerGreetingPromptedAt,
       },
     });
+  }
+
+  private async syncDisplayInfoForAgent(agent: AgentConfig): Promise<AgentConfig> {
+    if (!agent.feishu.connected) return agent;
+    const info = await this.fetchDisplayInfo(agent.feishu);
+    const latest = await defaultAgentRegistryService.serviceFor(this.agentId).getConfig();
+    return defaultAgentRegistryService.serviceFor(this.agentId).saveConfig({
+      ...latest,
+      feishu: {
+        ...latest.feishu,
+        avatarUrl: info.avatarUrl || undefined,
+        botProfileSyncedAt: nowIso(),
+        ...(info.openId ? { botOpenId: info.openId } : {}),
+      },
+    });
+  }
+
+  private fetchDisplayInfo(config: AgentConfig['feishu']): Promise<FeishuBotInfo> {
+    return (this.deps.getFeishuBotInfo ?? fetchFeishuBotInfo)(config);
   }
 
   private async ensureOwnerOnboardingPrompt(agent: AgentConfig): Promise<string | undefined> {
@@ -241,4 +285,13 @@ function registrationError(error: unknown): NonNullable<FeishuAppRegistrationSta
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// True when `iso` is a valid timestamp within `ttlMs` of now. Unset/unparseable
+// timestamps and a non-positive ttl are treated as stale so a sync still runs.
+function isWithinTtl(iso: string | undefined, ttlMs: number): boolean {
+  if (!iso || ttlMs <= 0) return false;
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return false;
+  return Date.now() - then < ttlMs;
 }

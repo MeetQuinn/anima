@@ -11,7 +11,7 @@ import {
   shouldWakeFeishuRuntime,
   type FeishuReceiveMessageEvent,
 } from '../feishu/events.js';
-import { createFeishuMessageClient, fetchFeishuTenantAccessToken } from '../feishu/client.js';
+import { createFeishuMessageClient, fetchFeishuBotInfo, fetchFeishuTenantAccessToken } from '../feishu/client.js';
 import { AgentFeishuService } from '../agents/agent-feishu.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
@@ -210,6 +210,52 @@ test('mints Feishu tenant access token from app credentials', async () => {
   });
 });
 
+test('Feishu bot info fetch reads display info', async () => {
+  const config: FeishuConfig = {
+    appId: 'cli_test',
+    appSecret: 'secret',
+    connected: true,
+    encryptKey: '',
+    verificationToken: '',
+  };
+  const calls: Array<{ method: 'GET'; url: string }> = [];
+  const info = await fetchFeishuBotInfo(config, {
+    createClient() {
+      return {
+        async request(input) {
+          calls.push(input);
+          return {
+            bot: {
+              app_name: 'Feishu Scout',
+              avatar_url: 'https://example.test/feishu-scout.png',
+              open_id: 'ou_bot',
+            },
+            code: 0,
+            msg: 'ok',
+          };
+        },
+        im: {
+          message: {
+            async create() { throw new Error('not used'); },
+            async reply() { throw new Error('not used'); },
+          },
+          messageReaction: {
+            async create() { throw new Error('not used'); },
+            async delete() { throw new Error('not used'); },
+          },
+        },
+      };
+    },
+  });
+
+  assert.deepEqual(calls, [{ method: 'GET', url: '/open-apis/bot/v3/info' }]);
+  assert.deepEqual(info, {
+    appName: 'Feishu Scout',
+    avatarUrl: 'https://example.test/feishu-scout.png',
+    openId: 'ou_bot',
+  });
+});
+
 test('Feishu app registration stores returned app credentials without using scanner user as bot id', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-register-app-test-'));
   const homePath = join(stateDir, 'home');
@@ -229,6 +275,13 @@ test('Feishu app registration stores returned app credentials without using scan
       });
       let appPresetName: string | undefined;
       const service = new AgentFeishuService('feishu-scout', {
+        async getFeishuBotInfo(config) {
+          assert.equal(config.appId, 'cli_generated');
+          return {
+            avatarUrl: 'https://example.test/feishu-bot.png',
+            openId: 'ou_actual_bot',
+          };
+        },
         async registerFeishuApp(input) {
           appPresetName = input.appPreset?.name;
           input.onQRCodeReady({ expireIn: 600, url: 'https://accounts.feishu.cn/verify?registration=test' });
@@ -251,12 +304,16 @@ test('Feishu app registration stores returned app credentials without using scan
       const completed = await waitForRegistration(service, started.registrationId, 'connected');
       assert.equal(completed.agent?.feishu.connected, true);
       assert.equal(completed.agent?.feishu.appId, 'cli_generated');
-      assert.equal(completed.agent?.feishu.botOpenId, undefined);
+      assert.equal(completed.agent?.feishu.avatarUrl, 'https://example.test/feishu-bot.png');
+      assert.equal(completed.agent?.feishu.botOpenId, 'ou_actual_bot');
 
       const stored = await defaultAgentRegistryService.serviceFor('feishu-scout').getConfig();
       assert.equal(stored.feishu.appSecret, 'generated-secret');
-      assert.equal(stored.feishu.botOpenId, undefined);
+      assert.equal(stored.feishu.avatarUrl, 'https://example.test/feishu-bot.png');
+      assert.equal(stored.feishu.botOpenId, 'ou_actual_bot');
       assert.equal(stored.feishu.ownerOpenId, 'ou_scanning_user_not_bot');
+      assert.notEqual(stored.feishu.botOpenId, stored.feishu.ownerOpenId);
+      assert.match(stored.feishu.botProfileSyncedAt ?? '', /^\d{4}-/);
       assert.match(stored.feishu.ownerGreetingPromptedAt ?? '', /^\d{4}-/);
 
       const items = await new WakeQueueService('feishu-scout').list();
@@ -286,19 +343,71 @@ test('manual Feishu credentials path clears registerApp owner greeting metadata'
         ownerTenantBrand: 'feishu',
       });
 
-      const connected = await new AgentFeishuService('scout').connect({
+      const connected = await new AgentFeishuService('scout', {
+        async getFeishuBotInfo(config) {
+          assert.equal(config.appId, 'manual-app');
+          return {
+            avatarUrl: 'https://example.test/manual-feishu-bot.png',
+            openId: 'ou_manual_bot',
+          };
+        },
+      }).connect({
         appId: 'manual-app',
         appSecret: 'manual-secret',
       });
 
       assert.equal(connected.feishu.appId, 'manual-app');
       assert.equal(connected.feishu.appSecret, 'manual-secret');
+      assert.equal(connected.feishu.avatarUrl, 'https://example.test/manual-feishu-bot.png');
+      assert.equal(connected.feishu.botOpenId, 'ou_manual_bot');
+      assert.match(connected.feishu.botProfileSyncedAt ?? '', /^\d{4}-/);
       assert.equal(connected.feishu.ownerOpenId, undefined);
       assert.equal(connected.feishu.ownerGreetingPromptedAt, undefined);
       assert.equal(connected.feishu.ownerGreetingChatId, undefined);
       assert.equal(connected.feishu.ownerGreetingMessageId, undefined);
       assert.equal(connected.feishu.ownerGreetingDeliveredAt, undefined);
       assert.deepEqual(await new WakeQueueService('scout').list(), []);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('Feishu display-info sync refreshes once then throttles within the TTL', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-sync-throttle-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir);
+
+      let calls = 0;
+      const service = new AgentFeishuService('scout', {
+        async getFeishuBotInfo() {
+          calls += 1;
+          return {
+            avatarUrl: `https://example.test/feishu-${calls}.png`,
+            openId: 'ou_synced_bot',
+          };
+        },
+      });
+      const sixHoursMs = 6 * 60 * 60 * 1000;
+
+      const first = await service.syncDisplayInfoIfStale({ ttlMs: sixHoursMs });
+      assert.equal(first.synced, true);
+      assert.equal(calls, 1);
+      const stamped = await defaultAgentRegistryService.serviceFor('scout').getConfig();
+      assert.equal(stamped.feishu.avatarUrl, 'https://example.test/feishu-1.png');
+      assert.equal(stamped.feishu.botOpenId, 'ou_synced_bot');
+      assert.ok(stamped.feishu.botProfileSyncedAt, 'botProfileSyncedAt should be set after a sync');
+
+      const second = await service.syncDisplayInfoIfStale({ ttlMs: sixHoursMs });
+      assert.equal(second.synced, false);
+      assert.equal(calls, 1, 'throttled call must not hit Feishu again');
+
+      const forced = await service.syncDisplayInfoIfStale({ ttlMs: 0 });
+      assert.equal(forced.synced, true);
+      assert.equal(calls, 2);
+      const refreshed = await defaultAgentRegistryService.serviceFor('scout').getConfig();
+      assert.equal(refreshed.feishu.avatarUrl, 'https://example.test/feishu-2.png');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

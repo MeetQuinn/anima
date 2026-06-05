@@ -277,6 +277,10 @@ export type SlackConfig = z.infer<typeof SlackConfig>;
 export const FeishuConfig = z.object({
   appId: z.string().default(''),
   appSecret: z.string().default(''),
+  avatarUrl: z.string().optional(),
+  // ISO timestamp of the last bot display-info (avatar/name/open_id) sync,
+  // used to throttle the automatic refresh that mirrors the Feishu app icon.
+  botProfileSyncedAt: z.string().optional(),
   botOpenId: z.string().optional(),
   encryptKey: z.string().default(''),
   ownerGreetingChatId: z.string().optional(),

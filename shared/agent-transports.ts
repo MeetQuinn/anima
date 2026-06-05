@@ -1,6 +1,7 @@
 export interface AgentTransportSnapshot {
   feishu?: {
     appId?: string;
+    avatarUrl?: string;
     botOpenId?: string;
     connected?: boolean;
   };
@@ -59,7 +60,7 @@ export function agentConfiguredPlatformKind(agent: AgentTransportSnapshot): Agen
   const connectedKind = agentPrimaryTransportKind(agent);
   if (connectedKind) return connectedKind;
 
-  if (hasString(agent.feishu?.appId) || hasString(agent.feishu?.botOpenId)) return 'feishu';
+  if (hasString(agent.feishu?.appId) || hasString(agent.feishu?.avatarUrl) || hasString(agent.feishu?.botOpenId)) return 'feishu';
   if (
     hasString(agent.slack?.appId)
     || hasString(agent.slack?.botUserId)

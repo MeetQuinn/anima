@@ -22,6 +22,7 @@ import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import { agentColor, initialOf } from '@/lib/avatars';
+import { agentAvatarUrl } from '@/lib/agent-avatar';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
 import { AgentRow, sidebarDotColor, sidebarDotTitle } from './sidebar/AgentRow';
 import { AgentCreateModal } from '@/views/onboarding';
@@ -241,6 +242,7 @@ export default function Sidebar({
               const notConnected = enabled && !agentHasConnectedTransport(agent);
               const color = agentColor(agentIndexMap.get(agent.id) ?? 0);
               const displayName = agent.profile?.displayName ?? agent.id;
+              const avatarUrl = agentAvatarUrl(agent);
               const initial = initialOf(displayName);
               const collapsedStatus = statusByAgentId.get(agent.id);
               const showCollapsedDot = enabled && !notConnected;
@@ -257,9 +259,9 @@ export default function Sidebar({
                       active ? 'bg-spine-elevated' : 'hover:bg-spine-elevated/30',
                     ].join(' ')}
                   >
-                    {agent.slack?.avatarUrl ? (
+                    {avatarUrl ? (
                       <img
-                        src={agent.slack.avatarUrl}
+                        src={avatarUrl}
                         alt=""
                         className={[
                           'h-9 w-9 rounded-lg object-cover ring-1 ring-avatar-ring-spine',

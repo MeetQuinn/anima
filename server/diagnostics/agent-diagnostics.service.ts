@@ -91,7 +91,7 @@ function safeAgent(agent: AgentConfig): AgentDiagnosticsBundle['agent'] {
     },
     transports: {
       feishu: {
-        configured: Boolean(agent.feishu.appId || agent.feishu.botOpenId),
+        configured: Boolean(agent.feishu.appId || agent.feishu.avatarUrl || agent.feishu.botOpenId),
         connected: agent.feishu.connected === true,
       },
       slack: {

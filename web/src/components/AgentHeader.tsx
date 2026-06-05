@@ -5,6 +5,7 @@ import { useParams } from 'react-router-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { parseLocation, AGENT_TABS, DEFAULT_TAB, type AgentTab } from '@/lib/url-state';
 import { agentColor, initialOf } from '@/lib/avatars';
+import { agentAvatarUrl } from '@/lib/agent-avatar';
 import { Button } from './ui/button';
 import AgentActionsMenu from './AgentActionsMenu';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
@@ -121,6 +122,7 @@ export default function AgentHeader() {
 
   const color = agentColor(idx);
   const displayName = agent.profile?.displayName ?? agent.id;
+  const avatarUrl = agentAvatarUrl(agent);
   const role = agent.profile?.role;
   const initial = initialOf(displayName);
   const status = agentStatuses.find((s) => s.agentId === agent.id);
@@ -145,9 +147,9 @@ export default function AgentHeader() {
   return (
     <header className="bg-surface">
       <div className="hidden h-14 items-center gap-3 border-b border-border-soft px-8 md:flex">
-        {agent.slack?.avatarUrl ? (
+        {avatarUrl ? (
           <img
-            src={agent.slack.avatarUrl}
+            src={avatarUrl}
             alt=""
             className="h-7 w-7 shrink-0 rounded-lg object-cover ring-1 ring-border-soft"
           />
