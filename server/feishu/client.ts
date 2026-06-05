@@ -1,7 +1,9 @@
 import * as lark from '@larksuiteoapi/node-sdk';
+import type { Readable } from 'node:stream';
 
 import type { FeishuConfig } from '../../shared/agent-config.js';
 import { asRecord, numberField, stringField } from '../json.js';
+import type { FeishuMessageResourceType } from './feishu-file.service.js';
 
 export const FEISHU_OPEN_API_BASE_URL = 'https://open.feishu.cn/open-apis';
 
@@ -46,6 +48,18 @@ export interface FeishuFileSendInput {
   receiveId: string;
   receiveIdType: FeishuReceiveIdType;
   threadMessageId?: string;
+}
+
+export interface FeishuMessageResourceDownloadInput {
+  fileKey: string;
+  messageId: string;
+  resourceType: FeishuMessageResourceType;
+}
+
+export interface FeishuMessageResourceDownload {
+  bytes: Buffer;
+  contentType?: string;
+  filename?: string;
 }
 
 export interface FeishuMessageListInput {
@@ -107,6 +121,7 @@ export interface FeishuReactionRemoveInput {
 
 export interface FeishuMessageClient {
   addReaction(input: FeishuReactionAddInput): Promise<FeishuReactionAddResult>;
+  downloadMessageResource(input: FeishuMessageResourceDownloadInput): Promise<FeishuMessageResourceDownload>;
   listMessages(input: FeishuMessageListInput): Promise<FeishuMessageListResult>;
   removeReaction(input: FeishuReactionRemoveInput): Promise<void>;
   replyText(input: FeishuTextReplyInput): Promise<FeishuTextSendResult>;
@@ -291,6 +306,21 @@ interface FeishuSdkReactionDeleteInput {
   };
 }
 
+interface FeishuSdkMessageResourceGetInput {
+  params: {
+    type: FeishuMessageResourceType;
+  };
+  path: {
+    file_key: string;
+    message_id: string;
+  };
+}
+
+interface FeishuSdkMessageResourceGetResult {
+  getReadableStream(): Readable;
+  headers?: Record<string, string | string[] | undefined>;
+}
+
 interface FeishuSdkClient {
   im: {
     file?: {
@@ -307,6 +337,9 @@ interface FeishuSdkClient {
     messageReaction: {
       create(input: FeishuSdkReactionCreateInput): Promise<FeishuSdkReactionCreateResult>;
       delete(input: FeishuSdkReactionDeleteInput): Promise<unknown>;
+    };
+    messageResource?: {
+      get(input: FeishuSdkMessageResourceGetInput): Promise<FeishuSdkMessageResourceGetResult>;
     };
   };
 }
@@ -426,6 +459,29 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
         hasMore: Boolean(response.data?.has_more),
         messages: feishuConversationMessagesFromSdk(response.data?.items),
         ...(response.data?.page_token ? { nextCursor: response.data.page_token } : {}),
+      };
+    },
+    async downloadMessageResource(input) {
+      if (!client.im.messageResource?.get) {
+        throw new Error('Feishu SDK client does not support messageResource.get');
+      }
+      const response = await client.im.messageResource.get({
+        params: {
+          type: input.resourceType,
+        },
+        path: {
+          file_key: input.fileKey,
+          message_id: input.messageId,
+        },
+      });
+      const bytes = await readableToBuffer(response.getReadableStream());
+      assertFeishuDownloadSize(bytes.length);
+      return {
+        bytes,
+        ...(contentDispositionFilename(headerValue(response.headers, 'content-disposition')) ? {
+          filename: contentDispositionFilename(headerValue(response.headers, 'content-disposition')),
+        } : {}),
+        ...(headerValue(response.headers, 'content-type') ? { contentType: headerValue(response.headers, 'content-type') } : {}),
       };
     },
     async uploadFile(input) {
@@ -610,6 +666,46 @@ export function createFeishuWsClient(config: FeishuConfig): lark.WSClient {
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
+}
+
+async function readableToBuffer(stream: Readable): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of stream) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+    chunks.push(bytes);
+    size += bytes.length;
+    assertFeishuDownloadSize(size);
+  }
+  return Buffer.concat(chunks);
+}
+
+function assertFeishuDownloadSize(sizeBytes: number): void {
+  const max = 100 * 1024 * 1024;
+  if (sizeBytes > max) {
+    throw new Error(`Feishu message resource exceeds ${max} bytes`);
+  }
+}
+
+function headerValue(headers: Record<string, string | string[] | undefined> | undefined, name: string): string | undefined {
+  if (!headers) return undefined;
+  const direct = Object.entries(headers)
+    .find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
+  if (Array.isArray(direct)) return direct[0];
+  return direct;
+}
+
+function contentDispositionFilename(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(value)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      return encoded;
+    }
+  }
+  return /filename="?([^";]+)"?/i.exec(value)?.[1];
 }
 
 function isFeishuImageUpload(input: FeishuFileUploadInput): boolean {

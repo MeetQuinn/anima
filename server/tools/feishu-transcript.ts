@@ -2,6 +2,7 @@ import type {
   FeishuConversationMention,
   FeishuConversationMessage,
 } from '../feishu/client.js';
+import { feishuMessageResourceId } from '../feishu/feishu-file.service.js';
 
 export interface FeishuTranscriptRequest {
   chatId: string;
@@ -50,14 +51,60 @@ function feishuTranscriptText(message: FeishuConversationMessage): string {
     return replaceFeishuMentionKeys(text, message.mentions ?? []) || '[empty text]';
   }
   if (messageType === 'image' && typeof content?.['image_key'] === 'string') {
-    return `[image] image_key=${content['image_key']}`;
+    return [
+      `[image] image_key=${content['image_key']}`,
+      feishuTranscriptAttachment({
+        fileKey: content['image_key'],
+        messageId: message.messageId,
+        resourceType: 'image',
+      }),
+    ].join('\n');
   }
   if (messageType === 'file') {
-    const name = typeof content?.['file_name'] === 'string' ? ` name=${content['file_name']}` : '';
-    const key = typeof content?.['file_key'] === 'string' ? ` file_key=${content['file_key']}` : '';
-    return `[file]${name}${key}`.trimEnd();
+    const fileKey = typeof content?.['file_key'] === 'string' ? content['file_key'] : '';
+    const name = typeof content?.['file_name'] === 'string' ? content['file_name'] : '';
+    const sizeBytes = feishuFileSize(content);
+    const summary = `[file]${name ? ` name=${name}` : ''}${fileKey ? ` file_key=${fileKey}` : ''}`.trimEnd();
+    return fileKey
+      ? [
+          summary,
+          feishuTranscriptAttachment({
+            fileKey,
+            messageId: message.messageId,
+            name,
+            resourceType: 'file',
+            sizeBytes,
+          }),
+        ].join('\n')
+      : summary;
   }
   return `[${messageType} message]`;
+}
+
+function feishuTranscriptAttachment(input: {
+  fileKey: string;
+  messageId: string;
+  name?: string;
+  resourceType: 'file' | 'image';
+  sizeBytes?: number;
+}): string {
+  const id = feishuMessageResourceId({
+    fileKey: input.fileKey,
+    messageId: input.messageId,
+    resourceType: input.resourceType,
+  });
+  const name = input.name ? ` name=${input.name}` : '';
+  const size = input.sizeBytes !== undefined ? ` size_bytes=${input.sizeBytes}` : '';
+  return `  attached: id=${id}${name}${size} (use \`anima file fetch ${id}\` to download)`;
+}
+
+function feishuFileSize(content: Record<string, unknown> | undefined): number | undefined {
+  const candidates = [content?.['file_size'], content?.['size'], content?.['size_bytes']];
+  const numeric = candidates.find((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  if (numeric !== undefined) return numeric;
+  const stringValue = candidates.find((value): value is string => typeof value === 'string' && value.length > 0);
+  const parsed = stringValue === undefined ? Number.NaN : Number(stringValue);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function parseFeishuContent(content: string | undefined): Record<string, unknown> | undefined {

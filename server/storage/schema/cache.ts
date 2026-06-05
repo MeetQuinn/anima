@@ -1,6 +1,8 @@
 // Disk schema for reconstructable caches under ANIMA_HOME/cache.
 //
 // Current layout:
+//   cache/feishu/files/<safe resource id>/meta.json
+//   cache/feishu/files/<safe resource id>/<safe filename>
 //   cache/slack/files/<teamId>/<fileId>/meta.json
 //   cache/slack/files/<teamId>/<fileId>/<safe original filename>
 //   cache/slack/teams/<teamId>/directory.json
@@ -16,6 +18,18 @@ import { z } from 'zod';
 import { resolveAnimaHome } from '../../anima-home.js';
 import { JsonStore } from '../json-store.js';
 import type { SlackConversationInfo, SlackUserInfo } from '../../slack/slack.helper.js';
+
+export const FeishuFileCacheMeta = z.object({
+  fileId: z.string(),
+  fileKey: z.string(),
+  messageId: z.string(),
+  mimetype: z.string(),
+  name: z.string(),
+  resourceType: z.enum(['file', 'image']),
+  sizeBytes: z.number(),
+});
+
+export type FeishuFileCacheMeta = z.infer<typeof FeishuFileCacheMeta>;
 
 export const SlackFileCacheMeta = z.object({
   id: z.string(),
@@ -58,6 +72,17 @@ export const getSlackFileCacheMetaStore = (teamId: string, fileId: string): Json
     path: () => join(slackFileCacheDir(teamId, fileId), 'meta.json'),
   });
 
+export const getFeishuFileCacheMetaStore = (fileId: string): JsonStore<Partial<FeishuFileCacheMeta>> =>
+  new JsonStore<Partial<FeishuFileCacheMeta>>({
+    empty: () => ({}),
+    parse: FeishuFileCacheMeta.partial().parse,
+    path: () => join(feishuFileCacheDir(fileId), 'meta.json'),
+  });
+
+export function feishuFileCacheDir(fileId: string): string {
+  return join(resolveAnimaHome(), 'cache', 'feishu', 'files', safeFeishuCacheSegment(fileId));
+}
+
 export function slackFileCacheDir(teamId: string, fileId: string): string {
   return join(resolveAnimaHome(), 'cache', 'slack', 'files', teamId, fileId);
 }
@@ -68,3 +93,7 @@ export const getSlackWorkspaceDirectoryStore = (teamId: string): JsonStore<Slack
     parse: (value) => SlackWorkspaceDirectoryFileSchema.parse(value) as SlackWorkspaceDirectoryFile,
     path: () => join(resolveAnimaHome(), 'cache', 'slack', 'teams', teamId, 'directory.json'),
   });
+
+function safeFeishuCacheSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'resource';
+}
