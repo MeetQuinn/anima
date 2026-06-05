@@ -20,6 +20,7 @@ import { messageFromInboxItem } from '../messages/message.projection.js';
 import { runFileSend } from '../tools/file-send.js';
 import { runFileFetch } from '../tools/files-cli.js';
 import { runMessageRead } from '../tools/message-read.js';
+import { runMessageReact } from '../tools/reactions.js';
 import { runMessageSend } from '../tools/messages.js';
 import { withAnimaHome } from './anima-home.js';
 import { allActivities, loadState } from './helpers/state.js';
@@ -28,6 +29,8 @@ import type {
   FeishuFileUploadInput,
   FeishuMessageResourceDownloadInput,
   FeishuMessageListInput,
+  FeishuReactionAddInput,
+  FeishuReactionRemoveInput,
   FeishuTextSendInput,
 } from '../feishu/client.js';
 import type { FeishuConfig } from '../../shared/agent-config.js';
@@ -1035,6 +1038,167 @@ test('message send can target a Feishu topic explicitly', async () => {
     });
 
     assert.deepEqual(replies, [{ messageId: 'om_topic_root', replyInThread: true, text: 'topic message' }]);
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('message react can add a Feishu reaction by message id', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-reaction-add-test-'));
+  const adds: FeishuReactionAddInput[] = [];
+  const logLines: string[] = [];
+  const originalLog = console.log;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir);
+      console.log = (...args: unknown[]) => {
+        logLines.push(args.map(String).join(' '));
+      };
+      await runMessageReact(
+        {
+          agent: 'scout',
+          channel: 'oc_target_chat',
+          messageId: 'om_target_message',
+          name: 'Thumbsup',
+        },
+        {
+          createFeishuMessageClient() {
+            return {
+              async addReaction(input) {
+                adds.push(input);
+                return { reactionId: 'reaction_1' };
+              },
+              async downloadMessageResource() {
+                throw new Error('unexpected file fetch');
+              },
+              async listMessages() {
+                throw new Error('unexpected message read');
+              },
+              async removeReaction() {
+                throw new Error('unexpected reaction remove');
+              },
+              async replyText() {
+                throw new Error('unexpected topic reply');
+              },
+              async sendUploadedFile() {
+                throw new Error('unexpected file send');
+              },
+              async sendText() {
+                throw new Error('unexpected send');
+              },
+              async uploadFile() {
+                throw new Error('unexpected file upload');
+              },
+            };
+          },
+        },
+      );
+
+      const activities = allActivities(await loadState());
+      const completed = activities
+        .filter((activity) => activity.type === 'external.effect.completed')
+        .at(-1);
+      assert.equal(completed?.payload?.['effect'], 'feishu.reaction');
+      assert.equal(completed?.payload?.['tool'], 'anima.message.react');
+      assert.equal(completed?.payload?.['platform'], 'feishu');
+      assert.equal(completed?.payload?.['channel'], 'oc_target_chat');
+      assert.equal(completed?.payload?.['messageId'], 'om_target_message');
+      assert.equal(completed?.payload?.['targetTs'], 'om_target_message');
+      assert.equal(completed?.payload?.['action'], 'added');
+      assert.equal(completed?.payload?.['name'], 'Thumbsup');
+      assert.equal(completed?.payload?.['reactionId'], 'reaction_1');
+    });
+
+    assert.deepEqual(adds, [{ emojiType: 'Thumbsup', messageId: 'om_target_message' }]);
+    assert.equal(
+      logLines.at(-1),
+      'reaction added successfully. feishu chat_id=oc_target_chat, message_id=om_target_message, reaction=Thumbsup, reaction_id=reaction_1.',
+    );
+  } finally {
+    console.log = originalLog;
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('message react can remove a Feishu reaction with a reaction id', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-reaction-remove-test-'));
+  const removes: FeishuReactionRemoveInput[] = [];
+  const logLines: string[] = [];
+  const originalLog = console.log;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir);
+      console.log = (...args: unknown[]) => {
+        logLines.push(args.map(String).join(' '));
+      };
+      await runMessageReact(
+        {
+          agent: 'scout',
+          channel: 'oc_target_chat',
+          messageId: 'om_target_message',
+          name: 'Thumbsup',
+          reactionId: 'reaction_1',
+          remove: true,
+        },
+        {
+          createFeishuMessageClient() {
+            return {
+              async addReaction() {
+                throw new Error('unexpected reaction add');
+              },
+              async downloadMessageResource() {
+                throw new Error('unexpected file fetch');
+              },
+              async listMessages() {
+                throw new Error('unexpected message read');
+              },
+              async removeReaction(input) {
+                removes.push(input);
+              },
+              async replyText() {
+                throw new Error('unexpected topic reply');
+              },
+              async sendUploadedFile() {
+                throw new Error('unexpected file send');
+              },
+              async sendText() {
+                throw new Error('unexpected send');
+              },
+              async uploadFile() {
+                throw new Error('unexpected file upload');
+              },
+            };
+          },
+        },
+      );
+    });
+
+    assert.deepEqual(removes, [{ messageId: 'om_target_message', reactionId: 'reaction_1' }]);
+    assert.equal(
+      logLines.at(-1),
+      'reaction removed successfully. feishu chat_id=oc_target_chat, message_id=om_target_message, reaction=Thumbsup, reaction_id=reaction_1.',
+    );
+  } finally {
+    console.log = originalLog;
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('message react remove requires reaction id for Feishu messages', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-reaction-validation-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir);
+      await assert.rejects(
+        () => runMessageReact({
+          agent: 'scout',
+          channel: 'oc_target_chat',
+          messageId: 'om_target_message',
+          remove: true,
+        }),
+        /requires --reaction-id/,
+      );
+    });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }
