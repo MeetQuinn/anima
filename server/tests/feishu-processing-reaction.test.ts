@@ -50,6 +50,12 @@ function fakeFeishuClient() {
     async replyText() {
       return {};
     },
+    async replyPost() {
+      return {};
+    },
+    async sendPost() {
+      return {};
+    },
     async sendUploadedFile() {
       return {};
     },
@@ -128,6 +134,12 @@ test('feishu processing reaction add swallows client errors', async () => {
     },
     async removeReaction() {},
     async replyText() {
+      return {};
+    },
+    async replyPost() {
+      return {};
+    },
+    async sendPost() {
       return {};
     },
     async sendUploadedFile() {

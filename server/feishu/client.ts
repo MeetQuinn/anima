@@ -4,6 +4,7 @@ import type { Readable } from 'node:stream';
 import type { FeishuConfig } from '../../shared/agent-config.js';
 import { asRecord, numberField, stringField } from '../json.js';
 import type { FeishuMessageResourceType } from './feishu-file.service.js';
+import type { FeishuPostContent } from './markdown-to-feishu-post.js';
 
 export const FEISHU_OPEN_API_BASE_URL = 'https://open.feishu.cn/open-apis';
 
@@ -22,6 +23,18 @@ export interface FeishuTextReplyInput {
   messageId: string;
   replyInThread: boolean;
   text: string;
+}
+
+export type FeishuPostSendInput = {
+  receiveId: string;
+  receiveIdType: FeishuReceiveIdType;
+  content: FeishuPostContent;
+};
+
+export interface FeishuPostReplyInput {
+  messageId: string;
+  replyInThread: boolean;
+  content: FeishuPostContent;
 }
 
 export interface FeishuTextSendResult {
@@ -125,8 +138,10 @@ export interface FeishuMessageClient {
   listMessages(input: FeishuMessageListInput): Promise<FeishuMessageListResult>;
   removeReaction(input: FeishuReactionRemoveInput): Promise<void>;
   replyText(input: FeishuTextReplyInput): Promise<FeishuTextSendResult>;
+  replyPost(input: FeishuPostReplyInput): Promise<FeishuTextSendResult>;
   sendUploadedFile(input: FeishuFileSendInput): Promise<FeishuTextSendResult>;
   sendText(input: FeishuTextSendInput): Promise<FeishuTextSendResult>;
+  sendPost(input: FeishuPostSendInput): Promise<FeishuTextSendResult>;
   uploadFile(input: FeishuFileUploadInput): Promise<FeishuUploadedFile>;
 }
 
@@ -183,7 +198,7 @@ interface FeishuTenantAccessTokenDeps {
 interface FeishuSdkMessageCreateInput {
   data: {
     content: string;
-    msg_type: 'file' | 'image' | 'text';
+    msg_type: 'file' | 'image' | 'post' | 'text';
     receive_id: string;
   };
   params: {
@@ -194,7 +209,7 @@ interface FeishuSdkMessageCreateInput {
 interface FeishuSdkMessageReplyInput {
   data: {
     content: string;
-    msg_type: 'file' | 'image' | 'text';
+    msg_type: 'file' | 'image' | 'post' | 'text';
     reply_in_thread: boolean;
   };
   path: {
@@ -566,6 +581,23 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
         ...(response.data?.thread_id ? { threadId: response.data.thread_id } : {}),
       };
     },
+    async replyPost(input) {
+      const response = await client.im.message.reply({
+        data: {
+          content: JSON.stringify(input.content),
+          msg_type: 'post',
+          reply_in_thread: input.replyInThread,
+        },
+        path: {
+          message_id: input.messageId,
+        },
+      });
+      return {
+        ...(response.data?.chat_id ? { chatId: response.data.chat_id } : {}),
+        ...(response.data?.message_id ? { messageId: response.data.message_id } : {}),
+        ...(response.data?.thread_id ? { threadId: response.data.thread_id } : {}),
+      };
+    },
     async sendUploadedFile(input) {
       const msgType = input.file.kind;
       const content = input.file.kind === 'image'
@@ -608,6 +640,23 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
         },
         params: {
           receive_id_type: target.receiveIdType,
+        },
+      });
+      return {
+        ...(response.data?.chat_id ? { chatId: response.data.chat_id } : {}),
+        ...(response.data?.message_id ? { messageId: response.data.message_id } : {}),
+        ...(response.data?.thread_id ? { threadId: response.data.thread_id } : {}),
+      };
+    },
+    async sendPost(input) {
+      const response = await client.im.message.create({
+        data: {
+          content: JSON.stringify(input.content),
+          msg_type: 'post',
+          receive_id: input.receiveId,
+        },
+        params: {
+          receive_id_type: input.receiveIdType,
         },
       });
       return {
