@@ -2,7 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight, Loader2, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { awaitAgentsRefresh, createAgent, refreshDashboardData, updateAgentProfile } from '@/api/agents';
+import {
+  awaitAgentsRefresh,
+  createAgent,
+  fetchAgentFeishuAppRegistration,
+  refreshDashboardData,
+  startAgentFeishuAppRegistration,
+  updateAgentProfile,
+} from '@/api/agents';
 import { fetchProviderAvailability, fetchWorkspacePlatform, saveWorkspacePlatform } from '@/api/system';
 import {
   DEFAULT_REASONING_EFFORT,
@@ -29,12 +36,17 @@ import {
 } from '@/views/agents/profile/FeishuOnboardingConnect';
 import { OwnerPickerForm } from '@/views/agents/profile/OwnerPickerForm';
 import { queryKeys } from '@/lib/query-keys';
+import type { AgentFeishuRegisterAppStatus } from '@shared/agent-config';
 import type { WorkspacePlatform } from '@shared/server-settings';
 
 const WORKSPACE_PLATFORM_LABELS: Record<WorkspacePlatform, string> = {
   feishu: 'Feishu',
   slack: 'Slack',
 };
+
+const FEISHU_CREATE_SLOW_MS = 15_000;
+const FEISHU_REGISTRATION_POLL_MS = 2000;
+const FEISHU_REGISTRATION_ACTIVE_STATES = ['starting', 'waiting', 'slow_down', 'domain_switched'];
 
 // ---------------------------------------------------------------------------
 // Step indicator
@@ -252,8 +264,11 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     : new URLSearchParams();
   const previewStepRaw = Number(previewSearch.get('_previewStep') ?? 0);
   const previewFeishuPhase = (previewSearch.get('_previewFeishu') as FeishuOnboardingPhase | null) ?? undefined;
-  const previewSlow = previewSearch.get('_previewSlow') === '1';
   const previewPlatform = (previewSearch.get('_previewPlatform') as WorkspacePlatform | null) ?? undefined;
+  const previewCreateLoading =
+    import.meta.env.DEV && previewSearch.get('_previewCreateLoading') === 'feishu';
+  const previewCreateSlow =
+    previewCreateLoading && previewSearch.get('_previewSlow') === '1';
   const previewStepName = previewSearch.get('_previewStep');
   const previewStep: FlowStep | undefined =
     previewFeishuPhase ? 'connect'
@@ -291,11 +306,17 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
   );
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [createStage, setCreateStage] = useState<'agent' | 'feishu' | undefined>();
+  const [feishuCreateSlow, setFeishuCreateSlow] = useState(false);
+  const [feishuRegistration, setFeishuRegistration] = useState<AgentFeishuRegisterAppStatus | null>(null);
+  const [feishuRegistrationError, setFeishuRegistrationError] = useState<string | undefined>();
 
   // Feishu connect sub-phase, reported up by FeishuOnboardingConnect.
   const [feishuPhase, setFeishuPhase] = useState<FeishuOnboardingPhase | undefined>(previewFeishuPhase);
 
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const createRunRef = useRef(0);
+  const feishuSlowTimerRef = useRef<number | null>(null);
 
   const {
     data: providerAvailability,
@@ -334,6 +355,9 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
   const selectedProviderHint = providerUnavailableHint(currentProvider, providerAvailability);
   const unavailableProviders = unavailableProviderHints(providerOptions, providerAvailability);
   const providerCheckPending = !providerAvailability && !providerAvailabilityError;
+  const effectiveCreating = previewCreateLoading || creating;
+  const effectiveCreateStage = previewCreateLoading ? 'feishu' : createStage;
+  const effectiveFeishuCreateSlow = previewCreateSlow || feishuCreateSlow;
 
   const homePath = derivedId
     ? defaultAgentHomePath(derivedId, customParent ?? DEFAULT_AGENT_HOMES_ROOT)
@@ -387,13 +411,20 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key !== 'Escape' || creating) return;
+      if (e.key !== 'Escape' || effectiveCreating) return;
       if (showPicker) { setShowPicker(false); return; }
       void handleClose();
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [handleClose, creating, showPicker]);
+  }, [handleClose, effectiveCreating, showPicker]);
+
+  useEffect(() => {
+    return () => {
+      createRunRef.current += 1;
+      clearFeishuSlowTimer();
+    };
+  }, []);
 
   function handleProviderChange(next: ProviderCatalogEntry['kind']) {
     setProviderKind(next);
@@ -431,45 +462,129 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     void persistPlatform(next);
   }
 
+  function clearFeishuSlowTimer() {
+    if (feishuSlowTimerRef.current !== null) {
+      window.clearTimeout(feishuSlowTimerRef.current);
+      feishuSlowTimerRef.current = null;
+    }
+  }
+
+  function startFeishuSlowTimer(runId: number) {
+    clearFeishuSlowTimer();
+    setFeishuCreateSlow(false);
+    feishuSlowTimerRef.current = window.setTimeout(() => {
+      if (createRunRef.current === runId) setFeishuCreateSlow(true);
+    }, FEISHU_CREATE_SLOW_MS);
+  }
+
+  async function waitForFeishuVerification(
+    agentId: string,
+    runId: number,
+  ): Promise<AgentFeishuRegisterAppStatus | null> {
+    let next = await startAgentFeishuAppRegistration(agentId, { botName: name.trim() || undefined });
+    if (createRunRef.current !== runId) return null;
+    setFeishuRegistration(next);
+
+    while (
+      FEISHU_REGISTRATION_ACTIVE_STATES.includes(next.state) &&
+      !next.verificationUrl
+    ) {
+      await delay(FEISHU_REGISTRATION_POLL_MS);
+      if (createRunRef.current !== runId) return null;
+      next = await fetchAgentFeishuAppRegistration(agentId, next.registrationId);
+      if (createRunRef.current !== runId) return null;
+      setFeishuRegistration(next);
+    }
+
+    return next;
+  }
+
   async function handleCreate() {
+    if (creating) return;
     setNameTouched(true);
     if (!derivedId || !role.trim() || !selectedProviderReady) return;
 
+    const runId = createRunRef.current + 1;
+    createRunRef.current = runId;
     setCreating(true);
+    setCreateStage(workspacePlatform === 'feishu' && !createdAgentId ? 'feishu' : 'agent');
     setCreateError(null);
+    setFeishuRegistration(null);
+    setFeishuRegistrationError(undefined);
+    setFeishuPhase(undefined);
+    if (workspacePlatform === 'feishu') startFeishuSlowTimer(runId);
+    else clearFeishuSlowTimer();
 
-    // Agent already created (user went back to edit name/role) — update profile and advance.
-    if (createdAgentId) {
-      try {
-        await updateAgentProfile(createdAgentId, { displayName: name.trim(), role: role.trim() });
-        refreshDashboardData();
-        setStep('connect');
-      } catch (err) {
-        setCreateError(err instanceof Error ? err.message : 'Failed to update agent');
-      } finally {
-        setCreating(false);
-      }
-      return;
-    }
-
-    const provider = {
-      kind: providerKind,
-      model,
-      ...((currentProvider?.reasoningEfforts ?? []).length > 0 ? { reasoningEffort: effort } : {}),
-    };
+    let nextAgentId = createdAgentId;
     try {
-      const agent = await createAgent({
-        name: name.trim(),
-        role: role.trim(),
-        homePath,
-        provider,
-      });
-      setCreatedAgentId(agent.id);
+      // Agent already created (user went back to edit name/role) — update profile and advance.
+      if (nextAgentId) {
+        await updateAgentProfile(nextAgentId, { displayName: name.trim(), role: role.trim() });
+        refreshDashboardData();
+      } else {
+        const provider = {
+          kind: providerKind,
+          model,
+          ...((currentProvider?.reasoningEfforts ?? []).length > 0 ? { reasoningEffort: effort } : {}),
+        };
+        const agent = await createAgent({
+          name: name.trim(),
+          role: role.trim(),
+          homePath,
+          provider,
+        });
+        nextAgentId = agent.id;
+        setCreatedAgentId(agent.id);
+      }
+
+      if (createRunRef.current !== runId) return;
+      if (workspacePlatform === 'feishu') {
+        try {
+          const registration = await waitForFeishuVerification(nextAgentId, runId);
+          if (!registration || createRunRef.current !== runId) return;
+
+          if (registration.state === 'connected') {
+            setFeishuPhase('connected');
+            await handleFeishuConnected('registerApp', nextAgentId);
+            return;
+          }
+
+          if (registration.state === 'failed') {
+            setFeishuRegistrationError(
+              registration.error?.description ?? registration.error?.message ?? 'Could not start Feishu app setup',
+            );
+            setFeishuPhase('fallback');
+            setStep('connect');
+            return;
+          }
+
+          setFeishuPhase('authorizing');
+          setStep('connect');
+          return;
+        } catch (err) {
+          if (createRunRef.current !== runId) return;
+          setFeishuRegistrationError(err instanceof Error ? err.message : 'Could not start Feishu app setup');
+          setFeishuPhase('fallback');
+          setStep('connect');
+          return;
+        }
+      }
+
       setStep('connect');
     } catch (err) {
-      setCreateError(err instanceof Error ? err.message : 'Failed to create agent');
+      if (createRunRef.current !== runId) return;
+      setCreateError(
+        err instanceof Error
+          ? err.message
+          : (createdAgentId ? 'Failed to update agent' : 'Failed to create agent'),
+      );
     } finally {
-      setCreating(false);
+      if (createRunRef.current === runId) {
+        clearFeishuSlowTimer();
+        setCreating(false);
+        setCreateStage(undefined);
+        setFeishuCreateSlow(false);
+      }
     }
   }
 
@@ -480,12 +595,12 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     setStep('owner');
   }
 
-  async function handleFeishuConnected(source: 'registerApp' | 'manual') {
+  async function handleFeishuConnected(source: 'registerApp' | 'manual', agentIdOverride = createdAgentId) {
     await awaitAgentsRefresh();
     // Jump to activity on any successful connect, but only arm the greeting
     // banner when the app was auto-registered — the manual path has no owner
     // open_id and never greets (#154), so a "say hi" promise there would be false.
-    if (createdAgentId) onComplete?.(createdAgentId, 'feishu', source === 'registerApp');
+    if (agentIdOverride) onComplete?.(agentIdOverride, 'feishu', source === 'registerApp');
   }
 
   function handleOwnerComplete() {
@@ -498,7 +613,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     step === 'connect' ? `Connect to ${WORKSPACE_PLATFORM_LABELS[workspacePlatform]}` :
     'Pick an owner';
   const createDisabledReason = (() => {
-    if (creating) return undefined;
+    if (effectiveCreating) return undefined;
     if (!derivedId) return 'Enter a name';
     if (!role.trim()) return 'Enter a role';
     if (providerAvailabilityError) return 'Provider check failed';
@@ -506,6 +621,9 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     if (!selectedProviderReady) return 'Install a provider first';
     return undefined;
   })();
+  const createButtonLabel = effectiveCreating
+    ? (effectiveCreateStage === 'feishu' ? 'Creating your Feishu app…' : (createdAgentId ? 'Saving…' : 'Creating…'))
+    : (createDisabledReason ?? (createdAgentId ? 'Save & continue →' : 'Create agent →'));
 
   // -------------------------------------------------------------------------
   // Directory picker overlay
@@ -756,12 +874,16 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
             <Button
               className="w-full"
               onClick={() => void handleCreate()}
-              disabled={creating || !!createDisabledReason}
+              disabled={effectiveCreating || !!createDisabledReason}
             >
-              {creating
-                ? (createdAgentId ? 'Saving…' : 'Creating…')
-                : (createDisabledReason ?? (createdAgentId ? 'Save & continue →' : 'Create agent →'))}
+              {effectiveCreating && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
+              {createButtonLabel}
             </Button>
+            {effectiveCreateStage === 'feishu' && effectiveFeishuCreateSlow && (
+              <p className="mt-2 text-center font-sans text-[11px] text-text-subtle">
+                This is taking longer than usual.
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -776,9 +898,9 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
         <div className="px-6 py-6">
           <FeishuOnboardingConnect
             agentId={createdAgentId}
-            agentName={name.trim()}
+            initialError={feishuRegistrationError}
+            initialRegistration={feishuRegistration}
             previewPhase={previewFeishuPhase}
-            previewSlow={previewSlow}
             onPhaseChange={setFeishuPhase}
             onConnect={(info) => void handleFeishuConnected(info.source)}
           />
@@ -865,6 +987,10 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
   }
 
   return card;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 // ---------------------------------------------------------------------------
