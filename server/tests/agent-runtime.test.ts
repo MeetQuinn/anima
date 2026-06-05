@@ -1408,12 +1408,12 @@ test('claude-code runtime records failed Bash command details', async () => {
   }
 });
 
-test('kimi-cli wire transport starts a turn and appends subscription follow-up input', async () => {
+test('kimi-cli ACP transport starts a turn and appends subscription follow-up input', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
   let runtime: AgentRuntime | undefined;
   try {
     await withAnimaHome(stateDir, async () => {
-      const callsPath = join(stateDir, 'kimi-wire-calls.jsonl');
+      const callsPath = join(stateDir, 'kimi-acp-calls.jsonl');
       const fakeKimi = join(stateDir, 'kimi');
       await writeFile(
         fakeKimi,
@@ -1423,8 +1423,10 @@ test('kimi-cli wire transport starts a turn and appends subscription follow-up i
           `fs.appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify({ argv: process.argv.slice(2) }) + '\\n');`,
           "process.stdin.setEncoding('utf8');",
           "let buffer = '';",
+          "let promptCount = 0;",
           'function send(message) { process.stdout.write(JSON.stringify(message) + "\\n"); }',
-          'function event(type, payload = {}) { send({ jsonrpc: "2.0", method: "event", params: { type, payload } }); }',
+          'function update(update) { send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "kimi-session-1", update } }); }',
+          'function content(text) { return [{ type: "content", content: { type: "text", text } }]; }',
           'process.stdin.on("data", (chunk) => {',
           '  buffer += chunk;',
           '  const lines = buffer.split(/\\r?\\n/);',
@@ -1434,33 +1436,38 @@ test('kimi-cli wire transport starts a turn and appends subscription follow-up i
           '    const msg = JSON.parse(line);',
           '    fs.appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + "\\n");',
           '    if (msg.method === "initialize") {',
-          '      send({ jsonrpc: "2.0", id: msg.id, result: { protocol_version: "1.10", server: { name: "Kimi Code CLI", version: "1.44.0" }, slash_commands: [{ name: "init", description: "Init", aliases: [] }], capabilities: { supports_question: true }, hooks: { supported_events: ["PreToolUse", "Stop"], configured: { PreToolUse: 1 } } } });',
+          '      send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, serverInfo: { name: "Kimi Code CLI", version: "0.9.0" }, agentCapabilities: { loadSession: true } } });',
           '    }',
-          '    if (msg.method === "prompt") {',
-          '      event("TurnBegin", { user_input: "Start Kimi." });',
-          '      event("StepBegin", { n: 1 });',
-          '      event("ContentPart", { type: "think", think: "thinking chunk", encrypted: null });',
-          '      event("StatusUpdate", { context_usage: 0.5, context_tokens: 13131, max_context_tokens: 262144, token_usage: { input_other: 100, output: 24, input_cache_read: 1024, input_cache_creation: 0 }, message_id: "chatcmpl-test", plan_mode: false });',
-          '      event("ToolCall", { id: "kimi-tool-1", function: { name: "Shell", arguments: "" } });',
-          '      event("ToolCallPart", { arguments_part: "{\\"command\\":\\"pw" });',
-          '      event("ToolCallPart", { arguments_part: "d\\"}" });',
-          '      event("ToolResult", { tool_call_id: "kimi-tool-1", return_value: { is_error: false, output: "/tmp", message: "ok" } });',
-          '      event("ToolCall", { id: "kimi-tool-read", function: { name: "ReadFile", arguments: "" } });',
-          '      event("ToolCallPart", { arguments_part: "{\\"path\\":\\"notes.md\\"}" });',
-          '      event("ToolResult", { tool_call_id: "kimi-tool-read", return_value: { is_error: false, output: "old", message: "ok" } });',
-          '      event("ToolCall", { id: "kimi-tool-2", function: { name: "StrReplaceFile", arguments: "" } });',
-          '      event("ToolCallPart", { arguments_part: "{\\"path\\":\\"notes.md\\",\\"edit\\":{\\"old\\":\\"old" });',
-          '      event("ToolCallPart", { arguments_part: "\\",\\"new\\":\\"new\\"}}" });',
-          '      event("ToolResult", { tool_call_id: "kimi-tool-2", return_value: { is_error: false, output: "", message: "ok" } });',
-          '      event("HookTriggered", { event: "PreToolUse", target: "Shell", hook_count: 1 });',
-          '      event("HookResolved", { event: "PreToolUse", target: "Shell", action: "allow", reason: "", duration_ms: 12 });',
-          '      event("PlanDisplay", { content: "plan text", file_path: "/tmp/plan.md" });',
-          '      event("ContentPart", { type: "text", text: "handled first" });',
+          '    if (msg.method === "session/new") {',
+          '      send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "kimi-session-1" } });',
           '    }',
-          '    if (msg.method === "steer") {',
-          '      event("SteerInput", { user_input: "Steer Kimi." });',
-          '      event("ContentPart", { type: "text", text: " + appended" });',
-          '      event("TurnEnd");',
+          '    if (msg.method === "session/set_model") {',
+          '      if (msg.params.modelId !== "kimi-code/kimi-for-coding") process.exit(42);',
+          '      send({ jsonrpc: "2.0", id: msg.id, result: {} });',
+          '    }',
+          '    if (msg.method === "session/prompt") {',
+          '      promptCount += 1;',
+          '      if (msg.params.sessionId !== "kimi-session-1") process.exit(43);',
+          '      if (promptCount === 1) {',
+          '        update({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "thinking chunk" } });',
+          '        update({ sessionUpdate: "usage_update", usage: { inputTokens: 100, outputTokens: 24, cachedReadTokens: 1024, contextTokens: 13131, contextWindow: 262144 } });',
+          '        update({ sessionUpdate: "tool_call", toolCallId: "kimi-tool-1", title: "Run command: pwd", kind: "execute" });',
+          '        update({ sessionUpdate: "tool_call_update", toolCallId: "kimi-tool-1", status: "in_progress", content: content("{\\"command\\":\\"pw") });',
+          '        update({ sessionUpdate: "tool_call_update", toolCallId: "kimi-tool-1", status: "completed", content: content("{\\"command\\":\\"pwd\\"}") });',
+          '        update({ sessionUpdate: "tool_call", toolCallId: "kimi-tool-real-shell", title: "Bash", kind: "execute", status: "pending", content: content("") });',
+          '        update({ sessionUpdate: "tool_call_update", toolCallId: "kimi-tool-real-shell", status: "in_progress", content: content("{\\"command\\": \\"pw") });',
+          '        update({ sessionUpdate: "tool_call_update", toolCallId: "kimi-tool-real-shell", title: "Running: pwd", kind: "execute", status: "in_progress", rawInput: { command: "pwd" }, content: content("{\\"command\\":\\"pwd\\"}") });',
+          '        update({ sessionUpdate: "tool_call_update", toolCallId: "kimi-tool-real-shell", status: "completed", rawOutput: "/tmp\\n", content: content("/tmp\\n") });',
+          '        update({ sessionUpdate: "tool_call", toolCallId: "kimi-tool-read", title: "Read file: notes.md", kind: "read", rawInput: { path: "notes.md" } });',
+          '        update({ sessionUpdate: "tool_call_update", toolCallId: "kimi-tool-read", status: "completed", rawOutput: "old" });',
+          '        update({ sessionUpdate: "tool_call", toolCallId: "kimi-tool-2", title: "Patch: notes.md", kind: "edit" });',
+          '        update({ sessionUpdate: "tool_call_update", toolCallId: "kimi-tool-2", status: "completed", content: content("{\\"path\\":\\"notes.md\\",\\"edit\\":{\\"old\\":\\"old\\",\\"new\\":\\"new\\"}}") });',
+          '        update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "handled first" } });',
+          '        setTimeout(() => send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn", usage: { inputTokens: 100, outputTokens: 24, cachedReadTokens: 1024 } } }), 50);',
+          '      } else {',
+          '        update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: " + appended" } });',
+          '        send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 2 } } });',
+          '      }',
           '    }',
           '  }',
           '});',
@@ -1496,28 +1503,31 @@ test('kimi-cli wire transport starts a turn and appends subscription follow-up i
         model: 'kimi-code/kimi-for-coding',
       });
       const runPromise = runtime.run(await runtimeInput(runtime, firstCtx, await loadState()));
-      await waitFor(() => readFile(callsPath, 'utf8').then((text) => text.includes('"method":"prompt"')));
+      await waitFor(() => readFile(callsPath, 'utf8').then((text) => text.includes('"method":"session/prompt"')));
       assert.deepEqual(
         await runtime.appendToActiveRun(await runtimeFollowupInput(runtime, firstCtx, secondCtx, await loadState())),
-        { accepted: true, text: 'appended to Kimi wire stdin' },
+        { accepted: true, text: 'queued for Kimi ACP session' },
       );
       assert.equal((await withTimeout(runPromise, 1_000)).text, 'handled first + appended');
 
       const state = await loadState();
       const sessionId = state.sessions.anima?.current?.id;
-      assert.ok(sessionId);
+      assert.equal(sessionId, 'kimi-session-1');
       const args = JSON.parse((await readFile(callsPath, 'utf8')).split('\n')[0] ?? '{}') as { argv: string[] };
-      assert.ok(args.argv.includes('--wire'));
-      assert.ok(args.argv.includes('--yolo'));
-      assert.ok(args.argv.includes('--thinking'));
-      assert.equal(args.argv[args.argv.indexOf('--model') + 1], 'kimi-code/kimi-for-coding');
-      assert.equal(args.argv[args.argv.indexOf('--session') + 1], sessionId);
+      assert.deepEqual(args.argv, ['acp']);
+      const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string; params?: { prompt?: Array<{ text?: string }> } });
+      assert.equal(calls.filter((call) => call.method === 'session/prompt').length, 2);
+      assert.ok(calls.find((call) => call.method === 'session/prompt')?.params?.prompt?.[0]?.text?.includes('You are Anima'));
       assert.deepEqual(await providerSessionStartedPayload(firstCtx.item.id), { kind: 'kimi-cli', resumed: false });
       const kimiTool = allActivities(state).find((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'kimi-tool-1');
       assert.equal(kimiTool?.payload?.['tool'], 'kimi.Shell');
       assert.equal(kimiTool?.payload?.['providerToolName'], 'Shell');
       assert.equal(kimiTool?.payload?.['command'], 'pwd');
       assert.equal(kimiTool?.payload?.['target'], 'pwd');
+      const kimiRealShell = allActivities(state).find((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'kimi-tool-real-shell');
+      assert.equal(kimiRealShell?.payload?.['tool'], 'kimi.Shell');
+      assert.equal(kimiRealShell?.payload?.['command'], 'pwd');
+      assert.equal(kimiRealShell?.payload?.['target'], 'pwd');
       const kimiEdit = allActivities(state).find((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'kimi-tool-2');
       assert.equal(kimiEdit?.payload?.['tool'], 'kimi.StrReplaceFile');
       assert.equal(kimiEdit?.payload?.['target'], 'notes.md');
@@ -1530,13 +1540,9 @@ test('kimi-cli wire transport starts a turn and appends subscription follow-up i
       for (const hiddenEventType of [
         'kimi.system.init',
         'kimi.turn.started',
-        'kimi.step.started',
         'kimi.thinking.delta',
         'provider.reasoning',
         'kimi.tool_result',
-        'kimi.hook.resolved',
-        'kimi.plan.display',
-        'kimi.steer.consumed',
         'kimi.turn.completed',
       ]) {
         assert.equal(
@@ -1603,7 +1609,7 @@ test('kimi-cli closed stdin startup failure stays on provider promise', async ()
       });
       await assert.rejects(
         runtime.run(await runtimeInput(runtime, ctx, await loadState())),
-        /Kimi wire runtime (stdin is closed|exited before completing active turn)/,
+        /Kimi ACP runtime (exited|stdin is closed)/,
       );
       await tick();
       assert.deepEqual(unhandledRejections, []);
