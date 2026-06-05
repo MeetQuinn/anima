@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ExternalLink, Loader2 } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
 
@@ -6,7 +6,6 @@ import {
   connectAgentFeishu,
   fetchAgentFeishuAppRegistration,
   refreshDashboardData,
-  startAgentFeishuAppRegistration,
 } from '@/api/agents';
 import { Button } from '@/components/ui/button';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -22,30 +21,26 @@ const PREVIEW_VERIFICATION_URL =
 // FeishuOnboardingConnect
 //
 // Onboarding-only Feishu connect surface (Profile keeps FeishuConnectStepper).
-// Dashboard-first, trimmed model: we never auto-open a tab. On submit we move to
-// the creating state and start app registration; when the registration returns a
-// verification URL we stay on the dashboard and the QR leads — a scan-first code
-// plus a weakened "open the Feishu tab" link. Because the tab is only ever opened
-// by a real click it can't be popup-blocked, and the connected transition is
-// poll-driven (it never depended on owning a tab). The existing-app credentials
-// form is reached ONLY on a hard create failure — there is no user-initiated
-// escape into it, so the connect screen stays minimal. On connect we hand off to
-// the parent immediately (no separate success screen); the live-moment lives on
-// the activity landing page.
+// Dashboard-first, trimmed model: we never auto-open a tab. The parent starts
+// registration from the create button and only mounts this step once the
+// registration has produced a verification URL or hard-failed. From here the QR
+// leads — a scan-first code plus a weakened "open the Feishu tab" link — and the
+// connected transition remains poll-driven. The existing-app credentials form is
+// reached ONLY on a hard create failure. On connect we hand off to the parent
+// immediately (no separate success screen); the live-moment lives on the activity
+// landing page.
 // ---------------------------------------------------------------------------
 
 export type FeishuOnboardingPhase = 'creating' | 'authorizing' | 'fallback' | 'connected';
 
-// How long a registration may stay pre-URL before we soften the creating copy.
-// This only changes the message; it never reveals credentials or a fallback.
-const SLOW_SOFTEN_MS = 15_000;
 const POLL_INTERVAL_MS = 2000;
 
 const ACTIVE_STATES = ['starting', 'waiting', 'slow_down', 'domain_switched'];
 
 interface Props {
   agentId: string;
-  agentName?: string;
+  initialError?: string;
+  initialRegistration?: AgentFeishuRegisterAppStatus | null;
   /**
    * Reports a successful connect and how it happened. `registerApp` = the app
    * was auto-created (an owner open_id exists, so the greeting will fire);
@@ -58,75 +53,35 @@ interface Props {
   onPhaseChange?: (phase: FeishuOnboardingPhase) => void;
   /** Forces a phase for dev/screenshot preview; disables live wiring. */
   previewPhase?: FeishuOnboardingPhase;
-  /** Forces the slow-softened creating copy in preview for screenshots. */
-  previewSlow?: boolean;
 }
 
 export function FeishuOnboardingConnect({
   agentId,
-  agentName,
+  initialError,
+  initialRegistration,
   onConnect,
   onPhaseChange,
   previewPhase,
-  previewSlow,
 }: Props) {
   const isPreview = previewPhase !== undefined;
-  const [phase, setPhase] = useState<FeishuOnboardingPhase>(previewPhase ?? 'creating');
+  const [phase, setPhase] = useState<FeishuOnboardingPhase>(
+    previewPhase ?? phaseFromRegistration(initialRegistration, initialError),
+  );
 
   // Surface phase changes to the parent (e.g. so the stepper reads fully-done at
   // the connected moment). Fires on mount too, including in preview.
   useEffect(() => {
     onPhaseChange?.(phase);
   }, [phase, onPhaseChange]);
-  const [registration, setRegistration] = useState<AgentFeishuRegisterAppStatus | null>(null);
-  const [error, setError] = useState<string | undefined>();
+  const [registration, setRegistration] = useState<AgentFeishuRegisterAppStatus | null>(
+    initialRegistration ?? null,
+  );
+  const [error, setError] = useState<string | undefined>(initialError);
 
   // Existing-app fallback form — reached only on a hard create failure.
   const [appId, setAppId] = useState('');
   const [appSecret, setAppSecret] = useState('');
   const [saving, setSaving] = useState(false);
-  // Soften the creating copy once the pre-URL wait runs long. Copy-only.
-  const [slow, setSlow] = useState(false);
-
-  const startedRef = useRef(false);
-  const slowTimerRef = useRef<number | null>(null);
-
-  const revealFallback = useCallback(() => {
-    if (slowTimerRef.current !== null) {
-      window.clearTimeout(slowTimerRef.current);
-      slowTimerRef.current = null;
-    }
-    setPhase((prev) => (prev === 'connected' ? prev : 'fallback'));
-  }, []);
-
-  // --- Auto-start app registration once, on mount ---------------------------
-  useEffect(() => {
-    if (isPreview || startedRef.current) return;
-    startedRef.current = true;
-
-    // If the URL is slow to arrive, soften the creating copy — but never reveal
-    // credentials on slowness; only a hard failure does that.
-    slowTimerRef.current = window.setTimeout(() => setSlow(true), SLOW_SOFTEN_MS);
-
-    void startAgentFeishuAppRegistration(agentId, { botName: agentName?.trim() || undefined })
-      .then((next) => {
-        setRegistration(next);
-        if (next.state === 'connected') {
-          handleConnected('registerApp');
-        } else if (next.verificationUrl) {
-          setPhase((prev) => (prev === 'fallback' || prev === 'connected' ? prev : 'authorizing'));
-        }
-      })
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : 'Could not start Feishu app setup');
-        revealFallback();
-      });
-
-    return () => {
-      if (slowTimerRef.current !== null) window.clearTimeout(slowTimerRef.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // --- Poll while registration is active ------------------------------------
   const registrationActive =
@@ -146,7 +101,7 @@ export function FeishuOnboardingConnect({
           if (next.state === 'connected') handleConnected('registerApp');
           if (next.state === 'failed') {
             setError(next.error?.description ?? next.error?.message);
-            revealFallback();
+            setPhase((prev) => (prev === 'connected' ? prev : 'fallback'));
           }
         })
         .catch((err) => {
@@ -162,7 +117,6 @@ export function FeishuOnboardingConnect({
   }, [agentId, registration?.registrationId, registrationActive]);
 
   function handleConnected(source: 'registerApp' | 'manual') {
-    if (slowTimerRef.current !== null) window.clearTimeout(slowTimerRef.current);
     setPhase('connected');
     refreshDashboardData();
     onConnect?.({ source });
@@ -186,7 +140,6 @@ export function FeishuOnboardingConnect({
   // The same held URL backs the scan/deep-link surfaces; in preview there is no
   // live registration, so fall back to a stand-in so the affordances are shootable.
   const verificationUrl = registration?.verificationUrl ?? (isPreview ? PREVIEW_VERIFICATION_URL : undefined);
-  const isSlow = isPreview ? Boolean(previewSlow) : slow;
   const authorizing = phase === 'authorizing' && Boolean(verificationUrl);
 
   // -------------------------------------------------------------------------
@@ -197,8 +150,6 @@ export function FeishuOnboardingConnect({
     <div className="space-y-5">
       {authorizing && verificationUrl ? (
         <FeishuConnectAffordances verificationUrl={verificationUrl} />
-      ) : phase === 'creating' || phase === 'authorizing' ? (
-        <CreatingState slow={isSlow} />
       ) : null}
 
       {phase === 'fallback' && (
@@ -221,26 +172,6 @@ export function FeishuOnboardingConnect({
       {error && phase !== 'fallback' && (
         <p className="font-sans text-[12px] text-health-error">{error}</p>
       )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Creating — the brief pre-URL state. Reads as in-progress, never done.
-// ---------------------------------------------------------------------------
-
-function CreatingState({ slow }: { slow: boolean }) {
-  return (
-    <div className="flex flex-col items-center px-2 py-6 text-center">
-      <span className="flex h-14 w-14 items-center justify-center rounded-full bg-accent-soft/50">
-        <Loader2 className="h-6 w-6 animate-spin text-accent" aria-hidden />
-      </span>
-      <div className="mt-4 font-serif text-[16px] font-semibold text-text">
-        Creating your Feishu app
-      </div>
-      <p className="mt-1.5 max-w-sm text-balance font-serif text-[13px] leading-relaxed text-text-muted">
-        {slow ? 'Still setting up. This is taking longer than usual.' : 'Setting up your Feishu app.'}
-      </p>
     </div>
   );
 }
@@ -295,6 +226,15 @@ function FeishuConnectAffordances({ verificationUrl }: { verificationUrl: string
       </a>
     </div>
   );
+}
+
+function phaseFromRegistration(
+  registration: AgentFeishuRegisterAppStatus | null | undefined,
+  error: string | undefined,
+): FeishuOnboardingPhase {
+  if (error || registration?.state === 'failed') return 'fallback';
+  if (registration?.state === 'connected') return 'connected';
+  return 'authorizing';
 }
 
 // ---------------------------------------------------------------------------
