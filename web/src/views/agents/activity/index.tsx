@@ -1,13 +1,19 @@
-import { useEffect, useMemo, useRef } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { AlertCircle, Loader2 } from 'lucide-react';
+import { AlertCircle, Loader2, X } from 'lucide-react';
 import { fetchAgentStatuses, fetchAgentActivities, fetchAgentMessages, fetchAgents } from '@/api/agents';
 import { buildActivityFeed, buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
 import { activityIsFailure, activityRow, isNarrativeStep } from '@/lib/activities';
 import { clockHM, dateKey, formatRelativeShort } from '@/lib/format';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
-import { useActivityFilters, type ActivityLens, type ActivityDir } from '@/hooks/useActivityFilters';
+import {
+  applyLensOverride,
+  clearLensOverride,
+  useActivityFilters,
+  type ActivityLens,
+  type ActivityDir,
+} from '@/hooks/useActivityFilters';
 import { useNow } from '@/hooks/useNow';
 import {
   agentHealthDegradedText,
@@ -215,6 +221,32 @@ function FirstRunHero({
 }
 
 // ---------------------------------------------------------------------------
+// FeishuHelloBanner — the one-time, dismissible connect confirmation that sits
+// atop the activity tab after a fresh Feishu connect. Decoupled from the async
+// greeting: it states the hello is on its way (future tense), never that it has
+// already happened, so a best-effort greeting that is slow or fails never makes
+// this a lie. Dismissal is permanent for the connection (handled by the caller).
+// ---------------------------------------------------------------------------
+
+function FeishuHelloBanner({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <div className="flex shrink-0 items-start gap-3 border-b border-border-soft bg-accent-soft/40 px-4 py-3 md:px-10">
+      <p className="flex-1 font-serif text-[13px] leading-snug text-text">
+        Feishu connected. Your agent will say hi in Feishu in a moment.
+      </p>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dismiss"
+        className="-mr-1 -mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-surface hover:text-text"
+      >
+        <X className="h-4 w-4" aria-hidden />
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Activity view
 // ---------------------------------------------------------------------------
 
@@ -399,6 +431,90 @@ export default function Activity() {
       !(lens === 'messages' && dir !== 'all') &&
       connectedPlatform !== undefined);
 
+  // --- Post-onboarding first landing -----------------------------------------
+  // A fresh Feishu connect navigates here with router state. On that first
+  // arrival we (a) force the activity view regardless of the user's stored lens
+  // preference — the "agent is alive" payoff — without persisting that override,
+  // and (b) arm the one-time greeting banner. The signal is consumed immediately
+  // so a reload / back-navigation never replays it.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const justConnected =
+    (location.state as { onboardingConnected?: 'feishu' | 'slack' } | null)?.onboardingConnected;
+  // Captured once at mount so the landing logic is pinned to the agent we
+  // actually arrived on (the route stays mounted across agentId param changes).
+  const [landingAgentId] = useState(agentId);
+
+  useEffect(() => {
+    if (!justConnected) return;
+    applyLensOverride('activity');
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The transient override applies only to the agent we landed on; drop it when
+  // the user navigates to a different agent (the route stays mounted across param
+  // changes) or leaves the activity view entirely.
+  useEffect(() => clearLensOverride, [agentId]);
+
+  // --- One-time "say hi in Feishu" banner ------------------------------------
+  // Dismissal is permanent and keyed to the connection (appId), so a fresh
+  // reconnect can legitimately show it again, but within one connection it is
+  // one-shot. The banner is decoupled from the async greeting: it never blocks
+  // and never claims the hello already happened.
+  const previewHelloBanner = import.meta.env.DEV && searchParams.get('_previewHelloBanner') === '1';
+  const feishuConnKey = agent?.feishu?.connected
+    ? (agent.feishu.appId?.trim() || 'connected')
+    : undefined;
+  // Captured once at mount; the agentId guard below stops it leaking to other agents.
+  const [pendingConnect] = useState<'feishu' | 'slack' | undefined>(justConnected);
+  const [dismissNonce, setDismissNonce] = useState(0);
+
+  // The fresh-connect landing shows the banner immediately. A reload (no router
+  // state) relies on the persisted "armed" flag instead.
+  const landingArm = pendingConnect === 'feishu' && agentId === landingAgentId;
+
+  // Persist the arm flag so the banner survives a reload until it is dismissed.
+  // Write-only effect (no React state) — keyed to the agent we landed on.
+  useEffect(() => {
+    if (pendingConnect !== 'feishu') return;
+    if (agentId !== landingAgentId || !agentId || !feishuConnKey) return;
+    try {
+      localStorage.setItem(`feishu-hello-armed:${agentId}`, feishuConnKey);
+    } catch {
+      /* localStorage unavailable */
+    }
+  }, [pendingConnect, agentId, feishuConnKey, landingAgentId]);
+
+  // Read the persisted arm/dismiss flags for this agent + connection. dismissNonce
+  // forces a re-read right after we write a dismissal.
+  const helloPersisted = useMemo(() => {
+    if (!agentId || !feishuConnKey) return { armed: false, dismissed: false };
+    try {
+      return {
+        armed: localStorage.getItem(`feishu-hello-armed:${agentId}`) === feishuConnKey,
+        dismissed: localStorage.getItem(`feishu-hello-dismissed:${agentId}`) === feishuConnKey,
+      };
+    } catch {
+      return { armed: false, dismissed: false };
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId, feishuConnKey, dismissNonce]);
+
+  function dismissHelloBanner() {
+    if (agentId && feishuConnKey) {
+      try {
+        localStorage.setItem(`feishu-hello-dismissed:${agentId}`, feishuConnKey);
+      } catch {
+        /* localStorage unavailable */
+      }
+    }
+    setDismissNonce((n) => n + 1);
+  }
+
+  const showHelloBanner =
+    previewHelloBanner || ((landingArm || helloPersisted.armed) && !helloPersisted.dismissed);
+
   const error = activitiesError instanceof Error ? activitiesError.message : activitiesError ? String(activitiesError) : null;
 
   const byDay = useMemo(() => {
@@ -496,6 +612,7 @@ export default function Activity() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-surface">
+      {showHelloBanner && <FeishuHelloBanner onDismiss={dismissHelloBanner} />}
       {error && (
         <div className="flex shrink-0 items-center gap-2.5 border-b border-health-error/30 bg-health-error-soft px-4 py-2 text-health-error">
           <AlertCircle className="h-3.5 w-3.5 shrink-0" />

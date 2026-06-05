@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Check, ExternalLink, Loader2 } from 'lucide-react';
+import { ExternalLink, Loader2 } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
 
 import {
@@ -22,19 +22,21 @@ const PREVIEW_VERIFICATION_URL =
 // FeishuOnboardingConnect
 //
 // Onboarding-only Feishu connect surface (Profile keeps FeishuConnectStepper).
-// Dashboard-first model: we never auto-open a tab. On submit we move to the
-// creating state and start app registration; when the registration returns a
-// verification URL we stay on the dashboard and render the auth panel — a
-// scan-first QR plus a user-initiated "Open the Feishu tab" link. Because the
-// tab is only ever opened by a real click it can't be popup-blocked, and the
-// connected transition is poll-driven (it never depended on owning a tab).
-// Slow registration holds the waiting state; only a hard failure reveals the
-// existing-app credentials fallback (also reachable as a user-initiated escape).
+// Dashboard-first, trimmed model: we never auto-open a tab. On submit we move to
+// the creating state and start app registration; when the registration returns a
+// verification URL we stay on the dashboard and the QR leads — a scan-first code
+// plus a weakened "open the Feishu tab" link. Because the tab is only ever opened
+// by a real click it can't be popup-blocked, and the connected transition is
+// poll-driven (it never depended on owning a tab). The existing-app credentials
+// form is reached ONLY on a hard create failure — there is no user-initiated
+// escape into it, so the connect screen stays minimal. On connect we hand off to
+// the parent immediately (no separate success screen); the live-moment lives on
+// the activity landing page.
 // ---------------------------------------------------------------------------
 
 export type FeishuOnboardingPhase = 'creating' | 'authorizing' | 'fallback' | 'connected';
 
-// How long a registration may stay pre-URL before we soften the waiting copy.
+// How long a registration may stay pre-URL before we soften the creating copy.
 // This only changes the message; it never reveals credentials or a fallback.
 const SLOW_SOFTEN_MS = 15_000;
 const POLL_INTERVAL_MS = 2000;
@@ -49,9 +51,7 @@ interface Props {
   onPhaseChange?: (phase: FeishuOnboardingPhase) => void;
   /** Forces a phase for dev/screenshot preview; disables live wiring. */
   previewPhase?: FeishuOnboardingPhase;
-  /** Forces the fallback reason in preview so both body variants are shootable. */
-  previewFallbackReason?: 'slow' | 'failed';
-  /** Forces the slow-softened waiting copy in preview for screenshots. */
+  /** Forces the slow-softened creating copy in preview for screenshots. */
   previewSlow?: boolean;
 }
 
@@ -61,7 +61,6 @@ export function FeishuOnboardingConnect({
   onConnect,
   onPhaseChange,
   previewPhase,
-  previewFallbackReason,
   previewSlow,
 }: Props) {
   const isPreview = previewPhase !== undefined;
@@ -75,28 +74,21 @@ export function FeishuOnboardingConnect({
   const [registration, setRegistration] = useState<AgentFeishuRegisterAppStatus | null>(null);
   const [error, setError] = useState<string | undefined>();
 
-  // Existing-app fallback form
+  // Existing-app fallback form — reached only on a hard create failure.
   const [appId, setAppId] = useState('');
   const [appSecret, setAppSecret] = useState('');
   const [saving, setSaving] = useState(false);
-  // Why we landed on the fallback: 'slow' (the user chose existing-app from the
-  // waiting state) vs 'failed' (a hard create failure). The reason picks the
-  // body line so we never claim a failure when the user opted in deliberately.
-  const [fallbackReason, setFallbackReason] = useState<'slow' | 'failed'>(
-    previewFallbackReason ?? 'slow',
-  );
-  // Soften the waiting copy once the pre-URL wait runs long. Copy-only.
+  // Soften the creating copy once the pre-URL wait runs long. Copy-only.
   const [slow, setSlow] = useState(false);
 
   const startedRef = useRef(false);
   const slowTimerRef = useRef<number | null>(null);
 
-  const revealFallback = useCallback((reason: 'slow' | 'failed' = 'slow') => {
+  const revealFallback = useCallback(() => {
     if (slowTimerRef.current !== null) {
       window.clearTimeout(slowTimerRef.current);
       slowTimerRef.current = null;
     }
-    setFallbackReason(reason);
     setPhase((prev) => (prev === 'connected' ? prev : 'fallback'));
   }, []);
 
@@ -105,7 +97,7 @@ export function FeishuOnboardingConnect({
     if (isPreview || startedRef.current) return;
     startedRef.current = true;
 
-    // If the URL is slow to arrive, soften the waiting copy — but never reveal
+    // If the URL is slow to arrive, soften the creating copy — but never reveal
     // credentials on slowness; only a hard failure does that.
     slowTimerRef.current = window.setTimeout(() => setSlow(true), SLOW_SOFTEN_MS);
 
@@ -120,7 +112,7 @@ export function FeishuOnboardingConnect({
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : 'Could not start Feishu app setup');
-        revealFallback('failed');
+        revealFallback();
       });
 
     return () => {
@@ -147,7 +139,7 @@ export function FeishuOnboardingConnect({
           if (next.state === 'connected') handleConnected();
           if (next.state === 'failed') {
             setError(next.error?.description ?? next.error?.message);
-            revealFallback('failed');
+            revealFallback();
           }
         })
         .catch((err) => {
@@ -188,6 +180,7 @@ export function FeishuOnboardingConnect({
   // live registration, so fall back to a stand-in so the affordances are shootable.
   const verificationUrl = registration?.verificationUrl ?? (isPreview ? PREVIEW_VERIFICATION_URL : undefined);
   const isSlow = isPreview ? Boolean(previewSlow) : slow;
+  const authorizing = phase === 'authorizing' && Boolean(verificationUrl);
 
   // -------------------------------------------------------------------------
   // Render
@@ -195,29 +188,28 @@ export function FeishuOnboardingConnect({
 
   return (
     <div className="space-y-5">
-      {(phase === 'creating' || phase === 'authorizing') && (
-        <WorkingState
-          phase={phase}
-          slow={isSlow}
-          verificationUrl={verificationUrl}
-          onUseExisting={() => revealFallback('slow')}
-        />
-      )}
+      {authorizing && verificationUrl ? (
+        <FeishuConnectAffordances verificationUrl={verificationUrl} />
+      ) : phase === 'creating' || phase === 'authorizing' ? (
+        <CreatingState slow={isSlow} />
+      ) : null}
 
       {phase === 'fallback' && (
         <FallbackState
           appId={appId}
           appSecret={appSecret}
-          reason={fallbackReason}
           saving={saving}
           onAppId={setAppId}
           onAppSecret={setAppSecret}
           onSubmit={() => void handleUseExisting()}
-          onBack={() => setPhase(verificationUrl ? 'authorizing' : 'creating')}
         />
       )}
 
-      {phase === 'connected' && <ConnectedState />}
+      {phase === 'connected' && (
+        <div className="flex justify-center py-6">
+          <Loader2 className="h-6 w-6 animate-spin text-accent" aria-hidden />
+        </div>
+      )}
 
       {error && phase !== 'fallback' && (
         <p className="font-sans text-[12px] text-health-error">{error}</p>
@@ -227,70 +219,34 @@ export function FeishuOnboardingConnect({
 }
 
 // ---------------------------------------------------------------------------
-// Working state — "creating" and "authorizing". Reads as in-progress, never done.
-// In the authorizing phase the held URL is present, so we render the scan-first
-// auth panel beneath the waiting copy.
+// Creating — the brief pre-URL state. Reads as in-progress, never done.
 // ---------------------------------------------------------------------------
 
-function WorkingState({
-  onUseExisting,
-  phase,
-  slow,
-  verificationUrl,
-}: {
-  onUseExisting: () => void;
-  phase: 'creating' | 'authorizing';
-  slow: boolean;
-  verificationUrl?: string;
-}) {
-  // Mobile shows only the deep-link (no QR, no separate tab), so the authorizing
-  // body must not promise "Scan the QR or open the Feishu tab" there.
-  const isMobile = useIsMobile();
-  const title = phase === 'creating' ? 'Creating your Feishu app' : 'Waiting for you in Feishu';
-  const body =
-    phase === 'creating'
-      ? slow
-        ? 'Still setting up. This is taking longer than usual.'
-        : 'Setting up your Feishu app. This page updates on its own once it is ready.'
-      : isMobile
-        ? 'Open Feishu to confirm the new app. This page updates on its own once you are done.'
-        : 'Scan the QR or open the Feishu tab to confirm the new app. This page updates on its own once you are done.';
-
+function CreatingState({ slow }: { slow: boolean }) {
   return (
     <div className="flex flex-col items-center px-2 py-6 text-center">
       <span className="flex h-14 w-14 items-center justify-center rounded-full bg-accent-soft/50">
         <Loader2 className="h-6 w-6 animate-spin text-accent" aria-hidden />
       </span>
-      <div className="mt-4 font-serif text-[16px] font-semibold text-text">{title}</div>
-      <p className="mt-1.5 max-w-sm text-balance font-serif text-[13px] leading-relaxed text-text-muted">
-        {body}
-      </p>
-
-      {phase === 'authorizing' && verificationUrl && (
-        <FeishuConnectAffordances verificationUrl={verificationUrl} />
-      )}
-
-      <div className="mt-6 flex w-full items-center gap-3">
-        <span className="h-px flex-1 bg-border-soft" />
-        <button
-          type="button"
-          onClick={onUseExisting}
-          className="font-sans text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
-        >
-          Use an existing Feishu app instead
-        </button>
-        <span className="h-px flex-1 bg-border-soft" />
+      <div className="mt-4 font-serif text-[16px] font-semibold text-text">
+        Creating your Feishu app
       </div>
+      <p className="mt-1.5 max-w-sm text-balance font-serif text-[13px] leading-relaxed text-text-muted">
+        {slow ? 'Still setting up. This is taking longer than usual.' : 'Setting up your Feishu app.'}
+      </p>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Scan / deep-link affordances. One held verification URL, surfaced by context:
+// Scan / deep-link affordances — the trimmed connect screen. The QR leads (no
+// heading, no waiting paragraph): one held verification URL surfaced by context:
 //   - mobile  → a tap deep-link (you cannot scan your own screen)
-//   - desktop → the QR leads at full footprint (our users are scan-native), with
-//               "Open the Feishu tab" as a secondary user-gesture link beneath it
-// The "then confirm" clause in the helper is load-bearing: scan is not completion.
+//   - desktop → the QR leads at full footprint, with one supporting line and a
+//               weakened "open the Feishu tab" link beneath it
+// The "then confirm the new app there" clause is load-bearing: scan is not
+// completion. The existing-app credentials form is failure-only, so there is no
+// up-front escape link here.
 // ---------------------------------------------------------------------------
 
 function FeishuConnectAffordances({ verificationUrl }: { verificationUrl: string }) {
@@ -298,40 +254,36 @@ function FeishuConnectAffordances({ verificationUrl }: { verificationUrl: string
 
   if (isMobile) {
     return (
-      <div className="mt-5 flex w-full flex-col items-center gap-2">
+      <div className="flex flex-col items-center px-2 py-6 text-center">
         <Button
-          className="w-full"
+          className="w-full max-w-xs"
           render={<a href={verificationUrl} rel="noreferrer" target="_blank" />}
         >
           Open Feishu
           <ExternalLink className="h-4 w-4" aria-hidden />
         </Button>
-        <p className="max-w-xs text-balance font-sans text-[12px] leading-snug text-text-muted">
-          We will open the Feishu app. Confirm the new app there to continue.
+        <p className="mt-3 max-w-xs text-balance font-serif text-[13px] leading-relaxed text-text-muted">
+          Open Feishu to confirm the new app there.
         </p>
       </div>
     );
   }
 
   return (
-    <div className="mt-5 flex flex-col items-center gap-4">
-      <div className="flex flex-col items-center gap-2">
-        <span className="rounded-md border border-border-soft bg-white p-3">
-          <QRCode value={verificationUrl} size={144} bgColor="#ffffff" fgColor="#1c1a17" level="M" />
-        </span>
-        <span className="font-sans text-[13px] font-medium text-text">Scan with Feishu</span>
-        <p className="max-w-[16rem] text-balance font-sans text-[11px] leading-snug text-text-muted">
-          Scan this with the Feishu app, then confirm the new app on your phone.
-        </p>
-      </div>
-
+    <div className="flex flex-col items-center px-2 py-6 text-center">
+      <span className="rounded-md border border-border-soft bg-white p-3">
+        <QRCode value={verificationUrl} size={144} bgColor="#ffffff" fgColor="#1c1a17" level="M" />
+      </span>
+      <p className="mt-3 max-w-[18rem] text-balance font-serif text-[13px] leading-relaxed text-text-muted">
+        Scan with Feishu, then confirm the new app there.
+      </p>
       <a
-        className="inline-flex items-center gap-1.5 font-sans text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
+        className="mt-3 inline-flex items-center gap-1.5 font-sans text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
         href={verificationUrl}
         rel="noreferrer"
         target="_blank"
       >
-        Open the Feishu tab
+        Or open the Feishu tab in your browser
         <ExternalLink className="h-3 w-3" aria-hidden />
       </a>
     </div>
@@ -339,8 +291,10 @@ function FeishuConnectAffordances({ verificationUrl }: { verificationUrl: string
 }
 
 // ---------------------------------------------------------------------------
-// Fallback — existing-app credentials in the same step. Reached only when the
-// user chooses it, or on a hard registration failure.
+// Fallback — existing-app credentials in the same step. Reached ONLY on a hard
+// registration failure (no user-initiated escape). The registration is dead and
+// startedRef is already set, so there is no live waiting state to return to —
+// the credentials form is the only forward path, so there is no "Go back".
 // ---------------------------------------------------------------------------
 
 function FallbackState({
@@ -348,25 +302,17 @@ function FallbackState({
   appSecret,
   onAppId,
   onAppSecret,
-  onBack,
   onSubmit,
-  reason,
   saving,
 }: {
   appId: string;
   appSecret: string;
   onAppId: (v: string) => void;
   onAppSecret: (v: string) => void;
-  onBack: () => void;
   onSubmit: () => void;
-  reason: 'slow' | 'failed';
   saving: boolean;
 }) {
   const disabled = saving || !appId.trim() || !appSecret.trim();
-  const body =
-    reason === 'failed'
-      ? "We couldn't finish creating the new app. Connect an app you already have to continue."
-      : 'Connect an app you already have to continue.';
   return (
     <div className="space-y-3">
       <div className="space-y-3 rounded-sm border border-border-soft bg-surface px-4 py-3">
@@ -374,7 +320,9 @@ function FallbackState({
           <div className="font-serif text-[14px] font-semibold text-text">
             Connect an existing Feishu app
           </div>
-          <p className="mt-1 font-serif text-[12px] leading-snug text-text-muted">{body}</p>
+          <p className="mt-1 font-serif text-[12px] leading-snug text-text-muted">
+            We couldn&apos;t finish creating the new app. Connect an app you already have to continue.
+          </p>
         </div>
         <CredentialField label="App ID" placeholder="cli_..." value={appId} onChange={onAppId} />
         <CredentialField
@@ -399,40 +347,6 @@ function FallbackState({
           )}
         </Button>
       </div>
-
-      {/* Only the user-initiated ('slow') path can go back to a live waiting
-          state. On hard failure the registration is dead and startedRef is
-          already set, so 'creating' would be inert — the credentials form above
-          is the escape, so we omit Go back. */}
-      {reason !== 'failed' && (
-        <button
-          type="button"
-          onClick={onBack}
-          className="inline-flex items-center gap-1.5 font-sans text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
-        >
-          <ArrowLeft className="h-3 w-3" aria-hidden />
-          Go back
-        </button>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Connected — the honest "your agent is live" moment. Brief, before redirect.
-// The richer live-moment lives on the activity landing page.
-// ---------------------------------------------------------------------------
-
-function ConnectedState() {
-  return (
-    <div className="flex flex-col items-center px-2 py-6 text-center">
-      <span className="flex h-14 w-14 items-center justify-center rounded-full bg-health-ok-soft">
-        <Check className="h-6 w-6 text-health-ok" aria-hidden />
-      </span>
-      <div className="mt-4 font-serif text-[16px] font-semibold text-text">Your agent is live</div>
-      <p className="mt-1.5 max-w-sm text-balance font-serif text-[13px] leading-relaxed text-text-muted">
-        Feishu is connected. Taking you to your agent now.
-      </p>
     </div>
   );
 }

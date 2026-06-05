@@ -85,7 +85,7 @@ function StepDot({
 interface AgentCreateFlowProps {
   firstRun: boolean;
   onClose: (createdAgentId?: string) => void;
-  onComplete?: (agentId: string) => void;
+  onComplete?: (agentId: string, justConnected?: 'feishu') => void;
 }
 
 type FlowStep = 'agent' | 'connect' | 'owner' | 'platform';
@@ -243,8 +243,6 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     : new URLSearchParams();
   const previewStepRaw = Number(previewSearch.get('_previewStep') ?? 0);
   const previewFeishuPhase = (previewSearch.get('_previewFeishu') as FeishuOnboardingPhase | null) ?? undefined;
-  const previewFallbackReason =
-    (previewSearch.get('_previewFallbackReason') as 'slow' | 'failed' | null) ?? undefined;
   const previewSlow = previewSearch.get('_previewSlow') === '1';
   const previewPlatform = (previewSearch.get('_previewPlatform') as WorkspacePlatform | null) ?? undefined;
   const previewStepName = previewSearch.get('_previewStep');
@@ -475,7 +473,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
 
   async function handleFeishuConnected() {
     await awaitAgentsRefresh();
-    if (createdAgentId) onComplete?.(createdAgentId);
+    if (createdAgentId) onComplete?.(createdAgentId, 'feishu');
   }
 
   function handleOwnerComplete() {
@@ -768,7 +766,6 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
             agentId={createdAgentId}
             agentName={name.trim()}
             previewPhase={previewFeishuPhase}
-            previewFallbackReason={previewFallbackReason}
             previewSlow={previewSlow}
             onPhaseChange={setFeishuPhase}
             onConnect={() => void handleFeishuConnected()}
@@ -868,7 +865,11 @@ export function OnboardingPage() {
     <AgentCreateFlow
       firstRun={true}
       onClose={(createdAgentId) => navigate(createdAgentId ? `/agents/${createdAgentId}/profile` : '/')}
-      onComplete={(id) => navigate(`/agents/${id}/activity`)}
+      onComplete={(id, justConnected) =>
+        navigate(`/agents/${id}/activity`, {
+          state: justConnected ? { onboardingConnected: justConnected } : undefined,
+        })
+      }
     />
   );
 }
@@ -887,7 +888,12 @@ export function AgentCreateModal({ onClose }: { onClose: () => void }) {
           onClose();
           if (createdAgentId) navigate(`/agents/${createdAgentId}/profile`);
         }}
-        onComplete={(id) => { onClose(); navigate(`/agents/${id}/activity`); }}
+        onComplete={(id, justConnected) => {
+          onClose();
+          navigate(`/agents/${id}/activity`, {
+            state: justConnected ? { onboardingConnected: justConnected } : undefined,
+          });
+        }}
       />
     </div>
   );
