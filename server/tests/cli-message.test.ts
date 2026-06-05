@@ -140,6 +140,29 @@ test('message send records an audited Slack output', async () => {
   }
 });
 
+test('subscription mute accepts Feishu oc chat ids without Slack resolution', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-feishu-subscription-mute-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeSlackConfig(stateDir);
+      const mute = await runNode([cliPath, 'subscription', 'mute', '--channel', 'oc_feishu_group'], {
+        env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir },
+      });
+
+      assert.equal(mute.status, 0, mute.stderr || mute.stdout);
+      assert.equal(mute.stdout.trim(), 'muted successfully. channel=oc_feishu_group.');
+      const state = await loadState();
+      assert.ok(Object.values(state.subscriptions).some(
+        (subscription) => subscription.kind === 'channel'
+          && subscription.channelId === 'oc_feishu_group'
+          && subscription.mutedAt,
+      ));
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('message send resolves the active runtime item without ANIMA_INBOX_ITEM_ID env', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-message-active-item-test-'));
   const posts: Array<{ channel: string; text: string; thread_ts?: string }> = [];

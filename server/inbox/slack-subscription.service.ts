@@ -4,6 +4,7 @@ import {
   type SubscriptionRecord,
 } from '../storage/schema/subscription.store.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
+import type { FeishuInboxItem } from '../../shared/inbox.js';
 
 export { subscriptionStatus };
 export type { SubscriptionRecord };
@@ -35,6 +36,17 @@ export interface SlackRuntimeDecision {
     threadTs?: string;
   };
   reason: 'channel_follow' | 'dm' | 'mention' | 'muted' | 'not_addressed' | 'thread_follow';
+  shouldStartRuntime: boolean;
+}
+
+export interface FeishuRuntimeDecision {
+  attentionSuggestion?: string;
+  subscription?: {
+    status: 'following' | 'muted';
+    subscriptionId: string;
+    kind: SubscriptionRecord['kind'];
+  };
+  reason: 'channel_follow' | 'dm' | 'mention' | 'muted' | 'not_addressed';
   shouldStartRuntime: boolean;
 }
 
@@ -178,6 +190,16 @@ export async function slackRuntimeDecision(
   return consumeChannelFollow(event, options);
 }
 
+export async function feishuRuntimeDecision(
+  event: FeishuInboxItem,
+  options: { agentId?: string; duplicate?: boolean; mentioned?: boolean; nowMs?: number },
+): Promise<FeishuRuntimeDecision> {
+  if (event.chatType === 'p2p') return { reason: 'dm', shouldStartRuntime: true };
+  if (!event.chatId) return { reason: 'not_addressed', shouldStartRuntime: false };
+  if (options.mentioned) return activateFeishuMentionFollow(event, options);
+  return consumeFeishuChannelFollow(event, options);
+}
+
 function immediateSlackRuntimeReason(
   event: SlackRuntimeMessageEvent,
 ): SlackRuntimeDecision['reason'] | undefined {
@@ -275,6 +297,57 @@ async function consumeChannelFollow(
   };
 }
 
+async function activateFeishuMentionFollow(
+  event: FeishuInboxItem,
+  options: { agentId?: string; duplicate?: boolean; nowMs?: number },
+): Promise<FeishuRuntimeDecision> {
+  const agentId = options.agentId ?? 'anima';
+  if (options.duplicate) return { reason: 'mention', shouldStartRuntime: true };
+
+  const store = new SubscriptionStore(agentId);
+  const subscription = await followChannel({
+    agentId,
+    channelId: event.chatId,
+    now: new Date(options.nowMs ?? Date.now()).toISOString(),
+    store,
+  });
+  return {
+    reason: 'mention',
+    shouldStartRuntime: true,
+    subscription: subscriptionDecisionSummary(subscription),
+  };
+}
+
+async function consumeFeishuChannelFollow(
+  event: FeishuInboxItem,
+  options: { agentId?: string; duplicate?: boolean; nowMs?: number },
+): Promise<FeishuRuntimeDecision> {
+  const agentId = options.agentId ?? 'anima';
+  const nowMs = options.nowMs ?? Date.now();
+  const now = new Date(nowMs).toISOString();
+  const store = new SubscriptionStore(agentId);
+  const existing = await store.find(channelSubscriptionId(agentId, event.chatId));
+  if (existing?.mutedAt) {
+    return {
+      reason: 'muted',
+      shouldStartRuntime: false,
+      subscription: subscriptionDecisionSummary(existing),
+    };
+  }
+
+  const base = existing?.kind === 'channel'
+    ? existing
+    : channelSubscriptionRecord(agentId, event.chatId, now);
+  const { next, suggestion } = noteInboundWake(base, nowMs);
+  if (!options.duplicate) await store.replace(next);
+  return {
+    ...(suggestion ? { attentionSuggestion: suggestion } : {}),
+    reason: 'channel_follow',
+    shouldStartRuntime: true,
+    subscription: subscriptionDecisionSummary(next),
+  };
+}
+
 export async function recordChannelPost(input: {
   agentId: string;
   channelId: string;
@@ -345,6 +418,25 @@ function followThread(input: {
         lastActivityAt: input.now,
         ...(input.posted ? { lastPostedAt: input.now, wakeCount: 0, wakeWindowStartedAt: input.now } : {}),
         ...(input.unmute ? { mutedAt: undefined } : {}),
+        updatedAt: input.now,
+      });
+    });
+}
+
+function followChannel(input: {
+  agentId: string;
+  channelId: string;
+  now: string;
+  store: SubscriptionStore;
+}): Promise<SubscriptionRecord> {
+  return input.store.find(channelSubscriptionId(input.agentId, input.channelId))
+    .then((existing) => {
+      const base = existing?.kind === 'channel'
+        ? existing
+        : channelSubscriptionRecord(input.agentId, input.channelId, input.now);
+      return input.store.replace({
+        ...base,
+        lastActivityAt: input.now,
         updatedAt: input.now,
       });
     });

@@ -1,5 +1,6 @@
 import { createFeishuEventDispatcher, createFeishuWsClient } from '../feishu/client.js';
-import { feishuReceiveMessageEventFromData, normalizeFeishuMessage } from '../feishu/events.js';
+import { feishuMessageMentionsBot, feishuReceiveMessageEventFromData, normalizeFeishuMessage } from '../feishu/events.js';
+import { feishuRuntimeDecision, type FeishuRuntimeDecision } from '../inbox/slack-subscription.service.js';
 import { WakeQueueService, type WakeQueueEnqueueResult } from '../inbox/wake-queue.service.js';
 import type { FeishuConfig } from '../../shared/agent-config.js';
 import type { FeishuInboxItem } from '../../shared/inbox.js';
@@ -65,22 +66,35 @@ export class FeishuMessageTransport implements MessageTransport {
       console.log(JSON.stringify(feishuIgnoredLog(this.options.agentRuntimeKind), null, 2));
       return;
     }
+    const duplicate = Boolean(await this.options.queue.find(event.id));
+    const runtimeDecision = await feishuRuntimeDecision(event, {
+      agentId: this.options.queue.agentId,
+      duplicate,
+      mentioned: feishuMessageMentionsBot(receiveEvent, this.options.config.botOpenId),
+    });
+    if (!runtimeDecision.shouldStartRuntime) {
+      console.log(JSON.stringify(feishuIgnoredLog(this.options.agentRuntimeKind, runtimeDecision.reason), null, 2));
+      return;
+    }
     const decision = await this.options.queue.enqueue(event);
-    console.log(JSON.stringify(feishuDecisionLog(decision, this.options.agentRuntimeKind), null, 2));
+    console.log(JSON.stringify(feishuDecisionLog(decision, this.options.agentRuntimeKind, runtimeDecision), null, 2));
   }
 }
 
 function feishuDecisionLog(
   decision: WakeQueueEnqueueResult,
   agentRuntimeKind: string,
+  runtimeDecision?: FeishuRuntimeDecision,
 ): object {
   return {
     agentRuntime: agentRuntimeKind,
     duplicate: Boolean(decision.duplicate),
+    ...(runtimeDecision?.subscription ? { subscription: runtimeDecision.subscription } : {}),
     ingested: !decision.duplicate,
     itemId: decision.item.id,
     platform: 'feishu',
     queued: Boolean(decision.queued),
+    reason: runtimeDecision?.reason,
     surface: isFeishuItem(decision.item) ? {
       chatId: decision.item.chatId,
       chatType: decision.item.chatType,
@@ -89,13 +103,13 @@ function feishuDecisionLog(
   };
 }
 
-function feishuIgnoredLog(agentRuntimeKind: string): object {
+function feishuIgnoredLog(agentRuntimeKind: string, reason = 'not_addressed_or_unsupported'): object {
   return {
     agentRuntime: agentRuntimeKind,
     ignored: true,
     ingested: false,
     platform: 'feishu',
-    reason: 'not_addressed_or_unsupported',
+    reason,
   };
 }
 

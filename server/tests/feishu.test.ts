@@ -105,6 +105,23 @@ test('Feishu group wake policy requires the configured bot mention', () => {
   assert.equal(shouldWakeFeishuRuntime(event, 'ou_anima_bot'), true);
 });
 
+test('normalizes Feishu group messages even when they are not direct mentions', () => {
+  const item = normalizeFeishuMessage({
+    botOpenId: 'ou_anima_bot',
+    event: makeFeishuEvent({
+      message: {
+        chat_type: 'group',
+        content: JSON.stringify({ text: 'background group message' }),
+        mentions: [],
+      },
+    }),
+  });
+
+  assert.equal(item?.kind, 'feishu');
+  assert.equal(item?.chatType, 'group');
+  assert.equal(item?.text, 'background group message');
+});
+
 test('normalizes Feishu mention keys to readable labels', () => {
   const item = normalizeFeishuMessage({
     botOpenId: 'ou_anima_bot',
