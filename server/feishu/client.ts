@@ -28,6 +28,49 @@ export interface FeishuTextSendResult {
   threadId?: string;
 }
 
+export interface FeishuMessageListInput {
+  chatId: string;
+  cursor?: string;
+  limit: number;
+}
+
+export interface FeishuMessageListResult {
+  hasMore: boolean;
+  messages: FeishuConversationMessage[];
+  nextCursor?: string;
+}
+
+export interface FeishuConversationMessage {
+  bodyContent?: string;
+  chatId?: string;
+  createTime?: string;
+  deleted?: boolean;
+  mentions?: FeishuConversationMention[];
+  messageId: string;
+  messageType?: string;
+  parentId?: string;
+  rootId?: string;
+  sender?: FeishuConversationSender;
+  threadId?: string;
+  updated?: boolean;
+}
+
+export interface FeishuConversationMention {
+  id?: string;
+  idType?: string;
+  key: string;
+  name?: string;
+  tenantKey?: string;
+}
+
+export interface FeishuConversationSender {
+  id?: string;
+  idType?: string;
+  senderName?: string;
+  senderType?: string;
+  tenantKey?: string;
+}
+
 export interface FeishuReactionAddInput {
   emojiType: string;
   messageId: string;
@@ -44,6 +87,7 @@ export interface FeishuReactionRemoveInput {
 
 export interface FeishuMessageClient {
   addReaction(input: FeishuReactionAddInput): Promise<FeishuReactionAddResult>;
+  listMessages(input: FeishuMessageListInput): Promise<FeishuMessageListResult>;
   removeReaction(input: FeishuReactionRemoveInput): Promise<void>;
   replyText(input: FeishuTextReplyInput): Promise<FeishuTextSendResult>;
   sendText(input: FeishuTextSendInput): Promise<FeishuTextSendResult>;
@@ -123,6 +167,53 @@ interface FeishuSdkMessageReplyResult {
   };
 }
 
+interface FeishuSdkMessageListInput {
+  params: {
+    container_id: string;
+    container_id_type: 'chat';
+    page_size: number;
+    page_token?: string;
+    sort_type: 'ByCreateTimeDesc';
+  };
+}
+
+interface FeishuSdkMessageListResult {
+  data?: {
+    has_more?: boolean;
+    items?: FeishuSdkListedMessage[];
+    page_token?: string;
+  };
+}
+
+interface FeishuSdkListedMessage {
+  body?: {
+    content?: string;
+  };
+  chat_id?: string;
+  create_time?: string;
+  deleted?: boolean;
+  mentions?: Array<{
+    id?: string;
+    id_type?: string;
+    key?: string;
+    name?: string;
+    tenant_key?: string;
+  }>;
+  message_id?: string;
+  msg_type?: string;
+  parent_id?: string;
+  root_id?: string;
+  sender?: {
+    id?: string;
+    id_type?: string;
+    sender_name?: string;
+    sender_type?: string;
+    tenant_key?: string;
+  };
+  thread_id?: string;
+  updated?: boolean;
+}
+
 interface FeishuSdkReactionCreateInput {
   data: {
     reaction_type: {
@@ -151,6 +242,7 @@ interface FeishuSdkClient {
   im: {
     message: {
       create(input: FeishuSdkMessageCreateInput): Promise<FeishuSdkMessageReplyResult>;
+      list?(input: FeishuSdkMessageListInput): Promise<FeishuSdkMessageListResult>;
       reply(input: FeishuSdkMessageReplyInput): Promise<FeishuSdkMessageReplyResult>;
     };
     messageReaction: {
@@ -258,6 +350,25 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
         },
       });
     },
+    async listMessages(input) {
+      if (!client.im.message.list) {
+        throw new Error('Feishu SDK client does not support message.list');
+      }
+      const response = await client.im.message.list({
+        params: {
+          container_id: input.chatId,
+          container_id_type: 'chat',
+          ...(input.cursor ? { page_token: input.cursor } : {}),
+          page_size: input.limit,
+          sort_type: 'ByCreateTimeDesc',
+        },
+      });
+      return {
+        hasMore: Boolean(response.data?.has_more),
+        messages: feishuConversationMessagesFromSdk(response.data?.items),
+        ...(response.data?.page_token ? { nextCursor: response.data.page_token } : {}),
+      };
+    },
     async replyText(input) {
       const response = await client.im.message.reply({
         data: {
@@ -293,6 +404,52 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
         ...(response.data?.thread_id ? { threadId: response.data.thread_id } : {}),
       };
     },
+  };
+}
+
+function feishuConversationMessagesFromSdk(items: FeishuSdkListedMessage[] | undefined): FeishuConversationMessage[] {
+  return (items ?? [])
+    .filter((item): item is FeishuSdkListedMessage & { message_id: string } => typeof item.message_id === 'string')
+    .map((item) => ({
+      ...(item.body?.content ? { bodyContent: item.body.content } : {}),
+      ...(item.chat_id ? { chatId: item.chat_id } : {}),
+      ...(item.create_time ? { createTime: item.create_time } : {}),
+      ...(item.deleted !== undefined ? { deleted: item.deleted } : {}),
+      ...(item.mentions?.length ? { mentions: feishuMentionsFromSdk(item.mentions) } : {}),
+      messageId: item.message_id,
+      ...(item.msg_type ? { messageType: item.msg_type } : {}),
+      ...(item.parent_id ? { parentId: item.parent_id } : {}),
+      ...(item.root_id ? { rootId: item.root_id } : {}),
+      ...(item.sender ? { sender: feishuSenderFromSdk(item.sender) } : {}),
+      ...(item.thread_id ? { threadId: item.thread_id } : {}),
+      ...(item.updated !== undefined ? { updated: item.updated } : {}),
+    }));
+}
+
+function feishuMentionsFromSdk(
+  mentions: NonNullable<FeishuSdkListedMessage['mentions']>,
+): FeishuConversationMention[] {
+  return mentions
+    .filter((mention): mention is NonNullable<FeishuSdkListedMessage['mentions']>[number] & { key: string } =>
+      typeof mention.key === 'string' && mention.key.length > 0)
+    .map((mention) => ({
+      ...(mention.id ? { id: mention.id } : {}),
+      ...(mention.id_type ? { idType: mention.id_type } : {}),
+      key: mention.key,
+      ...(mention.name ? { name: mention.name } : {}),
+      ...(mention.tenant_key ? { tenantKey: mention.tenant_key } : {}),
+    }));
+}
+
+function feishuSenderFromSdk(
+  sender: NonNullable<FeishuSdkListedMessage['sender']>,
+): FeishuConversationSender {
+  return {
+    ...(sender.id ? { id: sender.id } : {}),
+    ...(sender.id_type ? { idType: sender.id_type } : {}),
+    ...(sender.sender_name ? { senderName: sender.sender_name } : {}),
+    ...(sender.sender_type ? { senderType: sender.sender_type } : {}),
+    ...(sender.tenant_key ? { tenantKey: sender.tenant_key } : {}),
   };
 }
 

@@ -4,6 +4,11 @@ import type {
   WebClient,
 } from '@slack/web-api';
 
+import { createFeishuMessageClient as createDefaultFeishuMessageClient } from '../feishu/client.js';
+import type {
+  FeishuMessageClient,
+  FeishuMessageListResult,
+} from '../feishu/client.js';
 import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
 import {
   slackTargetSummary,
@@ -13,10 +18,12 @@ import {
   type SlackThreadSummary,
 } from './slack-target.js';
 import {
+  loadAgentFromOpts,
   resolveToolAgentId,
   slackWebClientForOpts,
   withToolActivity,
 } from './tool-context.js';
+import { feishuTranscriptOutput } from './feishu-transcript.js';
 import {
   slackTranscriptOutput,
   slackTranscriptUserLabels,
@@ -62,13 +69,30 @@ interface SlackReadRequest {
   threadTs?: string;
 }
 
+interface FeishuReadRequest {
+  chatId: string;
+  client: FeishuMessageClient;
+  cursor?: string;
+  limit: number;
+}
+
 type SlackReadTool = 'anima.message.read';
 type SlackConversationReadResponse = ConversationsHistoryResponse | ConversationsRepliesResponse;
 type SlackConversationReadMessage =
   | NonNullable<ConversationsHistoryResponse['messages']>[number]
   | NonNullable<ConversationsRepliesResponse['messages']>[number];
 
-export async function runMessageRead(opts: MessageReadInput): Promise<void> {
+interface MessageReadDeps {
+  createFeishuMessageClient?: typeof createDefaultFeishuMessageClient;
+}
+
+export async function runMessageRead(opts: MessageReadInput, deps: MessageReadDeps = {}): Promise<void> {
+  const feishuRequest = await feishuReadRequest(opts, deps);
+  if (feishuRequest) {
+    await runFeishuReadTool({ opts, request: feishuRequest, tool: 'anima.message.read' });
+    return;
+  }
+
   const threadTs = opts.threadTs;
   const mode: 'history' | 'replies' = threadTs ? 'replies' : 'history';
   const request = await slackReadRequest({ ...opts, threadTs }, mode);
@@ -97,6 +121,44 @@ export async function runMessageRead(opts: MessageReadInput): Promise<void> {
             ...(request.oldest ? { oldest: request.oldest } : {}),
           }),
   });
+}
+
+async function feishuReadRequest(
+  opts: MessageReadInput,
+  deps: MessageReadDeps,
+): Promise<FeishuReadRequest | undefined> {
+  const chatId = opts.channel?.trim();
+  if (!chatId?.startsWith('oc_')) return undefined;
+  assertFeishuReadSupported(opts);
+
+  const agent = await loadAgentFromOpts(opts);
+  if (!agent.feishu.connected) {
+    throw new Error(`Agent ${agent.id} has no Feishu connection configured`);
+  }
+
+  return {
+    chatId,
+    client: (deps.createFeishuMessageClient ?? createDefaultFeishuMessageClient)(agent.feishu),
+    ...(opts.cursor ? { cursor: opts.cursor } : {}),
+    limit: Math.min(opts.limit ?? 20, 50),
+  };
+}
+
+function assertFeishuReadSupported(opts: MessageReadInput): void {
+  if (opts.threadTs) {
+    throw new Error('Feishu message read currently supports chat history only; omit --thread-ts');
+  }
+  const unsupported = [
+    opts.after ? '--after' : '',
+    opts.around ? '--around' : '',
+    opts.before ? '--before' : '',
+    opts.inclusive ? '--inclusive' : '',
+    opts.latest ? '--latest' : '',
+    opts.oldest ? '--oldest' : '',
+  ].filter(Boolean);
+  if (unsupported.length > 0) {
+    throw new Error(`Feishu message read currently supports --channel, --limit, and --cursor only; unsupported: ${unsupported.join(', ')}`);
+  }
 }
 
 async function slackReadRequest(opts: MessageReadInput, mode: 'history' | 'replies'): Promise<SlackReadRequest> {
@@ -182,6 +244,44 @@ async function runSlackReadTool(input: {
   });
 }
 
+async function runFeishuReadTool(input: {
+  opts: MessageReadInput;
+  request: FeishuReadRequest;
+  tool: SlackReadTool;
+}): Promise<void> {
+  const agentId = resolveToolAgentId(input.opts);
+  if (!agentId) throw new Error('message read requires current agent context for audit');
+  const basePayload = feishuReadActivityPayload(input.tool, input.request);
+
+  await withToolActivity({
+    audit: { agentId },
+    basePayload,
+    op: async () => {
+      const response = await input.request.client.listMessages({
+        chatId: input.request.chatId,
+        ...(input.request.cursor ? { cursor: input.request.cursor } : {}),
+        limit: input.request.limit,
+      });
+      console.log(feishuReadOutput(input.request, response));
+      return {
+        result: undefined,
+        completedPayload: {
+          hasMore: response.hasMore,
+          messageCount: response.messages.length,
+          nextCursor: response.nextCursor ?? '',
+        },
+      };
+    },
+  });
+}
+
+function feishuReadOutput(request: FeishuReadRequest, response: FeishuMessageListResult): string {
+  return feishuTranscriptOutput(response.messages, request, {
+    hasMore: response.hasMore,
+    nextCursor: response.nextCursor ?? '',
+  });
+}
+
 function slackReadActivityPayload(tool: SlackReadTool, request: SlackReadRequest): Record<string, unknown> {
   return {
     ...(request.after ? { after: request.after } : {}),
@@ -197,6 +297,18 @@ function slackReadActivityPayload(tool: SlackReadTool, request: SlackReadRequest
     limit: request.limit,
     ...(request.oldest ? { oldest: request.oldest } : {}),
     ...(request.threadTs ? { threadTs: request.threadTs } : {}),
+    tool,
+  };
+}
+
+function feishuReadActivityPayload(tool: SlackReadTool, request: FeishuReadRequest): Record<string, unknown> {
+  return {
+    channel: request.chatId,
+    channelDisplayName: 'Feishu chat',
+    channelKind: 'chat',
+    ...(request.cursor ? { cursor: request.cursor } : {}),
+    limit: request.limit,
+    platform: 'feishu',
     tool,
   };
 }
