@@ -80,12 +80,18 @@ export class WakeQueueService {
   }
 
   async recoverInterrupted(input: {
+    currentWorkerId?: string;
     isWorkerAlive: (workerId: string) => boolean;
+    now?: Date;
+    staleRunningMs?: number;
   }): Promise<InboxItem[]> {
     const recovered: InboxItem[] = [];
+    const nowMs = input.now?.getTime() ?? Date.now();
     for (const item of await this.listRunnable()) {
       if (item.handling.status !== 'running') continue;
-      if (item.handling.workerId && input.isWorkerAlive(item.handling.workerId)) continue;
+      const workerAlive = item.handling.workerId ? input.isWorkerAlive(item.handling.workerId) : false;
+      const workerReplaced = workerChangedInCurrentProcess(item.handling.workerId, input.currentWorkerId);
+      if (workerAlive && !workerReplaced && !staleRunningItem(item, nowMs, input.staleRunningMs)) continue;
       await this.store.requeue(item.id, {
         ...(item.handling.drainRequestedAt ? { resumeReason: 'runtime_restart' as const } : {}),
       });
@@ -195,4 +201,28 @@ export class WakeQueueService {
       this.logger.warn(`Wake queue retention failed for ${this.agentId}: ${errorMessage(error)}`);
     }
   }
+}
+
+function workerChangedInCurrentProcess(
+  itemWorkerId: string | undefined,
+  currentWorkerId: string | undefined,
+): boolean {
+  if (!itemWorkerId || !currentWorkerId || itemWorkerId === currentWorkerId) return false;
+  const itemPid = workerPid(itemWorkerId);
+  const currentPid = workerPid(currentWorkerId);
+  return itemPid !== undefined && itemPid === currentPid;
+}
+
+function workerPid(workerId: string): number | undefined {
+  const pidText = workerId.split(':').at(-1);
+  const pid = pidText ? Number.parseInt(pidText, 10) : Number.NaN;
+  return Number.isFinite(pid) && pid > 0 ? pid : undefined;
+}
+
+function staleRunningItem(item: InboxItem, nowMs: number, staleRunningMs: number | undefined): boolean {
+  if (staleRunningMs === undefined || staleRunningMs <= 0) return false;
+  const startedAtMs = Date.parse(item.handling.startedAt ?? item.handling.updatedAt);
+  const updatedAtMs = Date.parse(item.handling.updatedAt);
+  if (Number.isNaN(startedAtMs) || Number.isNaN(updatedAtMs)) return false;
+  return nowMs - startedAtMs >= staleRunningMs && nowMs - updatedAtMs >= staleRunningMs;
 }
