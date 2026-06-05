@@ -39,7 +39,7 @@ type SubscriptionListOptions = z.infer<typeof SubscriptionListSchema>;
 // Failure: human-readable error to stderr; exit 1.
 
 export function registerSubscriptionCommands(program: Command): void {
-  const subscription = program.command('subscription').description('Inspect and mute Slack attention.');
+  const subscription = program.command('subscription').description('Inspect and mute Slack or Feishu attention.');
 
   subscription
     .command('list')
@@ -52,9 +52,9 @@ export function registerSubscriptionCommands(program: Command): void {
 
   subscription
     .command('mute')
-    .description('Mute a Slack channel or thread.')
-    .option('--channel <channel>', 'channel ID (e.g. C123ABC) or name (e.g. prod)')
-    .option('--thread-ts <ts>', 'mute one thread in the channel')
+    .description('Mute a Slack channel/thread or Feishu chat.')
+    .option('--channel <channel>', 'Slack channel ID/name, or Feishu chat_id (oc_...)')
+    .option('--thread-ts <ts>', 'mute one Slack thread in the channel')
     .action(async (_, command) => {
       const opts = SubscriptionMuteSchema.parse(command.optsWithGlobals());
       await subscriptionMute(opts);
@@ -105,6 +105,15 @@ async function subscriptionList(opts: SubscriptionListOptions): Promise<void> {
 async function subscriptionMute(opts: SubscriptionMuteOptions): Promise<void> {
   const agentIdResolved = resolveAgentIdFrom(opts.agent);
   if (!agentIdResolved) throw new Error('Agent not specified. Pass --agent <id> or set ANIMA_AGENT_ID.');
+  if (isFeishuChatId(opts.channel)) {
+    if (opts.threadTs) throw new Error('Feishu subscription mute currently supports chat-level mutes only.');
+    await muteSubscriptionForAgent({
+      agentId: agentIdResolved,
+      channelId: opts.channel,
+    });
+    console.log(`muted successfully. channel=${opts.channel}.`);
+    return;
+  }
   const agent = await defaultAgentRegistryService.serviceFor(agentIdResolved).getConfig();
   const client = agent.slack?.botToken
     ? await agentSlackServiceForAgent(agent.id).getWebClient()
@@ -124,6 +133,10 @@ async function subscriptionMute(opts: SubscriptionMuteOptions): Promise<void> {
 
   const channelRef = channel.name ? `#${channel.name}` : channel.id;
   console.log(`muted successfully. channel=${channelRef}${opts.threadTs ? ` thread_ts=${opts.threadTs}` : ''}.`);
+}
+
+function isFeishuChatId(channel: string): boolean {
+  return channel.startsWith('oc_');
 }
 
 async function memberChannelsForAgent(agent: { id: string; slack?: { botToken?: string; teamId?: string } }): Promise<Array<{ id: string; name?: string }>> {

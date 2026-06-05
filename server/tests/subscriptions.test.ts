@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import {
   attentionMapForSubscriptions,
   ensureThreadSubscriptionForSentMessage,
+  feishuRuntimeDecision,
   muteSubscriptionForAgent,
   recordChannelPost,
   shouldReply,
@@ -14,6 +15,7 @@ import {
 } from '../inbox/slack-subscription.service.js';
 import { withAnimaHome } from './anima-home.js';
 import { loadState } from './helpers/state.js';
+import type { FeishuInboxItem } from '../../shared/inbox.js';
 
 test('Slack routing replies to DMs without mention', () => {
   assert.equal(
@@ -365,3 +367,92 @@ test('attention map shows member channels, muted threads, and quiet thread tails
     await rm(stateDir, { force: true, recursive: true });
   }
 });
+
+test('Feishu group chats wake until muted, matching Slack channel follow semantics', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-channel-follow-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const topLevel = await feishuRuntimeDecision(
+        makeFeishuItem({ messageId: 'om_follow_1', text: 'top-level group message' }),
+        { agentId: 'scout', nowMs: 2_000 },
+      );
+      assert.equal(topLevel.shouldStartRuntime, true);
+      assert.equal(topLevel.reason, 'channel_follow');
+      assert.equal(topLevel.subscription?.kind, 'channel');
+      assert.equal(topLevel.subscription?.status, 'following');
+
+      await muteSubscriptionForAgent({
+        agentId: 'scout',
+        channelId: 'oc_group',
+        nowMs: 3_000,
+      });
+      const muted = await feishuRuntimeDecision(
+        makeFeishuItem({ messageId: 'om_follow_2', text: 'muted group message' }),
+        { agentId: 'scout', nowMs: 4_000 },
+      );
+      assert.equal(muted.shouldStartRuntime, false);
+      assert.equal(muted.reason, 'muted');
+
+      const mention = await feishuRuntimeDecision(
+        makeFeishuItem({ messageId: 'om_follow_3', text: '@Anima muted group pierce' }),
+        { agentId: 'scout', mentioned: true, nowMs: 5_000 },
+      );
+      assert.equal(mention.shouldStartRuntime, true);
+      assert.equal(mention.reason, 'mention');
+
+      const stillMuted = await feishuRuntimeDecision(
+        makeFeishuItem({ messageId: 'om_follow_4', text: 'still muted without mention' }),
+        { agentId: 'scout', nowMs: 6_000 },
+      );
+      assert.equal(stillMuted.shouldStartRuntime, false);
+      assert.equal(stillMuted.reason, 'muted');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('Feishu attention nudge suggests muting the oc chat id after repeated wakes', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-attention-nudge-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      let last;
+      for (let i = 0; i < 6; i += 1) {
+        last = await feishuRuntimeDecision(
+          makeFeishuItem({ messageId: `om_nudge_${i}`, text: `wake ${i}` }),
+          { agentId: 'scout', nowMs: 1_000 + i },
+        );
+      }
+      assert.equal(last?.shouldStartRuntime, true);
+      assert.match(last?.attentionSuggestion ?? '', /anima subscription mute --channel oc_group/);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+function makeFeishuItem(input: {
+  chatId?: string;
+  chatType?: string;
+  messageId: string;
+  text: string;
+}): FeishuInboxItem {
+  return {
+    actor: { openId: 'ou_alice', senderType: 'user' },
+    appId: 'cli_test',
+    chatId: input.chatId ?? 'oc_group',
+    chatType: input.chatType ?? 'group',
+    handling: {
+      createdAt: '2026-06-05T07:00:00.000Z',
+      queuedAt: '2026-06-05T07:00:00.000Z',
+      status: 'queued',
+      updatedAt: '2026-06-05T07:00:00.000Z',
+    },
+    id: `feishu:tenant_test:${input.chatId ?? 'oc_group'}:${input.messageId}`,
+    kind: 'feishu',
+    messageId: input.messageId,
+    receivedAt: '2026-06-05T07:00:00.000Z',
+    tenantKey: 'tenant_test',
+    text: input.text,
+  };
+}
