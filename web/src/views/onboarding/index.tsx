@@ -85,7 +85,16 @@ function StepDot({
 interface AgentCreateFlowProps {
   firstRun: boolean;
   onClose: (createdAgentId?: string) => void;
-  onComplete?: (agentId: string, justConnected?: 'feishu') => void;
+  onComplete?: (
+    agentId: string,
+    justConnected?: 'feishu',
+    /**
+     * True only when the connect will produce a Feishu greeting (auto-registered
+     * app). The manual existing-app path is left ungreeted (#154), so it lands on
+     * the activity view but must NOT arm the "say hi" banner.
+     */
+    greetingBanner?: boolean,
+  ) => void;
 }
 
 type FlowStep = 'agent' | 'connect' | 'owner' | 'platform';
@@ -471,9 +480,12 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     setStep('owner');
   }
 
-  async function handleFeishuConnected() {
+  async function handleFeishuConnected(source: 'registerApp' | 'manual') {
     await awaitAgentsRefresh();
-    if (createdAgentId) onComplete?.(createdAgentId, 'feishu');
+    // Jump to activity on any successful connect, but only arm the greeting
+    // banner when the app was auto-registered — the manual path has no owner
+    // open_id and never greets (#154), so a "say hi" promise there would be false.
+    if (createdAgentId) onComplete?.(createdAgentId, 'feishu', source === 'registerApp');
   }
 
   function handleOwnerComplete() {
@@ -768,7 +780,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
             previewPhase={previewFeishuPhase}
             previewSlow={previewSlow}
             onPhaseChange={setFeishuPhase}
-            onConnect={() => void handleFeishuConnected()}
+            onConnect={(info) => void handleFeishuConnected(info.source)}
           />
         </div>
       )}
@@ -865,9 +877,11 @@ export function OnboardingPage() {
     <AgentCreateFlow
       firstRun={true}
       onClose={(createdAgentId) => navigate(createdAgentId ? `/agents/${createdAgentId}/profile` : '/')}
-      onComplete={(id, justConnected) =>
+      onComplete={(id, justConnected, greetingBanner) =>
         navigate(`/agents/${id}/activity`, {
-          state: justConnected ? { onboardingConnected: justConnected } : undefined,
+          state: justConnected
+            ? { onboardingConnected: justConnected, feishuGreetingBanner: Boolean(greetingBanner) }
+            : undefined,
         })
       }
     />
@@ -888,10 +902,12 @@ export function AgentCreateModal({ onClose }: { onClose: () => void }) {
           onClose();
           if (createdAgentId) navigate(`/agents/${createdAgentId}/profile`);
         }}
-        onComplete={(id, justConnected) => {
+        onComplete={(id, justConnected, greetingBanner) => {
           onClose();
           navigate(`/agents/${id}/activity`, {
-            state: justConnected ? { onboardingConnected: justConnected } : undefined,
+            state: justConnected
+              ? { onboardingConnected: justConnected, feishuGreetingBanner: Boolean(greetingBanner) }
+              : undefined,
           });
         }}
       />

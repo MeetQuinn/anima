@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useReducer, useRef } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { AlertCircle, Loader2, X } from 'lucide-react';
@@ -432,25 +432,32 @@ export default function Activity() {
       connectedPlatform !== undefined);
 
   // --- Post-onboarding first landing -----------------------------------------
-  // A fresh Feishu connect navigates here with router state. On that first
-  // arrival we (a) force the activity view regardless of the user's stored lens
-  // preference — the "agent is alive" payoff — without persisting that override,
-  // and (b) arm the one-time greeting banner. The signal is consumed immediately
-  // so a reload / back-navigation never replays it.
+  // A fresh Feishu connect navigates here with router state:
+  //   { onboardingConnected: 'feishu', feishuGreetingBanner?: boolean }
+  // On that arrival we (a) force the activity view regardless of the user's
+  // stored lens preference — the "agent is alive" payoff — without persisting
+  // that override, and (b) arm the one-time greeting banner, but ONLY when the
+  // app was auto-registered (feishuGreetingBanner true). The manual existing-app
+  // path has no owner open_id and is left ungreeted (#154), so it jumps to the
+  // activity view but shows no "say hi" promise.
+  //
+  // The signal is read from the *current* location every render and consumed via
+  // a route-keyed effect, NOT captured at mount: React Router reuses this Activity
+  // component when the user creates another agent from an existing activity page,
+  // so a mount-only read would miss the freshly arrived state.
   const location = useLocation();
   const navigate = useNavigate();
-  const justConnected =
-    (location.state as { onboardingConnected?: 'feishu' | 'slack' } | null)?.onboardingConnected;
-  // Captured once at mount so the landing logic is pinned to the agent we
-  // actually arrived on (the route stays mounted across agentId param changes).
-  const [landingAgentId] = useState(agentId);
+  const landingState = location.state as
+    | { onboardingConnected?: 'feishu' | 'slack'; feishuGreetingBanner?: boolean }
+    | null;
+  const justConnectedFeishu = landingState?.onboardingConnected === 'feishu';
+  const landingWantsBanner = justConnectedFeishu && landingState?.feishuGreetingBanner === true;
 
+  // Force the activity lens for any fresh connect landing (auto or manual).
+  // applyLensOverride is idempotent and non-persisting.
   useEffect(() => {
-    if (!justConnected) return;
-    applyLensOverride('activity');
-    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (justConnectedFeishu) applyLensOverride('activity');
+  }, [location.key, justConnectedFeishu]);
 
   // The transient override applies only to the agent we landed on; drop it when
   // the user navigates to a different agent (the route stays mounted across param
@@ -466,29 +473,44 @@ export default function Activity() {
   const feishuConnKey = agent?.feishu?.connected
     ? (agent.feishu.appId?.trim() || 'connected')
     : undefined;
-  // Captured once at mount; the agentId guard below stops it leaking to other agents.
-  const [pendingConnect] = useState<'feishu' | 'slack' | undefined>(justConnected);
-  const [dismissNonce, setDismissNonce] = useState(0);
+  const [, forceHelloRerender] = useReducer((n: number) => n + 1, 0);
 
-  // The fresh-connect landing shows the banner immediately. A reload (no router
-  // state) relies on the persisted "armed" flag instead.
-  const landingArm = pendingConnect === 'feishu' && agentId === landingAgentId;
-
-  // Persist the arm flag so the banner survives a reload until it is dismissed.
-  // Write-only effect (no React state) — keyed to the agent we landed on.
+  // Arm + consume the landing signal. Keyed on the route + connection so it
+  // survives this component being reused for a freshly created agent, and waits
+  // for the connection key (appId) to resolve before persisting the arm so a late
+  // appId can't drop it. The ref stops a re-arm after the consuming replace.
+  const landingProcessedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (pendingConnect !== 'feishu') return;
-    if (agentId !== landingAgentId || !agentId || !feishuConnKey) return;
-    try {
-      localStorage.setItem(`feishu-hello-armed:${agentId}`, feishuConnKey);
-    } catch {
-      /* localStorage unavailable */
+    if (!justConnectedFeishu) return;
+    if (landingProcessedRef.current === location.key) return;
+    if (landingWantsBanner) {
+      // Wait for the appId; the effect re-fires when feishuConnKey resolves.
+      if (!agentId || !feishuConnKey) return;
+      try {
+        localStorage.setItem(`feishu-hello-armed:${agentId}`, feishuConnKey);
+      } catch {
+        /* localStorage unavailable */
+      }
     }
-  }, [pendingConnect, agentId, feishuConnKey, landingAgentId]);
+    landingProcessedRef.current = location.key;
+    // Consume the signal so a reload / back-navigation never replays it. The
+    // navigate re-renders, so the render-body read below picks up the new arm.
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+  }, [
+    justConnectedFeishu,
+    landingWantsBanner,
+    location.key,
+    location.pathname,
+    location.search,
+    agentId,
+    feishuConnKey,
+    navigate,
+  ]);
 
-  // Read the persisted arm/dismiss flags for this agent + connection. dismissNonce
-  // forces a re-read right after we write a dismissal.
-  const helloPersisted = useMemo(() => {
+  // Read the persisted arm/dismiss flags fresh each render — cheap, and always in
+  // sync with the writes above and the dismissal below (each is followed by a
+  // re-render: the consuming navigate, or forceHelloRerender on dismiss).
+  const helloPersisted = (() => {
     if (!agentId || !feishuConnKey) return { armed: false, dismissed: false };
     try {
       return {
@@ -498,8 +520,7 @@ export default function Activity() {
     } catch {
       return { armed: false, dismissed: false };
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentId, feishuConnKey, dismissNonce]);
+  })();
 
   function dismissHelloBanner() {
     if (agentId && feishuConnKey) {
@@ -509,11 +530,12 @@ export default function Activity() {
         /* localStorage unavailable */
       }
     }
-    setDismissNonce((n) => n + 1);
+    forceHelloRerender();
   }
 
   const showHelloBanner =
-    previewHelloBanner || ((landingArm || helloPersisted.armed) && !helloPersisted.dismissed);
+    previewHelloBanner ||
+    ((landingWantsBanner || helloPersisted.armed) && !helloPersisted.dismissed);
 
   const error = activitiesError instanceof Error ? activitiesError.message : activitiesError ? String(activitiesError) : null;
 

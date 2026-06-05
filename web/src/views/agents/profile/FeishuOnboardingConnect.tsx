@@ -46,7 +46,14 @@ const ACTIVE_STATES = ['starting', 'waiting', 'slow_down', 'domain_switched'];
 interface Props {
   agentId: string;
   agentName?: string;
-  onConnect?: () => void;
+  /**
+   * Reports a successful connect and how it happened. `registerApp` = the app
+   * was auto-created (an owner open_id exists, so the greeting will fire);
+   * `manual` = existing-app credentials on the create-failure path (#154 leaves
+   * it ungreeted — no owner open_id). The parent uses this to arm the "say hi"
+   * banner only when a greeting will actually happen.
+   */
+  onConnect?: (info: { source: 'registerApp' | 'manual' }) => void;
   /** Reports the current phase up so the parent stepper can mark connect done. */
   onPhaseChange?: (phase: FeishuOnboardingPhase) => void;
   /** Forces a phase for dev/screenshot preview; disables live wiring. */
@@ -105,7 +112,7 @@ export function FeishuOnboardingConnect({
       .then((next) => {
         setRegistration(next);
         if (next.state === 'connected') {
-          handleConnected();
+          handleConnected('registerApp');
         } else if (next.verificationUrl) {
           setPhase((prev) => (prev === 'fallback' || prev === 'connected' ? prev : 'authorizing'));
         }
@@ -136,7 +143,7 @@ export function FeishuOnboardingConnect({
           if (next.verificationUrl) {
             setPhase((prev) => (prev === 'fallback' || prev === 'connected' ? prev : 'authorizing'));
           }
-          if (next.state === 'connected') handleConnected();
+          if (next.state === 'connected') handleConnected('registerApp');
           if (next.state === 'failed') {
             setError(next.error?.description ?? next.error?.message);
             revealFallback();
@@ -154,11 +161,11 @@ export function FeishuOnboardingConnect({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, registration?.registrationId, registrationActive]);
 
-  function handleConnected() {
+  function handleConnected(source: 'registerApp' | 'manual') {
     if (slowTimerRef.current !== null) window.clearTimeout(slowTimerRef.current);
     setPhase('connected');
     refreshDashboardData();
-    onConnect?.();
+    onConnect?.({ source });
   }
 
   async function handleUseExisting() {
@@ -168,7 +175,7 @@ export function FeishuOnboardingConnect({
     try {
       await connectAgentFeishu(agentId, { appId: appId.trim(), appSecret: appSecret.trim() });
       setAppSecret('');
-      handleConnected();
+      handleConnected('manual');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Feishu connection failed');
     } finally {
