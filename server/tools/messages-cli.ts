@@ -44,24 +44,26 @@ const MessageReactSchema = GlobalFlags.extend({
 export function registerMessageCommands(program: Command): void {
   const message = program
     .command('message')
-    .description('Read Slack messages and record Slack outputs');
+    .description('Read Slack or Feishu messages and record Slack or Feishu outputs');
 
   // Input:   anima message read --channel <id> [--thread-ts <ts>] [--limit <n>]
   //          [--around <ts> | --before <ts> | --after <ts>] [--oldest <ts>] [--latest <ts>]
   //          [--cursor <c>] [--inclusive]
-  // Output:  multi-line transcript, oldest → newest, one line per Slack message:
+  // Output:  multi-line transcript, one line per Slack or Feishu message:
   //            [channel=<display> [channel_id=<id>] [thread_ts=<ts>] message_ts=<ts>
   //             time=<iso> [user_id=<id>] [user_local_time=<local> user_tz=<tz>]] <actor>: <text>
+  //            [platform=feishu chat_id=<oc_...> [thread_id=<id>] message_id=<om_...>
+  //             time=<iso> [user_id=<id>]] <actor>: <text>
   //          File attachments append a trailing line:
   //            attached: id=<id> name=<name> mimetype=<m> size_bytes=<n> (path=<local> | use anima file fetch <id>)
   //          Pagination: [page has_more=<bool> next_cursor=<cursor|-}]
   // Failure: human-readable error to stderr; exit 1.
   message
     .command('read')
-    .description('Read messages from a Slack channel or thread.')
-    .option('--channel <channel>', 'channel ID (e.g. C123ABC) or name (e.g. prod)\nDM: D-prefixed channel ID (e.g. D123ABC)')
-    .option('--thread-ts <ts>', 'read a thread; omit for the top-level channel')
-    .option('--limit <n>', 'max messages to return (default: 20 for channel, 50 for thread; hard cap: 200)')
+    .description('Read messages from a Slack channel/thread or Feishu chat.')
+    .option('--channel <channel>', 'Slack channel/DM target, or Feishu chat_id (oc_...)')
+    .option('--thread-ts <ts>', 'Slack thread timestamp; Feishu chat history does not support this yet')
+    .option('--limit <n>', 'max messages to return (Slack cap: 200; Feishu cap: 50)')
     .option('--around <ts>', 'window centered on ts (inclusive); cannot combine with --oldest/--latest/--cursor')
     .option('--before <ts>', 'messages before ts (exclusive); cannot combine with --oldest/--latest/--cursor')
     .option('--after <ts>', 'messages after ts (exclusive); cannot combine with --oldest/--latest/--cursor')

@@ -16,9 +16,10 @@ import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import { messageFromInboxItem } from '../messages/message.projection.js';
+import { runMessageRead } from '../tools/message-read.js';
 import { runMessageSend } from '../tools/messages.js';
 import { withAnimaHome } from './anima-home.js';
-import type { FeishuTextSendInput } from '../feishu/client.js';
+import type { FeishuMessageListInput, FeishuTextSendInput } from '../feishu/client.js';
 import type { FeishuConfig } from '../../shared/agent-config.js';
 
 function makeFeishuEvent(overrides: Omit<Partial<FeishuReceiveMessageEvent>, 'message' | 'sender'> & {
@@ -555,6 +556,163 @@ test('Feishu text replies can post in a message topic', async () => {
   });
 });
 
+test('Feishu message reads can list chat history', async () => {
+  const config: FeishuConfig = {
+    appId: 'cli_test',
+    appSecret: 'secret',
+    connected: true,
+    encryptKey: '',
+    verificationToken: '',
+  };
+  let capturedList: unknown;
+
+  const client = createFeishuMessageClient(config, {
+    createClient() {
+      return {
+        im: {
+          message: {
+            async create() {
+              throw new Error('unexpected create call');
+            },
+            async list(input) {
+              capturedList = input;
+              return {
+                data: {
+                  has_more: true,
+                  items: [{
+                    body: { content: JSON.stringify({ text: 'hello @_user_1' }) },
+                    chat_id: 'oc_test_chat',
+                    create_time: '1780410000000',
+                    mentions: [{ id: 'ou_bob', id_type: 'open_id', key: '@_user_1', name: 'Bob' }],
+                    message_id: 'om_test_message',
+                    msg_type: 'text',
+                    sender: {
+                      id: 'ou_alice',
+                      id_type: 'open_id',
+                      sender_name: 'Alice',
+                      sender_type: 'user',
+                    },
+                  }],
+                  page_token: 'cursor-next',
+                },
+              };
+            },
+            async reply() {
+              throw new Error('unexpected reply call');
+            },
+          },
+          messageReaction: {
+            async create() {
+              throw new Error('unexpected reaction create call');
+            },
+            async delete() {
+              throw new Error('unexpected reaction delete call');
+            },
+          },
+        },
+      };
+    },
+  });
+
+  const result = await client.listMessages({ chatId: 'oc_test_chat', cursor: 'cursor-1', limit: 2 });
+
+  assert.deepEqual(capturedList, {
+    params: {
+      container_id: 'oc_test_chat',
+      container_id_type: 'chat',
+      page_size: 2,
+      page_token: 'cursor-1',
+      sort_type: 'ByCreateTimeDesc',
+    },
+  });
+  assert.deepEqual(result, {
+    hasMore: true,
+    messages: [{
+      bodyContent: JSON.stringify({ text: 'hello @_user_1' }),
+      chatId: 'oc_test_chat',
+      createTime: '1780410000000',
+      mentions: [{ id: 'ou_bob', idType: 'open_id', key: '@_user_1', name: 'Bob' }],
+      messageId: 'om_test_message',
+      messageType: 'text',
+      sender: {
+        id: 'ou_alice',
+        idType: 'open_id',
+        senderName: 'Alice',
+        senderType: 'user',
+      },
+    }],
+    nextCursor: 'cursor-next',
+  });
+});
+
+test('message read can fetch Feishu chat history explicitly', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-message-read-test-'));
+  const reads: FeishuMessageListInput[] = [];
+  const logLines: string[] = [];
+  const originalLog = console.log;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir);
+      console.log = (...args: unknown[]) => {
+        logLines.push(args.map(String).join(' '));
+      };
+      await runMessageRead(
+        { agent: 'scout', channel: 'oc_target_chat', cursor: 'cursor-1', limit: 2 },
+        {
+          createFeishuMessageClient() {
+            return {
+              async addReaction() {
+                throw new Error('unexpected reaction add');
+              },
+              async listMessages(input) {
+                reads.push(input);
+                return {
+                  hasMore: true,
+                  messages: [{
+                    bodyContent: JSON.stringify({ text: 'hello @_user_1' }),
+                    chatId: 'oc_target_chat',
+                    createTime: '1780410000000',
+                    mentions: [{ key: '@_user_1', name: 'Bob' }],
+                    messageId: 'om_test_message',
+                    messageType: 'text',
+                    sender: {
+                      id: 'ou_alice',
+                      idType: 'open_id',
+                      senderName: 'Alice',
+                      senderType: 'user',
+                    },
+                  }],
+                  nextCursor: 'cursor-next',
+                };
+              },
+              async removeReaction() {
+                throw new Error('unexpected reaction remove');
+              },
+              async replyText() {
+                throw new Error('unexpected topic reply');
+              },
+              async sendText() {
+                throw new Error('unexpected send');
+              },
+            };
+          },
+        },
+      );
+    });
+
+    assert.deepEqual(reads, [{ chatId: 'oc_target_chat', cursor: 'cursor-1', limit: 2 }]);
+    const output = logLines.join('\n');
+    assert.match(
+      output,
+      /\[platform=feishu chat_id=oc_target_chat message_id=om_test_message time=2026-06-02T14:20:00\.000Z user_id=ou_alice\] Alice: hello @Bob/,
+    );
+    assert.match(output, /\[page has_more=true next_cursor=cursor-next\]/);
+  } finally {
+    console.log = originalLog;
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('message send can target a Feishu chat explicitly', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-explicit-chat-test-'));
   const sent: FeishuTextSendInput[] = [];
@@ -568,6 +726,9 @@ test('message send can target a Feishu chat explicitly', async () => {
             return {
               async addReaction() {
                 throw new Error('unexpected reaction add');
+              },
+              async listMessages() {
+                throw new Error('unexpected message read');
               },
               async removeReaction() {
                 throw new Error('unexpected reaction remove');
@@ -629,6 +790,9 @@ test('message send can target a Feishu owner open_id and record greeting deliver
               async addReaction() {
                 throw new Error('unexpected reaction add');
               },
+              async listMessages() {
+                throw new Error('unexpected message read');
+              },
               async removeReaction() {
                 throw new Error('unexpected reaction remove');
               },
@@ -678,6 +842,9 @@ test('message send can target a Feishu topic explicitly', async () => {
             return {
               async addReaction() {
                 throw new Error('unexpected reaction add');
+              },
+              async listMessages() {
+                throw new Error('unexpected message read');
               },
               async removeReaction() {
                 throw new Error('unexpected reaction remove');

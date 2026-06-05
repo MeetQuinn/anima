@@ -38,6 +38,9 @@ function fakeFeishuClient() {
       counter += 1;
       return { reactionId: `r${counter}:${input.emojiType}` };
     },
+    async listMessages() {
+      return { hasMore: false, messages: [] };
+    },
     async removeReaction(input) {
       calls.remove.push(input);
     },
@@ -107,6 +110,9 @@ test('feishu processing reaction add swallows client errors', async () => {
   const client: FeishuMessageClient = {
     async addReaction() {
       throw new Error('boom');
+    },
+    async listMessages() {
+      return { hasMore: false, messages: [] };
     },
     async removeReaction() {},
     async replyText() {
