@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 
 import {
   feishuReceiveMessageEventFromData,
@@ -17,6 +18,7 @@ import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import { messageFromInboxItem } from '../messages/message.projection.js';
 import { runFileSend } from '../tools/file-send.js';
+import { runFileFetch } from '../tools/files-cli.js';
 import { runMessageRead } from '../tools/message-read.js';
 import { runMessageSend } from '../tools/messages.js';
 import { withAnimaHome } from './anima-home.js';
@@ -24,6 +26,7 @@ import { allActivities, loadState } from './helpers/state.js';
 import type {
   FeishuFileSendInput,
   FeishuFileUploadInput,
+  FeishuMessageResourceDownloadInput,
   FeishuMessageListInput,
   FeishuTextSendInput,
 } from '../feishu/client.js';
@@ -671,6 +674,9 @@ test('message read can fetch Feishu chat history explicitly', async () => {
               async addReaction() {
                 throw new Error('unexpected reaction add');
               },
+              async downloadMessageResource() {
+                throw new Error('unexpected file fetch');
+              },
               async listMessages(input) {
                 reads.push(input);
                 return {
@@ -739,6 +745,9 @@ test('message send can target a Feishu chat explicitly', async () => {
             return {
               async addReaction() {
                 throw new Error('unexpected reaction add');
+              },
+              async downloadMessageResource() {
+                throw new Error('unexpected file fetch');
               },
               async listMessages() {
                 throw new Error('unexpected message read');
@@ -809,6 +818,9 @@ test('message send can target a Feishu owner open_id and record greeting deliver
               async addReaction() {
                 throw new Error('unexpected reaction add');
               },
+              async downloadMessageResource() {
+                throw new Error('unexpected file fetch');
+              },
               async listMessages() {
                 throw new Error('unexpected message read');
               },
@@ -867,6 +879,9 @@ test('message send can target a Feishu topic explicitly', async () => {
             return {
               async addReaction() {
                 throw new Error('unexpected reaction add');
+              },
+              async downloadMessageResource() {
+                throw new Error('unexpected file fetch');
               },
               async listMessages() {
                 throw new Error('unexpected message read');
@@ -1079,6 +1094,9 @@ test('file send can upload to a Feishu chat explicitly', async () => {
               async addReaction() {
                 throw new Error('unexpected reaction add');
               },
+              async downloadMessageResource() {
+                throw new Error('unexpected file fetch');
+              },
               async listMessages() {
                 throw new Error('unexpected message read');
               },
@@ -1142,6 +1160,238 @@ test('file send can upload to a Feishu chat explicitly', async () => {
       text: 'see attached',
     }]);
     assert.match(logLines.join('\n'), /uploaded successfully\. feishu chat_id=oc_target_chat, files=1\./);
+  } finally {
+    console.log = originalLog;
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('Feishu message resources can be downloaded from the SDK stream', async () => {
+  const config: FeishuConfig = {
+    appId: 'cli_test',
+    appSecret: 'secret',
+    connected: true,
+    encryptKey: '',
+    verificationToken: '',
+  };
+  let capturedGet: unknown;
+
+  const client = createFeishuMessageClient(config, {
+    createClient() {
+      return {
+        im: {
+          message: {
+            async create() {
+              throw new Error('unexpected create call');
+            },
+            async reply() {
+              throw new Error('unexpected reply call');
+            },
+          },
+          messageReaction: {
+            async create() {
+              throw new Error('unexpected reaction create call');
+            },
+            async delete() {
+              throw new Error('unexpected reaction delete call');
+            },
+          },
+          messageResource: {
+            async get(input) {
+              capturedGet = input;
+              return {
+                getReadableStream() {
+                  return Readable.from([Buffer.from('downloaded-image')]);
+                },
+                headers: {
+                  'Content-Disposition': 'attachment; filename="photo.png"',
+                  'Content-Type': 'image/png',
+                },
+              };
+            },
+          },
+        },
+      };
+    },
+  });
+
+  const downloaded = await client.downloadMessageResource({
+    fileKey: 'image_key_photo',
+    messageId: 'om_photo',
+    resourceType: 'image',
+  });
+
+  assert.deepEqual(capturedGet, {
+    params: {
+      type: 'image',
+    },
+    path: {
+      file_key: 'image_key_photo',
+      message_id: 'om_photo',
+    },
+  });
+  assert.equal(downloaded.bytes.toString(), 'downloaded-image');
+  assert.equal(downloaded.contentType, 'image/png');
+  assert.equal(downloaded.filename, 'photo.png');
+});
+
+test('message read emits Feishu file resource ids for fetch', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-message-read-files-test-'));
+  const logLines: string[] = [];
+  const originalLog = console.log;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir);
+      console.log = (...args: unknown[]) => {
+        logLines.push(args.map(String).join(' '));
+      };
+      await runMessageRead(
+        { agent: 'scout', channel: 'oc_target_chat', limit: 2 },
+        {
+          createFeishuMessageClient() {
+            return {
+              async addReaction() {
+                throw new Error('unexpected reaction add');
+              },
+              async downloadMessageResource() {
+                throw new Error('unexpected file fetch');
+              },
+              async listMessages() {
+                return {
+                  hasMore: false,
+                  messages: [{
+                    bodyContent: JSON.stringify({ file_key: 'file_key_report', file_name: 'report.pdf', file_size: '42' }),
+                    chatId: 'oc_target_chat',
+                    createTime: '1780410000000',
+                    messageId: 'om_file_message',
+                    messageType: 'file',
+                    sender: {
+                      id: 'ou_alice',
+                      senderName: 'Alice',
+                      senderType: 'user',
+                    },
+                  }, {
+                    bodyContent: JSON.stringify({ image_key: 'image_key_photo' }),
+                    chatId: 'oc_target_chat',
+                    createTime: '1780410001000',
+                    messageId: 'om_image_message',
+                    messageType: 'image',
+                    sender: {
+                      id: 'ou_bob',
+                      senderName: 'Bob',
+                      senderType: 'user',
+                    },
+                  }],
+                };
+              },
+              async removeReaction() {
+                throw new Error('unexpected reaction remove');
+              },
+              async replyText() {
+                throw new Error('unexpected topic reply');
+              },
+              async sendUploadedFile() {
+                throw new Error('unexpected file send');
+              },
+              async sendText() {
+                throw new Error('unexpected send');
+              },
+              async uploadFile() {
+                throw new Error('unexpected file upload');
+              },
+            };
+          },
+        },
+      );
+    });
+
+    const output = logLines.join('\n');
+    assert.match(output, /attached: id=feishu:message:om_file_message:file:file_key_report name=report\.pdf size_bytes=42/);
+    assert.match(output, /use `anima file fetch feishu:message:om_file_message:file:file_key_report` to download/);
+    assert.match(output, /attached: id=feishu:message:om_image_message:image:image_key_photo/);
+    assert.match(output, /use `anima file fetch feishu:message:om_image_message:image:image_key_photo` to download/);
+  } finally {
+    console.log = originalLog;
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('file fetch can download a Feishu message resource id', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-file-fetch-test-'));
+  const logLines: string[] = [];
+  const downloads: FeishuMessageResourceDownloadInput[] = [];
+  const originalLog = console.log;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir);
+      console.log = (...args: unknown[]) => {
+        logLines.push(args.map(String).join(' '));
+      };
+      await runFileFetch(
+        {
+          agent: 'scout',
+          file: 'feishu:message:om_file_message:file:file_key_report',
+        },
+        {
+          createFeishuMessageClient() {
+            return {
+              async addReaction() {
+                throw new Error('unexpected reaction add');
+              },
+              async downloadMessageResource(input) {
+                downloads.push(input);
+                return {
+                  bytes: Buffer.from('downloaded-report'),
+                  contentType: 'application/pdf',
+                  filename: 'report.pdf',
+                };
+              },
+              async listMessages() {
+                throw new Error('unexpected message read');
+              },
+              async removeReaction() {
+                throw new Error('unexpected reaction remove');
+              },
+              async replyText() {
+                throw new Error('unexpected topic reply');
+              },
+              async sendUploadedFile() {
+                throw new Error('unexpected file send');
+              },
+              async sendText() {
+                throw new Error('unexpected send');
+              },
+              async uploadFile() {
+                throw new Error('unexpected file upload');
+              },
+            };
+          },
+        },
+      );
+
+      const firstPath = logLines.at(-1);
+      assert.ok(firstPath);
+      assert.equal(await readFile(firstPath, 'utf8'), 'downloaded-report');
+
+      await runFileFetch(
+        {
+          agent: 'scout',
+          file: 'feishu:message:om_file_message:file:file_key_report',
+        },
+        {
+          createFeishuMessageClient() {
+            throw new Error('cached Feishu fetch should not call the API again');
+          },
+        },
+      );
+      assert.equal(logLines.at(-1), firstPath);
+    });
+
+    assert.deepEqual(downloads, [{
+      fileKey: 'file_key_report',
+      messageId: 'om_file_message',
+      resourceType: 'file',
+    }]);
   } finally {
     console.log = originalLog;
     await rm(stateDir, { force: true, recursive: true });

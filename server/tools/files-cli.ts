@@ -4,12 +4,24 @@ import { dirname } from 'node:path';
 import type { Command } from 'commander';
 import { z } from 'zod';
 
+import { createFeishuMessageClient as createDefaultFeishuMessageClient } from '../feishu/client.js';
+import {
+  defaultFeishuFileService,
+  parseFeishuMessageResourceId,
+} from '../feishu/feishu-file.service.js';
 import { slackFileFromRaw } from '../slack/slack.helper.js';
 import { defaultSlackFileService } from '../slack/slack-file.service.js';
 import { runFileSend, type FileSendInputData } from './file-send.js';
-import { slackWebClientForOpts } from './tool-context.js';
+import { loadAgentFromOpts, slackWebClientForOpts } from './tool-context.js';
 
 const GlobalFlags = z.object({});
+
+interface FileFetchInputData {
+  agent?: string;
+  file?: string;
+  fileId?: string;
+  output?: string;
+}
 
 const FileFetchSchema = GlobalFlags.extend({
   file: z.string().min(1).optional(),
@@ -17,7 +29,12 @@ const FileFetchSchema = GlobalFlags.extend({
   output: z.string().min(1).optional(),
 });
 
-type FileFetchInput = z.infer<typeof FileFetchSchema>;
+type FeishuMessageClientFactory = typeof createDefaultFeishuMessageClient;
+
+interface FileFetchDeps {
+  createFeishuMessageClient?: FeishuMessageClientFactory;
+  feishuFileService?: typeof defaultFeishuFileService;
+}
 
 const FileSendSchema = GlobalFlags.extend({
   caption: z.string().optional(),
@@ -42,7 +59,7 @@ export function registerFileCommands(program: Command): void {
   // Failure: human-readable error to stderr; exit 1.
   file
     .command('fetch [fileId] [output]')
-    .description('Download a Slack file into the local cache and print its path.\nfileId comes from the `attached: id=<id>` line in message read output.')
+    .description('Download a Slack or Feishu file into the local cache and print its path.\nfileId comes from the `attached: id=<id>` line in message read output.')
     .option('--file-id <id>', 'file ID (alias for the positional fileId)')
     .option('--output <path>', 'copy the fetched file to this path and print that path')
     .action(async (fileId: string | undefined, output: string | undefined, _, command) => {
@@ -75,9 +92,15 @@ export function registerFileCommands(program: Command): void {
     });
 }
 
-async function runFileFetch(opts: FileFetchInput): Promise<void> {
+export async function runFileFetch(opts: FileFetchInputData, deps: FileFetchDeps = {}): Promise<void> {
   const fileId = opts.file ?? opts.fileId;
   if (!fileId) throw new Error('file fetch requires <fileId> or --file-id <id>');
+  const feishuResource = parseFeishuMessageResourceId(fileId);
+  if (feishuResource) {
+    await runFeishuFileFetch(opts, feishuResource, deps);
+    return;
+  }
+
   const { agent, client } = await slackWebClientForOpts(opts);
   const token = agent.slack?.botToken ?? '';
   if (!token) throw new Error('slack.botToken is required');
@@ -98,6 +121,35 @@ async function runFileFetch(opts: FileFetchInput): Promise<void> {
   const file = await defaultSlackFileService.downloadToCache({ file: base, teamId, token });
   if (!('localPath' in file)) throw new Error(file.downloadError ?? `Slack file ${fileId} could not be cached`);
   await emitFetchPath(file.localPath, opts.output);
+}
+
+async function runFeishuFileFetch(
+  opts: FileFetchInputData,
+  resource: NonNullable<ReturnType<typeof parseFeishuMessageResourceId>>,
+  deps: FileFetchDeps,
+): Promise<void> {
+  const service = deps.feishuFileService ?? defaultFeishuFileService;
+  const cachedPath = await service.findCachedFile({ fileId: resource.fileId });
+  if (cachedPath) {
+    await emitFetchPath(cachedPath, opts.output);
+    return;
+  }
+
+  const agent = await loadAgentFromOpts(opts);
+  if (!agent.feishu.connected) {
+    throw new Error(`Agent ${agent.id} has no Feishu connection configured`);
+  }
+  const client = (deps.createFeishuMessageClient ?? createDefaultFeishuMessageClient)(agent.feishu);
+  const downloaded = await client.downloadMessageResource({
+    fileKey: resource.fileKey,
+    messageId: resource.messageId,
+    resourceType: resource.resourceType,
+  });
+  const cached = await service.writeToCache({
+    file: downloaded,
+    ref: resource,
+  });
+  await emitFetchPath(cached, opts.output);
 }
 
 async function emitFetchPath(localPath: string, outputPath: string | undefined): Promise<void> {
