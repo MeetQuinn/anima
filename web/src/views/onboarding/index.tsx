@@ -245,7 +245,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
   const previewFeishuPhase = (previewSearch.get('_previewFeishu') as FeishuOnboardingPhase | null) ?? undefined;
   const previewFallbackReason =
     (previewSearch.get('_previewFallbackReason') as 'slow' | 'failed' | null) ?? undefined;
-  const previewQrPromoted = previewSearch.get('_previewQrPromoted') === '1';
+  const previewSlow = previewSearch.get('_previewSlow') === '1';
   const previewPlatform = (previewSearch.get('_previewPlatform') as WorkspacePlatform | null) ?? undefined;
   const previewStepName = previewSearch.get('_previewStep');
   const previewStep: FlowStep | undefined =
@@ -289,10 +289,6 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
   const [feishuPhase, setFeishuPhase] = useState<FeishuOnboardingPhase | undefined>(previewFeishuPhase);
 
   const nameInputRef = useRef<HTMLInputElement>(null);
-  // Tab opened synchronously inside the Feishu submit handler so the browser
-  // treats it as user-initiated (popup-safe); FeishuOnboardingConnect points it
-  // at the Feishu authorization URL once registration returns one.
-  const feishuAuthWindowRef = useRef<Window | null>(null);
 
   const {
     data: providerAvailability,
@@ -431,14 +427,6 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
   async function handleCreate() {
     setNameTouched(true);
     if (!derivedId || !role.trim() || !selectedProviderReady) return;
-
-    // Feishu auto-start: open the authorization tab synchronously, inside this
-    // click, so the browser does not block it. FeishuOnboardingConnect points it
-    // at the real auth URL once registration returns one. A no-URL/failed start
-    // closes it back down via the fallback path.
-    if (workspacePlatform === 'feishu') {
-      feishuAuthWindowRef.current = window.open('', '_blank');
-    }
 
     setCreating(true);
     setCreateError(null);
@@ -779,10 +767,9 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
           <FeishuOnboardingConnect
             agentId={createdAgentId}
             agentName={name.trim()}
-            getAuthWindow={() => feishuAuthWindowRef.current}
             previewPhase={previewFeishuPhase}
             previewFallbackReason={previewFallbackReason}
-            previewPopupBlocked={previewQrPromoted}
+            previewSlow={previewSlow}
             onPhaseChange={setFeishuPhase}
             onConnect={() => void handleFeishuConnected()}
           />

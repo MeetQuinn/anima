@@ -22,17 +22,21 @@ const PREVIEW_VERIFICATION_URL =
 // FeishuOnboardingConnect
 //
 // Onboarding-only Feishu connect surface (Profile keeps FeishuConnectStepper).
-// The flow is auto-start: when the user submits name+role, the parent opens a
-// new tab synchronously inside the click handler (popup-safe) and hands the
-// window down here. We start app registration, point that tab at the returned
-// Feishu authorization URL, and keep this tab on a "working, hang on" state
-// while it polls. Slow or failed auto-creation reveals the existing-app
-// credentials fallback in the same step.
+// Dashboard-first model: we never auto-open a tab. On submit we move to the
+// creating state and start app registration; when the registration returns a
+// verification URL we stay on the dashboard and render the auth panel — a
+// scan-first QR plus a user-initiated "Open the Feishu tab" link. Because the
+// tab is only ever opened by a real click it can't be popup-blocked, and the
+// connected transition is poll-driven (it never depended on owning a tab).
+// Slow registration holds the waiting state; only a hard failure reveals the
+// existing-app credentials fallback (also reachable as a user-initiated escape).
 // ---------------------------------------------------------------------------
 
 export type FeishuOnboardingPhase = 'creating' | 'authorizing' | 'fallback' | 'connected';
 
-const SLOW_THRESHOLD_MS = 10_000;
+// How long a registration may stay pre-URL before we soften the waiting copy.
+// This only changes the message; it never reveals credentials or a fallback.
+const SLOW_SOFTEN_MS = 15_000;
 const POLL_INTERVAL_MS = 2000;
 
 const ACTIVE_STATES = ['starting', 'waiting', 'slow_down', 'domain_switched'];
@@ -40,8 +44,6 @@ const ACTIVE_STATES = ['starting', 'waiting', 'slow_down', 'domain_switched'];
 interface Props {
   agentId: string;
   agentName?: string;
-  /** Returns the tab the parent opened synchronously on submit (popup-safe). */
-  getAuthWindow?: () => Window | null;
   onConnect?: () => void;
   /** Reports the current phase up so the parent stepper can mark connect done. */
   onPhaseChange?: (phase: FeishuOnboardingPhase) => void;
@@ -49,19 +51,18 @@ interface Props {
   previewPhase?: FeishuOnboardingPhase;
   /** Forces the fallback reason in preview so both body variants are shootable. */
   previewFallbackReason?: 'slow' | 'failed';
-  /** Forces the popup-blocked promoted QR state in preview for screenshots. */
-  previewPopupBlocked?: boolean;
+  /** Forces the slow-softened waiting copy in preview for screenshots. */
+  previewSlow?: boolean;
 }
 
 export function FeishuOnboardingConnect({
   agentId,
   agentName,
-  getAuthWindow,
   onConnect,
   onPhaseChange,
   previewPhase,
   previewFallbackReason,
-  previewPopupBlocked,
+  previewSlow,
 }: Props) {
   const isPreview = previewPhase !== undefined;
   const [phase, setPhase] = useState<FeishuOnboardingPhase>(previewPhase ?? 'creating');
@@ -78,19 +79,19 @@ export function FeishuOnboardingConnect({
   const [appId, setAppId] = useState('');
   const [appSecret, setAppSecret] = useState('');
   const [saving, setSaving] = useState(false);
-  // Why we landed on the fallback: 'slow' (auto-creation past the 10s threshold,
-  // or the user chose existing-app early) vs 'failed' (hard create failure). The
-  // reason picks the body line so we never claim "taking longer" on a failure.
+  // Why we landed on the fallback: 'slow' (the user chose existing-app from the
+  // waiting state) vs 'failed' (a hard create failure). The reason picks the
+  // body line so we never claim a failure when the user opted in deliberately.
   const [fallbackReason, setFallbackReason] = useState<'slow' | 'failed'>(
     previewFallbackReason ?? 'slow',
   );
+  // Soften the waiting copy once the pre-URL wait runs long. Copy-only.
+  const [slow, setSlow] = useState(false);
 
   const startedRef = useRef(false);
   const slowTimerRef = useRef<number | null>(null);
 
   const revealFallback = useCallback((reason: 'slow' | 'failed' = 'slow') => {
-    // Once the fallback shows, the slow timer is moot — clear it so a late tick
-    // can't flip a 'failed' reason back to 'slow'.
     if (slowTimerRef.current !== null) {
       window.clearTimeout(slowTimerRef.current);
       slowTimerRef.current = null;
@@ -104,17 +105,13 @@ export function FeishuOnboardingConnect({
     if (isPreview || startedRef.current) return;
     startedRef.current = true;
 
-    // If auto-creation stalls past the slow threshold, surface the fallback so
-    // the user is never stranded on a spinner.
-    slowTimerRef.current = window.setTimeout(() => revealFallback('slow'), SLOW_THRESHOLD_MS);
+    // If the URL is slow to arrive, soften the waiting copy — but never reveal
+    // credentials on slowness; only a hard failure does that.
+    slowTimerRef.current = window.setTimeout(() => setSlow(true), SLOW_SOFTEN_MS);
 
     void startAgentFeishuAppRegistration(agentId, { botName: agentName?.trim() || undefined })
       .then((next) => {
         setRegistration(next);
-        const authWindow = getAuthWindow?.();
-        if (next.verificationUrl && authWindow) {
-          authWindow.location.href = next.verificationUrl;
-        }
         if (next.state === 'connected') {
           handleConnected();
         } else if (next.verificationUrl) {
@@ -144,9 +141,8 @@ export function FeishuOnboardingConnect({
         .then((next) => {
           if (cancelled) return;
           setRegistration(next);
-          const authWindow = getAuthWindow?.();
-          if (next.verificationUrl && authWindow && authWindow.location.href === 'about:blank') {
-            authWindow.location.href = next.verificationUrl;
+          if (next.verificationUrl) {
+            setPhase((prev) => (prev === 'fallback' || prev === 'connected' ? prev : 'authorizing'));
           }
           if (next.state === 'connected') handleConnected();
           if (next.state === 'failed') {
@@ -188,15 +184,10 @@ export function FeishuOnboardingConnect({
     }
   }
 
-  // The same held URL backs every scan/deep-link surface; in preview there is no
+  // The same held URL backs the scan/deep-link surfaces; in preview there is no
   // live registration, so fall back to a stand-in so the affordances are shootable.
   const verificationUrl = registration?.verificationUrl ?? (isPreview ? PREVIEW_VERIFICATION_URL : undefined);
-
-  // The auth tab is opened synchronously by the parent on submit; if the browser
-  // blocked it, that ref is null. When blocked we promote the QR (the desktop→
-  // phone bridge) since the tab path the body describes never happened.
-  const authWindow = getAuthWindow?.();
-  const popupBlocked = isPreview ? Boolean(previewPopupBlocked) : !authWindow || authWindow.closed;
+  const isSlow = isPreview ? Boolean(previewSlow) : slow;
 
   // -------------------------------------------------------------------------
   // Render
@@ -207,7 +198,7 @@ export function FeishuOnboardingConnect({
       {(phase === 'creating' || phase === 'authorizing') && (
         <WorkingState
           phase={phase}
-          popupBlocked={popupBlocked}
+          slow={isSlow}
           verificationUrl={verificationUrl}
           onUseExisting={() => revealFallback('slow')}
         />
@@ -219,10 +210,10 @@ export function FeishuOnboardingConnect({
           appSecret={appSecret}
           reason={fallbackReason}
           saving={saving}
-          verificationUrl={verificationUrl}
           onAppId={setAppId}
           onAppSecret={setAppSecret}
           onSubmit={() => void handleUseExisting()}
+          onBack={() => setPhase(verificationUrl ? 'authorizing' : 'creating')}
         />
       )}
 
@@ -237,33 +228,33 @@ export function FeishuOnboardingConnect({
 
 // ---------------------------------------------------------------------------
 // Working state — "creating" and "authorizing". Reads as in-progress, never done.
+// In the authorizing phase the held URL is present, so we render the scan-first
+// auth panel beneath the waiting copy.
 // ---------------------------------------------------------------------------
 
 function WorkingState({
   onUseExisting,
   phase,
-  popupBlocked,
+  slow,
   verificationUrl,
 }: {
   onUseExisting: () => void;
   phase: 'creating' | 'authorizing';
-  popupBlocked: boolean;
+  slow: boolean;
   verificationUrl?: string;
 }) {
-  // Once we have an auth URL we are in the authorizing phase. If the popup was
-  // blocked the QR is promoted, and the tab-centric body would be false (no tab
-  // opened) — so swap to the locked promoted heading/body for that case only.
-  const promoted = phase === 'authorizing' && popupBlocked && Boolean(verificationUrl);
-  const title = promoted
-    ? 'Continue in the Feishu app'
-    : phase === 'creating'
-      ? 'Creating your Feishu app'
-      : 'Waiting for you in Feishu';
-  const body = promoted
-    ? 'The Feishu tab did not open. Continue on your phone instead.'
-    : phase === 'creating'
-      ? 'We opened Feishu in a new tab. Confirm the app there to finish creating it. Keep this tab open while we finish.'
-      : 'Confirm the new app in the Feishu tab we opened. This page updates on its own once you are done.';
+  // Mobile shows only the deep-link (no QR, no separate tab), so the authorizing
+  // body must not promise "Scan the QR or open the Feishu tab" there.
+  const isMobile = useIsMobile();
+  const title = phase === 'creating' ? 'Creating your Feishu app' : 'Waiting for you in Feishu';
+  const body =
+    phase === 'creating'
+      ? slow
+        ? 'Still setting up. This is taking longer than usual.'
+        : 'Setting up your Feishu app. This page updates on its own once it is ready.'
+      : isMobile
+        ? 'Open Feishu to confirm the new app. This page updates on its own once you are done.'
+        : 'Scan the QR or open the Feishu tab to confirm the new app. This page updates on its own once you are done.';
 
   return (
     <div className="flex flex-col items-center px-2 py-6 text-center">
@@ -276,7 +267,7 @@ function WorkingState({
       </p>
 
       {phase === 'authorizing' && verificationUrl && (
-        <FeishuConnectAffordances popupBlocked={popupBlocked} verificationUrl={verificationUrl} />
+        <FeishuConnectAffordances verificationUrl={verificationUrl} />
       )}
 
       <div className="mt-6 flex w-full items-center gap-3">
@@ -297,20 +288,12 @@ function WorkingState({
 // ---------------------------------------------------------------------------
 // Scan / deep-link affordances. One held verification URL, surfaced by context:
 //   - mobile  → a tap deep-link (you cannot scan your own screen)
-//   - desktop → "Reopen the Feishu tab" + a modest QR, co-equal beneath the
-//               passive primary; the QR is affordance-sized, not a hero graphic,
-//               so the waiting-truth stays the visual anchor
-//   - desktop, popup blocked → the QR is promoted (the desktop→phone bridge)
+//   - desktop → the QR leads at full footprint (our users are scan-native), with
+//               "Open the Feishu tab" as a secondary user-gesture link beneath it
 // The "then confirm" clause in the helper is load-bearing: scan is not completion.
 // ---------------------------------------------------------------------------
 
-function FeishuConnectAffordances({
-  popupBlocked,
-  verificationUrl,
-}: {
-  popupBlocked: boolean;
-  verificationUrl: string;
-}) {
+function FeishuConnectAffordances({ verificationUrl }: { verificationUrl: string }) {
   const isMobile = useIsMobile();
 
   if (isMobile) {
@@ -330,51 +313,34 @@ function FeishuConnectAffordances({
     );
   }
 
-  // Promoted QR runs a touch larger than the co-equal default, but both stay
-  // modest so the QR never dominates the passive waiting-truth above it.
-  const qrSize = popupBlocked ? 128 : 104;
-
   return (
-    <div className="mt-5 flex flex-col items-center gap-3">
-      {!popupBlocked && (
-        <a
-          className="inline-flex items-center gap-1.5 rounded-sm border border-border-soft bg-surface px-3 py-2 font-sans text-[12px] font-medium text-text transition-colors hover:border-accent"
-          href={verificationUrl}
-          rel="noreferrer"
-          target="_blank"
-        >
-          Reopen the Feishu tab
-          <ExternalLink className="h-3 w-3" aria-hidden />
-        </a>
-      )}
-
-      <div className="flex flex-col items-center gap-1.5">
-        <span className="rounded-sm border border-border-soft bg-white p-2.5">
-          <QRCode value={verificationUrl} size={qrSize} bgColor="#ffffff" fgColor="#1c1a17" level="M" />
+    <div className="mt-5 flex flex-col items-center gap-4">
+      <div className="flex flex-col items-center gap-2">
+        <span className="rounded-md border border-border-soft bg-white p-3">
+          <QRCode value={verificationUrl} size={144} bgColor="#ffffff" fgColor="#1c1a17" level="M" />
         </span>
-        <span className="font-sans text-[12px] font-medium text-text">Or scan with Feishu</span>
+        <span className="font-sans text-[13px] font-medium text-text">Scan with Feishu</span>
         <p className="max-w-[16rem] text-balance font-sans text-[11px] leading-snug text-text-muted">
           Scan this with the Feishu app, then confirm the new app on your phone.
         </p>
       </div>
 
-      {popupBlocked && (
-        <a
-          className="inline-flex items-center gap-1.5 font-sans text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
-          href={verificationUrl}
-          rel="noreferrer"
-          target="_blank"
-        >
-          Or open the Feishu tab
-          <ExternalLink className="h-3 w-3" aria-hidden />
-        </a>
-      )}
+      <a
+        className="inline-flex items-center gap-1.5 font-sans text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
+        href={verificationUrl}
+        rel="noreferrer"
+        target="_blank"
+      >
+        Open the Feishu tab
+        <ExternalLink className="h-3 w-3" aria-hidden />
+      </a>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Fallback — existing-app credentials in the same step.
+// Fallback — existing-app credentials in the same step. Reached only when the
+// user chooses it, or on a hard registration failure.
 // ---------------------------------------------------------------------------
 
 function FallbackState({
@@ -382,25 +348,25 @@ function FallbackState({
   appSecret,
   onAppId,
   onAppSecret,
+  onBack,
   onSubmit,
   reason,
   saving,
-  verificationUrl,
 }: {
   appId: string;
   appSecret: string;
   onAppId: (v: string) => void;
   onAppSecret: (v: string) => void;
+  onBack: () => void;
   onSubmit: () => void;
   reason: 'slow' | 'failed';
   saving: boolean;
-  verificationUrl?: string;
 }) {
   const disabled = saving || !appId.trim() || !appSecret.trim();
   const body =
     reason === 'failed'
       ? "We couldn't finish creating the new app. Connect an app you already have to continue."
-      : 'This is taking longer than usual. You can keep waiting in the Feishu tab, or connect an app you already have.';
+      : 'Connect an app you already have to continue.';
   return (
     <div className="space-y-3">
       <div className="space-y-3 rounded-sm border border-border-soft bg-surface px-4 py-3">
@@ -434,16 +400,19 @@ function FallbackState({
         </Button>
       </div>
 
-      {verificationUrl && (
-        <a
+      {/* Only the user-initiated ('slow') path can go back to a live waiting
+          state. On hard failure the registration is dead and startedRef is
+          already set, so 'creating' would be inert — the credentials form above
+          is the escape, so we omit Go back. */}
+      {reason !== 'failed' && (
+        <button
+          type="button"
+          onClick={onBack}
           className="inline-flex items-center gap-1.5 font-sans text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
-          href={verificationUrl}
-          rel="noreferrer"
-          target="_blank"
         >
           <ArrowLeft className="h-3 w-3" aria-hidden />
-          Go back to the Feishu tab
-        </a>
+          Go back
+        </button>
       )}
     </div>
   );
