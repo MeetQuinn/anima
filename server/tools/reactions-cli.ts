@@ -8,15 +8,17 @@ const GlobalFlags = z.object({});
 const ReactionSchema = GlobalFlags.extend({
   channel: z.string().optional(),
   emoji: z.string().optional(),
+  messageId: z.string().optional(),
   messageTs: z.string().optional(),
   name: z.string().optional(),
+  reactionId: z.string().optional(),
   remove: z.boolean().optional(),
 });
 
 export function registerReactionCommands(program: Command): void {
   const reaction = program
     .command('reaction')
-    .description('Add or remove a reaction emoji on a Slack message (mirrors Slack reactions.* API).');
+    .description('Add or remove a reaction emoji on a Slack or Feishu message.');
 
   addReactionOptions(reaction)
     .option('--remove', 'remove the reaction instead of adding it')
@@ -26,11 +28,15 @@ export function registerReactionCommands(program: Command): void {
     });
 
   const channelOption = '--channel <channel>';
-  const channelDesc = 'channel ID (e.g. C123ABC) or name (e.g. prod)\nDM: D-prefixed channel ID (e.g. D123ABC) or @handle (e.g. @alice)';
+  const channelDesc = 'Slack channel ID/name or DM; Feishu chat id (oc_...)';
+  const messageIdOption = '--message-id <id>';
+  const messageIdDesc = 'Feishu message id (om_...) to react to';
   const messageTsOption = '--message-ts <ts>';
-  const messageTsDesc = 'timestamp of the message to react to';
+  const messageTsDesc = 'Slack message timestamp; also accepts Feishu om_ message ids for compatibility';
   const nameOption = '--name <emoji>';
-  const nameDesc = 'emoji name without colons (e.g. white_check_mark, eyes)\nstandard Slack names and custom workspace emoji both work; idempotent';
+  const nameDesc = 'Slack emoji name without colons, or Feishu emoji_type (e.g. OneSecond, Thumbsup)';
+  const reactionIdOption = '--reaction-id <id>';
+  const reactionIdDesc = 'Feishu reaction_id returned by add; required for Feishu remove';
 
   // Input:   anima reaction add --channel <id> --message-ts <ts> --name <emoji>
   // Input:   anima reaction remove --channel <id> --message-ts <ts> --name <emoji>
@@ -41,6 +47,7 @@ export function registerReactionCommands(program: Command): void {
     .command('add')
     .description('Add a reaction emoji to a message.')
     .option(channelOption, channelDesc)
+    .option(messageIdOption, messageIdDesc)
     .option(messageTsOption, messageTsDesc)
     .option(nameOption, nameDesc)
     .option('--emoji <emoji>', 'alias for --name')
@@ -53,9 +60,11 @@ export function registerReactionCommands(program: Command): void {
     .command('remove')
     .description('Remove a reaction emoji from a message.')
     .option(channelOption, channelDesc)
+    .option(messageIdOption, messageIdDesc)
     .option(messageTsOption, messageTsDesc)
     .option(nameOption, nameDesc)
     .option('--emoji <emoji>', 'alias for --name')
+    .option(reactionIdOption, reactionIdDesc)
     .action(async (_, command) => {
       const opts = reactionInput(command.optsWithGlobals());
       await runMessageReact({ ...opts, remove: true });
@@ -85,9 +94,11 @@ function addReactionCommand(parent: Command): void {
 
 function addReactionOptions(command: Command): Command {
   return command
-    .option('--channel <channel>', 'channel ID (e.g. C123ABC) or name (e.g. prod)\nDM: D-prefixed channel ID (e.g. D123ABC) or @handle (e.g. @alice)')
-    .option('--message-ts <ts>', 'timestamp of the message to react to')
-    .option('--name <emoji>', 'emoji name without colons (e.g. white_check_mark, eyes)')
+    .option('--channel <channel>', 'Slack channel ID/name or DM; Feishu chat id (oc_...)')
+    .option('--message-id <id>', 'Feishu message id (om_...) to react to')
+    .option('--message-ts <ts>', 'Slack message timestamp; also accepts Feishu om_ message ids for compatibility')
+    .option('--name <emoji>', 'Slack emoji name without colons, or Feishu emoji_type')
+    .option('--reaction-id <id>', 'Feishu reaction_id returned by add; required for Feishu remove')
     .option('--emoji <emoji>', 'alias for --name');
 }
 
