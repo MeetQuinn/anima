@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { AlertCircle, Loader2 } from 'lucide-react';
-import { fetchAgentStatuses, fetchAgentActivities, fetchAgentMessages } from '@/api/agents';
+import { fetchAgentStatuses, fetchAgentActivities, fetchAgentMessages, fetchAgents } from '@/api/agents';
 import { buildActivityFeed, buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
 import { activityIsFailure, activityRow, isNarrativeStep } from '@/lib/activities';
 import { clockHM, dateKey, formatRelativeShort } from '@/lib/format';
@@ -181,16 +181,57 @@ function ActivityStatusSummary({
 }
 
 // ---------------------------------------------------------------------------
+// First-run hero — the live moment.
+//
+// Renders in place of the generic "No activity yet." text the first time a
+// freshly connected agent's feed is empty. It is an invite, not a claim: it
+// never asserts the agent has messaged the owner (the proactive greeting is
+// async and may not have landed), so the copy stays user-initiated. Yields the
+// moment the first real activity arrives (filteredItems.length > 0).
+// ---------------------------------------------------------------------------
+
+function FirstRunHero({
+  agentName,
+  platform,
+}: {
+  agentName?: string;
+  platform: 'feishu' | 'slack';
+}) {
+  const platformLabel = platform === 'feishu' ? 'Feishu' : 'Slack';
+  return (
+    <div className="mt-20 flex flex-col items-center px-6 text-center animate-in fade-in slide-in-from-bottom-2 fill-mode-both duration-500 motion-reduce:animate-none">
+      <span className="relative mb-5 flex h-2 w-2" aria-hidden="true">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-activity-outbound opacity-60 motion-reduce:animate-none" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-activity-outbound" />
+      </span>
+      <p className="font-serif text-[19px] leading-tight text-text">Your agent is live.</p>
+      <p className="mt-1.5 font-serif text-[15px] leading-snug text-text-muted">
+        Say hi to{' '}
+        {agentName ? <span className="font-medium text-text">{agentName}</span> : 'it'} in{' '}
+        {platformLabel}.
+      </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Activity view
 // ---------------------------------------------------------------------------
 
 export default function Activity() {
+  const { data: agents = [] } = useQuery({ queryKey: queryKeys.agents(), queryFn: fetchAgents });
   const { data: agentStatuses = [] } = useQuery({
     queryKey: queryKeys.agentStatuses(),
     queryFn: fetchAgentStatuses,
     refetchInterval: refetchIntervals.agentStatuses,
   });
   const { agentId } = useParams<{ agentId: string }>();
+  const [searchParams] = useSearchParams();
+  // Dev-only, side-effect-free preview of the first-run hero for screenshots /
+  // on-render review (?_previewFirstRunHero=feishu|slack). Never honored in prod.
+  const previewFirstRunHero = import.meta.env.DEV
+    ? ((searchParams.get('_previewFirstRunHero') as 'feishu' | 'slack' | null) ?? undefined)
+    : undefined;
   const { failedOnly, lens, dir, showAllSteps, setFailedOnly, setLens, setDir, setShowAllSteps } = useActivityFilters();
   const now = useNow();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -336,6 +377,27 @@ export default function Activity() {
     if (!itemActivities.length) return undefined;
     return itemActivities.reduce((latest, a) => (a.createdAt > latest.createdAt ? a : latest));
   }, [currentItemId, currentItemStartedAt, activitiesData]);
+
+  // First-run hero gating. Show the live-moment invite in place of the generic
+  // empty text only when the DEFAULT, unfiltered feed is empty (a brand-new
+  // agent), not when a filter (failed-only / direction) emptied the view — those
+  // keep their own specific "no matches" copy. Needs a known connected platform
+  // to phrase the invite ("in Feishu" / "in Slack") honestly; absent it, fall
+  // back to the plain empty text.
+  const agent = agents.find((a) => a.id === agentId);
+  const connectedPlatform: 'feishu' | 'slack' | undefined = agent?.feishu?.connected
+    ? 'feishu'
+    : agent?.slack?.connected
+      ? 'slack'
+      : undefined;
+  const heroPlatform = previewFirstRunHero ?? connectedPlatform;
+  const showFirstRunHero =
+    previewFirstRunHero !== undefined ||
+    (!loadingActivities &&
+      filteredItems.length === 0 &&
+      !failedOnly &&
+      !(lens === 'messages' && dir !== 'all') &&
+      connectedPlatform !== undefined);
 
   const error = activitiesError instanceof Error ? activitiesError.message : activitiesError ? String(activitiesError) : null;
 
@@ -489,22 +551,27 @@ export default function Activity() {
             <Loader2 className="h-3.5 w-3.5 animate-spin text-text-subtle" aria-label="Loading older activity" />
           </div>
         )}
-        {filteredItems.length === 0 && (
-          <div className="mt-20 text-center">
-            <p className="font-serif italic text-[15px] text-text-subtle">
-              {loadingActivities
-                ? 'Loading activity...'
-                : lens === 'messages' && dir !== 'all'
-                  ? `No ${dir === 'in' ? 'inbox' : 'outbox'} messages yet.`
-                  : lens === 'messages'
-                    ? 'No messages yet.'
-                    : failedOnly
-                      ? 'No activity matches the current filters.'
-                      : 'No activity yet.'}
-            </p>
-          </div>
+        {showFirstRunHero ? (
+          <FirstRunHero agentName={agent?.profile?.displayName} platform={heroPlatform!} />
+        ) : (
+          filteredItems.length === 0 && (
+            <div className="mt-20 text-center">
+              <p className="font-serif italic text-[15px] text-text-subtle">
+                {loadingActivities
+                  ? 'Loading activity...'
+                  : lens === 'messages' && dir !== 'all'
+                    ? `No ${dir === 'in' ? 'inbox' : 'outbox'} messages yet.`
+                    : lens === 'messages'
+                      ? 'No messages yet.'
+                      : failedOnly
+                        ? 'No activity matches the current filters.'
+                        : 'No activity yet.'}
+              </p>
+            </div>
+          )
         )}
         {filteredItems.length > 0 &&
+          !showFirstRunHero &&
           byDay.map(([day, items]) => {
             let lastTime = '';
             return (
