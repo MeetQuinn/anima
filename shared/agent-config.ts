@@ -279,6 +279,12 @@ export const FeishuConfig = z.object({
   appSecret: z.string().default(''),
   botOpenId: z.string().optional(),
   encryptKey: z.string().default(''),
+  ownerGreetingChatId: z.string().optional(),
+  ownerGreetingDeliveredAt: z.string().optional(),
+  ownerGreetingMessageId: z.string().optional(),
+  ownerGreetingPromptedAt: z.string().optional(),
+  ownerOpenId: z.string().optional(),
+  ownerTenantBrand: z.enum(['feishu', 'lark']).optional(),
   verificationToken: z.string().default(''),
   connected: z.boolean().optional(),
 }).transform(({ appId, appSecret, connected: _connected, ...rest }) => ({

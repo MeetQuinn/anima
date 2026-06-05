@@ -420,6 +420,22 @@ function inboxItemForMessage(message: AgentMessageRecord): InboxItem {
     };
   }
   if (message.kind === 'onboarding') {
+    if (message.platform === 'feishu') {
+      const ownerOpenId = message.actorUserId ?? '';
+      return {
+        ...base,
+        kind: 'feishu_onboarding',
+        owner: {
+          openId: ownerOpenId,
+        },
+        target: {
+          platform: 'feishu',
+          receiveId: ownerOpenId,
+          receiveIdType: 'open_id',
+        },
+        text: message.text,
+      };
+    }
     return {
       ...base,
       channelId: message.channelId ?? '',
@@ -590,7 +606,7 @@ function surfaceChipForEvent(event: InboxItem, wakeMeta?: ReminderWakeMeta): Sur
 }
 
 export function isOnboardingWake(event: InboxItem): boolean {
-  return event.kind === 'onboarding' || event.id.startsWith('agent-onboarding:');
+  return event.kind === 'onboarding' || event.kind === 'feishu_onboarding' || event.id.startsWith('agent-onboarding:');
 }
 
 // Chip label rules (iris-locked 1779212784.593679, "Option A"):
@@ -665,6 +681,9 @@ function surfaceChipForOutbound(activity: ActivityRecord): SurfaceChip {
 
   if (platform === 'feishu') {
     const kind = payloadChannelKind || (payloadChannel.startsWith('oc_') ? 'group' : 'chat');
+    if (kind === 'open_id') {
+      return { kind: 'dm', label: payloadChannelDisplayName || 'Feishu owner' };
+    }
     const base = kind === 'p2p' ? 'Feishu DM' : `Feishu ${kind}`;
     if (payloadThreadTs) return { kind: 'thread', label: `${base} · topic` };
     if (kind === 'p2p') return { kind: 'dm', label: base };

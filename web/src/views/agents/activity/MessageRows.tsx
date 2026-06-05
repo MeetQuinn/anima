@@ -66,7 +66,7 @@ function actorName(item: InboxItem): string {
 
 function inboxItemText(item: InboxItem): string {
   if (item.kind === 'reminder') return '';
-  if (item.kind === 'onboarding') return item.text;
+  if (item.kind === 'onboarding' || item.kind === 'feishu_onboarding') return item.text;
   if (item.kind === 'choice_response') return `Selected: ${item.optionLabel}\nQuestion: ${item.question}`;
   return item.text ?? '';
 }
@@ -115,7 +115,7 @@ export function MessageInRow({
   // TS can narrow `item.event` through the ternary.
   const onboarding = isOnboardingWake(item.event);
   let name: string;
-  if (item.event.kind === 'onboarding' || item.event.id.startsWith('agent-onboarding:')) {
+  if (onboarding) {
     name = onboardingTitle();
   } else if (item.event.kind === 'reminder') {
     name = reminderTitle(item.event);

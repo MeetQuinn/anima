@@ -5,10 +5,16 @@ import { asRecord, numberField, stringField } from '../json.js';
 
 export const FEISHU_OPEN_API_BASE_URL = 'https://open.feishu.cn/open-apis';
 
-export interface FeishuTextSendInput {
+export type FeishuReceiveIdType = 'chat_id' | 'open_id';
+
+export type FeishuTextSendInput = {
   chatId: string;
   text: string;
-}
+} | {
+  receiveId: string;
+  receiveIdType: FeishuReceiveIdType;
+  text: string;
+};
 
 export interface FeishuTextReplyInput {
   messageId: string;
@@ -94,7 +100,7 @@ interface FeishuSdkMessageCreateInput {
     receive_id: string;
   };
   params: {
-    receive_id_type: 'chat_id';
+    receive_id_type: FeishuReceiveIdType;
   };
 }
 
@@ -270,14 +276,15 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
       };
     },
     async sendText(input) {
+      const target = feishuSendTarget(input);
       const response = await client.im.message.create({
         data: {
           content: JSON.stringify({ text: input.text }),
           msg_type: 'text',
-          receive_id: input.chatId,
+          receive_id: target.receiveId,
         },
         params: {
-          receive_id_type: 'chat_id',
+          receive_id_type: target.receiveIdType,
         },
       });
       return {
@@ -299,6 +306,14 @@ export function createFeishuEventDispatcher(input: {
   }).register({
     'im.message.receive_v1': (data) => input.onReceiveMessage(data),
   });
+}
+
+function feishuSendTarget(input: FeishuTextSendInput): {
+  receiveId: string;
+  receiveIdType: FeishuReceiveIdType;
+} {
+  if ('chatId' in input) return { receiveId: input.chatId, receiveIdType: 'chat_id' };
+  return { receiveId: input.receiveId, receiveIdType: input.receiveIdType };
 }
 
 export function createFeishuWsClient(config: FeishuConfig): lark.WSClient {

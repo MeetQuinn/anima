@@ -98,6 +98,22 @@ export const FeishuInboxItem = InboxItemBase.extend({
 
 export type FeishuInboxItem = z.infer<typeof FeishuInboxItem>;
 
+export const FeishuOnboardingInboxItem = InboxItemBase.extend({
+  kind: z.literal('feishu_onboarding'),
+  owner: z.object({
+    openId: z.string(),
+    tenantBrand: z.enum(['feishu', 'lark']).optional(),
+  }).strict(),
+  target: z.object({
+    platform: z.literal('feishu'),
+    receiveId: z.string(),
+    receiveIdType: z.literal('open_id'),
+  }).strict(),
+  text: z.string(),
+});
+
+export type FeishuOnboardingInboxItem = z.infer<typeof FeishuOnboardingInboxItem>;
+
 export const ReminderInboxItem = InboxItemBase.extend({
   kind: z.literal('reminder'),
   reminderId: z.string(),
@@ -142,6 +158,7 @@ export type ChoiceResponseInboxItem = z.infer<typeof ChoiceResponseInboxItem>;
 export const InboxItemSchema = z.discriminatedUnion('kind', [
   SlackInboxItem,
   FeishuInboxItem,
+  FeishuOnboardingInboxItem,
   ReminderInboxItem,
   OnboardingInboxItem,
   ChoiceResponseInboxItem,
