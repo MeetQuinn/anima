@@ -82,7 +82,7 @@ export function registerMessageCommands(program: Command): void {
   message
     .command('send')
     .description('Post a Slack or Feishu message.\nMessage body is read from stdin.')
-    .option('--channel <channel>', 'Slack channel/DM target, or Feishu chat_id (oc_...)')
+    .option('--channel <channel>', 'Slack channel/DM target, Feishu chat_id (oc_...), or Feishu open_id (ou_...)')
     .option('--thread-ts <ts>', 'Slack thread timestamp, or Feishu topic message_id; omit to post top-level/chat message')
     .action(async (_, command) => {
       const opts = MessageSendSchema.parse(command.optsWithGlobals());
