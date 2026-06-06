@@ -31,10 +31,9 @@
     "dist/server/",
     "dist/shared/",
     "dist/web/",
-    "docs/deployment.md",
-    "docs/guide/quickstart.md",
-    "docs/runtime-providers.md",
-    "docs/service-runbook.md",
+    "docs/*.md",
+    "docs/architecture/*.md",
+    "docs/guide/*.md",
     "templates/",
     "examples/"
   ],

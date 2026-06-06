@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { resolveAnimaReferencePaths, type AnimaReferencePaths } from './anima-reference.js';
+
 const TEMPLATE_FILE = 'runtime-standing-prompt.md';
 const DEFAULT_ROLE = 'general-purpose Anima agent';
 
@@ -9,6 +11,7 @@ let cachedTemplate: string | undefined;
 
 export interface AnimaRuntimeProfile {
   displayName: string;
+  referencePaths?: AnimaReferencePaths;
   role?: string;
 }
 
@@ -17,7 +20,38 @@ export function buildAnimaRuntimeProfile(profile: AnimaRuntimeProfile): string {
   const role = stripTrailingPeriod(profile.role?.trim() || DEFAULT_ROLE);
   return readBundledTemplate()
     .replaceAll('{{name}}', name)
-    .replaceAll('{{role}}', role);
+    .replaceAll('{{role}}', role)
+    .replaceAll(
+      '{{animaReferenceSection}}',
+      buildAnimaReferenceSection(profile.referencePaths ?? resolveAnimaReferencePaths()),
+    );
+}
+
+function buildAnimaReferenceSection(referencePaths: AnimaReferencePaths): string {
+  const lines = [
+    'For Anima feature how-tos, read `ANIMA_FEATURES.md` in your home before using an unfamiliar `anima` command.',
+  ];
+
+  if (referencePaths.docsPath) {
+    lines.push(
+      `Bundled Anima docs are available at \`${referencePaths.docsPath}\`. Use them for Anima behavior, configuration, architecture, and operator questions before guessing.`,
+      'Good starting points: `guide/how-an-agent-works.md`, `guide/working-with-your-agent.md`, `guide/using-the-dashboard.md`, `architecture/overview.md`, and `runtime-providers.md`.',
+    );
+  } else {
+    lines.push(
+      'Bundled Anima docs were not found in this runtime; use `anima <command> --help` and ask a teammate when behavior or configuration is unclear.',
+    );
+  }
+
+  if (referencePaths.sourcePath) {
+    lines.push(
+      `Anima source is available at \`${referencePaths.sourcePath}\`. Treat it as reference unless the user explicitly asks you to modify Anima itself.`,
+    );
+  }
+
+  lines.push('For exact CLI flags, run `anima <command> --help` before guessing.');
+
+  return lines.join('\n');
 }
 
 function readBundledTemplate(): string {
