@@ -635,6 +635,69 @@ test('web status marks a running item unhealthy when no live worker identity mat
   }
 });
 
+test('web status does not flash stale health for a freshly claimed running item before health publish catches up', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-fresh-running-health-test-'));
+  try {
+    await writeConfig(stateDir, [
+      defaultAgentConfig('milo'),
+    ]);
+    await withAnimaHome(stateDir, async () => {
+      const running = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'C-demo',
+          teamId: 'T-demo',
+          text: 'Run for Milo.',
+          ts: '1770000000.000013',
+          userId: 'U1',
+        }),
+        { agentId: 'milo', stateDir },
+      );
+      await new WakeQueueService('milo').claimNext('worker-1');
+      await setActiveRuntimeItem({
+        agentId: 'milo',
+        startedAt: new Date().toISOString(),
+        itemId: running.item.id,
+        workerId: 'worker-1',
+      });
+      await new AgentHealthStore({ animaHome: stateDir }).writeHealth({
+        agentId: 'milo',
+        runtime: {
+          processId: process.pid,
+          providerChildExpected: false,
+          workerId: 'worker-1',
+        },
+        state: 'healthy',
+        updatedAt: new Date().toISOString(),
+      });
+
+      const server = await createWebServer();
+      try {
+        server.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        const address = server.address();
+        if (!address || typeof address === 'string') {
+          throw new Error('Expected API server to listen on a TCP address.');
+        }
+        const statusesRes = await fetch(`http://127.0.0.1:${address.port}/api/agent-statuses`);
+        assert.equal(statusesRes.status, 200);
+        const statuses = (await statusesRes.json()) as Array<{
+          agentId: string;
+          currentItemId?: string;
+          health?: { reason?: string; state?: string };
+        }>;
+        const status = statuses.find((s) => s.agentId === 'milo');
+        assert.equal(status?.currentItemId, running.item.id);
+        assert.equal(status?.health?.state, 'healthy');
+        assert.equal(status?.health?.reason, undefined);
+      } finally {
+        server.close();
+      }
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('web status does not carry stale failed restart onto healthy agents', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-stale-restart-test-'));
   try {

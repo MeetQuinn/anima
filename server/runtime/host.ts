@@ -22,6 +22,7 @@ import {
 } from '../feishu/client.js';
 import { createSlackWebClient } from '../slack/client.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
+import { agentHasConnectedTransport } from '../../shared/agent-transports.js';
 import {
   AgentRestartCommandStore,
   type AgentRestartCommand,
@@ -97,6 +98,7 @@ export class RuntimeHost {
   private readonly configWatchers = new Map<string, FSWatcher>();
   private restartCommandWatcher?: FSWatcher;
   private configWatchDebounce?: NodeJS.Timeout;
+  private bootHealthInitialized = false;
 
   constructor(
     private readonly opts: RuntimeHostOptions = {},
@@ -180,6 +182,7 @@ export class RuntimeHost {
   private async reconcileAgents(): Promise<void> {
     const agents = await this.loadAgents(this.opts);
     this.knownAgents = new Map(agents.map((agent) => [agent.id, agent]));
+    await this.initializeBootHealth(agents);
     this.syncConfigWatchers(agents.map((agent) => agent.id));
     const pendingRestartAgentIds = new Set(await this.restartCommands.pendingAgentIds());
     const seenAgentIds = new Set<string>();
@@ -220,6 +223,24 @@ export class RuntimeHost {
     await this.clearMissingRestartCommands(seenAgentIds, pendingRestartAgentIds);
     if (!this.opts.agent) await this.stopMissingAgents(seenAgentIds);
     await this.publishKnownHealthSnapshots();
+  }
+
+  private async initializeBootHealth(agents: AgentConfig[]): Promise<void> {
+    if (this.bootHealthInitialized) return;
+    this.bootHealthInitialized = true;
+    await Promise.allSettled(
+      agents
+        .filter((agent) => agent.enabled !== false && agentHasConnectedTransport(agent) && isAgentRunnable(agent))
+        .map(async (agent) => {
+          const previous = await this.healthStore.get(agent.id);
+          if (previous?.state === 'unhealthy' && isProviderFailureReason(previous.reason)) return;
+          await this.healthStore.writeHealth({
+            agentId: agent.id,
+            state: 'starting',
+            updatedAt: nowIso(),
+          });
+        }),
+    );
   }
 
   private async forceRestartAgent(
@@ -795,6 +816,13 @@ function healthForRuntime(runtime: AgentRuntimeHandleSnapshot | undefined): Runt
 
 function isTransientRuntimeChildReason(reason: AgentHealthReason | undefined): reason is 'provider_child_missing' | 'provider_child_exited' {
   return reason === 'provider_child_missing' || reason === 'provider_child_exited';
+}
+
+function isProviderFailureReason(reason: AgentHealthReason | undefined): boolean {
+  return reason === 'provider_auth_failed'
+    || reason === 'provider_quota_exhausted'
+    || reason === 'provider_error'
+    || reason === 'provider_rate_limited';
 }
 
 async function staleRunningItemForAgent(

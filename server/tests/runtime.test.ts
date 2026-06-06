@@ -368,6 +368,71 @@ test('runtime host writes recovered restart health snapshots', async () => {
   }
 });
 
+test('runtime host marks runnable agents starting before serial boot completes without hiding provider failures', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-boot-health-test-'));
+  try {
+    const healthStore = new AgentHealthStore({ animaHome: stateDir });
+    const agents = [
+      runtimeHostAgent('alpha', { connected: true }),
+      runtimeHostAgent('bravo', { connected: true }),
+      runtimeHostAgent('quota', { connected: true }),
+    ];
+    await healthStore.writeHealth({
+      agentId: 'bravo',
+      reason: 'stale_running_item',
+      state: 'unhealthy',
+      updatedAt: '2026-06-06T00:00:00.000Z',
+    });
+    await healthStore.writeHealth({
+      agentId: 'quota',
+      reason: 'provider_quota_exhausted',
+      state: 'unhealthy',
+      updatedAt: '2026-06-06T00:00:00.000Z',
+    });
+    let releaseAlpha!: () => void;
+    let alphaStarted!: () => void;
+    const alphaBlock = new Promise<void>((resolve) => {
+      releaseAlpha = resolve;
+    });
+    const alphaStartedPromise = new Promise<void>((resolve) => {
+      alphaStarted = resolve;
+    });
+    const started: string[] = [];
+    const host = new RuntimeHost({}, {
+      animaHome: stateDir,
+      healthStore,
+      loadAgents: async () => agents,
+      logger: silentLogger,
+      startAgent: async (agent) => {
+        started.push(agent.id);
+        if (agent.id === 'alpha') {
+          alphaStarted();
+          await alphaBlock;
+        }
+        return healthHandle(agent.id, 1);
+      },
+      validateAgent: async () => {},
+    });
+
+    const reconcile = host.reconcileOnce();
+    await alphaStartedPromise;
+
+    const bravoDuringBoot = await healthStore.get('bravo');
+    assert.equal(bravoDuringBoot?.state, 'starting');
+    assert.equal(bravoDuringBoot?.reason, undefined);
+    const quotaDuringBoot = await healthStore.get('quota');
+    assert.equal(quotaDuringBoot?.state, 'unhealthy');
+    assert.equal(quotaDuringBoot?.reason, 'provider_quota_exhausted');
+
+    releaseAlpha();
+    await reconcile;
+    assert.deepEqual(started, ['alpha', 'bravo', 'quota']);
+    await host.stop();
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('runtime host debounces missing provider children before marking unhealthy', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-child-health-debounce-test-'));
   try {
