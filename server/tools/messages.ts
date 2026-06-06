@@ -2,6 +2,7 @@ import type { WebClient } from '@slack/web-api';
 
 import { createFeishuMessageClient as createDefaultFeishuMessageClient } from '../feishu/client.js';
 import type { FeishuReceiveIdType } from '../feishu/client.js';
+import { markdownToFeishuPost } from '../feishu/markdown-to-feishu-post.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { nowIso } from '../ids.js';
 import {
@@ -195,16 +196,17 @@ async function runFeishuMessageSend(input: {
     basePayload,
     effectType: 'feishu.message.send',
     op: async () => {
+      const postContent = markdownToFeishuPost(input.text);
       const response = input.threadMessageId
-        ? await client.replyText({
+        ? await client.replyPost({
             messageId: input.threadMessageId,
             replyInThread: true,
-            text: input.text,
+            content: postContent,
           })
-        : await client.sendText({
+        : await client.sendPost({
             receiveId: input.target.receiveId,
             receiveIdType: input.target.receiveIdType,
-            text: input.text,
+            content: postContent,
           });
       await recordFeishuOwnerGreetingDelivery({
         agentId: input.agentId,

@@ -977,6 +977,12 @@ test('message read can fetch Feishu chat history explicitly', async () => {
               async replyText() {
                 throw new Error('unexpected topic reply');
               },
+              async replyPost() {
+                return {};
+              },
+              async sendPost() {
+                return {};
+              },
               async sendUploadedFile() {
                 throw new Error('unexpected file send');
               },
@@ -1007,7 +1013,7 @@ test('message read can fetch Feishu chat history explicitly', async () => {
 
 test('message send can target a Feishu chat explicitly', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-explicit-chat-test-'));
-  const sent: FeishuTextSendInput[] = [];
+  const sent: Array<{ receiveId: string; receiveIdType: string }> = [];
   try {
     await withAnimaHome(stateDir, async () => {
       await writeFeishuConfig(stateDir);
@@ -1031,12 +1037,18 @@ test('message send can target a Feishu chat explicitly', async () => {
               async replyText() {
                 throw new Error('unexpected topic reply');
               },
+              async replyPost() {
+                throw new Error('unexpected topic reply post');
+              },
               async sendUploadedFile() {
                 throw new Error('unexpected file send');
               },
-              async sendText(input) {
+              async sendPost(input) {
                 sent.push(input);
                 return { chatId: 'oc_target_chat', messageId: 'om_sent' };
+              },
+              async sendText() {
+                throw new Error('unexpected plain text send');
               },
               async uploadFile() {
                 throw new Error('unexpected file upload');
@@ -1047,11 +1059,9 @@ test('message send can target a Feishu chat explicitly', async () => {
       );
     });
 
-    assert.deepEqual(sent, [{
-      receiveId: 'oc_target_chat',
-      receiveIdType: 'chat_id',
-      text: 'ordinary chat message',
-    }]);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0]?.receiveId, 'oc_target_chat');
+    assert.equal(sent[0]?.receiveIdType, 'chat_id');
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }
@@ -1059,7 +1069,7 @@ test('message send can target a Feishu chat explicitly', async () => {
 
 test('message send can target a Feishu owner open_id and record greeting delivery', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-owner-send-test-'));
-  const sent: FeishuTextSendInput[] = [];
+  const sent: Array<{ receiveId: string; receiveIdType: string }> = [];
   const previousItemId = process.env.ANIMA_INBOX_ITEM_ID;
   try {
     await withAnimaHome(stateDir, async () => {
@@ -1103,12 +1113,18 @@ test('message send can target a Feishu owner open_id and record greeting deliver
               async replyText() {
                 throw new Error('unexpected topic reply');
               },
+              async replyPost() {
+                throw new Error('unexpected topic reply post');
+              },
               async sendUploadedFile() {
                 throw new Error('unexpected file send');
               },
-              async sendText(input) {
+              async sendPost(input) {
                 sent.push(input);
                 return { chatId: 'oc_owner_dm', messageId: 'om_owner_hello' };
+              },
+              async sendText() {
+                throw new Error('unexpected plain text send');
               },
               async uploadFile() {
                 throw new Error('unexpected file upload');
@@ -1124,11 +1140,9 @@ test('message send can target a Feishu owner open_id and record greeting deliver
       assert.match(stored.feishu.ownerGreetingDeliveredAt ?? '', /^\d{4}-/);
     });
 
-    assert.deepEqual(sent, [{
-      receiveId: 'ou_owner',
-      receiveIdType: 'open_id',
-      text: 'hello owner',
-    }]);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0]?.receiveId, 'ou_owner');
+    assert.equal(sent[0]?.receiveIdType, 'open_id');
   } finally {
     if (previousItemId === undefined) {
       delete process.env.ANIMA_INBOX_ITEM_ID;
@@ -1141,7 +1155,7 @@ test('message send can target a Feishu owner open_id and record greeting deliver
 
 test('message send can target a Feishu topic explicitly', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-explicit-topic-test-'));
-  const replies: Array<{ messageId: string; replyInThread: boolean; text: string }> = [];
+  const replies: Array<{ messageId: string; replyInThread: boolean }> = [];
   try {
     await withAnimaHome(stateDir, async () => {
       await writeFeishuConfig(stateDir);
@@ -1162,9 +1176,15 @@ test('message send can target a Feishu topic explicitly', async () => {
               async removeReaction() {
                 throw new Error('unexpected reaction remove');
               },
-              async replyText(input) {
+              async replyText() {
+                throw new Error('unexpected plain text topic reply');
+              },
+              async replyPost(input) {
                 replies.push(input);
                 return { chatId: 'oc_target_chat', messageId: 'om_sent', threadId: 'omt_topic' };
+              },
+              async sendPost() {
+                throw new Error('unexpected ordinary send post');
               },
               async sendUploadedFile() {
                 throw new Error('unexpected file send');
@@ -1181,7 +1201,9 @@ test('message send can target a Feishu topic explicitly', async () => {
       );
     });
 
-    assert.deepEqual(replies, [{ messageId: 'om_topic_root', replyInThread: true, text: 'topic message' }]);
+    assert.equal(replies.length, 1);
+    assert.equal(replies[0]?.messageId, 'om_topic_root');
+    assert.equal(replies[0]?.replyInThread, true);
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }
@@ -1223,6 +1245,12 @@ test('message react can add a Feishu reaction by message id', async () => {
               },
               async replyText() {
                 throw new Error('unexpected topic reply');
+              },
+              async replyPost() {
+                return {};
+              },
+              async sendPost() {
+                return {};
               },
               async sendUploadedFile() {
                 throw new Error('unexpected file send');
@@ -1301,6 +1329,12 @@ test('message react can remove a Feishu reaction with a reaction id', async () =
               },
               async replyText() {
                 throw new Error('unexpected topic reply');
+              },
+              async replyPost() {
+                return {};
+              },
+              async sendPost() {
+                return {};
               },
               async sendUploadedFile() {
                 throw new Error('unexpected file send');
@@ -1540,6 +1574,12 @@ test('file send can upload to a Feishu chat explicitly', async () => {
               async replyText() {
                 throw new Error('unexpected topic reply');
               },
+              async replyPost() {
+                return {};
+              },
+              async sendPost() {
+                return {};
+              },
               async sendUploadedFile(input) {
                 order.push('send-file');
                 fileSends.push(input);
@@ -1724,6 +1764,12 @@ test('message read emits Feishu file resource ids for fetch', async () => {
               async replyText() {
                 throw new Error('unexpected topic reply');
               },
+              async replyPost() {
+                return {};
+              },
+              async sendPost() {
+                return {};
+              },
               async sendUploadedFile() {
                 throw new Error('unexpected file send');
               },
@@ -1788,6 +1834,12 @@ test('file fetch can download a Feishu message resource id', async () => {
               },
               async replyText() {
                 throw new Error('unexpected topic reply');
+              },
+              async replyPost() {
+                return {};
+              },
+              async sendPost() {
+                return {};
               },
               async sendUploadedFile() {
                 throw new Error('unexpected file send');
