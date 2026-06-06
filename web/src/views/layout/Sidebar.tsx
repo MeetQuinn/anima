@@ -25,6 +25,7 @@ import { agentColor, initialOf } from '@/lib/avatars';
 import { agentAvatarUrl } from '@/lib/agent-avatar';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
 import { AgentRow, sidebarDotColor, sidebarDotTitle } from './sidebar/AgentRow';
+import { agentOptionId, useSidebarAgentKeyboardNav } from './sidebar/useSidebarAgentKeyboardNav';
 import { AgentCreateModal } from '@/views/onboarding';
 import {
   AddKbModal,
@@ -103,6 +104,13 @@ export default function Sidebar({
   );
 
   const { orderedAgents, orderedKbs, agentIndexMap, kbIndexMap, sensors, reorderAgents, reorderKbs } = useSidebarOrder();
+  // Arrow up/down to move through agents (selection follows focus, debounced
+  // commit). Expanded list only; the collapsed icon rail stays click-only.
+  const agentKeyboardNav = useSidebarAgentKeyboardNav({
+    agentIds: orderedAgents.map((a) => a.id),
+    activeAgentId: agentId,
+    onCommit: setAgentId,
+  });
   // Knowledge Base add modal
   const [showAddModal, setShowAddModal] = useState(false);
 
@@ -447,7 +455,11 @@ export default function Sidebar({
                 <Plus className="h-3 w-3" />
               </button>
             </div>
-            <div className="space-y-0.5">
+            <div
+              className="space-y-0.5 rounded-sm focus-visible:outline-none"
+              aria-label="Agents"
+              {...agentKeyboardNav.listboxProps}
+            >
               <DndContext
                 sensors={sensors}
                 collisionDetection={closestCenter}
@@ -469,6 +481,8 @@ export default function Sidebar({
                           enabled={agent.enabled !== false}
                           {...(status ? { status } : {})}
                           onClick={() => setAgentId(agent.id)}
+                          optionId={agentOptionId(agent.id)}
+                          focused={agentKeyboardNav.isOptionFocused(agent.id)}
                         />
                       </SortableItem>
                     );

@@ -35,6 +35,8 @@ export function AgentRow({
   enabled,
   status,
   onClick,
+  optionId,
+  focused = false,
 }: {
   agent: AgentConfig;
   index: number;
@@ -43,6 +45,10 @@ export function AgentRow({
   enabled: boolean;
   status?: AgentStatusSummary;
   onClick: () => void;
+  // When rendered inside the keyboard-navigable listbox, the row becomes an
+  // ARIA option and `focused` reflects the keyboard cursor. Omitted elsewhere.
+  optionId?: string;
+  focused?: boolean;
 }) {
   const color = agentColor(index);
   const displayName = agent.profile?.displayName ?? agent.id;
@@ -56,10 +62,14 @@ export function AgentRow({
   const hasRightMeta = !enabled || showRuntimeHealth;
   return (
     <div
+      {...(optionId ? { id: optionId, role: 'option', 'aria-selected': active } : {})}
       className={[
         'group relative flex w-full items-center rounded-sm transition-colors',
         // Active: solid elevated bg; hover: much lighter so selected is unambiguous
         active ? 'bg-spine-elevated' : 'hover:bg-spine-elevated/30',
+        // Keyboard cursor: inset accent ring, distinct from the active bg/bar so
+        // a held arrow shows where you'll land before the commit catches up.
+        focused ? 'ring-1 ring-inset ring-accent' : '',
       ].join(' ')}
     >
       {active && (
@@ -68,6 +78,9 @@ export function AgentRow({
       )}
       <button
         onClick={onClick}
+        // Inside the listbox the container owns keyboard focus (single tab
+        // stop); rows are reachable by arrows, not Tab. Mouse clicks still work.
+        {...(optionId ? { tabIndex: -1 } : {})}
         className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-inset"
       >
         {avatarUrl ? (
