@@ -43,9 +43,13 @@ function buildAnimaReferenceSection(referencePaths: AnimaReferencePaths): string
     );
   }
 
+  lines.push(
+    "Anima's source is public at <https://github.com/MeetQuinn/anima>. When a local checkout isn't available, read it there for behavior, configuration, and architecture.",
+  );
+
   if (referencePaths.sourcePath) {
     lines.push(
-      `Anima source is available at \`${referencePaths.sourcePath}\`. Treat it as reference unless the user explicitly asks you to modify Anima itself.`,
+      `A local Anima source checkout is available at \`${referencePaths.sourcePath}\`. Treat it as reference unless the user explicitly asks you to modify Anima itself.`,
     );
   }
 
