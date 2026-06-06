@@ -4,7 +4,7 @@ import { Row, SurfaceText, COLOR_INBOUND, COLOR_OUTBOUND, COLOR_REMINDER } from 
 import { AttachedFiles, UploadedFile } from './Attachments';
 import { isOnboardingWake, type ActivityFeedItem } from '@/lib/activity-feed';
 import type { ActivityMode } from '@/lib/activities';
-import type { ChoiceResponseInboxItem, InboxItem, SlackInboxItem } from '@shared/inbox';
+import type { ChoiceResponseInboxItem, FeishuInboxItem, InboxItem, SlackInboxItem } from '@shared/inbox';
 import type { SlackFile } from '@/types';
 
 // ---------------------------------------------------------------------------
@@ -87,8 +87,12 @@ function choiceResponseTitle(item: ChoiceResponseInboxItem): string {
   return item.answeredBy.handle?.replace(/^@/, '') || item.answeredBy.displayName || 'Choice response';
 }
 
-function slackFiles(item: SlackInboxItem): SlackFile[] {
+function inboundFiles(item: SlackInboxItem | FeishuInboxItem): SlackFile[] {
   return item.files ?? [];
+}
+
+function isFileBearingInboxItem(item: InboxItem): item is SlackInboxItem | FeishuInboxItem {
+  return item.kind === 'slack' || item.kind === 'feishu';
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +130,7 @@ export function MessageInRow({
   }
   const dotColor = item.event.kind === 'reminder' || onboarding ? COLOR_REMINDER : COLOR_INBOUND;
   const text = inboxItemText(item.event).trim();
-  const files = isSlackItem(item.event) ? slackFiles(item.event) : [];
+  const files = isFileBearingInboxItem(item.event) ? inboundFiles(item.event) : [];
   const hasFiles = files.length > 0;
   // Follow-up treatment is mode-dependent (iris lock 1779210850.086949):
   //   • Conversation mode: hide entirely. Active-run append is Anima-internal

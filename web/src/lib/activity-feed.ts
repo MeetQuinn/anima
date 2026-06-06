@@ -478,6 +478,14 @@ function inboxItemForMessage(message: AgentMessageRecord): InboxItem {
       },
       chatId: message.channelId ?? '',
       chatType: message.channelKind ?? 'group',
+      ...(message.files?.length ? {
+        files: message.files.map((file, index) => ({
+          id: file.fileId ?? `${message.messageId}:file:${index}`,
+          mimetype: file.mimetype ?? 'application/octet-stream',
+          name: file.filename,
+          sizeBytes: file.sizeBytes ?? 0,
+        })),
+      } : {}),
       kind: 'feishu',
       messageId: message.messageTs ?? message.messageId,
       text: message.text,

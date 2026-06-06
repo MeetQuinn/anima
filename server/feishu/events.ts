@@ -1,5 +1,6 @@
 import { nowIso } from '../ids.js';
-import type { FeishuInboxItem } from '../../shared/inbox.js';
+import { feishuMessageResourceId } from './feishu-file.service.js';
+import type { FeishuInboxItem, InboxFileMeta } from '../../shared/inbox.js';
 
 export interface FeishuReceiveMessageEvent {
   app_id?: string;
@@ -54,8 +55,10 @@ export function normalizeFeishuMessage(input: {
   botOpenId?: string;
   event: FeishuReceiveMessageEvent;
 }): FeishuInboxItem | undefined {
-  const text = feishuTextFromMessage(input.event.message);
-  if (!text) return undefined;
+  const parsedContent = parseFeishuContent(input.event.message.content);
+  const files = feishuFilesFromMessage(input.event.message, parsedContent);
+  const text = feishuTextFromMessage(input.event.message, parsedContent) ?? feishuAttachmentText(files);
+  if (!text && !files.length) return undefined;
 
   const tenantKey = input.event.tenant_key ?? input.event.sender.tenant_key;
   const appId = input.event.app_id ?? input.appId;
@@ -65,6 +68,7 @@ export function normalizeFeishuMessage(input: {
     appId,
     chatId: input.event.message.chat_id,
     chatType: input.event.message.chat_type,
+    ...(files.length ? { files } : {}),
     handling: { createdAt: handlingAt, queuedAt: handlingAt, status: 'queued', updatedAt: handlingAt },
     id: feishuMessageEventId({
       appId,
@@ -79,7 +83,7 @@ export function normalizeFeishuMessage(input: {
     receivedAt: feishuTimestampToIso(input.event.message.create_time),
     ...(input.event.message.root_id ? { rootId: input.event.message.root_id } : {}),
     ...(tenantKey ? { tenantKey } : {}),
-    text,
+    text: text ?? '',
     ...(input.event.message.thread_id ? { threadId: input.event.message.thread_id } : {}),
   };
   return result;
@@ -120,12 +124,79 @@ function feishuActor(event: FeishuReceiveMessageEvent): FeishuInboxItem['actor']
   };
 }
 
-function feishuTextFromMessage(message: FeishuReceiveMessageEvent['message']): string | undefined {
+function feishuTextFromMessage(
+  message: FeishuReceiveMessageEvent['message'],
+  parsed: Record<string, unknown> | undefined,
+): string | undefined {
   if (message.message_type !== 'text') return undefined;
-  const parsed = parseFeishuContent(message.content);
   const rawText = typeof parsed?.['text'] === 'string' ? parsed['text'] : undefined;
   if (!rawText?.trim()) return undefined;
   return replaceFeishuMentionKeys(rawText, message.mentions ?? []);
+}
+
+function feishuFilesFromMessage(
+  message: FeishuReceiveMessageEvent['message'],
+  parsed: Record<string, unknown> | undefined,
+): InboxFileMeta[] {
+  if (message.message_type === 'image') {
+    const imageKey = stringContentField(parsed, 'image_key');
+    if (!imageKey) return [];
+    return [{
+      id: feishuMessageResourceId({
+        fileKey: imageKey,
+        messageId: message.message_id,
+        resourceType: 'image',
+      }),
+      mimetype: 'image/*',
+      name: fallbackFeishuResourceName('image', message.message_id),
+      sizeBytes: feishuFileSize(parsed) ?? 0,
+    }];
+  }
+
+  if (message.message_type === 'file') {
+    const fileKey = stringContentField(parsed, 'file_key');
+    if (!fileKey) return [];
+    const fileName = stringContentField(parsed, 'file_name') ?? fallbackFeishuResourceName('file', message.message_id);
+    return [{
+      id: feishuMessageResourceId({
+        fileKey,
+        messageId: message.message_id,
+        resourceType: 'file',
+      }),
+      mimetype: stringContentField(parsed, 'mime_type') ?? stringContentField(parsed, 'mimetype') ?? 'application/octet-stream',
+      name: fileName,
+      sizeBytes: feishuFileSize(parsed) ?? 0,
+    }];
+  }
+
+  return [];
+}
+
+function feishuAttachmentText(files: InboxFileMeta[]): string | undefined {
+  if (!files.length) return undefined;
+  if (files.length > 1) return `[${files.length} attachments]`;
+  const file = files[0];
+  if (!file) return undefined;
+  const kind = file.id.includes(':image:') ? 'image' : 'file';
+  return `[${kind}] ${file.name}`;
+}
+
+function stringContentField(content: Record<string, unknown> | undefined, field: string): string | undefined {
+  const value = content?.[field];
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function feishuFileSize(content: Record<string, unknown> | undefined): number | undefined {
+  const candidates = [content?.['file_size'], content?.['size'], content?.['size_bytes']];
+  const numeric = candidates.find((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  if (numeric !== undefined) return numeric;
+  const stringValue = candidates.find((value): value is string => typeof value === 'string' && value.length > 0);
+  const parsed = stringValue === undefined ? Number.NaN : Number(stringValue);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function fallbackFeishuResourceName(kind: 'file' | 'image', messageId: string): string {
+  return `${kind}-${messageId}`;
 }
 
 function parseFeishuContent(content: string): Record<string, unknown> | undefined {
