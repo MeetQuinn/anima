@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ExternalLink, Loader2 } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
 
@@ -6,6 +6,7 @@ import {
   connectAgentFeishu,
   fetchAgentFeishuAppRegistration,
   refreshDashboardData,
+  startAgentFeishuAppRegistration,
 } from '@/api/agents';
 import { Button } from '@/components/ui/button';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -34,6 +35,7 @@ const PREVIEW_VERIFICATION_URL =
 export type FeishuOnboardingPhase = 'creating' | 'authorizing' | 'fallback' | 'connected';
 
 const POLL_INTERVAL_MS = 2000;
+const SLOW_SOFTEN_MS = 15_000;
 
 const ACTIVE_STATES = ['starting', 'waiting', 'slow_down', 'domain_switched'];
 
@@ -82,6 +84,28 @@ export function FeishuOnboardingConnect({
   const [appId, setAppId] = useState('');
   const [appSecret, setAppSecret] = useState('');
   const [saving, setSaving] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [retrySlow, setRetrySlow] = useState(false);
+  const retrySlowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const registrationRunRef = useRef(0);
+
+  function clearRetrySlowTimer() {
+    if (retrySlowTimerRef.current === null) return;
+    clearTimeout(retrySlowTimerRef.current);
+    retrySlowTimerRef.current = null;
+  }
+
+  function startRetrySlowTimer() {
+    clearRetrySlowTimer();
+    setRetrySlow(false);
+    retrySlowTimerRef.current = setTimeout(() => {
+      setRetrySlow(true);
+    }, SLOW_SOFTEN_MS);
+  }
+
+  useEffect(() => () => {
+    if (retrySlowTimerRef.current !== null) clearTimeout(retrySlowTimerRef.current);
+  }, []);
 
   // --- Poll while registration is active ------------------------------------
   const registrationActive =
@@ -90,22 +114,29 @@ export function FeishuOnboardingConnect({
   useEffect(() => {
     if (!registrationActive || !registration?.registrationId) return undefined;
     let cancelled = false;
+    const runId = registrationRunRef.current;
     const timer = window.setInterval(() => {
       void fetchAgentFeishuAppRegistration(agentId, registration.registrationId)
         .then((next) => {
-          if (cancelled) return;
+          if (cancelled || runId !== registrationRunRef.current) return;
           setRegistration(next);
           if (next.verificationUrl) {
-            setPhase((prev) => (prev === 'fallback' || prev === 'connected' ? prev : 'authorizing'));
+            clearRetrySlowTimer();
+            setRetrying(false);
+            setRetrySlow(false);
+            setPhase((prev) => (prev === 'connected' ? prev : 'authorizing'));
           }
           if (next.state === 'connected') handleConnected('registerApp');
           if (next.state === 'failed') {
+            clearRetrySlowTimer();
+            setRetrying(false);
+            setRetrySlow(false);
             setError(next.error?.description ?? next.error?.message);
             setPhase((prev) => (prev === 'connected' ? prev : 'fallback'));
           }
         })
         .catch((err) => {
-          if (cancelled) return;
+          if (cancelled || runId !== registrationRunRef.current) return;
           setError(err instanceof Error ? err.message : 'Could not refresh Feishu app setup');
         });
     }, POLL_INTERVAL_MS);
@@ -117,13 +148,59 @@ export function FeishuOnboardingConnect({
   }, [agentId, registration?.registrationId, registrationActive]);
 
   function handleConnected(source: 'registerApp' | 'manual') {
+    clearRetrySlowTimer();
+    setRetrying(false);
+    setRetrySlow(false);
     setPhase('connected');
     refreshDashboardData();
     onConnect?.({ source });
   }
 
+  async function handleRetryRegistration() {
+    if (retrying || isPreview) return;
+    const runId = registrationRunRef.current + 1;
+    registrationRunRef.current = runId;
+    setRetrying(true);
+    setRetrySlow(false);
+    setError(undefined);
+    setRegistration(null);
+    setPhase('fallback');
+    startRetrySlowTimer();
+    let keepWaiting = false;
+    try {
+      const next = await startAgentFeishuAppRegistration(agentId);
+      if (runId !== registrationRunRef.current) return;
+      setRegistration(next);
+      if (next.state === 'connected') {
+        handleConnected('registerApp');
+      } else if (next.state === 'failed') {
+        setError(next.error?.description ?? next.error?.message);
+        setPhase('fallback');
+      } else if (next.verificationUrl) {
+        setPhase('authorizing');
+      } else if (ACTIVE_STATES.includes(next.state)) {
+        keepWaiting = true;
+      }
+    } catch (err) {
+      if (runId !== registrationRunRef.current) return;
+      setError(err instanceof Error ? err.message : 'Could not start creating your Feishu app.');
+      setPhase('fallback');
+    } finally {
+      if (runId === registrationRunRef.current && !keepWaiting) {
+        clearRetrySlowTimer();
+        setRetrying(false);
+        setRetrySlow(false);
+      }
+    }
+  }
+
   async function handleUseExisting() {
     if (saving || !appId.trim() || !appSecret.trim()) return;
+    registrationRunRef.current += 1;
+    clearRetrySlowTimer();
+    setRetrying(false);
+    setRetrySlow(false);
+    setRegistration(null);
     setSaving(true);
     setError(undefined);
     try {
@@ -159,7 +236,10 @@ export function FeishuOnboardingConnect({
           saving={saving}
           onAppId={setAppId}
           onAppSecret={setAppSecret}
+          onRetry={() => void handleRetryRegistration()}
           onSubmit={() => void handleUseExisting()}
+          retrying={retrying}
+          retrySlow={retrySlow}
         />
       )}
 
@@ -249,19 +329,42 @@ function FallbackState({
   appSecret,
   onAppId,
   onAppSecret,
+  onRetry,
   onSubmit,
+  retrying,
+  retrySlow,
   saving,
 }: {
   appId: string;
   appSecret: string;
   onAppId: (v: string) => void;
   onAppSecret: (v: string) => void;
+  onRetry: () => void;
   onSubmit: () => void;
+  retrying: boolean;
+  retrySlow: boolean;
   saving: boolean;
 }) {
   const disabled = saving || !appId.trim() || !appSecret.trim();
   return (
     <div className="space-y-3">
+      <div className="space-y-2 rounded-sm border border-border-soft bg-surface px-4 py-3">
+        <Button className="w-full" onClick={onRetry} disabled={saving || retrying}>
+          {retrying ? (
+            <span className="inline-flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Creating your Feishu app…
+            </span>
+          ) : (
+            'Try creating a new Feishu app again'
+          )}
+        </Button>
+        {retrying && retrySlow && (
+          <p className="text-center font-sans text-[12px] text-text-subtle">
+            This is taking longer than usual.
+          </p>
+        )}
+      </div>
       <div className="space-y-3 rounded-sm border border-border-soft bg-surface px-4 py-3">
         <div>
           <div className="font-serif text-[14px] font-semibold text-text">

@@ -136,7 +136,7 @@ export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
     } catch (err) {
       if (!isCurrentCreateRun(runId)) return;
       clearSlowTimer();
-      setError(err instanceof Error ? err.message : 'Could not start Feishu app registration');
+      setError(err instanceof Error ? err.message : 'Could not start creating your Feishu app.');
       setExistingReason('failed');
       setSetupMode('existing');
     } finally {
@@ -179,6 +179,15 @@ export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
     setError(undefined);
   }
 
+  function retryCreateApp() {
+    clearSlowTimer();
+    setRegistration(null);
+    setError(undefined);
+    setExistingReason('manual');
+    setSetupMode('create');
+    void handleRegisterApp();
+  }
+
   return (
     <div className="space-y-5">
       {setupMode === 'create' && (
@@ -192,7 +201,7 @@ export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
                 onClick={() => void handleRegisterApp()}
                 disabled={registering || !!registrationActive}
               >
-                {registering || registration?.state === 'starting' ? (
+                {registering || registrationActive ? (
                   <span className="inline-flex items-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Creating your Feishu app…
@@ -228,6 +237,7 @@ export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
           onAppId={setAppId}
           onAppSecret={setAppSecret}
           onBack={showCreate}
+          onRetry={retryCreateApp}
           onSubmit={() => void handleConnect()}
         />
       )}
@@ -294,6 +304,7 @@ function ExistingCredentialsForm({
   onAppId,
   onAppSecret,
   onBack,
+  onRetry,
   onSubmit,
   reason,
   saving,
@@ -304,6 +315,7 @@ function ExistingCredentialsForm({
   onAppId: (value: string) => void;
   onAppSecret: (value: string) => void;
   onBack: () => void;
+  onRetry: () => void;
   onSubmit: () => void;
   reason: ExistingModeReason;
   saving: boolean;
@@ -318,6 +330,13 @@ function ExistingCredentialsForm({
         >
           Create a new Feishu app
         </button>
+      )}
+      {reason === 'failed' && (
+        <div className="rounded-sm border border-border-soft bg-surface px-4 py-3">
+          <Button className="w-full" onClick={onRetry} disabled={saving}>
+            Try creating a new Feishu app again
+          </Button>
+        </div>
       )}
       <div className="space-y-3 rounded-sm border border-border-soft bg-surface px-4 py-3">
         <div>
