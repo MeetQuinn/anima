@@ -53,6 +53,7 @@ export interface AgentDiagnosticsServer {
   lastServicesRestart?: {
     blockerCount?: number;
     completedAt: string;
+    interruptedCount?: number;
     mode?: string;
     reason?: string;
     requestedCount?: number;

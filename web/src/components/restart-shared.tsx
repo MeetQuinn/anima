@@ -139,6 +139,7 @@ export const RESTART_ECHO_FRESH_MS = 60_000;
 export interface RestartEchoSignal {
   completedAt?: string;
   fallbackToIdle?: boolean;
+  interruptedCount?: number;
   mode?: 'idle' | 'drain-active';
   resumedCount?: number;
   status?: 'blocked' | 'succeeded';
@@ -150,8 +151,8 @@ export type RestartEcho = { kind: 'resumed'; count: number } | { kind: 'restarte
  * The locked honesty rule (Nora 1780049911): "N agents resumed" fires ONLY on
  * the genuine drain-and-resume path — drain-active mode, did NOT fall back to
  * idle-wait, and at least one running item was re-queued. On the fallback path
- * (drain timeout → wait-for-idle, nothing interrupted) NOTHING resumed, so it
- * must show plain "restarted" — never a false resume claim. Returns null once
+ * (drain timeout → direct restart) may interrupt work that only recovers after
+ * boot, so it must show plain "restarted" — never a false resume claim. Returns null once
  * the event ages out of the freshness window (or if there's no completion).
  *
  * Date.now() is called inside the function body so callers don't trigger
@@ -162,7 +163,12 @@ export function restartEcho(signal: RestartEchoSignal | undefined): RestartEcho 
   if (signal.status === 'blocked') return null;
   const completed = Date.parse(signal.completedAt);
   if (!Number.isFinite(completed) || Date.now() - completed > RESTART_ECHO_FRESH_MS) return null;
-  if (signal.mode === 'drain-active' && !signal.fallbackToIdle && (signal.resumedCount ?? 0) > 0) {
+  if (
+    signal.mode === 'drain-active'
+    && !signal.fallbackToIdle
+    && (signal.interruptedCount ?? 0) === 0
+    && (signal.resumedCount ?? 0) > 0
+  ) {
     return { kind: 'resumed', count: signal.resumedCount ?? 0 };
   }
   return { kind: 'restarted' };

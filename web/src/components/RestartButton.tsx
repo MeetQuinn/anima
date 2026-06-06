@@ -165,11 +165,9 @@ function RestartOverlay() {
         <div className="font-serif text-[16px] font-medium text-text">
           Restarting Anima services…
         </div>
-        {/* Continuity-first + honest about the best-effort safe point (v1 never
-            force-kills a tool mid-flight — it drains to a clean edge or waits). */}
         <div className="font-sans text-[12px] leading-relaxed text-text-muted">
-          Any working agents pause at a safe point and resume right where they left off. The web app
-          reloads automatically when services are back.
+          Any working agents are asked to pause and resume where they left off. The web app reloads
+          automatically when services are back.
         </div>
       </div>
     </div>,

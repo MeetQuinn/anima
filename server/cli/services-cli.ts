@@ -258,6 +258,7 @@ async function prepareRestartGate(specs: ServiceSpec[], opts: ServicesCliOptions
 
   if (opts.drainActive || opts.resumeRunning) {
     const drainResult = await waitForRestartDrain({
+      continueOnTimeout: true,
       drainTimeoutMs: opts.drainTimeoutMs ?? DEFAULT_RESTART_DRAIN_TIMEOUT_MS,
       markerTtlMs: (opts.drainTimeoutMs ?? DEFAULT_RESTART_DRAIN_TIMEOUT_MS) + 60_000,
     });

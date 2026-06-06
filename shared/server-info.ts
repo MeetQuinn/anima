@@ -15,6 +15,7 @@ export type ServicesRestartBlocker = z.infer<typeof ServicesRestartBlocker>;
 export const ServicesRestartSucceededResult = z.object({
   completedAt: z.string(),
   fallbackToIdle: z.boolean(),
+  interruptedCount: z.number().optional(),
   mode: z.enum(['idle', 'drain-active']),
   requestedCount: z.number(),
   resumedCount: z.number(),

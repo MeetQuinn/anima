@@ -133,6 +133,7 @@ function safeLastServicesRestart(
   }
   return {
     completedAt: lastRestart.completedAt,
+    interruptedCount: lastRestart.interruptedCount,
     mode: lastRestart.mode,
     requestedCount: lastRestart.requestedCount,
     resumedCount: lastRestart.resumedCount,

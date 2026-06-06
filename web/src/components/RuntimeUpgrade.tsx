@@ -484,14 +484,10 @@ function UpgradeOverlay({ target }: { target?: string }) {
         <div className="font-serif text-[16px] font-medium text-text">
           {target ? `Installing ${target}…` : 'Installing update…'}
         </div>
-        {/* Continuity-first default. The old idle-wait line ("waits for a working
-            agent to finish") survives here, reframed as "at a safe point" — which
-            is honest for BOTH the drain path (clean edge reached quickly) and the
-            drain-timeout fallback (waits for a safe point; v1 never force-kills). */}
         <div className="font-sans text-[12px] leading-relaxed text-text-muted">
           Your current version keeps running while Anima installs and verifies the new one, then
-          restarts at a safe point so any working agents resume right where they left off. The
-          dashboard reloads automatically when it&apos;s back.
+          asks any working agents to pause before restart. The dashboard reloads automatically when
+          it&apos;s back.
         </div>
       </div>
     </div>,
@@ -528,6 +524,7 @@ function echoSignal(op: RuntimeUpgradeOperation) {
   return {
     completedAt: op.completedAt,
     fallbackToIdle: op.restart?.fallbackToIdle,
+    interruptedCount: op.restart?.interruptedCount,
     mode: op.restart?.mode,
     resumedCount: op.restart?.resumedCount,
   };
