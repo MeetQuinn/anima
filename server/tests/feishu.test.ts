@@ -84,6 +84,84 @@ test('normalizes Feishu text DMs into inbox items', () => {
   assert.equal(item?.text, 'hello from Feishu');
 });
 
+test('normalizes Feishu file messages into prompt attachments', () => {
+  const item = normalizeFeishuMessage({
+    event: makeFeishuEvent({
+      message: {
+        content: JSON.stringify({
+          file_key: 'file_key_report',
+          file_name: 'report.pdf',
+          file_size: '42',
+        }),
+        message_id: 'om_file_message',
+        message_type: 'file',
+      },
+    }),
+  });
+
+  assert.ok(item);
+  assert.equal(item.text, '[file] report.pdf');
+  assert.deepEqual(item.files, [{
+    id: 'feishu:message:om_file_message:file:file_key_report',
+    mimetype: 'application/octet-stream',
+    name: 'report.pdf',
+    sizeBytes: 42,
+  }]);
+
+  const prompt = buildCodeAgentDeliveryPrompt(item);
+  assert.match(prompt, /^New Feishu message:/);
+  assert.match(prompt, /ou_alice: \[file\] report\.pdf/);
+  assert.match(prompt, /<attached_files>/);
+  assert.match(prompt, /<file id="feishu:message:om_file_message:file:file_key_report" name="report\.pdf" mimetype="application\/octet-stream" size_bytes="42" \/>/);
+  assert.match(prompt, /Use `anima message send --channel oc_test_chat` to post back to this Feishu chat/);
+
+  const message = messageFromInboxItem(item);
+  assert.deepEqual(message?.files, [{
+    filename: 'report.pdf',
+    fileId: 'feishu:message:om_file_message:file:file_key_report',
+    mimetype: 'application/octet-stream',
+    sizeBytes: 42,
+  }]);
+});
+
+test('normalizes Feishu image messages into fetchable prompt attachments', () => {
+  const item = normalizeFeishuMessage({
+    event: makeFeishuEvent({
+      message: {
+        content: JSON.stringify({ image_key: 'image_key_photo' }),
+        message_id: 'om_image_message',
+        message_type: 'image',
+      },
+    }),
+  });
+
+  assert.ok(item);
+  assert.equal(item.text, '[image] image-om_image_message');
+  assert.deepEqual(item.files, [{
+    id: 'feishu:message:om_image_message:image:image_key_photo',
+    mimetype: 'image/*',
+    name: 'image-om_image_message',
+    sizeBytes: 0,
+  }]);
+
+  const prompt = buildCodeAgentDeliveryPrompt(item);
+  assert.match(prompt, /<file id="feishu:message:om_image_message:image:image_key_photo" name="image-om_image_message" mimetype="image\/\*" size_bytes="0" \/>/);
+});
+
+test('ignores unsupported Feishu non-text messages without fetchable resources', () => {
+  const item = normalizeFeishuMessage({
+    event: makeFeishuEvent({
+      message: {
+        content: JSON.stringify({ sticker_key: 'sticker_1' }),
+        message_id: 'om_sticker_message',
+        message_type: 'sticker',
+      },
+    }),
+  });
+
+  assert.equal(item, undefined);
+});
+
 test('Feishu group wake policy requires the configured bot mention', () => {
   const event = makeFeishuEvent({
     message: {

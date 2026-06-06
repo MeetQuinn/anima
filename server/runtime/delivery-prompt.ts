@@ -3,6 +3,7 @@ import type {
   FeishuInboxItem,
   FeishuOnboardingInboxItem,
   InboxItem,
+  InboxFileMeta,
   OnboardingInboxItem,
   ReminderInboxItem,
 } from '../../shared/inbox.js';
@@ -10,7 +11,6 @@ import {
   slackSurfaceDisplayRef,
   slackSurfaceForEvent,
   type SlackEvent,
-  type SlackFile,
 } from '../inbox/slack-events.js';
 import type { Reminder } from '../../shared/reminder.js';
 
@@ -78,6 +78,7 @@ function buildFeishuDeliveryPrompt(event: FeishuInboxItem): string {
   const envelope = `${feishuMessageEnvelope(event)} ${feishuActorLabel(event)}: ${event.text}`;
   return [
     `New Feishu message:\n\n${envelope}`,
+    formatAttachedFiles(event.files),
     [
       'Reply target:',
       `Use \`anima message send --channel ${event.chatId}\` to post back to this Feishu chat.`,
@@ -85,7 +86,7 @@ function buildFeishuDeliveryPrompt(event: FeishuInboxItem): string {
       'Use `anima message send --channel <chat_id>` to send to an explicit Feishu chat.',
       'Feishu API access: use `FEISHU_TENANT_ACCESS_TOKEN`, `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, and `FEISHU_API_BASE_URL` from env when you need Feishu APIs. Do not print these values.',
     ].join('\n'),
-  ].join('\n\n');
+  ].filter(Boolean).join('\n\n');
 }
 
 function buildFeishuOnboardingDeliveryPrompt(event: FeishuOnboardingInboxItem): string {
@@ -242,13 +243,13 @@ function readableChoiceActor(actor: ChoiceResponseInboxItem['answeredBy']): stri
   return handle ? `${handle} (${mention})` : mention;
 }
 
-function formatAttachedFiles(files: SlackFile[] | undefined): string {
+function formatAttachedFiles(files: InboxFileMeta[] | undefined): string {
   if (!files?.length) return '';
   const rendered = files.map(formatAttachedFile);
   return '<attached_files>\n' + rendered.join('\n') + '\n</attached_files>';
 }
 
-function formatAttachedFile(file: SlackFile): string {
+function formatAttachedFile(file: InboxFileMeta): string {
   const errorAttr = file.downloadError ? ` error=${escapeAttr(file.downloadError)}` : '';
 
   return `<file id=${escapeAttr(file.id)} name=${escapeAttr(file.name)} mimetype=${escapeAttr(file.mimetype)} size_bytes=${escapeAttr(String(file.sizeBytes))}${errorAttr} />`;

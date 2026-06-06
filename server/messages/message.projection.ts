@@ -128,6 +128,12 @@ function feishuInboxMessage(item: FeishuInboxItem): AgentMessageRecord {
     channelId: item.chatId,
     channelKind: item.chatType,
     direction: 'in',
+    ...(item.files?.length ? { files: item.files.map((file) => ({
+      filename: file.name,
+      fileId: file.id,
+      mimetype: file.mimetype,
+      sizeBytes: file.sizeBytes,
+    })) } : {}),
     kind: 'message',
     messageId: messageIdForInboxItem(item),
     messageTs: item.messageId,

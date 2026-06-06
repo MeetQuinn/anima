@@ -39,7 +39,7 @@ export const SlackInboxActor = z.object({
 
 export type SlackInboxActor = z.infer<typeof SlackInboxActor>;
 
-export const SlackFileMeta = z.object({
+export const InboxFileMeta = z.object({
   downloadError: z.string().optional(),
   id: z.string(),
   mimetype: z.string(),
@@ -47,7 +47,10 @@ export const SlackFileMeta = z.object({
   sizeBytes: z.number(),
 });
 
-export type SlackFileMeta = z.infer<typeof SlackFileMeta>;
+export type InboxFileMeta = z.infer<typeof InboxFileMeta>;
+
+export const SlackFileMeta = InboxFileMeta;
+export type SlackFileMeta = InboxFileMeta;
 
 export const FeishuInboxActor = z.object({
   displayName: z.string().optional(),
@@ -86,6 +89,7 @@ export const FeishuInboxItem = InboxItemBase.extend({
   appId: z.string().optional(),
   chatId: z.string(),
   chatType: z.string(),
+  files: z.array(InboxFileMeta).optional(),
   kind: z.literal('feishu'),
   messageId: z.string(),
   parentId: z.string().optional(),
