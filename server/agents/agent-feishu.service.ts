@@ -50,6 +50,7 @@ export class AgentFeishuService {
   constructor(private readonly agentId: string, private readonly deps: AgentFeishuServiceDeps = {}) {}
 
   async connect(input: AgentConnectFeishuRequest) {
+    this.abortActiveRegistration('Manual Feishu credentials were connected instead.');
     const service = defaultAgentRegistryService.serviceFor(this.agentId);
     const current = await service.getConfig();
     const saved = await service.saveConfig({
@@ -118,12 +119,14 @@ export class AgentFeishuService {
         name: botName,
       },
       onQRCodeReady(info) {
+        if (abortController.signal.aborted) return;
         session.expireIn = info.expireIn;
         session.state = 'waiting';
         session.verificationUrl = info.url;
         markReady();
       },
       onStatusChange(info) {
+        if (abortController.signal.aborted) return;
         if (info.status === 'slow_down' || info.status === 'domain_switched') {
           session.state = info.status;
         }
@@ -131,6 +134,7 @@ export class AgentFeishuService {
       signal: abortController.signal,
       source: 'anima-dashboard',
     }).then(async (result) => {
+      if (!this.isRegistrationSessionActive(session)) return;
       await this.completeRegistration(session, result);
       markReady();
     })
@@ -153,13 +157,13 @@ export class AgentFeishuService {
     return registrationStatus(session);
   }
 
-  private abortActiveRegistration(): void {
+  private abortActiveRegistration(message = 'A newer Feishu app registration was started.'): void {
     for (const session of registrationSessions.values()) {
       if (session.agentId !== this.agentId) continue;
       if (session.state === 'connected' || session.state === 'failed') continue;
       session.abortController.abort();
       session.state = 'failed';
-      session.error = { code: 'abort', message: 'A newer Feishu app registration was started.' };
+      session.error = { code: 'abort', message };
     }
   }
 
@@ -167,13 +171,22 @@ export class AgentFeishuService {
     session: FeishuAppRegistrationSession,
     result: FeishuRegisterAppResult,
   ): Promise<void> {
-    session.agent = await this.connectRegisteredApp(result);
+    if (!this.isRegistrationSessionActive(session)) return;
+    const agent = await this.connectRegisteredApp(session, result);
+    if (!agent || !this.isRegistrationSessionActive(session)) return;
+    session.agent = agent;
     session.state = 'connected';
   }
 
-  private async connectRegisteredApp(result: FeishuRegisterAppResult) {
+  private isRegistrationSessionActive(session: FeishuAppRegistrationSession): boolean {
+    return !session.abortController.signal.aborted
+      && registrationSessions.get(session.registrationId) === session;
+  }
+
+  private async connectRegisteredApp(session: FeishuAppRegistrationSession, result: FeishuRegisterAppResult) {
     const service = defaultAgentRegistryService.serviceFor(this.agentId);
     const current = await service.getConfig();
+    if (!this.isRegistrationSessionActive(session)) return undefined;
     const ownerOpenId = result.userOpenId?.trim() || undefined;
     const ownerChanged = ownerOpenId !== current.feishu.ownerOpenId;
     const saved = await service.saveConfig({
@@ -192,13 +205,17 @@ export class AgentFeishuService {
         ownerTenantBrand: result.tenantBrand,
       },
     });
+    if (!this.isRegistrationSessionActive(session)) return undefined;
     const synced = await this.syncDisplayInfoForAgent(saved).catch(() => saved);
+    if (!this.isRegistrationSessionActive(session)) return undefined;
 
     const ownerGreetingPromptedAt = await this.ensureOwnerOnboardingPrompt(synced);
+    if (!this.isRegistrationSessionActive(session)) return undefined;
     if (!ownerGreetingPromptedAt || synced.feishu.ownerGreetingPromptedAt === ownerGreetingPromptedAt) {
       return synced;
     }
     const latest = await service.getConfig();
+    if (!this.isRegistrationSessionActive(session)) return undefined;
     return service.saveConfig({
       ...latest,
       feishu: {

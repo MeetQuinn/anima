@@ -376,6 +376,72 @@ test('manual Feishu credentials path clears registerApp owner greeting metadata'
   }
 });
 
+test('manual Feishu credentials supersede an active registerApp session', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-manual-supersede-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir);
+
+      let resolveRegister: ((result: { appId: string; appSecret: string; userOpenId: string }) => void) | undefined;
+      const registerPromise = new Promise<{ appId: string; appSecret: string; userOpenId: string }>((resolve) => {
+        resolveRegister = resolve;
+      });
+      const service = new AgentFeishuService('scout', {
+        async getFeishuBotInfo(config) {
+          assert.equal(config.appId, 'manual-app');
+          return {
+            avatarUrl: 'https://example.test/manual-feishu-bot.png',
+            openId: 'ou_manual_bot',
+          };
+        },
+        async registerFeishuApp(input) {
+          input.onQRCodeReady({ expireIn: 600, url: 'https://accounts.feishu.cn/verify?registration=supersede' });
+          return registerPromise;
+        },
+      });
+
+      const started = await service.startAppRegistration({ botName: 'Scout' });
+      assert.equal(started.state, 'waiting');
+      assert.equal(started.verificationUrl, 'https://accounts.feishu.cn/verify?registration=supersede');
+
+      const manual = await service.connect({
+        appId: 'manual-app',
+        appSecret: 'manual-secret',
+      });
+      assert.equal(manual.feishu.appId, 'manual-app');
+      assert.equal(manual.feishu.appSecret, 'manual-secret');
+      assert.equal(manual.feishu.botOpenId, 'ou_manual_bot');
+      assert.equal(manual.feishu.ownerOpenId, undefined);
+      assert.equal(manual.feishu.ownerGreetingPromptedAt, undefined);
+
+      const aborted = await service.registrationStatus(started.registrationId);
+      assert.equal(aborted.state, 'failed');
+      assert.equal(aborted.error?.code, 'abort');
+
+      resolveRegister?.({
+        appId: 'cli_generated_late',
+        appSecret: 'generated-secret-late',
+        userOpenId: 'ou_late_owner',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const stored = await defaultAgentRegistryService.serviceFor('scout').getConfig();
+      assert.equal(stored.feishu.appId, 'manual-app');
+      assert.equal(stored.feishu.appSecret, 'manual-secret');
+      assert.equal(stored.feishu.botOpenId, 'ou_manual_bot');
+      assert.equal(stored.feishu.ownerOpenId, undefined);
+      assert.equal(stored.feishu.ownerGreetingPromptedAt, undefined);
+      assert.deepEqual(await new WakeQueueService('scout').list(), []);
+
+      const stillAborted = await service.registrationStatus(started.registrationId);
+      assert.equal(stillAborted.state, 'failed');
+      assert.equal(stillAborted.agent, undefined);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('Feishu display-info sync refreshes once then throttles within the TTL', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-sync-throttle-test-'));
   try {
