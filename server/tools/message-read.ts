@@ -74,6 +74,8 @@ interface FeishuReadRequest {
   client: FeishuMessageClient;
   cursor?: string;
   limit: number;
+  threadId?: string;
+  threadRef?: string;
 }
 
 type SlackReadTool = 'anima.message.read';
@@ -136,18 +138,39 @@ async function feishuReadRequest(
     throw new Error(`Agent ${agent.id} has no Feishu connection configured`);
   }
 
+  const client = (deps.createFeishuMessageClient ?? createDefaultFeishuMessageClient)(agent.feishu);
+  const thread = await feishuReadThreadRef(opts.threadTs, client);
+
   return {
     chatId,
-    client: (deps.createFeishuMessageClient ?? createDefaultFeishuMessageClient)(agent.feishu),
+    client,
     ...(opts.cursor ? { cursor: opts.cursor } : {}),
     limit: Math.min(opts.limit ?? 20, 50),
+    ...(thread ? thread : {}),
   };
 }
 
-function assertFeishuReadSupported(opts: MessageReadInput): void {
-  if (opts.threadTs) {
-    throw new Error('Feishu message read currently supports chat history only; omit --thread-ts');
+async function feishuReadThreadRef(
+  threadTs: string | undefined,
+  client: FeishuMessageClient,
+): Promise<Pick<FeishuReadRequest, 'threadId' | 'threadRef'> | undefined> {
+  const ref = threadTs?.trim();
+  if (!ref) return undefined;
+  if (ref.startsWith('omt_')) return { threadId: ref, threadRef: ref };
+  if (!ref.startsWith('om_')) {
+    throw new Error('Feishu message read --thread-ts must be a topic thread_id (omt_...) or message_id (om_...)');
   }
+  if (!client.getMessage) {
+    throw new Error('Feishu message client does not support resolving message_id to thread_id');
+  }
+  const message = await client.getMessage({ messageId: ref });
+  if (!message?.threadId) {
+    throw new Error(`Feishu message ${ref} did not include thread_id; pass the topic thread_id (omt_...) instead`);
+  }
+  return { threadId: message.threadId, threadRef: ref };
+}
+
+function assertFeishuReadSupported(opts: MessageReadInput): void {
   const unsupported = [
     opts.after ? '--after' : '',
     opts.around ? '--around' : '',
@@ -157,7 +180,7 @@ function assertFeishuReadSupported(opts: MessageReadInput): void {
     opts.oldest ? '--oldest' : '',
   ].filter(Boolean);
   if (unsupported.length > 0) {
-    throw new Error(`Feishu message read currently supports --channel, --limit, and --cursor only; unsupported: ${unsupported.join(', ')}`);
+    throw new Error(`Feishu message read currently supports --channel, --thread-ts, --limit, and --cursor only; unsupported: ${unsupported.join(', ')}`);
   }
 }
 
@@ -261,6 +284,7 @@ async function runFeishuReadTool(input: {
         chatId: input.request.chatId,
         ...(input.request.cursor ? { cursor: input.request.cursor } : {}),
         limit: input.request.limit,
+        ...(input.request.threadId ? { threadId: input.request.threadId } : {}),
       });
       console.log(feishuReadOutput(input.request, response));
       return {
@@ -305,10 +329,12 @@ function feishuReadActivityPayload(tool: SlackReadTool, request: FeishuReadReque
   return {
     channel: request.chatId,
     channelDisplayName: 'Feishu chat',
-    channelKind: 'chat',
+    channelKind: request.threadId ? 'topic' : 'chat',
     ...(request.cursor ? { cursor: request.cursor } : {}),
     limit: request.limit,
     platform: 'feishu',
+    ...(request.threadId ? { threadId: request.threadId } : {}),
+    ...(request.threadRef ? { targetTs: request.threadRef, threadTs: request.threadRef } : {}),
     tool,
   };
 }

@@ -60,9 +60,9 @@ export function registerMessageCommands(program: Command): void {
   // Failure: human-readable error to stderr; exit 1.
   message
     .command('read')
-    .description('Read messages from a Slack channel/thread or Feishu chat.')
+    .description('Read messages from a Slack channel/thread or Feishu chat/topic.')
     .option('--channel <channel>', 'Slack channel/DM target, or Feishu chat_id (oc_...)')
-    .option('--thread-ts <ts>', 'Slack thread timestamp; Feishu chat history does not support this yet')
+    .option('--thread-ts <ts>', 'Slack thread timestamp, Feishu topic thread_id (omt_...), or Feishu topic message_id (om_...)')
     .option('--limit <n>', 'max messages to return (Slack cap: 200; Feishu cap: 50)')
     .option('--around <ts>', 'window centered on ts (inclusive); cannot combine with --oldest/--latest/--cursor')
     .option('--before <ts>', 'messages before ts (exclusive); cannot combine with --oldest/--latest/--cursor')
@@ -95,8 +95,8 @@ export function registerMessageCommands(program: Command): void {
   message
     .command('update')
     .description('Edit a previously sent message in place.\nNew message body is read from stdin.')
-    .option('--channel <channel>', 'channel ID (e.g. C123ABC) or name (e.g. prod)\nDM: D-prefixed channel ID (e.g. D123ABC)')
-    .option('--message-ts <ts>', 'timestamp of the message to update (from the send output)')
+    .option('--channel <channel>', 'Slack channel/DM target, or Feishu chat_id (oc_...)')
+    .option('--message-ts <ts>', 'Slack message timestamp, or Feishu message_id (om_...) to update')
     .action(async (_, command) => {
       const opts = MessageUpdateSchema.parse(command.optsWithGlobals());
       await runMessageUpdate(opts);

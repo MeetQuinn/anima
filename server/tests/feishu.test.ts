@@ -21,7 +21,7 @@ import { runFileSend } from '../tools/file-send.js';
 import { runFileFetch } from '../tools/files-cli.js';
 import { runMessageRead } from '../tools/message-read.js';
 import { runMessageReact } from '../tools/reactions.js';
-import { runMessageSend } from '../tools/messages.js';
+import { runMessageSend, runMessageUpdate } from '../tools/messages.js';
 import { withAnimaHome } from './anima-home.js';
 import { allActivities, loadState } from './helpers/state.js';
 import type {
@@ -29,6 +29,7 @@ import type {
   FeishuFileUploadInput,
   FeishuMessageResourceDownloadInput,
   FeishuMessageListInput,
+  FeishuPostUpdateInput,
   FeishuReactionAddInput,
   FeishuReactionRemoveInput,
   FeishuTextSendInput,
@@ -928,6 +929,222 @@ test('Feishu message reads can list chat history', async () => {
   });
 });
 
+test('Feishu message reads can list topic history', async () => {
+  const config: FeishuConfig = {
+    appId: 'cli_test',
+    appSecret: 'secret',
+    connected: true,
+    encryptKey: '',
+    verificationToken: '',
+  };
+  let capturedList: unknown;
+
+  const client = createFeishuMessageClient(config, {
+    createClient() {
+      return {
+        im: {
+          message: {
+            async create() {
+              throw new Error('unexpected create call');
+            },
+            async list(input) {
+              capturedList = input;
+              return {
+                data: {
+                  has_more: false,
+                  items: [{
+                    body: { content: JSON.stringify({ text: 'topic reply' }) },
+                    chat_id: 'oc_test_chat',
+                    create_time: '1780410000000',
+                    message_id: 'om_topic_reply',
+                    msg_type: 'text',
+                    parent_id: 'om_topic_root',
+                    root_id: 'om_topic_root',
+                    thread_id: 'omt_topic',
+                  }],
+                },
+              };
+            },
+            async reply() {
+              throw new Error('unexpected reply call');
+            },
+          },
+          messageReaction: {
+            async create() {
+              throw new Error('unexpected reaction create call');
+            },
+            async delete() {
+              throw new Error('unexpected reaction delete call');
+            },
+          },
+        },
+      };
+    },
+  });
+
+  const result = await client.listMessages({
+    chatId: 'oc_test_chat',
+    cursor: 'cursor-1',
+    limit: 2,
+    threadId: 'omt_topic',
+  });
+
+  assert.deepEqual(capturedList, {
+    params: {
+      container_id: 'omt_topic',
+      container_id_type: 'thread',
+      page_size: 2,
+      page_token: 'cursor-1',
+      sort_type: 'ByCreateTimeDesc',
+    },
+  });
+  assert.deepEqual(result.messages, [{
+    bodyContent: JSON.stringify({ text: 'topic reply' }),
+    chatId: 'oc_test_chat',
+    createTime: '1780410000000',
+    messageId: 'om_topic_reply',
+    messageType: 'text',
+    parentId: 'om_topic_root',
+    rootId: 'om_topic_root',
+    threadId: 'omt_topic',
+  }]);
+});
+
+test('Feishu messages can resolve a topic root message to a thread id', async () => {
+  const config: FeishuConfig = {
+    appId: 'cli_test',
+    appSecret: 'secret',
+    connected: true,
+    encryptKey: '',
+    verificationToken: '',
+  };
+  let capturedGet: unknown;
+
+  const client = createFeishuMessageClient(config, {
+    createClient() {
+      return {
+        im: {
+          message: {
+            async create() {
+              throw new Error('unexpected create call');
+            },
+            async get(input) {
+              capturedGet = input;
+              return {
+                data: {
+                  items: [{
+                    chat_id: 'oc_test_chat',
+                    message_id: 'om_topic_root',
+                    msg_type: 'text',
+                    thread_id: 'omt_topic',
+                  }],
+                },
+              };
+            },
+            async reply() {
+              throw new Error('unexpected reply call');
+            },
+          },
+          messageReaction: {
+            async create() {
+              throw new Error('unexpected reaction create call');
+            },
+            async delete() {
+              throw new Error('unexpected reaction delete call');
+            },
+          },
+        },
+      };
+    },
+  });
+
+  const message = await client.getMessage?.({ messageId: 'om_topic_root' });
+
+  assert.deepEqual(capturedGet, {
+    path: {
+      message_id: 'om_topic_root',
+    },
+  });
+  assert.equal(message?.messageId, 'om_topic_root');
+  assert.equal(message?.threadId, 'omt_topic');
+});
+
+test('Feishu message updates use the SDK update endpoint', async () => {
+  const config: FeishuConfig = {
+    appId: 'cli_test',
+    appSecret: 'secret',
+    connected: true,
+    encryptKey: '',
+    verificationToken: '',
+  };
+  let capturedUpdate: unknown;
+
+  const client = createFeishuMessageClient(config, {
+    createClient() {
+      return {
+        im: {
+          message: {
+            async create() {
+              throw new Error('unexpected create call');
+            },
+            async reply() {
+              throw new Error('unexpected reply call');
+            },
+            async update(input) {
+              capturedUpdate = input;
+              return {
+                data: {
+                  chat_id: 'oc_test_chat',
+                  message_id: 'om_target_message',
+                  thread_id: 'omt_topic',
+                },
+              };
+            },
+          },
+          messageReaction: {
+            async create() {
+              throw new Error('unexpected reaction create call');
+            },
+            async delete() {
+              throw new Error('unexpected reaction delete call');
+            },
+          },
+        },
+      };
+    },
+  });
+
+  const result = await client.updatePost?.({
+    content: {
+      zh_cn: {
+        content: [[{ tag: 'text', text: 'updated post' }]],
+        title: '',
+      },
+    },
+    messageId: 'om_target_message',
+  });
+
+  assert.deepEqual(capturedUpdate, {
+    data: {
+      content: JSON.stringify({
+        zh_cn: {
+          content: [[{ tag: 'text', text: 'updated post' }]],
+          title: '',
+        },
+      }),
+      msg_type: 'post',
+    },
+    path: {
+      message_id: 'om_target_message',
+    },
+  });
+  assert.deepEqual(result, {
+    chatId: 'oc_test_chat',
+    messageId: 'om_target_message',
+    threadId: 'omt_topic',
+  });
+});
+
 test('message read can fetch Feishu chat history explicitly', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-message-read-test-'));
   const reads: FeishuMessageListInput[] = [];
@@ -1011,6 +1228,108 @@ test('message read can fetch Feishu chat history explicitly', async () => {
   }
 });
 
+test('message read can fetch Feishu topic history explicitly', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-topic-read-test-'));
+  const reads: FeishuMessageListInput[] = [];
+  const logLines: string[] = [];
+  const originalLog = console.log;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir);
+      console.log = (...args: unknown[]) => {
+        logLines.push(args.map(String).join(' '));
+      };
+      await runMessageRead(
+        { agent: 'scout', channel: 'oc_target_chat', limit: 2, threadTs: 'om_topic_root' },
+        {
+          createFeishuMessageClient() {
+            return {
+              async addReaction() {
+                throw new Error('unexpected reaction add');
+              },
+              async downloadMessageResource() {
+                throw new Error('unexpected file fetch');
+              },
+              async getMessage(input) {
+                assert.deepEqual(input, { messageId: 'om_topic_root' });
+                return {
+                  chatId: 'oc_target_chat',
+                  messageId: 'om_topic_root',
+                  threadId: 'omt_topic',
+                };
+              },
+              async listMessages(input) {
+                reads.push(input);
+                return {
+                  hasMore: false,
+                  messages: [{
+                    bodyContent: JSON.stringify({ text: 'topic reply' }),
+                    chatId: 'oc_target_chat',
+                    createTime: '1780410000000',
+                    messageId: 'om_topic_reply',
+                    messageType: 'text',
+                    parentId: 'om_topic_root',
+                    rootId: 'om_topic_root',
+                    sender: {
+                      id: 'ou_alice',
+                      idType: 'open_id',
+                      senderName: 'Alice',
+                      senderType: 'user',
+                    },
+                    threadId: 'omt_topic',
+                  }],
+                };
+              },
+              async removeReaction() {
+                throw new Error('unexpected reaction remove');
+              },
+              async replyText() {
+                throw new Error('unexpected topic reply');
+              },
+              async replyPost() {
+                return {};
+              },
+              async sendPost() {
+                return {};
+              },
+              async sendUploadedFile() {
+                throw new Error('unexpected file send');
+              },
+              async sendText() {
+                throw new Error('unexpected send');
+              },
+              async uploadFile() {
+                throw new Error('unexpected file upload');
+              },
+            };
+          },
+        },
+      );
+
+      const completed = allActivities(await loadState())
+        .filter((activity) => activity.type === 'tool.call.completed')
+        .at(-1);
+      assert.equal(completed?.payload?.['tool'], 'anima.message.read');
+      assert.equal(completed?.payload?.['platform'], 'feishu');
+      assert.equal(completed?.payload?.['channel'], 'oc_target_chat');
+      assert.equal(completed?.payload?.['channelKind'], 'topic');
+      assert.equal(completed?.payload?.['threadId'], 'omt_topic');
+      assert.equal(completed?.payload?.['threadTs'], 'om_topic_root');
+      assert.equal(completed?.payload?.['targetTs'], 'om_topic_root');
+    });
+
+    assert.deepEqual(reads, [{ chatId: 'oc_target_chat', limit: 2, threadId: 'omt_topic' }]);
+    const output = logLines.join('\n');
+    assert.match(
+      output,
+      /\[platform=feishu chat_id=oc_target_chat thread_id=omt_topic message_id=om_topic_reply time=2026-06-02T14:20:00\.000Z user_id=ou_alice\] Alice: topic reply/,
+    );
+  } finally {
+    console.log = originalLog;
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('message send can target a Feishu chat explicitly', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-explicit-chat-test-'));
   const sent: Array<{ receiveId: string; receiveIdType: string }> = [];
@@ -1063,6 +1382,96 @@ test('message send can target a Feishu chat explicitly', async () => {
     assert.equal(sent[0]?.receiveId, 'oc_target_chat');
     assert.equal(sent[0]?.receiveIdType, 'chat_id');
   } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('message update can edit a Feishu message explicitly', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-message-update-test-'));
+  const updates: FeishuPostUpdateInput[] = [];
+  const logLines: string[] = [];
+  const originalLog = console.log;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir);
+      console.log = (...args: unknown[]) => {
+        logLines.push(args.map(String).join(' '));
+      };
+      await runMessageUpdate(
+        {
+          agent: 'scout',
+          channel: 'oc_target_chat',
+          messageTs: 'om_target_message',
+          text: 'Updated **Feishu** message.',
+        },
+        {
+          createFeishuMessageClient() {
+            return {
+              async addReaction() {
+                throw new Error('unexpected reaction add');
+              },
+              async downloadMessageResource() {
+                throw new Error('unexpected file fetch');
+              },
+              async listMessages() {
+                throw new Error('unexpected message read');
+              },
+              async removeReaction() {
+                throw new Error('unexpected reaction remove');
+              },
+              async replyText() {
+                throw new Error('unexpected topic reply');
+              },
+              async replyPost() {
+                throw new Error('unexpected topic reply post');
+              },
+              async sendPost() {
+                throw new Error('unexpected ordinary send post');
+              },
+              async sendUploadedFile() {
+                throw new Error('unexpected file send');
+              },
+              async sendText() {
+                throw new Error('unexpected ordinary send');
+              },
+              async updatePost(input) {
+                updates.push(input);
+                return { chatId: 'oc_target_chat', messageId: 'om_target_message' };
+              },
+              async uploadFile() {
+                throw new Error('unexpected file upload');
+              },
+            };
+          },
+        },
+      );
+
+      const completed = allActivities(await loadState())
+        .filter((activity) => activity.type === 'external.effect.completed')
+        .at(-1);
+      assert.equal(completed?.payload?.['effect'], 'feishu.message.update');
+      assert.equal(completed?.payload?.['tool'], 'anima.message.update');
+      assert.equal(completed?.payload?.['platform'], 'feishu');
+      assert.equal(completed?.payload?.['channel'], 'oc_target_chat');
+      assert.equal(completed?.payload?.['messageId'], 'om_target_message');
+      assert.equal(completed?.payload?.['targetTs'], 'om_target_message');
+      assert.equal(completed?.payload?.['status'], 'updated');
+      assert.equal(completed?.payload?.['text'], 'Updated **Feishu** message.');
+    });
+
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0]?.messageId, 'om_target_message');
+    assert.deepEqual(updates[0]?.content.zh_cn.content, [[
+      { tag: 'text', text: 'Updated ' },
+      { tag: 'text', text: 'Feishu', style: ['bold'] },
+      { tag: 'text', text: ' message.' },
+    ]]);
+    assert.equal(
+      logLines.at(-1),
+      'updated successfully. feishu chat_id=oc_target_chat, message_id=om_target_message.',
+    );
+  } finally {
+    console.log = originalLog;
     await rm(stateDir, { force: true, recursive: true });
   }
 });

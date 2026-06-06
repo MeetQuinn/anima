@@ -37,6 +37,11 @@ export interface FeishuPostReplyInput {
   content: FeishuPostContent;
 }
 
+export interface FeishuPostUpdateInput {
+  messageId: string;
+  content: FeishuPostContent;
+}
+
 export interface FeishuTextSendResult {
   chatId?: string;
   messageId?: string;
@@ -79,6 +84,7 @@ export interface FeishuMessageListInput {
   chatId: string;
   cursor?: string;
   limit: number;
+  threadId?: string;
 }
 
 export interface FeishuMessageListResult {
@@ -118,6 +124,10 @@ export interface FeishuConversationSender {
   tenantKey?: string;
 }
 
+export interface FeishuMessageGetInput {
+  messageId: string;
+}
+
 export interface FeishuReactionAddInput {
   emojiType: string;
   messageId: string;
@@ -135,6 +145,7 @@ export interface FeishuReactionRemoveInput {
 export interface FeishuMessageClient {
   addReaction(input: FeishuReactionAddInput): Promise<FeishuReactionAddResult>;
   downloadMessageResource(input: FeishuMessageResourceDownloadInput): Promise<FeishuMessageResourceDownload>;
+  getMessage?(input: FeishuMessageGetInput): Promise<FeishuConversationMessage | undefined>;
   listMessages(input: FeishuMessageListInput): Promise<FeishuMessageListResult>;
   removeReaction(input: FeishuReactionRemoveInput): Promise<void>;
   replyText(input: FeishuTextReplyInput): Promise<FeishuTextSendResult>;
@@ -142,6 +153,7 @@ export interface FeishuMessageClient {
   sendUploadedFile(input: FeishuFileSendInput): Promise<FeishuTextSendResult>;
   sendText(input: FeishuTextSendInput): Promise<FeishuTextSendResult>;
   sendPost(input: FeishuPostSendInput): Promise<FeishuTextSendResult>;
+  updatePost?(input: FeishuPostUpdateInput): Promise<FeishuTextSendResult>;
   uploadFile(input: FeishuFileUploadInput): Promise<FeishuUploadedFile>;
 }
 
@@ -228,10 +240,19 @@ interface FeishuSdkMessageReplyResult {
 interface FeishuSdkMessageListInput {
   params: {
     container_id: string;
-    container_id_type: 'chat';
+    container_id_type: 'chat' | 'thread';
     page_size: number;
     page_token?: string;
     sort_type: 'ByCreateTimeDesc';
+  };
+}
+
+interface FeishuSdkMessageGetInput {
+  params?: {
+    user_id_type?: 'open_id' | 'union_id' | 'user_id';
+  };
+  path: {
+    message_id: string;
   };
 }
 
@@ -342,6 +363,16 @@ interface FeishuSdkMessageResourceGetResult {
   headers?: Record<string, string | string[] | undefined>;
 }
 
+interface FeishuSdkMessageUpdateInput {
+  data: {
+    content: string;
+    msg_type: 'post';
+  };
+  path: {
+    message_id: string;
+  };
+}
+
 interface FeishuSdkClient {
   request?(input: { method: 'GET'; url: string }): Promise<unknown>;
   im: {
@@ -353,8 +384,10 @@ interface FeishuSdkClient {
     };
     message: {
       create(input: FeishuSdkMessageCreateInput): Promise<FeishuSdkMessageReplyResult>;
+      get?(input: FeishuSdkMessageGetInput): Promise<FeishuSdkMessageListResult>;
       list?(input: FeishuSdkMessageListInput): Promise<FeishuSdkMessageListResult>;
       reply(input: FeishuSdkMessageReplyInput): Promise<FeishuSdkMessageReplyResult>;
+      update?(input: FeishuSdkMessageUpdateInput): Promise<FeishuSdkMessageReplyResult>;
     };
     messageReaction: {
       create(input: FeishuSdkReactionCreateInput): Promise<FeishuSdkReactionCreateResult>;
@@ -492,10 +525,12 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
       if (!client.im.message.list) {
         throw new Error('Feishu SDK client does not support message.list');
       }
+      const containerId = input.threadId ?? input.chatId;
+      const containerIdType = input.threadId ? 'thread' : 'chat';
       const response = await client.im.message.list({
         params: {
-          container_id: input.chatId,
-          container_id_type: 'chat',
+          container_id: containerId,
+          container_id_type: containerIdType,
           ...(input.cursor ? { page_token: input.cursor } : {}),
           page_size: input.limit,
           sort_type: 'ByCreateTimeDesc',
@@ -505,6 +540,36 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
         hasMore: Boolean(response.data?.has_more),
         messages: feishuConversationMessagesFromSdk(response.data?.items),
         ...(response.data?.page_token ? { nextCursor: response.data.page_token } : {}),
+      };
+    },
+    async getMessage(input) {
+      if (!client.im.message.get) {
+        throw new Error('Feishu SDK client does not support message.get');
+      }
+      const response = await client.im.message.get({
+        path: {
+          message_id: input.messageId,
+        },
+      });
+      return feishuConversationMessagesFromSdk(response.data?.items)[0];
+    },
+    async updatePost(input) {
+      if (!client.im.message.update) {
+        throw new Error('Feishu SDK client does not support message.update');
+      }
+      const response = await client.im.message.update({
+        data: {
+          content: JSON.stringify(input.content),
+          msg_type: 'post',
+        },
+        path: {
+          message_id: input.messageId,
+        },
+      });
+      return {
+        ...(response.data?.chat_id ? { chatId: response.data.chat_id } : {}),
+        messageId: response.data?.message_id ?? input.messageId,
+        ...(response.data?.thread_id ? { threadId: response.data.thread_id } : {}),
       };
     },
     async downloadMessageResource(input) {
