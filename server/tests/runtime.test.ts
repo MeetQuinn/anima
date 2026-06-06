@@ -70,6 +70,8 @@ test('child process termination escalates from SIGTERM to SIGKILL', async () => 
 test('first-class anima CLI command detection covers plain agent-facing tools', () => {
   assert.equal(isFirstClassAnimaCliCommand('anima ask --question "Pick" --option A --option B'), true);
   assert.equal(isFirstClassAnimaCliCommand('ANIMA_AGENT_ID=scout anima reminder list'), true);
+  assert.equal(isFirstClassAnimaCliCommand('anima env set SERVICE_TOKEN --secret'), true);
+  assert.equal(isFirstClassAnimaCliCommand('ANIMA_AGENT_ID=scout anima env run --keys SERVICE_TOKEN -- node script.js'), true);
   assert.equal(isFirstClassAnimaCliCommand('anima subscription mute --channel C123'), true);
   assert.equal(isFirstClassAnimaCliCommand('anima message send --channel C123'), true);
   assert.equal(isFirstClassAnimaCliCommand('cd ~/anima && ANIMA_AGENT_ID=scout anima ask --question "Pick"'), false);

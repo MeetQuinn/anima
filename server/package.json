@@ -18,10 +18,12 @@
     "test:unit:dist": "cd .. && node scripts/run-tests.mjs unit"
   },
   "dependencies": {
+    "@dotenvx/dotenvx": "^1.71.0",
     "@larksuiteoapi/node-sdk": "^1.66.1",
     "@slack/bolt": "^4.7.2",
     "@slack/web-api": "^7.15.2",
     "commander": "^14.0.3",
+    "eciesjs": "0.4.18",
     "fastify": "^5.8.5",
     "ignore": "^7.0.5",
     "luxon": "^3.7.2",
