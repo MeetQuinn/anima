@@ -27,6 +27,7 @@ export class RestartBlockedError extends Error {
 
 export interface RestartDrainResult {
   fallbackToIdle: boolean;
+  interruptedCount?: number;
   mode: 'drain-active';
   requestedCount: number;
   resumedCount: number;
@@ -54,6 +55,7 @@ export async function waitForRestartIdle(timeoutMs: number): Promise<void> {
 }
 
 export async function waitForRestartDrain(input: {
+  continueOnTimeout?: boolean;
   drainTimeoutMs?: number;
   markerTtlMs?: number;
 } = {}): Promise<RestartDrainResult> {
@@ -85,6 +87,21 @@ export async function waitForRestartDrain(input: {
 
     const elapsedMs = Date.now() - startedAt;
     if (elapsedMs >= drainTimeoutMs) {
+      const resumedCount = await countRequeuedItems(initialRunning);
+      if (input.continueOnTimeout) {
+        const interruptedCount = blockers.length;
+        console.error(
+          `Timed out waiting for running agents to drain; continuing restart and leaving ${interruptedCount} item(s) for recovery.`,
+        );
+        return {
+          fallbackToIdle: false,
+          interruptedCount,
+          mode: 'drain-active',
+          requestedCount: initialRunning.length,
+          resumedCount,
+          status: 'succeeded',
+        };
+      }
       await clearRestartDrain().catch(() => {});
       await Promise.all(initialRunning.map(({ agentId, item }) =>
         new WakeQueueService(agentId).clearDrainRequest(item.id).catch(() => undefined),

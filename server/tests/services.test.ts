@@ -377,7 +377,7 @@ test('services restart drain mode leaves queued inbox items for the new worker',
   }
 });
 
-test('services restart drain mode times out a running item without stopping services', async () => {
+test('services restart drain mode continues after timeout and leaves running item recoverable', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'anima-services-restart-drain-timeout-'));
   const childPids = new Set<number>();
   try {
@@ -410,30 +410,40 @@ test('services restart drain mode times out a running item without stopping serv
       env: { ANIMA_HOME: configDir, ANIMA_RESTART_RESULT_FILE: resultPath },
     });
 
-    assert.equal(restart.status, 1);
-    assert.match(restart.stderr, /Timed out waiting for running agents to reach a restart drain point/);
-    assert.match(restart.stderr, /agent=anima status=running item=item_running/);
-    assert.doesNotMatch(restart.stdout, /stopped pid/);
-    assert.doesNotMatch(restart.stdout, /started pid/);
-    assert.equal(pidIsRunning(oldPid), true);
-    const inbox = JSON.parse(await readFile(join(configDir, 'agents', 'anima', 'inbox.json'), 'utf8')) as Record<string, { handling?: { drainRequestedAt?: string; drainTimeoutMs?: number; status?: string } }>;
-    assert.equal(inbox['item_running']?.handling?.status, 'running');
-    assert.equal(inbox['item_running']?.handling?.drainRequestedAt, undefined);
-    assert.equal(inbox['item_running']?.handling?.drainTimeoutMs, undefined);
+    collectStartedPids(restart.stdout, childPids);
+
+    assert.equal(restart.status, 0, restart.stderr || restart.stdout);
+    assert.match(restart.stderr, /Timed out waiting for running agents to drain; continuing restart/);
+    assert.match(restart.stdout, new RegExp(`agent: stopped pid ${oldPid}`));
+    assert.match(restart.stdout, /agent: started pid/);
+    assert.equal(pidIsRunning(oldPid), false);
+    const inbox = JSON.parse(await readFile(join(configDir, 'agents', 'anima', 'inbox.json'), 'utf8')) as Record<string, {
+      handling?: {
+        drainRequestedAt?: string;
+        drainTimeoutMs?: number;
+        resumeReason?: string;
+        status?: string;
+      };
+    }>;
+    assert.match(inbox['item_running']?.handling?.status ?? '', /^(queued|running)$/);
+    if (inbox['item_running']?.handling?.status === 'queued') {
+      assert.equal(inbox['item_running']?.handling?.resumeReason, 'runtime_restart');
+      assert.equal(inbox['item_running']?.handling?.drainRequestedAt, undefined);
+      assert.equal(inbox['item_running']?.handling?.drainTimeoutMs, undefined);
+    } else {
+      assert.ok(inbox['item_running']?.handling?.drainRequestedAt);
+      assert.equal(inbox['item_running']?.handling?.drainTimeoutMs, 0);
+    }
     const result = JSON.parse(await readFile(resultPath, 'utf8')) as {
-      blockers?: Array<{ agentId?: string; itemId?: string; status?: string }>;
-      reason?: string;
+      interruptedCount?: number;
+      requestedCount?: number;
+      resumedCount?: number;
       status?: string;
     };
-    assert.equal(result.status, 'blocked');
-    assert.equal(result.reason, 'drain_timeout');
-    assert.deepEqual(result.blockers?.map((blocker) => ({
-      agentId: blocker.agentId,
-      itemId: blocker.itemId,
-      status: blocker.status,
-    })), [
-      { agentId: 'anima', itemId: 'item_running', status: 'running' },
-    ]);
+    assert.equal(result.status, 'succeeded');
+    assert.equal(result.requestedCount, 1);
+    assert.equal(result.resumedCount, 0);
+    assert.equal(result.interruptedCount, 1);
   } finally {
     for (const pid of childPids) {
       try {

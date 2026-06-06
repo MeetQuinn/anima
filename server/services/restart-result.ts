@@ -15,7 +15,7 @@ export type ServicesRestartBlockedDraft = Omit<ServicesRestartBlockedResult, 'co
 export type ServicesRestartResultDraft = ServicesRestartBlockedDraft | ServicesRestartSucceededDraft;
 export type ServicesRestartSummary = Pick<
   ServicesRestartSucceededResultType,
-  'fallbackToIdle' | 'mode' | 'requestedCount' | 'resumedCount'
+  'fallbackToIdle' | 'interruptedCount' | 'mode' | 'requestedCount' | 'resumedCount'
 >;
 
 export function servicesRestartLogPath(animaHome: string): string {
@@ -29,6 +29,7 @@ export function servicesRestartResultPath(animaHome: string): string {
 export function idleServicesRestartResult(): ServicesRestartSucceededDraft {
   return {
     fallbackToIdle: false,
+    interruptedCount: 0,
     mode: 'idle',
     requestedCount: 0,
     resumedCount: 0,
@@ -88,6 +89,7 @@ export async function readServicesRestartSummary(resultPath: string): Promise<Se
   }
   return {
     fallbackToIdle: parsed.data.fallbackToIdle,
+    interruptedCount: parsed.data.interruptedCount,
     mode: parsed.data.mode,
     requestedCount: parsed.data.requestedCount,
     resumedCount: parsed.data.resumedCount,

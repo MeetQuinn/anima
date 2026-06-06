@@ -33,6 +33,7 @@ export const RuntimeUpgradeOperation = z.object({
   rollback: z.enum(['not_needed', 'succeeded', 'failed']).optional(),
   restart: z.object({
     fallbackToIdle: z.boolean(),
+    interruptedCount: z.number().optional(),
     mode: z.enum(['idle', 'drain-active']),
     requestedCount: z.number(),
     resumedCount: z.number(),
