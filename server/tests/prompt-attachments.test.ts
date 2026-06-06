@@ -247,7 +247,8 @@ test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack t
   assert.match(text, /Bundled Anima docs are available at `\/opt\/anima\/docs`/);
   assert.match(text, /guide\/how-an-agent-works\.md/);
   assert.match(text, /runtime-providers\.md/);
-  assert.match(text, /Anima source is available at `\/work\/anima`/);
+  assert.match(text, /Anima's source is public at <https:\/\/github\.com\/MeetQuinn\/anima>/);
+  assert.match(text, /A local Anima source checkout is available at `\/work\/anima`/);
   assert.match(text, /Treat it as reference unless the user explicitly asks you to modify Anima itself/);
   assert.match(text, /For exact CLI flags, run `anima <command> --help` before guessing/);
   assert.doesNotMatch(text, /\$ANIMA_CHANNEL|\$ANIMA_THREAD/);
@@ -260,7 +261,8 @@ test('buildAnimaRuntimeProfile falls back cleanly when bundled docs are unavaila
     role: 'Product PM for prioritization.',
   });
   assert.match(text, /Bundled Anima docs were not found in this runtime/);
-  assert.doesNotMatch(text, /Anima source is available at/);
+  assert.match(text, /Anima's source is public at <https:\/\/github\.com\/MeetQuinn\/anima>/);
+  assert.doesNotMatch(text, /local Anima source checkout is available at/);
 });
 
 test('resolveAnimaReferencePathsFromRoots finds bundled docs and source checkout roots', async () => {
