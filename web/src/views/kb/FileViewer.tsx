@@ -2,6 +2,7 @@ import { Children, isValidElement, useCallback, useEffect, useId, useMemo, useRe
 import type { ReactNode } from 'react';
 import {
   AlertTriangle,
+  ChevronRight,
   Code2,
   Copy,
   Download,
@@ -12,6 +13,7 @@ import {
   Link2,
   List,
   Megaphone,
+  MoreHorizontal,
   OctagonAlert,
   WrapText,
   X,
@@ -387,89 +389,140 @@ function HeadingAnchor({ id }: { id: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// BreadcrumbPath
+// FileBreadcrumb — filename-forward path. Replaces the raw mono filesystem
+// path (which read like debug output and duplicated the file tree). Shows the
+// filename prominently with at most one parent directory for context; deeper
+// nesting collapses to a leading ellipsis. Full path stays in the title.
 // ---------------------------------------------------------------------------
 
-// Breadcrumb path: shows truncated on first render; tap/click to expand to the full
-// path (break-all wrap) so mobile users can read or copy deeply nested paths.
-export function BreadcrumbPath({ filePath }: { filePath: string }) {
-  const [expanded, setExpanded] = useState(false);
+export function FileBreadcrumb({ filePath }: { filePath: string }) {
+  const segments = filePath.split('/').filter(Boolean);
+  const name = segments[segments.length - 1] ?? filePath;
+  const parents = segments.slice(0, -1);
+  const parent = parents[parents.length - 1];
+  const hasDeeper = parents.length > 1;
   return (
-    <button
-      onClick={() => setExpanded((e) => !e)}
+    <div
       title={filePath}
-      aria-label={expanded ? 'Collapse path' : 'Tap to expand full path'}
-      className={[
-        'block w-full min-w-0 text-left font-mono text-[11px] text-text-subtle',
-        expanded ? 'whitespace-normal break-all' : 'truncate',
-      ].join(' ')}
+      className="flex min-w-0 items-center gap-1 font-sans text-[12px] text-text-subtle"
     >
-      {filePath}
-    </button>
+      {parent && (
+        <>
+          {hasDeeper && <span className="shrink-0 text-text-subtle/70">…</span>}
+          {hasDeeper && <ChevronRight className="h-3 w-3 shrink-0 text-text-subtle/50" />}
+          <span className="max-w-[12rem] shrink truncate">{parent}</span>
+          <ChevronRight className="h-3 w-3 shrink-0 text-text-subtle/50" />
+        </>
+      )}
+      <span className="min-w-0 shrink truncate font-medium text-text-muted">{name}</span>
+    </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// FileToolbar — path copy, raw open, download
+// FileOverflowMenu — collapses copy-path / open-raw / download (plus the file
+// size) into a single "⋯" menu so the header stays one clean row instead of a
+// strip of unlabeled icons floating beside a loose size figure.
 // ---------------------------------------------------------------------------
 
-function CopyPathButton({ filePath }: { filePath: string }) {
+export function FileOverflowMenu({
+  id,
+  filePath,
+  size,
+}: {
+  id: string;
+  filePath: string;
+  size?: number;
+}) {
+  const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
 
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    };
+  }, []);
+
+  const rawUrl = buildKbRawPath(id, filePath);
   const handleCopy = useCallback(() => {
     copyTextToClipboard(filePath)
       .then(() => {
         setCopied(true);
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
-        timeoutRef.current = setTimeout(() => setCopied(false), 2000);
+        if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+        copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
       })
       .catch(() => {});
   }, [filePath]);
 
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, []);
+  const itemClass =
+    'flex w-full items-center gap-2 px-3 py-2 text-left font-sans text-[12px] text-text-muted transition-colors hover:bg-surface-elevated';
 
   return (
-    <button
-      onClick={handleCopy}
-      title={copied ? 'Path copied!' : 'Copy path'}
-      aria-label={copied ? 'Path copied' : 'Copy path'}
-      className="chrome flex min-h-[44px] shrink-0 items-center justify-center rounded-sm px-2 text-text-subtle transition-colors hover:bg-surface-elevated hover:text-text-muted"
-    >
-      <Copy className="h-3.5 w-3.5" />
-    </button>
-  );
-}
-
-export function FileToolbar({ id, filePath }: { id: string; filePath: string }) {
-  const rawUrl = buildKbRawPath(id, filePath);
-  return (
-    <>
-      <CopyPathButton filePath={filePath} />
-      <a
-        href={rawUrl}
-        target="_blank"
-        rel="noreferrer"
-        title="Open raw"
-        aria-label="Open raw"
-        className="chrome flex min-h-[44px] shrink-0 items-center justify-center rounded-sm px-2 text-text-subtle transition-colors hover:bg-surface-elevated hover:text-text-muted"
+    <div ref={containerRef} className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        title="More actions"
+        aria-label="More actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={[
+          'chrome flex min-h-[44px] shrink-0 items-center justify-center rounded-sm px-2 transition-colors',
+          open ? 'text-text' : 'text-text-subtle hover:bg-surface-elevated hover:text-text-muted',
+        ].join(' ')}
       >
-        <ExternalLink className="h-3.5 w-3.5" />
-      </a>
-      <a
-        href={kbDownloadUrl(id, filePath)}
-        download
-        title="Download file"
-        aria-label="Download file"
-        className="chrome flex min-h-[44px] shrink-0 items-center justify-center rounded-sm px-2 text-text-subtle transition-colors hover:bg-surface-elevated hover:text-text-muted"
-      >
-        <Download className="h-3.5 w-3.5" />
-      </a>
-    </>
+        <MoreHorizontal className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-md border border-border-soft bg-surface-raised shadow-lg"
+        >
+          {size !== undefined && (
+            <div className="border-b border-border-soft px-3 py-1.5 font-sans text-[11px] text-text-subtle">
+              {formatBytes(size)}
+            </div>
+          )}
+          <button role="menuitem" onClick={handleCopy} className={itemClass}>
+            <Copy className="h-3.5 w-3.5 shrink-0" />
+            {copied ? 'Path copied' : 'Copy path'}
+          </button>
+          <a
+            role="menuitem"
+            href={rawUrl}
+            target="_blank"
+            rel="noreferrer"
+            onClick={() => setOpen(false)}
+            className={itemClass}
+          >
+            <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+            Open raw
+          </a>
+          <a
+            role="menuitem"
+            href={kbDownloadUrl(id, filePath)}
+            download
+            onClick={() => setOpen(false)}
+            className={itemClass}
+          >
+            <Download className="h-3.5 w-3.5 shrink-0" />
+            Download
+          </a>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1005,7 +1058,7 @@ function ImageLightbox({ src, alt }: { src: string; alt: string }) {
 // View mode toggle + raw source view (GitHub-style Preview / Code)
 // ---------------------------------------------------------------------------
 
-type ViewMode = 'preview' | 'code';
+export type ViewMode = 'preview' | 'code';
 
 const VIEW_MODE_STORAGE_KEY = 'kb-file-view-mode';
 
@@ -1013,7 +1066,7 @@ const VIEW_MODE_STORAGE_KEY = 'kb-file-view-mode';
 // fresh session). A power user inspecting raw source across several files
 // shouldn't have to re-toggle each time, but newcomers still land on the
 // friendly rendered view first.
-function loadSessionViewMode(): ViewMode {
+export function loadSessionViewMode(): ViewMode {
   try {
     return window.sessionStorage.getItem(VIEW_MODE_STORAGE_KEY) === 'code' ? 'code' : 'preview';
   } catch {
@@ -1021,7 +1074,7 @@ function loadSessionViewMode(): ViewMode {
   }
 }
 
-function saveSessionViewMode(mode: ViewMode): void {
+export function saveSessionViewMode(mode: ViewMode): void {
   try {
     window.sessionStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
   } catch {
@@ -1049,7 +1102,7 @@ function saveSessionWrap(wrap: boolean): void {
 }
 
 // Parse a `#L<n>` line anchor from a location hash.
-function lineFromHash(hash: string): number | null {
+export function lineFromHash(hash: string): number | null {
   const m = /^#L(\d+)$/.exec(hash);
   if (!m) return null;
   const n = Number(m[1]);
@@ -1061,7 +1114,7 @@ const VIEW_MODE_OPTIONS = [
   { value: 'code' as const, label: 'Code', Icon: Code2 },
 ];
 
-function ViewModeToggle({ mode, onChange }: { mode: ViewMode; onChange: (mode: ViewMode) => void }) {
+export function ViewModeToggle({ mode, onChange }: { mode: ViewMode; onChange: (mode: ViewMode) => void }) {
   return (
     <div
       role="tablist"
@@ -1229,12 +1282,20 @@ export function FileContent({
   file,
   loading,
   error,
+  mode: modeProp,
+  onModeChange,
 }: {
   id: string;
   filePath: string;
   file: KbFile | undefined;
   loading: boolean;
   error: Error | null;
+  // When the parent owns the Preview/Code toggle (so it can live in the page
+  // header alongside the other file controls), it passes a controlled mode +
+  // handler and FileContent suppresses its own inline toggle bar. Left
+  // undefined (e.g. the README default view) FileContent manages mode itself.
+  mode?: ViewMode;
+  onModeChange?: (mode: ViewMode) => void;
 }) {
   const rawUrl = buildKbRawPath(id, filePath);
   const navigate = useNavigate();
@@ -1252,13 +1313,22 @@ export function FileContent({
 
   // Preview / Code toggle for Markdown. Land in Code mode when deep-linked to a
   // `#L<n>` source line; otherwise honour the session's last choice.
-  const [mode, setMode] = useState<ViewMode>(() =>
+  const [internalMode, setInternalMode] = useState<ViewMode>(() =>
     lineFromHash(window.location.hash) ? 'code' : loadSessionViewMode(),
   );
-  const changeMode = useCallback((next: ViewMode) => {
-    setMode(next);
-    saveSessionViewMode(next);
-  }, []);
+  const controlledMode = modeProp !== undefined && onModeChange !== undefined;
+  const mode = controlledMode ? modeProp : internalMode;
+  const changeMode = useCallback(
+    (next: ViewMode) => {
+      if (controlledMode && onModeChange) {
+        onModeChange(next);
+      } else {
+        setInternalMode(next);
+        saveSessionViewMode(next);
+      }
+    },
+    [controlledMode, onModeChange],
+  );
   const showAsCode = file?.kind === 'markdown' && mode === 'code';
 
   // Scroll to hash target after markdown renders.
@@ -1536,10 +1606,14 @@ export function FileContent({
       <div className="flex h-full min-h-0 flex-col">
         {/* GitHub-style Preview / Code switch. Markdown is the one kind that has
             both a rendered form and inline source, so it's the only place the
-            toggle appears. */}
-        <div className="flex h-9 shrink-0 items-center justify-end border-b border-border-soft px-3">
-          <ViewModeToggle mode={mode} onChange={changeMode} />
-        </div>
+            toggle appears. When the parent owns the toggle (controlled mode, the
+            primary file view) it lives in the page header instead, so the inline
+            bar is suppressed to avoid a redundant second row. */}
+        {!controlledMode && (
+          <div className="flex h-9 shrink-0 items-center justify-end border-b border-border-soft px-3">
+            <ViewModeToggle mode={mode} onChange={changeMode} />
+          </div>
+        )}
         {showAsCode ? (
           // Raw source includes frontmatter, matching what GitHub shows.
           <CodeView body={file.content} language="markdown" />

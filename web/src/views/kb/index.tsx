@@ -1,16 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, Search, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
 import { fetchKb, fetchKbFile, fetchKbTree } from '@/api/kb';
 import { useNavigate, useParams } from 'react-router-dom';
 import { buildKbPath } from '@/lib/url-state';
-import { formatBytes } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
 import { useIsMobile } from '@/hooks/use-mobile';
 import type { KbTreeNode } from '@shared/kb';
 
 import { TreeRow, ancestorsOf, matchesFilter } from './FileTree';
-import { FileContent, BreadcrumbPath, FileToolbar, TocButton, extractToc } from './FileViewer';
+import {
+  FileContent,
+  FileBreadcrumb,
+  FileOverflowMenu,
+  ViewModeToggle,
+  TocButton,
+  extractToc,
+  loadSessionViewMode,
+  saveSessionViewMode,
+  lineFromHash,
+} from './FileViewer';
+import type { ViewMode } from './FileViewer';
 
 const expandedDirsByKb = new Map<string, string[]>();
 const lastViewedFileByKb = new Map<string, string>();
@@ -142,6 +152,19 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
     if (!file || file.kind !== 'markdown' || !file.content) return [];
     return extractToc(file.content);
   }, [file]);
+
+  // Preview/Code view-mode for the selected markdown file, lifted to the page
+  // so the single toggle can live in the header alongside the other file
+  // controls (instead of a second strip inside the viewer). Land in Code when
+  // deep-linked to a `#L<n>` source line; otherwise honour the session choice.
+  const [viewMode, setViewMode] = useState<ViewMode>(() =>
+    lineFromHash(window.location.hash) ? 'code' : loadSessionViewMode(),
+  );
+  const changeViewMode = useCallback((next: ViewMode) => {
+    setViewMode(next);
+    saveSessionViewMode(next);
+  }, []);
+  const isMarkdown = file?.kind === 'markdown';
 
   // ---------------------------------------------------------------------------
   // Effects
@@ -323,18 +346,27 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
           )}
         </span>
 
-        {/* Right-side header controls — desktop only */}
+        {/* File breadcrumb — left-aligned next to the KB title (desktop). A
+            breadcrumb reads as location, so it belongs on the left as the
+            continuation of the title path; the action controls stay right. */}
         {filePath && (
-          <div className="ml-auto hidden md:flex min-w-0 items-center gap-2">
-            <div className="min-w-0 mr-1">
-              <BreadcrumbPath filePath={filePath} />
-            </div>
-            {file && !fileLoading && (
-              <span className="chrome shrink-0 text-[11px] text-text-subtle">
-                {formatBytes(file.size)}
-              </span>
+          <div className="hidden md:flex min-w-0 items-center gap-1.5">
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-subtle/40" />
+            <FileBreadcrumb filePath={filePath} />
+          </div>
+        )}
+
+        {/* Right-side action controls — desktop only: [Preview|Code] [⋯] [TOC]. */}
+        {filePath && (
+          <div className="ml-auto hidden md:flex shrink-0 items-center gap-2 pl-2">
+            {isMarkdown && !fileLoading && (
+              <ViewModeToggle mode={viewMode} onChange={changeViewMode} />
             )}
-            <FileToolbar id={id} filePath={filePath} />
+            <FileOverflowMenu
+              id={id}
+              filePath={filePath}
+              size={file && !fileLoading ? file.size : undefined}
+            />
             <TocButton entries={toc} />
           </div>
         )}
@@ -458,20 +490,22 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
         >
           {filePath ? (
             <div className="flex h-full flex-col">
-              {/* Mobile file toolbar */}
+              {/* Mobile file toolbar — the "‹ Files" back button already gives
+                  location context, so drop the full path and show just the
+                  filename plus the Preview/Code toggle and overflow/TOC. */}
               <div className="flex min-h-[44px] shrink-0 items-center gap-2 border-b border-border-soft px-4 md:hidden">
-                <div className="min-w-0 flex-1">
-                  <BreadcrumbPath filePath={filePath} />
-                </div>
-                {file && !fileLoading && (
-                  <span className="chrome shrink-0 text-[11px] text-text-subtle">
-                    {formatBytes(file.size)}
-                  </span>
+                <span className="min-w-0 flex-1 truncate font-sans text-[13px] font-medium text-text-muted">
+                  {filePath.split('/').pop()}
+                </span>
+                {isMarkdown && !fileLoading && (
+                  <ViewModeToggle mode={viewMode} onChange={changeViewMode} />
                 )}
-                <div className="ml-auto flex items-center gap-0.5">
-                  <FileToolbar id={id} filePath={filePath} />
-                  <TocButton entries={toc} />
-                </div>
+                <FileOverflowMenu
+                  id={id}
+                  filePath={filePath}
+                  size={file && !fileLoading ? file.size : undefined}
+                />
+                <TocButton entries={toc} />
               </div>
               <div className="min-h-0 flex-1 overflow-hidden flex flex-col">
                 <FileContent
@@ -486,6 +520,8 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
                         ? new Error(String(fileError))
                         : null
                   }
+                  mode={viewMode}
+                  onModeChange={changeViewMode}
                 />
               </div>
             </div>
