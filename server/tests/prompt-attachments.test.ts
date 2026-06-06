@@ -1,5 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { makeReminderInboxItem } from './helpers/inbox.js';
 import type { InboxItem } from '../inbox/wake-queue.service.js';
@@ -8,6 +12,7 @@ import {
   buildRuntimeRestartContinuationDeliveryPrompt,
   buildCodeAgentDeliveryPrompt,
 } from '../runtime/delivery-prompt.js';
+import { resolveAnimaReferencePathsFromRoots } from '../runtime/anima-reference.js';
 import { runtimeEnv } from '../runtime/runtime-bridge.js';
 import { buildAnimaRuntimeProfile } from '../runtime/standing-prompt.js';
 import { makeSlackEvent } from './helpers/slack.js';
@@ -223,7 +228,14 @@ test('buildCodeAgentDeliveryPrompt emits <attached_files> metadata and omits blo
 });
 
 test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack targets', () => {
-  const text = buildAnimaRuntimeProfile({ displayName: 'Iris', role: 'Product PM for prioritization.' });
+  const text = buildAnimaRuntimeProfile({
+    displayName: 'Iris',
+    referencePaths: {
+      docsPath: '/opt/anima/docs',
+      sourcePath: '/work/anima',
+    },
+    role: 'Product PM for prioritization.',
+  });
   assert.doesNotMatch(text, /\{\{name\}\}|\{\{role\}\}/);
   assert.match(text, /Reply target comes from the delivery envelope/);
   assert.match(text, /pass its `channel=` \/ `thread_ts=` to `--channel` \/ `--thread-ts` literally/);
@@ -232,7 +244,44 @@ test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack t
   assert.match(text, /anima reminder/);
   assert.match(text, /anima message send --channel <id-or-name> \[--thread-ts <thread_ts>\]/);
   assert.match(text, /read `ANIMA_FEATURES\.md` in your home before using an unfamiliar `anima` command/);
+  assert.match(text, /Bundled Anima docs are available at `\/opt\/anima\/docs`/);
+  assert.match(text, /guide\/how-an-agent-works\.md/);
+  assert.match(text, /runtime-providers\.md/);
+  assert.match(text, /Anima source is available at `\/work\/anima`/);
+  assert.match(text, /Treat it as reference unless the user explicitly asks you to modify Anima itself/);
+  assert.match(text, /For exact CLI flags, run `anima <command> --help` before guessing/);
   assert.doesNotMatch(text, /\$ANIMA_CHANNEL|\$ANIMA_THREAD/);
+});
+
+test('buildAnimaRuntimeProfile falls back cleanly when bundled docs are unavailable', () => {
+  const text = buildAnimaRuntimeProfile({
+    displayName: 'Iris',
+    referencePaths: {},
+    role: 'Product PM for prioritization.',
+  });
+  assert.match(text, /Bundled Anima docs were not found in this runtime/);
+  assert.doesNotMatch(text, /Anima source is available at/);
+});
+
+test('resolveAnimaReferencePathsFromRoots finds bundled docs and source checkout roots', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-reference-root-'));
+  mkdirSync(join(root, 'docs', 'guide'), { recursive: true });
+  mkdirSync(join(root, 'docs', 'architecture'), { recursive: true });
+  mkdirSync(join(root, '.git'), { recursive: true });
+  mkdirSync(join(root, 'server'), { recursive: true });
+  mkdirSync(join(root, 'shared'), { recursive: true });
+  mkdirSync(join(root, 'web'), { recursive: true });
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@meetquinn/anima' }));
+  writeFileSync(join(root, 'docs', 'guide', 'how-an-agent-works.md'), '# Agent\n');
+  writeFileSync(join(root, 'docs', 'guide', 'working-with-your-agent.md'), '# Working\n');
+  writeFileSync(join(root, 'docs', 'guide', 'using-the-dashboard.md'), '# Dashboard\n');
+  writeFileSync(join(root, 'docs', 'architecture', 'overview.md'), '# Architecture\n');
+  writeFileSync(join(root, 'docs', 'runtime-providers.md'), '# Providers\n');
+
+  assert.deepEqual(resolveAnimaReferencePathsFromRoots([join(root, 'missing'), root]), {
+    docsPath: join(root, 'docs'),
+    sourcePath: root,
+  });
 });
 
 test('buildAnimaRuntimeProfile keeps MEMORY.md as a short recovery index', () => {
