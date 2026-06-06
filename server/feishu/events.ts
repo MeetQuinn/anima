@@ -1,5 +1,9 @@
 import { nowIso } from '../ids.js';
-import { feishuMessageResourceId } from './feishu-file.service.js';
+import {
+  feishuMessageAttachmentsFromContent,
+  parseFeishuContent,
+  type FeishuMessageAttachmentMeta,
+} from './message-content.js';
 import type { FeishuInboxItem, InboxFileMeta } from '../../shared/inbox.js';
 
 export interface FeishuReceiveMessageEvent {
@@ -138,38 +142,20 @@ function feishuFilesFromMessage(
   message: FeishuReceiveMessageEvent['message'],
   parsed: Record<string, unknown> | undefined,
 ): InboxFileMeta[] {
-  if (message.message_type === 'image') {
-    const imageKey = stringContentField(parsed, 'image_key');
-    if (!imageKey) return [];
-    return [{
-      id: feishuMessageResourceId({
-        fileKey: imageKey,
-        messageId: message.message_id,
-        resourceType: 'image',
-      }),
-      mimetype: 'image/*',
-      name: fallbackFeishuResourceName('image', message.message_id),
-      sizeBytes: feishuFileSize(parsed) ?? 0,
-    }];
-  }
+  return feishuMessageAttachmentsFromContent({
+    content: parsed,
+    messageId: message.message_id,
+    messageType: message.message_type,
+  }).map(inboxFileMeta);
+}
 
-  if (message.message_type === 'file') {
-    const fileKey = stringContentField(parsed, 'file_key');
-    if (!fileKey) return [];
-    const fileName = stringContentField(parsed, 'file_name') ?? fallbackFeishuResourceName('file', message.message_id);
-    return [{
-      id: feishuMessageResourceId({
-        fileKey,
-        messageId: message.message_id,
-        resourceType: 'file',
-      }),
-      mimetype: stringContentField(parsed, 'mime_type') ?? stringContentField(parsed, 'mimetype') ?? 'application/octet-stream',
-      name: fileName,
-      sizeBytes: feishuFileSize(parsed) ?? 0,
-    }];
-  }
-
-  return [];
+function inboxFileMeta(file: FeishuMessageAttachmentMeta): InboxFileMeta {
+  return {
+    id: file.fileId,
+    mimetype: file.mimetype,
+    name: file.name,
+    sizeBytes: file.sizeBytes ?? 0,
+  };
 }
 
 function feishuAttachmentText(files: InboxFileMeta[]): string | undefined {
@@ -179,35 +165,6 @@ function feishuAttachmentText(files: InboxFileMeta[]): string | undefined {
   if (!file) return undefined;
   const kind = file.id.includes(':image:') ? 'image' : 'file';
   return `[${kind}] ${file.name}`;
-}
-
-function stringContentField(content: Record<string, unknown> | undefined, field: string): string | undefined {
-  const value = content?.[field];
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function feishuFileSize(content: Record<string, unknown> | undefined): number | undefined {
-  const candidates = [content?.['file_size'], content?.['size'], content?.['size_bytes']];
-  const numeric = candidates.find((value): value is number => typeof value === 'number' && Number.isFinite(value));
-  if (numeric !== undefined) return numeric;
-  const stringValue = candidates.find((value): value is string => typeof value === 'string' && value.length > 0);
-  const parsed = stringValue === undefined ? Number.NaN : Number(stringValue);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function fallbackFeishuResourceName(kind: 'file' | 'image', messageId: string): string {
-  return `${kind}-${messageId}`;
-}
-
-function parseFeishuContent(content: string): Record<string, unknown> | undefined {
-  try {
-    const parsed = JSON.parse(content) as unknown;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 function replaceFeishuMentionKeys(
