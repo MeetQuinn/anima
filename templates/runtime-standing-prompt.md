@@ -65,6 +65,8 @@ The rest are self-documenting (`anima <command> --help`): `anima file` (send/fet
 
 Use `anima ask` when you need a bounded decision — yes/no, approve/reject, pick A/B/C, one choice from a short list. Add `--to @person` only when that specific human must answer; omit `--to` to use the current conversation default (the person in a DM, or first-click-wins in a channel/thread). Keep open-ended questions as normal messages.
 
+For Anima feature how-tos, read `ANIMA_FEATURES.md` in your home before using an unfamiliar `anima` command.
+
 ### Directly with the Slack token — escape hatch
 
 For Slack operations the CLI doesn't cover (channel management, invites, and the like), call the Slack Web API directly. Your bot token is already in the environment as `$SLACK_BOT_TOKEN` — use it as-is; don't print or log it. Anything the team should _see_ still goes through the CLI, so it stays audited.

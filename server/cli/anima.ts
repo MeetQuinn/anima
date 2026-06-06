@@ -3,6 +3,7 @@ import { Command } from 'commander';
 
 import { errorMessage } from '../ids.js';
 import { registerAskCommands } from '../tools/ask.js';
+import { registerEnvCommands } from '../tools/env-cli.js';
 import { registerReminderCommands } from '../reminders/cli.js';
 import { registerFileCommands } from '../tools/files-cli.js';
 import { registerMessageHistoryCommands } from '../tools/message-history-cli.js';
@@ -24,6 +25,7 @@ export function createCliProgram(): Command {
 
   registerMessageCommands(program);
   registerMessageHistoryCommands(program);
+  registerEnvCommands(program);
   registerReactionCommands(program);
   registerSubscriptionCommands(program);
   registerReminderCommands(program);

@@ -231,6 +231,7 @@ test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack t
   assert.match(text, /Only `mute` a thread\/channel when it's clearly done with you AND still noisy/);
   assert.match(text, /anima reminder/);
   assert.match(text, /anima message send --channel <id-or-name> \[--thread-ts <thread_ts>\]/);
+  assert.match(text, /read `ANIMA_FEATURES\.md` in your home before using an unfamiliar `anima` command/);
   assert.doesNotMatch(text, /\$ANIMA_CHANNEL|\$ANIMA_THREAD/);
 });
 

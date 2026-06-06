@@ -55,6 +55,6 @@ export function isFirstClassAnimaCliCommand(command: string | undefined): boolea
   if (!trimmed) return false;
   const withOptionalEnv = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S+)\s+)*`;
   return new RegExp(
-    String.raw`^${withOptionalEnv}anima\s+(?:ask|message\s+(?:read|send|update|react)|file\s+send|reminder\s+(?:schedule|cancel|snooze|list)|subscription\s+(?:list|mute))\b`,
+    String.raw`^${withOptionalEnv}anima\s+(?:ask|env\s+(?:set|list|run|source)|message\s+(?:read|send|update|react)|file\s+send|reminder\s+(?:schedule|cancel|snooze|list)|subscription\s+(?:list|mute))\b`,
   ).test(trimmed);
 }
