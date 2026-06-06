@@ -2,7 +2,11 @@ import type {
   FeishuConversationMention,
   FeishuConversationMessage,
 } from '../feishu/client.js';
-import { feishuMessageResourceId } from '../feishu/feishu-file.service.js';
+import {
+  feishuMessageAttachmentsFromContent,
+  parseFeishuContent,
+  type FeishuMessageAttachmentMeta,
+} from '../feishu/message-content.js';
 
 export interface FeishuTranscriptRequest {
   chatId: string;
@@ -51,29 +55,25 @@ function feishuTranscriptText(message: FeishuConversationMessage): string {
     return replaceFeishuMentionKeys(text, message.mentions ?? []) || '[empty text]';
   }
   if (messageType === 'image' && typeof content?.['image_key'] === 'string') {
+    const attachment = feishuTranscriptAttachmentMeta(message, content);
     return [
       `[image] image_key=${content['image_key']}`,
-      feishuTranscriptAttachment({
-        fileKey: content['image_key'],
-        messageId: message.messageId,
-        resourceType: 'image',
-      }),
-    ].join('\n');
+      attachment ? feishuTranscriptAttachment({ fileId: attachment.fileId }) : '',
+    ].filter(Boolean).join('\n');
   }
   if (messageType === 'file') {
-    const fileKey = typeof content?.['file_key'] === 'string' ? content['file_key'] : '';
-    const name = typeof content?.['file_name'] === 'string' ? content['file_name'] : '';
-    const sizeBytes = feishuFileSize(content);
+    const attachment = feishuTranscriptAttachmentMeta(message, content);
+    const fileKey = attachment?.fileKey ?? '';
+    const name = attachment?.providedName ?? '';
+    const sizeBytes = attachment?.sizeBytes;
     const summary = `[file]${name ? ` name=${name}` : ''}${fileKey ? ` file_key=${fileKey}` : ''}`.trimEnd();
-    return fileKey
+    return attachment
       ? [
           summary,
           feishuTranscriptAttachment({
-            fileKey,
-            messageId: message.messageId,
-            name,
-            resourceType: 'file',
-            sizeBytes,
+            fileId: attachment.fileId,
+            ...(name ? { name } : {}),
+            ...(sizeBytes !== undefined ? { sizeBytes } : {}),
           }),
         ].join('\n')
       : summary;
@@ -81,42 +81,25 @@ function feishuTranscriptText(message: FeishuConversationMessage): string {
   return `[${messageType} message]`;
 }
 
+function feishuTranscriptAttachmentMeta(
+  message: FeishuConversationMessage,
+  content: Record<string, unknown> | undefined,
+): FeishuMessageAttachmentMeta | undefined {
+  return feishuMessageAttachmentsFromContent({
+    content,
+    messageId: message.messageId,
+    messageType: message.messageType,
+  })[0];
+}
+
 function feishuTranscriptAttachment(input: {
-  fileKey: string;
-  messageId: string;
+  fileId: string;
   name?: string;
-  resourceType: 'file' | 'image';
   sizeBytes?: number;
 }): string {
-  const id = feishuMessageResourceId({
-    fileKey: input.fileKey,
-    messageId: input.messageId,
-    resourceType: input.resourceType,
-  });
   const name = input.name ? ` name=${input.name}` : '';
   const size = input.sizeBytes !== undefined ? ` size_bytes=${input.sizeBytes}` : '';
-  return `  attached: id=${id}${name}${size} (use \`anima file fetch ${id}\` to download)`;
-}
-
-function feishuFileSize(content: Record<string, unknown> | undefined): number | undefined {
-  const candidates = [content?.['file_size'], content?.['size'], content?.['size_bytes']];
-  const numeric = candidates.find((value): value is number => typeof value === 'number' && Number.isFinite(value));
-  if (numeric !== undefined) return numeric;
-  const stringValue = candidates.find((value): value is string => typeof value === 'string' && value.length > 0);
-  const parsed = stringValue === undefined ? Number.NaN : Number(stringValue);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function parseFeishuContent(content: string | undefined): Record<string, unknown> | undefined {
-  if (!content) return undefined;
-  try {
-    const parsed = JSON.parse(content) as unknown;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : undefined;
-  } catch {
-    return undefined;
-  }
+  return `  attached: id=${input.fileId}${name}${size} (use \`anima file fetch ${input.fileId}\` to download)`;
 }
 
 function replaceFeishuMentionKeys(text: string, mentions: FeishuConversationMention[]): string {

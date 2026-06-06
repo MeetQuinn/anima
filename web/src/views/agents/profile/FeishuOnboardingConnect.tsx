@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ExternalLink, Loader2 } from 'lucide-react';
-import { QRCode } from 'react-qr-code';
+import { Loader2 } from 'lucide-react';
 
 import {
   connectAgentFeishu,
@@ -9,8 +8,14 @@ import {
   startAgentFeishuAppRegistration,
 } from '@/api/agents';
 import { Button } from '@/components/ui/button';
-import { useIsMobile } from '@/hooks/use-mobile';
-import { CredentialField } from './FeishuConnectStepper';
+import {
+  FEISHU_CONNECT_SLOW_SOFTEN_MS,
+  FeishuConnectAffordances,
+  FeishuCreatingAppLabel,
+  FeishuExistingCredentialsCard,
+  FeishuSlowLine,
+  isFeishuRegistrationActive,
+} from './feishu-connect-shared';
 import type { AgentFeishuRegisterAppStatus } from '@shared/agent-config';
 
 // A real Feishu authorization URL is only known at runtime. For dev/screenshot
@@ -35,9 +40,6 @@ const PREVIEW_VERIFICATION_URL =
 export type FeishuOnboardingPhase = 'creating' | 'authorizing' | 'fallback' | 'connected';
 
 const POLL_INTERVAL_MS = 2000;
-const SLOW_SOFTEN_MS = 15_000;
-
-const ACTIVE_STATES = ['starting', 'waiting', 'slow_down', 'domain_switched'];
 
 interface Props {
   agentId: string;
@@ -100,7 +102,7 @@ export function FeishuOnboardingConnect({
     setRetrySlow(false);
     retrySlowTimerRef.current = setTimeout(() => {
       setRetrySlow(true);
-    }, SLOW_SOFTEN_MS);
+    }, FEISHU_CONNECT_SLOW_SOFTEN_MS);
   }
 
   useEffect(() => () => {
@@ -108,8 +110,7 @@ export function FeishuOnboardingConnect({
   }, []);
 
   // --- Poll while registration is active ------------------------------------
-  const registrationActive =
-    !isPreview && registration && ACTIVE_STATES.includes(registration.state);
+  const registrationActive = !isPreview && isFeishuRegistrationActive(registration);
 
   useEffect(() => {
     if (!registrationActive || !registration?.registrationId) return undefined;
@@ -178,7 +179,7 @@ export function FeishuOnboardingConnect({
         setPhase('fallback');
       } else if (next.verificationUrl) {
         setPhase('authorizing');
-      } else if (ACTIVE_STATES.includes(next.state)) {
+      } else if (isFeishuRegistrationActive(next)) {
         keepWaiting = true;
       }
     } catch (err) {
@@ -256,58 +257,6 @@ export function FeishuOnboardingConnect({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Scan / deep-link affordances — the trimmed connect screen. The QR leads (no
-// heading, no waiting paragraph): one held verification URL surfaced by context:
-//   - mobile  → a tap deep-link (you cannot scan your own screen)
-//   - desktop → the QR leads at full footprint, with one supporting line and a
-//               weakened "open the Feishu tab" link beneath it
-// The "then confirm the new app there" clause is load-bearing: scan is not
-// completion. The existing-app credentials form is failure-only, so there is no
-// up-front escape link here.
-// ---------------------------------------------------------------------------
-
-function FeishuConnectAffordances({ verificationUrl }: { verificationUrl: string }) {
-  const isMobile = useIsMobile();
-
-  if (isMobile) {
-    return (
-      <div className="flex flex-col items-center px-2 py-6 text-center">
-        <Button
-          className="w-full max-w-xs"
-          render={<a href={verificationUrl} rel="noreferrer" target="_blank" />}
-        >
-          Open Feishu
-          <ExternalLink className="h-4 w-4" aria-hidden />
-        </Button>
-        <p className="mt-3 max-w-xs text-balance font-serif text-[13px] leading-relaxed text-text-muted">
-          Open Feishu to confirm the new app there.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col items-center px-2 py-6 text-center">
-      <span className="rounded-md border border-border-soft bg-white p-3">
-        <QRCode value={verificationUrl} size={144} bgColor="#ffffff" fgColor="#1c1a17" level="M" />
-      </span>
-      <p className="mt-3 max-w-[18rem] text-balance font-serif text-[13px] leading-relaxed text-text-muted">
-        Scan with Feishu, then confirm the new app there.
-      </p>
-      <a
-        className="mt-3 inline-flex items-center gap-1.5 font-sans text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
-        href={verificationUrl}
-        rel="noreferrer"
-        target="_blank"
-      >
-        Or open the Feishu tab in your browser
-        <ExternalLink className="h-3 w-3" aria-hidden />
-      </a>
-    </div>
-  );
-}
-
 function phaseFromRegistration(
   registration: AgentFeishuRegisterAppStatus | null | undefined,
   error: string | undefined,
@@ -350,53 +299,20 @@ function FallbackState({
     <div className="space-y-3">
       <div className="space-y-2 rounded-sm border border-border-soft bg-surface px-4 py-3">
         <Button className="w-full" onClick={onRetry} disabled={saving || retrying}>
-          {retrying ? (
-            <span className="inline-flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Creating your Feishu app…
-            </span>
-          ) : (
-            'Try creating a new Feishu app again'
-          )}
+          {retrying ? <FeishuCreatingAppLabel /> : 'Try creating a new Feishu app again'}
         </Button>
-        {retrying && retrySlow && (
-          <p className="text-center font-sans text-[12px] text-text-subtle">
-            This is taking longer than usual.
-          </p>
-        )}
+        {retrying && retrySlow && <FeishuSlowLine />}
       </div>
-      <div className="space-y-3 rounded-sm border border-border-soft bg-surface px-4 py-3">
-        <div>
-          <div className="font-serif text-[14px] font-semibold text-text">
-            Connect an existing Feishu app
-          </div>
-          <p className="mt-1 font-serif text-[12px] leading-snug text-text-muted">
-            We couldn&apos;t finish creating the new app. Connect an app you already have to continue.
-          </p>
-        </div>
-        <CredentialField label="App ID" placeholder="cli_..." value={appId} onChange={onAppId} />
-        <CredentialField
-          label="App Secret"
-          placeholder="App secret"
-          secret
-          value={appSecret}
-          onChange={onAppSecret}
-        />
-        <p className="font-sans text-[12px] leading-snug text-text-muted">
-          Find these on your app&apos;s Credentials &amp; Basic Info page in the Feishu Open Platform
-          Developer Console.
-        </p>
-        <Button className="w-full" onClick={onSubmit} disabled={disabled}>
-          {saving ? (
-            <span className="inline-flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Connecting…
-            </span>
-          ) : (
-            'Connect Feishu app'
-          )}
-        </Button>
-      </div>
+      <FeishuExistingCredentialsCard
+        appId={appId}
+        appSecret={appSecret}
+        description="We couldn't finish creating the new app. Connect an app you already have to continue."
+        disabled={disabled}
+        saving={saving}
+        onAppId={onAppId}
+        onAppSecret={onAppSecret}
+        onSubmit={onSubmit}
+      />
     </div>
   );
 }
