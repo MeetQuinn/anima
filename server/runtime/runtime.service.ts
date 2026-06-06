@@ -127,6 +127,7 @@ function latestRunningItem(items: InboxItem[]): InboxItem | undefined {
 }
 
 const STARTING_TIMEOUT_MS = 30_000;
+const FRESH_RUNNING_STALE_GRACE_MS = 10_000;
 
 function expectsRuntimeHealth(agent: AgentConfig): boolean {
   if (agent.enabled === false) return false;
@@ -165,7 +166,9 @@ function staleRuntimeReason(
   if (!queue.active) return 'stale_running_item';
   if (!runtime) return 'stale_running_item';
   if (!runtime.workerId || runtime.workerId !== queue.active.workerId) return 'stale_running_item';
-  if (!runtime.activeItemId || runtime.activeItemId !== queue.runningItemId) return 'stale_running_item';
+  if (!runtime.activeItemId || runtime.activeItemId !== queue.runningItemId) {
+    return freshRunningItem(queue.active.startedAt) ? undefined : 'stale_running_item';
+  }
   if (runtime.processId && !processAlive(runtime.processId)) return 'stale_running_item';
   return undefined;
 }
@@ -195,6 +198,12 @@ function syntheticHealth(
     state,
     updatedAt: nowIso(),
   };
+}
+
+function freshRunningItem(startedAt: string | undefined): boolean {
+  if (!startedAt) return false;
+  const startedAtMs = Date.parse(startedAt);
+  return Number.isFinite(startedAtMs) && Date.now() - startedAtMs < FRESH_RUNNING_STALE_GRACE_MS;
 }
 
 function processAlive(pid: number): boolean {
