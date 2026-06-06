@@ -44,7 +44,22 @@ export { AddKbModal } from './sidebar/KbModals';
 // Listeners are applied to the whole wrapper so clicks still propagate to
 // children normally (PointerSensor distance:4 constraint allows click-through).
 // ---------------------------------------------------------------------------
-function SortableItem({ id, children }: { id: string; children: React.ReactNode }) {
+function SortableItem({
+  id,
+  children,
+  presentation = false,
+}: {
+  id: string;
+  children: React.ReactNode;
+  // When the wrapper lives inside an ARIA listbox (the agent list), suppress
+  // dnd-kit's accessibility attributes. Those default to role="button" +
+  // tabIndex=0 (+ aria-*), which would add a tab stop and insert a focusable
+  // wrapper between the listbox and its role="option" rows, breaking the
+  // single-tab-stop aria-activedescendant model. We're PointerSensor-only, so
+  // these attributes are non-functional anyway (they exist for keyboard drag).
+  // setNodeRef/listeners/transform are kept, so pointer reorder is unaffected.
+  presentation?: boolean;
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
   });
@@ -55,7 +70,7 @@ function SortableItem({ id, children }: { id: string; children: React.ReactNode 
         transform: CSS.Transform.toString(transform),
         transition: transition ?? undefined,
       }}
-      {...attributes}
+      {...(presentation ? { role: 'presentation' as const } : attributes)}
       {...listeners}
       className={[
         'group/drag relative select-none',
@@ -472,7 +487,7 @@ export default function Sidebar({
                   {orderedAgents.map((agent) => {
                     const status = statusByAgentId.get(agent.id);
                     return (
-                      <SortableItem key={agent.id} id={agent.id}>
+                      <SortableItem key={agent.id} id={agent.id} presentation>
                         <AgentRow
                           agent={agent}
                           index={agentIndexMap.get(agent.id) ?? 0}
