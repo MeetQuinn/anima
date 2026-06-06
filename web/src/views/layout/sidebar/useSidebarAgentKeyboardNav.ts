@@ -103,6 +103,17 @@ export function useSidebarAgentKeyboardNav({
     scheduleCommit(nextId);
   };
 
+  // A mouse click lands DOM focus on the clicked row's inner button. The
+  // keyboard model expects focus to live on the list container (rows are not
+  // tab stops), so pull focus back to the container after a click. Otherwise
+  // the stale button keeps :focus-visible and, on the next arrow press (which
+  // flips the modality to keyboard), lights an accent ring on the agent you
+  // just navigated AWAY from. Click bubbles after the row's own onClick, so
+  // navigation has already fired by the time we refocus.
+  const onClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.currentTarget.focus();
+  };
+
   const onFocus = () => setListFocused(true);
   const onBlur = (event: React.FocusEvent<HTMLDivElement>) => {
     // React's onBlur bubbles; only drop focus when it leaves the list entirely.
@@ -119,6 +130,7 @@ export function useSidebarAgentKeyboardNav({
       'aria-activedescendant':
         listFocused && effectiveCursorId ? agentOptionId(effectiveCursorId) : undefined,
       onKeyDown,
+      onClick,
       onFocus,
       onBlur,
     },

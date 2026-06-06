@@ -81,7 +81,14 @@ export function AgentRow({
         // Inside the listbox the container owns keyboard focus (single tab
         // stop); rows are reachable by arrows, not Tab. Mouse clicks still work.
         {...(optionId ? { tabIndex: -1 } : {})}
-        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-inset"
+        className={[
+          'flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-3 py-2.5 text-left focus-visible:outline-none',
+          // Inside the listbox the keyboard cursor ring (driven by `focused` on
+          // the row container) is the single highlight; the button must not add
+          // its own focus-visible ring, which would otherwise linger on a
+          // click-focused row after arrow nav moves the active agent away.
+          optionId ? '' : 'focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-inset',
+        ].join(' ')}
       >
         {avatarUrl ? (
           <img
