@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, ExternalLink, Loader2 } from 'lucide-react';
+import { QRCode } from 'react-qr-code';
 
 import {
   connectAgentFeishu,
@@ -8,6 +9,7 @@ import {
   startAgentFeishuAppRegistration,
 } from '@/api/agents';
 import { Button } from '@/components/ui/button';
+import { useIsMobile } from '@/hooks/use-mobile';
 import type { AgentFeishuRegisterAppStatus } from '@shared/agent-config';
 
 interface Props {
@@ -17,22 +19,41 @@ interface Props {
 }
 
 type SetupMode = 'create' | 'existing';
+type ExistingModeReason = 'manual' | 'failed';
+
+const ACTIVE_STATES = ['starting', 'waiting', 'slow_down', 'domain_switched'];
+const SLOW_SOFTEN_MS = 15_000;
 
 export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
   const defaultBotName = agentName?.trim() || 'Anima {user}';
   const [setupMode, setSetupMode] = useState<SetupMode>('create');
-  const [botName, setBotName] = useState(defaultBotName);
+  const [existingReason, setExistingReason] = useState<ExistingModeReason>('manual');
   const [appId, setAppId] = useState('');
   const [appSecret, setAppSecret] = useState('');
   const [registration, setRegistration] = useState<AgentFeishuRegisterAppStatus | null>(null);
   const [registering, setRegistering] = useState(false);
+  const [registeringSlow, setRegisteringSlow] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const createRunRef = useRef(0);
+  const mountedRef = useRef(true);
+  const slowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const disabled = saving || !appId.trim() || !appSecret.trim();
   const registrationActive = registration
-    && ['starting', 'waiting', 'slow_down', 'domain_switched'].includes(registration.state);
+    && ACTIVE_STATES.includes(registration.state);
+  const verificationUrl = registration?.verificationUrl;
+  const showingQr = Boolean(registrationActive && verificationUrl);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      createRunRef.current += 1;
+      clearSlowTimer();
+    };
+  }, []);
 
   useEffect(() => {
     if (!registrationActive || !registration?.registrationId) return undefined;
@@ -42,10 +63,18 @@ export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
         .then((next) => {
           if (cancelled) return;
           setRegistration(next);
+          if (next.verificationUrl) clearSlowTimer();
           if (next.state === 'connected') {
             setSaved(true);
+            clearSlowTimer();
             refreshDashboardData();
             onConnect?.();
+          }
+          if (next.state === 'failed') {
+            clearSlowTimer();
+            setExistingReason('failed');
+            setError(next.error?.description ?? next.error?.message);
+            setSetupMode('existing');
           }
         })
         .catch((err) => {
@@ -59,30 +88,69 @@ export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
     };
   }, [agentId, onConnect, registration?.registrationId, registrationActive]);
 
+  function clearSlowTimer() {
+    if (slowTimerRef.current === null) return;
+    clearTimeout(slowTimerRef.current);
+    slowTimerRef.current = null;
+  }
+
+  function startSlowTimer() {
+    clearSlowTimer();
+    setRegisteringSlow(false);
+    slowTimerRef.current = setTimeout(() => {
+      setRegisteringSlow(true);
+    }, SLOW_SOFTEN_MS);
+  }
+
+  function isCurrentCreateRun(runId: number): boolean {
+    return mountedRef.current && createRunRef.current === runId;
+  }
+
   async function handleRegisterApp() {
     if (registering) return;
+    const runId = createRunRef.current + 1;
+    createRunRef.current = runId;
     setRegistering(true);
+    startSlowTimer();
     setError(undefined);
     setSaved(false);
     try {
       const next = await startAgentFeishuAppRegistration(agentId, {
-        botName: botName.trim() || undefined,
+        botName: defaultBotName,
       });
+      if (!isCurrentCreateRun(runId)) return;
       setRegistration(next);
       if (next.state === 'connected') {
         setSaved(true);
+        clearSlowTimer();
         refreshDashboardData();
         onConnect?.();
+      } else if (next.state === 'failed') {
+        clearSlowTimer();
+        setExistingReason('failed');
+        setError(next.error?.description ?? next.error?.message);
+        setSetupMode('existing');
+      } else if (next.verificationUrl) {
+        clearSlowTimer();
       }
     } catch (err) {
+      if (!isCurrentCreateRun(runId)) return;
+      clearSlowTimer();
       setError(err instanceof Error ? err.message : 'Could not start Feishu app registration');
+      setExistingReason('failed');
+      setSetupMode('existing');
     } finally {
-      setRegistering(false);
+      if (isCurrentCreateRun(runId)) setRegistering(false);
     }
   }
 
   async function handleConnect() {
     if (disabled) return;
+    createRunRef.current += 1;
+    clearSlowTimer();
+    setRegistration(null);
+    setRegistering(false);
+    setRegisteringSlow(false);
     setSaving(true);
     setError(undefined);
     try {
@@ -101,96 +169,67 @@ export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
     }
   }
 
+  function showExistingCredentials(reason: ExistingModeReason) {
+    setExistingReason(reason);
+    setSetupMode('existing');
+  }
+
+  function showCreate() {
+    setSetupMode('create');
+    setError(undefined);
+  }
+
   return (
     <div className="space-y-5">
       {setupMode === 'create' && (
         <>
-          <div className="rounded-sm border border-border-soft bg-surface-elevated px-4 py-3">
-            <div className="font-serif text-[14px] font-semibold text-text">
-              Create a Feishu app
-            </div>
-            <p className="font-serif mt-1 text-[13px] leading-snug text-text-muted">
-              Anima opens a Feishu authorization link, saves the returned credentials, then validates
-              message delivery. You may still need to confirm bot permissions and event delivery in Feishu.
-            </p>
-            <div className="mt-3">
-              <CredentialField
-                label="Bot name"
-                placeholder="Bot name"
-                value={botName}
-                onChange={setBotName}
-              />
-            </div>
-            <Button
-              className="mt-3 w-full"
-              onClick={() => void handleRegisterApp()}
-              disabled={registering || !!registrationActive}
-            >
-              {registering || registration?.state === 'starting' ? (
-                <span className="inline-flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Creating Feishu app…
-                </span>
-              ) : (
-                'Create Feishu app'
+          {showingQr && verificationUrl ? (
+            <FeishuConnectAffordances verificationUrl={verificationUrl} />
+          ) : (
+            <div className="rounded-sm border border-border-soft bg-surface-elevated px-4 py-3">
+              <Button
+                className="w-full"
+                onClick={() => void handleRegisterApp()}
+                disabled={registering || !!registrationActive}
+              >
+                {registering || registration?.state === 'starting' ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Creating your Feishu app…
+                  </span>
+                ) : (
+                  'Create Feishu app'
+                )}
+              </Button>
+              {(registering || registrationActive) && registeringSlow && (
+                <p className="mt-2 text-center font-sans text-[12px] text-text-subtle">
+                  This is taking longer than usual.
+                </p>
               )}
-            </Button>
-          </div>
-
-          {registration && (
-            <RegistrationStatusCard status={registration} />
+            </div>
           )}
           <button
             type="button"
             className="font-sans text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
-            onClick={() => setSetupMode('existing')}
+            onClick={() => showExistingCredentials('manual')}
           >
-            Use an existing bot
+            Use an existing Feishu app
           </button>
         </>
       )}
 
       {setupMode === 'existing' && (
-        <div className="space-y-3">
-          <button
-            type="button"
-            className="font-sans text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
-            onClick={() => setSetupMode('create')}
-          >
-            Create a new bot
-          </button>
-          <div className="space-y-3 rounded-sm border border-border-soft bg-surface px-4 py-3">
-            <div className="font-serif text-[14px] font-semibold text-text">
-              Use existing Feishu app credentials
-            </div>
-            <CredentialField
-              label="App ID"
-              placeholder="cli_..."
-              value={appId}
-              onChange={setAppId}
-            />
-            <CredentialField
-              label="App Secret"
-              placeholder="App secret"
-              secret
-              value={appSecret}
-              onChange={setAppSecret}
-            />
-            <p className="font-sans text-[12px] leading-snug text-text-muted">
-              Get these from your app&apos;s Credentials &amp; Basic Info page in the Feishu Open Platform Developer Console.
-            </p>
-            <Button className="w-full" onClick={() => void handleConnect()} disabled={disabled}>
-              {saving ? (
-                <span className="inline-flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Saving…
-                </span>
-              ) : (
-                'Save Feishu connection'
-              )}
-            </Button>
-          </div>
-        </div>
+        <ExistingCredentialsForm
+          appId={appId}
+          appSecret={appSecret}
+          disabled={disabled}
+          reason={existingReason}
+          saving={saving}
+          onAppId={setAppId}
+          onAppSecret={setAppSecret}
+          onBack={showCreate}
+          onSubmit={() => void handleConnect()}
+        />
       )}
 
       {error && (
@@ -207,75 +246,119 @@ export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
   );
 }
 
-function RegistrationStatusCard({ status }: { status: AgentFeishuRegisterAppStatus }) {
-  const message = registrationMessage(status);
-  return (
-    <div className="space-y-3 rounded-sm border border-border-soft bg-surface px-4 py-3">
-      <div className="flex items-start gap-3">
-        {status.state === 'connected' ? (
-          <Check className="mt-0.5 h-4 w-4 text-health-ok" />
-        ) : status.state === 'failed' ? (
-          <span className="mt-1 h-2.5 w-2.5 rounded-full bg-health-error" />
-        ) : (
-          <Loader2 className="mt-0.5 h-4 w-4 animate-spin text-accent" />
-        )}
-        <div className="min-w-0">
-          <div className="font-serif text-[13px] font-semibold text-text">{message.title}</div>
-          <p className="mt-1 font-serif text-[12px] leading-snug text-text-muted">{message.body}</p>
-        </div>
-      </div>
-      {status.verificationUrl && status.state !== 'connected' && status.state !== 'failed' && (
-        <a
-          className="inline-flex items-center gap-2 rounded-sm border border-border-soft bg-surface-elevated px-3 py-2 font-sans text-[12px] font-medium text-text hover:border-accent"
-          href={status.verificationUrl}
-          rel="noreferrer"
-          target="_blank"
+function FeishuConnectAffordances({ verificationUrl }: { verificationUrl: string }) {
+  const isMobile = useIsMobile();
+
+  if (isMobile) {
+    return (
+      <div className="flex flex-col items-center rounded-sm border border-border-soft bg-surface px-4 py-6 text-center">
+        <Button
+          className="w-full max-w-xs"
+          render={<a href={verificationUrl} rel="noreferrer" target="_blank" />}
         >
-          Open Feishu authorization link
-          <ExternalLink className="h-3 w-3" aria-hidden />
-        </a>
-      )}
+          Open Feishu
+          <ExternalLink className="h-4 w-4" aria-hidden />
+        </Button>
+        <p className="mt-3 max-w-xs text-balance font-serif text-[13px] leading-relaxed text-text-muted">
+          Open Feishu to confirm the new app there.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-center rounded-sm border border-border-soft bg-surface px-4 py-6 text-center">
+      <span className="rounded-md border border-border-soft bg-white p-3">
+        <QRCode value={verificationUrl} size={144} bgColor="#ffffff" fgColor="#1c1a17" level="M" />
+      </span>
+      <p className="mt-3 max-w-[18rem] text-balance font-serif text-[13px] leading-relaxed text-text-muted">
+        Scan with Feishu, then confirm the new app there.
+      </p>
+      <a
+        className="mt-3 inline-flex items-center gap-1.5 font-sans text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
+        href={verificationUrl}
+        rel="noreferrer"
+        target="_blank"
+      >
+        Or open the Feishu tab in your browser
+        <ExternalLink className="h-3 w-3" aria-hidden />
+      </a>
     </div>
   );
 }
 
-function registrationMessage(status: AgentFeishuRegisterAppStatus): { body: string; title: string } {
-  if (status.state === 'connected') {
-    return {
-      title: 'Feishu app credentials saved',
-      body: 'Now send a Feishu message to validate event delivery and the first reply.',
-    };
-  }
-  if (status.state === 'failed') {
-    return {
-      title: 'Feishu app creation stopped',
-      body: status.error?.description ?? status.error?.message ?? 'Retry app creation, or use existing app credentials below.',
-    };
-  }
-  if (status.state === 'slow_down') {
-    return {
-      title: 'Waiting for Feishu authorization',
-      body: 'Feishu asked Anima to poll more slowly. Keep the authorization page open.',
-    };
-  }
-  if (status.state === 'domain_switched') {
-    return {
-      title: 'Waiting in the matching Feishu domain',
-      body: 'Continue in the Feishu authorization page shown by Anima.',
-    };
-  }
-  if (status.verificationUrl) {
-    return {
-      title: 'Confirm the Feishu app',
-      body: status.expireIn
-        ? `Open the link and confirm the app in Feishu. The link expires in about ${Math.ceil(status.expireIn / 60)} minutes.`
-        : 'Open the link and confirm the app in Feishu.',
-    };
-  }
-  return {
-    title: 'Preparing Feishu authorization',
-    body: 'Anima is asking Feishu for an app creation link.',
-  };
+function ExistingCredentialsForm({
+  appId,
+  appSecret,
+  disabled,
+  onAppId,
+  onAppSecret,
+  onBack,
+  onSubmit,
+  reason,
+  saving,
+}: {
+  appId: string;
+  appSecret: string;
+  disabled: boolean;
+  onAppId: (value: string) => void;
+  onAppSecret: (value: string) => void;
+  onBack: () => void;
+  onSubmit: () => void;
+  reason: ExistingModeReason;
+  saving: boolean;
+}) {
+  return (
+    <div className="space-y-3">
+      {reason === 'manual' && (
+        <button
+          type="button"
+          className="font-sans text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
+          onClick={onBack}
+        >
+          Create a new Feishu app
+        </button>
+      )}
+      <div className="space-y-3 rounded-sm border border-border-soft bg-surface px-4 py-3">
+        <div>
+          <div className="font-serif text-[14px] font-semibold text-text">
+            Connect an existing Feishu app
+          </div>
+          <p className="mt-1 font-serif text-[12px] leading-snug text-text-muted">
+            {reason === 'failed'
+              ? "We couldn't finish creating the new app. Connect an app you already have to continue."
+              : 'Connect an app you already have to continue.'}
+          </p>
+        </div>
+        <CredentialField
+          label="App ID"
+          placeholder="cli_..."
+          value={appId}
+          onChange={onAppId}
+        />
+        <CredentialField
+          label="App Secret"
+          placeholder="App secret"
+          secret
+          value={appSecret}
+          onChange={onAppSecret}
+        />
+        <p className="font-sans text-[12px] leading-snug text-text-muted">
+          Find these on your app&apos;s Credentials &amp; Basic Info page in the Feishu Open Platform Developer Console.
+        </p>
+        <Button className="w-full" onClick={onSubmit} disabled={disabled}>
+          {saving ? (
+            <span className="inline-flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Connecting…
+            </span>
+          ) : (
+            'Connect Feishu app'
+          )}
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 export function CredentialField({
