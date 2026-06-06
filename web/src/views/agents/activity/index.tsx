@@ -279,11 +279,18 @@ export default function Activity() {
     queryFn: ({ pageParam }) => fetchAgentActivities(agentId!, 100, pageParam),
     enabled: !!agentId && lens === 'activity',
     initialPageParam: undefined as string | undefined,
-    // Each page's nextCursor is the ISO timestamp of its oldest activity.
-    // getPreviousPageParam is called with pages[0] (the oldest currently-loaded
-    // page) and returns the cursor needed to load the page before it.
-    getPreviousPageParam: (firstPage) => firstPage.nextCursor ?? undefined,
-    getNextPageParam: () => undefined,
+    // Forward pagination toward OLDER history. page[0] is always the newest
+    // page (initialPageParam undefined); each page's nextCursor is the ISO
+    // timestamp of its oldest activity, so getNextPageParam loads the page of
+    // older activities that comes after it. We deliberately do NOT use
+    // getPreviousPageParam: on a poll/refetch react-query rebuilds the page
+    // list starting from page[0] and walking forward via getNextPageParam. If
+    // the newest page were not page[0], that walk would drop every page it
+    // can't reach, silently discarding the latest logs once the user has
+    // loaded older history. Display order is timestamp-sorted downstream, so
+    // array order has no effect on what the user sees.
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    getPreviousPageParam: () => undefined,
     refetchInterval: agentId ? refetchIntervals.agentActivities : false,
   });
   const messageDirection = dir === 'all' ? undefined : dir;
@@ -296,17 +303,21 @@ export default function Activity() {
     }),
     enabled: !!agentId && lens === 'messages',
     initialPageParam: undefined as string | undefined,
-    getPreviousPageParam: (firstPage) => firstPage.nextCursor ?? undefined,
-    getNextPageParam: () => undefined,
+    // Same forward-toward-older pagination as the activity query above, for the
+    // same refetch-reconstruction reason. page[0] stays the newest page.
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    getPreviousPageParam: () => undefined,
     refetchInterval: agentId ? refetchIntervals.agentActivities : false,
   });
   const activitiesError = lens === 'messages' ? messageQuery.error : activityQuery.error;
   const loadingActivities = lens === 'messages' ? messageQuery.isLoading : activityQuery.isLoading;
-  const fetchPreviousPage = lens === 'messages' ? messageQuery.fetchPreviousPage : activityQuery.fetchPreviousPage;
-  const hasPreviousPage = lens === 'messages' ? messageQuery.hasPreviousPage : activityQuery.hasPreviousPage;
-  const isFetchingPreviousPage = lens === 'messages'
-    ? messageQuery.isFetchingPreviousPage
-    : activityQuery.isFetchingPreviousPage;
+  // "Older history" maps to react-query's forward (next) direction — see the
+  // pagination comment on activityQuery above.
+  const fetchOlder = lens === 'messages' ? messageQuery.fetchNextPage : activityQuery.fetchNextPage;
+  const hasOlder = lens === 'messages' ? messageQuery.hasNextPage : activityQuery.hasNextPage;
+  const isFetchingOlder = lens === 'messages'
+    ? messageQuery.isFetchingNextPage
+    : activityQuery.isFetchingNextPage;
 
   // Merge all loaded pages into a single feed page.
   // Feed events are deduplicated by their source IDs so that the
@@ -567,14 +578,14 @@ export default function Activity() {
     function handleScroll() {
       isAtBottomRef.current = el!.scrollHeight - el!.scrollTop - el!.clientHeight < BOTTOM_THRESHOLD;
       // Load older history when the user scrolls near the top.
-      if (el!.scrollTop < TOP_THRESHOLD && hasPreviousPage && !isFetchingPreviousPage) {
+      if (el!.scrollTop < TOP_THRESHOLD && hasOlder && !isFetchingOlder) {
         prevScrollHeightRef.current = el!.scrollHeight;
-        void fetchPreviousPage();
+        void fetchOlder();
       }
     }
     el.addEventListener('scroll', handleScroll, { passive: true });
     return () => el.removeEventListener('scroll', handleScroll);
-  }, [hasPreviousPage, isFetchingPreviousPage, fetchPreviousPage]);
+  }, [hasOlder, isFetchingOlder, fetchOlder]);
 
   // After a previous page loads, restore the scroll position so the viewport
   // doesn't jump. We recorded scrollHeight before the fetch; the delta between
@@ -684,8 +695,8 @@ export default function Activity() {
         ref={scrollContainerRef}
         className="flex-1 overflow-x-hidden overflow-y-auto px-4 pt-3 pb-[calc(64px+env(safe-area-inset-bottom))] md:px-10 md:pt-5 md:pb-10"
       >
-        {/* Load-more indicator — shown at the very top while fetching an older page */}
-        {isFetchingPreviousPage && (
+        {/* Load-more indicator: shown at the very top while fetching an older page */}
+        {isFetchingOlder && (
           <div className="flex justify-center py-3">
             <Loader2 className="h-3.5 w-3.5 animate-spin text-text-subtle" aria-label="Loading older activity" />
           </div>
