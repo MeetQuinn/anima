@@ -25,6 +25,7 @@ import { agentColor, initialOf } from '@/lib/avatars';
 import { agentAvatarUrl } from '@/lib/agent-avatar';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
 import { AgentRow, sidebarDotColor, sidebarDotTitle } from './sidebar/AgentRow';
+import { agentOptionId, useSidebarAgentKeyboardNav } from './sidebar/useSidebarAgentKeyboardNav';
 import { AgentCreateModal } from '@/views/onboarding';
 import {
   AddKbModal,
@@ -43,7 +44,22 @@ export { AddKbModal } from './sidebar/KbModals';
 // Listeners are applied to the whole wrapper so clicks still propagate to
 // children normally (PointerSensor distance:4 constraint allows click-through).
 // ---------------------------------------------------------------------------
-function SortableItem({ id, children }: { id: string; children: React.ReactNode }) {
+function SortableItem({
+  id,
+  children,
+  presentation = false,
+}: {
+  id: string;
+  children: React.ReactNode;
+  // When the wrapper lives inside an ARIA listbox (the agent list), suppress
+  // dnd-kit's accessibility attributes. Those default to role="button" +
+  // tabIndex=0 (+ aria-*), which would add a tab stop and insert a focusable
+  // wrapper between the listbox and its role="option" rows, breaking the
+  // single-tab-stop aria-activedescendant model. We're PointerSensor-only, so
+  // these attributes are non-functional anyway (they exist for keyboard drag).
+  // setNodeRef/listeners/transform are kept, so pointer reorder is unaffected.
+  presentation?: boolean;
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
   });
@@ -54,7 +70,7 @@ function SortableItem({ id, children }: { id: string; children: React.ReactNode 
         transform: CSS.Transform.toString(transform),
         transition: transition ?? undefined,
       }}
-      {...attributes}
+      {...(presentation ? { role: 'presentation' as const } : attributes)}
       {...listeners}
       className={[
         'group/drag relative select-none',
@@ -103,6 +119,13 @@ export default function Sidebar({
   );
 
   const { orderedAgents, orderedKbs, agentIndexMap, kbIndexMap, sensors, reorderAgents, reorderKbs } = useSidebarOrder();
+  // Arrow up/down to move through agents (selection follows focus, debounced
+  // commit). Expanded list only; the collapsed icon rail stays click-only.
+  const agentKeyboardNav = useSidebarAgentKeyboardNav({
+    agentIds: orderedAgents.map((a) => a.id),
+    activeAgentId: agentId,
+    onCommit: setAgentId,
+  });
   // Knowledge Base add modal
   const [showAddModal, setShowAddModal] = useState(false);
 
@@ -447,7 +470,11 @@ export default function Sidebar({
                 <Plus className="h-3 w-3" />
               </button>
             </div>
-            <div className="space-y-0.5">
+            <div
+              className="space-y-0.5 rounded-sm focus-visible:outline-none"
+              aria-label="Agents"
+              {...agentKeyboardNav.listboxProps}
+            >
               <DndContext
                 sensors={sensors}
                 collisionDetection={closestCenter}
@@ -460,7 +487,7 @@ export default function Sidebar({
                   {orderedAgents.map((agent) => {
                     const status = statusByAgentId.get(agent.id);
                     return (
-                      <SortableItem key={agent.id} id={agent.id}>
+                      <SortableItem key={agent.id} id={agent.id} presentation>
                         <AgentRow
                           agent={agent}
                           index={agentIndexMap.get(agent.id) ?? 0}
@@ -469,6 +496,8 @@ export default function Sidebar({
                           enabled={agent.enabled !== false}
                           {...(status ? { status } : {})}
                           onClick={() => setAgentId(agent.id)}
+                          optionId={agentOptionId(agent.id)}
+                          focused={agentKeyboardNav.isOptionFocused(agent.id)}
                         />
                       </SortableItem>
                     );
