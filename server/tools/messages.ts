@@ -294,13 +294,27 @@ async function recordFeishuOwnerGreetingDelivery(input: {
   });
 }
 
-export async function runMessageUpdate(opts: MessageUpdateInput): Promise<void> {
-  const text = await readStdin();
+export async function runMessageUpdate(
+  opts: MessageUpdateInput,
+  deps: MessageSendDeps = {},
+): Promise<void> {
+  const text = opts.text ?? await readStdin();
   const agentId = resolveToolAgentId(opts);
   if (!agentId) throw new Error('message update requires current agent context for audit');
   if (!opts.channel) throw new Error('message update requires --channel');
   const targetTs = opts.messageTs;
   if (!targetTs) throw new Error('message update requires --message-ts');
+  if (opts.channel.startsWith('oc_')) {
+    await runFeishuMessageUpdate({
+      agentId,
+      channel: opts.channel,
+      createFeishuMessageClient: deps.createFeishuMessageClient ?? createDefaultFeishuMessageClient,
+      opts,
+      targetMessageId: targetTs,
+      text,
+    });
+    return;
+  }
   const { agent, client } = await slackWebClientForOpts(opts);
   const teamId = agent.slack.teamId || undefined;
   const channel = await resolveSlackChannelArgument({
@@ -364,6 +378,63 @@ export async function runMessageUpdate(opts: MessageUpdateInput): Promise<void> 
   });
 }
 
+async function runFeishuMessageUpdate(input: {
+  agentId: string;
+  channel: string;
+  createFeishuMessageClient: FeishuMessageClientFactory;
+  opts: MessageUpdateInput;
+  targetMessageId: string;
+  text: string;
+}): Promise<void> {
+  if (!input.targetMessageId.startsWith('om_')) {
+    throw new Error('Feishu message update requires --message-ts to be a Feishu message_id (om_...)');
+  }
+  const agent = await loadAgentFromOpts(input.opts);
+  if (!agent.feishu.connected) throw new Error(`Agent ${input.agentId} has no Feishu connection configured`);
+  const client = input.createFeishuMessageClient(agent.feishu);
+  if (!client.updatePost) {
+    throw new Error('Feishu message client does not support message.update');
+  }
+  const updatePost = client.updatePost.bind(client);
+  const basePayload = {
+    channel: input.channel,
+    channelDisplayName: 'Feishu chat',
+    channelKind: 'chat',
+    messageId: input.targetMessageId,
+    platform: 'feishu',
+    targetTs: input.targetMessageId,
+    tool: 'anima.message.update',
+  };
+
+  await withToolActivity({
+    audit: { agentId: input.agentId },
+    basePayload,
+    effectType: 'feishu.message.update',
+    op: async () => {
+      const response = await updatePost({
+        content: markdownToFeishuPost(input.text),
+        messageId: input.targetMessageId,
+      });
+      const messageId = response.messageId ?? input.targetMessageId;
+      console.log(feishuUpdateOutputLine({
+        channel: input.channel,
+        messageId,
+      }));
+      return {
+        result: undefined,
+        completedPayload: {
+          ...(response.chatId ? { channel: response.chatId } : {}),
+          ...(response.threadId ? { threadTs: response.threadId } : {}),
+          messageId,
+          status: 'updated',
+          text: input.text,
+          ts: messageId,
+        },
+      };
+    },
+  });
+}
+
 function subscriptionPayload(subscription: { kind: string; mutedAt?: string; subscriptionId: string; threadTs?: string }): Record<string, unknown> {
   return {
     subscriptionId: subscription.subscriptionId,
@@ -417,6 +488,13 @@ function feishuOutputLine(input: {
   if (input.threadId) parts.push(`thread_id=${input.threadId}`);
   if (input.messageId) parts.push(`message_id=${input.messageId}`);
   return `sent successfully. ${parts.join(', ')}.`;
+}
+
+function feishuUpdateOutputLine(input: {
+  channel: string;
+  messageId: string;
+}): string {
+  return `updated successfully. feishu chat_id=${input.channel}, message_id=${input.messageId}.`;
 }
 
 function feishuChatDisplayName(item: FeishuInboxItem): string {
