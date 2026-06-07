@@ -159,19 +159,6 @@ export const ChoiceResponseInboxItem = InboxItemBase.extend({
 
 export type ChoiceResponseInboxItem = z.infer<typeof ChoiceResponseInboxItem>;
 
-// Local agent-to-agent message. Never leaves this Anima home — no chat
-// platform is involved. The sender writes it straight into the target's inbox
-// (picked up by the same drain poll that handles every other inbox kind).
-export const AgentMessageInboxItem = InboxItemBase.extend({
-  fromAgentId: z.string(),
-  fromName: z.string(),
-  kind: z.literal('agent_message'),
-  replyTo: z.string().optional(),
-  text: z.string(),
-});
-
-export type AgentMessageInboxItem = z.infer<typeof AgentMessageInboxItem>;
-
 export const InboxItemSchema = z.discriminatedUnion('kind', [
   SlackInboxItem,
   FeishuInboxItem,
@@ -179,7 +166,6 @@ export const InboxItemSchema = z.discriminatedUnion('kind', [
   ReminderInboxItem,
   OnboardingInboxItem,
   ChoiceResponseInboxItem,
-  AgentMessageInboxItem,
 ]);
 
 export type InboxItem = z.infer<typeof InboxItemSchema>;

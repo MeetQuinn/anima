@@ -4,7 +4,6 @@ import type {
   AgentMessageRecord,
 } from '../../shared/messages.js';
 import type {
-  AgentMessageInboxItem,
   ChoiceResponseInboxItem,
   FeishuInboxItem,
   FeishuOnboardingInboxItem,
@@ -16,7 +15,6 @@ import type {
 export function messageFromInboxItem(item: InboxItem): AgentMessageRecord | undefined {
   if (item.kind === 'slack') return slackInboxMessage(item);
   if (item.kind === 'feishu') return feishuInboxMessage(item);
-  if (item.kind === 'agent_message') return agentInboxMessage(item);
   if (item.kind === 'reminder') {
     return {
       actor: 'Reminder',
@@ -52,15 +50,6 @@ export function messageFromActivity(activity: Activity): AgentMessageRecord | un
       isEdit: tool === 'anima.message.update' || effect === 'slack.message.update',
       kind: 'message',
       messageTs: stringField(payload, 'ts') ?? stringField(payload, 'targetTs') ?? stringField(payload, 'messageId'),
-      text: stringField(payload, 'text') ?? '',
-    });
-  }
-
-  if (effect === 'agent.relay.send') {
-    return baseOutboxMessage(activity, payload, {
-      kind: 'message',
-      messageTs: stringField(payload, 'messageId'),
-      platform: 'local',
       text: stringField(payload, 'text') ?? '',
     });
   }
@@ -152,29 +141,6 @@ function feishuInboxMessage(item: FeishuInboxItem): AgentMessageRecord {
     source: { id: item.id, kind: 'inbox' },
     text: item.text,
     ...(item.threadId ? { threadTs: item.threadId } : {}),
-    timestamp: item.receivedAt,
-  };
-}
-
-// Local agent-to-agent message. `platform: 'local'` is the discriminator the
-// web Messages lens uses to reconstruct an agent_message event (vs a Slack one).
-// The peer agent is the "conversation": channelId = sender id, threadTs = the
-// message this replies to, so replies thread correctly.
-function agentInboxMessage(item: AgentMessageInboxItem): AgentMessageRecord {
-  return {
-    actor: item.fromName,
-    actorUserId: item.fromAgentId,
-    channelDisplayName: 'Local agents',
-    channelId: item.fromAgentId,
-    channelKind: 'agent',
-    direction: 'in',
-    kind: 'message',
-    messageId: messageIdForInboxItem(item),
-    messageTs: item.id,
-    platform: 'local',
-    source: { id: item.id, kind: 'inbox' },
-    text: item.text,
-    ...(item.replyTo ? { threadTs: item.replyTo } : {}),
     timestamp: item.receivedAt,
   };
 }
