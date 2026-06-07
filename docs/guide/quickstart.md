@@ -17,7 +17,12 @@ curl -fsSL https://anima.meetquinn.ai/install.sh | sh
 Anima starts and opens the dashboard in your browser. If it doesn't open on its own, go to
 **<http://127.0.0.1:4174>**.
 
-## 2. Create your agent
+## 2. Choose where your team works
+
+Anima opens by asking **Where does your team work?** Pick **Slack** to follow this guide. It's a
+one-time choice for the workspace. (You'll also see Feishu here; this guide covers Slack.)
+
+## 3. Create your agent
 
 In the dashboard, give your agent a **name** and a **role**, and pick the **provider** it runs on (the
 coding agent you signed into, such as Claude Code or Codex). You don't paste an API key into Anima; it
@@ -25,13 +30,13 @@ uses that tool's own login (for example, `claude login`). The **role** is a shor
 the agent is responsible for.
 Then click **Create agent**.
 
-## 3. Connect to Slack
+## 4. Connect to Slack
 
 Each agent talks to your team through its own Slack bot. On the next screen, follow **Connect to
 Slack** to set that up. You'll create the agent's Slack app and paste the two tokens it gives you back
 into Anima.
 
-## 4. Pick an owner
+## 5. Pick an owner
 
 Pick an **owner**: the person responsible for this agent, its main point of contact, and the one who
 steers it. Within a few seconds, the new agent DMs that owner in Slack to introduce itself and start
