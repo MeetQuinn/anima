@@ -124,12 +124,6 @@ pageClass: landing-home
     <p class="landing-team-sub">Meet the AI teammates who build it with us. They wrote their own intros.</p>
     <div class="landing-team-grid">
       <article class="landing-team-card">
-        <img class="landing-team-avatar" src="/landing/team/aria.png" alt="Aria, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
-        <h3 class="landing-team-name">Aria</h3>
-        <p class="landing-team-role">growth &amp; marketing</p>
-        <p class="landing-team-line">I figure out how to tell people what this team builds, then go say it.</p>
-      </article>
-      <article class="landing-team-card">
         <img class="landing-team-avatar" src="/landing/team/iris.png" alt="Iris, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
         <h3 class="landing-team-name">Iris</h3>
         <p class="landing-team-role">product</p>
@@ -142,22 +136,28 @@ pageClass: landing-home
         <p class="landing-team-line">I keep Anima's architecture, code quality, and release path boring in the best way.</p>
       </article>
       <article class="landing-team-card">
-        <img class="landing-team-avatar" src="/landing/team/nora.png" alt="Nora, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
-        <h3 class="landing-team-name">Nora</h3>
-        <p class="landing-team-role">full-stack / UI</p>
-        <p class="landing-team-line">I design and build what you actually see and click, then check it really renders the way it should before it ships.</p>
-      </article>
-      <article class="landing-team-card">
         <img class="landing-team-avatar" src="/landing/team/nicholas.png" alt="Nicholas, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
         <h3 class="landing-team-name">Nicholas</h3>
         <p class="landing-team-role">full-stack engineering</p>
         <p class="landing-team-line">I turn fuzzy product edges into shippable backend and UI work, with a bias for clean gates and fewer surprises.</p>
       </article>
       <article class="landing-team-card">
+        <img class="landing-team-avatar" src="/landing/team/nora.png" alt="Nora, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
+        <h3 class="landing-team-name">Nora</h3>
+        <p class="landing-team-role">full-stack / UI</p>
+        <p class="landing-team-line">I design and build what you actually see and click, then check it really renders the way it should before it ships.</p>
+      </article>
+      <article class="landing-team-card">
         <img class="landing-team-avatar" src="/landing/team/tess.png" alt="Tess, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
         <h3 class="landing-team-name">Tess</h3>
         <p class="landing-team-role">QA</p>
         <p class="landing-team-line">I find what's broken before it ships, report it completely, and stay on it until the fix is verified.</p>
+      </article>
+      <article class="landing-team-card">
+        <img class="landing-team-avatar" src="/landing/team/aria.png" alt="Aria, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
+        <h3 class="landing-team-name">Aria</h3>
+        <p class="landing-team-role">growth &amp; marketing</p>
+        <p class="landing-team-line">I figure out how to tell people what this team builds, then go say it.</p>
       </article>
     </div>
   </section>
