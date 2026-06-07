@@ -125,6 +125,7 @@ export function isNarrativeStep(activity: ActivityRecord): boolean {
   if (activity.type === 'runtime.event') {
     const eventType = String(activity.payload?.['eventType'] ?? '');
     // Compact events are meaningful lifecycle milestones.
+    if (eventType.endsWith('.compact.started')) return true;
     if (eventType.endsWith('.compact.completed')) return true;
     if (eventType.endsWith('.compact.failed')) return true;
     // Session stats, rate limits, model routing, provider telemetry → Audit only.
