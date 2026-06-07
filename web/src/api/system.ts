@@ -1,6 +1,6 @@
 import { apiRequest, jsonInit } from './client';
 import type { ProviderAvailability } from '@shared/provider-catalog';
-import type { ProviderUsageResponse } from '@shared/provider-usage';
+import type { ProviderUsageKind, ProviderUsageResponse, ProviderUsageRow } from '@shared/provider-usage';
 import type { ServerInfo } from '@shared/server-info';
 import type { SidebarOrder, WorkspacePlatform } from '@shared/server-settings';
 import type {
@@ -47,6 +47,10 @@ export async function fetchProviderAvailability(): Promise<ProviderAvailability[
 
 export async function fetchProviderUsage(): Promise<ProviderUsageResponse> {
   return apiRequest('/api/provider-usage');
+}
+
+export async function fetchProviderUsageProvider(provider: ProviderUsageKind): Promise<ProviderUsageRow> {
+  return apiRequest(`/api/provider-usage/${encodeURIComponent(provider)}`);
 }
 
 export async function fetchServerInfo(): Promise<ServerInfo> {

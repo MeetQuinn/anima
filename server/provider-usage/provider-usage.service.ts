@@ -23,6 +23,23 @@ export class ProviderUsageService {
     return { providers };
   }
 
+  async get(provider: ProviderUsageKind): Promise<ProviderUsageRow> {
+    const adapter = this.adapters.find((candidate) => candidate.provider === provider);
+    if (!adapter) {
+      return {
+        checkedAt: new Date().toISOString(),
+        error: usageError('unknown', `Provider usage adapter not found for ${provider}`),
+        extras: [],
+        label: provider,
+        provider,
+        source: 'native',
+        status: 'unavailable',
+        windows: [],
+      };
+    }
+    return this.fetchProvider(adapter);
+  }
+
   private async fetchProvider(adapter: ProviderUsageAdapter): Promise<ProviderUsageRow> {
     const checkedAt = new Date().toISOString();
     try {

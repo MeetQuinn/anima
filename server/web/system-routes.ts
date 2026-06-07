@@ -12,6 +12,7 @@ import {
   RuntimeUpgradeConflictError,
   RuntimeUpgradeUnavailableError,
 } from '../runtime-management/runtime-upgrade.js';
+import { ProviderUsageKind } from '../../shared/provider-usage.js';
 import { SidebarOrder, WorkspacePlatform } from '../../shared/server-settings.js';
 import { HttpError } from './http.js';
 
@@ -22,6 +23,11 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
   fastify.get('/api/health', async () => ({ ok: true }));
   fastify.get('/api/provider-availability', async () => defaultSystemService.providerAvailability());
   fastify.get('/api/provider-usage', async () => defaultProviderUsageService.list());
+  fastify.get('/api/provider-usage/:provider', async (request, reply) => {
+    const parsed = ProviderUsageKind.safeParse((request.params as { provider?: unknown }).provider);
+    if (!parsed.success) return reply.status(400).send({ error: 'Invalid provider usage provider' });
+    return defaultProviderUsageService.get(parsed.data);
+  });
   fastify.get('/api/system-update', async () => defaultRuntimeUpgradeService.status());
   fastify.post('/api/system-update/check', async () => defaultRuntimeUpgradeService.checkNow());
   fastify.get('/api/server-info', async () => defaultSystemService.serverInfo());

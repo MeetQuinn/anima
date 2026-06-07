@@ -154,6 +154,38 @@ test('provider usage service isolates adapter failures per provider', async () =
   assert.equal(response.providers[1]?.error?.type, 'unknown');
 });
 
+test('provider usage service can refresh a single provider without calling the others', async () => {
+  let codexCalls = 0;
+  let claudeCalls = 0;
+  const service = new ProviderUsageService([
+    {
+      fetch: async () => {
+        codexCalls += 1;
+        return { extras: [], status: 'available', windows: [{ label: '5h', remainingPercent: 92 }] };
+      },
+      label: 'Codex',
+      provider: 'codex-cli',
+      source: 'private-api',
+    },
+    {
+      fetch: async () => {
+        claudeCalls += 1;
+        return { extras: [], status: 'available', windows: [{ label: '5h', remainingPercent: 88 }] };
+      },
+      label: 'Claude',
+      provider: 'claude-code',
+      source: 'private-api',
+    },
+  ]);
+
+  const row = await service.get('codex-cli');
+
+  assert.equal(row.provider, 'codex-cli');
+  assert.equal(row.status, 'available');
+  assert.equal(codexCalls, 1);
+  assert.equal(claudeCalls, 0);
+});
+
 function restoreEnv(key: string, value: string | undefined): void {
   if (value === undefined) {
     delete process.env[key];

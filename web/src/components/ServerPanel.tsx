@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
 import { ChevronDown, ChevronRight, RefreshCw, X } from 'lucide-react';
-import { fetchServerInfo, fetchProviderUsage, pingHealth } from '@/api/system';
+import { fetchServerInfo, fetchProviderUsage, fetchProviderUsageProvider, pingHealth } from '@/api/system';
 import { shortIso, formatUptime } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
 import { useNow } from '@/hooks/useNow';
 import RestartButton from './RestartButton';
 import RuntimeUpgradeRow from './RuntimeUpgrade';
-import type { ProviderUsageRow, ProviderUsageWindow, ProviderUsageExtra } from '@shared/provider-usage';
+import type { ProviderUsageKind, ProviderUsageResponse, ProviderUsageRow, ProviderUsageWindow, ProviderUsageExtra } from '@shared/provider-usage';
 
 interface Props {
   onClose: () => void;
@@ -125,21 +125,45 @@ function WindowRow({ w, now }: { w: ProviderUsageWindow; now: Date }) {
   );
 }
 
-function ProviderBlock({ row, now }: { row: ProviderUsageRow; now: Date }) {
+function ProviderBlock({
+  isRefreshing = false,
+  now,
+  onRefresh,
+  row,
+}: {
+  isRefreshing?: boolean;
+  now: Date;
+  onRefresh?: () => void;
+  row: ProviderUsageRow;
+}) {
   const isAvailable = row.status === 'available';
   const errorMessage = providerUsageErrorMessage(row);
   return (
     <div className={isAvailable ? '' : 'opacity-50'}>
       {/* Name + best-effort badge */}
-      <div className="mb-2 flex items-center gap-1.5">
-        <span className="font-sans text-[12px] font-medium text-text">{row.label}</span>
-        {row.source === 'private-api' && (
-          <span
-            className="rounded border border-text-subtle/20 px-1 font-mono text-[9px] text-text-subtle"
-            title="Data scraped from private API — best-effort"
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate font-sans text-[12px] font-medium text-text">{row.label}</span>
+          {row.source === 'private-api' && (
+            <span
+              className="rounded border border-text-subtle/20 px-1 font-mono text-[9px] text-text-subtle"
+              title="Data scraped from private API — best-effort"
+            >
+              ≈
+            </span>
+          )}
+        </div>
+        {onRefresh && (
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={isRefreshing}
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40"
+            aria-label={`Refresh ${row.label} usage`}
+            title={`Refresh ${row.label}`}
           >
-            ≈
-          </span>
+            <RefreshCw className={`h-3 w-3 ${isRefreshing ? 'animate-spin' : ''}`} />
+          </button>
         )}
       </div>
 
@@ -216,6 +240,8 @@ function UsageSkeleton() {
  */
 export default function ServerPanel({ onClose }: Props) {
   const [providerUsageOpen, setProviderUsageOpen] = useState(false);
+  const [refreshingProvider, setRefreshingProvider] = useState<ProviderUsageKind | null>(null);
+  const queryClient = useQueryClient();
 
   // --- Server info ---
   const { data: healthOk } = useQuery({
@@ -281,7 +307,29 @@ export default function ServerPanel({ onClose }: Props) {
   // Wait for both health and server info before revealing the card.
   const isReady = healthOk !== undefined && !!info;
 
-  const usageCheckedAt = usageData?.providers[0]?.checkedAt;
+  const usageCheckedAt = usageData?.providers.reduce<string | undefined>((latest, row) => {
+    if (!latest) return row.checkedAt;
+    return row.checkedAt > latest ? row.checkedAt : latest;
+  }, undefined);
+
+  async function refreshOneProvider(provider: ProviderUsageKind): Promise<void> {
+    if (refreshingProvider) return;
+    setRefreshingProvider(provider);
+    try {
+      const row = await fetchProviderUsageProvider(provider);
+      queryClient.setQueryData<ProviderUsageResponse>(queryKeys.providerUsage(), (current) => {
+        const providers = current?.providers ?? [];
+        const found = providers.some((candidate) => candidate.provider === row.provider);
+        return {
+          providers: found
+            ? providers.map((candidate) => candidate.provider === row.provider ? row : candidate)
+            : [...providers, row],
+        };
+      });
+    } finally {
+      setRefreshingProvider((current) => current === provider ? null : current);
+    }
+  }
 
   return createPortal(
     <div className="fixed inset-0 z-50">
@@ -381,7 +429,13 @@ export default function ServerPanel({ onClose }: Props) {
                 return visible.length > 0 ? (
                   <div className="space-y-5">
                     {visible.map((row) => (
-                      <ProviderBlock key={row.provider} row={row} now={now} />
+                      <ProviderBlock
+                        key={row.provider}
+                        isRefreshing={refreshingProvider === row.provider}
+                        now={now}
+                        onRefresh={() => void refreshOneProvider(row.provider)}
+                        row={row}
+                      />
                     ))}
                     {visible.some((r) => r.source === 'private-api') && (
                       <p className="font-mono text-[9px] text-text-subtle opacity-50">
