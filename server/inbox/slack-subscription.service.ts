@@ -522,13 +522,17 @@ function lastNudgeAllowsSuggestion(subscription: SubscriptionRecord, nowMs: numb
 }
 
 function attentionSuggestionFor(subscription: SubscriptionRecord): string {
-  const target = subscription.kind === 'thread'
-    ? `thread ${subscription.threadTs} in ${subscription.channelId}`
-    : `channel ${subscription.channelId}`;
-  const command = subscription.kind === 'thread'
-    ? `anima subscription mute --channel ${subscription.channelId} --thread-ts ${subscription.threadTs}`
-    : `anima subscription mute --channel ${subscription.channelId}`;
-  return `You've been reading ${target} without posting. If it is not relevant, mute it with \`${command}\`.`;
+  const isFeishuChat = subscription.kind === 'channel' && subscription.channelId.startsWith('oc_');
+  if (subscription.kind === 'thread') {
+    const command = `anima subscription mute --channel ${subscription.channelId} --thread-ts ${subscription.threadTs}`;
+    return `You've been reading thread ${subscription.threadTs} in ${subscription.channelId} without posting. If it is not relevant, mute it with \`${command}\`.`;
+  }
+  if (isFeishuChat) {
+    const command = `anima subscription mute --chat-id ${subscription.channelId}`;
+    return `You've been reading Feishu chat ${subscription.channelId} without posting. If it is not relevant, mute it with \`${command}\`.`;
+  }
+  const command = `anima subscription mute --channel ${subscription.channelId}`;
+  return `You've been reading channel ${subscription.channelId} without posting. If it is not relevant, mute it with \`${command}\`.`;
 }
 
 function threadRecentlyActive(subscription: SubscriptionRecord, nowMs: number): boolean {

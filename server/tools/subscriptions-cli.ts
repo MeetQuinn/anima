@@ -11,6 +11,7 @@ import {
   type SubscriptionRecord,
 } from '../inbox/slack-subscription.service.js';
 import { SlackWorkspaceDirectoryService } from '../slack/workspace-directory.service.js';
+import { normalizeChatTargetOptions } from './chat-target-options.js';
 import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
 
 const GlobalFlags = z.object({
@@ -18,7 +19,8 @@ const GlobalFlags = z.object({
 });
 
 const SubscriptionMuteSchema = GlobalFlags.extend({
-  channel: z.string().min(1, 'subscription mute requires --channel'),
+  chatId: z.string().optional(),
+  channel: z.string().optional(),
   threadTs: z.string().min(1).optional(),
 });
 
@@ -26,7 +28,7 @@ const SubscriptionListSchema = GlobalFlags.extend({
   all: z.boolean().default(false),
 });
 
-type SubscriptionMuteOptions = z.infer<typeof SubscriptionMuteSchema>;
+type SubscriptionMuteOptions = Omit<z.infer<typeof SubscriptionMuteSchema>, 'chatId'>;
 type SubscriptionListOptions = z.infer<typeof SubscriptionListSchema>;
 
 // Input:   anima subscription list
@@ -35,6 +37,7 @@ type SubscriptionListOptions = z.infer<typeof SubscriptionListSchema>;
 // Failure: human-readable error to stderr; exit 1.
 
 // Input:   anima subscription mute --channel <id> [--thread-ts <ts>]
+// Input:   anima subscription mute --chat-id <oc_...>
 // Output:  muted successfully. channel=<ref> [thread_ts=<ts>].
 // Failure: human-readable error to stderr; exit 1.
 
@@ -54,10 +57,11 @@ export function registerSubscriptionCommands(program: Command): void {
     .command('mute')
     .description('Mute a Slack channel/thread or Feishu chat.')
     .option('--channel <channel>', 'Slack channel ID/name, or Feishu chat_id (oc_...)')
+    .option('--chat-id <chatId>', 'Feishu chat_id (oc_...); alias for --channel')
     .option('--thread-ts <ts>', 'mute one Slack thread in the channel')
     .action(async (_, command) => {
       const opts = SubscriptionMuteSchema.parse(command.optsWithGlobals());
-      await subscriptionMute(opts);
+      await subscriptionMute(normalizeChatTargetOptions(opts, 'subscription mute'));
     });
 }
 
@@ -89,7 +93,7 @@ async function subscriptionList(opts: SubscriptionListOptions): Promise<void> {
     console.log('- none');
   } else {
     for (const channel of map.channels) {
-      console.log(`- [${channel.status}] channel=${channel.channelName ? `#${channel.channelName}` : channel.channelId}`);
+      console.log(`- [${channel.status}] ${subscriptionChannelRef(channel)}`);
     }
   }
   console.log('Threads:');
@@ -105,13 +109,14 @@ async function subscriptionList(opts: SubscriptionListOptions): Promise<void> {
 async function subscriptionMute(opts: SubscriptionMuteOptions): Promise<void> {
   const agentIdResolved = resolveAgentIdFrom(opts.agent);
   if (!agentIdResolved) throw new Error('Agent not specified. Pass --agent <id> or set ANIMA_AGENT_ID.');
+  if (!opts.channel) throw new Error('subscription mute requires --channel or --chat-id');
   if (isFeishuChatId(opts.channel)) {
     if (opts.threadTs) throw new Error('Feishu subscription mute currently supports chat-level mutes only.');
     await muteSubscriptionForAgent({
       agentId: agentIdResolved,
       channelId: opts.channel,
     });
-    console.log(`muted successfully. channel=${opts.channel}.`);
+    console.log(`muted successfully. feishu chat_id=${opts.channel}.`);
     return;
   }
   const agent = await defaultAgentRegistryService.serviceFor(agentIdResolved).getConfig();
@@ -137,6 +142,11 @@ async function subscriptionMute(opts: SubscriptionMuteOptions): Promise<void> {
 
 function isFeishuChatId(channel: string): boolean {
   return channel.startsWith('oc_');
+}
+
+function subscriptionChannelRef(channel: { channelId: string; channelName?: string }): string {
+  if (isFeishuChatId(channel.channelId) && !channel.channelName) return `feishu chat_id=${channel.channelId}`;
+  return `channel=${channel.channelName ? `#${channel.channelName}` : channel.channelId}`;
 }
 
 async function memberChannelsForAgent(agent: { id: string; slack?: { botToken?: string; teamId?: string } }): Promise<Array<{ id: string; name?: string }>> {

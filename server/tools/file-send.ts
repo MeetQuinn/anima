@@ -74,7 +74,7 @@ interface FileSendDeps {
 export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = {}): Promise<void> {
   const agentId = resolveToolAgentId(opts);
   if (!agentId) throw new Error('file send requires current agent context for audit');
-  if (!opts.channel) throw new Error('file send requires --channel');
+  if (!opts.channel) throw new Error('file send requires --channel or --chat-id');
   if (!opts.paths.length) throw new Error('file send requires at least one path');
 
   // Validate every path up front so we fail closed before any Slack call.
