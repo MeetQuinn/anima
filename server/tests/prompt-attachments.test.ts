@@ -277,6 +277,7 @@ test('buildAnimaRuntimeProfile separates Feishu-only transport instructions', ()
   assert.match(text, /Feishu messages can arrive from chats, DMs, and message topics/);
   assert.match(text, /anima message send --chat-id <chat_id>/);
   assert.match(text, /anima message read --chat-id <chat_id> --thread-ts <message_or_thread_id>/);
+  assert.match(text, /<at user_id="ou_\.\.\."><\/at>/);
   assert.match(text, /FEISHU_TENANT_ACCESS_TOKEN/);
   assert.match(text, /https:\/\/open\.feishu\.cn\/open-apis/);
   assert.doesNotMatch(text, /Slack messages can arrive|Slack API|SLACK_BOT_TOKEN|FEISHU_APP_SECRET|FEISHU_API_BASE_URL/);

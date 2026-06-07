@@ -1,5 +1,6 @@
 export type FeishuPostInlineItem =
   | { tag: 'text'; text: string; style?: string[] }
+  | { tag: 'at'; user_id: string; style?: string[] }
   | { tag: 'a'; text: string; href: string }
   | { tag: 'code_block'; language: string; text: string };
 
@@ -20,6 +21,7 @@ export interface FeishuPostContent {
  *   *text*  / _text_    → italic text
  *   `code`              → inline_code text
  *   [text](url)         → link
+ *   <at user_id="ou_..."></at> → Feishu mention
  */
 function parseInline(line: string): FeishuPostInlineItem[] {
   const items: FeishuPostInlineItem[] = [];
@@ -27,6 +29,15 @@ function parseInline(line: string): FeishuPostInlineItem[] {
 
   while (i < line.length) {
     const ch = line[i]!;
+
+    if (ch === '<') {
+      const at = parseFeishuAt(line, i);
+      if (at) {
+        items.push(at.item);
+        i += at.length;
+        continue;
+      }
+    }
 
     // ---- bold: **text** or __text__ ----
     if (
@@ -84,7 +95,7 @@ function parseInline(line: string): FeishuPostInlineItem[] {
     let j = i + 1;
     while (j < line.length) {
       const next = line[j]!;
-      if (next === '*' || next === '_' || next === '`' || next === '[') break;
+      if (next === '*' || next === '_' || next === '`' || next === '[' || next === '<') break;
       j++;
     }
     const text = line.slice(i, j);
@@ -93,6 +104,20 @@ function parseInline(line: string): FeishuPostInlineItem[] {
   }
 
   return items;
+}
+
+function parseFeishuAt(line: string, start: number): { item: FeishuPostInlineItem; length: number } | undefined {
+  const match = /^<at\s+user_id="([^"]+)">.*?<\/at>/.exec(line.slice(start));
+  const userId = match?.[1]?.trim();
+  if (!match || !userId || !isFeishuAtUserId(userId)) return undefined;
+  return {
+    item: { tag: 'at', user_id: userId },
+    length: match[0].length,
+  };
+}
+
+function isFeishuAtUserId(value: string): boolean {
+  return value === 'all' || /^[A-Za-z0-9_-]{2,128}$/.test(value);
 }
 
 /**
