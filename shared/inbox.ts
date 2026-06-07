@@ -89,6 +89,7 @@ export const FeishuInboxItem = InboxItemBase.extend({
   attentionSuggestion: z.string().optional(),
   appId: z.string().optional(),
   chatId: z.string(),
+  chatName: z.string().optional(),
   chatType: z.string(),
   files: z.array(InboxFileMeta).optional(),
   kind: z.literal('feishu'),

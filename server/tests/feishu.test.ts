@@ -12,6 +12,7 @@ import {
   type FeishuReceiveMessageEvent,
 } from '../feishu/events.js';
 import { createFeishuMessageClient, fetchFeishuBotInfo, fetchFeishuTenantAccessToken } from '../feishu/client.js';
+import { FeishuDirectoryService } from '../feishu/directory.service.js';
 import { AgentFeishuService } from '../agents/agent-feishu.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
@@ -29,6 +30,7 @@ import type {
   FeishuFileUploadInput,
   FeishuMessageResourceDownloadInput,
   FeishuMessageListInput,
+  FeishuMessageClient,
   FeishuPostUpdateInput,
   FeishuReactionAddInput,
   FeishuReactionRemoveInput,
@@ -69,6 +71,42 @@ function makeFeishuEvent(overrides: Omit<Partial<FeishuReceiveMessageEvent>, 'me
       sender_type: sender?.sender_type ?? 'user',
       tenant_key: sender?.tenant_key ?? 'tenant_test',
     },
+  };
+}
+
+function testFeishuMessageClient(overrides: Partial<FeishuMessageClient> = {}): FeishuMessageClient {
+  return {
+    async addReaction() {
+      throw new Error('unexpected reaction add');
+    },
+    async downloadMessageResource() {
+      throw new Error('unexpected file fetch');
+    },
+    async listMessages() {
+      throw new Error('unexpected list messages');
+    },
+    async removeReaction() {
+      throw new Error('unexpected reaction remove');
+    },
+    async replyPost() {
+      throw new Error('unexpected post reply');
+    },
+    async replyText() {
+      throw new Error('unexpected text reply');
+    },
+    async sendPost() {
+      throw new Error('unexpected post send');
+    },
+    async sendText() {
+      throw new Error('unexpected text send');
+    },
+    async sendUploadedFile() {
+      throw new Error('unexpected file send');
+    },
+    async uploadFile() {
+      throw new Error('unexpected file upload');
+    },
+    ...overrides,
   };
 }
 
@@ -253,6 +291,66 @@ test('Feishu delivery prompt is platform-aware', () => {
   );
 });
 
+test('Feishu directory enriches live delivery prompt with actor and chat names', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-directory-prompt-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const receiveEvent = makeFeishuEvent({
+        message: {
+          chat_type: 'group',
+          mentions: [{
+            id: { open_id: 'ou_bob' },
+            key: '@_user_1',
+            mentioned_type: 'user',
+            name: 'Bob',
+          }],
+        },
+      });
+      const item = normalizeFeishuMessage({ event: receiveEvent });
+      assert.ok(item);
+
+      const service = new FeishuDirectoryService({
+        directoryId: 'tenant_test',
+        now: () => '2026-06-07T00:00:00.000Z',
+      });
+      const enriched = await service.enrichInboxItem({
+        client: testFeishuMessageClient({
+          async getChat(input) {
+            assert.deepEqual(input, { chatId: 'oc_test_chat' });
+            return { chatId: 'oc_test_chat', chatName: '产品群', chatType: 'group' };
+          },
+          async getMessage(input) {
+            assert.deepEqual(input, { messageId: 'om_test_message' });
+            return {
+              chatId: 'oc_test_chat',
+              messageId: 'om_test_message',
+              sender: {
+                id: 'ou_alice',
+                idType: 'open_id',
+                senderName: 'Alice',
+                senderType: 'user',
+              },
+            };
+          },
+        }),
+        item,
+        receiveEvent,
+      });
+
+      assert.equal(enriched.actor?.displayName, 'Alice');
+      assert.equal(enriched.chatName, '产品群');
+      assert.equal((await service.getCachedUser('ou_bob'))?.displayName, 'Bob');
+      assert.equal((await service.getCachedChat('oc_test_chat'))?.chatName, '产品群');
+      assert.equal(
+        buildCodeAgentDeliveryPrompt(enriched),
+        'New Feishu message:\n\n[platform=feishu chat=group chat_id=oc_test_chat chat_name="产品群" message_id=om_test_message time=2026-06-02T14:20:00.000Z user_id=ou_alice] Alice: hello from Feishu',
+      );
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('mints Feishu tenant access token from app credentials', async () => {
   const result = await fetchFeishuTenantAccessToken({
     appId: 'cli_test',
@@ -302,7 +400,7 @@ test('Feishu bot info fetch reads display info', async () => {
     encryptKey: '',
     verificationToken: '',
   };
-  const calls: Array<{ method: 'GET'; url: string }> = [];
+  const calls: Array<{ data?: unknown; method: 'GET' | 'POST'; url: string }> = [];
   const info = await fetchFeishuBotInfo(config, {
     createClient() {
       return {
@@ -1071,6 +1169,111 @@ test('Feishu messages can resolve a topic root message to a thread id', async ()
   assert.equal(message?.threadId, 'omt_topic');
 });
 
+test('Feishu client can fetch chat display info', async () => {
+  const config: FeishuConfig = {
+    appId: 'cli_test',
+    appSecret: 'secret',
+    connected: true,
+    encryptKey: '',
+    verificationToken: '',
+  };
+  const calls: Array<{ method: string; url: string }> = [];
+
+  const client = createFeishuMessageClient(config, {
+    createClient() {
+      return {
+        async request(input) {
+          calls.push(input);
+          return {
+            code: 0,
+            data: {
+              chat: {
+                avatar: 'https://example.test/chat.png',
+                chat_id: 'oc_test_chat',
+                chat_type: 'group',
+                name: '产品群',
+              },
+            },
+          };
+        },
+        im: {
+          message: {
+            async create() { throw new Error('unexpected create call'); },
+            async reply() { throw new Error('unexpected reply call'); },
+          },
+          messageReaction: {
+            async create() { throw new Error('unexpected reaction create call'); },
+            async delete() { throw new Error('unexpected reaction delete call'); },
+          },
+        },
+      };
+    },
+  });
+
+  assert.deepEqual(await client.getChat?.({ chatId: 'oc_test_chat' }), {
+    avatarUrl: 'https://example.test/chat.png',
+    chatId: 'oc_test_chat',
+    chatName: '产品群',
+    chatType: 'group',
+  });
+  assert.deepEqual(calls, [{
+    method: 'GET',
+    url: '/open-apis/im/v1/chats/oc_test_chat',
+  }]);
+});
+
+test('Feishu client can fetch basic user names by open_id', async () => {
+  const config: FeishuConfig = {
+    appId: 'cli_test',
+    appSecret: 'secret',
+    connected: true,
+    encryptKey: '',
+    verificationToken: '',
+  };
+  const calls: Array<{ data?: unknown; method: string; url: string }> = [];
+
+  const client = createFeishuMessageClient(config, {
+    createClient() {
+      return {
+        async request(input) {
+          calls.push(input);
+          return {
+            code: 0,
+            data: {
+              users: [{
+                i18n_name: { en_us: 'Alice', zh_cn: '艾丽丝' },
+                name: 'Alice',
+                user_id: 'ou_alice',
+              }],
+            },
+          };
+        },
+        im: {
+          message: {
+            async create() { throw new Error('unexpected create call'); },
+            async reply() { throw new Error('unexpected reply call'); },
+          },
+          messageReaction: {
+            async create() { throw new Error('unexpected reaction create call'); },
+            async delete() { throw new Error('unexpected reaction delete call'); },
+          },
+        },
+      };
+    },
+  });
+
+  assert.deepEqual(await client.getUserBasics?.({ openIds: ['ou_alice'] }), [{
+    i18nName: { en_us: 'Alice', zh_cn: '艾丽丝' },
+    name: 'Alice',
+    openId: 'ou_alice',
+  }]);
+  assert.deepEqual(calls, [{
+    data: { user_ids: ['ou_alice'] },
+    method: 'POST',
+    url: '/open-apis/contact/v3/users/basic_batch?user_id_type=open_id',
+  }]);
+});
+
 test('Feishu message updates use the SDK update endpoint', async () => {
   const config: FeishuConfig = {
     appId: 'cli_test',
@@ -1169,6 +1372,10 @@ test('message read can fetch Feishu chat history explicitly', async () => {
               async downloadMessageResource() {
                 throw new Error('unexpected file fetch');
               },
+              async getChat(input) {
+                assert.deepEqual(input, { chatId: 'oc_target_chat' });
+                return { chatId: 'oc_target_chat', chatName: '产品群', chatType: 'group' };
+              },
               async listMessages(input) {
                 reads.push(input);
                 return {
@@ -1177,7 +1384,7 @@ test('message read can fetch Feishu chat history explicitly', async () => {
                     bodyContent: JSON.stringify({ text: 'hello @_user_1' }),
                     chatId: 'oc_target_chat',
                     createTime: '1780410000000',
-                    mentions: [{ key: '@_user_1', name: 'Bob' }],
+                    mentions: [{ id: 'ou_bob', idType: 'open_id', key: '@_user_1', name: 'Bob' }],
                     messageId: 'om_test_message',
                     messageType: 'text',
                     sender: {
@@ -1215,13 +1422,18 @@ test('message read can fetch Feishu chat history explicitly', async () => {
           },
         },
       );
+      const completed = allActivities(await loadState())
+        .filter((activity) => activity.type === 'tool.call.completed')
+        .at(-1);
+      assert.equal(completed?.payload?.['channelDisplayName'], '产品群');
+      assert.equal(completed?.payload?.['channelName'], '产品群');
     });
 
     assert.deepEqual(reads, [{ chatId: 'oc_target_chat', cursor: 'cursor-1', limit: 2 }]);
     const output = logLines.join('\n');
     assert.match(
       output,
-      /\[platform=feishu chat_id=oc_target_chat message_id=om_test_message time=2026-06-02T14:20:00\.000Z user_id=ou_alice\] Alice: hello @Bob/,
+      /\[platform=feishu chat_id=oc_target_chat chat_name="产品群" message_id=om_test_message time=2026-06-02T14:20:00\.000Z user_id=ou_alice\] Alice: hello @Bob/,
     );
     assert.match(output, /\[page has_more=true next_cursor=cursor-next\]/);
   } finally {

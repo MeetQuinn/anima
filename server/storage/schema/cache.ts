@@ -3,6 +3,7 @@
 // Current layout:
 //   cache/feishu/files/<safe resource id>/meta.json
 //   cache/feishu/files/<safe resource id>/<safe filename>
+//   cache/feishu/tenants/<tenant or app id>/directory.json
 //   cache/slack/files/<teamId>/<fileId>/meta.json
 //   cache/slack/files/<teamId>/<fileId>/<safe original filename>
 //   cache/slack/teams/<teamId>/directory.json
@@ -53,6 +54,29 @@ export interface SlackWorkspaceDirectoryFile {
   };
 }
 
+export interface FeishuDirectoryChatInfo {
+  avatarUrl?: string;
+  chatId: string;
+  chatName?: string;
+  chatType?: string;
+  updatedAt: string;
+}
+
+export interface FeishuDirectoryUserInfo {
+  displayName?: string;
+  i18nName?: Record<string, string>;
+  openId: string;
+  unionId?: string;
+  updatedAt: string;
+  userId?: string;
+}
+
+export interface FeishuDirectoryFile {
+  chats: FeishuDirectoryChatInfo[];
+  directoryId: string;
+  users: FeishuDirectoryUserInfo[];
+}
+
 export const SlackWorkspaceDirectoryFileSchema = z.object({
   channels: z.array(z.object({ id: z.string() }).passthrough()).default([]),
   channelsSyncedAt: z.string().optional(),
@@ -63,6 +87,25 @@ export const SlackWorkspaceDirectoryFileSchema = z.object({
     iconUrl: z.string().optional(),
     syncedAt: z.string(),
   }).optional(),
+});
+
+export const FeishuDirectoryFileSchema = z.object({
+  chats: z.array(z.object({
+    avatarUrl: z.string().optional(),
+    chatId: z.string(),
+    chatName: z.string().optional(),
+    chatType: z.string().optional(),
+    updatedAt: z.string(),
+  })).default([]),
+  directoryId: z.string(),
+  users: z.array(z.object({
+    displayName: z.string().optional(),
+    i18nName: z.record(z.string(), z.string()).optional(),
+    openId: z.string(),
+    unionId: z.string().optional(),
+    updatedAt: z.string(),
+    userId: z.string().optional(),
+  })).default([]),
 });
 
 export const getSlackFileCacheMetaStore = (teamId: string, fileId: string): JsonStore<Partial<SlackFileCacheMeta>> =>
@@ -92,6 +135,13 @@ export const getSlackWorkspaceDirectoryStore = (teamId: string): JsonStore<Slack
     empty: () => ({ channels: [], teamId, users: [] }),
     parse: (value) => SlackWorkspaceDirectoryFileSchema.parse(value) as SlackWorkspaceDirectoryFile,
     path: () => join(resolveAnimaHome(), 'cache', 'slack', 'teams', teamId, 'directory.json'),
+  });
+
+export const getFeishuDirectoryStore = (directoryId: string): JsonStore<FeishuDirectoryFile> =>
+  new JsonStore<FeishuDirectoryFile>({
+    empty: () => ({ chats: [], directoryId, users: [] }),
+    parse: (value) => FeishuDirectoryFileSchema.parse(value) as FeishuDirectoryFile,
+    path: () => join(resolveAnimaHome(), 'cache', 'feishu', 'tenants', safeFeishuCacheSegment(directoryId), 'directory.json'),
   });
 
 function safeFeishuCacheSegment(value: string): string {

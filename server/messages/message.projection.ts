@@ -241,6 +241,7 @@ function feishuActorLabel(item: FeishuInboxItem): string {
 }
 
 function feishuChatDisplayName(item: FeishuInboxItem): string {
+  if (item.chatName) return item.chatName;
   return item.chatType === 'p2p' ? 'Feishu DM' : `Feishu ${item.chatType}`;
 }
 

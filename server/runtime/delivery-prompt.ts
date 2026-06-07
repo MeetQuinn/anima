@@ -182,7 +182,8 @@ function feishuMessageEnvelope(event: FeishuInboxItem): string {
   const threadPart = event.threadId ? ` thread_id=${event.threadId}` : '';
   const actorUserId = event.actor?.openId ?? event.actor?.userId;
   const userPart = actorUserId ? ` user_id=${actorUserId}` : '';
-  return `[platform=feishu chat=${event.chatType} chat_id=${event.chatId}${threadPart} message_id=${event.messageId} time=${event.receivedAt}${userPart}]`;
+  const chatNamePart = event.chatName ? ` chat_name=${quoteEnvelopeValue(event.chatName)}` : '';
+  return `[platform=feishu chat=${event.chatType} chat_id=${event.chatId}${chatNamePart}${threadPart} message_id=${event.messageId} time=${event.receivedAt}${userPart}]`;
 }
 
 function actorLabel(event: SlackEvent): string {
@@ -249,6 +250,10 @@ function escapeAttr(value: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
   return `"${escaped}"`;
+}
+
+function quoteEnvelopeValue(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
 function formatUserLocalTime(

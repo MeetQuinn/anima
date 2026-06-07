@@ -5,6 +5,7 @@ import type {
 } from '@slack/web-api';
 
 import { createFeishuMessageClient as createDefaultFeishuMessageClient } from '../feishu/client.js';
+import { FeishuDirectoryService, feishuDirectoryId } from '../feishu/directory.service.js';
 import type {
   FeishuMessageClient,
   FeishuMessageListResult,
@@ -71,8 +72,10 @@ interface SlackReadRequest {
 
 interface FeishuReadRequest {
   chatId: string;
+  chatName?: string;
   client: FeishuMessageClient;
   cursor?: string;
+  directory?: FeishuDirectoryService;
   limit: number;
   threadId?: string;
   threadRef?: string;
@@ -139,12 +142,17 @@ async function feishuReadRequest(
   }
 
   const client = (deps.createFeishuMessageClient ?? createDefaultFeishuMessageClient)(agent.feishu);
+  const directoryId = feishuDirectoryId({ appId: agent.feishu.appId });
+  const directory = directoryId ? new FeishuDirectoryService({ directoryId }) : undefined;
+  const chat = directory ? await directory.getChat({ chatId, client }).catch(() => undefined) : undefined;
   const thread = await feishuReadThreadRef(opts.threadTs, client);
 
   return {
     chatId,
+    ...(chat?.chatName ? { chatName: chat.chatName } : {}),
     client,
     ...(opts.cursor ? { cursor: opts.cursor } : {}),
+    ...(directory ? { directory } : {}),
     limit: Math.min(opts.limit ?? 20, 50),
     ...(thread ? thread : {}),
   };
@@ -286,6 +294,9 @@ async function runFeishuReadTool(input: {
         limit: input.request.limit,
         ...(input.request.threadId ? { threadId: input.request.threadId } : {}),
       });
+      if (input.request.directory) {
+        await input.request.directory.applyConversationMessages(response.messages).catch(() => undefined);
+      }
       console.log(feishuReadOutput(input.request, response));
       return {
         result: undefined,
@@ -328,7 +339,8 @@ function slackReadActivityPayload(tool: SlackReadTool, request: SlackReadRequest
 function feishuReadActivityPayload(tool: SlackReadTool, request: FeishuReadRequest): Record<string, unknown> {
   return {
     channel: request.chatId,
-    channelDisplayName: 'Feishu chat',
+    channelDisplayName: request.chatName ?? 'Feishu chat',
+    ...(request.chatName ? { channelName: request.chatName } : {}),
     channelKind: request.threadId ? 'topic' : 'chat',
     ...(request.cursor ? { cursor: request.cursor } : {}),
     limit: request.limit,
