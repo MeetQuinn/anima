@@ -67,13 +67,13 @@ export function AgentRow({
         'group relative flex w-full items-center rounded-sm transition-colors',
         // Active: solid elevated bg; hover: much lighter so selected is unambiguous
         active ? 'bg-spine-elevated' : 'hover:bg-spine-elevated/30',
-        // Keyboard cursor: inset accent ring, distinct from the active bg/bar so
-        // a held arrow shows where you'll land before the commit catches up.
-        focused ? 'ring-1 ring-inset ring-accent' : '',
       ].join(' ')}
     >
-      {active && (
-        // 2px accent bar — slightly thicker than 1px for clear visibility
+      {(active || focused) && (
+        // Left accent bar marks both the committed selection and the keyboard
+        // cursor. Showing it for `focused` gives instant feedback as you arrow
+        // (the active bg/bar commit lags ~120ms behind the cursor), replacing
+        // the full inset ring that read as too loud on the dark spine.
         <span aria-hidden className="absolute left-0 top-1.5 bottom-1.5 w-0.5 bg-accent" />
       )}
       <button
