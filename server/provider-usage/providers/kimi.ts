@@ -15,7 +15,8 @@ import {
 } from './common.js';
 
 const KIMI_USAGE_API = 'https://api.kimi.com/coding/v1/usages';
-const KIMI_CREDENTIALS_PATH = ['.kimi', 'credentials', 'kimi-code.json'];
+const KIMI_CODE_CREDENTIALS_PATH = ['.kimi-code', 'credentials', 'kimi-code.json'];
+const KIMI_LEGACY_CREDENTIALS_PATH = ['.kimi', 'credentials', 'kimi-code.json'];
 const KIMI_OPENCODE_AUTH_PATH = ['.local', 'share', 'opencode', 'auth.json'];
 
 export async function fetchKimiUsage(): Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>> {
@@ -65,16 +66,22 @@ export function parseKimiUsageResponse(
 }
 
 async function readKimiToken(): Promise<string | undefined> {
-  const native = record(await readJsonFile(kimiCredentialsPath()));
-  const nativeToken = stringValue(native?.access_token);
-  if (nativeToken) return nativeToken;
+  for (const path of kimiCredentialPaths()) {
+    const native = record(await readJsonFile(path));
+    const nativeToken = stringValue(native?.access_token);
+    if (nativeToken) return nativeToken;
+  }
   const opencode = record(await readJsonFile(homePath(...KIMI_OPENCODE_AUTH_PATH)));
   return stringValue(record(opencode?.['kimi-for-coding'])?.key) ?? stringValue(record(opencode?.['kimi-for-coding'])?.access);
 }
 
-function kimiCredentialsPath(): string {
+function kimiCredentialPaths(): string[] {
   const shareDir = process.env.KIMI_SHARE_DIR?.trim();
-  return shareDir ? join(shareDir, 'credentials', 'kimi-code.json') : homePath(...KIMI_CREDENTIALS_PATH);
+  return [
+    ...(shareDir ? [join(shareDir, 'credentials', 'kimi-code.json')] : []),
+    homePath(...KIMI_CODE_CREDENTIALS_PATH),
+    homePath(...KIMI_LEGACY_CREDENTIALS_PATH),
+  ];
 }
 
 function kimiUsageWindow(label: string, data: Record<string, unknown> | undefined): ProviderUsageWindow | undefined {
