@@ -7,6 +7,7 @@ import {
 } from '../feishu/client.js';
 import { nowIso } from '../ids.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { singleLine } from '../json.js';
 import { defaultAgentRegistryService } from './agent.service.js';
 import { randomUUID } from 'crypto';
 
@@ -97,6 +98,8 @@ export class AgentFeishuService {
       ? agent.profile.displayName.trim() || 'Anima {user}'
       : 'Anima {user}';
     const botName = requestedBotName || fallbackBotName;
+    const appDescription = singleLine(agent.profile.role || '')
+      || 'An Anima agent that works alongside your team in chat.';
     const registrationId = randomUUID();
     const abortController = new AbortController();
     const session: FeishuAppRegistrationSession = {
@@ -115,7 +118,7 @@ export class AgentFeishuService {
     const register = this.deps.registerFeishuApp ?? registerFeishuApp;
     void register({
       appPreset: {
-        desc: 'An Anima agent that works alongside your team in chat.',
+        desc: appDescription,
         name: botName,
       },
       onQRCodeReady(info) {
