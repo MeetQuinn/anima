@@ -72,6 +72,9 @@ importers:
 
   packages/animactl:
     dependencies:
+      '@dotenvx/dotenvx':
+        specifier: ^1.71.0
+        version: 1.71.0
       '@larksuiteoapi/node-sdk':
         specifier: ^1.66.1
         version: 1.66.1
@@ -84,6 +87,9 @@ importers:
       commander:
         specifier: ^14.0.3
         version: 14.0.3
+      eciesjs:
+        specifier: 0.4.18
+        version: 0.4.18
       fastify:
         specifier: ^5.8.5
         version: 5.8.5
