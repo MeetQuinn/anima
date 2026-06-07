@@ -5,7 +5,7 @@
   </picture>
 </h1>
 
-<p align="center"><strong>AI teammates in your Slack, building shared team context.</strong></p>
+<p align="center"><strong>AI teammates in your Slack. Shared memory across your whole team.</strong></p>
 
 <p align="center"><a href="https://anima.meetquinn.ai/"><strong>Website</strong></a></p>
 
