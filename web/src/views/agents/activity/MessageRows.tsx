@@ -61,7 +61,6 @@ function actorName(item: InboxItem): string {
       ?? item.actor?.unionId
       ?? 'Unknown Feishu user';
   }
-  if (item.kind === 'agent_message') return item.fromName;
   return 'Unknown user';
 }
 

@@ -9,7 +9,6 @@ import { registerFileCommands } from '../tools/files-cli.js';
 import { registerMessageHistoryCommands } from '../tools/message-history-cli.js';
 import { registerMessageCommands } from '../tools/messages-cli.js';
 import { registerReactionCommands } from '../tools/reactions-cli.js';
-import { registerRelayCommands } from '../tools/relay-cli.js';
 import { registerSubscriptionCommands } from '../tools/subscriptions-cli.js';
 
 async function main(): Promise<void> {
@@ -32,7 +31,6 @@ export function createCliProgram(): Command {
   registerReminderCommands(program);
   registerFileCommands(program);
   registerAskCommands(program);
-  registerRelayCommands(program);
 
   return program;
 }

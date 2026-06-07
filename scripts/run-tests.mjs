@@ -17,7 +17,6 @@ const groups = {
     'messages.test.js',
     'message-transport.test.js',
     'prompt-attachments.test.js',
-    'relay.test.js',
     'reminders.test.js',
     'runtime.test.js',
     'runtime-upgrade.test.js',
