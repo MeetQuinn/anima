@@ -456,6 +456,7 @@ test('Feishu app registration stores returned app credentials without using scan
         resolveRegister = resolve;
       });
       let appPresetName: string | undefined;
+      let appPresetDescription: string | undefined;
       const service = new AgentFeishuService('feishu-scout', {
         async getFeishuBotInfo(config) {
           assert.equal(config.appId, 'cli_generated');
@@ -466,6 +467,7 @@ test('Feishu app registration stores returned app credentials without using scan
         },
         async registerFeishuApp(input) {
           appPresetName = input.appPreset?.name;
+          appPresetDescription = input.appPreset?.desc;
           input.onQRCodeReady({ expireIn: 600, url: 'https://accounts.feishu.cn/verify?registration=test' });
           return registerPromise;
         },
@@ -476,6 +478,7 @@ test('Feishu app registration stores returned app credentials without using scan
       assert.equal(started.verificationUrl, 'https://accounts.feishu.cn/verify?registration=test');
       assert.equal(started.expireIn, 600);
       assert.equal(appPresetName, 'Feishu Scout');
+      assert.equal(appPresetDescription, 'Feishu registration test agent.');
 
       resolveRegister?.({
         appId: 'cli_generated',
@@ -676,9 +679,11 @@ test('Feishu app registration accepts an editable bot name override', async () =
       });
 
       let appPresetName: string | undefined;
+      let appPresetDescription: string | undefined;
       const service = new AgentFeishuService('feishu-scout', {
         async registerFeishuApp(input) {
           appPresetName = input.appPreset?.name;
+          appPresetDescription = input.appPreset?.desc;
           input.onQRCodeReady({ expireIn: 600, url: 'https://accounts.feishu.cn/verify?registration=test' });
           return new Promise(() => undefined);
         },
@@ -687,6 +692,7 @@ test('Feishu app registration accepts an editable bot name override', async () =
       const started = await service.startAppRegistration({ botName: 'Review Helper' });
       assert.equal(started.state, 'waiting');
       assert.equal(appPresetName, 'Review Helper');
+      assert.equal(appPresetDescription, 'Feishu registration test agent.');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
@@ -707,9 +713,11 @@ test('Feishu app registration falls back to the default preset when bot name is 
       });
 
       let appPresetName: string | undefined;
+      let appPresetDescription: string | undefined;
       const service = new AgentFeishuService('feishu-scout', {
         async registerFeishuApp(input) {
           appPresetName = input.appPreset?.name;
+          appPresetDescription = input.appPreset?.desc;
           input.onQRCodeReady({ expireIn: 600, url: 'https://accounts.feishu.cn/verify?registration=test' });
           return new Promise(() => undefined);
         },
@@ -718,6 +726,7 @@ test('Feishu app registration falls back to the default preset when bot name is 
       const started = await service.startAppRegistration({ botName: '   ' });
       assert.equal(started.state, 'waiting');
       assert.equal(appPresetName, 'Anima {user}');
+      assert.equal(appPresetDescription, 'Feishu registration test agent.');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
