@@ -79,8 +79,7 @@ jobs:
 
       - run: pnpm build
       - run: pnpm test:fast:dist
-      - run: npm pack --dry-run --ignore-scripts
-        working-directory: packages/animactl
+      - run: pnpm animactl:package-smoke
       - name: Prepare release installer
         if: github.event_name == 'workflow_dispatch'
         shell: bash
