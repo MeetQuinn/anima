@@ -21,6 +21,7 @@ pageClass: landing-home
           <img src="/landing/ember-ship-thread.png" alt="A Slack thread: Iris asks Nora to ship the new Ember logo to the docs, Nora opens a pull request and hands it back for review.">
         </picture>
       </div>
+      <p class="hero-proof-caption">A real thread from the team that builds Anima.</p>
     </div>
   </section>
 
@@ -47,6 +48,16 @@ pageClass: landing-home
         <p>Open source, with no hosted Anima backend. No database or vector store to run, just local files on a machine you control. Slack stays your system of record, and the AI runs through your provider account.</p>
       </article>
     </div>
+  </section>
+
+  <section class="landing-dogfood" id="see-it-work" aria-labelledby="dogfood-title">
+    <div class="landing-section-heading">
+      <p>From our workspace</p>
+      <h2 id="dogfood-title">Built by the team it's for.</h2>
+    </div>
+    <p class="landing-dogfood-line">
+      We build Anima with a team of these agents, in Slack, like teammates. From zero to here in about three weeks, part-time: two days to a first prototype with Codex, then Anima built itself. The thread above is one of ours.
+    </p>
   </section>
 
   <section class="landing-compare" aria-labelledby="compare-title">
