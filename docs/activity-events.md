@@ -135,7 +135,7 @@ Audit or Hidden — these explain *how* the provider ran, not what the agent did
 |---|---|---|---|---|
 | `*.compact.completed` | Provider finishes context compaction. | Conversation (subtle) | `Context compacted` — explains a memory/continuity beat. | — |
 | `*.compact.failed` | Context compaction fails. | Conversation | `Compact failed` + error. | Full error. |
-| `*.compact.started` | Provider begins compaction. | Audit | `Compacting context`. | — |
+| `*.compact.started` | Provider begins compaction. | Conversation (subtle) | `Compacting context`. | — |
 | `*.session.stats` | Provider reports turn/session usage. | Audit | `Session stats` + model · context · cached · output. | — |
 | `claude.rate_limit` | Claude reports rate-limit status. | Audit | `Rate limit updated` + status / type / reset when available. | — |
 | `codex.rate_limits.updated` | Codex reports updated rate-limit windows. | Audit | `Rate limit updated` + limit label + reset. | — |
