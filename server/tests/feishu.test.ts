@@ -130,10 +130,10 @@ test('Feishu delivery prompt includes attention suggestions', () => {
   assert.ok(item);
   const prompt = buildCodeAgentDeliveryPrompt({
     ...item,
-    attentionSuggestion: 'Mute with `anima subscription mute --channel oc_test_chat`.',
+    attentionSuggestion: 'Mute with `anima subscription mute --chat-id oc_test_chat`.',
   });
 
-  assert.match(prompt, /Attention suggestion:\nMute with `anima subscription mute --channel oc_test_chat`\./);
+  assert.match(prompt, /Attention suggestion:\nMute with `anima subscription mute --chat-id oc_test_chat`\./);
 });
 
 test('normalizes Feishu image messages into fetchable prompt attachments', () => {

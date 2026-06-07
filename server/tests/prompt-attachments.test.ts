@@ -245,12 +245,12 @@ test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack t
   });
   assert.doesNotMatch(text, /\{\{name\}\}|\{\{role\}\}/);
   assert.match(text, /Reply target comes from the delivery envelope/);
-  assert.match(text, /pass its `channel=` \/ `thread_ts=` to `--channel` \/ `--thread-ts` literally/);
+  assert.match(text, /pass the envelope's `channel=` as `--channel` and `thread_ts=` as `--thread-ts`/);
   assert.match(text, /Slack messages can arrive from DMs, threads, channel messages, and group conversations/);
   assert.match(text, /You always receive DMs and messages that @mention you/);
   assert.match(text, /Only `mute` a thread\/channel when it's clearly done with you AND still noisy/);
   assert.match(text, /anima reminder/);
-  assert.match(text, /anima message send --channel <id-or-name> \[--thread-ts <thread_ts>\]/);
+  assert.match(text, /anima message send <target flags> \[--thread-ts <thread_or_topic_id>\]/);
   assert.match(text, /Anima docs: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs>/);
   assert.match(text, /local docs: `\/opt\/anima\/docs`/);
   assert.match(text, /guide\/agent-features\.md/);
@@ -275,7 +275,8 @@ test('buildAnimaRuntimeProfile separates Feishu-only transport instructions', ()
   });
 
   assert.match(text, /Feishu messages can arrive from chats, DMs, and message topics/);
-  assert.match(text, /anima message send --channel <chat_id>/);
+  assert.match(text, /anima message send --chat-id <chat_id>/);
+  assert.match(text, /anima message read --chat-id <chat_id> --thread-ts <message_or_thread_id>/);
   assert.match(text, /FEISHU_TENANT_ACCESS_TOKEN/);
   assert.match(text, /https:\/\/open\.feishu\.cn\/open-apis/);
   assert.doesNotMatch(text, /Slack messages can arrive|Slack API|SLACK_BOT_TOKEN|FEISHU_APP_SECRET|FEISHU_API_BASE_URL/);

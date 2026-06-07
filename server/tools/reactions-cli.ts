@@ -1,11 +1,13 @@
 import type { Command } from 'commander';
 import { z } from 'zod';
 
+import { normalizeChatTargetOptions } from './chat-target-options.js';
 import { runMessageReact } from './reactions.js';
 
 const GlobalFlags = z.object({});
 
 const ReactionSchema = GlobalFlags.extend({
+  chatId: z.string().optional(),
   channel: z.string().optional(),
   emoji: z.string().optional(),
   messageId: z.string().optional(),
@@ -28,7 +30,9 @@ export function registerReactionCommands(program: Command): void {
     });
 
   const channelOption = '--channel <channel>';
-  const channelDesc = 'Slack channel ID/name or DM; Feishu chat id (oc_...)';
+  const channelDesc = 'Slack channel ID/name or DM; Feishu chat_id (oc_...)';
+  const chatIdOption = '--chat-id <chatId>';
+  const chatIdDesc = 'Feishu chat_id (oc_...); alias for --channel';
   const messageIdOption = '--message-id <id>';
   const messageIdDesc = 'Feishu message id (om_...) to react to';
   const messageTsOption = '--message-ts <ts>';
@@ -47,6 +51,7 @@ export function registerReactionCommands(program: Command): void {
     .command('add')
     .description('Add a reaction emoji to a message.')
     .option(channelOption, channelDesc)
+    .option(chatIdOption, chatIdDesc)
     .option(messageIdOption, messageIdDesc)
     .option(messageTsOption, messageTsDesc)
     .option(nameOption, nameDesc)
@@ -60,6 +65,7 @@ export function registerReactionCommands(program: Command): void {
     .command('remove')
     .description('Remove a reaction emoji from a message.')
     .option(channelOption, channelDesc)
+    .option(chatIdOption, chatIdDesc)
     .option(messageIdOption, messageIdDesc)
     .option(messageTsOption, messageTsDesc)
     .option(nameOption, nameDesc)
@@ -94,7 +100,8 @@ function addReactionCommand(parent: Command): void {
 
 function addReactionOptions(command: Command): Command {
   return command
-    .option('--channel <channel>', 'Slack channel ID/name or DM; Feishu chat id (oc_...)')
+    .option('--channel <channel>', 'Slack channel ID/name or DM; Feishu chat_id (oc_...)')
+    .option('--chat-id <chatId>', 'Feishu chat_id (oc_...); alias for --channel')
     .option('--message-id <id>', 'Feishu message id (om_...) to react to')
     .option('--message-ts <ts>', 'Slack message timestamp; also accepts Feishu om_ message ids for compatibility')
     .option('--name <emoji>', 'Slack emoji name without colons, or Feishu emoji_type')
@@ -105,7 +112,7 @@ function addReactionOptions(command: Command): Command {
 function reactionInput(raw: unknown): z.infer<typeof ReactionSchema> {
   const opts = ReactionSchema.parse(raw);
   return {
-    ...opts,
+    ...normalizeChatTargetOptions(opts, 'reaction'),
     name: opts.name ?? opts.emoji,
   };
 }

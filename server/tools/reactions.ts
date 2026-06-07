@@ -39,7 +39,7 @@ export async function runMessageReact(opts: MessageReactInput, deps: MessageReac
   const action: 'added' | 'removed' = opts.remove ? 'removed' : 'added';
   if (!agentId) throw new Error('message react requires current agent context for audit');
   const channelArg = opts.channel?.trim();
-  if (!channelArg) throw new Error('message react requires --channel');
+  if (!channelArg) throw new Error('message react requires --channel or --chat-id');
   const targetTs = opts.messageTs?.trim();
   const targetMessageId = opts.messageId?.trim() || targetTs;
   if (!targetMessageId) throw new Error('message react requires --message-ts or --message-id');
@@ -120,7 +120,7 @@ async function runFeishuMessageReact(input: {
   opts: MessageReactInput;
 }): Promise<void> {
   if (!input.channel.startsWith('oc_')) {
-    throw new Error('Feishu message react requires --channel with an oc_ chat id');
+    throw new Error('Feishu message react requires --chat-id or --channel with an oc_ chat_id');
   }
   if (!input.messageId.startsWith('om_')) {
     throw new Error('Feishu message react requires --message-id or --message-ts with an om_ message id');

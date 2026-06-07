@@ -424,7 +424,7 @@ test('Feishu attention nudge suggests muting the oc chat id after repeated wakes
         );
       }
       assert.equal(last?.shouldStartRuntime, true);
-      assert.match(last?.attentionSuggestion ?? '', /anima subscription mute --channel oc_group/);
+      assert.match(last?.attentionSuggestion ?? '', /anima subscription mute --chat-id oc_group/);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

@@ -39,7 +39,7 @@ How you work alongside others:
 
 - Slack messages can arrive from DMs, threads, channel messages, and group conversations. The delivery envelope names the Slack surface with `channel=`, optional `thread_ts=`, `message_ts=`, and Slack user identifiers.
 - You always receive DMs and messages that @mention you. In channels or threads you're part of, you may see messages too.
-- To reply, pass the envelope's `channel=` and `thread_ts=` values literally to `anima message send`.
+- To reply, pass the envelope's `channel=` as `--channel` and `thread_ts=` as `--thread-ts`.
 - To reach a specific teammate in Slack, DM or @mention them. A plain channel message may be silently missed by an agent that is not in that channel or thread.
 - Slack message bodies are standard Markdown through Anima: use `**bold**`, not Slack's single-star style.
 - The runtime may mark incoming Slack messages with 👀 while you work and clear it when done. Leave 👀 to the runtime; it is the receipt marker.
@@ -54,9 +54,9 @@ For Slack operations the CLI doesn't cover (channel management, invites, and the
 ### Feishu
 
 - Feishu messages can arrive from chats, DMs, and message topics. The delivery envelope names the Feishu target with `chat_id=`, `message_id=`, optional `thread_id=`, and Feishu user identifiers such as `open_id`.
-- To reply to a Feishu chat, use the `chat_id` from the envelope as `anima message send --channel <chat_id>`.
+- To reply to a Feishu chat, use the `chat_id` from the envelope as `anima message send --chat-id <chat_id>`.
 - To reply in a Feishu message topic, pass the delivery envelope's `thread_id` when present, otherwise `message_id`, as `--thread-ts`.
-- Use `anima message read --channel <chat_id> --thread-ts <message_or_thread_id>` when you need Feishu topic history, and `anima message update --channel <chat_id> --message-ts <message_id>` when you need to edit a Feishu message you sent.
+- Use `anima message read --chat-id <chat_id> --thread-ts <message_or_thread_id>` when you need Feishu topic history, and `anima message update --chat-id <chat_id> --message-ts <message_id>` when you need to edit a Feishu message you sent.
 - Use `anima file fetch <file_id>` for Feishu file or image attachments listed in `<attached_files>`.
 
 Feishu API escape hatch:
@@ -79,11 +79,11 @@ Your context is periodically compressed or reset — on compaction or restart, t
 
 Read and post team messages with `anima message` — `send`, `read`, `update`, `react`. Patterns:
 
-- Reply target comes from the delivery envelope: pass its `channel=` / `thread_ts=` to `--channel` / `--thread-ts` literally.
+- Reply target comes from the delivery envelope. Use the target flag named in your connected chat section, and pass thread/topic ids to `--thread-ts` when needed.
 - Bodies go through a heredoc (multi-line, often with backticks):
 
 ```
-anima message send --channel <id-or-name> [--thread-ts <thread_ts>] <<'ANIMA_MESSAGE'
+anima message send <target flags> [--thread-ts <thread_or_topic_id>] <<'ANIMA_MESSAGE'
 <markdown>
 ANIMA_MESSAGE
 ```

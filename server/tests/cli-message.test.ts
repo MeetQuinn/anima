@@ -140,17 +140,17 @@ test('message send records an audited Slack output', async () => {
   }
 });
 
-test('subscription mute accepts Feishu oc chat ids without Slack resolution', async () => {
+test('subscription mute accepts Feishu --chat-id without Slack resolution', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-feishu-subscription-mute-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
       await writeSlackConfig(stateDir);
-      const mute = await runNode([cliPath, 'subscription', 'mute', '--channel', 'oc_feishu_group'], {
+      const mute = await runNode([cliPath, 'subscription', 'mute', '--chat-id', 'oc_feishu_group'], {
         env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir },
       });
 
       assert.equal(mute.status, 0, mute.stderr || mute.stdout);
-      assert.equal(mute.stdout.trim(), 'muted successfully. channel=oc_feishu_group.');
+      assert.equal(mute.stdout.trim(), 'muted successfully. feishu chat_id=oc_feishu_group.');
       const state = await loadState();
       assert.ok(Object.values(state.subscriptions).some(
         (subscription) => subscription.kind === 'channel'
@@ -1188,7 +1188,7 @@ test('reaction commands require --channel, --message-ts, and --name', async () =
 
     const noChannel = await runNode([cliPath, 'reaction', 'add', '--message-ts', '1770000200.000123', '--name', 'eyes'], { env: baseEnv });
     assert.notEqual(noChannel.status, 0);
-    assert.match(noChannel.stderr, /requires --channel/);
+    assert.match(noChannel.stderr, /requires --channel or --chat-id/);
 
     const noTs = await runNode([cliPath, 'reaction', 'add', '--channel', 'C-product', '--name', 'eyes'], { env: baseEnv });
     assert.notEqual(noTs.status, 0);

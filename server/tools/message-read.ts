@@ -180,7 +180,7 @@ function assertFeishuReadSupported(opts: MessageReadInput): void {
     opts.oldest ? '--oldest' : '',
   ].filter(Boolean);
   if (unsupported.length > 0) {
-    throw new Error(`Feishu message read currently supports --channel, --thread-ts, --limit, and --cursor only; unsupported: ${unsupported.join(', ')}`);
+    throw new Error(`Feishu message read currently supports --chat-id/--channel, --thread-ts, --limit, and --cursor only; unsupported: ${unsupported.join(', ')}`);
   }
 }
 
@@ -188,7 +188,7 @@ async function slackReadRequest(opts: MessageReadInput, mode: 'history' | 'repli
   const { agent, client } = await slackWebClientForOpts(opts);
   const teamId = agent.slack.teamId || undefined;
 
-  if (!opts.channel) throw new Error('Missing --channel');
+  if (!opts.channel) throw new Error('Missing --channel or --chat-id');
   const channel = await resolveSlackChannelArgument({
     channel: opts.channel,
     client,

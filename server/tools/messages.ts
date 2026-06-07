@@ -88,7 +88,7 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
       return;
     }
   }
-  if (!opts.channel) throw new Error('message send requires --channel');
+  if (!opts.channel) throw new Error('message send requires --channel or --chat-id');
   const { agent, client } = await slackWebClientForOpts(opts);
   const teamId = agent.slack.teamId || undefined;
   const channel = await resolveSlackChannelArgument({
@@ -301,7 +301,7 @@ export async function runMessageUpdate(
   const text = opts.text ?? await readStdin();
   const agentId = resolveToolAgentId(opts);
   if (!agentId) throw new Error('message update requires current agent context for audit');
-  if (!opts.channel) throw new Error('message update requires --channel');
+  if (!opts.channel) throw new Error('message update requires --channel or --chat-id');
   const targetTs = opts.messageTs;
   if (!targetTs) throw new Error('message update requires --message-ts');
   if (opts.channel.startsWith('oc_')) {

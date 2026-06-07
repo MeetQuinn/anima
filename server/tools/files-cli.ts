@@ -11,6 +11,7 @@ import {
 } from '../feishu/feishu-file.service.js';
 import { slackFileFromRaw } from '../slack/slack.helper.js';
 import { defaultSlackFileService } from '../slack/slack-file.service.js';
+import { normalizeChatTargetOptions } from './chat-target-options.js';
 import { runFileSend, type FileSendInputData } from './file-send.js';
 import { loadAgentFromOpts, slackWebClientForOpts } from './tool-context.js';
 
@@ -38,6 +39,7 @@ interface FileFetchDeps {
 
 const FileSendSchema = GlobalFlags.extend({
   caption: z.string().optional(),
+  chatId: z.string().optional(),
   channel: z.string().optional(),
   paths: z.array(z.string().min(1)).min(1),
   threadTs: z.string().optional(),
@@ -76,6 +78,7 @@ export function registerFileCommands(program: Command): void {
     });
 
   // Input:   anima file send --channel <id> [--thread-ts <ts>] [--caption <text> | stdin] <path>...
+  // Input:   anima file send --chat-id <oc_...> [--thread-ts <om_or_omt>] [--caption <text> | stdin] <path>...
   // Output:  uploaded successfully. (channel=#<name> | dm=<handle>)[, thread_ts=<ts>], files=<N>.
   // Failure: human-readable error to stderr; exit 1.
   //          Fails closed before any platform call when --channel/path missing, path is not a file,
@@ -84,11 +87,12 @@ export function registerFileCommands(program: Command): void {
     .command('send <paths...>')
     .description('Upload one or more local files to Slack or Feishu.\nFails before any upload if a path is missing or not a file.')
     .option('--channel <channel>', 'Slack channel/DM target, Feishu chat_id (oc_...), or Feishu open_id (ou_...)')
+    .option('--chat-id <chatId>', 'Feishu chat_id (oc_...); alias for --channel')
     .option('--thread-ts <ts>', 'reply inside this thread; omit to post top-level')
     .option('--caption <text>', 'optional caption for the uploaded files; or pass via stdin heredoc')
     .action(async (paths: string[], _, command) => {
       const opts = FileSendSchema.parse({ ...command.optsWithGlobals(), paths });
-      await runFileSend(opts);
+      await runFileSend(normalizeChatTargetOptions(opts, 'file send'));
     });
 }
 
