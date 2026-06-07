@@ -2,7 +2,6 @@ import { existsSync, watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
-import { writeAgentFeatureReference } from '../agents/feature-reference.js';
 import {
   isAgentRunnable,
   resolveAgentHomePath,
@@ -630,7 +629,6 @@ export async function loadRuntimeAgents(opts: RuntimeHostOptions = {}): Promise<
 
 async function startAgentFromConfig(agent: AgentConfig, animaHome: string): Promise<RunningAgentHandle> {
   await validateRunnableAgentConfig(agent);
-  await writeAgentFeatureReference(agent);
   const server = runtimeServerConfigForAgent(agent);
   if (server.slack) await validateSlackConnectionForStart(agent.id, server.slack);
   const managedEnv = await managedProviderEnvForAgent(agent, animaHome, server.slack?.botToken);

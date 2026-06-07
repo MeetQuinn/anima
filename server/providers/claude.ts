@@ -36,7 +36,7 @@ export const CLAUDE_DISALLOWED_TOOLS = [
   'PushNotification',
 ];
 const CLAUDE_TRANSIENT_CONTINUE_PROMPT =
-  'The previous provider turn ended with a transient API or transport error after partial progress. Continue from the current conversation state. Do not repeat completed tool calls, Slack messages, file sends, or file edits; inspect state first if needed, then finish the requested task.';
+  'The previous provider turn ended with a transient API or transport error after partial progress. Continue from the current conversation state. Do not repeat completed tool calls, chat messages, file sends, or file edits; inspect state first if needed, then finish the requested task.';
 
 export class ClaudeCodeAgentRuntime implements AgentRuntime {
   readonly env: Record<string, string> | undefined;

@@ -47,65 +47,73 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
   if (event.handling.resumeReason === 'runtime_restart') {
     return buildRuntimeRestartContinuationDeliveryPrompt();
   }
-  if (event.kind === 'reminder') {
-    return buildReminderDeliveryPrompt(event, context);
-  }
-  if (event.kind === 'onboarding') {
-    return buildOnboardingDeliveryPrompt({
-      channelId: event.channelId,
-      ownerLabel: readableOwnerLabel(event.operator),
-      receivedAt: event.receivedAt,
-      text: event.text,
-    });
-  }
-  if (event.kind === 'choice_response') {
-    return buildChoiceResponseDeliveryPrompt(event);
-  }
-  if (event.kind === 'feishu_onboarding') {
-    return buildFeishuOnboardingDeliveryPrompt(event);
-  }
-  if (event.kind === 'feishu') {
-    return buildFeishuDeliveryPrompt(event);
-  }
-  if (event.id.startsWith('agent-onboarding:')) {
-    return buildLegacyOnboardingSlackDeliveryPrompt(event);
-  }
+  if (event.kind === 'reminder') return buildReminderDeliveryPrompt(event, context);
+  if (event.kind === 'choice_response') return buildChoiceResponseDeliveryPrompt(event);
+  if (event.kind === 'onboarding') return buildSlackOnboardingDeliveryPrompt(event);
+  if (event.kind === 'feishu_onboarding') return buildFeishuOnboardingDeliveryPrompt(event);
+  if (event.kind === 'feishu') return buildFeishuMessageDeliveryPrompt(event);
 
-  return buildSlackDeliveryPrompt(event);
+  return buildSlackMessageDeliveryPrompt(event);
 }
 
-function buildFeishuDeliveryPrompt(event: FeishuInboxItem): string {
+function buildSlackMessageDeliveryPrompt(event: SlackEvent): string {
+  const envelope = `${messageEnvelope(event)} ${actorLabel(event)}: ${event.text}`;
+  return buildDeliveryEventPrompt({
+    attentionSuggestion: event.attentionSuggestion,
+    envelope,
+    files: event.files,
+    title: 'New Slack message',
+  });
+}
+
+function buildFeishuMessageDeliveryPrompt(event: FeishuInboxItem): string {
   const envelope = `${feishuMessageEnvelope(event)} ${feishuActorLabel(event)}: ${event.text}`;
-  return [
-    `New Feishu message:\n\n${envelope}`,
-    formatAttachedFiles(event.files),
-    [
-      'Reply target:',
-      `Use \`anima message send --channel ${event.chatId}\` to post back to this Feishu chat.`,
-      `Use \`anima message send --channel ${event.chatId} --thread-ts ${event.messageId}\` to reply in this message's topic.`,
-      'Use `anima message send --channel <chat_id>` to send to an explicit Feishu chat.',
-      'Feishu API access: use `FEISHU_TENANT_ACCESS_TOKEN`, `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, and `FEISHU_API_BASE_URL` from env when you need Feishu APIs. Do not print these values.',
-    ].join('\n'),
-  ].filter(Boolean).join('\n\n');
+  return buildDeliveryEventPrompt({
+    attentionSuggestion: event.attentionSuggestion,
+    envelope,
+    files: event.files,
+    title: 'New Feishu message',
+  });
+}
+
+function buildSlackOnboardingDeliveryPrompt(event: OnboardingInboxItem): string {
+  return buildOnboardingDeliveryPrompt({
+    envelope: `[owner=${readableOwnerLabel(event.operator)} channel=${event.channelId} time=${event.receivedAt}]`,
+    text: event.text,
+  });
 }
 
 function buildFeishuOnboardingDeliveryPrompt(event: FeishuOnboardingInboxItem): string {
-  return `Agent onboarding:
-
-[owner=feishu-owner channel=${event.target.receiveId} time=${event.receivedAt}]
-${event.text}
-
-Reply target:
-Use \`anima message send --channel ${event.target.receiveId}\` to reply to your owner.`;
+  return buildOnboardingDeliveryPrompt({
+    envelope: `[platform=feishu owner=feishu-owner channel=${event.target.receiveId} receive_id_type=${event.target.receiveIdType} time=${event.receivedAt}]`,
+    text: event.text,
+  });
 }
 
-function buildSlackDeliveryPrompt(event: SlackEvent): string {
-  const envelope = `${messageEnvelope(event)} ${actorLabel(event)}: ${event.text}`;
+function buildOnboardingDeliveryPrompt(input: {
+  envelope: string;
+  text: string;
+}): string {
+  return buildDeliveryEventPrompt({
+    body: input.text,
+    envelope: input.envelope,
+    title: 'Agent onboarding',
+  });
+}
+
+function buildDeliveryEventPrompt(input: {
+  attentionSuggestion?: string;
+  body?: string;
+  envelope: string;
+  files?: InboxFileMeta[];
+  title: string;
+}): string {
+  const primary = `${input.title}:\n\n${[input.envelope, input.body].filter(Boolean).join('\n')}`;
   return [
-    `New Slack message:\n\n${envelope}`,
-    formatAttachedFiles(event.files),
-    event.attentionSuggestion ? `Attention suggestion:\n${event.attentionSuggestion}` : '',
-  ].filter(Boolean).join('\n');
+    primary,
+    formatAttachedFiles(input.files),
+    input.attentionSuggestion ? `Attention suggestion:\n${input.attentionSuggestion}` : '',
+  ].filter(Boolean).join('\n\n');
 }
 
 function buildChoiceResponseDeliveryPrompt(event: ChoiceResponseInboxItem): string {
@@ -116,35 +124,7 @@ function buildChoiceResponseDeliveryPrompt(event: ChoiceResponseInboxItem): stri
 ${actor} selected: ${event.optionLabel}
 
 Question:
-${event.question}
-
-Reply target:
-Use \`anima message send --channel ${event.channelId} --thread-ts ${event.threadTs}\` to reply under the question.`;
-}
-
-function buildLegacyOnboardingSlackDeliveryPrompt(event: SlackEvent): string {
-  const ownerLabel = event.actor?.userId ? `<@${event.actor.userId}>` : 'the owner';
-  return buildOnboardingDeliveryPrompt({
-    channelId: event.channelId,
-    ownerLabel,
-    receivedAt: event.receivedAt,
-    text: event.text,
-  });
-}
-
-function buildOnboardingDeliveryPrompt(input: {
-  channelId: string;
-  ownerLabel: string;
-  receivedAt: string;
-  text: string;
-}): string {
-  return `Agent onboarding:
-
-[owner=${input.ownerLabel} channel=${input.channelId} time=${input.receivedAt}]
-${input.text}
-
-Reply target:
-Use \`anima message send --channel ${input.channelId}\` to reply to ${input.ownerLabel}.`;
+${event.question}`;
 }
 
 function buildReminderDeliveryPrompt(
@@ -152,9 +132,7 @@ function buildReminderDeliveryPrompt(
   context: CodeAgentPromptContext,
 ): string {
   const reminder = context.reminder?.reminderId === event.reminderId ? context.reminder : undefined;
-  if (!reminder) {
-    return `Scheduled reminder:\n\n[reminder_id=${event.reminderId} time=${event.receivedAt}] Reminder fired.`;
-  }
+  if (!reminder) throw new Error(`Reminder context not found: ${event.reminderId}`);
   const provenance = reminder.provenance
     ? `\n\nProvenance:\n${JSON.stringify(reminder.provenance, null, 2)}`
     : '';
@@ -183,8 +161,8 @@ export function buildProviderCrashRetryDeliveryPrompt(input: {
     'Anima system note: the previous provider process crashed before completing this same item.',
     `This is retry ${input.attempt}/${input.maxRetries}.`,
     `Previous error: ${input.previousError}`,
-    'Continue the original task from the current files, conversation, and Slack state.',
-    'Do not repeat completed external side effects such as Slack messages, file sends, or file edits; inspect state first if needed.',
+    'Continue the original task from the current files, conversation, and connected chat state.',
+    'Do not repeat completed external side effects such as chat messages, file sends, or file edits; inspect state first if needed.',
   ].join('\n');
 }
 

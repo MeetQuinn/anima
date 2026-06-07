@@ -86,6 +86,7 @@ export type SlackInboxItem = z.infer<typeof SlackInboxItem>;
 
 export const FeishuInboxItem = InboxItemBase.extend({
   actor: FeishuInboxActor.optional(),
+  attentionSuggestion: z.string().optional(),
   appId: z.string().optional(),
   chatId: z.string(),
   chatType: z.string(),

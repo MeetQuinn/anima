@@ -107,8 +107,8 @@ test('delivery prompt module exposes named provider-facing Anima builders', () =
     'Anima system note: the previous provider process crashed before completing this same item.',
     'This is retry 2/3.',
     'Previous error: boom',
-    'Continue the original task from the current files, conversation, and Slack state.',
-    'Do not repeat completed external side effects such as Slack messages, file sends, or file edits; inspect state first if needed.',
+    'Continue the original task from the current files, conversation, and connected chat state.',
+    'Do not repeat completed external side effects such as chat messages, file sends, or file edits; inspect state first if needed.',
   ].join('\n'));
 });
 
@@ -164,6 +164,13 @@ test('buildCodeAgentDeliveryPrompt renders scheduled reminders as the current ev
   assert.doesNotMatch(text, /Reply command|Recovery context/);
 });
 
+test('buildCodeAgentDeliveryPrompt rejects reminders without reminder context', () => {
+  assert.throws(
+    () => buildCodeAgentDeliveryPrompt(makeReminderInboxItem({ reminderId: 'missing' })),
+    /Reminder context not found: missing/,
+  );
+});
+
 test('buildCodeAgentDeliveryPrompt renders onboarding as an onboarding wake, not a Slack DM', () => {
   const text = buildCodeAgentDeliveryPrompt({
     channelId: 'D-owner',
@@ -187,11 +194,11 @@ test('buildCodeAgentDeliveryPrompt renders onboarding as an onboarding wake, not
 
   assert.match(text, /^Agent onboarding:/);
   assert.match(text, /\[owner=Iris \(@iris, <@U-owner>\) channel=D-owner time=2026-01-01T00:00:00\.000Z\]/);
-  assert.match(text, /Use `anima message send --channel D-owner` to reply to Iris/);
+  assert.doesNotMatch(text, /Reply target:|Use `anima message send/);
   assert.doesNotMatch(text, /^New Slack message:/);
 });
 
-test('buildCodeAgentDeliveryPrompt treats legacy Slack-shaped onboarding as onboarding', () => {
+test('buildCodeAgentDeliveryPrompt treats Slack-shaped agent-onboarding ids as ordinary Slack messages', () => {
   const event = makeSlackEvent({
     channelId: 'D-owner',
     eventId: 'agent-onboarding:anima:U-owner',
@@ -201,9 +208,8 @@ test('buildCodeAgentDeliveryPrompt treats legacy Slack-shaped onboarding as onbo
   });
   const text = buildCodeAgentDeliveryPrompt(event);
 
-  assert.match(text, /^Agent onboarding:/);
-  assert.match(text, /\[owner=<@U-owner> channel=D-owner time=/);
-  assert.doesNotMatch(text, /^New Slack message:/);
+  assert.match(text, /^New Slack message:/);
+  assert.doesNotMatch(text, /^Agent onboarding:/);
 });
 
 test('buildCodeAgentDeliveryPrompt emits <attached_files> metadata and omits block when no files', () => {
@@ -235,23 +241,55 @@ test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack t
       sourcePath: '/work/anima',
     },
     role: 'Product PM for prioritization.',
+    transports: { feishu: false, slack: true },
   });
   assert.doesNotMatch(text, /\{\{name\}\}|\{\{role\}\}/);
   assert.match(text, /Reply target comes from the delivery envelope/);
   assert.match(text, /pass its `channel=` \/ `thread_ts=` to `--channel` \/ `--thread-ts` literally/);
-  assert.match(text, /You always receive DMs and any message that @mentions you/);
+  assert.match(text, /Slack messages can arrive from DMs, threads, channel messages, and group conversations/);
+  assert.match(text, /You always receive DMs and messages that @mention you/);
   assert.match(text, /Only `mute` a thread\/channel when it's clearly done with you AND still noisy/);
   assert.match(text, /anima reminder/);
   assert.match(text, /anima message send --channel <id-or-name> \[--thread-ts <thread_ts>\]/);
-  assert.match(text, /read `ANIMA_FEATURES\.md` in your home before using an unfamiliar `anima` command/);
-  assert.match(text, /Bundled Anima docs are available at `\/opt\/anima\/docs`/);
-  assert.match(text, /guide\/how-an-agent-works\.md/);
-  assert.match(text, /runtime-providers\.md/);
-  assert.match(text, /Anima's source is public at <https:\/\/github\.com\/MeetQuinn\/anima>/);
-  assert.match(text, /A local Anima source checkout is available at `\/work\/anima`/);
-  assert.match(text, /Treat it as reference unless the user explicitly asks you to modify Anima itself/);
-  assert.match(text, /For exact CLI flags, run `anima <command> --help` before guessing/);
+  assert.match(text, /Anima docs: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs>/);
+  assert.match(text, /local docs: `\/opt\/anima\/docs`/);
+  assert.match(text, /guide\/agent-features\.md/);
+  assert.match(text, /Anima source: <https:\/\/github\.com\/MeetQuinn\/anima>/);
+  assert.match(text, /local checkout: `\/work\/anima`/);
+  assert.match(text, /Treat source as reference unless asked to modify Anima/);
+  assert.match(text, /For exact CLI flags: `anima <command> --help`/);
+  assert.match(text, /\$SLACK_BOT_TOKEN/);
+  assert.doesNotMatch(text, /Feishu messages can arrive|FEISHU_APP_SECRET/);
+  assert.doesNotMatch(text, /ANIMA_FEATURES/);
   assert.doesNotMatch(text, /\$ANIMA_CHANNEL|\$ANIMA_THREAD/);
+});
+
+test('buildAnimaRuntimeProfile separates Feishu-only transport instructions', () => {
+  const text = buildAnimaRuntimeProfile({
+    displayName: 'Feishu Scout',
+    referencePaths: {
+      docsPath: '/opt/anima/docs',
+    },
+    role: 'Feishu test agent.',
+    transports: { feishu: true, slack: false },
+  });
+
+  assert.match(text, /Feishu messages can arrive from chats, DMs, and message topics/);
+  assert.match(text, /anima message send --channel <chat_id>/);
+  assert.match(text, /FEISHU_TENANT_ACCESS_TOKEN/);
+  assert.match(text, /https:\/\/open\.feishu\.cn\/open-apis/);
+  assert.doesNotMatch(text, /Slack messages can arrive|Slack API|SLACK_BOT_TOKEN|FEISHU_APP_SECRET|FEISHU_API_BASE_URL/);
+});
+
+test('buildAnimaRuntimeProfile includes both transport sections for mixed agents', () => {
+  const text = buildAnimaRuntimeProfile({
+    displayName: 'Bridge',
+    role: 'Mixed transport agent.',
+    transports: { feishu: true, slack: true },
+  });
+
+  assert.match(text, /Slack messages can arrive/);
+  assert.match(text, /Feishu messages can arrive/);
 });
 
 test('buildAnimaRuntimeProfile falls back cleanly when bundled docs are unavailable', () => {
@@ -259,10 +297,12 @@ test('buildAnimaRuntimeProfile falls back cleanly when bundled docs are unavaila
     displayName: 'Iris',
     referencePaths: {},
     role: 'Product PM for prioritization.',
+    transports: { feishu: false, slack: true },
   });
-  assert.match(text, /Bundled Anima docs were not found in this runtime/);
-  assert.match(text, /Anima's source is public at <https:\/\/github\.com\/MeetQuinn\/anima>/);
-  assert.doesNotMatch(text, /local Anima source checkout is available at/);
+  assert.match(text, /Anima docs: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs>/);
+  assert.doesNotMatch(text, /local docs:/);
+  assert.match(text, /Anima source: <https:\/\/github\.com\/MeetQuinn\/anima>/);
+  assert.doesNotMatch(text, /local checkout:/);
 });
 
 test('resolveAnimaReferencePathsFromRoots finds bundled docs and source checkout roots', async () => {
@@ -274,6 +314,7 @@ test('resolveAnimaReferencePathsFromRoots finds bundled docs and source checkout
   mkdirSync(join(root, 'shared'), { recursive: true });
   mkdirSync(join(root, 'web'), { recursive: true });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@meetquinn/anima' }));
+  writeFileSync(join(root, 'docs', 'guide', 'agent-features.md'), '# Features\n');
   writeFileSync(join(root, 'docs', 'guide', 'how-an-agent-works.md'), '# Agent\n');
   writeFileSync(join(root, 'docs', 'guide', 'working-with-your-agent.md'), '# Working\n');
   writeFileSync(join(root, 'docs', 'guide', 'using-the-dashboard.md'), '# Dashboard\n');
@@ -287,7 +328,11 @@ test('resolveAnimaReferencePathsFromRoots finds bundled docs and source checkout
 });
 
 test('buildAnimaRuntimeProfile keeps MEMORY.md as a short recovery index', () => {
-  const text = buildAnimaRuntimeProfile({ displayName: 'Iris', role: 'Product PM for prioritization.' });
+  const text = buildAnimaRuntimeProfile({
+    displayName: 'Iris',
+    role: 'Product PM for prioritization.',
+    transports: { feishu: false, slack: true },
+  });
   assert.match(text, /an index, not a corpus/);
   assert.match(text, /roughly one screen/);
   assert.match(text, /notes\/<topic>\.md/);
@@ -296,10 +341,17 @@ test('buildAnimaRuntimeProfile keeps MEMORY.md as a short recovery index', () =>
 });
 
 test('buildAnimaRuntimeProfile injects agent name and role into the opening identity line', () => {
-  const withRole = buildAnimaRuntimeProfile({ displayName: 'Iris', role: 'Product PM for prioritization.' });
+  const withRole = buildAnimaRuntimeProfile({
+    displayName: 'Iris',
+    role: 'Product PM for prioritization.',
+    transports: { feishu: false, slack: true },
+  });
   assert.match(withRole, /You are Iris, Product PM for prioritization\./);
 
-  const noRole = buildAnimaRuntimeProfile({ displayName: 'Anima' });
+  const noRole = buildAnimaRuntimeProfile({
+    displayName: 'Anima',
+    transports: { feishu: false, slack: true },
+  });
   assert.match(noRole, /You are Anima, general-purpose Anima agent\./);
 });
 

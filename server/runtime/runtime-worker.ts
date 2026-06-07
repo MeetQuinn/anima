@@ -215,6 +215,10 @@ export class AgentRuntimeWorker {
           profile: {
             displayName: agentConfig.profile?.displayName ?? this.options.agentId,
             ...(agentConfig.profile?.role ? { role: agentConfig.profile.role } : {}),
+            transports: {
+              feishu: agentConfig.feishu.connected,
+              slack: agentConfig.slack.connected,
+            },
           },
           retryNotice,
           session: runContext.session,

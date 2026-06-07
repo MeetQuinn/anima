@@ -79,7 +79,10 @@ export class FeishuMessageTransport implements MessageTransport {
       console.log(JSON.stringify(feishuIgnoredLog(this.options.agentRuntimeKind, runtimeDecision.reason), null, 2));
       return;
     }
-    const decision = await this.options.queue.enqueue(event);
+    const queuedEvent: FeishuInboxItem = runtimeDecision.attentionSuggestion
+      ? { ...event, attentionSuggestion: runtimeDecision.attentionSuggestion }
+      : event;
+    const decision = await this.options.queue.enqueue(queuedEvent);
     console.log(JSON.stringify(feishuDecisionLog(decision, this.options.agentRuntimeKind, runtimeDecision), null, 2));
   }
 

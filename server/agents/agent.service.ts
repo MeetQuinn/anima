@@ -24,7 +24,6 @@ import {
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { nowIso } from '../ids.js';
-import { writeAgentFeatureReference } from './feature-reference.js';
 import { writeSeedMemory } from './seed-memory.js';
 import { defaultKbRegistryService, type KbRegistryService } from '../kb/kb.service.js';
 import {
@@ -189,7 +188,6 @@ export class AgentRegistryService {
     await this.kbRegistryService.ensureDefaultTeamKbForAgentHome(agent.homePath);
     const created = await service.createAgent(agent);
     await writeSeedMemory(created);
-    await writeAgentFeatureReference(created);
     await mkdir(join(created.homePath, 'notes'), { recursive: true });
     return created;
   }
