@@ -418,6 +418,8 @@ interface FeishuSdkClient {
 
 interface FeishuMessageClientDeps {
   createClient?(config: FeishuConfig): FeishuSdkClient;
+  fetch?: typeof fetch;
+  fetchFeishuTenantAccessToken?: typeof fetchFeishuTenantAccessToken;
 }
 
 export async function fetchFeishuTenantAccessToken(
@@ -514,6 +516,7 @@ export async function fetchFeishuBotInfo(
 
 export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMessageClientDeps = {}): FeishuMessageClient {
   const client: FeishuSdkClient = feishuSdkClient(config, deps);
+  const openApi = feishuOpenApiRequester(config, deps);
   return {
     async addReaction(input) {
       const response = await client.im.messageReaction.create({
@@ -571,12 +574,9 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
       return feishuConversationMessagesFromSdk(response.data?.items)[0];
     },
     async getChat(input) {
-      if (!client.request) {
-        throw new Error('Feishu SDK client does not support generic request');
-      }
-      const response = asRecord(await client.request({
+      const response = asRecord(await openApi({
         method: 'GET',
-        url: `/open-apis/im/v1/chats/${encodeURIComponent(input.chatId)}`,
+        path: `/im/v1/chats/${encodeURIComponent(input.chatId)}`,
       }));
       const code = numberField(response, 'code');
       if (code !== undefined && code !== 0) {
@@ -596,15 +596,12 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
       };
     },
     async getUserBasics(input) {
-      if (!client.request) {
-        throw new Error('Feishu SDK client does not support generic request');
-      }
       const openIds = [...new Set(input.openIds.map((id) => id.trim()).filter(Boolean))].slice(0, 10);
       if (!openIds.length) return [];
-      const response = asRecord(await client.request({
+      const response = asRecord(await openApi({
         data: { user_ids: openIds },
         method: 'POST',
-        url: '/open-apis/contact/v3/users/basic_batch?user_id_type=open_id',
+        path: '/contact/v3/users/basic_batch?user_id_type=open_id',
       }));
       const code = numberField(response, 'code');
       if (code !== undefined && code !== 0) {
@@ -806,6 +803,31 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
         ...(response.data?.thread_id ? { threadId: response.data.thread_id } : {}),
       };
     },
+  };
+}
+
+function feishuOpenApiRequester(
+  config: FeishuConfig,
+  deps: FeishuMessageClientDeps,
+): (input: { data?: unknown; method: 'GET' | 'POST'; path: string }) => Promise<unknown> {
+  const fetchImpl = deps.fetch ?? fetch;
+  let cachedToken: Promise<FeishuTenantAccessToken> | undefined;
+  return async (input) => {
+    cachedToken ??= (deps.fetchFeishuTenantAccessToken ?? fetchFeishuTenantAccessToken)(config);
+    const token = await cachedToken;
+    const response = await fetchImpl(`${FEISHU_OPEN_API_BASE_URL}${input.path}`, {
+      ...(input.data !== undefined ? { body: JSON.stringify(input.data) } : {}),
+      headers: {
+        Authorization: `Bearer ${token.tenantAccessToken}`,
+        'Content-Type': 'application/json; charset=utf-8',
+      },
+      method: input.method,
+    });
+    const payload = asRecord(await response.json().catch(() => ({})));
+    if (!response.ok) {
+      throw new Error(`Feishu OpenAPI request failed with HTTP ${response.status}: ${stringField(payload, 'msg') ?? response.statusText}`);
+    }
+    return payload;
   };
 }
 

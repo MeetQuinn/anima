@@ -31,6 +31,7 @@ import type {
   FeishuMessageResourceDownloadInput,
   FeishuMessageListInput,
   FeishuMessageClient,
+  FeishuPostSendInput,
   FeishuPostUpdateInput,
   FeishuReactionAddInput,
   FeishuReactionRemoveInput,
@@ -108,6 +109,15 @@ function testFeishuMessageClient(overrides: Partial<FeishuMessageClient> = {}): 
     },
     ...overrides,
   };
+}
+
+function jsonResponse(payload: unknown, init: { ok?: boolean; status?: number; statusText?: string } = {}): Response {
+  return {
+    json: async () => payload,
+    ok: init.ok ?? true,
+    status: init.status ?? 200,
+    statusText: init.statusText ?? 'OK',
+  } as Response;
 }
 
 test('normalizes Feishu text DMs into inbox items', () => {
@@ -1186,25 +1196,11 @@ test('Feishu client can fetch chat display info', async () => {
     encryptKey: '',
     verificationToken: '',
   };
-  const calls: Array<{ method: string; url: string }> = [];
+  const calls: Array<{ body?: BodyInit | null; headers?: HeadersInit; method?: string; url: string }> = [];
 
   const client = createFeishuMessageClient(config, {
     createClient() {
       return {
-        async request(input) {
-          calls.push(input);
-          return {
-            code: 0,
-            data: {
-              chat: {
-                avatar: 'https://example.test/chat.png',
-                chat_id: 'oc_test_chat',
-                chat_type: 'group',
-                name: '产品群',
-              },
-            },
-          };
-        },
         im: {
           message: {
             async create() { throw new Error('unexpected create call'); },
@@ -1217,6 +1213,23 @@ test('Feishu client can fetch chat display info', async () => {
         },
       };
     },
+    async fetch(input, init) {
+      calls.push({ ...init, url: input.toString() });
+      return jsonResponse({
+        code: 0,
+        data: {
+          chat: {
+            avatar: 'https://example.test/chat.png',
+            chat_id: 'oc_test_chat',
+            chat_type: 'group',
+            name: '产品群',
+          },
+        },
+      });
+    },
+    async fetchFeishuTenantAccessToken() {
+      return { tenantAccessToken: 't-test' };
+    },
   });
 
   assert.deepEqual(await client.getChat?.({ chatId: 'oc_test_chat' }), {
@@ -1226,8 +1239,12 @@ test('Feishu client can fetch chat display info', async () => {
     chatType: 'group',
   });
   assert.deepEqual(calls, [{
+    headers: {
+      Authorization: 'Bearer t-test',
+      'Content-Type': 'application/json; charset=utf-8',
+    },
     method: 'GET',
-    url: '/open-apis/im/v1/chats/oc_test_chat',
+    url: 'https://open.feishu.cn/open-apis/im/v1/chats/oc_test_chat',
   }]);
 });
 
@@ -1239,24 +1256,11 @@ test('Feishu client can fetch basic user names by open_id', async () => {
     encryptKey: '',
     verificationToken: '',
   };
-  const calls: Array<{ data?: unknown; method: string; url: string }> = [];
+  const calls: Array<{ body?: BodyInit | null; headers?: HeadersInit; method?: string; url: string }> = [];
 
   const client = createFeishuMessageClient(config, {
     createClient() {
       return {
-        async request(input) {
-          calls.push(input);
-          return {
-            code: 0,
-            data: {
-              users: [{
-                i18n_name: { en_us: 'Alice', zh_cn: '艾丽丝' },
-                name: 'Alice',
-                user_id: 'ou_alice',
-              }],
-            },
-          };
-        },
         im: {
           message: {
             async create() { throw new Error('unexpected create call'); },
@@ -1269,6 +1273,22 @@ test('Feishu client can fetch basic user names by open_id', async () => {
         },
       };
     },
+    async fetch(input, init) {
+      calls.push({ ...init, url: input.toString() });
+      return jsonResponse({
+        code: 0,
+        data: {
+          users: [{
+            i18n_name: { en_us: 'Alice', zh_cn: '艾丽丝' },
+            name: 'Alice',
+            user_id: 'ou_alice',
+          }],
+        },
+      });
+    },
+    async fetchFeishuTenantAccessToken() {
+      return { tenantAccessToken: 't-test' };
+    },
   });
 
   assert.deepEqual(await client.getUserBasics?.({ openIds: ['ou_alice'] }), [{
@@ -1277,9 +1297,13 @@ test('Feishu client can fetch basic user names by open_id', async () => {
     openId: 'ou_alice',
   }]);
   assert.deepEqual(calls, [{
-    data: { user_ids: ['ou_alice'] },
+    body: JSON.stringify({ user_ids: ['ou_alice'] }),
+    headers: {
+      Authorization: 'Bearer t-test',
+      'Content-Type': 'application/json; charset=utf-8',
+    },
     method: 'POST',
-    url: '/open-apis/contact/v3/users/basic_batch?user_id_type=open_id',
+    url: 'https://open.feishu.cn/open-apis/contact/v3/users/basic_batch?user_id_type=open_id',
   }]);
 });
 
@@ -1555,12 +1579,12 @@ test('message read can fetch Feishu topic history explicitly', async () => {
 
 test('message send can target a Feishu chat explicitly', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-explicit-chat-test-'));
-  const sent: Array<{ receiveId: string; receiveIdType: string }> = [];
+  const sent: FeishuPostSendInput[] = [];
   try {
     await withAnimaHome(stateDir, async () => {
       await writeFeishuConfig(stateDir);
       await runMessageSend(
-        { agent: 'scout', channel: 'oc_target_chat', text: 'ordinary chat message' },
+        { agent: 'scout', channel: 'oc_target_chat', text: 'hello <at user_id="ou_alice"></at>' },
         {
           createFeishuMessageClient() {
             return {
@@ -1604,6 +1628,10 @@ test('message send can target a Feishu chat explicitly', async () => {
     assert.equal(sent.length, 1);
     assert.equal(sent[0]?.receiveId, 'oc_target_chat');
     assert.equal(sent[0]?.receiveIdType, 'chat_id');
+    assert.deepEqual(sent[0]?.content.zh_cn.content, [[
+      { tag: 'text', text: 'hello ' },
+      { tag: 'at', user_id: 'ou_alice' },
+    ]]);
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }
