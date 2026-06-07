@@ -4,6 +4,7 @@ import { apiRequest, jsonInit } from './client';
 import type {
   AgentConfig,
   AgentConnectFeishuRequest,
+  AgentFeishuScopeStatus,
   AgentFeishuRegisterAppRequest,
   AgentFeishuRegisterAppStatus,
   AgentConnectSlackRequest,
@@ -146,6 +147,10 @@ export async function fetchAgentFeishuAppRegistration(
   return apiRequest(
     `/api/agents/${encodeURIComponent(id)}/feishu/register-app/${encodeURIComponent(registrationId)}`,
   );
+}
+
+export async function fetchAgentFeishuScopeStatus(id: string): Promise<AgentFeishuScopeStatus> {
+  return apiRequest(`/api/agents/${encodeURIComponent(id)}/feishu/scopes`);
 }
 
 export async function fetchAgentSlackManifestUpdate(id: string): Promise<AgentSlackManifestUpdateInfo> {

@@ -1,7 +1,11 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import type { Readable } from 'node:stream';
 
-import type { FeishuConfig } from '../../shared/agent-config.js';
+import {
+  FEISHU_PROFILE_NAME_SCOPE,
+  type AgentFeishuScopeGrant,
+  type FeishuConfig,
+} from '../../shared/agent-config.js';
 import { asRecord, numberField, stringField } from '../json.js';
 import type { FeishuMessageResourceType } from './feishu-file.service.js';
 import type { FeishuPostContent } from './markdown-to-feishu-post.js';
@@ -416,10 +420,13 @@ interface FeishuSdkClient {
   };
 }
 
-interface FeishuMessageClientDeps {
-  createClient?(config: FeishuConfig): FeishuSdkClient;
+interface FeishuOpenApiDeps {
   fetch?: typeof fetch;
   fetchFeishuTenantAccessToken?: typeof fetchFeishuTenantAccessToken;
+}
+
+interface FeishuMessageClientDeps extends FeishuOpenApiDeps {
+  createClient?(config: FeishuConfig): FeishuSdkClient;
 }
 
 export async function fetchFeishuTenantAccessToken(
@@ -512,6 +519,44 @@ export async function fetchFeishuBotInfo(
     ...(avatarUrl ? { avatarUrl } : {}),
     ...(openId ? { openId } : {}),
   };
+}
+
+export async function fetchFeishuAppScopes(
+  config: FeishuConfig,
+  deps: FeishuOpenApiDeps = {},
+): Promise<AgentFeishuScopeGrant[]> {
+  const response = asRecord(await feishuOpenApiRequester(config, deps)({
+    method: 'GET',
+    path: '/application/v6/scopes',
+  }));
+  const code = numberField(response, 'code');
+  if (code !== undefined && code !== 0) {
+    throw new Error(`Feishu scope status request failed: ${stringField(response, 'msg') ?? `code ${code}`}`);
+  }
+  const data = asRecord(response?.data);
+  const scopes = Array.isArray(data?.scopes) ? data.scopes : [];
+  return scopes.flatMap((scope): AgentFeishuScopeGrant[] => {
+    const entry = asRecord(scope);
+    const scopeName = stringField(entry, 'scope_name');
+    if (!scopeName) return [];
+    const grantStatus = numberField(entry, 'grant_status');
+    return [{
+      granted: grantStatus === 1,
+      ...(grantStatus !== undefined ? { grantStatus } : {}),
+      scopeName,
+    }];
+  });
+}
+
+export function feishuProfileNameScopeAuthUrl(appId: string): string | undefined {
+  const cleanAppId = appId.trim();
+  if (!cleanAppId) return undefined;
+  const params = new URLSearchParams({
+    op_from: 'openapi',
+    q: FEISHU_PROFILE_NAME_SCOPE,
+    token_type: 'tenant',
+  });
+  return `https://open.feishu.cn/app/${encodeURIComponent(cleanAppId)}/auth?${params.toString()}`;
 }
 
 export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMessageClientDeps = {}): FeishuMessageClient {
@@ -808,7 +853,7 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
 
 function feishuOpenApiRequester(
   config: FeishuConfig,
-  deps: FeishuMessageClientDeps,
+  deps: FeishuOpenApiDeps,
 ): (input: { data?: unknown; method: 'GET' | 'POST'; path: string }) => Promise<unknown> {
   const fetchImpl = deps.fetch ?? fetch;
   let cachedToken: Promise<FeishuTenantAccessToken> | undefined;

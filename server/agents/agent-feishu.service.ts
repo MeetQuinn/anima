@@ -1,6 +1,15 @@
-import type { AgentConfig, AgentConnectFeishuRequest, AgentFeishuRegisterAppRequest } from '../../shared/agent-config.js';
+import {
+  FEISHU_PROFILE_NAME_SCOPE,
+  type AgentConfig,
+  type AgentConnectFeishuRequest,
+  type AgentFeishuRegisterAppRequest,
+  type AgentFeishuScopeGrant,
+  type AgentFeishuScopeStatus,
+} from '../../shared/agent-config.js';
 import {
   fetchFeishuBotInfo,
+  fetchFeishuAppScopes,
+  feishuProfileNameScopeAuthUrl,
   registerFeishuApp,
   type FeishuBotInfo,
   type FeishuRegisterAppResult,
@@ -13,6 +22,7 @@ import { randomUUID } from 'crypto';
 
 type RegisterFeishuApp = typeof registerFeishuApp;
 type GetFeishuBotInfo = (config: AgentConfig['feishu']) => Promise<FeishuBotInfo>;
+type GetFeishuAppScopes = (config: AgentConfig['feishu']) => Promise<AgentFeishuScopeGrant[]>;
 
 export type FeishuAppRegistrationState =
   | 'starting'
@@ -43,6 +53,7 @@ interface FeishuAppRegistrationSession extends FeishuAppRegistrationStatus {
 const registrationSessions = new Map<string, FeishuAppRegistrationSession>();
 
 interface AgentFeishuServiceDeps {
+  getFeishuAppScopes?: GetFeishuAppScopes;
   getFeishuBotInfo?: GetFeishuBotInfo;
   registerFeishuApp?: RegisterFeishuApp;
 }
@@ -88,6 +99,49 @@ export class AgentFeishuService {
     if (isWithinTtl(agent.feishu.botProfileSyncedAt, options.ttlMs)) return { synced: false };
     await this.syncDisplayInfoForAgent(agent);
     return { synced: true };
+  }
+
+  async getScopeStatus(): Promise<AgentFeishuScopeStatus> {
+    const agent = await defaultAgentRegistryService.serviceFor(this.agentId).getConfig();
+    if (!agent.feishu.connected) {
+      return {
+        connected: false,
+        profileName: {
+          granted: false,
+          scope: FEISHU_PROFILE_NAME_SCOPE,
+          state: 'not_connected',
+        },
+      };
+    }
+
+    try {
+      const scopes = await (this.deps.getFeishuAppScopes ?? fetchFeishuAppScopes)(agent.feishu);
+      const profileNameScope = scopes.find((scope) => scope.scopeName === FEISHU_PROFILE_NAME_SCOPE);
+      const granted = Boolean(profileNameScope?.granted);
+      return {
+        appId: agent.feishu.appId,
+        connected: true,
+        profileName: {
+          ...(granted ? {} : { authUrl: feishuProfileNameScopeAuthUrl(agent.feishu.appId) }),
+          granted,
+          scope: FEISHU_PROFILE_NAME_SCOPE,
+          state: granted ? 'granted' : 'missing',
+        },
+        scopes,
+      };
+    } catch (error) {
+      return {
+        appId: agent.feishu.appId,
+        connected: true,
+        profileName: {
+          authUrl: feishuProfileNameScopeAuthUrl(agent.feishu.appId),
+          granted: false,
+          message: error instanceof Error ? error.message : String(error),
+          scope: FEISHU_PROFILE_NAME_SCOPE,
+          state: 'unknown',
+        },
+      };
+    }
   }
 
   async startAppRegistration(input: AgentFeishuRegisterAppRequest = {}): Promise<FeishuAppRegistrationStatus> {

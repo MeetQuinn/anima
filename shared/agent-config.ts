@@ -331,6 +331,27 @@ export const AgentFeishuRegisterAppStatus = z.object({
 
 export type AgentFeishuRegisterAppStatus = z.infer<typeof AgentFeishuRegisterAppStatus>;
 
+export const FEISHU_PROFILE_NAME_SCOPE = 'contact:user.basic_profile:readonly';
+
+export interface AgentFeishuScopeGrant {
+  granted: boolean;
+  grantStatus?: number;
+  scopeName: string;
+}
+
+export interface AgentFeishuScopeStatus {
+  appId?: string;
+  connected: boolean;
+  profileName: {
+    authUrl?: string;
+    granted: boolean;
+    message?: string;
+    scope: typeof FEISHU_PROFILE_NAME_SCOPE;
+    state: 'granted' | 'missing' | 'not_connected' | 'unknown';
+  };
+  scopes?: AgentFeishuScopeGrant[];
+}
+
 export const AgentOwner = SlackUserCandidate.extend({
   onboardingPromptedAt: z.string().optional(),
 }).strict();

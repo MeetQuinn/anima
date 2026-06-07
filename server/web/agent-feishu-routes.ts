@@ -38,6 +38,10 @@ export function registerAgentFeishuRoutes(fastify: FastifyInstance): void {
     async (request) =>
       redactAgentConfig(await agentFeishuServiceForAgent(request.params.agentId).syncDisplayInfo()),
   );
+  fastify.get<{ Params: { agentId: string } }>(
+    '/api/agents/:agentId/feishu/scopes',
+    async (request) => agentFeishuServiceForAgent(request.params.agentId).getScopeStatus(),
+  );
 }
 
 function redactFeishuRegistrationStatus(status: FeishuAppRegistrationStatus): FeishuAppRegistrationStatus {
