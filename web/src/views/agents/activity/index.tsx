@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useReducer, useRef } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { AlertCircle, Loader2, X } from 'lucide-react';
-import { fetchAgentStatuses, fetchAgentActivities, fetchAgentMessages, fetchAgents } from '@/api/agents';
+import { AlertCircle, ExternalLink, Loader2, X } from 'lucide-react';
+import {
+  fetchAgentStatuses,
+  fetchAgentActivities,
+  fetchAgentFeishuScopeStatus,
+  fetchAgentMessages,
+  fetchAgents,
+} from '@/api/agents';
 import { buildActivityFeed, buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
 import { activityIsFailure, activityRow, isNarrativeStep } from '@/lib/activities';
 import { clockHM, dateKey, formatRelativeShort } from '@/lib/format';
@@ -234,6 +240,43 @@ function FeishuHelloBanner({ onDismiss }: { onDismiss: () => void }) {
       <p className="flex-1 font-serif text-[13px] leading-snug text-text">
         Feishu connected. Your agent will say hi in Feishu in a moment.
       </p>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dismiss"
+        className="-mr-1 -mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-surface hover:text-text"
+      >
+        <X className="h-4 w-4" aria-hidden />
+      </button>
+    </div>
+  );
+}
+
+function FeishuNameAccessConnectBanner({
+  authUrl,
+  onDismiss,
+}: {
+  authUrl?: string;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-start gap-3 border-b border-border-soft bg-health-warn-soft/60 px-4 py-2.5 md:px-10">
+      <div className="min-w-0 flex-1">
+        <p className="font-serif text-[13px] leading-snug text-text">
+          Connected. Your agents can message your team right away. Optional: authorize teammate-name
+          access so they use names, not IDs.
+        </p>
+        {authUrl && (
+          <a
+            href={authUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-1.5 inline-flex items-center gap-1 font-sans text-[12px] text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+          >
+            Authorize in Feishu <ExternalLink className="h-3 w-3" />
+          </a>
+        )}
+      </div>
       <button
         type="button"
         onClick={onDismiss}
@@ -494,9 +537,16 @@ export default function Activity() {
   useEffect(() => {
     if (!justConnectedFeishu) return;
     if (landingProcessedRef.current === location.key) return;
+    // Wait for the appId; the effect re-fires when feishuConnKey resolves. The
+    // connected-name banner is keyed to the connection, including manual
+    // existing-app connects where the greeting banner is intentionally absent.
+    if (!agentId || !feishuConnKey) return;
+    try {
+      localStorage.setItem(`feishu-name-access-armed:${agentId}`, feishuConnKey);
+    } catch {
+      /* localStorage unavailable */
+    }
     if (landingWantsBanner) {
-      // Wait for the appId; the effect re-fires when feishuConnKey resolves.
-      if (!agentId || !feishuConnKey) return;
       try {
         localStorage.setItem(`feishu-hello-armed:${agentId}`, feishuConnKey);
       } catch {
@@ -532,6 +582,18 @@ export default function Activity() {
       return { armed: false, dismissed: false };
     }
   })();
+  const nameAccessPersisted = (() => {
+    if (!agentId || !feishuConnKey) return { armed: false, dismissed: false };
+    try {
+      return {
+        armed: localStorage.getItem(`feishu-name-access-armed:${agentId}`) === feishuConnKey,
+        dismissed:
+          localStorage.getItem(`feishu-name-access-dismissed:${agentId}`) === feishuConnKey,
+      };
+    } catch {
+      return { armed: false, dismissed: false };
+    }
+  })();
 
   function dismissHelloBanner() {
     if (agentId && feishuConnKey) {
@@ -544,9 +606,37 @@ export default function Activity() {
     forceHelloRerender();
   }
 
+  function dismissNameAccessBanner() {
+    if (agentId && feishuConnKey) {
+      try {
+        localStorage.setItem(`feishu-name-access-dismissed:${agentId}`, feishuConnKey);
+      } catch {
+        /* localStorage unavailable */
+      }
+    }
+    forceHelloRerender();
+  }
+
   const showHelloBanner =
     previewHelloBanner ||
     ((landingWantsBanner || helloPersisted.armed) && !helloPersisted.dismissed);
+
+  const shouldCheckNameAccess = Boolean(
+    agentId &&
+    nameAccessPersisted.armed &&
+    !nameAccessPersisted.dismissed &&
+    connectedPlatform === 'feishu',
+  );
+  const { data: feishuScopeStatus } = useQuery({
+    queryKey: queryKeys.agentFeishuScopes(agentId ?? ''),
+    queryFn: () => fetchAgentFeishuScopeStatus(agentId!),
+    enabled: shouldCheckNameAccess,
+  });
+  const profileNameState = feishuScopeStatus?.profileName.state;
+  const showNameAccessConnectBanner =
+    nameAccessPersisted.armed &&
+    !nameAccessPersisted.dismissed &&
+    (profileNameState === 'missing' || profileNameState === 'unknown');
 
   const error = activitiesError instanceof Error ? activitiesError.message : activitiesError ? String(activitiesError) : null;
 
@@ -646,6 +736,12 @@ export default function Activity() {
   return (
     <div className="flex h-full flex-col overflow-hidden bg-surface">
       {showHelloBanner && <FeishuHelloBanner onDismiss={dismissHelloBanner} />}
+      {showNameAccessConnectBanner && (
+        <FeishuNameAccessConnectBanner
+          authUrl={feishuScopeStatus?.profileName.authUrl}
+          onDismiss={dismissNameAccessBanner}
+        />
+      )}
       {error && (
         <div className="flex shrink-0 items-center gap-2.5 border-b border-health-error/30 bg-health-error-soft px-4 py-2 text-health-error">
           <AlertCircle className="h-3.5 w-3.5 shrink-0" />
