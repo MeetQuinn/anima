@@ -101,6 +101,47 @@
   color: var(--landing-ink) !important;
 }
 
+/* Star on GitHub: co-primary with Get started. Solid ink, not a ghost,
+   carries equal weight to the accent button (and reads GitHub-dark). */
+.landing-button-github {
+  gap: 8px;
+  background: var(--landing-ink);
+  color: #ffffff !important;
+}
+
+.landing-button-github:hover {
+  background: #34302b;
+  color: #ffffff !important;
+}
+
+.landing-button-icon {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+/* Subordinate hero link under the two co-primary buttons. */
+.landing-hero-secondary {
+  margin: 16px 0 0;
+}
+
+.landing-hero-secondary a {
+  color: var(--landing-muted);
+  font-size: 15px;
+  font-weight: 700;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(111, 106, 98, 0.4);
+  padding-bottom: 1px;
+  transition:
+    color 160ms ease,
+    border-color 160ms ease;
+}
+
+.landing-hero-secondary a:hover {
+  color: var(--landing-ink);
+  border-color: rgba(31, 29, 26, 0.55);
+}
+
 .landing-hero-visual {
   position: relative;
 }
@@ -121,6 +162,13 @@
 .landing-caption {
   max-width: 620px;
   margin: 20px auto 0;
+  color: var(--landing-muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+.hero-proof-caption {
+  margin: 14px 0 0;
   color: var(--landing-muted);
   font-size: 14px;
   text-align: center;
@@ -181,9 +229,23 @@
 }
 
 .landing-card-section,
+.landing-dogfood,
 .landing-compare,
 .landing-start {
   margin-top: 88px;
+}
+
+.landing-dogfood-line {
+  max-width: 760px;
+  margin: 24px auto 0;
+  color: var(--landing-muted);
+  font-size: 19px;
+  line-height: 1.62;
+  text-align: center;
+}
+
+#see-it-work {
+  scroll-margin-top: 84px;
 }
 
 .landing-section-heading p {
@@ -537,11 +599,14 @@
   }
 
   .landing-actions {
+    flex-direction: column;
+    align-items: stretch;
     gap: 10px;
   }
 
   .landing-button {
     flex: 1 1 auto;
+    width: 100%;
   }
 
   .landing-hero-visual {
@@ -592,6 +657,7 @@
   .landing-cards p,
   .compare-cell p,
   .compare-note,
+  .landing-dogfood-line,
   .landing-start-frame,
   .landing-start p {
     font-size: 14px;
@@ -599,6 +665,7 @@
   }
 
   .landing-card-section,
+  .landing-dogfood,
   .landing-compare,
   .landing-start {
     margin-top: 54px;
