@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { ProviderUsageService } from '../provider-usage/provider-usage.service.js';
 import { providerUsageNetworkErrorMessage } from '../provider-usage/http.js';
 import { parseClaudeUsageResponse } from '../provider-usage/providers/claude.js';
 import { parseCodexUsageResponse } from '../provider-usage/providers/codex.js';
-import { parseKimiUsageResponse } from '../provider-usage/providers/kimi.js';
+import { fetchKimiUsage, parseKimiUsageResponse } from '../provider-usage/providers/kimi.js';
 
 test('Claude usage parser returns remaining windows and extra usage', () => {
   const parsed = parseClaudeUsageResponse({
@@ -71,6 +74,46 @@ test('Kimi usage parser returns top-level and short-window limits', () => {
   ]);
 });
 
+test('Kimi usage reads Kimi Code credentials before legacy migrated credentials', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-kimi-usage-home-'));
+  await mkdir(join(home, '.kimi-code', 'credentials'), { recursive: true });
+  await mkdir(join(home, '.kimi', 'credentials'), { recursive: true });
+  await writeFile(
+    join(home, '.kimi-code', 'credentials', 'kimi-code.json'),
+    JSON.stringify({ access_token: 'new-kimi-code-token' }),
+    'utf8',
+  );
+  await writeFile(
+    join(home, '.kimi', 'credentials', 'kimi-code.json'),
+    JSON.stringify({ access_token: 'legacy-expired-token' }),
+    'utf8',
+  );
+
+  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
+  const originalShareDir = process.env.KIMI_SHARE_DIR;
+  const originalFetch = globalThis.fetch;
+  const authorizations: string[] = [];
+  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
+  delete process.env.KIMI_SHARE_DIR;
+  globalThis.fetch = (async (_url, init) => {
+    authorizations.push(String((init?.headers as Record<string, string> | undefined)?.Authorization ?? ''));
+    return new Response(JSON.stringify({ usage: { limit: 100, remaining: 75 }, limits: [] }), {
+      headers: { 'content-type': 'application/json' },
+      status: 200,
+    });
+  }) as typeof fetch;
+
+  try {
+    const result = await fetchKimiUsage();
+    assert.equal(result.status, 'available');
+    assert.deepEqual(authorizations, ['Bearer new-kimi-code-token']);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
+    restoreEnv('KIMI_SHARE_DIR', originalShareDir);
+  }
+});
+
 test('provider usage network errors are classified without raw fetch wording', () => {
   const abortError = new Error('This operation was aborted');
   abortError.name = 'AbortError';
@@ -110,3 +153,11 @@ test('provider usage service isolates adapter failures per provider', async () =
   assert.equal(response.providers[1]?.status, 'unavailable');
   assert.equal(response.providers[1]?.error?.type, 'unknown');
 });
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
+}
