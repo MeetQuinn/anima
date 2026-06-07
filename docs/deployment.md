@@ -45,12 +45,12 @@ that pinned runtime:
 
 ```bash
 curl -fsSL https://anima.meetquinn.ai/install.sh | sh
-npx -y @meetquinn/animactl start          # first start on stable/latest
-npx -y @meetquinn/animactl dashboard      # launch the local dashboard
-npx -y @meetquinn/animactl restart        # command-line upgrade to stable/latest
-npx -y @meetquinn/animactl@canary restart # opt-in prerelease upgrade/restart path
-npx -y @meetquinn/animactl status
-npx -y @meetquinn/animactl stop
+npx -y @meetquinn/animactl@latest start # first start on stable/latest
+npx -y @meetquinn/animactl@latest dashboard # launch the local dashboard
+npx -y @meetquinn/animactl@latest restart # command-line upgrade to stable/latest
+npx -y @meetquinn/animactl@canary restart # opt in to the prerelease restart path
+npx -y @meetquinn/animactl@latest status
+npx -y @meetquinn/animactl@latest stop
 ```
 
 The curl installer is a bootstrap convenience for first-run stable installs. It checks for Node/npm,
@@ -58,15 +58,15 @@ then runs the `latest` npm dist-tag for `@meetquinn/animactl`. `start` is the fi
 starting stopped services. On an interactive desktop it launches the dashboard automatically; use
 `--no-browser` for headless scripts. `dashboard` launches the current home's dashboard without
 starting services. `restart` is the command-line upgrade path: it installs the package version
-selected by `npx` into `~/.anima/runtime/current`, then restarts services with drain-and-resume. With
-no version suffix, `npx` selects the `latest` npm dist-tag; use `@canary` or an exact version suffix
-when you want a different target.
+selected by `npx` into `~/.anima/runtime/current`, then restarts services with drain-and-resume.
+Docs use `@latest` explicitly because the installer does not add `animactl` to the user's `PATH`.
+Use `@canary` or an exact version suffix when you want a different target.
 
 The admin CLI exposes the lower-level runtime status/install commands:
 
 ```bash
-animactl runtime status
-animactl runtime install --channel canary
+npx -y @meetquinn/animactl@latest runtime status
+npx -y @meetquinn/animactl@latest runtime install --channel canary
 ```
 
 Set `ANIMA_HOME=/path/to/home` to manage a non-default home. If `ANIMA_HOME` is unset, managed
