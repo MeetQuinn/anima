@@ -139,7 +139,11 @@ export class AgentRuntimeWorker {
         this.logger.error(`Runtime worker drain failed for ${this.options.agentId}: ${errorMessage(error)}`);
       });
     }
-    if (options.drainActive) await this.options.agentRuntime.close?.();
+    if (options.drainActive) {
+      await this.options.agentRuntime.close?.(
+        options.forceAfterMs === undefined ? undefined : { forceAfterMs: options.forceAfterMs },
+      );
+    }
   }
 
   private async recoverInterruptedItems(): Promise<void> {

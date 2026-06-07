@@ -12,6 +12,7 @@ import { allActivities, loadState } from './helpers/state.js';
 import type { InboxItem, InboxItemStatus } from '../../shared/inbox.js';
 import type {
   AgentRuntime,
+  AgentRuntimeCloseOptions,
   AgentRuntimeDrainInput,
   AgentRuntimeInput,
   AgentRuntimeResult,
@@ -149,6 +150,31 @@ test('runtime worker drain close lets active item finish before clearing audit p
       await drain;
       assert.equal((await queueFor('scout').find(decision.ctx.item.id))?.handling.status, 'completed');
       assert.equal(await findActiveRuntimeItem('scout'), undefined);
+      worker = undefined;
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker forwards force timeout when closing after drain', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-drain-close-force-test-'));
+  const runtime = new CloseOptionsRuntime();
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        queue: queueFor('scout'),
+        pollIntervalMs: 10_000,
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+
+      await worker.close({ drainActive: true, forceAfterMs: 123 });
+      assert.deepEqual(runtime.closeOptions, [{ forceAfterMs: 123 }]);
       worker = undefined;
     });
   } finally {
@@ -763,6 +789,23 @@ class ControlledRuntime implements AgentRuntime {
     const resolve = this.resolvers.shift();
     assert.ok(resolve, 'Expected an active runtime call');
     resolve();
+  }
+}
+
+class CloseOptionsRuntime implements AgentRuntime {
+  readonly kind = 'close-options';
+  readonly closeOptions: Array<AgentRuntimeCloseOptions | undefined> = [];
+
+  async run(_input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
+    return {};
+  }
+
+  async appendToActiveRun(_input: AgentRuntimeFollowupInput): Promise<{ accepted: boolean }> {
+    return { accepted: false };
+  }
+
+  async close(options?: AgentRuntimeCloseOptions): Promise<void> {
+    this.closeOptions.push(options);
   }
 }
 

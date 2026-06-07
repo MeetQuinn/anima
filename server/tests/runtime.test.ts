@@ -257,6 +257,31 @@ test('runtime host defers config reload until the running agent is idle', async 
   await host.stop();
 });
 
+test('runtime host bounds idle config reload shutdown with a force timeout', async () => {
+  let scout = runtimeHostAgent('scout', { connected: true, homePath: '/tmp/home-a', model: 'opus' });
+  const stopped: string[] = [];
+  const stopOptions: Array<Parameters<RunningAgentHandle['stop']>[0]> = [];
+  const host = new RuntimeHost({}, {
+    animaHome: '/tmp/anima-home',
+    forceRestartTimeoutMs: 123,
+    loadAgents: async () => [scout],
+    logger: silentLogger,
+    startAgent: async (agent) => stopHandle(agent.id, stopped, undefined, (options) => {
+      stopOptions.push(options);
+    }),
+    validateAgent: async () => {},
+  });
+
+  await host.reconcileOnce();
+  scout = runtimeHostAgent('scout', { connected: true, homePath: '/tmp/home-b', model: 'opus' });
+  await host.reconcileOnce();
+
+  assert.deepEqual(stopped, ['scout']);
+  assert.deepEqual(stopOptions[0], { drainActive: true, forceAfterMs: 123 });
+
+  await host.stop();
+});
+
 test('runtime host stops a running agent after it becomes disabled', async () => {
   let scout = runtimeHostAgent('scout', { connected: true });
   const stopped: string[] = [];
