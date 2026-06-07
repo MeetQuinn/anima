@@ -30,6 +30,7 @@ import {
 import { SessionSection } from './SessionStats';
 import { SlackConnectStepper } from './SlackConnectStepper';
 import { FeishuConnectStepper } from './FeishuConnectStepper';
+import { FeishuScopeStatusCard } from './FeishuScopeStatusCard';
 import { SlackManifestUpdateCard } from './SlackManifestUpdateCard';
 import { SkillsSection } from './SkillsSection';
 import { OwnerPickerForm } from './OwnerPickerForm';
@@ -484,6 +485,7 @@ export default function Profile() {
                 Feishu credentials are stored in the agent config and injected by Anima
                 at runtime. Secret values are hidden in the dashboard.
               </p>
+              <FeishuScopeStatusCard agentId={agentId} />
               </div>
             ) : (
               <FeishuConnectStepper

@@ -14,6 +14,7 @@ export const queryKeys = {
   agentSessions: (agentId: string) => ['agent-session', agentId] as const,
   agentSession: (agentId: string, currentItemId?: string) =>
     ['agent-session', agentId, currentItemId] as const,
+  agentFeishuScopes: (agentId: string) => ['agent-feishu-scopes', agentId] as const,
   agentSlackManifestUpdate: (agentId: string) => ['agent-slack-manifest-update', agentId] as const,
   kbs: () => ['kbs'] as const,
   kb: (id: string) => ['kb', id] as const,

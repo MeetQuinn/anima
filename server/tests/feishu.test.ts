@@ -11,7 +11,12 @@ import {
   shouldWakeFeishuRuntime,
   type FeishuReceiveMessageEvent,
 } from '../feishu/events.js';
-import { createFeishuMessageClient, fetchFeishuBotInfo, fetchFeishuTenantAccessToken } from '../feishu/client.js';
+import {
+  createFeishuMessageClient,
+  fetchFeishuAppScopes,
+  fetchFeishuBotInfo,
+  fetchFeishuTenantAccessToken,
+} from '../feishu/client.js';
 import { FeishuDirectoryService } from '../feishu/directory.service.js';
 import { AgentFeishuService } from '../agents/agent-feishu.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
@@ -1305,6 +1310,115 @@ test('Feishu client can fetch basic user names by open_id', async () => {
     method: 'POST',
     url: 'https://open.feishu.cn/open-apis/contact/v3/users/basic_batch?user_id_type=open_id',
   }]);
+});
+
+test('Feishu client can fetch tenant scope grant status', async () => {
+  const config: FeishuConfig = {
+    appId: 'cli_test',
+    appSecret: 'secret',
+    connected: true,
+    encryptKey: '',
+    verificationToken: '',
+  };
+  const calls: Array<{ body?: BodyInit | null; headers?: HeadersInit; method?: string; url: string }> = [];
+
+  const scopes = await fetchFeishuAppScopes(config, {
+    async fetch(input, init) {
+      calls.push({ ...init, url: input.toString() });
+      return jsonResponse({
+        code: 0,
+        data: {
+          scopes: [{
+            grant_status: 1,
+            scope_name: 'contact:user.basic_profile:readonly',
+          }, {
+            grant_status: 2,
+            scope_name: 'im:message:readonly',
+          }],
+        },
+      });
+    },
+    async fetchFeishuTenantAccessToken() {
+      return { tenantAccessToken: 't-test' };
+    },
+  });
+
+  assert.deepEqual(scopes, [{
+    granted: true,
+    grantStatus: 1,
+    scopeName: 'contact:user.basic_profile:readonly',
+  }, {
+    granted: false,
+    grantStatus: 2,
+    scopeName: 'im:message:readonly',
+  }]);
+  assert.deepEqual(calls, [{
+    headers: {
+      Authorization: 'Bearer t-test',
+      'Content-Type': 'application/json; charset=utf-8',
+    },
+    method: 'GET',
+    url: 'https://open.feishu.cn/open-apis/application/v6/scopes',
+  }]);
+});
+
+test('Feishu service reports missing profile-name scope with authorization link', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-scope-status-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir);
+      const service = new AgentFeishuService('scout', {
+        async getFeishuAppScopes() {
+          return [{
+            granted: true,
+            grantStatus: 1,
+            scopeName: 'im:message:readonly',
+          }];
+        },
+      });
+
+      const status = await service.getScopeStatus();
+
+      assert.equal(status.connected, true);
+      assert.equal(status.appId, 'cli_test');
+      assert.equal(status.profileName.state, 'missing');
+      assert.equal(status.profileName.granted, false);
+      assert.equal(status.profileName.scope, 'contact:user.basic_profile:readonly');
+      assert.match(
+        status.profileName.authUrl ?? '',
+        /^https:\/\/open\.feishu\.cn\/app\/cli_test\/auth\?/,
+      );
+      assert.match(status.profileName.authUrl ?? '', /contact%3Auser\.basic_profile%3Areadonly/);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('Feishu service reports granted profile-name scope', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-scope-granted-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir);
+      const service = new AgentFeishuService('scout', {
+        async getFeishuAppScopes() {
+          return [{
+            granted: true,
+            grantStatus: 1,
+            scopeName: 'contact:user.basic_profile:readonly',
+          }];
+        },
+      });
+
+      const status = await service.getScopeStatus();
+
+      assert.equal(status.profileName.state, 'granted');
+      assert.equal(status.profileName.granted, true);
+      assert.equal(status.profileName.authUrl, undefined);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 test('Feishu message updates use the SDK update endpoint', async () => {
