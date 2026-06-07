@@ -13,10 +13,10 @@ For managed installs, operators normally drive the runtime with the public comma
 
 ```bash
 curl -fsSL https://anima.meetquinn.ai/install.sh | sh
-npx -y @meetquinn/animactl dashboard
-npx -y @meetquinn/animactl restart
-npx -y @meetquinn/animactl status
-npx -y @meetquinn/animactl stop
+npx -y @meetquinn/animactl@latest dashboard
+npx -y @meetquinn/animactl@latest restart
+npx -y @meetquinn/animactl@latest status
+npx -y @meetquinn/animactl@latest stop
 ```
 
 Those commands are documented in [Deployment and upgrades](deployment.md). This runbook covers the
@@ -34,15 +34,15 @@ Each Anima home runs two daemons:
 
 The web app port comes from the selected home config's `dashboardPort` field. Managed installs
 normally use `4174`; source-development services seed `14174`. Use
-`npx -y @meetquinn/animactl dashboard` for managed installs, or
-`ANIMA_HOME=<path> animactl services dashboard` for a specific home, to launch the dashboard without
-remembering the port.
+`npx -y @meetquinn/animactl@latest dashboard` for managed installs, or
+`ANIMA_HOME=<path> npx -y @meetquinn/animactl@latest services dashboard` for a specific home, to
+launch the dashboard without remembering the port.
 The agent service auto-starts newly runnable Slack-connected agents. Restart services after changing an already-running agent's provider, home, Slack tokens, or enabled state.
 
 ## Status
 
 ```bash
-ANIMA_HOME=<path> animactl services status
+ANIMA_HOME=<path> npx -y @meetquinn/animactl@latest services status
 ```
 
 Status output includes each service id (`agent` / `web`), pid if running, web URL when relevant, and log path.
@@ -50,7 +50,7 @@ Status output includes each service id (`agent` / `web`), pid if running, web UR
 ## Restart
 
 ```bash
-ANIMA_HOME=<path> animactl restart
+ANIMA_HOME=<path> npx -y @meetquinn/animactl@latest restart
 ```
 
 Managed restarts drain active agents before stopping services. Running agents are asked to reach a provider quiescent point after the current tool result and before the next tool call; their current item is then re-queued so the new worker resumes it with the persisted session. Queued items are not blockers and remain queued for the new worker. Use `--drain-timeout-ms <ms>` to tune how long the drain waits before failing honestly.
@@ -66,8 +66,8 @@ Same-environment restart from inside an active runtime is refused, because it wo
 ## Stop And Start
 
 ```bash
-ANIMA_HOME=<path> animactl services stop
-ANIMA_HOME=<path> animactl services start
+ANIMA_HOME=<path> npx -y @meetquinn/animactl@latest services stop
+ANIMA_HOME=<path> npx -y @meetquinn/animactl@latest services start
 ```
 
 `stop` is also refused from inside the same environment's active runtime, for the same reason.

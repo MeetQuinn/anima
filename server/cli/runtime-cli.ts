@@ -207,7 +207,7 @@ export function printRuntimeStatus(status: RuntimeStatus): void {
   if (!status.installed) {
     console.log('runtime: not installed');
     console.log(`dir: ${status.paths.runtimeDir}`);
-    console.log('Run `npx @meetquinn/animactl start` to install and start the local runtime.');
+    console.log('Run `npx -y @meetquinn/animactl@latest start` to install and start the local runtime.');
     return;
   }
   console.log(`runtime: ${status.packageName}@${status.version ?? 'unknown'}`);
@@ -307,7 +307,7 @@ async function installRuntimeForService(options: RuntimeCliOptions): Promise<{ p
 async function runDashboardCommand(): Promise<void> {
   const url = await managedDashboardUrl();
   if (!(await dashboardIsReachable(url))) {
-    console.error(`Dashboard is not reachable at ${url}. Run \`npx -y @meetquinn/animactl start\` first.`);
+    console.error(`Dashboard is not reachable at ${url}. Run \`npx -y @meetquinn/animactl@latest start\` first.`);
     process.exitCode = 1;
     return;
   }
