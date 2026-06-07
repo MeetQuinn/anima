@@ -10,6 +10,7 @@ import {
 
 export interface FeishuTranscriptRequest {
   chatId: string;
+  chatName?: string;
   limit: number;
 }
 
@@ -31,6 +32,7 @@ function feishuTranscriptLine(message: FeishuConversationMessage, request: Feish
   const fields = [
     'platform=feishu',
     `chat_id=${chatId}`,
+    ...(request.chatName ? [`chat_name=${quoteEnvelopeValue(request.chatName)}`] : []),
     ...(message.threadId ? [`thread_id=${message.threadId}`] : []),
     `message_id=${message.messageId}`,
     `time=${feishuTimestampToIso(message.createTime)}`,
@@ -117,4 +119,8 @@ function feishuTimestampToIso(timestamp: string | undefined): string {
   const millis = value > 10_000_000_000 ? value : value * 1000;
   const date = new Date(millis);
   return Number.isFinite(date.getTime()) ? date.toISOString() : timestamp || 'unknown';
+}
+
+function quoteEnvelopeValue(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }

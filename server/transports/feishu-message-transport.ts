@@ -1,11 +1,18 @@
-import { createFeishuEventDispatcher, createFeishuWsClient } from '../feishu/client.js';
-import { feishuMessageMentionsBot, feishuReceiveMessageEventFromData, normalizeFeishuMessage } from '../feishu/events.js';
+import { createFeishuEventDispatcher, createFeishuMessageClient, createFeishuWsClient } from '../feishu/client.js';
+import { FeishuDirectoryService, feishuDirectoryId } from '../feishu/directory.service.js';
+import {
+  feishuMessageMentionsBot,
+  feishuReceiveMessageEventFromData,
+  normalizeFeishuMessage,
+  type FeishuReceiveMessageEvent,
+} from '../feishu/events.js';
 import { agentFeishuServiceForAgent } from '../agents/agent-feishu.service.js';
 import { feishuRuntimeDecision, type FeishuRuntimeDecision } from '../inbox/slack-subscription.service.js';
 import { WakeQueueService, type WakeQueueEnqueueResult } from '../inbox/wake-queue.service.js';
 import type { FeishuConfig } from '../../shared/agent-config.js';
 import type { FeishuInboxItem } from '../../shared/inbox.js';
 import type { MessageTransport } from './message-transport.js';
+import type { FeishuMessageClient } from '../feishu/client.js';
 
 interface FeishuWsClient {
   close(params?: { force?: boolean }): void;
@@ -19,6 +26,7 @@ export interface FeishuMessageTransportOptions {
 }
 
 export interface FeishuMessageTransportDeps {
+  createMessageClient?(config: FeishuConfig): FeishuMessageClient;
   createWsClient?(config: FeishuConfig): FeishuWsClient;
 }
 
@@ -59,7 +67,7 @@ export class FeishuMessageTransport implements MessageTransport {
       console.log(JSON.stringify(feishuIgnoredLog(this.options.agentRuntimeKind), null, 2));
       return;
     }
-    const event = normalizeFeishuMessage({
+    let event = normalizeFeishuMessage({
       appId: this.options.config.appId,
       botOpenId: this.options.config.botOpenId,
       event: receiveEvent,
@@ -68,6 +76,7 @@ export class FeishuMessageTransport implements MessageTransport {
       console.log(JSON.stringify(feishuIgnoredLog(this.options.agentRuntimeKind), null, 2));
       return;
     }
+    event = await this.enrichDirectory(event, receiveEvent);
     this.maybeSyncDisplayInfo();
     const duplicate = Boolean(await this.options.queue.find(event.id));
     const runtimeDecision = await feishuRuntimeDecision(event, {
@@ -98,6 +107,29 @@ export class FeishuMessageTransport implements MessageTransport {
       .finally(() => {
         this.displayInfoSyncInFlight = false;
       });
+  }
+
+  private async enrichDirectory(
+    event: FeishuInboxItem,
+    receiveEvent: FeishuReceiveMessageEvent,
+  ): Promise<FeishuInboxItem> {
+    const directoryId = feishuDirectoryId({
+      appId: this.options.config.appId,
+      tenantKey: event.tenantKey,
+    });
+    if (!directoryId) return event;
+    const client = this.deps.createMessageClient?.(this.options.config) ?? createFeishuMessageClient(this.options.config);
+    try {
+      return await new FeishuDirectoryService({ directoryId }).enrichInboxItem({
+        client,
+        item: event,
+        receiveEvent,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`Feishu directory enrichment failed: ${message}`);
+      return event;
+    }
   }
 }
 

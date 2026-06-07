@@ -93,6 +93,21 @@ export interface FeishuMessageListResult {
   nextCursor?: string;
 }
 
+export interface FeishuChatInfo {
+  avatarUrl?: string;
+  chatId: string;
+  chatName?: string;
+  chatType?: string;
+}
+
+export interface FeishuUserBasicInfo {
+  i18nName?: Record<string, string>;
+  name?: string;
+  openId: string;
+  unionId?: string;
+  userId?: string;
+}
+
 export interface FeishuConversationMessage {
   bodyContent?: string;
   chatId?: string;
@@ -145,7 +160,9 @@ export interface FeishuReactionRemoveInput {
 export interface FeishuMessageClient {
   addReaction(input: FeishuReactionAddInput): Promise<FeishuReactionAddResult>;
   downloadMessageResource(input: FeishuMessageResourceDownloadInput): Promise<FeishuMessageResourceDownload>;
+  getChat?(input: { chatId: string }): Promise<FeishuChatInfo | undefined>;
   getMessage?(input: FeishuMessageGetInput): Promise<FeishuConversationMessage | undefined>;
+  getUserBasics?(input: { openIds: string[] }): Promise<FeishuUserBasicInfo[]>;
   listMessages(input: FeishuMessageListInput): Promise<FeishuMessageListResult>;
   removeReaction(input: FeishuReactionRemoveInput): Promise<void>;
   replyText(input: FeishuTextReplyInput): Promise<FeishuTextSendResult>;
@@ -374,7 +391,7 @@ interface FeishuSdkMessageUpdateInput {
 }
 
 interface FeishuSdkClient {
-  request?(input: { method: 'GET'; url: string }): Promise<unknown>;
+  request?(input: { data?: unknown; method: 'GET' | 'POST'; url: string }): Promise<unknown>;
   im: {
     file?: {
       create(input: FeishuSdkFileCreateInput): Promise<FeishuSdkFileCreateResult | null>;
@@ -552,6 +569,65 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
         },
       });
       return feishuConversationMessagesFromSdk(response.data?.items)[0];
+    },
+    async getChat(input) {
+      if (!client.request) {
+        throw new Error('Feishu SDK client does not support generic request');
+      }
+      const response = asRecord(await client.request({
+        method: 'GET',
+        url: `/open-apis/im/v1/chats/${encodeURIComponent(input.chatId)}`,
+      }));
+      const code = numberField(response, 'code');
+      if (code !== undefined && code !== 0) {
+        throw new Error(`Feishu chat info request failed: ${stringField(response, 'msg') ?? `code ${code}`}`);
+      }
+      const data = asRecord(response?.data);
+      const chat = asRecord(data?.chat) ?? data;
+      const chatId = stringField(chat, 'chat_id') ?? input.chatId;
+      const avatarUrl = stringField(chat, 'avatar') ?? stringField(chat, 'avatar_url');
+      const chatName = stringField(chat, 'name');
+      const chatType = stringField(chat, 'chat_type');
+      return {
+        ...(avatarUrl ? { avatarUrl } : {}),
+        chatId,
+        ...(chatName ? { chatName } : {}),
+        ...(chatType ? { chatType } : {}),
+      };
+    },
+    async getUserBasics(input) {
+      if (!client.request) {
+        throw new Error('Feishu SDK client does not support generic request');
+      }
+      const openIds = [...new Set(input.openIds.map((id) => id.trim()).filter(Boolean))].slice(0, 10);
+      if (!openIds.length) return [];
+      const response = asRecord(await client.request({
+        data: { user_ids: openIds },
+        method: 'POST',
+        url: '/open-apis/contact/v3/users/basic_batch?user_id_type=open_id',
+      }));
+      const code = numberField(response, 'code');
+      if (code !== undefined && code !== 0) {
+        throw new Error(`Feishu user basic request failed: ${stringField(response, 'msg') ?? `code ${code}`}`);
+      }
+      const data = asRecord(response?.data);
+      const users = Array.isArray(data?.users) ? data.users : [];
+      return users.flatMap((entry) => {
+        const user = asRecord(entry);
+        const openId = stringField(user, 'user_id') ?? stringField(user, 'open_id');
+        if (!openId) return [];
+        const i18nName = recordOfStrings(asRecord(user?.i18n_name));
+        const name = stringField(user, 'name');
+        const unionId = stringField(user, 'union_id');
+        const userId = stringField(user, 'user_id');
+        return [{
+          ...(i18nName ? { i18nName } : {}),
+          ...(name ? { name } : {}),
+          openId,
+          ...(unionId ? { unionId } : {}),
+          ...(userId && userId !== openId ? { userId } : {}),
+        }];
+      });
     },
     async updatePost(input) {
       if (!client.im.message.update) {
@@ -883,6 +959,15 @@ function isFeishuImageMimetype(mimetype: string): boolean {
 
 function isFeishuImageName(filename: string): boolean {
   return /\.(bmp|gif|ico|jpe?g|png|tiff?|webp)$/i.test(filename);
+}
+
+function recordOfStrings(record: Record<string, unknown> | undefined): Record<string, string> | undefined {
+  if (!record) return undefined;
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (typeof value === 'string' && value.trim()) result[key] = value;
+  }
+  return Object.keys(result).length ? result : undefined;
 }
 
 function feishuFileTypeFor(input: FeishuFileUploadInput): FeishuSdkFileType {
