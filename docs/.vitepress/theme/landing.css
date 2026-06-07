@@ -238,7 +238,7 @@
 
 /* "The team that builds Anima" proof grid. The sub carries the
    AI-teammate disclosure and stays visible at every breakpoint. */
-.landing-team-sub {
+.landing-home .landing-team-sub {
   max-width: 660px;
   margin: 16px auto 0;
   color: var(--landing-muted);
@@ -300,7 +300,7 @@
   line-height: 1.6;
 }
 
-.landing-dogfood-line {
+.landing-home .landing-dogfood-line {
   max-width: 760px;
   margin: 24px auto 0;
   color: var(--landing-muted);
