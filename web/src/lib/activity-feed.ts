@@ -54,7 +54,7 @@ function hiddenRuntimeEvent(eventType: string): boolean {
 }
 
 export interface SurfaceChip {
-  kind: 'channel' | 'thread' | 'dm' | 'reminder' | 'onboarding';
+  kind: 'channel' | 'thread' | 'dm' | 'reminder' | 'onboarding' | 'agent';
   label: string;
 }
 
@@ -220,6 +220,18 @@ export function buildActivityFeed(
           timestamp: activity.createdAt,
           surface: surfaceChipForOutbound(activity),
           isEdit: tool === 'anima.message.update' || effect === 'slack.message.update',
+        });
+        continue;
+      }
+      if (effect === 'agent.relay.send') {
+        const text = activity.payload?.['text'];
+        items.push({
+          kind: 'message-out',
+          activity,
+          text: typeof text === 'string' ? text : '',
+          timestamp: activity.createdAt,
+          surface: surfaceChipForOutbound(activity),
+          isEdit: false,
         });
         continue;
       }
@@ -449,6 +461,16 @@ function inboxItemForMessage(message: AgentMessageRecord): InboxItem {
       text: message.text,
     };
   }
+  if (message.platform === 'local') {
+    return {
+      ...base,
+      fromAgentId: message.actorUserId ?? message.channelId ?? '',
+      fromName: message.actor ?? message.actorDisplayName ?? message.actorUserId ?? 'Agent',
+      kind: 'agent_message',
+      text: message.text,
+      ...(message.threadTs ? { replyTo: message.threadTs } : {}),
+    };
+  }
   if (message.kind === 'choice_response') {
     return {
       ...base,
@@ -533,7 +555,10 @@ function activityForMessage(message: AgentMessageRecord): ActivityRecord {
     threadTs: message.threadTs,
     ts: message.messageTs,
   };
-  if (message.kind === 'message') {
+  if (message.platform === 'local') {
+    payload['effect'] = 'agent.relay.send';
+    payload['messageId'] = message.messageTs;
+  } else if (message.kind === 'message') {
     payload['effect'] = message.platform === 'feishu'
       ? 'feishu.message.send'
       : message.isEdit ? 'slack.message.update' : 'slack.message.send';
@@ -609,6 +634,7 @@ function surfaceChipForEvent(event: InboxItem, wakeMeta?: ReminderWakeMeta): Sur
   }
   if (event.kind === 'choice_response') return surfaceChipForChoice(event);
   if (event.kind === 'feishu') return surfaceChipForFeishu(event);
+  if (event.kind === 'agent_message') return { kind: 'agent', label: 'relay' };
   if (event.kind !== 'slack') return { kind: 'onboarding', label: 'Onboarding' };
   return surfaceChipForSlack(event);
 }

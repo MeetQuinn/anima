@@ -1,4 +1,5 @@
 import type {
+  AgentMessageInboxItem,
   ChoiceResponseInboxItem,
   FeishuInboxItem,
   FeishuOnboardingInboxItem,
@@ -67,6 +68,9 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
   if (event.kind === 'feishu') {
     return buildFeishuDeliveryPrompt(event);
   }
+  if (event.kind === 'agent_message') {
+    return buildAgentMessageDeliveryPrompt(event);
+  }
   if (event.id.startsWith('agent-onboarding:')) {
     return buildLegacyOnboardingSlackDeliveryPrompt(event);
   }
@@ -97,6 +101,20 @@ ${event.text}
 
 Reply target:
 Use \`anima message send --channel ${event.target.receiveId}\` to reply to your owner.`;
+}
+
+function buildAgentMessageDeliveryPrompt(event: AgentMessageInboxItem): string {
+  const replyPart = event.replyTo ? ` reply_to=${event.replyTo}` : '';
+  const envelope = `[platform=local from=${event.fromAgentId} name=${event.fromName} message_id=${event.id}${replyPart} time=${event.receivedAt}] ${event.fromName}: ${event.text}`;
+  return [
+    `New local agent message:\n\n${envelope}`,
+    [
+      'This is a local agent-to-agent message. It was not sent on any chat platform — it lives only in this Anima home and shows in the dashboard log.',
+      'Reply target:',
+      `Use \`anima relay send --to ${event.fromAgentId} --reply-to ${event.id}\` to reply to ${event.fromName}.`,
+      'Use `anima relay list` to see which local agents you can reach.',
+    ].join('\n'),
+  ].join('\n\n');
 }
 
 function buildSlackDeliveryPrompt(event: SlackEvent): string {
