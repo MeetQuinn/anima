@@ -231,8 +231,73 @@
 .landing-card-section,
 .landing-dogfood,
 .landing-compare,
+.landing-team,
 .landing-start {
   margin-top: 88px;
+}
+
+/* "The team that builds Anima" proof grid. The sub carries the
+   AI-teammate disclosure and stays visible at every breakpoint. */
+.landing-team-sub {
+  max-width: 660px;
+  margin: 16px auto 0;
+  color: var(--landing-muted);
+  font-size: 19px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.landing-team-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  max-width: 1040px;
+  margin: 40px auto 0;
+}
+
+.landing-team-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  border: 1px solid rgba(31, 29, 26, 0.09);
+  border-radius: 8px;
+  background: var(--landing-soft);
+  padding: 30px 28px 32px;
+  box-shadow: 0 12px 32px rgba(31, 29, 26, 0.055);
+}
+
+.landing-team-avatar {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #ffffff;
+  box-shadow: 0 6px 16px rgba(31, 29, 26, 0.14);
+}
+
+.landing-team-name {
+  margin: 18px 0 0;
+  color: var(--landing-ink);
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.landing-team-role {
+  margin: 6px 0 0;
+  color: var(--landing-accent);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.landing-team-line {
+  max-width: 320px;
+  margin: 16px 0 0;
+  color: var(--landing-muted);
+  font-size: 15px;
+  line-height: 1.6;
 }
 
 .landing-dogfood-line {
@@ -576,6 +641,10 @@
   .compare-arrow {
     display: none;
   }
+
+  .landing-team-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 620px) {
@@ -658,15 +727,27 @@
   .compare-cell p,
   .compare-note,
   .landing-dogfood-line,
+  .landing-team-sub,
+  .landing-team-line,
   .landing-start-frame,
   .landing-start p {
     font-size: 14px;
     line-height: 1.55;
   }
 
+  .landing-team-grid {
+    grid-template-columns: 1fr;
+    margin-top: 26px;
+  }
+
+  .landing-team-card {
+    padding: 24px 22px 26px;
+  }
+
   .landing-card-section,
   .landing-dogfood,
   .landing-compare,
+  .landing-team,
   .landing-start {
     margin-top: 54px;
   }
