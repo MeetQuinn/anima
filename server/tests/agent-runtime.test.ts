@@ -20,7 +20,7 @@ import type { TestState } from './helpers/state.js';
 async function runtimeInput(runtime: AgentRuntime, context: RuntimeItemContext, state?: TestState) {
   return new AgentRuntimeBridge(runtime).runInput({
     context,
-    profile: { displayName: 'Anima' },
+    profile: { displayName: 'Anima', transports: { feishu: false, slack: true } },
     session: state?.sessions[context.agentId],
   });
 }

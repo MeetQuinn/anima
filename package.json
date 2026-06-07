@@ -92,6 +92,7 @@
     "fastify": "^5.8.5",
     "ignore": "^7.0.5",
     "luxon": "^3.7.2",
+    "mustache": "^4.2.0",
     "zod": "^4.4.3"
   },
   "lint-staged": {

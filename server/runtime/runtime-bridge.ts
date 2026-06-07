@@ -73,7 +73,8 @@ export class AgentRuntimeBridge {
   private async promptContext(event: InboxItem, agentId: string): Promise<CodeAgentPromptContext> {
     if (event.kind !== 'reminder') return {};
     const reminder = await reminderServiceForAgent(agentId).findReminder(event.reminderId);
-    return reminder ? { reminder } : {};
+    if (!reminder) throw new Error(`Reminder context not found: ${event.reminderId}`);
+    return { reminder };
   }
 
   private effects(context: RuntimeItemContext, onActivity?: () => void): AgentRuntimeEffects {

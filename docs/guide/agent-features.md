@@ -1,8 +1,7 @@
-# Anima feature reference
+# Agent feature reference
 
 Quick how-tos for Anima's own features. When you are about to use an `anima` command you are
-not sure about, read the relevant entry here first. Anima maintains this file and refreshes it on
-start, so do not edit it.
+not sure about, read the relevant entry here first.
 
 ## Per-agent environment values and secrets (`anima env`)
 

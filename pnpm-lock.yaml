@@ -35,6 +35,9 @@ importers:
       luxon:
         specifier: ^3.7.2
         version: 3.7.2
+      mustache:
+        specifier: ^4.2.0
+        version: 4.2.0
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -99,6 +102,9 @@ importers:
       luxon:
         specifier: ^3.7.2
         version: 3.7.2
+      mustache:
+        specifier: ^4.2.0
+        version: 4.2.0
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -132,6 +138,9 @@ importers:
       luxon:
         specifier: ^3.7.2
         version: 3.7.2
+      mustache:
+        specifier: ^4.2.0
+        version: 4.2.0
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -139,6 +148,9 @@ importers:
       '@types/luxon':
         specifier: ^3.7.1
         version: 3.7.1
+      '@types/mustache':
+        specifier: ^4.2.6
+        version: 4.2.6
       '@types/node':
         specifier: ^24.10.0
         version: 24.12.3
@@ -1565,6 +1577,9 @@ packages:
 
   '@types/ms@2.1.0':
     resolution: {integrity: sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==}
+
+  '@types/mustache@4.2.6':
+    resolution: {integrity: sha512-t+8/QWTAhOFlrF1IVZqKnMRJi84EgkIK5Kh0p2JV4OLywUvCwJPFxbJAl7XAow7DVIHsF+xW9f1MVzg0L6Szjw==}
 
   '@types/node@24.12.3':
     resolution: {integrity: sha512-8oljBDGun9cIsZRJR6fkihn0TSXJI0UDOOhncYaERq6M0JMDoPLxyscwruJcb4GKS6dvK/d8xebYBg27h/duaQ==}
@@ -3415,6 +3430,10 @@ packages:
     peerDependenciesMeta:
       typescript:
         optional: true
+
+  mustache@4.2.0:
+    resolution: {integrity: sha512-71ippSywq5Yb7/tVYyGbkBggbU8H3u5Rz56fH60jGFgr8uHwxs+aSKeqmluIVzM0m0kB7xQjKS6qPfd0b2ZoqQ==}
+    hasBin: true
 
   mute-stream@4.0.0:
     resolution: {integrity: sha512-gSrprq0fJ3EiOErzjdIZrjysVVmJ4uu1QWfCDss5LypA5OXvrMje5Ym5z6V6RLyJ2eF87lasX7t6a0AnFvZblg==}
@@ -5697,6 +5716,8 @@ snapshots:
 
   '@types/ms@2.1.0': {}
 
+  '@types/mustache@4.2.6': {}
+
   '@types/node@24.12.3':
     dependencies:
       undici-types: 7.16.0
@@ -7961,6 +7982,8 @@ snapshots:
       typescript: 6.0.3
     transitivePeerDependencies:
       - '@types/node'
+
+  mustache@4.2.0: {}
 
   mute-stream@4.0.0: {}
 

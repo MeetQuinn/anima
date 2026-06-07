@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolveAnimaReferencePaths, type AnimaReferencePaths } from './anima-reference.js';
+import { renderPromptTemplate } from './prompt-template.js';
 
 const TEMPLATE_FILE = 'runtime-standing-prompt.md';
 const DEFAULT_ROLE = 'general-purpose Anima agent';
@@ -13,49 +14,26 @@ export interface AnimaRuntimeProfile {
   displayName: string;
   referencePaths?: AnimaReferencePaths;
   role?: string;
+  transports: {
+    feishu: boolean;
+    slack: boolean;
+  };
 }
 
 export function buildAnimaRuntimeProfile(profile: AnimaRuntimeProfile): string {
   const name = profile.displayName.trim() || 'Anima agent';
   const role = stripTrailingPeriod(profile.role?.trim() || DEFAULT_ROLE);
-  return readBundledTemplate()
-    .replaceAll('{{name}}', name)
-    .replaceAll('{{role}}', role)
-    .replaceAll(
-      '{{animaReferenceSection}}',
-      buildAnimaReferenceSection(profile.referencePaths ?? resolveAnimaReferencePaths()),
-    );
-}
-
-function buildAnimaReferenceSection(referencePaths: AnimaReferencePaths): string {
-  const lines = [
-    'For Anima feature how-tos, read `ANIMA_FEATURES.md` in your home before using an unfamiliar `anima` command.',
-  ];
-
-  if (referencePaths.docsPath) {
-    lines.push(
-      `Bundled Anima docs are available at \`${referencePaths.docsPath}\`. Use them for Anima behavior, configuration, architecture, and operator questions before guessing.`,
-      'Good starting points: `guide/how-an-agent-works.md`, `guide/working-with-your-agent.md`, `guide/using-the-dashboard.md`, `architecture/overview.md`, and `runtime-providers.md`.',
-    );
-  } else {
-    lines.push(
-      'Bundled Anima docs were not found in this runtime; use `anima <command> --help` and ask a teammate when behavior or configuration is unclear.',
-    );
-  }
-
-  lines.push(
-    "Anima's source is public at <https://github.com/MeetQuinn/anima>. When a local checkout isn't available, read it there for behavior, configuration, and architecture.",
-  );
-
-  if (referencePaths.sourcePath) {
-    lines.push(
-      `A local Anima source checkout is available at \`${referencePaths.sourcePath}\`. Treat it as reference unless the user explicitly asks you to modify Anima itself.`,
-    );
-  }
-
-  lines.push('For exact CLI flags, run `anima <command> --help` before guessing.');
-
-  return lines.join('\n');
+  const referencePaths = profile.referencePaths ?? resolveAnimaReferencePaths();
+  return renderPromptTemplate(readBundledTemplate(), {
+    docsPath: referencePaths.docsPath ?? '',
+    feishu: profile.transports.feishu,
+    hasDocs: Boolean(referencePaths.docsPath),
+    hasLocalSource: Boolean(referencePaths.sourcePath),
+    name,
+    role,
+    slack: profile.transports.slack,
+    sourcePath: referencePaths.sourcePath ?? '',
+  });
 }
 
 function readBundledTemplate(): string {

@@ -114,7 +114,7 @@ test('normalizes Feishu file messages into prompt attachments', () => {
   assert.match(prompt, /ou_alice: \[file\] report\.pdf/);
   assert.match(prompt, /<attached_files>/);
   assert.match(prompt, /<file id="feishu:message:om_file_message:file:file_key_report" name="report\.pdf" mimetype="application\/octet-stream" size_bytes="42" \/>/);
-  assert.match(prompt, /Use `anima message send --channel oc_test_chat` to post back to this Feishu chat/);
+  assert.doesNotMatch(prompt, /Reply target:|Feishu API access:/);
 
   const message = messageFromInboxItem(item);
   assert.deepEqual(message?.files, [{
@@ -123,6 +123,17 @@ test('normalizes Feishu file messages into prompt attachments', () => {
     mimetype: 'application/octet-stream',
     sizeBytes: 42,
   }]);
+});
+
+test('Feishu delivery prompt includes attention suggestions', () => {
+  const item = normalizeFeishuMessage({ event: makeFeishuEvent() });
+  assert.ok(item);
+  const prompt = buildCodeAgentDeliveryPrompt({
+    ...item,
+    attentionSuggestion: 'Mute with `anima subscription mute --channel oc_test_chat`.',
+  });
+
+  assert.match(prompt, /Attention suggestion:\nMute with `anima subscription mute --channel oc_test_chat`\./);
 });
 
 test('normalizes Feishu image messages into fetchable prompt attachments', () => {
@@ -238,16 +249,7 @@ test('Feishu delivery prompt is platform-aware', () => {
 
   assert.equal(
     buildCodeAgentDeliveryPrompt(item),
-    [
-      'New Feishu message:\n\n[platform=feishu chat=p2p chat_id=oc_test_chat message_id=om_test_message time=2026-06-02T14:20:00.000Z user_id=ou_alice] ou_alice: hello from Feishu',
-      [
-        'Reply target:',
-        'Use `anima message send --channel oc_test_chat` to post back to this Feishu chat.',
-        'Use `anima message send --channel oc_test_chat --thread-ts om_test_message` to reply in this message\'s topic.',
-        'Use `anima message send --channel <chat_id>` to send to an explicit Feishu chat.',
-        'Feishu API access: use `FEISHU_TENANT_ACCESS_TOKEN`, `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, and `FEISHU_API_BASE_URL` from env when you need Feishu APIs. Do not print these values.',
-      ].join('\n'),
-    ].join('\n\n'),
+    'New Feishu message:\n\n[platform=feishu chat=p2p chat_id=oc_test_chat message_id=om_test_message time=2026-06-02T14:20:00.000Z user_id=ou_alice] ou_alice: hello from Feishu',
   );
 });
 
@@ -663,9 +665,9 @@ test('Feishu onboarding prompt targets the owner open_id without requiring an ow
   });
 
   assert.match(text, /^Agent onboarding:/);
-  assert.match(text, /\[owner=feishu-owner channel=ou_owner time=2026-01-01T00:00:00\.000Z\]/);
+  assert.match(text, /\[platform=feishu owner=feishu-owner channel=ou_owner receive_id_type=open_id time=2026-01-01T00:00:00\.000Z\]/);
   assert.match(text, /Your owner is the person who connected you to Feishu/);
-  assert.match(text, /Use `anima message send --channel ou_owner` to reply to your owner/);
+  assert.doesNotMatch(text, /Reply target:|Use `anima message send/);
   assert.doesNotMatch(text, /Slack|Lark|<@|ou_owner.*owner is/);
 });
 
