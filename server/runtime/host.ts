@@ -306,7 +306,10 @@ export class RuntimeHost {
     }
 
     this.logger.log(`Agent ${agent.id}: config changed; reloading runtime.`);
-    await running.handle.stop({ drainActive: true });
+    await running.handle.stop({
+      drainActive: true,
+      forceAfterMs: this.forceRestartTimeoutMs,
+    });
     this.agentHandles.delete(agent.id);
     await this.startAndStore(agent, nextFingerprint);
   }
