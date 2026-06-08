@@ -380,9 +380,6 @@ function RecommendedPermissionsState({
               <div className="font-serif text-[13px] font-semibold leading-snug text-text">
                 {scope.label}
               </div>
-              <p className="mt-0.5 font-sans text-[12px] leading-snug text-text-muted">
-                {scope.description}
-              </p>
             </div>
           </li>
         ))}
@@ -426,7 +423,7 @@ function RecommendedPermissionsState({
           onClick={onContinue}
           className="inline-flex min-h-9 items-center justify-center rounded-sm px-3 font-sans text-[12px] text-text-muted underline decoration-text-subtle/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
         >
-          Finish without these for now
+          Skip
         </button>
       </div>
     </div>
