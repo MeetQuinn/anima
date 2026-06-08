@@ -1557,6 +1557,105 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
   }
 });
 
+test('kimi-cli ACP permission requests select the Kimi-provided allow option', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'kimi-acp-permission-calls.jsonl');
+      const permissionResultPath = join(stateDir, 'kimi-acp-permission-result.json');
+      const fakeKimi = join(stateDir, 'kimi');
+      await writeFile(
+        fakeKimi,
+        [
+          '#!/usr/bin/env node',
+          "const fs = require('fs');",
+          "process.stdin.setEncoding('utf8');",
+          "let buffer = '';",
+          "let promptRequestId = null;",
+          'function send(message) { process.stdout.write(JSON.stringify(message) + "\\n"); }',
+          'function update(update) { send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "kimi-session-permission", update } }); }',
+          'process.stdin.on("data", (chunk) => {',
+          '  buffer += chunk;',
+          '  const lines = buffer.split(/\\r?\\n/);',
+          '  buffer = lines.pop() || "";',
+          '  for (const line of lines) {',
+          '    if (!line.trim()) continue;',
+          '    const msg = JSON.parse(line);',
+          '    fs.appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + "\\n");',
+          '    if (msg.id === "permission-1" && msg.result) {',
+          '      fs.writeFileSync(process.env.PERMISSION_RESULT_PATH, JSON.stringify(msg.result));',
+          '      if (msg.result.outcome?.outcome !== "selected") process.exit(45);',
+          '      if (msg.result.outcome?.optionId !== "allow_always_option") process.exit(46);',
+          '      update({ sessionUpdate: "tool_call", toolCallId: "kimi-tool-approved", title: "Bash", kind: "execute", rawInput: { command: "pwd" } });',
+          '      update({ sessionUpdate: "tool_call_update", toolCallId: "kimi-tool-approved", status: "completed", rawOutput: "/tmp\\n" });',
+          '      update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "permission approved" } });',
+          '      send({ jsonrpc: "2.0", id: promptRequestId, result: { stopReason: "end_turn" } });',
+          '      return;',
+          '    }',
+          '    if (msg.method === "initialize") {',
+          '      send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, serverInfo: { name: "Kimi Code CLI", version: "0.11.0" }, agentCapabilities: { loadSession: true } } });',
+          '      return;',
+          '    }',
+          '    if (msg.method === "session/new") {',
+          '      send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "kimi-session-permission" } });',
+          '      return;',
+          '    }',
+          '    if (msg.method === "session/prompt") {',
+          '      promptRequestId = msg.id;',
+          '      send({',
+          '        jsonrpc: "2.0",',
+          '        id: "permission-1",',
+          '        method: "session/request_permission",',
+          '        params: {',
+          '          sessionId: "kimi-session-permission",',
+          '          options: [',
+          '            { optionId: "reject_once_option", kind: "reject_once", name: "Reject once" },',
+          '            { optionId: "allow_once_option", kind: "allow_once", name: "Allow once" },',
+          '            { optionId: "allow_always_option", kind: "allow_always", name: "Allow always" }',
+          '          ]',
+          '        }',
+          '      });',
+          '      return;',
+          '    }',
+          '  }',
+          '});',
+        ].join('\n'),
+        'utf8',
+      );
+      await chmod(fakeKimi, 0o755);
+
+      const ctx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-kimi-permission',
+          teamId: 'T-demo',
+          text: 'Run a Kimi shell command.',
+          ts: '1770000650.000001',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath, PERMISSION_RESULT_PATH: permissionResultPath }),
+        kind: 'kimi-cli',
+      });
+      const result = await runtime.run(await runtimeInput(runtime, ctx, await loadState()));
+      assert.equal(result.text, 'permission approved');
+      const permissionResult = JSON.parse(await readFile(permissionResultPath, 'utf8')) as {
+        outcome?: { optionId?: string; outcome?: string };
+      };
+      assert.deepEqual(permissionResult.outcome, {
+        optionId: 'allow_always_option',
+        outcome: 'selected',
+      });
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('kimi-cli closed stdin startup failure stays on provider promise', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
   const unhandledRejections: unknown[] = [];
