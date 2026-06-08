@@ -97,7 +97,7 @@ export class KimiCliAgentRuntime implements AgentRuntime {
       let controller!: KimiAcpController;
       controller = new KimiAcpController(
         startChildProcess({
-          args: ['acp'],
+          args: ['--yolo', 'acp'],
           bufferOutput: false,
           command: KIMI_COMMAND,
           cwd: input.cwd,
