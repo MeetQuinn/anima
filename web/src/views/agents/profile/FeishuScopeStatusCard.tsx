@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { fetchAgentFeishuScopeStatus } from '@/api/agents';
 import { queryKeys } from '@/lib/query-keys';
+import type { AgentFeishuScopeStatus } from '@shared/agent-config';
 
 interface Props {
   agentId: string;
@@ -27,7 +28,8 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
     recheckResult?.agentId === agentId && recheckResult.appId === currentAppId
       ? recheckResult.state
       : null;
-  const state = data?.profileName.state;
+  const recommended = data?.recommended;
+  const state = recommended?.state ?? data?.profileName.state;
   if (
     currentRecheckResult !== 'granted' &&
     !isError &&
@@ -35,20 +37,20 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
   )
     return null;
 
-  const scope = data?.profileName.scope ?? 'contact:user.basic_profile:readonly';
-  const authUrl = data?.profileName.authUrl;
+  const authUrl = recommended?.authUrl ?? data?.profileName.authUrl;
   const confirmedMissing = state === 'missing';
   const title = confirmedMissing
-    ? "Teammate names aren't available yet"
-    : "Teammate name access isn't confirmed";
+    ? "Recommended Feishu permissions aren't fully authorized yet"
+    : "Recommended Feishu permission access isn't confirmed";
   const body = confirmedMissing
-    ? 'Your agents can send and receive messages in Feishu. To let them address teammates by name instead of an ID, authorize one more permission in the Feishu admin console.'
-    : "Anima couldn't confirm whether this Feishu app grants profile-name access. If your agents only see IDs instead of names, authorize this permission in the Feishu admin console.";
+    ? 'Your agents can send and receive messages in Feishu. To let them use teammate names, look people up by email or phone, and invite people or bots into chats, authorize the recommended permissions in the Feishu admin console.'
+    : "Anima couldn't confirm whether this Feishu app grants the recommended permissions. If your agents only see IDs, cannot look people up by email or phone, or cannot invite members to chats, authorize these permissions in the Feishu admin console.";
+  const scopes = recommendedScopesForDisplay(data);
 
   async function handleRecheck() {
     setRecheckResult(null);
     const result = await refetch();
-    const nextState = result.data?.profileName.state;
+    const nextState = result.data?.recommended.state ?? result.data?.profileName.state;
     if (nextState === 'granted' || nextState === 'missing') {
       setRecheckResult({ agentId, appId: result.data?.appId, state: nextState });
     }
@@ -60,7 +62,8 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
         <div className="flex items-start gap-2">
           <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-health-ok" />
           <p className="font-serif text-[13px] leading-snug text-text">
-            Teammate-name access is on. Your agents can now use teammates' names.
+            Recommended Feishu permissions are on. Your agents can now use teammate names, look
+            people up by email or phone, and invite members to chats.
           </p>
         </div>
       </div>
@@ -74,22 +77,31 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
         <div className="min-w-0 flex-1">
           <div className="font-serif text-[14px] font-semibold text-text">{title}</div>
           <p className="mt-1 font-serif text-[13px] leading-snug text-text-muted">{body}</p>
-          <div className="mt-2 break-all font-mono text-[11px] text-text-subtle">
-            Required scope: {scope}
+          <div className="mt-2">
+            <div className="font-sans text-[11px] font-medium uppercase tracking-[0.08em] text-text-subtle">
+              Recommended scopes
+            </div>
+            <ul className="mt-1 space-y-0.5">
+              {scopes.map((scope) => (
+                <li key={scope} className="break-all font-mono text-[11px] text-text-subtle">
+                  {scope}
+                </li>
+              ))}
+            </ul>
           </div>
           {currentRecheckResult === 'missing' && (
             <div className="mt-2 font-sans text-[11px] text-text-subtle">
               Not authorized yet. If you just approved it in Feishu, give it a moment and recheck.
             </div>
           )}
-          {data?.profileName.message && currentRecheckResult !== 'missing' && (
+          {(recommended?.message ?? data?.profileName.message) && currentRecheckResult !== 'missing' && (
             <div className="mt-2 break-words font-sans text-[11px] text-text-subtle">
-              Last check: {data.profileName.message}
+              Last check: {recommended?.message ?? data?.profileName.message}
             </div>
           )}
-          {isError && !data?.profileName.message && (
+          {isError && !(recommended?.message ?? data?.profileName.message) && (
             <div className="mt-2 font-sans text-[11px] text-text-subtle">
-              Could not check Feishu name access.
+              Could not check Feishu permissions.
             </div>
           )}
           {authUrl && (
@@ -119,4 +131,10 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
       </div>
     </div>
   );
+}
+
+function recommendedScopesForDisplay(data: AgentFeishuScopeStatus | undefined): string[] {
+  if (data?.recommended.missingScopes.length) return data.recommended.missingScopes;
+  if (data?.recommended.scopes.length) return data.recommended.scopes.map((scope) => scope.scope);
+  return [data?.profileName.scope ?? 'contact:user.basic_profile:readonly'];
 }

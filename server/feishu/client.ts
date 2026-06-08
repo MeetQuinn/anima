@@ -548,15 +548,17 @@ export async function fetchFeishuAppScopes(
   });
 }
 
-export function feishuProfileNameScopeAuthUrl(appId: string): string | undefined {
+export function feishuScopeAuthUrl(appId: string, scopes: readonly string[]): string | undefined {
   const cleanAppId = appId.trim();
   if (!cleanAppId) return undefined;
-  const params = new URLSearchParams({
-    op_from: 'openapi',
-    q: FEISHU_PROFILE_NAME_SCOPE,
-    token_type: 'tenant',
-  });
-  return `https://open.feishu.cn/app/${encodeURIComponent(cleanAppId)}/auth?${params.toString()}`;
+  const cleanScopes = [...new Set(scopes.map((scope) => scope.trim()).filter(Boolean))];
+  if (!cleanScopes.length) return undefined;
+  const q = cleanScopes.map((scope) => encodeURIComponent(scope)).join(',');
+  return `https://open.feishu.cn/app/${encodeURIComponent(cleanAppId)}/auth?op_from=openapi&q=${q}&token_type=tenant`;
+}
+
+export function feishuProfileNameScopeAuthUrl(appId: string): string | undefined {
+  return feishuScopeAuthUrl(appId, [FEISHU_PROFILE_NAME_SCOPE]);
 }
 
 export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMessageClientDeps = {}): FeishuMessageClient {
