@@ -3,10 +3,7 @@ import { CheckCircle2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 
 import { fetchAgentFeishuScopeStatus } from '@/api/agents';
-import {
-  FeishuPublishNotAppliedVerdict,
-  FeishuRecommendedPermissionsChecklist,
-} from './FeishuRecommendedPermissionsChecklist';
+import { FeishuRecommendedPermissionsChecklist } from './FeishuRecommendedPermissionsChecklist';
 import { queryKeys } from '@/lib/query-keys';
 import {
   FEISHU_RECOMMENDED_SCOPES,
@@ -68,8 +65,7 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
         <div className="flex items-start gap-2">
           <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-health-ok" />
           <p className="font-serif text-[13px] leading-snug text-text">
-            Recommended Feishu permissions are on. Your agents can now use teammate names, see group
-            messages, look people up by email or phone, and invite members to chats.
+            Recommended Feishu permissions are on. Your Feishu bot is good to go.
           </p>
         </div>
       </div>
@@ -86,7 +82,6 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
       onTogglePerms={() => setShowPerms((v) => !v)}
       onRecheck={() => void handleRecheck()}
       isRechecking={isFetching}
-      banner={<FeishuPublishNotAppliedVerdict />}
       statusLine={
         <>
           {lastCheckMessage && currentRecheckResult !== 'missing' && (
@@ -108,9 +103,11 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
 function recommendedScopesForDisplay(
   data: AgentFeishuScopeStatus | undefined,
 ): AgentFeishuRecommendedScopeStatusItem[] {
+  // Always show the full recommended set (with each scope's grant flag) so the
+  // list can mark passed vs still-missing after a recheck instead of dropping
+  // the granted rows.
   if (data?.recommended.scopes.length) {
-    const missing = data.recommended.scopes.filter((scope) => !scope.granted);
-    return missing.length ? missing : data.recommended.scopes;
+    return data.recommended.scopes;
   }
   return FEISHU_RECOMMENDED_SCOPES.map((scope) => ({
     capability: scope.capability,
