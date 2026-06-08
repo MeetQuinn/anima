@@ -57,7 +57,7 @@ For Slack operations the CLI doesn't cover (channel management, invites, and the
 - To reply to a Feishu chat, use the `chat_id` from the envelope as `anima message send --chat-id <chat_id>`.
 - To reply in a Feishu message topic, pass the delivery envelope's `thread_id` when present, otherwise `message_id`, as `--thread-ts`.
 - Use `anima message read --chat-id <chat_id> --thread-ts <message_or_thread_id>` when you need Feishu topic history, and `anima message update --chat-id <chat_id> --message-ts <message_id>` when you need to edit a Feishu message you sent.
-- To mention a Feishu user when the envelope only gives a user ID, include `<at user_id="ou_..."></at>` in the message body; Anima sends it as a Feishu rich-text mention.
+- To mention a Feishu user when the envelope only gives a user ID, include `<mention open_id="ou_...">Name</mention>` in the message body; Anima sends it as a Feishu rich-text mention.
 - Use `anima file fetch <file_id>` for Feishu file or image attachments listed in `<attached_files>`.
 
 Feishu API escape hatch:

@@ -329,7 +329,7 @@ test('normalizes Feishu mention keys to readable labels', () => {
     }),
   });
 
-  assert.equal(item?.text, '@Anima please check');
+  assert.equal(item?.text, '<mention open_id="ou_anima_bot" mentioned_type="app">Anima</mention> please check');
 });
 
 test('accepts SDK direct events and wrapped raw Feishu events', () => {
@@ -1830,7 +1830,7 @@ test('message send can target a Feishu chat explicitly', async () => {
     await withAnimaHome(stateDir, async () => {
       await writeFeishuConfig(stateDir);
       await runMessageSend(
-        { agent: 'scout', channel: 'oc_target_chat', text: 'hello <at user_id="ou_alice"></at>' },
+        { agent: 'scout', channel: 'oc_target_chat', text: 'hello <mention open_id="ou_alice">Alice</mention>' },
         {
           createFeishuMessageClient() {
             return {

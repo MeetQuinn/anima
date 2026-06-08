@@ -26,7 +26,7 @@ test('Slack text helpers extract and replace mentions', () => {
   assert.deepEqual(extractSlackUserMentionIds('hi <@U123> and <@U456|legacy> and <@U123>'), ['U123', 'U456']);
   assert.equal(
     replaceSlackUserMentions('hi <@U123> and <@U456|legacy> and <@U789>', new Map([['U123', '@alice'], ['U456', '@bob']])),
-    'hi @alice and @bob and @U789',
+    'hi <mention user_id="U123">alice</mention> and <mention user_id="U456">bob</mention> and <mention user_id="U789">U789</mention>',
   );
   assert.deepEqual(extractSlackChannelMentionIds('see <#C123|product> and <#G456> and <#C123|product>'), ['C123', 'G456']);
   assert.equal(replaceSlackChannelMentions('see <#C123|product> and <#G456>', new Map([['C123', '#support']])), 'see #support and #G456');
