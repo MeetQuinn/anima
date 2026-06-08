@@ -23,8 +23,10 @@ Don't have one yet? Install and sign into one of these, then come back here:
 To confirm it's ready, run `claude --version` (or `codex --version`). You should see a version
 number, not an error.
 
-<!-- SCREENSHOT (Nora): coding-tool sign-in. The browser/login prompt after running `claude` (or `codex`),
-     with a callout on the "you're signed in" confirmation. Third-party UI: keep minimal + annotated. -->
+<!-- SCREENSHOT (Nora): ONE frame — the "it worked" confirmation. Terminal back at a ready prompt with
+     `claude --version` (or `codex --version`) returning a version number. Skip the OAuth login form
+     (most drift-prone vendor screen). Raw frame from a real authenticated install; Nora owns crop +
+     callout + de-identify. -->
 
 This is the most technical step in the whole setup. If you can install an app and sign into it, you
 can do this. Give it a few minutes. The tool's own page (linked above) walks you through it, and its
