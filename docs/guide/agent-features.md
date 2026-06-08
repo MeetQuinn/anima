@@ -95,8 +95,10 @@ Use deterministic identifiers only:
   `open_id`.
 - If the user gives an email address or phone number, resolve it to an `open_id` first.
 - If the user gives a tenant `user_id`, you may invite with `member_id_type=user_id`.
-- Do not guess from display name. If you only have a name, ask the user for an email, phone number,
-  `open_id`, or `user_id`.
+- Do not guess from display name. If you only have a name, first ask the user to mention the
+  teammate in Feishu and send the request again so Anima can read the stable ID from the mention
+  metadata. If they cannot mention the teammate, ask for an email, phone number, `open_id`, or
+  `user_id`.
 
 To resolve an email or phone number to an `open_id`, call Feishu's user ID lookup API:
 
@@ -109,7 +111,8 @@ curl -sS -X POST \
 ```
 
 Use only the fields you have. For example, omit `mobiles` when you only have an email address. If
-Feishu returns no matching user, ask the user for another deterministic identifier.
+Feishu returns no matching user, first ask the user to mention the teammate in Feishu and send the
+request again. If they cannot mention the teammate, ask for another deterministic identifier.
 
 After you have the target user's `open_id`, invite them with the chat-member API:
 
