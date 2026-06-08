@@ -47,8 +47,8 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
     ? "Recommended Feishu permissions aren't fully authorized yet"
     : "Recommended Feishu permission access isn't confirmed";
   const body = confirmedMissing
-    ? 'Your agents can send and receive messages in Feishu. To let them use teammate names, look people up by email or phone, and invite people or bots into chats, authorize the recommended permissions in the Feishu admin console.'
-    : "Anima couldn't confirm whether this Feishu app grants the recommended permissions. If your agents only see IDs, cannot look people up by email or phone, or cannot invite members to chats, authorize these permissions in the Feishu admin console.";
+    ? 'Your agents can send and receive messages in Feishu. To let them use teammate names, see group messages, look people up by email or phone, and invite people or bots into chats, authorize the recommended permissions in the Feishu admin console.'
+    : "Anima couldn't confirm whether this Feishu app grants the recommended permissions. If your agents only see IDs, cannot see group messages, cannot look people up by email or phone, or cannot invite members to chats, authorize these permissions in the Feishu admin console.";
   const scopes = recommendedScopesForDisplay(data);
 
   async function handleRecheck() {
@@ -66,8 +66,8 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
         <div className="flex items-start gap-2">
           <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-health-ok" />
           <p className="font-serif text-[13px] leading-snug text-text">
-            Recommended Feishu permissions are on. Your agents can now use teammate names, look
-            people up by email or phone, and invite members to chats.
+            Recommended Feishu permissions are on. Your agents can now use teammate names, see
+            group messages, look people up by email or phone, and invite members to chats.
           </p>
         </div>
       </div>

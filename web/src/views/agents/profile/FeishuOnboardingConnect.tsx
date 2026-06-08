@@ -340,8 +340,8 @@ function RecommendedPermissionsState({
         <div className="flex items-start gap-2">
           <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-health-ok" />
           <p className="font-serif text-[13px] leading-snug text-text">
-            Recommended Feishu permissions are on. Your agents can now use teammate names, look
-            people up by email or phone, and invite members to chats.
+            Recommended Feishu permissions are on. Your agents can now use teammate names, see
+            group messages, look people up by email or phone, and invite members to chats.
           </p>
         </div>
         <Button className="w-full" onClick={onContinue}>Start activity</Button>
@@ -367,8 +367,8 @@ function RecommendedPermissionsState({
         </p>
         <p className="mt-2 font-sans text-[12px] leading-snug text-text-subtle">
           If you finish without them, your bot can still send and receive messages, but it may not
-          be able to use teammate names, look people up by email or phone, or invite and manage
-          group chat members until these permissions are authorized.
+          be able to use teammate names, see group messages, look people up by email or phone, or
+          invite and manage group chat members until these permissions are authorized.
         </p>
       </div>
       <ul className="rounded-sm border border-border-soft bg-white">
