@@ -83,3 +83,48 @@ Do not print or log `$FEISHU_TENANT_ACCESS_TOKEN`. If the API says the app lacks
 user to authorize the recommended Feishu permissions, publish a new app version, then try again. If
 the API says the bot cannot manage chat members, the current bot may not be allowed to invite
 members in that group.
+
+## Invite a Feishu user into a chat
+
+Use this when the user asks you to add a human teammate to the current Feishu chat and there is no
+`anima` command for the invite yet.
+
+Use deterministic identifiers only:
+
+- If the teammate appears in the current message envelope or readable history, use their Feishu
+  `open_id`.
+- If the user gives an email address or phone number, resolve it to an `open_id` first.
+- If the user gives a tenant `user_id`, you may invite with `member_id_type=user_id`.
+- Do not guess from display name. If you only have a name, ask the user for an email, phone number,
+  `open_id`, or `user_id`.
+
+To resolve an email or phone number to an `open_id`, call Feishu's user ID lookup API:
+
+```
+curl -sS -X POST \
+  "https://open.feishu.cn/open-apis/contact/v3/users/batch_get_id?user_id_type=open_id" \
+  -H "Authorization: Bearer $FEISHU_TENANT_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"emails":["<email>"],"mobiles":["<phone>"],"include_resigned":false}'
+```
+
+Use only the fields you have. For example, omit `mobiles` when you only have an email address. If
+Feishu returns no matching user, ask the user for another deterministic identifier.
+
+After you have the target user's `open_id`, invite them with the chat-member API:
+
+```
+curl -sS -X POST \
+  "https://open.feishu.cn/open-apis/im/v1/chats/<chat_id>/members?member_id_type=open_id" \
+  -H "Authorization: Bearer $FEISHU_TENANT_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"id_list":["<target_open_id>"]}'
+```
+
+Replace `<chat_id>` with the Feishu `oc_...` chat ID and `<target_open_id>` with the user's Feishu
+`open_id`. If you already have a tenant `user_id`, use
+`member_id_type=user_id` and pass that `user_id` in `id_list`.
+
+Do not print or log `$FEISHU_TENANT_ACCESS_TOKEN`. The current agent's Feishu app must have the
+recommended member-invite and user-lookup permissions authorized and published. If the API says the
+bot cannot manage chat members, the current bot may not be allowed to invite members in that group.
