@@ -4,7 +4,11 @@ import { useQuery } from '@tanstack/react-query';
 
 import { fetchAgentFeishuScopeStatus } from '@/api/agents';
 import { queryKeys } from '@/lib/query-keys';
-import type { AgentFeishuScopeStatus } from '@shared/agent-config';
+import {
+  FEISHU_RECOMMENDED_SCOPES,
+  type AgentFeishuRecommendedScopeStatusItem,
+  type AgentFeishuScopeStatus,
+} from '@shared/agent-config';
 
 interface Props {
   agentId: string;
@@ -79,12 +83,17 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
           <p className="mt-1 font-serif text-[13px] leading-snug text-text-muted">{body}</p>
           <div className="mt-2">
             <div className="font-sans text-[11px] font-medium uppercase tracking-[0.08em] text-text-subtle">
-              Recommended scopes
+              Recommended permissions
             </div>
-            <ul className="mt-1 space-y-0.5">
+            <ul className="mt-1 space-y-2">
               {scopes.map((scope) => (
-                <li key={scope} className="break-all font-mono text-[11px] text-text-subtle">
-                  {scope}
+                <li key={scope.scope} className="rounded-sm border border-border-soft bg-white px-3 py-2">
+                  <div className="font-serif text-[13px] font-semibold leading-snug text-text">
+                    {scope.label}
+                  </div>
+                  <p className="mt-0.5 font-sans text-[12px] leading-snug text-text-muted">
+                    {scope.description}
+                  </p>
                 </li>
               ))}
             </ul>
@@ -133,8 +142,18 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
   );
 }
 
-function recommendedScopesForDisplay(data: AgentFeishuScopeStatus | undefined): string[] {
-  if (data?.recommended.missingScopes.length) return data.recommended.missingScopes;
-  if (data?.recommended.scopes.length) return data.recommended.scopes.map((scope) => scope.scope);
-  return [data?.profileName.scope ?? 'contact:user.basic_profile:readonly'];
+function recommendedScopesForDisplay(
+  data: AgentFeishuScopeStatus | undefined,
+): AgentFeishuRecommendedScopeStatusItem[] {
+  if (data?.recommended.scopes.length) {
+    const missing = data.recommended.scopes.filter((scope) => !scope.granted);
+    return missing.length ? missing : data.recommended.scopes;
+  }
+  return FEISHU_RECOMMENDED_SCOPES.map((scope) => ({
+    capability: scope.capability,
+    description: scope.description,
+    granted: false,
+    label: scope.label,
+    scope: scope.scope,
+  }));
 }
