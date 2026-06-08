@@ -264,8 +264,8 @@ function FeishuRecommendedPermissionsConnectBanner({
       <div className="min-w-0 flex-1">
         <p className="font-serif text-[13px] leading-snug text-text">
           Connected. Your agents can message your team right away. Optional: authorize recommended
-          Feishu permissions so they can use teammate names, look people up by email or phone, and
-          invite members to chats.
+          Feishu permissions so they can use teammate names, see group messages, look people up by
+          email or phone, and invite members to chats.
         </p>
         {authUrl && (
           <a

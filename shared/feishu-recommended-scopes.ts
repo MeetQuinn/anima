@@ -1,6 +1,7 @@
 export const FEISHU_PROFILE_NAME_SCOPE = 'contact:user.basic_profile:readonly';
 
 export type FeishuRecommendedScopeCapability =
+  | 'group_visibility'
   | 'teammate_names'
   | 'user_lookup'
   | 'chat_invites';
@@ -42,6 +43,12 @@ export const FEISHU_RECOMMENDED_SCOPES = [
     description: 'Supports phone-based user lookup.',
     label: 'Read teammate phone numbers',
     scope: 'contact:user.phone:readonly',
+  },
+  {
+    capability: 'group_visibility',
+    description: 'Let the bot see messages in Feishu group chats.',
+    label: 'See group messages',
+    scope: 'im:message.group_msg',
   },
   {
     capability: 'chat_invites',

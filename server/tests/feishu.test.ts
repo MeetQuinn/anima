@@ -1436,6 +1436,7 @@ test('Feishu service reports missing recommended scopes with authorization link'
       assert.equal(status.recommended.state, 'missing');
       assert.equal(status.recommended.granted, false);
       assert.deepEqual(status.recommended.missingScopes, FEISHU_RECOMMENDED_SCOPE_NAMES);
+      assert.ok(status.recommended.missingScopes.includes('im:message.group_msg'));
       assert.equal(status.recommended.scopes.length, FEISHU_RECOMMENDED_SCOPE_NAMES.length);
       assert.match(
         status.recommended.authUrl ?? '',
