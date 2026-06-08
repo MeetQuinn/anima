@@ -1,8 +1,12 @@
 import { useState } from 'react';
-import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, RotateCw } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 
 import { fetchAgentFeishuScopeStatus } from '@/api/agents';
+import {
+  FeishuPublishNotAppliedVerdict,
+  FeishuRecommendedPermissionsChecklist,
+} from './FeishuRecommendedPermissionsChecklist';
 import { queryKeys } from '@/lib/query-keys';
 import {
   FEISHU_RECOMMENDED_SCOPES,
@@ -22,6 +26,7 @@ type RecheckResult = {
 
 export function FeishuScopeStatusCard({ agentId }: Props) {
   const [recheckResult, setRecheckResult] = useState<RecheckResult | null>(null);
+  const [showPerms, setShowPerms] = useState(false);
   const { data, isError, isFetching, refetch } = useQuery({
     queryKey: queryKeys.agentFeishuScopes(agentId),
     queryFn: () => fetchAgentFeishuScopeStatus(agentId),
@@ -42,14 +47,11 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
     return null;
 
   const authUrl = recommended?.authUrl ?? data?.profileName.authUrl;
-  const confirmedMissing = state === 'missing';
-  const title = confirmedMissing
-    ? "Recommended Feishu permissions aren't fully authorized yet"
-    : "Recommended Feishu permission access isn't confirmed";
-  const body = confirmedMissing
-    ? 'Your agents can send and receive messages in Feishu. To let them use teammate names, see group messages, look people up by email or phone, and invite people or bots into chats, authorize the recommended permissions in the Feishu admin console.'
-    : "Anima couldn't confirm whether this Feishu app grants the recommended permissions. If your agents only see IDs, cannot see group messages, cannot look people up by email or phone, or cannot invite members to chats, authorize these permissions in the Feishu admin console.";
   const scopes = recommendedScopesForDisplay(data);
+  // Match the onboarding honesty model: only assert "still missing" (✗ rows,
+  // red verdict, publish-step ring) after an explicit recheck comes back missing,
+  // never on first paint.
+  const confirmedMissing = currentRecheckResult === 'missing';
 
   async function handleRecheck() {
     setRecheckResult(null);
@@ -62,88 +64,44 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
 
   if (currentRecheckResult === 'granted') {
     return (
-      <div className="rounded-sm border border-health-ok/30 bg-health-ok-soft px-4 py-3">
+      <div className="rounded-md border border-health-ok/30 bg-health-ok-soft px-4 py-3">
         <div className="flex items-start gap-2">
           <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-health-ok" />
           <p className="font-serif text-[13px] leading-snug text-text">
-            Recommended Feishu permissions are on. Your agents can now use teammate names, see
-            group messages, look people up by email or phone, and invite members to chats.
+            Recommended Feishu permissions are on. Your agents can now use teammate names, see group
+            messages, look people up by email or phone, and invite members to chats.
           </p>
         </div>
       </div>
     );
   }
 
+  const lastCheckMessage = recommended?.message ?? data?.profileName.message;
   return (
-    <div className="rounded-sm border border-health-warn/30 bg-health-warn-soft px-4 py-3">
-      <div className="flex items-start gap-2">
-        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-health-warn" />
-        <div className="min-w-0 flex-1">
-          <div className="font-serif text-[14px] font-semibold text-text">{title}</div>
-          <p className="mt-1 font-serif text-[13px] leading-snug text-text-muted">{body}</p>
-          <div className="mt-2">
-            <div className="font-sans text-[11px] font-medium uppercase tracking-[0.08em] text-text-subtle">
-              Recommended permissions
-            </div>
-            <ul className="mt-1 rounded-sm border border-border-soft bg-white">
-              {scopes.map((scope) => (
-                <li
-                  key={scope.scope}
-                  className="flex gap-2.5 border-b border-border-soft px-3 py-2.5 last:border-b-0"
-                >
-                  <span
-                    className="mt-[0.45rem] h-1.5 w-1.5 shrink-0 rounded-full bg-text-subtle/60"
-                    aria-hidden
-                  />
-                  <div className="font-serif text-[13px] font-semibold leading-snug text-text">
-                    {scope.label}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-          {currentRecheckResult === 'missing' && (
-            <div className="mt-2 font-sans text-[11px] text-text-subtle">
-              If you've added the permissions in Feishu, make sure you also published a new app
-              version. Then select Recheck access.
+    <FeishuRecommendedPermissionsChecklist
+      scopes={scopes}
+      authUrl={authUrl}
+      confirmedMissing={confirmedMissing}
+      showPerms={showPerms}
+      onTogglePerms={() => setShowPerms((v) => !v)}
+      onRecheck={() => void handleRecheck()}
+      isRechecking={isFetching}
+      banner={<FeishuPublishNotAppliedVerdict />}
+      statusLine={
+        <>
+          {lastCheckMessage && currentRecheckResult !== 'missing' && (
+            <div className="break-words font-sans text-[11px] text-text-subtle">
+              Last check: {lastCheckMessage}
             </div>
           )}
-          {(recommended?.message ?? data?.profileName.message) && currentRecheckResult !== 'missing' && (
-            <div className="mt-2 break-words font-sans text-[11px] text-text-subtle">
-              Last check: {recommended?.message ?? data?.profileName.message}
-            </div>
-          )}
-          {isError && !(recommended?.message ?? data?.profileName.message) && (
-            <div className="mt-2 font-sans text-[11px] text-text-subtle">
+          {isError && !lastCheckMessage && (
+            <div className="font-sans text-[11px] text-text-subtle">
               Could not check Feishu permissions.
             </div>
           )}
-          {authUrl && (
-            <a
-              href={authUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-3 inline-flex items-center gap-1 font-sans text-[12px] text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
-            >
-              Authorize in Feishu <ExternalLink className="h-3 w-3" />
-            </a>
-          )}
-          <button
-            type="button"
-            onClick={() => void handleRecheck()}
-            disabled={isFetching}
-            className="mt-3 ml-3 inline-flex items-center gap-1 font-sans text-[12px] text-text-muted underline decoration-text-subtle/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isFetching ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <RotateCw className="h-3 w-3" />
-            )}
-            Recheck access
-          </button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    />
   );
 }
 

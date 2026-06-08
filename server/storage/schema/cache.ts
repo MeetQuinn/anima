@@ -26,7 +26,7 @@ export const FeishuFileCacheMeta = z.object({
   messageId: z.string(),
   mimetype: z.string(),
   name: z.string(),
-  resourceType: z.enum(['file', 'image']),
+  resourceType: z.enum(['audio', 'file', 'image']),
   sizeBytes: z.number(),
 });
 

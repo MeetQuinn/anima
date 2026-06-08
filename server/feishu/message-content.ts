@@ -76,6 +76,45 @@ export function feishuMessageAttachmentsFromContent(input: {
     })];
   }
 
+  if (input.messageType === 'audio') {
+    const fileKey = stringContentField(input.content, 'file_key');
+    if (!fileKey) return [];
+    return [attachmentMeta({
+      fileKey,
+      messageId: input.messageId,
+      mimetype: 'audio/opus',
+      name: `${fallbackFeishuResourceName('audio', input.messageId)}.opus`,
+      resourceType: 'audio',
+    })];
+  }
+
+  if (input.messageType === 'media') {
+    const fileKey = stringContentField(input.content, 'file_key');
+    if (!fileKey) return [];
+    const results: FeishuMessageAttachmentMeta[] = [attachmentMeta({
+      fileKey,
+      messageId: input.messageId,
+      mimetype: 'video/mp4',
+      name: `${fallbackFeishuResourceName('file', input.messageId)}.mp4`,
+      resourceType: 'file',
+    })];
+    const imageKey = stringContentField(input.content, 'image_key');
+    if (imageKey) {
+      results.push(attachmentMeta({
+        fileKey: imageKey,
+        messageId: input.messageId,
+        mimetype: 'image/*',
+        name: fallbackFeishuResourceName('image', input.messageId),
+        resourceType: 'image',
+      }));
+    }
+    return results;
+  }
+
+  if (input.messageType === 'post') {
+    return feishuPostInlineAttachmentsFromContent(input.content, input.messageId);
+  }
+
   return [];
 }
 
@@ -88,6 +127,48 @@ export function feishuPostPlainTextFromContent(content: Record<string, unknown> 
     if (lines.length) return lines.join('\n');
   }
   return undefined;
+}
+
+function feishuPostInlineAttachmentsFromContent(
+  content: Record<string, unknown> | undefined,
+  messageId: string,
+): FeishuMessageAttachmentMeta[] {
+  const results: FeishuMessageAttachmentMeta[] = [];
+  for (const section of feishuPostSections(content)) {
+    const paragraphs = section['content'];
+    if (!Array.isArray(paragraphs)) continue;
+    for (const paragraph of paragraphs) {
+      const items = Array.isArray(paragraph) ? paragraph : [paragraph];
+      for (const item of items) {
+        if (!isRecord(item)) continue;
+        const tag = stringContentField(item, 'tag');
+        if (tag === 'img') {
+          const imageKey = stringContentField(item, 'image_key');
+          if (imageKey) {
+            results.push(attachmentMeta({
+              fileKey: imageKey,
+              messageId,
+              mimetype: 'image/*',
+              name: fallbackFeishuResourceName('image', messageId),
+              resourceType: 'image',
+            }));
+          }
+        } else if (tag === 'media') {
+          const fileKey = stringContentField(item, 'file_key');
+          if (fileKey) {
+            results.push(attachmentMeta({
+              fileKey,
+              messageId,
+              mimetype: 'video/mp4',
+              name: `${fallbackFeishuResourceName('file', messageId)}.mp4`,
+              resourceType: 'file',
+            }));
+          }
+        }
+      }
+    }
+  }
+  return results;
 }
 
 function attachmentMeta(input: {

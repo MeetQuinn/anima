@@ -240,8 +240,10 @@ function feishuAttachmentText(files: InboxFileMeta[]): string | undefined {
   if (files.length > 1) return `[${files.length} attachments]`;
   const file = files[0];
   if (!file) return undefined;
-  const kind = file.id.includes(':image:') ? 'image' : 'file';
-  return `[${kind}] ${file.name}`;
+  if (file.mimetype.startsWith('audio/')) return `[audio] ${file.name}`;
+  if (file.mimetype.startsWith('video/')) return `[video] ${file.name}`;
+  if (file.id.includes(':image:')) return `[image] ${file.name}`;
+  return `[file] ${file.name}`;
 }
 
 function replaceFeishuMentionKeys(

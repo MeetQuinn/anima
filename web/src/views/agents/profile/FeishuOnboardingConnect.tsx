@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { CheckCircle2, ExternalLink, Loader2, RotateCw } from 'lucide-react';
+import { CheckCircle2, CircleAlert, Loader2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 
 import {
@@ -10,6 +10,10 @@ import {
   startAgentFeishuAppRegistration,
 } from '@/api/agents';
 import { Button } from '@/components/ui/button';
+import {
+  FeishuPublishNotAppliedVerdict,
+  FeishuRecommendedPermissionsChecklist,
+} from './FeishuRecommendedPermissionsChecklist';
 import { queryKeys } from '@/lib/query-keys';
 import {
   FEISHU_CONNECT_SLOW_SOFTEN_MS,
@@ -299,7 +303,7 @@ function phaseFromRegistration(
   return 'authorizing';
 }
 
-function RecommendedPermissionsState({
+export function RecommendedPermissionsState({
   agentId,
   onContinue,
   preview,
@@ -309,6 +313,8 @@ function RecommendedPermissionsState({
   preview?: boolean;
 }) {
   const [recheckResult, setRecheckResult] = useState<'granted' | 'missing' | null>(null);
+  const [showPerms, setShowPerms] = useState(false);
+  const [skipModal, setSkipModal] = useState(false);
   const scopeQuery = useQuery({
     queryKey: queryKeys.agentFeishuScopes(agentId),
     queryFn: () => fetchAgentFeishuScopeStatus(agentId),
@@ -351,88 +357,84 @@ function RecommendedPermissionsState({
 
   const authUrl = data?.recommended.authUrl;
   const scopes = recommendedScopesForDisplay(data);
+  const confirmedMissing = recheckResult === 'missing';
   return (
-    <div className="space-y-4 rounded-sm border border-border-soft bg-surface px-4 py-3">
-      <div>
-        <div className="font-serif text-[14px] font-semibold text-text">
-          Authorize Feishu permissions
-        </div>
-        <p className="mt-1 font-serif text-[13px] leading-snug text-text-muted">
-          Authorize the permissions below so your Feishu bot can work more smoothly with teammates
-          and group chats.
-        </p>
-        <p className="mt-2 font-sans text-[12px] leading-snug text-text-muted">
-          In Feishu, add these permissions and publish a new app version. Then come back here and
-          select Recheck access.
-        </p>
-        <p className="mt-2 font-sans text-[12px] leading-snug text-text-subtle">
-          If you finish without them, your bot can still send and receive messages, but it may not
-          be able to use teammate names, see group messages, look people up by email or phone, or
-          invite and manage group chat members until these permissions are authorized.
-        </p>
-      </div>
-      <ul className="rounded-sm border border-border-soft bg-white">
-        {scopes.map((scope) => (
-          <li
-            key={scope.scope}
-            className="flex gap-2.5 border-b border-border-soft px-3 py-2.5 last:border-b-0"
-          >
-            <span
-              className="mt-[0.45rem] h-1.5 w-1.5 shrink-0 rounded-full bg-text-subtle/60"
-              aria-hidden
-            />
-            <div className="min-w-0">
-              <div className="font-serif text-[13px] font-semibold leading-snug text-text">
-                {scope.label}
+    <>
+      <FeishuRecommendedPermissionsChecklist
+        scopes={scopes}
+        authUrl={authUrl}
+        confirmedMissing={confirmedMissing}
+        showPerms={showPerms}
+        onTogglePerms={() => setShowPerms((v) => !v)}
+        onRecheck={() => void handleRecheck()}
+        isRechecking={isFetching}
+        banner={<FeishuPublishNotAppliedVerdict />}
+        statusLine={
+          <>
+            {data?.recommended.message && recheckResult !== 'missing' && (
+              <div className="break-words font-sans text-[11px] text-text-subtle">
+                Last check: {data.recommended.message}
+              </div>
+            )}
+            {isError && !data?.recommended.message && (
+              <div className="font-sans text-[11px] text-text-subtle">
+                Could not check Feishu permissions.
+              </div>
+            )}
+          </>
+        }
+        footer={
+          <div className="border-t border-border-soft pt-3">
+            <button
+              type="button"
+              onClick={() => setSkipModal(true)}
+              className="font-sans text-[12px] text-text-muted underline decoration-text-subtle/40 underline-offset-2 transition-colors hover:text-text"
+            >
+              Skip for now
+            </button>
+          </div>
+        }
+      />
+
+      {skipModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-sm space-y-4 rounded-lg border border-border-soft bg-surface px-5 py-4 shadow-lg">
+            <div className="flex items-start gap-2.5">
+              <CircleAlert className="mt-0.5 h-[18px] w-[18px] shrink-0 text-health-error" aria-hidden />
+              <div className="space-y-1.5">
+                <div className="font-serif text-[14px] font-semibold leading-tight text-text">
+                  Skipping leaves some teammate features off
+                </div>
+                <p className="font-serif text-[13px] leading-relaxed text-text-muted">
+                  Your Feishu bot keeps sending and receiving messages, but it won&rsquo;t recognize
+                  teammates by name or work fully in group chats. Looking people up by email or phone
+                  also stays off. You can authorize anytime from the agent&rsquo;s profile.
+                </p>
               </div>
             </div>
-          </li>
-        ))}
-      </ul>
-      {recheckResult === 'missing' && (
-        <div className="font-sans text-[11px] text-text-subtle">
-          If you've added the permissions in Feishu, make sure you also published a new app
-          version. Then select Recheck access.
+            <div className="flex items-center justify-end gap-4 pt-0.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setSkipModal(false);
+                  onContinue();
+                }}
+                className="font-sans text-[12px] text-text-muted underline decoration-text-subtle/40 underline-offset-2 transition-colors hover:text-text"
+              >
+                Skip anyway
+              </button>
+              <Button size="sm" onClick={() => setSkipModal(false)}>
+                Keep setting up
+              </Button>
+            </div>
+          </div>
         </div>
       )}
-      {data?.recommended.message && recheckResult !== 'missing' && (
-        <div className="break-words font-sans text-[11px] text-text-subtle">
-          Last check: {data.recommended.message}
-        </div>
-      )}
-      {isError && !data?.recommended.message && (
-        <div className="font-sans text-[11px] text-text-subtle">
-          Could not check Feishu permissions.
-        </div>
-      )}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        {authUrl && (
-          <Button
-            className="w-full sm:w-auto"
-            render={<a href={authUrl} rel="noreferrer" target="_blank" />}
-          >
-            Authorize in Feishu
-            <ExternalLink className="h-4 w-4" aria-hidden />
-          </Button>
-        )}
-        <button
-          type="button"
-          onClick={() => void handleRecheck()}
-          disabled={isFetching}
-          className="inline-flex min-h-9 items-center justify-center gap-1 rounded-sm px-3 font-sans text-[12px] text-text-muted underline decoration-text-subtle/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isFetching ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCw className="h-3 w-3" />}
-          Recheck access
-        </button>
-        <button
-          type="button"
-          onClick={onContinue}
-          className="inline-flex min-h-9 items-center justify-center rounded-sm px-3 font-sans text-[12px] text-text-muted underline decoration-text-subtle/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
-        >
-          Skip
-        </button>
-      </div>
-    </div>
+    </>
   );
 }
 
