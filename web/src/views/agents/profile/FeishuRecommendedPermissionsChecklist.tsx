@@ -1,4 +1,4 @@
-import { ChevronDown, CircleAlert, ExternalLink, Loader2, RotateCw, X } from 'lucide-react';
+import { Check, ChevronDown, CircleAlert, ExternalLink, Loader2, RotateCw, X } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -28,21 +28,39 @@ export function FeishuStepBadge({ n, alert = false }: { n: number; alert?: boole
   );
 }
 
-// The recheck-came-back-still-missing verdict. Points the user back at the
-// manual publish step (the most common reason new permissions don't apply).
-export function FeishuPublishNotAppliedVerdict() {
+// The recheck-came-back-still-missing verdict. The diagnosis depends on whether
+// ANY recommended scope came through: zero granted means the manual publish
+// almost certainly didn't happen (the most common cause); a partial grant means
+// the publish DID happen, so the real fix is adding the still-missing scopes in
+// the console and publishing again. Keying the copy off `anyGranted` keeps the
+// diagnosis honest in both states instead of always blaming the publish step.
+export function FeishuRecheckMissingVerdict({ anyGranted }: { anyGranted: boolean }) {
   return (
     <div className="flex items-start gap-2 rounded-md border border-health-error/30 bg-health-error-soft px-3 py-2">
       <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-health-error" aria-hidden />
       <div className="space-y-0.5">
-        <p className="font-serif text-[13px] font-semibold leading-snug text-text">
-          Not authorized yet.
-        </p>
-        <p className="font-serif text-[12px] leading-snug text-text-muted">
-          Feishu hasn’t applied the new permissions. This usually means step 2 wasn’t published yet.
-          Publish a new app version, then recheck. If you just published, give it a moment and
-          recheck.
-        </p>
+        {anyGranted ? (
+          <>
+            <p className="font-serif text-[13px] font-semibold leading-snug text-text">
+              Some permissions aren’t active yet
+            </p>
+            <p className="font-serif text-[12px] leading-snug text-text-muted">
+              The ones still marked below need granting in Feishu. Add them in the console, publish a
+              new app version, then recheck.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="font-serif text-[13px] font-semibold leading-snug text-text">
+              Not authorized yet.
+            </p>
+            <p className="font-serif text-[12px] leading-snug text-text-muted">
+              Feishu hasn’t applied the new permissions. This usually means step 2 wasn’t published
+              yet. Publish a new app version, then recheck. If you just published, give it a moment
+              and recheck.
+            </p>
+          </>
+        )}
       </div>
     </div>
   );
@@ -52,18 +70,18 @@ interface ChecklistProps {
   scopes: AgentFeishuRecommendedScopeStatusItem[];
   authUrl?: string;
   /**
-   * A recheck confirmed the scopes are still ungranted: shows the red verdict
-   * banner, flips the permission rows to ✗ ("What’s still missing"), rings the
-   * publish step, and force-opens the list. Stays false until a recheck so we
-   * never assert a false-unhealthy verdict before actually checking (#222).
+   * A recheck ran and at least one recommended scope is still ungranted: shows
+   * the red verdict banner, rings the publish step, force-opens the list, and
+   * gives every permission row a verdict marker (green check if that scope came
+   * back granted, red cross if still ungranted). Stays false until a recheck so
+   * the rows stay neutral gray dots and we never assert a pass/fail before
+   * actually checking (#222).
    */
   confirmedMissing: boolean;
   showPerms: boolean;
   onTogglePerms: () => void;
   onRecheck: () => void;
   isRechecking: boolean;
-  /** Verdict banner shown above the steps when confirmedMissing. */
-  banner?: ReactNode;
   /** Small status line under the steps (last-check / could-not-check). */
   statusLine?: ReactNode;
   /** Footer under the card body (e.g. the onboarding Skip control). */
@@ -78,7 +96,6 @@ export function FeishuRecommendedPermissionsChecklist({
   onTogglePerms,
   onRecheck,
   isRechecking,
-  banner,
   statusLine,
   footer,
 }: ChecklistProps) {
@@ -95,7 +112,7 @@ export function FeishuRecommendedPermissionsChecklist({
         </p>
       </div>
 
-      {confirmedMissing && banner}
+      {confirmedMissing && <FeishuRecheckMissingVerdict anyGranted={scopes.some((s) => s.granted)} />}
 
       <ol className="space-y-3.5">
         <li className="flex items-start gap-3">
@@ -121,7 +138,7 @@ export function FeishuRecommendedPermissionsChecklist({
                 aria-expanded={open}
                 className="inline-flex items-center gap-1 font-sans text-[12px] text-text-muted transition-colors hover:text-text"
               >
-                {confirmedMissing ? 'What’s still missing' : 'What you’ll add in Feishu'}
+                Permissions
                 <ChevronDown
                   className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`}
                   aria-hidden
@@ -134,15 +151,24 @@ export function FeishuRecommendedPermissionsChecklist({
                       key={scope.scope}
                       className="flex items-start gap-2 font-serif text-[12px] leading-snug text-text-muted"
                     >
-                      {confirmedMissing ? (
-                        <X
-                          className="mt-[1px] h-3.5 w-3.5 shrink-0 text-health-error"
+                      {!confirmedMissing ? (
+                        // Default / pre-check: neutral gray dot, no pass/fail claim.
+                        <span
+                          className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-text-subtle/50"
+                          aria-hidden
+                        />
+                      ) : scope.granted ? (
+                        // Post-check, this scope came back granted: green check.
+                        <Check
+                          className="mt-[1px] h-3.5 w-3.5 shrink-0 text-health-ok"
                           strokeWidth={2.75}
                           aria-hidden
                         />
                       ) : (
-                        <span
-                          className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-text-subtle/50"
+                        // Post-check, still ungranted: red cross.
+                        <X
+                          className="mt-[1px] h-3.5 w-3.5 shrink-0 text-health-error"
+                          strokeWidth={2.75}
                           aria-hidden
                         />
                       )}
