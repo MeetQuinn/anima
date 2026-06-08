@@ -2,6 +2,7 @@ import type {
   ChoiceResponseInboxItem,
   FeishuInboxItem,
   FeishuOnboardingInboxItem,
+  FeishuQuotedMessage,
   InboxItem,
   InboxFileMeta,
   OnboardingInboxItem,
@@ -67,13 +68,22 @@ function buildSlackMessageDeliveryPrompt(event: SlackEvent): string {
 }
 
 function buildFeishuMessageDeliveryPrompt(event: FeishuInboxItem): string {
-  const envelope = `${feishuMessageEnvelope(event)} ${feishuActorLabel(event)}: ${event.text}`;
+  const envelope = event.quotedMessage
+    ? `${feishuMessageEnvelope(event)} ${feishuActorLabel(event)}:\n${formatFeishuQuotedMessage(event.quotedMessage)}\n${event.text}`
+    : `${feishuMessageEnvelope(event)} ${feishuActorLabel(event)}: ${event.text}`;
   return buildDeliveryEventPrompt({
     attentionSuggestion: event.attentionSuggestion,
     envelope,
     files: event.files,
     title: 'New Feishu message',
   });
+}
+
+function formatFeishuQuotedMessage(message: FeishuQuotedMessage): string {
+  return message.text
+    .split(/\r?\n/)
+    .map((line) => `> (quoted) ${message.actorLabel}: ${line}`)
+    .join('\n');
 }
 
 function buildSlackOnboardingDeliveryPrompt(event: OnboardingInboxItem): string {

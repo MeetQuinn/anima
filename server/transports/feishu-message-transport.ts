@@ -6,13 +6,17 @@ import {
   normalizeFeishuMessage,
   type FeishuReceiveMessageEvent,
 } from '../feishu/events.js';
+import {
+  feishuPostPlainTextFromContent,
+  parseFeishuContent,
+} from '../feishu/message-content.js';
 import { agentFeishuServiceForAgent } from '../agents/agent-feishu.service.js';
 import { feishuRuntimeDecision, type FeishuRuntimeDecision } from '../inbox/slack-subscription.service.js';
 import { WakeQueueService, type WakeQueueEnqueueResult } from '../inbox/wake-queue.service.js';
 import type { FeishuConfig } from '../../shared/agent-config.js';
-import type { FeishuInboxItem } from '../../shared/inbox.js';
+import type { FeishuInboxItem, FeishuQuotedMessage } from '../../shared/inbox.js';
 import type { MessageTransport } from './message-transport.js';
-import type { FeishuMessageClient } from '../feishu/client.js';
+import type { FeishuConversationMessage, FeishuMessageClient } from '../feishu/client.js';
 
 interface FeishuWsClient {
   close(params?: { force?: boolean }): void;
@@ -77,6 +81,7 @@ export class FeishuMessageTransport implements MessageTransport {
       return;
     }
     event = await this.enrichDirectory(event, receiveEvent);
+    event = await this.enrichWithQuotedMessage(event);
     this.maybeSyncDisplayInfo();
     const duplicate = Boolean(await this.options.queue.find(event.id));
     const runtimeDecision = await feishuRuntimeDecision(event, {
@@ -107,6 +112,21 @@ export class FeishuMessageTransport implements MessageTransport {
       .finally(() => {
         this.displayInfoSyncInFlight = false;
       });
+  }
+
+  private async enrichWithQuotedMessage(event: FeishuInboxItem): Promise<FeishuInboxItem> {
+    if (!event.parentId) return event;
+    const client = this.deps.createMessageClient?.(this.options.config) ?? createFeishuMessageClient(this.options.config);
+    if (!client.getMessage) return event;
+    try {
+      const parent = await client.getMessage({ messageId: event.parentId });
+      if (!parent) return event;
+      const quoted = quotedMessageFromConversation(parent);
+      if (!quoted) return event;
+      return { ...event, quotedMessage: quoted };
+    } catch {
+      return event;
+    }
   }
 
   private async enrichDirectory(
@@ -169,4 +189,18 @@ function feishuIgnoredLog(agentRuntimeKind: string, reason = 'not_addressed_or_u
 
 function isFeishuItem(item: unknown): item is FeishuInboxItem {
   return Boolean(item && typeof item === 'object' && (item as { kind?: unknown }).kind === 'feishu');
+}
+
+function quotedMessageFromConversation(message: FeishuConversationMessage): FeishuQuotedMessage | undefined {
+  if (message.deleted) return undefined;
+  const content = parseFeishuContent(message.bodyContent);
+  let text: string | undefined;
+  if (message.messageType === 'text') {
+    text = typeof content?.['text'] === 'string' ? content['text'] : undefined;
+  } else if (message.messageType === 'post') {
+    text = feishuPostPlainTextFromContent(content);
+  }
+  if (!text?.trim()) return undefined;
+  const actorLabel = message.sender?.senderName ?? message.sender?.id ?? 'unknown';
+  return { actorLabel, text: text.trim() };
 }

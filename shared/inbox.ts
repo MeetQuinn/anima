@@ -84,6 +84,12 @@ export const SlackInboxItem = InboxItemBase.extend({
 
 export type SlackInboxItem = z.infer<typeof SlackInboxItem>;
 
+export const FeishuQuotedMessage = z.object({
+  actorLabel: z.string(),
+  text: z.string(),
+});
+export type FeishuQuotedMessage = z.infer<typeof FeishuQuotedMessage>;
+
 export const FeishuInboxItem = InboxItemBase.extend({
   actor: FeishuInboxActor.optional(),
   attentionSuggestion: z.string().optional(),
@@ -95,6 +101,7 @@ export const FeishuInboxItem = InboxItemBase.extend({
   kind: z.literal('feishu'),
   messageId: z.string(),
   parentId: z.string().optional(),
+  quotedMessage: FeishuQuotedMessage.optional(),
   rawContent: z.string().optional(),
   rootId: z.string().optional(),
   tenantKey: z.string().optional(),

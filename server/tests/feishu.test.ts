@@ -21,6 +21,7 @@ import { FeishuDirectoryService } from '../feishu/directory.service.js';
 import { AgentFeishuService } from '../agents/agent-feishu.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { FeishuMessageTransport } from '../transports/feishu-message-transport.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import { messageFromInboxItem } from '../messages/message.projection.js';
 import { runFileSend } from '../tools/file-send.js';
@@ -125,6 +126,15 @@ function jsonResponse(payload: unknown, init: { ok?: boolean; status?: number; s
     status: init.status ?? 200,
     statusText: init.statusText ?? 'OK',
   } as Response;
+}
+
+async function handleFeishuReceiveForTest(
+  transport: FeishuMessageTransport,
+  data: unknown,
+): Promise<void> {
+  await (transport as unknown as {
+    handleReceiveMessage(data: unknown): Promise<void>;
+  }).handleReceiveMessage(data);
 }
 
 test('normalizes Feishu text DMs into inbox items', () => {
@@ -348,6 +358,121 @@ test('Feishu delivery prompt is platform-aware', () => {
     buildCodeAgentDeliveryPrompt(item),
     'New Feishu message:\n\n[platform=feishu chat=p2p chat_id=oc_test_chat message_id=om_test_message time=2026-06-02T14:20:00.000Z user_id=ou_alice] ou_alice: hello from Feishu',
   );
+});
+
+test('Feishu delivery prompt includes resolved quoted message content', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-quoted-message-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir, { botProfileSyncedAt: '2099-01-01T00:00:00.000Z' });
+      const queue = new WakeQueueService('scout');
+      const reads: string[] = [];
+      const transport = new FeishuMessageTransport(
+        {
+          agentRuntimeKind: 'kimi-cli',
+          config: {
+            appId: 'cli_test',
+            appSecret: 'secret',
+            connected: true,
+            encryptKey: '',
+            verificationToken: '',
+          },
+          queue,
+        },
+        {
+          createMessageClient: () => testFeishuMessageClient({
+            async getMessage(input) {
+              reads.push(input.messageId);
+              if (input.messageId === 'om_reply_message') {
+                return {
+                  chatId: 'oc_test_chat',
+                  messageId: 'om_reply_message',
+                  sender: { id: 'ou_alice', idType: 'open_id', senderName: 'Alice', senderType: 'user' },
+                };
+              }
+              if (input.messageId === 'om_parent_message') {
+                return {
+                  bodyContent: JSON.stringify({ text: 'quoted first line\nquoted second line' }),
+                  chatId: 'oc_test_chat',
+                  messageId: 'om_parent_message',
+                  messageType: 'text',
+                  sender: { id: 'ou_bob', idType: 'open_id', senderName: 'Bob', senderType: 'user' },
+                };
+              }
+              throw new Error(`unexpected message read: ${input.messageId}`);
+            },
+          }),
+        },
+      );
+
+      await handleFeishuReceiveForTest(transport, makeFeishuEvent({
+        message: {
+          content: JSON.stringify({ text: 'current reply' }),
+          message_id: 'om_reply_message',
+          parent_id: 'om_parent_message',
+        },
+      }));
+
+      assert.deepEqual(reads, ['om_reply_message', 'om_parent_message']);
+      const item = (await queue.list()).find((queued) => queued.kind === 'feishu');
+      assert.equal(item?.kind, 'feishu');
+      assert.deepEqual(item?.kind === 'feishu' ? item.quotedMessage : undefined, {
+        actorLabel: 'Bob',
+        text: 'quoted first line\nquoted second line',
+      });
+      assert.equal(
+        item?.kind === 'feishu' ? buildCodeAgentDeliveryPrompt(item) : '',
+        'New Feishu message:\n\n[platform=feishu chat=p2p chat_id=oc_test_chat message_id=om_reply_message time=2026-06-02T14:20:00.000Z user_id=ou_alice] Alice:\n> (quoted) Bob: quoted first line\n> (quoted) Bob: quoted second line\ncurrent reply',
+      );
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('Feishu quoted message lookup failure does not drop delivery', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-quoted-message-failure-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir, { botProfileSyncedAt: '2099-01-01T00:00:00.000Z' });
+      const queue = new WakeQueueService('scout');
+      const transport = new FeishuMessageTransport(
+        {
+          agentRuntimeKind: 'kimi-cli',
+          config: {
+            appId: 'cli_test',
+            appSecret: 'secret',
+            connected: true,
+            encryptKey: '',
+            verificationToken: '',
+          },
+          queue,
+        },
+        {
+          createMessageClient: () => testFeishuMessageClient({
+            async getMessage() {
+              throw new Error('Feishu getMessage unavailable');
+            },
+          }),
+        },
+      );
+
+      await handleFeishuReceiveForTest(transport, makeFeishuEvent({
+        message: {
+          content: JSON.stringify({ text: 'current reply' }),
+          message_id: 'om_reply_message',
+          parent_id: 'om_parent_message',
+        },
+      }));
+
+      const item = (await queue.list()).find((queued) => queued.kind === 'feishu');
+      assert.equal(item?.kind, 'feishu');
+      assert.equal(item?.kind === 'feishu' ? item.quotedMessage : undefined, undefined);
+      assert.equal(item?.kind === 'feishu' ? item.text : undefined, 'current reply');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 test('Feishu directory enriches live delivery prompt with actor and chat names', async () => {
