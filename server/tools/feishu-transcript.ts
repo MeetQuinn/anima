@@ -85,6 +85,35 @@ function feishuTranscriptText(message: FeishuConversationMessage): string {
         ].join('\n')
       : summary;
   }
+  if (messageType === 'audio') {
+    const attachment = feishuTranscriptAttachmentMeta(message, content);
+    const durationMs = typeof content?.['duration'] === 'number' ? content['duration'] : undefined;
+    const durationSec = durationMs !== undefined ? Math.round(durationMs / 1000) : undefined;
+    const summary = `[audio]${durationSec !== undefined ? ` duration=${durationSec}s` : ''}`;
+    return attachment
+      ? [summary, feishuTranscriptAttachment({ fileId: attachment.fileId })].join('\n')
+      : summary;
+  }
+  if (messageType === 'media') {
+    const attachments = feishuMessageAttachmentsFromContent({
+      content,
+      messageId: message.messageId,
+      messageType: message.messageType,
+    });
+    const videoAttachment = attachments.find((a) => a.resourceType === 'file');
+    const durationMs = typeof content?.['video_duration'] === 'number' ? content['video_duration'] : undefined;
+    const durationSec = durationMs !== undefined ? Math.round(durationMs / 1000) : undefined;
+    const width = typeof content?.['width'] === 'number' ? content['width'] : undefined;
+    const height = typeof content?.['height'] === 'number' ? content['height'] : undefined;
+    const meta = [
+      durationSec !== undefined ? `duration=${durationSec}s` : '',
+      width !== undefined && height !== undefined ? `${width}x${height}` : '',
+    ].filter(Boolean).join(' ');
+    const summary = `[media]${meta ? ` ${meta}` : ''}`;
+    return videoAttachment
+      ? [summary, feishuTranscriptAttachment({ fileId: videoAttachment.fileId })].join('\n')
+      : summary;
+  }
   return `[${messageType} message]`;
 }
 

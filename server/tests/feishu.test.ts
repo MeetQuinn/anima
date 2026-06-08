@@ -281,6 +281,119 @@ test('ignores unsupported Feishu non-text messages without fetchable resources',
   assert.equal(item, undefined);
 });
 
+test('normalizes Feishu audio messages into fetchable attachments', () => {
+  const item = normalizeFeishuMessage({
+    event: makeFeishuEvent({
+      message: {
+        content: JSON.stringify({ duration: 12000, file_key: 'audio_key_abc' }),
+        message_id: 'om_audio_message',
+        message_type: 'audio',
+      },
+    }),
+  });
+
+  assert.ok(item);
+  assert.equal(item.text, '[audio] audio-om_audio_message.opus');
+  assert.deepEqual(item.files, [{
+    id: 'feishu:message:om_audio_message:audio:audio_key_abc',
+    mimetype: 'audio/opus',
+    name: 'audio-om_audio_message.opus',
+    sizeBytes: 0,
+  }]);
+
+  const prompt = buildCodeAgentDeliveryPrompt(item);
+  assert.match(prompt, /<file id="feishu:message:om_audio_message:audio:audio_key_abc" name="audio-om_audio_message\.opus" mimetype="audio\/opus" size_bytes="0" \/>/);
+});
+
+test('normalizes Feishu media (video) messages into fetchable attachments', () => {
+  const item = normalizeFeishuMessage({
+    event: makeFeishuEvent({
+      message: {
+        content: JSON.stringify({
+          file_key: 'video_key_abc',
+          height: 720,
+          image_key: 'thumb_key_abc',
+          video_duration: 15000,
+          width: 480,
+        }),
+        message_id: 'om_media_message',
+        message_type: 'media',
+      },
+    }),
+  });
+
+  assert.ok(item);
+  assert.equal(item.text, '[2 attachments]');
+  assert.equal(item.files?.length, 2);
+  assert.equal(item.files?.[0]?.id, 'feishu:message:om_media_message:file:video_key_abc');
+  assert.equal(item.files?.[0]?.mimetype, 'video/mp4');
+  assert.equal(item.files?.[1]?.id, 'feishu:message:om_media_message:image:thumb_key_abc');
+  assert.equal(item.files?.[1]?.mimetype, 'image/*');
+});
+
+test('message read renders Feishu audio transcript with duration', () => {
+  const output = feishuTranscriptOutput(
+    [{
+      bodyContent: JSON.stringify({ duration: 8000, file_key: 'audio_key_abc' }),
+      chatId: 'oc_target_chat',
+      createTime: '1780410000000',
+      messageId: 'om_audio_transcript',
+      messageType: 'audio',
+      sender: { id: 'ou_alice', idType: 'open_id', senderName: 'Alice', senderType: 'user' },
+    }],
+    { chatId: 'oc_target_chat', limit: 1 },
+    { hasMore: false, nextCursor: '' },
+  );
+
+  assert.match(output, /Alice: \[audio\] duration=8s/);
+  assert.match(output, /attached: id=feishu:message:om_audio_transcript:audio:audio_key_abc/);
+  assert.match(output, /anima file fetch feishu:message:om_audio_transcript:audio:audio_key_abc/);
+});
+
+test('message read renders Feishu media transcript with duration and resolution', () => {
+  const output = feishuTranscriptOutput(
+    [{
+      bodyContent: JSON.stringify({ file_key: 'video_key_abc', height: 720, image_key: 'thumb_key_abc', video_duration: 15000, width: 1280 }),
+      chatId: 'oc_target_chat',
+      createTime: '1780410000000',
+      messageId: 'om_media_transcript',
+      messageType: 'media',
+      sender: { id: 'ou_alice', idType: 'open_id', senderName: 'Alice', senderType: 'user' },
+    }],
+    { chatId: 'oc_target_chat', limit: 1 },
+    { hasMore: false, nextCursor: '' },
+  );
+
+  assert.match(output, /Alice: \[media\] duration=15s 1280x720/);
+  assert.match(output, /attached: id=feishu:message:om_media_transcript:file:video_key_abc/);
+});
+
+test('normalizes Feishu rich text post with inline images into attachments', () => {
+  const item = normalizeFeishuMessage({
+    event: makeFeishuEvent({
+      message: {
+        content: JSON.stringify({
+          zh_cn: {
+            content: [
+              [{ tag: 'text', text: 'check out this screenshot' }],
+              [{ image_key: 'img_inline_key', tag: 'img' }],
+            ],
+            title: 'Design update',
+          },
+        }),
+        message_id: 'om_post_with_image',
+        message_type: 'post',
+      },
+    }),
+  });
+
+  assert.ok(item);
+  assert.match(item.text, /Design update/);
+  assert.match(item.text, /\[image\]/);
+  assert.ok(item.files?.some((f) => f.id === 'feishu:message:om_post_with_image:image:img_inline_key'));
+  assert.ok(item.files?.some((f) => f.mimetype === 'image/*'));
+});
+
 test('Feishu group wake policy requires the configured bot mention', () => {
   const event = makeFeishuEvent({
     message: {
