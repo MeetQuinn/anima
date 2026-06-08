@@ -67,7 +67,10 @@ function buildSlackMessageDeliveryPrompt(event: SlackEvent): string {
 }
 
 function buildFeishuMessageDeliveryPrompt(event: FeishuInboxItem): string {
-  const envelope = `${feishuMessageEnvelope(event)} ${feishuActorLabel(event)}: ${event.text}`;
+  const quotedBlock = event.quotedMessage
+    ? `> (quoted) ${event.quotedMessage.actorLabel}: ${event.quotedMessage.text}\n`
+    : '';
+  const envelope = `${feishuMessageEnvelope(event)} ${feishuActorLabel(event)}: ${quotedBlock}${event.text}`;
   return buildDeliveryEventPrompt({
     attentionSuggestion: event.attentionSuggestion,
     envelope,
