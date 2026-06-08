@@ -4,6 +4,19 @@ on:
   push:
     branches:
       - main
+    paths:
+      - ".github/workflows/publish.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "shared/**"
+      - "server/**"
+      - "web/**"
+      - "packages/animactl/**"
+      - "templates/**"
+      - "scripts/check-animactl-package.mjs"
+      - "scripts/install.sh"
+      - "scripts/prepare-animactl-package.mjs"
   workflow_dispatch:
     inputs:
       version:
