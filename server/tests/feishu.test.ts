@@ -30,6 +30,7 @@ import { runMessageReact } from '../tools/reactions.js';
 import { runMessageSend, runMessageUpdate } from '../tools/messages.js';
 import { withAnimaHome } from './anima-home.js';
 import { allActivities, loadState } from './helpers/state.js';
+import { FEISHU_RECOMMENDED_SCOPE_NAMES } from '../../shared/agent-config.js';
 import type {
   FeishuFileSendInput,
   FeishuFileUploadInput,
@@ -1362,7 +1363,7 @@ test('Feishu client can fetch tenant scope grant status', async () => {
   }]);
 });
 
-test('Feishu service reports missing profile-name scope with authorization link', async () => {
+test('Feishu service reports missing recommended scopes with authorization link', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-scope-status-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
@@ -1389,13 +1390,24 @@ test('Feishu service reports missing profile-name scope with authorization link'
         /^https:\/\/open\.feishu\.cn\/app\/cli_test\/auth\?/,
       );
       assert.match(status.profileName.authUrl ?? '', /contact%3Auser\.basic_profile%3Areadonly/);
+      assert.equal(status.recommended.state, 'missing');
+      assert.equal(status.recommended.granted, false);
+      assert.deepEqual(status.recommended.missingScopes, FEISHU_RECOMMENDED_SCOPE_NAMES);
+      assert.equal(status.recommended.scopes.length, FEISHU_RECOMMENDED_SCOPE_NAMES.length);
+      assert.match(
+        status.recommended.authUrl ?? '',
+        /^https:\/\/open\.feishu\.cn\/app\/cli_test\/auth\?/,
+      );
+      for (const scope of FEISHU_RECOMMENDED_SCOPE_NAMES) {
+        assert.match(status.recommended.authUrl ?? '', new RegExp(escapeRegExp(encodeURIComponent(scope))));
+      }
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }
 });
 
-test('Feishu service reports granted profile-name scope', async () => {
+test('Feishu service keeps profile-name compatibility while recommended scopes are missing', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-scope-granted-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
@@ -1415,6 +1427,43 @@ test('Feishu service reports granted profile-name scope', async () => {
       assert.equal(status.profileName.state, 'granted');
       assert.equal(status.profileName.granted, true);
       assert.equal(status.profileName.authUrl, undefined);
+      assert.equal(status.recommended.state, 'missing');
+      assert.equal(status.recommended.granted, false);
+      assert.deepEqual(
+        status.recommended.missingScopes,
+        FEISHU_RECOMMENDED_SCOPE_NAMES.filter((scope) => scope !== 'contact:user.basic_profile:readonly'),
+      );
+      assert.match(status.recommended.authUrl ?? '', /im%3Achat\.members%3Awrite_only/);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('Feishu service reports granted recommended scopes', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-recommended-scopes-granted-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir);
+      const service = new AgentFeishuService('scout', {
+        async getFeishuAppScopes() {
+          return FEISHU_RECOMMENDED_SCOPE_NAMES.map((scopeName) => ({
+            granted: true,
+            grantStatus: 1,
+            scopeName,
+          }));
+        },
+      });
+
+      const status = await service.getScopeStatus();
+
+      assert.equal(status.profileName.state, 'granted');
+      assert.equal(status.recommended.state, 'granted');
+      assert.equal(status.recommended.granted, true);
+      assert.deepEqual(status.recommended.missingScopes, []);
+      assert.equal(status.recommended.authUrl, undefined);
+      assert.deepEqual(status.recommended.scopes.map((scope) => scope.scope), FEISHU_RECOMMENDED_SCOPE_NAMES);
+      assert.deepEqual(status.recommended.scopes.map((scope) => scope.granted), FEISHU_RECOMMENDED_SCOPE_NAMES.map(() => true));
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
@@ -2678,6 +2727,10 @@ async function writeFeishuConfig(configDir: string, feishu: Partial<FeishuConfig
     }, null, 2)}\n`,
     'utf8',
   );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 async function waitForRegistration(

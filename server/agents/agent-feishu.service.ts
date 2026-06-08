@@ -1,8 +1,11 @@
 import {
   FEISHU_PROFILE_NAME_SCOPE,
+  FEISHU_RECOMMENDED_SCOPE_NAMES,
+  FEISHU_RECOMMENDED_SCOPES,
   type AgentConfig,
   type AgentConnectFeishuRequest,
   type AgentFeishuRegisterAppRequest,
+  type AgentFeishuRecommendedScopeStatusItem,
   type AgentFeishuScopeGrant,
   type AgentFeishuScopeStatus,
 } from '../../shared/agent-config.js';
@@ -10,6 +13,7 @@ import {
   fetchFeishuBotInfo,
   fetchFeishuAppScopes,
   feishuProfileNameScopeAuthUrl,
+  feishuScopeAuthUrl,
   registerFeishuApp,
   type FeishuBotInfo,
   type FeishuRegisterAppResult,
@@ -111,6 +115,12 @@ export class AgentFeishuService {
           scope: FEISHU_PROFILE_NAME_SCOPE,
           state: 'not_connected',
         },
+        recommended: {
+          granted: false,
+          missingScopes: [...FEISHU_RECOMMENDED_SCOPE_NAMES],
+          scopes: recommendedScopeStatusItems([]),
+          state: 'not_connected',
+        },
       };
     }
 
@@ -118,6 +128,7 @@ export class AgentFeishuService {
       const scopes = await (this.deps.getFeishuAppScopes ?? fetchFeishuAppScopes)(agent.feishu);
       const profileNameScope = scopes.find((scope) => scope.scopeName === FEISHU_PROFILE_NAME_SCOPE);
       const granted = Boolean(profileNameScope?.granted);
+      const recommended = recommendedScopeStatus(agent.feishu.appId, scopes);
       return {
         appId: agent.feishu.appId,
         connected: true,
@@ -127,17 +138,27 @@ export class AgentFeishuService {
           scope: FEISHU_PROFILE_NAME_SCOPE,
           state: granted ? 'granted' : 'missing',
         },
+        recommended,
         scopes,
       };
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       return {
         appId: agent.feishu.appId,
         connected: true,
         profileName: {
           authUrl: feishuProfileNameScopeAuthUrl(agent.feishu.appId),
           granted: false,
-          message: error instanceof Error ? error.message : String(error),
+          message,
           scope: FEISHU_PROFILE_NAME_SCOPE,
+          state: 'unknown',
+        },
+        recommended: {
+          authUrl: feishuScopeAuthUrl(agent.feishu.appId, FEISHU_RECOMMENDED_SCOPE_NAMES),
+          granted: false,
+          message,
+          missingScopes: [...FEISHU_RECOMMENDED_SCOPE_NAMES],
+          scopes: recommendedScopeStatusItems([]),
           state: 'unknown',
         },
       };
@@ -355,6 +376,38 @@ function registrationError(error: unknown): NonNullable<FeishuAppRegistrationSta
     ...(typeof value.description === 'string' ? { description: value.description } : {}),
     ...(typeof value.message === 'string' ? { message: value.message } : {}),
   };
+}
+
+function recommendedScopeStatus(
+  appId: string,
+  grants: readonly AgentFeishuScopeGrant[],
+): AgentFeishuScopeStatus['recommended'] {
+  const scopes = recommendedScopeStatusItems(grants);
+  const missingScopes = scopes.filter((scope) => !scope.granted).map((scope) => scope.scope);
+  const granted = missingScopes.length === 0;
+  return {
+    ...(granted ? {} : { authUrl: feishuScopeAuthUrl(appId, missingScopes) }),
+    granted,
+    missingScopes,
+    scopes,
+    state: granted ? 'granted' : 'missing',
+  };
+}
+
+function recommendedScopeStatusItems(
+  grants: readonly AgentFeishuScopeGrant[],
+): AgentFeishuRecommendedScopeStatusItem[] {
+  return FEISHU_RECOMMENDED_SCOPES.map((recommended) => {
+    const grant = grants.find((scope) => scope.scopeName === recommended.scope);
+    return {
+      capability: recommended.capability,
+      description: recommended.description,
+      granted: Boolean(grant?.granted),
+      ...(grant?.grantStatus !== undefined ? { grantStatus: grant.grantStatus } : {}),
+      label: recommended.label,
+      scope: recommended.scope,
+    };
+  });
 }
 
 function delay(ms: number): Promise<void> {

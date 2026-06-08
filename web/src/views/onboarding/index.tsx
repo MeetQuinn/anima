@@ -544,8 +544,8 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
           if (!registration || createRunRef.current !== runId) return;
 
           if (registration.state === 'connected') {
-            setFeishuPhase('connected');
-            await handleFeishuConnected('registerApp', nextAgentId);
+            setFeishuPhase('permissions');
+            setStep('connect');
             return;
           }
 

@@ -252,7 +252,7 @@ function FeishuHelloBanner({ onDismiss }: { onDismiss: () => void }) {
   );
 }
 
-function FeishuNameAccessConnectBanner({
+function FeishuRecommendedPermissionsConnectBanner({
   authUrl,
   onDismiss,
 }: {
@@ -263,8 +263,9 @@ function FeishuNameAccessConnectBanner({
     <div className="flex shrink-0 items-start gap-3 border-b border-border-soft bg-health-warn-soft/60 px-4 py-2.5 md:px-10">
       <div className="min-w-0 flex-1">
         <p className="font-serif text-[13px] leading-snug text-text">
-          Connected. Your agents can message your team right away. Optional: authorize teammate-name
-          access so they use names, not IDs.
+          Connected. Your agents can message your team right away. Optional: authorize recommended
+          Feishu permissions so they can use teammate names, look people up by email or phone, and
+          invite members to chats.
         </p>
         {authUrl && (
           <a
@@ -538,11 +539,11 @@ export default function Activity() {
     if (!justConnectedFeishu) return;
     if (landingProcessedRef.current === location.key) return;
     // Wait for the appId; the effect re-fires when feishuConnKey resolves. The
-    // connected-name banner is keyed to the connection, including manual
+    // recommended-permissions banner is keyed to the connection, including manual
     // existing-app connects where the greeting banner is intentionally absent.
     if (!agentId || !feishuConnKey) return;
     try {
-      localStorage.setItem(`feishu-name-access-armed:${agentId}`, feishuConnKey);
+      localStorage.setItem(`feishu-recommended-scopes-armed:${agentId}`, feishuConnKey);
     } catch {
       /* localStorage unavailable */
     }
@@ -582,13 +583,13 @@ export default function Activity() {
       return { armed: false, dismissed: false };
     }
   })();
-  const nameAccessPersisted = (() => {
+  const recommendedPermissionsPersisted = (() => {
     if (!agentId || !feishuConnKey) return { armed: false, dismissed: false };
     try {
       return {
-        armed: localStorage.getItem(`feishu-name-access-armed:${agentId}`) === feishuConnKey,
+        armed: localStorage.getItem(`feishu-recommended-scopes-armed:${agentId}`) === feishuConnKey,
         dismissed:
-          localStorage.getItem(`feishu-name-access-dismissed:${agentId}`) === feishuConnKey,
+          localStorage.getItem(`feishu-recommended-scopes-dismissed:${agentId}`) === feishuConnKey,
       };
     } catch {
       return { armed: false, dismissed: false };
@@ -606,10 +607,10 @@ export default function Activity() {
     forceHelloRerender();
   }
 
-  function dismissNameAccessBanner() {
+  function dismissRecommendedPermissionsBanner() {
     if (agentId && feishuConnKey) {
       try {
-        localStorage.setItem(`feishu-name-access-dismissed:${agentId}`, feishuConnKey);
+        localStorage.setItem(`feishu-recommended-scopes-dismissed:${agentId}`, feishuConnKey);
       } catch {
         /* localStorage unavailable */
       }
@@ -621,22 +622,22 @@ export default function Activity() {
     previewHelloBanner ||
     ((landingWantsBanner || helloPersisted.armed) && !helloPersisted.dismissed);
 
-  const shouldCheckNameAccess = Boolean(
+  const shouldCheckRecommendedPermissions = Boolean(
     agentId &&
-    nameAccessPersisted.armed &&
-    !nameAccessPersisted.dismissed &&
+    recommendedPermissionsPersisted.armed &&
+    !recommendedPermissionsPersisted.dismissed &&
     connectedPlatform === 'feishu',
   );
   const { data: feishuScopeStatus } = useQuery({
     queryKey: queryKeys.agentFeishuScopes(agentId ?? ''),
     queryFn: () => fetchAgentFeishuScopeStatus(agentId!),
-    enabled: shouldCheckNameAccess,
+    enabled: shouldCheckRecommendedPermissions,
   });
-  const profileNameState = feishuScopeStatus?.profileName.state;
-  const showNameAccessConnectBanner =
-    nameAccessPersisted.armed &&
-    !nameAccessPersisted.dismissed &&
-    (profileNameState === 'missing' || profileNameState === 'unknown');
+  const recommendedPermissionsState = feishuScopeStatus?.recommended.state;
+  const showRecommendedPermissionsConnectBanner =
+    recommendedPermissionsPersisted.armed &&
+    !recommendedPermissionsPersisted.dismissed &&
+    (recommendedPermissionsState === 'missing' || recommendedPermissionsState === 'unknown');
 
   const error = activitiesError instanceof Error ? activitiesError.message : activitiesError ? String(activitiesError) : null;
 
@@ -736,10 +737,10 @@ export default function Activity() {
   return (
     <div className="flex h-full flex-col overflow-hidden bg-surface">
       {showHelloBanner && <FeishuHelloBanner onDismiss={dismissHelloBanner} />}
-      {showNameAccessConnectBanner && (
-        <FeishuNameAccessConnectBanner
-          authUrl={feishuScopeStatus?.profileName.authUrl}
-          onDismiss={dismissNameAccessBanner}
+      {showRecommendedPermissionsConnectBanner && (
+        <FeishuRecommendedPermissionsConnectBanner
+          authUrl={feishuScopeStatus?.recommended.authUrl}
+          onDismiss={dismissRecommendedPermissionsBanner}
         />
       )}
       {error && (

@@ -4,6 +4,10 @@ import { z } from 'zod';
 
 import { defaultAgentHomePath } from './agent-home.js';
 import {
+  FEISHU_PROFILE_NAME_SCOPE,
+  type FeishuRecommendedScopeCapability,
+} from './feishu-recommended-scopes.js';
+import {
   DEFAULT_PROVIDER_KIND,
   defaultModelForProvider,
   isSupportedReasoningEffort,
@@ -331,12 +335,29 @@ export const AgentFeishuRegisterAppStatus = z.object({
 
 export type AgentFeishuRegisterAppStatus = z.infer<typeof AgentFeishuRegisterAppStatus>;
 
-export const FEISHU_PROFILE_NAME_SCOPE = 'contact:user.basic_profile:readonly';
+export {
+  FEISHU_PROFILE_NAME_SCOPE,
+  FEISHU_RECOMMENDED_SCOPES,
+  FEISHU_RECOMMENDED_SCOPE_NAMES,
+  type FeishuRecommendedScope,
+  type FeishuRecommendedScopeCapability,
+} from './feishu-recommended-scopes.js';
 
 export interface AgentFeishuScopeGrant {
   granted: boolean;
   grantStatus?: number;
   scopeName: string;
+}
+
+export type AgentFeishuScopeCheckState = 'granted' | 'missing' | 'not_connected' | 'unknown';
+
+export interface AgentFeishuRecommendedScopeStatusItem {
+  capability: FeishuRecommendedScopeCapability;
+  description: string;
+  granted: boolean;
+  grantStatus?: number;
+  label: string;
+  scope: string;
 }
 
 export interface AgentFeishuScopeStatus {
@@ -347,7 +368,15 @@ export interface AgentFeishuScopeStatus {
     granted: boolean;
     message?: string;
     scope: typeof FEISHU_PROFILE_NAME_SCOPE;
-    state: 'granted' | 'missing' | 'not_connected' | 'unknown';
+    state: AgentFeishuScopeCheckState;
+  };
+  recommended: {
+    authUrl?: string;
+    granted: boolean;
+    message?: string;
+    missingScopes: string[];
+    scopes: AgentFeishuRecommendedScopeStatusItem[];
+    state: AgentFeishuScopeCheckState;
   };
   scopes?: AgentFeishuScopeGrant[];
 }

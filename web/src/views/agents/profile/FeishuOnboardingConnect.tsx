@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, RotateCw } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 
 import {
   connectAgentFeishu,
   fetchAgentFeishuAppRegistration,
+  fetchAgentFeishuScopeStatus,
   refreshDashboardData,
   startAgentFeishuAppRegistration,
 } from '@/api/agents';
 import { Button } from '@/components/ui/button';
+import { queryKeys } from '@/lib/query-keys';
 import {
   FEISHU_CONNECT_SLOW_SOFTEN_MS,
   FeishuConnectAffordances,
@@ -16,7 +19,11 @@ import {
   FeishuSlowLine,
   isFeishuRegistrationActive,
 } from './feishu-connect-shared';
-import type { AgentFeishuRegisterAppStatus } from '@shared/agent-config';
+import {
+  FEISHU_RECOMMENDED_SCOPES,
+  type AgentFeishuRegisterAppStatus,
+  type AgentFeishuScopeStatus,
+} from '@shared/agent-config';
 
 // A real Feishu authorization URL is only known at runtime. For dev/screenshot
 // preview (no live registration), encode a stand-in so the QR/affordances render.
@@ -37,7 +44,7 @@ const PREVIEW_VERIFICATION_URL =
 // landing page.
 // ---------------------------------------------------------------------------
 
-export type FeishuOnboardingPhase = 'creating' | 'authorizing' | 'fallback' | 'connected';
+export type FeishuOnboardingPhase = 'creating' | 'authorizing' | 'fallback' | 'permissions' | 'connected';
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -88,6 +95,9 @@ export function FeishuOnboardingConnect({
   const [saving, setSaving] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retrySlow, setRetrySlow] = useState(false);
+  const [pendingConnectSource, setPendingConnectSource] = useState<'registerApp' | 'manual' | null>(
+    phaseFromRegistration(initialRegistration, initialError) === 'permissions' ? 'registerApp' : null,
+  );
   const retrySlowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const registrationRunRef = useRef(0);
 
@@ -152,8 +162,14 @@ export function FeishuOnboardingConnect({
     clearRetrySlowTimer();
     setRetrying(false);
     setRetrySlow(false);
-    setPhase('connected');
+    setPendingConnectSource(source);
+    setPhase('permissions');
     refreshDashboardData();
+  }
+
+  function finishConnected() {
+    const source = pendingConnectSource ?? 'registerApp';
+    setPhase('connected');
     onConnect?.({ source });
   }
 
@@ -244,6 +260,14 @@ export function FeishuOnboardingConnect({
         />
       )}
 
+      {phase === 'permissions' && (
+        <RecommendedPermissionsState
+          agentId={agentId}
+          onContinue={finishConnected}
+          preview={isPreview}
+        />
+      )}
+
       {phase === 'connected' && (
         <div className="flex justify-center py-6">
           <Loader2 className="h-6 w-6 animate-spin text-accent" aria-hidden />
@@ -262,8 +286,178 @@ function phaseFromRegistration(
   error: string | undefined,
 ): FeishuOnboardingPhase {
   if (error || registration?.state === 'failed') return 'fallback';
-  if (registration?.state === 'connected') return 'connected';
+  if (registration?.state === 'connected') return 'permissions';
   return 'authorizing';
+}
+
+function RecommendedPermissionsState({
+  agentId,
+  onContinue,
+  preview,
+}: {
+  agentId: string;
+  onContinue: () => void;
+  preview?: boolean;
+}) {
+  const [recheckResult, setRecheckResult] = useState<'granted' | 'missing' | null>(null);
+  const autoContinueRef = useRef(false);
+  const scopeQuery = useQuery({
+    queryKey: queryKeys.agentFeishuScopes(agentId),
+    queryFn: () => fetchAgentFeishuScopeStatus(agentId),
+    enabled: !preview,
+  });
+  const { isError, isFetching, refetch } = scopeQuery;
+  const data = preview ? previewRecommendedScopeStatus() : scopeQuery.data;
+  const state = data?.recommended.state;
+
+  useEffect(() => {
+    if (state !== 'granted' || autoContinueRef.current) return;
+    autoContinueRef.current = true;
+    onContinue();
+  }, [onContinue, state]);
+
+  async function handleRecheck() {
+    setRecheckResult(null);
+    const result = await refetch();
+    const nextState = result.data?.recommended.state;
+    if (nextState === 'granted' || nextState === 'missing') setRecheckResult(nextState);
+  }
+
+  if (!data && !isError) {
+    return (
+      <div className="flex justify-center py-6">
+        <Loader2 className="h-6 w-6 animate-spin text-accent" aria-hidden />
+      </div>
+    );
+  }
+
+  if (recheckResult === 'granted') {
+    return (
+      <div className="space-y-3 rounded-sm border border-health-ok/30 bg-health-ok-soft px-4 py-3">
+        <div className="flex items-start gap-2">
+          <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-health-ok" />
+          <p className="font-serif text-[13px] leading-snug text-text">
+            Recommended Feishu permissions are on. Your agents can now use teammate names, look
+            people up by email or phone, and invite members to chats.
+          </p>
+        </div>
+        <Button className="w-full" onClick={onContinue}>Continue to activity</Button>
+      </div>
+    );
+  }
+
+  const confirmedMissing = state === 'missing';
+  const authUrl = data?.recommended.authUrl;
+  const scopes = recommendedScopesForDisplay(data);
+  return (
+    <div className="space-y-3 rounded-sm border border-health-warn/30 bg-health-warn-soft px-4 py-3">
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-health-warn" />
+        <div className="min-w-0 flex-1">
+          <div className="font-serif text-[14px] font-semibold text-text">
+            Authorize recommended Feishu permissions
+          </div>
+          <p className="mt-1 font-serif text-[13px] leading-snug text-text-muted">
+            Your agent can already send and receive messages in Feishu. Authorize the recommended
+            permissions so it can use teammate names, look people up by email or phone, and invite
+            people or bots into chats.
+          </p>
+          <div className="mt-2">
+            <div className="font-sans text-[11px] font-medium uppercase tracking-[0.08em] text-text-subtle">
+              Recommended scopes
+            </div>
+            <ul className="mt-1 space-y-0.5">
+              {scopes.map((scope) => (
+                <li key={scope} className="break-all font-mono text-[11px] text-text-subtle">
+                  {scope}
+                </li>
+              ))}
+            </ul>
+          </div>
+          {recheckResult === 'missing' && (
+            <div className="mt-2 font-sans text-[11px] text-text-subtle">
+              Not authorized yet. If you just approved it in Feishu, give it a moment and recheck.
+            </div>
+          )}
+          {data?.recommended.message && recheckResult !== 'missing' && (
+            <div className="mt-2 break-words font-sans text-[11px] text-text-subtle">
+              Last check: {data.recommended.message}
+            </div>
+          )}
+          {isError && !data?.recommended.message && (
+            <div className="mt-2 font-sans text-[11px] text-text-subtle">
+              Could not check Feishu permissions.
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        {authUrl && (
+          <Button
+            className="w-full sm:w-auto"
+            render={<a href={authUrl} rel="noreferrer" target="_blank" />}
+          >
+            Authorize in Feishu
+            <ExternalLink className="h-4 w-4" aria-hidden />
+          </Button>
+        )}
+        <button
+          type="button"
+          onClick={() => void handleRecheck()}
+          disabled={isFetching}
+          className="inline-flex min-h-9 items-center justify-center gap-1 rounded-sm px-3 font-sans text-[12px] text-text-muted underline decoration-text-subtle/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {isFetching ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCw className="h-3 w-3" />}
+          Recheck access
+        </button>
+        <button
+          type="button"
+          onClick={onContinue}
+          className="inline-flex min-h-9 items-center justify-center rounded-sm px-3 font-sans text-[12px] text-text-muted underline decoration-text-subtle/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
+        >
+          Continue to activity
+        </button>
+      </div>
+      {!confirmedMissing && state !== 'unknown' && (
+        <p className="font-sans text-[11px] text-text-subtle">
+          Checking recommended permissions before continuing.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function recommendedScopesForDisplay(data: AgentFeishuScopeStatus | undefined): string[] {
+  if (data?.recommended.missingScopes.length) return data.recommended.missingScopes;
+  if (data?.recommended.scopes.length) return data.recommended.scopes.map((scope) => scope.scope);
+  return FEISHU_RECOMMENDED_SCOPES.map((scope) => scope.scope);
+}
+
+function previewRecommendedScopeStatus(): AgentFeishuScopeStatus {
+  const scopes = FEISHU_RECOMMENDED_SCOPES.map((scope) => ({
+    capability: scope.capability,
+    description: scope.description,
+    granted: false,
+    label: scope.label,
+    scope: scope.scope,
+  }));
+  return {
+    appId: 'cli_preview',
+    connected: true,
+    profileName: {
+      authUrl: 'https://open.feishu.cn/app/cli_preview/auth?preview=recommended-scopes',
+      granted: false,
+      scope: 'contact:user.basic_profile:readonly',
+      state: 'missing',
+    },
+    recommended: {
+      authUrl: 'https://open.feishu.cn/app/cli_preview/auth?preview=recommended-scopes',
+      granted: false,
+      missingScopes: scopes.map((scope) => scope.scope),
+      scopes,
+      state: 'missing',
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
