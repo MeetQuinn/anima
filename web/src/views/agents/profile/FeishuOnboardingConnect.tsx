@@ -361,21 +361,26 @@ function RecommendedPermissionsState({
           Authorize the permissions below so your Feishu bot can work more smoothly with teammates
           and group chats.
         </p>
+        <p className="mt-2 font-sans text-[12px] leading-snug text-text-muted">
+          In Feishu, add these permissions and publish a new app version. Then come back here and
+          select Recheck access.
+        </p>
         <p className="mt-2 font-sans text-[12px] leading-snug text-text-subtle">
           If you finish without them, your bot can still send and receive messages, but it may not
           be able to use teammate names, look people up by email or phone, or invite and manage
           group chat members until these permissions are authorized.
         </p>
       </div>
-      <ul className="space-y-2">
-        {scopes.map((scope, index) => (
+      <ul className="rounded-sm border border-border-soft bg-white">
+        {scopes.map((scope) => (
           <li
             key={scope.scope}
-            className="flex gap-3 rounded-sm border border-border-soft bg-white px-3 py-2"
+            className="flex gap-2.5 border-b border-border-soft px-3 py-2.5 last:border-b-0"
           >
-            <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border-soft font-sans text-[10px] font-semibold text-text-subtle">
-              {index + 1}
-            </span>
+            <span
+              className="mt-[0.45rem] h-1.5 w-1.5 shrink-0 rounded-full bg-text-subtle/60"
+              aria-hidden
+            />
             <div className="min-w-0">
               <div className="font-serif text-[13px] font-semibold leading-snug text-text">
                 {scope.label}
@@ -386,7 +391,8 @@ function RecommendedPermissionsState({
       </ul>
       {recheckResult === 'missing' && (
         <div className="font-sans text-[11px] text-text-subtle">
-          Not authorized yet. If you just approved it in Feishu, give it a moment and recheck.
+          If you've added the permissions in Feishu, make sure you also published a new app
+          version. Then select Recheck access.
         </div>
       )}
       {data?.recommended.message && recheckResult !== 'missing' && (

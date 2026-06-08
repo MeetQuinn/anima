@@ -85,9 +85,16 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
             <div className="font-sans text-[11px] font-medium uppercase tracking-[0.08em] text-text-subtle">
               Recommended permissions
             </div>
-            <ul className="mt-1 space-y-2">
+            <ul className="mt-1 rounded-sm border border-border-soft bg-white">
               {scopes.map((scope) => (
-                <li key={scope.scope} className="rounded-sm border border-border-soft bg-white px-3 py-2">
+                <li
+                  key={scope.scope}
+                  className="flex gap-2.5 border-b border-border-soft px-3 py-2.5 last:border-b-0"
+                >
+                  <span
+                    className="mt-[0.45rem] h-1.5 w-1.5 shrink-0 rounded-full bg-text-subtle/60"
+                    aria-hidden
+                  />
                   <div className="font-serif text-[13px] font-semibold leading-snug text-text">
                     {scope.label}
                   </div>
@@ -97,7 +104,8 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
           </div>
           {currentRecheckResult === 'missing' && (
             <div className="mt-2 font-sans text-[11px] text-text-subtle">
-              Not authorized yet. If you just approved it in Feishu, give it a moment and recheck.
+              If you've added the permissions in Feishu, make sure you also published a new app
+              version. Then select Recheck access.
             </div>
           )}
           {(recommended?.message ?? data?.profileName.message) && currentRecheckResult !== 'missing' && (
