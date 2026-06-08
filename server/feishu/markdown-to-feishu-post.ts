@@ -21,7 +21,7 @@ export interface FeishuPostContent {
  *   *text*  / _text_    → italic text
  *   `code`              → inline_code text
  *   [text](url)         → link
- *   <at user_id="ou_..."></at> → Feishu mention
+ *   <mention user_id="ou_...">Name</mention> → Feishu mention
  */
 function parseInline(line: string): FeishuPostInlineItem[] {
   const items: FeishuPostInlineItem[] = [];
@@ -107,7 +107,7 @@ function parseInline(line: string): FeishuPostInlineItem[] {
 }
 
 function parseFeishuAt(line: string, start: number): { item: FeishuPostInlineItem; length: number } | undefined {
-  const match = /^<at\s+user_id="([^"]+)">.*?<\/at>/.exec(line.slice(start));
+  const match = /^<mention\s+user_id="([^"]+)">[^<]*<\/mention>/.exec(line.slice(start));
   const userId = match?.[1]?.trim();
   if (!match || !userId || !isFeishuAtUserId(userId)) return undefined;
   return {

@@ -178,7 +178,11 @@ function replaceFeishuMentionKeys(
   let result = text;
   for (const mention of mentions) {
     if (!mention.key || !mention.name) continue;
-    result = result.replaceAll(mention.key, `@${mention.name}`);
+    const openId = mention.id.open_id;
+    const replacement = openId
+      ? `<mention user_id="${openId}">${mention.name}</mention>`
+      : `@${mention.name}`;
+    result = result.replaceAll(mention.key, replacement);
   }
   return result;
 }
