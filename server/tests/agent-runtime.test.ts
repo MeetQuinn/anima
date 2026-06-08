@@ -1514,7 +1514,7 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
       const sessionId = state.sessions.anima?.current?.id;
       assert.equal(sessionId, 'kimi-session-1');
       const args = JSON.parse((await readFile(callsPath, 'utf8')).split('\n')[0] ?? '{}') as { argv: string[] };
-      assert.deepEqual(args.argv, ['acp']);
+      assert.deepEqual(args.argv, ['--yolo', 'acp']);
       const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string; params?: { prompt?: Array<{ text?: string }> } });
       assert.equal(calls.filter((call) => call.method === 'session/prompt').length, 2);
       assert.ok(calls.find((call) => call.method === 'session/prompt')?.params?.prompt?.[0]?.text?.includes('You are Anima'));
