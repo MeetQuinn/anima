@@ -8,7 +8,7 @@ import {
 } from '../storage/schema/cache.js';
 import { safeFilename } from '../storage/safe-filename.js';
 
-export type FeishuMessageResourceType = 'file' | 'image';
+export type FeishuMessageResourceType = 'audio' | 'file' | 'image';
 
 export interface FeishuMessageResourceRef {
   fileId: string;
@@ -63,7 +63,7 @@ export function parseFeishuMessageResourceId(fileId: string): FeishuMessageResou
   if (parts.length !== 5) return undefined;
   const [platform, scope, messageId, resourceType, fileKey] = parts;
   if (platform !== 'feishu' || scope !== 'message') return undefined;
-  if (resourceType !== 'file' && resourceType !== 'image') return undefined;
+  if (resourceType !== 'audio' && resourceType !== 'file' && resourceType !== 'image') return undefined;
   if (!messageId || !fileKey) return undefined;
   return { fileId, fileKey, messageId, resourceType };
 }
@@ -87,6 +87,8 @@ function extensionForContentType(contentType: string | undefined): string {
   if (normalized === 'image/jpeg') return '.jpg';
   if (normalized === 'image/gif') return '.gif';
   if (normalized === 'image/webp') return '.webp';
+  if (normalized === 'audio/opus' || normalized === 'audio/ogg') return '.opus';
+  if (normalized === 'video/mp4') return '.mp4';
   if (normalized === 'application/pdf') return '.pdf';
   if (normalized === 'text/plain') return '.txt';
   return '';
