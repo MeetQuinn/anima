@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   Clipboard,
   ClipboardCheck,
+  ExternalLink,
   MoreHorizontal,
   Power,
   PowerOff,
@@ -89,6 +90,18 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
   const agent = agents.find((a) => a.id === agentId);
   if (!agent) return null;
   const enabled = agent.enabled !== false;
+  // A non-empty Feishu appId means the user created a Feishu bot app during
+  // onboarding. Removing the agent wipes the local config (appId included) but
+  // cannot delete the app on Feishu's side — there is no API for that — so the
+  // remove dialog surfaces a deep-link to that exact app's console page.
+  // Route the console domain by tenant brand silently (never shown to the user);
+  // the visible label always says "Feishu console" per our copy red line.
+  const feishuAppId = agent.feishu?.appId?.trim();
+  const feishuConsoleUrl = feishuAppId
+    ? `https://${
+        agent.feishu?.ownerTenantBrand === 'lark' ? 'open.larksuite.com' : 'open.feishu.cn'
+      }/app/${encodeURIComponent(feishuAppId)}`
+    : undefined;
   const status = statuses.find((candidate) => candidate.agentId === agentId);
   const running = Boolean(status?.currentItemId);
   const health = status?.health;
@@ -289,7 +302,28 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
                 setMenuOpen(false);
                 confirm({
                   title: 'Remove this agent?',
-                  description: 'The agent will stop running and its local Anima config will be deleted. Home files are not affected.',
+                  description: feishuConsoleUrl ? (
+                    <>
+                      <p>
+                        The agent will stop running and its local Anima config will be deleted. Home
+                        files are not affected.
+                      </p>
+                      <p className="mt-2">
+                        {"Removing this agent won't delete the Feishu bot you created. To remove it completely, delete the app in the Feishu console."}
+                      </p>
+                      <a
+                        href={feishuConsoleUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-2 inline-flex items-center gap-1 font-sans text-[13px] text-text underline decoration-text-subtle/40 underline-offset-2 transition-colors hover:decoration-text/40"
+                      >
+                        Open this app in the Feishu console
+                        <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                      </a>
+                    </>
+                  ) : (
+                    'The agent will stop running and its local Anima config will be deleted. Home files are not affected.'
+                  ),
                   variant: 'error',
                   confirmLabel: 'Remove',
                   busyLabel: 'Removing…',
