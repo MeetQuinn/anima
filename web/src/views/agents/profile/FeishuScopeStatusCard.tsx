@@ -91,9 +91,6 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
                   <div className="font-serif text-[13px] font-semibold leading-snug text-text">
                     {scope.label}
                   </div>
-                  <p className="mt-0.5 font-sans text-[12px] leading-snug text-text-muted">
-                    {scope.description}
-                  </p>
                 </li>
               ))}
             </ul>
