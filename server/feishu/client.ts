@@ -115,6 +115,7 @@ export interface FeishuUserBasicInfo {
 export interface FeishuConversationMessage {
   bodyContent?: string;
   chatId?: string;
+  chatType?: string;
   createTime?: string;
   deleted?: boolean;
   mentions?: FeishuConversationMention[];
@@ -321,6 +322,7 @@ interface FeishuSdkListedMessage {
     content?: string;
   };
   chat_id?: string;
+  chat_type?: string;
   create_time?: string;
   deleted?: boolean;
   mentions?: Array<{
@@ -894,6 +896,7 @@ function feishuConversationMessagesFromSdk(items: FeishuSdkListedMessage[] | und
     .map((item) => ({
       ...(item.body?.content ? { bodyContent: item.body.content } : {}),
       ...(item.chat_id ? { chatId: item.chat_id } : {}),
+      ...(item.chat_type ? { chatType: item.chat_type } : {}),
       ...(item.create_time ? { createTime: item.create_time } : {}),
       ...(item.deleted !== undefined ? { deleted: item.deleted } : {}),
       ...(item.mentions?.length ? { mentions: feishuMentionsFromSdk(item.mentions) } : {}),
@@ -936,14 +939,21 @@ function feishuSenderFromSdk(
 
 export function createFeishuEventDispatcher(input: {
   config: FeishuConfig;
+  onReactionCreated?(data: unknown): Promise<void>;
   onReceiveMessage(data: unknown): Promise<void>;
 }): lark.EventDispatcher {
-  return new lark.EventDispatcher({
+  const dispatcher = new lark.EventDispatcher({
     encryptKey: input.config.encryptKey,
     verificationToken: input.config.verificationToken,
   }).register({
     'im.message.receive_v1': (data) => input.onReceiveMessage(data),
   });
+  if (input.onReactionCreated) {
+    dispatcher.register({
+      'im.message.reaction.created_v1': (data) => input.onReactionCreated!(data),
+    });
+  }
+  return dispatcher;
 }
 
 function feishuSendTarget(input: FeishuTextSendInput): {

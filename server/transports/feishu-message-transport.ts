@@ -2,8 +2,10 @@ import { createFeishuEventDispatcher, createFeishuMessageClient, createFeishuWsC
 import { FeishuDirectoryService, feishuDirectoryId } from '../feishu/directory.service.js';
 import {
   feishuMessageMentionsBot,
+  feishuReactionEventFromData,
   feishuReceiveMessageEventFromData,
   normalizeFeishuMessage,
+  normalizeFeishuReaction,
   type FeishuReceiveMessageEvent,
 } from '../feishu/events.js';
 import {
@@ -48,6 +50,7 @@ export class FeishuMessageTransport implements MessageTransport {
     const wsClient = this.deps.createWsClient?.(this.options.config) ?? createFeishuWsClient(this.options.config);
     const dispatcher = createFeishuEventDispatcher({
       config: this.options.config,
+      onReactionCreated: (data) => this.handleReactionCreated(data),
       onReceiveMessage: (data) => this.handleReceiveMessage(data),
     });
     try {
@@ -98,6 +101,45 @@ export class FeishuMessageTransport implements MessageTransport {
       : event;
     const decision = await this.options.queue.enqueue(queuedEvent);
     console.log(JSON.stringify(feishuDecisionLog(decision, this.options.agentRuntimeKind, runtimeDecision), null, 2));
+  }
+
+  private async handleReactionCreated(data: unknown): Promise<void> {
+    const reactionEvent = feishuReactionEventFromData(data);
+    if (!reactionEvent) return;
+    // Only wake on human reactions, not bot-generated ones or unknown operators.
+    if (reactionEvent.operator_type !== 'user') return;
+
+    const client = this.deps.createMessageClient?.(this.options.config) ?? createFeishuMessageClient(this.options.config);
+    if (!client.getMessage) return;
+
+    let message: Awaited<ReturnType<NonNullable<typeof client.getMessage>>>;
+    try {
+      message = await client.getMessage({ messageId: reactionEvent.message_id });
+    } catch {
+      return;
+    }
+    if (!message?.chatId) return;
+
+    // Wake when someone reacted to our bot's own message
+    if (message.sender?.senderType !== 'app') return;
+
+    const tenantKey = reactionEvent.tenant_key;
+    const event = normalizeFeishuReaction({
+      appId: this.options.config.appId,
+      chatId: message.chatId,
+      chatType: message.chatType ?? 'group',
+      event: reactionEvent,
+      ...(tenantKey ? { tenantKey } : {}),
+    });
+
+    const duplicate = Boolean(await this.options.queue.find(event.id));
+    if (duplicate) {
+      console.log(JSON.stringify(feishuIgnoredLog(this.options.agentRuntimeKind, 'duplicate_reaction'), null, 2));
+      return;
+    }
+
+    const decision = await this.options.queue.enqueue(event);
+    console.log(JSON.stringify(feishuDecisionLog(decision, this.options.agentRuntimeKind), null, 2));
   }
 
   private maybeSyncDisplayInfo(): void {
