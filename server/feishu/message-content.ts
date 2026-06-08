@@ -63,6 +63,19 @@ export function feishuMessageAttachmentsFromContent(input: {
     })];
   }
 
+  if (input.messageType === 'sticker') {
+    // Some sticker messages expose an image_key that can be fetched as an image resource.
+    const imageKey = stringContentField(input.content, 'image_key');
+    if (!imageKey) return [];
+    return [attachmentMeta({
+      fileKey: imageKey,
+      messageId: input.messageId,
+      mimetype: 'image/*',
+      name: fallbackFeishuResourceName('image', input.messageId),
+      resourceType: 'image',
+    })];
+  }
+
   return [];
 }
 

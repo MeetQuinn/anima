@@ -46,6 +46,73 @@ export interface FeishuReceiveMessageEvent {
   ts?: string;
 }
 
+export interface FeishuReactionCreatedEvent {
+  action_time?: string;
+  app_id?: string;
+  event_id?: string;
+  message_id: string;
+  operator_id?: {
+    open_id?: string;
+    union_id?: string;
+    user_id?: string;
+  };
+  operator_type?: string;
+  reaction_type: {
+    emoji_type: string;
+  };
+  tenant_key?: string;
+}
+
+export function feishuReactionEventFromData(data: unknown): FeishuReactionCreatedEvent | undefined {
+  // SDK may pass the inner event object directly or wrap it under `event`
+  const candidates = [data, (data as { event?: unknown } | undefined)?.event];
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const c = candidate as Partial<FeishuReactionCreatedEvent>;
+    if (
+      typeof c.message_id === 'string'
+      && c.reaction_type
+      && typeof c.reaction_type === 'object'
+      && typeof (c.reaction_type as { emoji_type?: unknown }).emoji_type === 'string'
+    ) {
+      return c as FeishuReactionCreatedEvent;
+    }
+  }
+  return undefined;
+}
+
+export function normalizeFeishuReaction(input: {
+  appId?: string;
+  chatId: string;
+  chatType: string;
+  event: FeishuReactionCreatedEvent;
+  tenantKey?: string;
+}): FeishuInboxItem {
+  const emojiType = input.event.reaction_type.emoji_type;
+  const operatorOpenId = input.event.operator_id?.open_id;
+  const handlingAt = nowIso();
+  return {
+    ...(input.event.operator_id ? {
+      actor: {
+        ...(operatorOpenId ? { openId: operatorOpenId } : {}),
+        ...(input.event.operator_type ? { senderType: input.event.operator_type } : {}),
+        ...(input.event.operator_id.union_id ? { unionId: input.event.operator_id.union_id } : {}),
+        ...(input.event.operator_id.user_id ? { userId: input.event.operator_id.user_id } : {}),
+      },
+    } : {}),
+    appId: input.appId,
+    chatId: input.chatId,
+    chatType: input.chatType,
+    handling: { createdAt: handlingAt, queuedAt: handlingAt, status: 'queued', updatedAt: handlingAt },
+    id: `feishu:${input.tenantKey ?? input.appId ?? 'unknown-tenant'}:${input.chatId}:reaction:${input.event.message_id}:${emojiType}:${operatorOpenId ?? 'unknown'}`,
+    kind: 'feishu',
+    messageId: input.event.message_id,
+    receivedAt: feishuTimestampToIso(input.event.action_time),
+    ...(input.tenantKey ? { tenantKey: input.tenantKey } : {}),
+    text: `[reaction:${emojiType}] on ${input.event.message_id}`,
+  };
+}
+
 export function feishuReceiveMessageEventFromData(data: unknown): FeishuReceiveMessageEvent | undefined {
   if (isFeishuReceiveMessageEvent(data)) return data;
   if (data && typeof data === 'object') {
@@ -133,6 +200,10 @@ function feishuTextFromMessage(
   message: FeishuReceiveMessageEvent['message'],
   parsed: Record<string, unknown> | undefined,
 ): string | undefined {
+  if (message.message_type === 'sticker') {
+    const stickerId = typeof parsed?.['sticker_id'] === 'string' ? parsed['sticker_id'] : undefined;
+    return stickerId ? `[sticker sticker_id=${stickerId}]` : '[sticker]';
+  }
   const rawText = message.message_type === 'text'
     ? (typeof parsed?.['text'] === 'string' ? parsed['text'] : undefined)
     : message.message_type === 'post'

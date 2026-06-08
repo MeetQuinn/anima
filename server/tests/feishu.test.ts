@@ -6,8 +6,10 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 
 import {
+  feishuReactionEventFromData,
   feishuReceiveMessageEventFromData,
   normalizeFeishuMessage,
+  normalizeFeishuReaction,
   shouldWakeFeishuRuntime,
   type FeishuReceiveMessageEvent,
 } from '../feishu/events.js';
@@ -257,18 +259,105 @@ test('normalizes Feishu image messages into fetchable prompt attachments', () =>
   assert.match(prompt, /<file id="feishu:message:om_image_message:image:image_key_photo" name="image-om_image_message" mimetype="image\/\*" size_bytes="0" \/>/);
 });
 
-test('ignores unsupported Feishu non-text messages without fetchable resources', () => {
+test('ignores truly unsupported Feishu message types that produce no text or files', () => {
+  // interactive card with no recognizable content
   const item = normalizeFeishuMessage({
     event: makeFeishuEvent({
       message: {
-        content: JSON.stringify({ sticker_key: 'sticker_1' }),
+        content: JSON.stringify({ header: { title: { content: 'card' } } }),
+        message_id: 'om_interactive_message',
+        message_type: 'interactive',
+      },
+    }),
+  });
+  assert.equal(item, undefined);
+});
+
+test('normalizes Feishu sticker messages to recognizable text', () => {
+  const item = normalizeFeishuMessage({
+    event: makeFeishuEvent({
+      message: {
+        content: JSON.stringify({ sticker_id: 'sticker_abc123' }),
         message_id: 'om_sticker_message',
         message_type: 'sticker',
       },
     }),
   });
 
-  assert.equal(item, undefined);
+  assert.ok(item);
+  assert.equal(item.text, '[sticker sticker_id=sticker_abc123]');
+  assert.equal(item.files, undefined);
+});
+
+test('normalizes Feishu sticker with image_key into a fetchable attachment', () => {
+  const item = normalizeFeishuMessage({
+    event: makeFeishuEvent({
+      message: {
+        content: JSON.stringify({ image_key: 'img_sticker_key', sticker_id: 'sticker_abc123' }),
+        message_id: 'om_sticker_img_message',
+        message_type: 'sticker',
+      },
+    }),
+  });
+
+  assert.ok(item);
+  assert.equal(item.text, '[sticker sticker_id=sticker_abc123]');
+  assert.deepEqual(item.files, [{
+    id: 'feishu:message:om_sticker_img_message:image:img_sticker_key',
+    mimetype: 'image/*',
+    name: 'image-om_sticker_img_message',
+    sizeBytes: 0,
+  }]);
+});
+
+test('parses and normalizes Feishu reaction events', () => {
+  const rawData = {
+    action_time: '1780410000000',
+    message_id: 'om_reacted_message',
+    operator_id: { open_id: 'ou_alice', union_id: 'on_alice', user_id: 'user_alice' },
+    operator_type: 'user',
+    reaction_type: { emoji_type: 'THUMBSUP' },
+    tenant_key: 'tenant_test',
+  };
+
+  const event = feishuReactionEventFromData(rawData);
+  assert.ok(event);
+  assert.equal(event.message_id, 'om_reacted_message');
+  assert.equal(event.reaction_type.emoji_type, 'THUMBSUP');
+
+  const item = normalizeFeishuReaction({
+    appId: 'cli_test',
+    chatId: 'oc_test_chat',
+    chatType: 'group',
+    event,
+    tenantKey: 'tenant_test',
+  });
+
+  assert.equal(item.kind, 'feishu');
+  assert.equal(item.chatId, 'oc_test_chat');
+  assert.equal(item.messageId, 'om_reacted_message');
+  assert.equal(item.text, '[reaction:THUMBSUP] on om_reacted_message');
+  assert.equal(item.actor?.openId, 'ou_alice');
+  assert.match(item.id, /reaction:om_reacted_message:THUMBSUP:ou_alice/);
+
+  const prompt = buildCodeAgentDeliveryPrompt(item);
+  assert.match(prompt, /\[reaction:THUMBSUP\] on om_reacted_message/);
+  assert.match(prompt, /ou_alice:/);
+});
+
+test('feishuReactionEventFromData handles SDK-wrapped event envelope', () => {
+  const wrapped = {
+    event: {
+      action_time: '1780410000000',
+      message_id: 'om_wrapped',
+      operator_type: 'user',
+      reaction_type: { emoji_type: 'LIKE' },
+    },
+  };
+
+  const event = feishuReactionEventFromData(wrapped);
+  assert.ok(event);
+  assert.equal(event.message_id, 'om_wrapped');
 });
 
 test('Feishu group wake policy requires the configured bot mention', () => {
