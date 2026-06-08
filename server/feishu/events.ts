@@ -91,6 +91,8 @@ export function normalizeFeishuReaction(input: {
   const emojiType = input.event.reaction_type.emoji_type;
   const operatorOpenId = input.event.operator_id?.open_id;
   const handlingAt = nowIso();
+  const reactionKey = input.event.event_id
+    ?? `${input.event.message_id}:${emojiType}:${operatorOpenId ?? 'unknown'}`;
   return {
     ...(input.event.operator_id ? {
       actor: {
@@ -104,7 +106,7 @@ export function normalizeFeishuReaction(input: {
     chatId: input.chatId,
     chatType: input.chatType,
     handling: { createdAt: handlingAt, queuedAt: handlingAt, status: 'queued', updatedAt: handlingAt },
-    id: `feishu:${input.tenantKey ?? input.appId ?? 'unknown-tenant'}:${input.chatId}:reaction:${input.event.message_id}:${emojiType}:${operatorOpenId ?? 'unknown'}`,
+    id: `feishu:${input.tenantKey ?? input.appId ?? 'unknown-tenant'}:${input.chatId}:reaction:${reactionKey}`,
     kind: 'feishu',
     messageId: input.event.message_id,
     receivedAt: feishuTimestampToIso(input.event.action_time),

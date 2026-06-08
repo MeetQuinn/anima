@@ -23,6 +23,7 @@ import { FeishuDirectoryService } from '../feishu/directory.service.js';
 import { AgentFeishuService } from '../agents/agent-feishu.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { FeishuMessageTransport } from '../transports/feishu-message-transport.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import { messageFromInboxItem } from '../messages/message.projection.js';
 import { runFileSend } from '../tools/file-send.js';
@@ -127,6 +128,26 @@ function jsonResponse(payload: unknown, init: { ok?: boolean; status?: number; s
     status: init.status ?? 200,
     statusText: init.statusText ?? 'OK',
   } as Response;
+}
+
+function feishuTransportConfig(overrides: Partial<FeishuConfig> = {}): FeishuConfig {
+  return {
+    appId: 'cli_test',
+    appSecret: 'secret',
+    connected: true,
+    encryptKey: '',
+    verificationToken: '',
+    ...overrides,
+  };
+}
+
+async function handleFeishuReactionForTest(
+  transport: FeishuMessageTransport,
+  data: unknown,
+): Promise<void> {
+  await (transport as unknown as {
+    handleReactionCreated(data: unknown): Promise<void>;
+  }).handleReactionCreated(data);
 }
 
 test('normalizes Feishu text DMs into inbox items', () => {
@@ -358,6 +379,155 @@ test('feishuReactionEventFromData handles SDK-wrapped event envelope', () => {
   const event = feishuReactionEventFromData(wrapped);
   assert.ok(event);
   assert.equal(event.message_id, 'om_wrapped');
+});
+
+test('Feishu reaction transport enqueues human reactions to bot messages', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-reaction-transport-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const queue = new WakeQueueService('scout');
+      const transport = new FeishuMessageTransport(
+        {
+          agentRuntimeKind: 'kimi-cli',
+          config: feishuTransportConfig(),
+          queue,
+        },
+        {
+          createMessageClient: () => testFeishuMessageClient({
+            async getMessage(input) {
+              assert.deepEqual(input, { messageId: 'om_bot_message' });
+              return {
+                chatId: 'oc_test_chat',
+                chatType: 'group',
+                messageId: 'om_bot_message',
+                sender: { id: 'cli_test', idType: 'app_id', senderType: 'app' },
+              };
+            },
+          }),
+        },
+      );
+
+      await handleFeishuReactionForTest(transport, {
+        action_time: '1780410000000',
+        event_id: 'evt_reaction_created_1',
+        message_id: 'om_bot_message',
+        operator_id: { open_id: 'ou_alice', user_id: 'user_alice' },
+        operator_type: 'user',
+        reaction_type: { emoji_type: 'THUMBSUP' },
+        tenant_key: 'tenant_test',
+      });
+
+      const items = await queue.list();
+      assert.equal(items.length, 1);
+      const item = items[0];
+      assert.equal(item?.kind, 'feishu');
+      assert.equal(item?.id, 'feishu:tenant_test:oc_test_chat:reaction:evt_reaction_created_1');
+      assert.equal(item?.chatId, 'oc_test_chat');
+      assert.equal(item?.chatType, 'group');
+      assert.equal(item?.text, '[reaction:THUMBSUP] on om_bot_message');
+      assert.equal(item?.actor?.openId, 'ou_alice');
+      assert.equal(item?.actor?.senderType, 'user');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('Feishu reaction transport ignores non-user operators and non-bot messages', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-reaction-ignore-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const queue = new WakeQueueService('scout');
+      const getMessageCalls: string[] = [];
+      const transport = new FeishuMessageTransport(
+        {
+          agentRuntimeKind: 'kimi-cli',
+          config: feishuTransportConfig(),
+          queue,
+        },
+        {
+          createMessageClient: () => testFeishuMessageClient({
+            async getMessage(input) {
+              getMessageCalls.push(input.messageId);
+              return {
+                chatId: 'oc_test_chat',
+                chatType: 'group',
+                messageId: input.messageId,
+                sender: { id: 'ou_bob', idType: 'open_id', senderType: 'user' },
+              };
+            },
+          }),
+        },
+      );
+      const base = {
+        action_time: '1780410000000',
+        message_id: 'om_message',
+        operator_id: { open_id: 'ou_alice' },
+        reaction_type: { emoji_type: 'THUMBSUP' },
+        tenant_key: 'tenant_test',
+      };
+
+      await handleFeishuReactionForTest(transport, { ...base, event_id: 'evt_bot', operator_type: 'bot' });
+      await handleFeishuReactionForTest(transport, { ...base, event_id: 'evt_app', operator_type: 'app' });
+      await handleFeishuReactionForTest(transport, { ...base, event_id: 'evt_unknown' });
+      await handleFeishuReactionForTest(transport, { ...base, event_id: 'evt_user_on_user', operator_type: 'user' });
+
+      assert.deepEqual(getMessageCalls, ['om_message']);
+      assert.deepEqual(await queue.list(), []);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('Feishu reaction transport deduplicates by event id when present', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-reaction-dedupe-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const queue = new WakeQueueService('scout');
+      const transport = new FeishuMessageTransport(
+        {
+          agentRuntimeKind: 'kimi-cli',
+          config: feishuTransportConfig(),
+          queue,
+        },
+        {
+          createMessageClient: () => testFeishuMessageClient({
+            async getMessage(input) {
+              return {
+                chatId: 'oc_test_chat',
+                chatType: 'group',
+                messageId: input.messageId,
+                sender: { id: 'cli_test', idType: 'app_id', senderType: 'app' },
+              };
+            },
+          }),
+        },
+      );
+      const base = {
+        action_time: '1780410000000',
+        message_id: 'om_bot_message',
+        operator_id: { open_id: 'ou_alice' },
+        operator_type: 'user',
+        reaction_type: { emoji_type: 'THUMBSUP' },
+        tenant_key: 'tenant_test',
+      };
+
+      await handleFeishuReactionForTest(transport, { ...base, event_id: 'evt_reaction_1' });
+      await handleFeishuReactionForTest(transport, { ...base, event_id: 'evt_reaction_1' });
+      await handleFeishuReactionForTest(transport, { ...base, event_id: 'evt_reaction_2' });
+
+      assert.deepEqual(
+        (await queue.list()).map((item) => item.id).sort(),
+        [
+          'feishu:tenant_test:oc_test_chat:reaction:evt_reaction_1',
+          'feishu:tenant_test:oc_test_chat:reaction:evt_reaction_2',
+        ],
+      );
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 test('Feishu group wake policy requires the configured bot mention', () => {

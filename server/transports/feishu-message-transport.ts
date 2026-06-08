@@ -101,8 +101,8 @@ export class FeishuMessageTransport implements MessageTransport {
   private async handleReactionCreated(data: unknown): Promise<void> {
     const reactionEvent = feishuReactionEventFromData(data);
     if (!reactionEvent) return;
-    // Only wake on human reactions, not bot-generated ones
-    if (reactionEvent.operator_type === 'bot') return;
+    // Only wake on human reactions, not bot-generated ones or unknown operators.
+    if (reactionEvent.operator_type !== 'user') return;
 
     const client = this.deps.createMessageClient?.(this.options.config) ?? createFeishuMessageClient(this.options.config);
     if (!client.getMessage) return;
