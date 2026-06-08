@@ -25,6 +25,7 @@ import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import { messageFromInboxItem } from '../messages/message.projection.js';
 import { runFileSend } from '../tools/file-send.js';
 import { runFileFetch } from '../tools/files-cli.js';
+import { feishuTranscriptOutput } from '../tools/feishu-transcript.js';
 import { runMessageRead } from '../tools/message-read.js';
 import { runMessageReact } from '../tools/reactions.js';
 import { runMessageSend, runMessageUpdate } from '../tools/messages.js';
@@ -137,6 +138,48 @@ test('normalizes Feishu text DMs into inbox items', () => {
   assert.equal(item?.receivedAt, '2026-06-02T14:20:00.000Z');
   assert.equal(item?.actor?.openId, 'ou_alice');
   assert.equal(item?.text, 'hello from Feishu');
+});
+
+test('normalizes Feishu rich text posts into inbox items', () => {
+  const item = normalizeFeishuMessage({
+    event: makeFeishuEvent({
+      message: {
+        content: JSON.stringify({
+          zh_cn: {
+            content: [
+              [
+                { tag: 'text', text: 'hello ' },
+                { href: 'https://example.com', tag: 'a', text: 'link' },
+              ],
+              [
+                { tag: 'at', user_id: 'ou_bob', user_name: 'Bob' },
+                { tag: 'text', text: ' please review' },
+              ],
+              [{ image_key: 'img_v3', tag: 'img' }],
+            ],
+            title: 'Project update',
+          },
+        }),
+        message_id: 'om_post_message',
+        message_type: 'post',
+      },
+    }),
+  });
+
+  assert.ok(item);
+  assert.equal(
+    item.text,
+    [
+      'Project update',
+      'hello link (https://example.com)',
+      '@Bob please review',
+      '[image]',
+    ].join('\n'),
+  );
+
+  const prompt = buildCodeAgentDeliveryPrompt(item);
+  assert.match(prompt, /^New Feishu message:/);
+  assert.match(prompt, /ou_alice: Project update\nhello link \(https:\/\/example\.com\)\n@Bob please review\n\[image\]/);
 });
 
 test('normalizes Feishu file messages into prompt attachments', () => {
@@ -1636,6 +1679,45 @@ test('message read can fetch Feishu chat history explicitly', async () => {
     console.log = originalLog;
     await rm(stateDir, { force: true, recursive: true });
   }
+});
+
+test('message read renders Feishu rich text post history', () => {
+  const output = feishuTranscriptOutput(
+    [{
+      bodyContent: JSON.stringify({
+        zh_cn: {
+          content: [
+            [
+              { tag: 'text', text: 'read the ' },
+              { href: 'https://example.com/doc', tag: 'a', text: 'doc' },
+            ],
+            [
+              { tag: 'at', user_id: 'ou_bob', user_name: 'Bob' },
+              { tag: 'text', text: ' owns this' },
+            ],
+          ],
+          title: 'Rich note',
+        },
+      }),
+      chatId: 'oc_target_chat',
+      createTime: '1780410000000',
+      messageId: 'om_post_message',
+      messageType: 'post',
+      sender: {
+        id: 'ou_alice',
+        idType: 'open_id',
+        senderName: 'Alice',
+        senderType: 'user',
+      },
+    }],
+    { chatId: 'oc_target_chat', limit: 1 },
+    { hasMore: false, nextCursor: '' },
+  );
+
+  assert.match(
+    output,
+    /\[platform=feishu chat_id=oc_target_chat message_id=om_post_message time=2026-06-02T14:20:00\.000Z user_id=ou_alice\] Alice: Rich note\nread the doc \(https:\/\/example\.com\/doc\)\n@Bob owns this/,
+  );
 });
 
 test('message read can fetch Feishu topic history explicitly', async () => {
