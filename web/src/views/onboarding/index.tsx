@@ -109,7 +109,7 @@ interface AgentCreateFlowProps {
   ) => void;
 }
 
-type FlowStep = 'agent' | 'connect' | 'owner' | 'platform';
+type FlowStep = 'agent' | 'connect' | 'permissions' | 'owner' | 'platform';
 
 function WorkspacePlatformStep({
   error,
@@ -271,11 +271,11 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     previewCreateLoading && previewSearch.get('_previewSlow') === '1';
   const previewStepName = previewSearch.get('_previewStep');
   const previewStep: FlowStep | undefined =
-    previewFeishuPhase ? 'connect'
+    previewFeishuPhase ? (previewFeishuPhase === 'permissions' || previewFeishuPhase === 'connected' ? 'permissions' : 'connect')
       : previewStepName === 'platform' ? 'platform'
         : previewStepRaw === 1 ? 'agent'
           : previewStepRaw === 2 ? 'connect'
-            : previewStepRaw === 3 ? 'owner' : undefined;
+            : previewStepRaw === 3 ? (previewPlatform === 'feishu' ? 'permissions' : 'owner') : undefined;
 
   const [step, setStep] = useState<FlowStep>(previewStep ?? (firstRun ? 'platform' : 'agent'));
   const [workspacePlatform, setWorkspacePlatform] = useState<WorkspacePlatform>(
@@ -313,6 +313,9 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
 
   // Feishu connect sub-phase, reported up by FeishuOnboardingConnect.
   const [feishuPhase, setFeishuPhase] = useState<FeishuOnboardingPhase | undefined>(previewFeishuPhase);
+  const [feishuConnectSource, setFeishuConnectSource] = useState<'registerApp' | 'manual' | null>(
+    previewFeishuPhase === 'permissions' || previewFeishuPhase === 'connected' ? 'registerApp' : null,
+  );
 
   const nameInputRef = useRef<HTMLInputElement>(null);
   const createRunRef = useRef(0);
@@ -332,10 +335,10 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
 
   const providerOptions = useMemo(() => providerCatalog(), []);
   // Platform is a pre-step fork, not a numbered step. Each platform gets its own
-  // numbered sequence (Slack: agent → connect → owner; Feishu: agent → connect),
+  // numbered sequence (Slack: agent → connect → owner; Feishu: agent → connect → permissions),
   // so the two flows no longer share a stepper count.
   const numberedSteps = useMemo<FlowStep[]>(() => {
-    const tail: FlowStep[] = workspacePlatform === 'slack' ? ['connect', 'owner'] : ['connect'];
+    const tail: FlowStep[] = workspacePlatform === 'slack' ? ['connect', 'owner'] : ['connect', 'permissions'];
     return ['agent', ...tail];
   }, [workspacePlatform]);
   const onPlatformFork = step === 'platform';
@@ -505,14 +508,21 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
     if (!derivedId || !role.trim() || !selectedProviderReady) return;
 
     const runId = createRunRef.current + 1;
+    const preserveFeishuPermissions =
+      workspacePlatform === 'feishu' &&
+      Boolean(createdAgentId) &&
+      (feishuPhase === 'permissions' || feishuPhase === 'connected');
     createRunRef.current = runId;
     setCreating(true);
     setCreateStage(workspacePlatform === 'feishu' && !createdAgentId ? 'feishu' : 'agent');
     setCreateError(null);
-    setFeishuRegistration(null);
-    setFeishuRegistrationError(undefined);
-    setFeishuPhase(undefined);
-    if (workspacePlatform === 'feishu') startFeishuSlowTimer(runId);
+    if (!preserveFeishuPermissions) {
+      setFeishuRegistration(null);
+      setFeishuRegistrationError(undefined);
+      setFeishuPhase(undefined);
+      setFeishuConnectSource(null);
+    }
+    if (workspacePlatform === 'feishu' && !preserveFeishuPermissions) startFeishuSlowTimer(runId);
     else clearFeishuSlowTimer();
 
     let nextAgentId = createdAgentId;
@@ -539,13 +549,18 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
 
       if (createRunRef.current !== runId) return;
       if (workspacePlatform === 'feishu') {
+        if (preserveFeishuPermissions) {
+          setStep('permissions');
+          return;
+        }
         try {
           const registration = await waitForFeishuVerification(nextAgentId, runId);
           if (!registration || createRunRef.current !== runId) return;
 
           if (registration.state === 'connected') {
+            setFeishuConnectSource('registerApp');
             setFeishuPhase('permissions');
-            setStep('connect');
+            setStep('permissions');
             return;
           }
 
@@ -596,11 +611,17 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
   }
 
   async function handleFeishuConnected(source: 'registerApp' | 'manual', agentIdOverride = createdAgentId) {
+    setFeishuConnectSource(source);
     await awaitAgentsRefresh();
     // Jump to activity on any successful connect, but only arm the greeting
     // banner when the app was auto-registered — the manual path has no owner
     // open_id and never greets (#154), so a "say hi" promise there would be false.
     if (agentIdOverride) onComplete?.(agentIdOverride, 'feishu', source === 'registerApp');
+  }
+
+  function handleFeishuPhaseChange(phase: FeishuOnboardingPhase) {
+    setFeishuPhase(phase);
+    if (phase === 'permissions') setStep('permissions');
   }
 
   function handleOwnerComplete() {
@@ -610,7 +631,8 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
   const stepTitle =
     step === 'platform' ? 'Where does your team work?' :
     step === 'agent' ? 'Create your agent' :
-    step === 'connect' ? `Connect to ${WORKSPACE_PLATFORM_LABELS[workspacePlatform]}` :
+    step === 'connect' ? (workspacePlatform === 'feishu' ? 'Create Feishu bot' : `Connect to ${WORKSPACE_PLATFORM_LABELS[workspacePlatform]}`) :
+    step === 'permissions' ? 'Authorize Feishu permissions' :
     'Pick an owner';
   const createDisabledReason = (() => {
     if (effectiveCreating) return undefined;
@@ -691,7 +713,11 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
                   current={feishuAllDone ? numberedSteps.length + 1 : currentStepIndex + 1}
                   done={feishuAllDone || index < currentStepIndex}
                   last={index === numberedSteps.length - 1}
-                  onClick={index < currentStepIndex ? () => setStep(entry) : undefined}
+                  onClick={
+                    index < currentStepIndex && !(workspacePlatform === 'feishu' && entry === 'connect')
+                      ? () => setStep(entry)
+                      : undefined
+                  }
                 />
               ))}
             </div>
@@ -894,14 +920,16 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
           <SlackConnectStepper agentId={createdAgentId} onConnect={handleSlackConnected} />
         </div>
       )}
-      {step === 'connect' && createdAgentId && workspacePlatform === 'feishu' && (
+      {(step === 'connect' || step === 'permissions') && createdAgentId && workspacePlatform === 'feishu' && (
         <div className="px-6 py-6">
           <FeishuOnboardingConnect
             agentId={createdAgentId}
             initialError={feishuRegistrationError}
             initialRegistration={feishuRegistration}
+            initialConnectSource={feishuConnectSource ?? undefined}
             previewPhase={previewFeishuPhase}
-            onPhaseChange={setFeishuPhase}
+            onPhaseChange={handleFeishuPhaseChange}
+            onPendingConnectSource={setFeishuConnectSource}
             onConnect={(info) => void handleFeishuConnected(info.source)}
           />
         </div>
