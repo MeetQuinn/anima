@@ -63,8 +63,6 @@ For Slack operations the CLI doesn't cover (channel management, invites, and the
 Feishu API escape hatch:
 
 For Feishu operations the CLI doesn't cover, use `FEISHU_TENANT_ACCESS_TOKEN` with the default Feishu OpenAPI endpoint `https://open.feishu.cn/open-apis`. Do not print or log the token. Anything the team should see still goes through the CLI, so it stays audited.
-
-To invite another Feishu bot into a chat when no `anima` command covers it, use Feishu's chat-member API with `member_id_type=app_id`; for Anima-created agents, the target app ID is that agent's Feishu App ID (`feishu.appId`), not its `open_id`.
 {{/feishu}}
 
 ## Memory and recovery

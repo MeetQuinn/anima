@@ -280,8 +280,6 @@ test('buildAnimaRuntimeProfile separates Feishu-only transport instructions', ()
   assert.match(text, /<at user_id="ou_\.\.\."><\/at>/);
   assert.match(text, /FEISHU_TENANT_ACCESS_TOKEN/);
   assert.match(text, /https:\/\/open\.feishu\.cn\/open-apis/);
-  assert.match(text, /member_id_type=app_id/);
-  assert.match(text, /target app ID is that agent's Feishu App ID \(`feishu\.appId`\), not its `open_id`/);
   assert.doesNotMatch(text, /Slack messages can arrive|Slack API|SLACK_BOT_TOKEN|FEISHU_APP_SECRET|FEISHU_API_BASE_URL/);
 });
 
