@@ -51,3 +51,35 @@ anima env list
   Use stdin only.
 - Some names are reserved or managed and cannot be set (for example `ANIMA_*`, `PATH`,
   `NODE_OPTIONS`, and the dotenv key material). The CLI will tell you if a name is not allowed.
+
+## Invite another Feishu bot into a chat
+
+Use this when the user asks you to add another Anima-created Feishu agent to the current Feishu
+chat and there is no `anima` command for the invite yet.
+
+Feishu invites bots by **app ID**, not by `open_id`. For an Anima-created Feishu agent, the target
+app ID is the agent's Feishu App ID (`feishu.appId`). If you cannot see the target agent's app ID,
+ask the user for it or ask them to open the target agent's Profile page and copy the Feishu App ID.
+Do not guess it from the bot name.
+
+You need the current chat ID from the delivery envelope, for example `chat_id=oc_...`. The current
+agent must already be in that chat, and its Feishu app must have the recommended group-member
+permission authorized and published.
+
+Call Feishu's chat-member API with the runtime tenant token:
+
+```
+curl -sS -X POST \
+  "https://open.feishu.cn/open-apis/im/v1/chats/<chat_id>/members?member_id_type=app_id" \
+  -H "Authorization: Bearer $FEISHU_TENANT_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"id_list":["<target_app_id>"]}'
+```
+
+Replace `<chat_id>` with the Feishu `oc_...` chat ID and `<target_app_id>` with the target
+agent's Feishu App ID.
+
+Do not print or log `$FEISHU_TENANT_ACCESS_TOKEN`. If the API says the app lacks permission, ask the
+user to authorize the recommended Feishu permissions, publish a new app version, then try again. If
+the API says the bot cannot manage chat members, the current bot may not be allowed to invite
+members in that group.
