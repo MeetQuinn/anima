@@ -66,6 +66,17 @@ export function feishuMessageAttachmentsFromContent(input: {
   return [];
 }
 
+export function feishuPostPlainTextFromContent(content: Record<string, unknown> | undefined): string | undefined {
+  for (const section of feishuPostSections(content)) {
+    const lines = [
+      stringContentField(section, 'title'),
+      ...feishuPostParagraphs(section['content']),
+    ].filter((line): line is string => Boolean(line?.trim()));
+    if (lines.length) return lines.join('\n');
+  }
+  return undefined;
+}
+
 function attachmentMeta(input: {
   fileKey: string;
   messageId: string;
@@ -94,6 +105,73 @@ function attachmentMeta(input: {
 function stringContentField(content: Record<string, unknown> | undefined, field: string): string | undefined {
   const value = content?.[field];
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function feishuPostSections(content: Record<string, unknown> | undefined): Record<string, unknown>[] {
+  if (!content) return [];
+  const sections: Record<string, unknown>[] = [];
+  if (Array.isArray(content['content']) || stringContentField(content, 'title')) sections.push(content);
+
+  for (const key of ['zh_cn', 'en_us', 'ja_jp']) {
+    const section = content[key];
+    if (isRecord(section)) sections.push(section);
+  }
+
+  for (const section of Object.values(content)) {
+    if (!isRecord(section) || sections.includes(section)) continue;
+    if (Array.isArray(section['content']) || stringContentField(section, 'title')) sections.push(section);
+  }
+
+  return sections;
+}
+
+function feishuPostParagraphs(content: unknown): string[] {
+  if (!Array.isArray(content)) return [];
+  return content
+    .map((paragraph) => {
+      const items = Array.isArray(paragraph) ? paragraph : [paragraph];
+      return items.map(feishuPostInlineText).join('').trim();
+    })
+    .filter((line) => line.length > 0);
+}
+
+function feishuPostInlineText(item: unknown): string {
+  if (typeof item === 'string') return item;
+  if (!isRecord(item)) return '';
+
+  const tag = stringContentField(item, 'tag');
+  if (tag === 'a') {
+    const text = stringValueField(item, 'text') ?? stringContentField(item, 'href');
+    const href = stringContentField(item, 'href');
+    if (!text) return '';
+    return href && href !== text ? `${text} (${href})` : text;
+  }
+  if (tag === 'at') {
+    const name = stringContentField(item, 'user_name')
+      ?? stringContentField(item, 'name')
+      ?? stringContentField(item, 'user_id');
+    return name ? `@${name.replace(/^@/, '')}` : '@unknown';
+  }
+  if (tag === 'img') return '[image]';
+  if (tag === 'media') return '[media]';
+  if (tag === 'emotion') {
+    const emoji = stringContentField(item, 'emoji_type') ?? stringValueField(item, 'text');
+    return emoji ? `:${emoji}:` : '[emoji]';
+  }
+
+  return stringValueField(item, 'text')
+    ?? stringValueField(item, 'content')
+    ?? stringValueField(item, 'title')
+    ?? '';
+}
+
+function stringValueField(content: Record<string, unknown>, field: string): string | undefined {
+  const value = content[field];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
 function feishuFileSize(content: Record<string, unknown> | undefined): number | undefined {

@@ -1,6 +1,7 @@
 import { nowIso } from '../ids.js';
 import {
   feishuMessageAttachmentsFromContent,
+  feishuPostPlainTextFromContent,
   parseFeishuContent,
   type FeishuMessageAttachmentMeta,
 } from './message-content.js';
@@ -132,8 +133,11 @@ function feishuTextFromMessage(
   message: FeishuReceiveMessageEvent['message'],
   parsed: Record<string, unknown> | undefined,
 ): string | undefined {
-  if (message.message_type !== 'text') return undefined;
-  const rawText = typeof parsed?.['text'] === 'string' ? parsed['text'] : undefined;
+  const rawText = message.message_type === 'text'
+    ? (typeof parsed?.['text'] === 'string' ? parsed['text'] : undefined)
+    : message.message_type === 'post'
+      ? feishuPostPlainTextFromContent(parsed)
+      : undefined;
   if (!rawText?.trim()) return undefined;
   return replaceFeishuMentionKeys(rawText, message.mentions ?? []);
 }

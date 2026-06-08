@@ -4,6 +4,7 @@ import type {
 } from '../feishu/client.js';
 import {
   feishuMessageAttachmentsFromContent,
+  feishuPostPlainTextFromContent,
   parseFeishuContent,
   type FeishuMessageAttachmentMeta,
 } from '../feishu/message-content.js';
@@ -55,6 +56,10 @@ function feishuTranscriptText(message: FeishuConversationMessage): string {
   if (messageType === 'text') {
     const text = typeof content?.['text'] === 'string' ? content['text'] : '';
     return replaceFeishuMentionKeys(text, message.mentions ?? []) || '[empty text]';
+  }
+  if (messageType === 'post') {
+    const text = feishuPostPlainTextFromContent(content) ?? '';
+    return replaceFeishuMentionKeys(text, message.mentions ?? []) || '[empty rich text]';
   }
   if (messageType === 'image' && typeof content?.['image_key'] === 'string') {
     const attachment = feishuTranscriptAttachmentMeta(message, content);
