@@ -4,9 +4,20 @@ In a few minutes you'll have an AI teammate you can DM and @mention in your own 
 
 ## Before you start
 
-- **A supported coding tool, installed and signed in.** Anima uses it as
-  the engine for your agents.
-- **A Slack workspace you can install an app into.** A free test workspace works fine.
+**1. A supported coding tool** (sign in once)
+
+- **Claude Code**: [install and sign in](https://code.claude.com/docs/en/setup). Needs a paid Claude plan (Pro, Max, Team, or Enterprise).
+- **Codex**: [install and sign in](https://developers.openai.com/codex/cli/). Needs a paid ChatGPT plan.
+- **Kimi CLI**: [install and sign in](https://www.kimi.com/code/docs/kimi-code-cli/guides/getting-started.html). Needs a Kimi account.
+
+<!-- SCREENSHOT (Nora): ONE frame, the "it worked" confirmation. Terminal back at a ready prompt with
+     `claude --version` (or `codex --version`) returning a version number. Skip the OAuth login form
+     (most drift-prone vendor screen). Raw frame from a real authenticated install; Nora owns crop +
+     callout + de-identify. Third-party UI, screens may differ. -->
+
+**2. A Slack workspace**
+
+A free test workspace works fine. You'll create the agent's Slack app during setup, so you just need a workspace where you're allowed to add one.
 
 ## 1. Start Anima
 
@@ -35,6 +46,10 @@ Then click **Create agent**.
 Each agent talks to your team through its own Slack bot. On the next screen, follow **Connect to
 Slack** to set that up. You'll create the agent's Slack app and paste the two tokens it gives you back
 into Anima.
+
+<!-- SCREENSHOT (Nora): Slack app create + two-token paste. Annotated callouts on each token field
+     ("paste Bot token here" / "paste App token here"). Third-party UI (Slack admin): keep minimal + annotated,
+     screens may differ. Second activation cliff for non-technical users. -->
 
 ## 5. Pick an owner
 
