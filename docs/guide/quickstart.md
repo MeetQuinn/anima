@@ -6,7 +6,7 @@ In a few minutes you'll have an AI teammate you can DM and @mention in your own 
 
 **1. A Mac or Linux computer**
 
-**2. A supported coding tool** (sign in once)
+**2. A supported coding tool**
 
 - **Claude Code**: [install and sign in](https://code.claude.com/docs/en/setup). Needs a paid Claude plan (Pro, Max, Team, or Enterprise).
 - **Codex**: [install and sign in](https://developers.openai.com/codex/cli/). Needs a paid ChatGPT plan.
