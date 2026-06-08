@@ -4,7 +4,9 @@ In a few minutes you'll have an AI teammate you can DM and @mention in your own 
 
 ## Before you start
 
-**1. A supported coding tool** (sign in once)
+**1. A Mac or Linux computer**
+
+**2. A supported coding tool** (sign in once)
 
 - **Claude Code**: [install and sign in](https://code.claude.com/docs/en/setup). Needs a paid Claude plan (Pro, Max, Team, or Enterprise).
 - **Codex**: [install and sign in](https://developers.openai.com/codex/cli/). Needs a paid ChatGPT plan.
@@ -15,7 +17,7 @@ In a few minutes you'll have an AI teammate you can DM and @mention in your own 
      (most drift-prone vendor screen). Raw frame from a real authenticated install; Nora owns crop +
      callout + de-identify. Third-party UI, screens may differ. -->
 
-**2. A Slack workspace**
+**3. A Slack workspace**
 
 A free test workspace works fine. You'll create the agent's Slack app during setup, so you just need a workspace where you're allowed to add one.
 
