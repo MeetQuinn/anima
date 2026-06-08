@@ -329,7 +329,7 @@ test('normalizes Feishu mention keys to readable labels', () => {
     }),
   });
 
-  assert.equal(item?.text, '@Anima please check');
+  assert.equal(item?.text, '<at user_id="ou_anima_bot">Anima</at> please check');
 });
 
 test('accepts SDK direct events and wrapped raw Feishu events', () => {
