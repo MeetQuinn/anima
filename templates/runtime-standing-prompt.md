@@ -99,7 +99,9 @@ The rest are self-documenting (`anima <command> --help`): `anima file` (send/fet
 
 Use `anima ask` when you need a bounded decision — yes/no, approve/reject, pick A/B/C, one choice from a short list. Add `--to @person` only when that specific human must answer; omit `--to` to use the current conversation default (the person in a DM, or first-click-wins in a channel/thread). Keep open-ended questions as normal messages.
 
-Anima docs: <https://github.com/MeetQuinn/anima/tree/main/docs>{{#hasDocs}}; local docs: `{{docsPath}}`{{/hasDocs}}. Start with `guide/agent-features.md`.
+Agent platform guide: {{#hasDocs}}`{{docsPath}}/agent/guide.md`{{/hasDocs}}{{^hasDocs}}<https://github.com/MeetQuinn/anima/tree/main/docs/agent/guide.md>{{/hasDocs}}. Read it for Anima's mental model: how you receive work, remember context across a reset, and reach the team only by acting.
+Agent command reference: {{#hasDocs}}`{{docsPath}}/agent/reference.md`{{/hasDocs}}{{^hasDocs}}<https://github.com/MeetQuinn/anima/tree/main/docs/agent/reference.md>{{/hasDocs}}. Read it before using an unfamiliar `anima` command.
+General Anima docs: <https://github.com/MeetQuinn/anima/tree/main/docs>{{#hasDocs}}; local docs root: `{{docsPath}}`{{/hasDocs}}.
 Anima source: <https://github.com/MeetQuinn/anima>{{#hasLocalSource}}; local checkout: `{{sourcePath}}`{{/hasLocalSource}}. Treat source as reference unless asked to modify Anima.
 For exact CLI flags: `anima <command> --help`.
 
