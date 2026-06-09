@@ -12,10 +12,23 @@ import {
 import ConfirmModal from '@/components/ConfirmModal';
 import DirectoryPicker from '@/components/DirectoryPicker';
 import { EditAffordance, ErrorHint, Field, SavedHint } from './Primitives';
-import { ANIMA_MANAGED_PROVIDER_ENV_KEYS, type AgentProviderConfig } from '@shared/agent-config';
+import {
+  ANIMA_MANAGED_PROVIDER_ENV_KEYS,
+  type AgentProviderConfig,
+  type ClaudeCodeTransport,
+} from '@shared/agent-config';
 import { providerKindLabel, providerValueLabel } from '@/lib/provider-display';
 
 const RESERVED_ENV_KEYS = new Set<string>(ANIMA_MANAGED_PROVIDER_ENV_KEYS);
+const DEFAULT_CLAUDE_CODE_TRANSPORT: ClaudeCodeTransport = 'stream-json';
+const CLAUDE_CODE_TRANSPORT_OPTIONS: Array<{
+  disabled?: boolean;
+  label: string;
+  value: ClaudeCodeTransport;
+}> = [
+  { value: 'stream-json', label: 'Current CLI mode' },
+  { value: 'channel', label: 'Claude Code Channels', disabled: true },
+];
 
 // ── InlineTextRow ─────────────────────────────────────────────────────────────
 
@@ -284,31 +297,39 @@ export function ProviderInlineRow({
   kind,
   model,
   effort,
+  transport,
   providerOptions,
   onRequestSave,
 }: {
   kind: string;
   model: string;
   effort: string;
+  transport?: ClaudeCodeTransport;
   providerOptions: ProviderCatalogEntry[];
-  onRequestSave: (kind: string, model: string, effort?: string) => void;
+  onRequestSave: (kind: string, model: string, effort?: string, transport?: ClaudeCodeTransport) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draftKind, setDraftKind] = useState('');
   const [draftModel, setDraftModel] = useState('');
   const [draftEffort, setDraftEffort] = useState('');
+  const [draftTransport, setDraftTransport] = useState<ClaudeCodeTransport>(DEFAULT_CLAUDE_CODE_TRANSPORT);
   const draftProvider = providerOptions.find((option) => option.kind === draftKind);
   const draftModelOptions = draftProvider?.models ?? [];
   const draftEffortOptions = draftProvider?.reasoningEfforts ?? [];
   const hasDraftEffort = draftEffortOptions.length > 0;
+  const hasDraftTransport = draftKind === 'claude-code';
   const currentProvider = providerOptions.find((option) => option.kind === kind);
   const hasCurrentEffort = (currentProvider?.reasoningEfforts ?? []).length > 0;
+  const currentTransport = kind === 'claude-code'
+    ? transport ?? DEFAULT_CLAUDE_CODE_TRANSPORT
+    : undefined;
   const kindChanged = draftKind !== kind;
 
   function begin() {
     setDraftKind(kind);
     setDraftModel(model);
     setDraftEffort(hasCurrentEffort ? effort : '');
+    setDraftTransport(currentTransport ?? DEFAULT_CLAUDE_CODE_TRANSPORT);
     setEditing(true);
   }
 
@@ -319,17 +340,24 @@ export function ProviderInlineRow({
     setDraftKind(nextProvider.kind);
     setDraftModel(nextProvider.defaultModel);
     setDraftEffort(defaultEffortForProvider(nextProvider));
+    setDraftTransport(DEFAULT_CLAUDE_CODE_TRANSPORT);
   }
 
   function handleSave() {
     const nextEffort = hasDraftEffort ? draftEffort : undefined;
     const currentEffort = hasCurrentEffort ? effort : undefined;
-    if (draftKind === kind && draftModel === model && nextEffort === currentEffort) {
+    const nextTransport = hasDraftTransport ? draftTransport : undefined;
+    if (
+      draftKind === kind
+      && draftModel === model
+      && nextEffort === currentEffort
+      && nextTransport === currentTransport
+    ) {
       setEditing(false);
       return;
     }
     setEditing(false);
-    onRequestSave(draftKind, draftModel, nextEffort);
+    onRequestSave(draftKind, draftModel, nextEffort, nextTransport);
   }
 
   return (
@@ -388,7 +416,39 @@ export function ProviderInlineRow({
                 </SelectContent>
               </Select>
             )}
+            {hasDraftTransport && (
+              <Select
+                value={draftTransport}
+                onValueChange={(v) => {
+                  if (isClaudeCodeTransport(v)) setDraftTransport(v);
+                }}
+              >
+                <SelectTrigger className="h-8 w-52 font-serif text-[14px]">
+                  {claudeCodeTransportLabel(draftTransport)}
+                </SelectTrigger>
+                <SelectContent>
+                  {CLAUDE_CODE_TRANSPORT_OPTIONS.map((opt) => (
+                    <SelectItem
+                      key={opt.value}
+                      value={opt.value}
+                      disabled={opt.disabled}
+                      className="font-serif text-[14px]"
+                    >
+                      {opt.label}
+                      {opt.disabled && (
+                        <span className="font-sans text-[11px] text-text-subtle">Next adapter</span>
+                      )}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
+          {hasDraftTransport && (
+            <div className="max-w-xl font-sans text-[11px] leading-snug text-text-muted">
+              Current CLI mode uses Anima's existing Claude Code stream bridge. Claude Code Channels will become selectable once the Channel adapter lands.
+            </div>
+          )}
           {kindChanged && (
             <div className="max-w-xl font-sans text-[11px] leading-snug text-text-muted">
               Switching provider starts a fresh provider session. MEMORY.md, notes, and activity history stay intact;
@@ -418,6 +478,12 @@ export function ProviderInlineRow({
                 <span className="font-serif text-[13px] md:text-[15px] text-text-muted">{providerValueLabel(effort)}</span>
               </>
             )}
+            {currentTransport && (
+              <>
+                <span className="font-sans mx-1.5 text-[12px] text-text-subtle">·</span>
+                <span className="font-serif text-[13px] md:text-[15px] text-text-muted">{claudeCodeTransportLabel(currentTransport)}</span>
+              </>
+            )}
           </EditAffordance>
         </div>
       )}
@@ -430,6 +496,14 @@ function defaultEffortForProvider(provider: ProviderCatalogEntry): string {
   return provider.reasoningEfforts.includes(DEFAULT_REASONING_EFFORT)
     ? DEFAULT_REASONING_EFFORT
     : provider.reasoningEfforts[0] ?? '';
+}
+
+function isClaudeCodeTransport(value: string | null | undefined): value is ClaudeCodeTransport {
+  return value === 'stream-json' || value === 'channel';
+}
+
+function claudeCodeTransportLabel(value: ClaudeCodeTransport): string {
+  return CLAUDE_CODE_TRANSPORT_OPTIONS.find((option) => option.value === value)?.label ?? value;
 }
 
 // ── ProviderEnvRow ──────────────────────────────────────────────────────────
@@ -604,19 +678,19 @@ export function ProviderEnvRow({
 // Confirms changes that require this agent provider to reload before they apply.
 export function ConfirmRestartModal({
   isActive,
-  kindChanged = false,
+  sessionBoundaryChanged = false,
   saving,
   onConfirm,
   onCancel,
 }: {
   isActive: boolean;
-  kindChanged?: boolean;
+  sessionBoundaryChanged?: boolean;
   saving: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  const sessionCopy = kindChanged
-    ? ' Switching provider starts a fresh provider session; MEMORY.md, notes, and activity history stay intact.'
+  const sessionCopy = sessionBoundaryChanged
+    ? ' Switching provider or Claude Code mode starts a fresh provider session; MEMORY.md, notes, and activity history stay intact.'
     : '';
   return (
     <ConfirmModal

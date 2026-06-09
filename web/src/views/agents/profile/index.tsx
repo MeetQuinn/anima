@@ -40,8 +40,9 @@ import {
   agentSlackConnected,
   agentTransportLabel,
 } from '@shared/agent-transports';
+import type { AgentConfig, ClaudeCodeTransport } from '@shared/agent-config';
 
-type PendingRestart = { kind: string; model: string; effort?: string };
+type PendingRestart = { kind: string; model: string; effort?: string; transport?: ClaudeCodeTransport };
 
 function FeishuMeta({ label, value }: { label: string; value?: string }) {
   return (
@@ -222,6 +223,7 @@ export default function Profile() {
         kind: pendingRestart.kind,
         model: pendingRestart.model,
         ...(pendingRestart.effort ? { reasoningEffort: pendingRestart.effort } : {}),
+        ...(pendingRestart.transport ? { transport: pendingRestart.transport } : {}),
       });
       setPendingRestart(null);
       showApplyNoticeIfActive();
@@ -270,8 +272,9 @@ export default function Profile() {
             kind={agent.provider.kind}
             model={agent.provider.model ?? ''}
             effort={('reasoningEffort' in agent.provider ? agent.provider.reasoningEffort : undefined) ?? ''}
+            transport={agent.provider.kind === 'claude-code' ? agent.provider.transport : undefined}
             providerOptions={providerOptions}
-            onRequestSave={(kind, model, effort) => setPendingRestart({ kind, model, effort })}
+            onRequestSave={(kind, model, effort, transport) => setPendingRestart({ kind, model, effort, transport })}
           />
           <ProviderEnvRow
             env={agent.provider.env}
@@ -514,7 +517,7 @@ export default function Profile() {
       {pendingRestart && (
         <ConfirmRestartModal
           isActive={isActive}
-          kindChanged={pendingRestart.kind !== agent.provider.kind}
+          sessionBoundaryChanged={providerSessionBoundaryWillChange(agent.provider, pendingRestart)}
           saving={restartSaving}
           onConfirm={() => void handleConfirmRestart()}
           onCancel={() => setPendingRestart(null)}
@@ -534,4 +537,14 @@ export default function Profile() {
       )}
     </div>
   );
+}
+
+function providerSessionBoundaryWillChange(
+  current: NonNullable<AgentConfig['provider']>,
+  next: PendingRestart,
+): boolean {
+  if (next.kind !== current.kind) return true;
+  return current.kind === 'claude-code'
+    && next.transport !== undefined
+    && next.transport !== (current.transport ?? 'stream-json');
 }
