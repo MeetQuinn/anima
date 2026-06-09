@@ -131,3 +131,122 @@ Replace `<chat_id>` with the Feishu `oc_...` chat ID and `<target_open_id>` with
 Do not print or log `$FEISHU_TENANT_ACCESS_TOKEN`. The current agent's Feishu app must have the
 recommended member-invite and user-lookup permissions authorized and published. If the API says the
 bot cannot manage chat members, the current bot may not be allowed to invite members in that group.
+
+## Ask a one-click question (`anima ask`)
+
+Use this when you need a bounded decision from a human: yes/no, approve/reject, or one pick
+from a short list of 2 to 5 options. For an open-ended or multi-part question, send a normal
+message instead. `ask` is for choices, not discussion.
+
+The question posts with clickable answer buttons. By default the current Slack surface answers
+it: the person in a DM, or first-click-wins in a channel or thread. Add `--to` only when one
+specific person must be the one to answer.
+
+```
+anima ask --question "Ship the release to stable now?" --option "Ship" --option "Hold" --to @teammate
+```
+
+**Do not:**
+
+- Do not use `ask` for open-ended or multi-part questions. Buttons cannot capture those, so send
+  a message.
+- Do not add `--to` unless a specific human must answer. Omit it to let whoever is there respond.
+
+## Wake yourself later (`anima reminder`)
+
+Use this for all deferred or recurring work: check back on a task, follow up with a teammate, run
+a daily routine, or anything you need to do later. A reminder wakes you with its instructions at
+the scheduled time. This is the most basic form of acting on your own initiative. Reminders
+persist across restarts and are recorded in the audit log.
+
+Schedule a one-shot with a delay or a fixed time, or a recurring one with a repeat rule and a
+timezone:
+
+```
+anima reminder schedule --in 2h --title "check deploy" --instructions "verify prod is healthy"
+anima reminder schedule --repeat daily@09:00 --timezone Asia/Shanghai --title "standup" --instructions "post the async standup"
+```
+
+Manage them with `anima reminder list`, `anima reminder cancel <id>`, and
+`anima reminder snooze <id>`. Repeat formats: `every:<n>m|h|d`, `daily@HH:MM`, and
+`weekly:<day,day>@HH:MM`. The timezone is an IANA name, for example `Asia/Shanghai`.
+
+**Do not:**
+
+- Do not roll your own scheduling, for example a background sleep. Only `anima reminder` survives
+  a restart, which is the whole point: a scheduled wake must still fire after the runtime restarts.
+
+## Reconstruct after a restart (`anima inbox`, `anima outbox`)
+
+Use this when you have just restarted or compacted and need to see what was happening. Read your
+`MEMORY.md` first to restore who you are and your open obligations, then check recent history.
+`anima inbox` shows messages and wakes you received. `anima outbox` shows what you sent, including
+messages, files, and reactions.
+
+```
+anima inbox
+anima outbox
+```
+
+**Do not:**
+
+- Do not re-answer a message you already handled. If you are unsure whether you replied, check
+  `anima outbox` before sending. A duplicate reply reads as a glitch.
+
+## Send a file, or open one you received (`anima file`)
+
+Use this to upload a local file to the chat, or to open a file a teammate sent you. Sending fails
+before upload if a path does not exist.
+
+```
+anima file send /tmp/chart.png
+anima file fetch <fileId> /tmp/incoming.png
+```
+
+The `fileId` comes from the `attached: id=<id>` line in message-read output. To actually look at
+an image a teammate sent, fetch it to a path and then read that path.
+
+**Do not:**
+
+- Do not claim you have seen an image you only have the `id` for. Fetch it and read it first.
+
+## See where you are listening, mute what is done (`anima subscription`)
+
+Use this to check which channels and threads you are following (`list`), or to stop following one
+that is finished with you (`mute`).
+
+```
+anima subscription list
+anima subscription mute --channel <id>
+```
+
+Mute only when a thread or channel is clearly done with you and still noisy. An @mention always
+brings you back, so muting is safe and is not the same as leaving. Finishing your part of a thread
+is not a reason to mute, because follow-ups are common.
+
+## Send messages and reactions (`anima message`, `anima reaction`)
+
+The message body is read from stdin, so send a multi-line or Markdown body with a heredoc. Reply
+where the message came from: pass the envelope's `channel=` to `--channel` and its `thread_ts=` to
+`--thread-ts`. Bodies are Markdown, so use `**bold**`. `anima message update` edits a message in
+place.
+
+```
+anima message send --channel C0XXXX --thread-ts 1780000000.000000 <<'MSG'
+**Done.** Details here.
+MSG
+```
+
+A reaction is a lightweight reply when a full message is not needed. The emoji is a name, without
+colons:
+
+```
+anima reaction add --channel C0XXXX --message-ts 1780000000.000000 --name white_check_mark
+```
+
+**Do not:**
+
+- Do not pass the emoji with colons, for example `:white_check_mark:`. Use the bare name
+  `white_check_mark`.
+- Editing a message to add an @mention does not notify the mentioned person. Delete and re-post
+  with the mention instead.
