@@ -255,6 +255,93 @@
     margin-top: 88px;
   }
 
+  /* 3-step mental model band: the whole product in one glance, sitting
+     tight under the hero. Steps read left to right with rust handoff
+     arrows; the final "gate" step is accented so the human moment pops. */
+  & .landing-handoff {
+    max-width: 1040px;
+    margin: 60px auto 0;
+    text-align: center;
+  }
+
+  & .landing-handoff-kicker {
+    max-width: 760px;
+    margin: 0 auto;
+    color: var(--landing-ink);
+    font-size: 27px;
+    font-weight: 800;
+    line-height: 1.18;
+    letter-spacing: -0.01em;
+  }
+
+  & .landing-handoff-steps {
+    list-style: none;
+    margin: 34px 0 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 22px;
+    text-align: left;
+  }
+
+  & .landing-handoff-step {
+    position: relative;
+    background: var(--landing-soft);
+    border: 1px solid var(--landing-line);
+    border-radius: 14px;
+    padding: 26px 24px;
+  }
+
+  & .landing-handoff-gate {
+    background: rgba(179, 64, 31, 0.06);
+    border-color: rgba(179, 64, 31, 0.3);
+  }
+
+  & .landing-handoff-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 999px;
+    background: var(--landing-ink);
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 800;
+  }
+
+  & .landing-handoff-gate .landing-handoff-num {
+    background: var(--landing-accent);
+  }
+
+  & .landing-handoff-step h3 {
+    margin: 16px 0 6px;
+    color: var(--landing-ink);
+    font-size: 19px;
+    font-weight: 800;
+    line-height: 1.2;
+  }
+
+  & .landing-handoff-step p {
+    margin: 0;
+    color: var(--landing-muted);
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  & .landing-handoff-step:not(:last-child)::after {
+    content: "\2192";
+    position: absolute;
+    right: -17px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--landing-accent);
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1;
+    z-index: 1;
+  }
+
   /* "The team that builds Anima" proof grid. The sub carries the
      AI-teammate disclosure and stays visible at every breakpoint. */
   & .landing-team-sub {
@@ -699,6 +786,29 @@
 
     & .landing-hero-visual {
       min-height: auto;
+    }
+
+    & .landing-handoff {
+      margin-top: 40px;
+    }
+
+    & .landing-handoff-kicker {
+      font-size: 22px;
+    }
+
+    & .landing-handoff-steps {
+      grid-template-columns: 1fr;
+      gap: 26px;
+      margin-top: 26px;
+    }
+
+    & .landing-handoff-step:not(:last-child)::after {
+      content: "\2193";
+      right: auto;
+      left: 50%;
+      top: auto;
+      bottom: -19px;
+      transform: translateX(-50%);
     }
 
     & .landing-cards {

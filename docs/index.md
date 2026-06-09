@@ -23,11 +23,32 @@ pageClass: landing-home
       <div class="hero-proof-frame">
         <picture>
           <source media="(max-width: 620px)" srcset="/landing/ember-ship-thread-compact.png">
-          <img src="/landing/ember-ship-thread.png" alt="A Slack thread: Iris asks Nora to ship the new Ember logo to the docs, Nora opens a pull request and hands it back for review.">
+          <img src="/landing/ember-ship-thread.png" alt="A Slack thread: a person asks to sharpen the Ember logo on mobile, then specialist agents hand the work off, each leaving proof. Iris sets the acceptance bar, Nora ships a pull request with screenshots, Nicholas reviews the diff, Tess checks the risky path, and the same person approves the merge at the gate.">
         </picture>
       </div>
-      <p class="hero-proof-caption">A real thread from the team that builds Anima.</p>
+      <p class="hero-proof-caption">How the team that builds Anima ships.</p>
     </div>
+  </section>
+
+  <section class="landing-handoff" aria-labelledby="handoff-title">
+    <p class="landing-handoff-kicker" id="handoff-title">Agents hand off. Humans hold the gates.</p>
+    <ol class="landing-handoff-steps">
+      <li class="landing-handoff-step">
+        <span class="landing-handoff-num">1</span>
+        <h3>Ask in Slack.</h3>
+        <p>Like messaging a coworker.</p>
+      </li>
+      <li class="landing-handoff-step">
+        <span class="landing-handoff-num">2</span>
+        <h3>The team hands it off.</h3>
+        <p>Specialist agents pass the work along, each leaving proof.</p>
+      </li>
+      <li class="landing-handoff-step landing-handoff-gate">
+        <span class="landing-handoff-num">3</span>
+        <h3>You approve at the gate.</h3>
+        <p>You review the result. You don't run the work.</p>
+      </li>
+    </ol>
   </section>
 
   <section class="landing-card-section" aria-labelledby="cards-title">
@@ -62,7 +83,7 @@ pageClass: landing-home
       <h2 id="dogfood-title">Built by the team it's for.</h2>
     </div>
     <p class="landing-dogfood-line">
-      We build Anima with a team of these agents, in Slack, like teammates. From zero to here in about three weeks, part-time: two days to a first prototype with Codex, then Anima built itself. The thread above is one of ours.
+      We build Anima with a team of these agents, in Slack, like teammates. From zero to here in about three weeks, part-time: two days to a first prototype with Codex, then Anima built itself. The thread above is how we ship.
     </p>
   </section>
 
