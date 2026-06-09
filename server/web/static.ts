@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 
 import { errorMessage } from '../ids.js';
+import { dashboardStaticRedirectLocation, isPublicStaticAssetPath } from './dashboard-auth.js';
 import { routePath, sendJsonRaw } from './http.js';
 
 const MIME_TYPES: Record<string, string> = {
@@ -33,9 +34,24 @@ export function registerStaticRoutes(fastify: FastifyInstance): void {
     if (routePath(request.url).startsWith('/api/')) {
       return reply.status(404).send({ error: 'not_found' });
     }
+    const path = routePath(request.url);
+    if (isPublicStaticAssetPath(path)) {
+      reply.hijack();
+      try {
+        const served = await serveStatic(reply.raw, path, { fallbackToIndex: false });
+        if (!served) sendJsonRaw(reply.raw, 404, { error: 'not_found' });
+      } catch (error) {
+        if (!reply.raw.headersSent) sendJsonRaw(reply.raw, 500, { error: errorMessage(error) });
+      }
+      return;
+    }
+    const redirectLocation = await dashboardStaticRedirectLocation(request.url, request.headers);
+    if (redirectLocation) {
+      return reply.redirect(redirectLocation, 302);
+    }
     reply.hijack();
     try {
-      const served = await serveStatic(reply.raw, routePath(request.url));
+      const served = await serveStatic(reply.raw, path, { fallbackToIndex: true });
       if (!served) sendJsonRaw(reply.raw, 404, { error: 'not_found' });
     } catch (error) {
       if (!reply.raw.headersSent) sendJsonRaw(reply.raw, 500, { error: errorMessage(error) });
@@ -43,7 +59,11 @@ export function registerStaticRoutes(fastify: FastifyInstance): void {
   });
 }
 
-async function serveStatic(response: ServerResponse, urlPath: string): Promise<boolean> {
+async function serveStatic(
+  response: ServerResponse,
+  urlPath: string,
+  options: { fallbackToIndex: boolean },
+): Promise<boolean> {
   const requested = urlPath.replace(/^\/+/, '') || 'index.html';
   const filePath = resolve(UI_DIST_DIR, requested);
   if (filePath !== UI_DIST_DIR && !filePath.startsWith(UI_DIST_DIR + sep)) {
@@ -59,6 +79,8 @@ async function serveStatic(response: ServerResponse, urlPath: string): Promise<b
     response.end(content);
     return true;
   }
+
+  if (!options.fallbackToIndex) return false;
 
   const indexPath = join(UI_DIST_DIR, 'index.html');
   if (existsSync(indexPath)) {

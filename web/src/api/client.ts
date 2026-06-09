@@ -10,6 +10,7 @@ export async function apiRequest<T>(url: string, init?: RequestInit): Promise<T>
       typeof body === 'object' && body !== null && 'error' in body && typeof (body as { error?: unknown }).error === 'string'
         ? (body as { error: string }).error
         : `HTTP ${res.status}`;
+    if (res.status === 401) redirectToLogin(url);
     throw new Error(message);
   }
   return res.json() as Promise<T>;
@@ -27,4 +28,12 @@ export function jsonInit(method: string, body?: unknown): RequestInit {
         }
       : {}),
   };
+}
+
+function redirectToLogin(url: string): void {
+  if (typeof window === 'undefined') return;
+  if (window.location.pathname === '/login') return;
+  if (url.startsWith('/api/auth/')) return;
+  const next = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  window.location.assign(`/login?next=${encodeURIComponent(next || '/')}`);
 }
