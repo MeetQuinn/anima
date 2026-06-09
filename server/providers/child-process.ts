@@ -26,12 +26,13 @@ export function startChildProcess(input: {
   onStderrChunk?: (chunk: string) => Promise<void>;
   onStdoutChunk?: (chunk: string) => Promise<void>;
   signal?: AbortSignal;
+  stdin?: 'ignore' | 'inherit' | 'pipe';
 }): RunningChildProcess {
   const startedAt = new Date().toISOString();
   const child = spawn(input.command, input.args, {
     cwd: input.cwd ?? process.cwd(),
     env: input.env,
-    stdio: ['pipe', 'pipe', 'pipe'],
+    stdio: [input.stdin ?? 'pipe', 'pipe', 'pipe'],
   });
 
   if (input.signal) {
@@ -62,13 +63,13 @@ export function startChildProcess(input: {
         streamEffectError = error;
       });
   }
-  child.stdout.on('data', (chunk: Buffer | string) => {
+  child.stdout?.on('data', (chunk: Buffer | string) => {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     lastStdoutAt = new Date().toISOString();
     if (bufferOutput) stdoutChunks.push(buffer);
     enqueueStreamEffect(input.onStdoutChunk ? () => input.onStdoutChunk?.(buffer.toString('utf8')) ?? Promise.resolve() : undefined);
   });
-  child.stderr.on('data', (chunk: Buffer | string) => {
+  child.stderr?.on('data', (chunk: Buffer | string) => {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     lastStderrAt = new Date().toISOString();
     if (bufferOutput) stderrChunks.push(buffer);
@@ -103,7 +104,7 @@ export function startChildProcess(input: {
   return {
     completion,
     endStdin() {
-      if (!child.stdin.destroyed) child.stdin.end();
+      if (child.stdin && !child.stdin.destroyed) child.stdin.end();
     },
     kill(signal: NodeJS.Signals = 'SIGTERM') {
       child.kill(signal);
@@ -121,11 +122,11 @@ export function startChildProcess(input: {
         ...(child.pid ? { pid: child.pid } : {}),
         ...(exitSignal !== undefined ? { signal: exitSignal } : {}),
         startedAt,
-        stdinWritable: !child.stdin.destroyed && child.stdin.writable,
+        stdinWritable: Boolean(child.stdin && !child.stdin.destroyed && child.stdin.writable),
       };
     },
     writeStdin(chunk: string) {
-      if (child.stdin.destroyed || !child.stdin.writable) throw new Error(`${input.label} stdin is closed`);
+      if (!child.stdin || child.stdin.destroyed || !child.stdin.writable) throw new Error(`${input.label} stdin is closed`);
       child.stdin.write(chunk);
     },
   };

@@ -841,6 +841,118 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
   }
 });
 
+test('claude-code channel transport launches plugin channel and completes after reply callback', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+    const callsPath = join(stateDir, 'claude-channel-calls.jsonl');
+    const fakeClaude = join(stateDir, 'claude');
+    await writeFile(
+      fakeClaude,
+      [
+        '#!/usr/bin/env node',
+        "import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';",
+        "import { createServer } from 'node:http';",
+        "const fail = (code, reason) => { appendFileSync(process.env.CALLS_PATH, JSON.stringify({ type: 'fail', code, reason }) + '\\n'); process.exit(code); };",
+        "process.on('uncaughtException', (error) => fail(99, error.stack || error.message));",
+        'const argv = process.argv.slice(2);',
+        "appendFileSync(process.env.CALLS_PATH, JSON.stringify({ type: 'argv', argv }) + '\\n');",
+        "if (argv.includes('--output-format')) fail(40, 'output-format should not be present');",
+        "if (argv.includes('--input-format')) fail(41, 'input-format should not be present');",
+        "if (argv[argv.indexOf('--permission-mode') + 1] !== 'bypassPermissions') fail(42, `bad permission mode: ${argv.join(' ')}`);",
+        `if (argv[argv.indexOf('--disallowedTools') + 1] !== ${JSON.stringify(CLAUDE_DISALLOWED_TOOLS.join(','))}) fail(43, 'bad disallowed tools');`,
+        "const pluginIndex = argv.indexOf('--plugin-dir');",
+        "if (pluginIndex === -1) fail(44, 'missing plugin dir');",
+        "const pluginRoot = argv[pluginIndex + 1];",
+        "const plugin = JSON.parse(readFileSync(`${pluginRoot}/.claude-plugin/plugin.json`, 'utf8'));",
+        "const mcp = JSON.parse(readFileSync(`${pluginRoot}/.mcp.json`, 'utf8'));",
+        "if (plugin.name !== 'anima-channel') fail(45, 'bad plugin name');",
+        "if (!mcp.mcpServers?.anima?.args?.[0]?.includes('claude-channel-mcp-server.js')) fail(46, JSON.stringify(mcp));",
+        "const server = createServer((req, res) => {",
+        "  if (req.method !== 'POST' || req.url !== '/notify') {",
+        "    res.writeHead(404, { 'content-type': 'application/json' });",
+        "    res.end('{\"error\":\"not found\"}\\n');",
+        "    return;",
+        "  }",
+        "  const chunks = [];",
+        "  req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));",
+        "  req.on('end', () => {",
+        "    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));",
+        "    appendFileSync(process.env.CALLS_PATH, JSON.stringify({ type: 'notify', body }) + '\\n');",
+        "    if (!body.prompt.includes('New Slack message:')) fail(47, 'missing slack prompt');",
+        "    if (!body.prompt.includes('What did I ask over channel?')) fail(48, 'missing message text');",
+        "    if (body.channel !== 'D-anima') fail(49, `bad channel: ${body.channel}`);",
+        "    if (body.platform !== 'slack') fail(50, `bad platform: ${body.platform}`);",
+        "    res.writeHead(200, { 'content-type': 'application/json' });",
+        "    res.end(JSON.stringify({ text: 'channel reply delivered' }) + '\\n');",
+        "  });",
+        "});",
+        "server.listen(0, '127.0.0.1', () => {",
+        "  const address = server.address();",
+        "  writeFileSync(process.env.ANIMA_CLAUDE_CHANNEL_STATE_FILE, JSON.stringify({ host: '127.0.0.1', port: address.port }) + '\\n', 'utf8');",
+        "});",
+        "process.on('SIGTERM', () => server.close(() => process.exit(0)));",
+        "process.stdin.resume();",
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await chmod(fakeClaude, 0o755);
+
+    const ctx = await ingestEvent(
+      makeSlackEvent({
+        channelId: 'D-anima',
+        teamId: 'T-demo',
+        text: 'What did I ask over channel?',
+        userId: 'U1',
+      }),
+      { agentId: 'anima', stateDir },
+    );
+
+    runtime = createAgentRuntime({
+      env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+      kind: 'claude-code',
+      model: 'opus',
+      reasoningEffort: 'xhigh',
+      transport: 'channel',
+    });
+
+    let resultText: string | undefined;
+    try {
+      resultText = (await runtime.run(await runtimeInput(runtime, ctx, await loadState()))).text;
+    } catch (error) {
+      console.error(await readFile(callsPath, 'utf8').catch(() => 'no calls log'));
+      throw error;
+    }
+    assert.equal(resultText, 'channel reply delivered');
+    const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as {
+      argv?: string[];
+      body?: Record<string, unknown>;
+      type: string;
+    });
+    assert.equal(calls[0]?.type, 'argv');
+    assert.equal(calls[0]?.argv?.includes('--plugin-dir'), true);
+    assert.equal(calls[0]?.argv?.includes('--output-format'), false);
+    assert.equal(calls[0]?.argv?.includes('--input-format'), false);
+    assert.equal(calls[1]?.type, 'notify');
+    assert.equal(calls[1]?.body?.['itemId'], ctx.item.id);
+
+    const activities = await activitiesForInboxItemWindow('anima', ctx.item.id);
+    const started = activities.find((activity) => activity.type === 'runtime.started');
+    assert.equal(started?.payload?.['inputFormat'], 'channel');
+    assert.equal(started?.payload?.['transport'], 'channel');
+    const agentText = activities.find((activity) => activity.type === 'agent.text');
+    assert.equal(agentText?.payload?.['text'], 'channel reply delivered');
+    await runtime.close?.();
+    runtime = undefined;
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('claude-code runtime retries fresh when persisted session is missing', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
   try {
