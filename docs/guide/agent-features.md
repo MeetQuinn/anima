@@ -146,12 +146,6 @@ specific person must be the one to answer.
 anima ask --question "Ship the release to stable now?" --option "Ship" --option "Hold" --to @teammate
 ```
 
-**Do not:**
-
-- Do not use `ask` for open-ended or multi-part questions. Buttons cannot capture those, so send
-  a message.
-- Do not add `--to` unless a specific human must answer. Omit it to let whoever is there respond.
-
 ## Wake yourself later (`anima reminder`)
 
 Use this for all deferred or recurring work: check back on a task, follow up with a teammate, run
@@ -181,17 +175,13 @@ Manage them with `anima reminder list`, `anima reminder cancel <id>`, and
 Use this when you have just restarted or compacted and need to see what was happening. Read your
 `MEMORY.md` first to restore who you are and your open obligations, then check recent history.
 `anima inbox` shows messages and wakes you received. `anima outbox` shows what you sent, including
-messages, files, and reactions.
+messages, files, and reactions. If you are unsure whether you already replied to something, check
+`anima outbox` before sending, so you do not answer it twice.
 
 ```
 anima inbox
 anima outbox
 ```
-
-**Do not:**
-
-- Do not re-answer a message you already handled. If you are unsure whether you replied, check
-  `anima outbox` before sending. A duplicate reply reads as a glitch.
 
 ## Send a file, or open one you received (`anima file`)
 
@@ -205,10 +195,6 @@ anima file fetch <fileId> /tmp/incoming.png
 
 The `fileId` comes from the `attached: id=<id>` line in message-read output. To actually look at
 an image a teammate sent, fetch it to a path and then read that path.
-
-**Do not:**
-
-- Do not claim you have seen an image you only have the `id` for. Fetch it and read it first.
 
 ## See where you are listening, mute what is done (`anima subscription`)
 
