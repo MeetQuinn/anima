@@ -24,11 +24,18 @@ export interface SlackRawFile {
 
 export type DownloadableSlackFile = SlackFile & { urlPrivate?: string };
 
-const SLACK_USER_MENTION_PATTERN = /<@([A-Z0-9]+)(?:\|([^>]+))?>/g;
+const SLACK_USER_MENTION_PATTERN = /<@([UW][A-Z0-9]*\d[A-Z0-9]*)(?:\|([^>]+))?>/g;
 const SLACK_CHANNEL_MENTION_PATTERN = /<#([A-Z0-9]+)(?:\|([^>]+))?>/g;
 const READABLE_SLACK_USER_ID_PATTERN = /(^|[^A-Za-z0-9._%+`<@-])@(U[A-Z0-9]+)/g;
 const READABLE_SLACK_USER_MENTION_PATTERN = /(^|[^A-Za-z0-9._%+`<@-])@([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?)/g;
 const READABLE_SLACK_CHANNEL_MENTION_PATTERN = /(^|[^A-Za-z0-9._/`<#-])#([A-Za-z][A-Za-z0-9_-]*)/g;
+const STRUCTURED_SLACK_USER_MENTION_PATTERN = /<mention\s+user_id=(["'])([A-Z0-9]+)\1[^>]*>([\s\S]*?)<\/mention>/gi;
+const ESCAPED_STRUCTURED_SLACK_USER_MENTION_PATTERN = /&lt;mention\s+user_id=(?:"|&quot;|&#34;)([A-Z0-9]+)(?:"|&quot;|&#34;)(?:(?!&gt;).)*&gt;([\s\S]*?)&lt;\/mention&gt;/gi;
+
+export interface StructuredSlackUserMention {
+  id: string;
+  label: string;
+}
 
 export function extractSlackUserMentionIds(text: string): string[] {
   const ids = new Set<string>();
@@ -63,6 +70,29 @@ export function replaceSlackChannelMentions(text: string, labels: Map<string, st
     if (fallbackName) return channelLabel(fallbackName);
     return channelLabel(channelId);
   });
+}
+
+export function extractStructuredSlackUserMentions(text: string): StructuredSlackUserMention[] {
+  const mentions = new Map<string, StructuredSlackUserMention>();
+  forEachNonCodeSegment(text, (segment) => {
+    for (const match of segment.matchAll(STRUCTURED_SLACK_USER_MENTION_PATTERN)) {
+      const id = match[2]?.toUpperCase();
+      if (id) mentions.set(id, { id, label: structuredMentionLabel(match[3], id) });
+    }
+    for (const match of segment.matchAll(ESCAPED_STRUCTURED_SLACK_USER_MENTION_PATTERN)) {
+      const id = match[1]?.toUpperCase();
+      if (id) mentions.set(id, { id, label: structuredMentionLabel(match[2], id) });
+    }
+  });
+  return [...mentions.values()];
+}
+
+export function replaceStructuredSlackUserMentions(text: string): string {
+  return replaceOutsideMarkdownCode(text, (segment) =>
+    segment
+      .replace(STRUCTURED_SLACK_USER_MENTION_PATTERN, (_raw, _quote: string, userId: string) => `<@${userId.toUpperCase()}>`)
+      .replace(ESCAPED_STRUCTURED_SLACK_USER_MENTION_PATTERN, (_raw, userId: string) => `<@${userId.toUpperCase()}>`),
+  );
 }
 
 export function extractReadableSlackUserMentions(text: string): string[] {
@@ -215,6 +245,20 @@ function extractReadableMentions(text: string, pattern: RegExp): string[] {
 
 function normalizeReadableMention(value: string): string {
   return value.trim().replace(/^[@#]/, '').toLowerCase();
+}
+
+function structuredMentionLabel(value: string | undefined, fallback: string): string {
+  const label = decodeBasicHtmlEntities(value ?? '').trim().replace(/^@/, '');
+  return label || fallback;
+}
+
+function decodeBasicHtmlEntities(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&#34;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
 }
 
 function replaceOutsideMarkdownCode(text: string, replace: (segment: string) => string): string {

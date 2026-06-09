@@ -15,15 +15,18 @@ import {
   extractReadableSlackUserIdMentions,
   extractSlackChannelMentionIds,
   extractSlackUserMentionIds,
+  extractStructuredSlackUserMentions,
   replaceReadableSlackChannelMentions,
   replaceReadableSlackUserIdMentions,
   replaceReadableSlackUserMentions,
   replaceSlackChannelMentions,
   replaceSlackUserMentions,
+  replaceStructuredSlackUserMentions,
 } from '../slack/slack.helper.js';
 
 test('Slack text helpers extract and replace mentions', () => {
   assert.deepEqual(extractSlackUserMentionIds('hi <@U123> and <@U456|legacy> and <@U123>'), ['U123', 'U456']);
+  assert.deepEqual(extractSlackUserMentionIds('example <@USERID> is not a real mention'), []);
   assert.equal(
     replaceSlackUserMentions('hi <@U123> and <@U456|legacy> and <@U789>', new Map([['U123', '@alice'], ['U456', '@bob']])),
     'hi <mention user_id="U123">alice</mention> and <mention user_id="U456">bob</mention> and <mention user_id="U789">U789</mention>',
@@ -68,6 +71,31 @@ test('Slack text helpers convert raw user ids outside code spans', () => {
     replaceReadableSlackUserMentions('cc `please @alice` and @alice', new Map([['alice', 'U123']])),
     'cc `please @alice` and <@U123>',
   );
+});
+
+test('Slack text helpers convert structured mention tags to Slack markup', async () => {
+  const input = [
+    '<mention user_id="U123">alice</mention>',
+    '&lt;mention user_id=&quot;U456&quot;&gt;bob&lt;/mention&gt;',
+    '`<mention user_id="U789">literal</mention>`',
+  ].join(' ');
+
+  assert.deepEqual(extractStructuredSlackUserMentions(input), [
+    { id: 'U123', label: 'alice' },
+    { id: 'U456', label: 'bob' },
+  ]);
+  assert.equal(
+    replaceStructuredSlackUserMentions(input),
+    '<@U123> <@U456> `<mention user_id="U789">literal</mention>`',
+  );
+
+  const slackText = await slackTextForPostMessage({ client: fakeSlackApi({}), text: input });
+  assert.equal(slackText.text, '<@U123> <@U456> `<mention user_id="U789">literal</mention>`');
+  assert.deepEqual(slackText.resolved, [
+    { id: 'U123', label: '@alice', type: 'user' },
+    { id: 'U456', label: '@bob', type: 'user' },
+  ]);
+  assert.deepEqual(slackText.unresolved, []);
 });
 
 test('Slack message mentions treat generic placeholders as literal text', async () => {

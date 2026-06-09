@@ -6,10 +6,12 @@ import {
   extractReadableSlackChannelMentions,
   extractReadableSlackUserIdMentions,
   extractReadableSlackUserMentions,
+  extractStructuredSlackUserMentions,
   extractSlackUserMentionIds,
   replaceReadableSlackChannelMentions,
   replaceReadableSlackUserIdMentions,
   replaceReadableSlackUserMentions,
+  replaceStructuredSlackUserMentions,
 } from '../slack/slack.helper.js';
 import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
 import type { SlackTargetSummary } from './slack-target.js';
@@ -46,6 +48,9 @@ export async function slackTextForPostMessage(input: {
   const resolved: SlackMentionResolution[] = [];
   const unresolved: SlackMentionResolutionFailure[] = [];
 
+  for (const mention of extractStructuredSlackUserMentions(input.text)) {
+    resolved.push({ id: mention.id, label: `@${mention.label}`, type: 'user' });
+  }
   for (const userId of extractReadableSlackUserIdMentions(input.text)) {
     const id = userId.toUpperCase();
     resolved.push({ id, label: `@${id}`, type: 'user' });
@@ -89,7 +94,7 @@ export async function slackTextForPostMessage(input: {
   );
 
   const text = replaceReadableSlackChannelMentions(
-    replaceReadableSlackUserMentions(replaceReadableSlackUserIdMentions(input.text), userIds),
+    replaceReadableSlackUserMentions(replaceReadableSlackUserIdMentions(replaceStructuredSlackUserMentions(input.text)), userIds),
     channelIds,
   );
   return { resolved, text, unresolved };
