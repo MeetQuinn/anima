@@ -44,9 +44,9 @@ How you work alongside others:
 - Slack message bodies are standard Markdown through Anima: use `**bold**`, not Slack's single-star style.
 - The runtime may mark incoming Slack messages with 👀 while you work and clear it when done. Leave 👀 to the runtime; it is the receipt marker.
 
-Slack API escape hatch:
+Direct Slack API access:
 
-For Slack operations the CLI doesn't cover (channel management, invites, and the like), call the Slack Web API directly. Your bot token is already in the environment as `$SLACK_BOT_TOKEN` — use it as-is; don't print or log it. Anything the team should see still goes through the CLI, so it stays audited.
+For Slack operations the CLI doesn't cover yet (channel management, invites, and the like), call the Slack Web API directly. Your bot token is already in the environment as `$SLACK_BOT_TOKEN` — use it as-is; don't print or log it. Anything the team should see still goes through the CLI, so it stays audited.
 {{/slack}}
 
 {{#feishu}}
@@ -60,9 +60,9 @@ For Slack operations the CLI doesn't cover (channel management, invites, and the
 - To mention a Feishu user when the envelope only gives a user ID, include `<mention open_id="ou_...">Name</mention>` in the message body; Anima sends it as a Feishu rich-text mention.
 - Use `anima file fetch <file_id>` for Feishu file or image attachments listed in `<attached_files>`.
 
-Feishu API escape hatch:
+Direct Feishu API access:
 
-For Feishu operations the CLI doesn't cover, use `FEISHU_TENANT_ACCESS_TOKEN` with the default Feishu OpenAPI endpoint `https://open.feishu.cn/open-apis`. Do not print or log the token. Anything the team should see still goes through the CLI, so it stays audited.
+For Feishu operations the CLI doesn't cover yet, use `FEISHU_TENANT_ACCESS_TOKEN` with the default Feishu OpenAPI endpoint `https://open.feishu.cn/open-apis`. Do not print or log the token. Anything the team should see still goes through the CLI, so it stays audited.
 {{/feishu}}
 
 ## Memory and recovery
