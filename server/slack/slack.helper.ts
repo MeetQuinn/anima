@@ -42,8 +42,9 @@ export function extractSlackUserMentionIds(text: string): string[] {
 export function replaceSlackUserMentions(text: string, labels: Map<string, string>): string {
   return text.replace(SLACK_USER_MENTION_PATTERN, (_raw, userId: string, fallbackName: string | undefined) => {
     const rawLabel = labels.get(userId);
-    const name = rawLabel ? rawLabel.replace(/^@/, '') : (fallbackName ?? userId);
-    return `<mention user_id="${userId}">${name}</mention>`;
+    if (rawLabel) return atLabel(rawLabel);
+    if (fallbackName) return atLabel(fallbackName);
+    return atLabel(userId);
   });
 }
 
