@@ -65,6 +65,7 @@ interface FeishuSendTarget {
 
 interface MessageSendDeps {
   createFeishuMessageClient?: FeishuMessageClientFactory;
+  writeOutput?: (line: string) => void;
 }
 
 export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDeps = {}): Promise<void> {
@@ -84,6 +85,7 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
         target: feishuTarget,
         text,
         threadMessageId: opts.threadTs,
+        writeOutput: deps.writeOutput,
       });
       return;
     }
@@ -141,7 +143,8 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
             messageTs: response.ts,
             ...(threadTs ? { threadTs } : {}),
           });
-      console.log(slackOutputLine({
+      const writeOutput = deps.writeOutput ?? console.log;
+      writeOutput(slackOutputLine({
         messageTs: response.ts,
         status: 'sent',
         target,
@@ -175,6 +178,7 @@ async function runFeishuMessageSend(input: {
   target: FeishuSendTarget;
   text: string;
   threadMessageId?: string;
+  writeOutput?: (line: string) => void;
 }): Promise<void> {
   const agent = await loadAgentFromOpts(input.opts);
   if (!agent.feishu.connected) throw new Error(`Agent ${input.agentId} has no Feishu connection configured`);
@@ -213,7 +217,8 @@ async function runFeishuMessageSend(input: {
         item: input.item,
         response,
       });
-      console.log(feishuOutputLine({
+      const writeOutput = input.writeOutput ?? console.log;
+      writeOutput(feishuOutputLine({
         messageId: response.messageId,
         receiveId: input.target.receiveId,
         receiveIdType: input.target.receiveIdType,
@@ -312,6 +317,7 @@ export async function runMessageUpdate(
       opts,
       targetMessageId: targetTs,
       text,
+      writeOutput: deps.writeOutput,
     });
     return;
   }
@@ -354,7 +360,8 @@ export async function runMessageUpdate(
       const response = await client.chat.update(payload);
       const responseTs = response.ts ?? targetTs;
       const permalink = slackMessageRedirectLink({ channelId: channel.id, messageTs: responseTs });
-      console.log(slackOutputLine({
+      const writeOutput = deps.writeOutput ?? console.log;
+      writeOutput(slackOutputLine({
         messageTs: responseTs,
         status: 'updated',
         target,
@@ -385,6 +392,7 @@ async function runFeishuMessageUpdate(input: {
   opts: MessageUpdateInput;
   targetMessageId: string;
   text: string;
+  writeOutput?: (line: string) => void;
 }): Promise<void> {
   if (!input.targetMessageId.startsWith('om_')) {
     throw new Error('Feishu message update requires --message-ts to be a Feishu message_id (om_...)');
@@ -416,7 +424,8 @@ async function runFeishuMessageUpdate(input: {
         messageId: input.targetMessageId,
       });
       const messageId = response.messageId ?? input.targetMessageId;
-      console.log(feishuUpdateOutputLine({
+      const writeOutput = input.writeOutput ?? console.log;
+      writeOutput(feishuUpdateOutputLine({
         channel: input.channel,
         messageId,
       }));
