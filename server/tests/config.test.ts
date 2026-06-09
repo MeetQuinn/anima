@@ -291,6 +291,70 @@ test('provider idle timeout defaults to 30 minutes for all providers', async () 
   }
 });
 
+test('claude-code provider transport defaults to stream-json', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-config-claude-transport-default-test-'));
+  try {
+    await writeConfig(configDir, [
+      {
+        id: 'anima',
+        provider: {
+          kind: 'claude-code',
+          model: 'opus',
+        },
+        homePath: 'agents/anima',
+      },
+    ]);
+    await withAnimaHome(configDir, async () => {
+      const agent = await agentService('anima').getConfig();
+      assert.equal(agent.provider.kind, 'claude-code');
+      assert.equal(agent.provider.transport, 'stream-json');
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+  }
+});
+
+test('claude-code provider transport patch archives the current provider session', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-config-claude-transport-switch-test-'));
+  try {
+    await writeConfig(configDir, [
+      {
+        id: 'anima',
+        provider: {
+          kind: 'claude-code',
+          model: 'opus',
+          transport: 'stream-json',
+        },
+        homePath: 'agents/anima',
+      },
+    ]);
+    await withAnimaHome(configDir, async () => {
+      await new SessionStore('anima').write({
+        createdAt: '2026-05-26T00:00:00.000Z',
+        current: {
+          id: 'claude-session-1',
+          kind: 'claude-code',
+          updatedAt: '2026-05-26T00:01:00.000Z',
+        },
+        updatedAt: '2026-05-26T00:01:00.000Z',
+      });
+
+      const agent = await agentService('anima').updateProvider({ transport: 'channel' });
+      assert.equal(agent.provider.kind, 'claude-code');
+      assert.equal(agent.provider.transport, 'channel');
+
+      const session = await new SessionStore('anima').read();
+      assert.ok(session);
+      assert.equal(session.current, undefined);
+      assert.equal(session.archived?.[0]?.kind, 'claude-code');
+      assert.equal(session.archived?.[0]?.id, 'claude-session-1');
+      assert.match(session.archived?.[0]?.note ?? '', /Claude Code transport switched from stream-json to channel/);
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+  }
+});
+
 test('agent provider env patch preserves, updates, and deletes write-only keys', async () => {
   const configDir = await mkdtemp(join(tmpdir(), 'anima-config-env-patch-test-'));
   try {
@@ -489,6 +553,12 @@ test('agent provider patch rejects invalid kind/model/effort combinations', asyn
           reasoningEffort: 'high',
         }),
         /unsupported reasoningEffort high/,
+      );
+      await assert.rejects(
+        agentService('anima').updateProvider({
+          transport: 'channel',
+        }),
+        /unsupported transport for codex-cli: channel/,
       );
       const agent = await agentService('anima').getConfig();
       assert.equal(agent.provider.kind, 'codex-cli');

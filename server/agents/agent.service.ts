@@ -92,10 +92,9 @@ export class AgentService {
   async updateProvider(provider: AgentUpdateProviderRequest): Promise<AgentConfig> {
     const current = await this.getConfig();
     const next = await this.saveConfig(agentConfigWithProviderUpdate(current, provider));
-    if (provider.kind && provider.kind !== current.provider.kind) {
-      await this.archiveCurrentProviderSession(
-        `provider switched from ${current.provider.kind} to ${next.provider.kind}`,
-      );
+    const archiveNote = providerSessionArchiveNote(current.provider, next.provider);
+    if (archiveNote) {
+      await this.archiveCurrentProviderSession(archiveNote);
     }
     return next;
   }
@@ -161,6 +160,23 @@ export class AgentService {
     });
     return { archivedAt, archivedProviderSessions };
   }
+}
+
+function providerSessionArchiveNote(
+  current: AgentConfig['provider'],
+  next: AgentConfig['provider'],
+): string | undefined {
+  if (current.kind !== next.kind) {
+    return `provider switched from ${current.kind} to ${next.kind}`;
+  }
+  if (
+    current.kind === 'claude-code'
+    && next.kind === 'claude-code'
+    && (current.transport ?? 'stream-json') !== (next.transport ?? 'stream-json')
+  ) {
+    return `Claude Code transport switched from ${current.transport ?? 'stream-json'} to ${next.transport ?? 'stream-json'}`;
+  }
+  return undefined;
 }
 
 export class AgentRegistryService {
