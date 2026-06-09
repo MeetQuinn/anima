@@ -1,4 +1,5 @@
 import type {
+  DashboardAuth,
   ReleaseTrack,
   ServerTrack,
   SidebarOrder,
@@ -38,6 +39,11 @@ export class ServerSettingsService {
     return config.sidebarOrder ?? {};
   }
 
+  async getDashboardAuth(): Promise<DashboardAuth | undefined> {
+    const config = await this.store.read();
+    return config.dashboardAuth;
+  }
+
   async getReleaseTrack(): Promise<ReleaseTrack> {
     const config = await this.store.read();
     if (config.releaseTrack) return config.releaseTrack;
@@ -65,6 +71,12 @@ export class ServerSettingsService {
     const config = await this.store.read();
     await this.store.write({ ...config, sidebarOrder });
     return sidebarOrder;
+  }
+
+  async setDashboardAuth(dashboardAuth: DashboardAuth): Promise<DashboardAuth> {
+    const config = await this.store.read();
+    await this.store.write({ ...config, dashboardAuth });
+    return dashboardAuth;
   }
 
   async setWorkspacePlatform(workspacePlatform: WorkspacePlatform): Promise<WorkspacePlatform> {

@@ -14,3 +14,11 @@ export type ServerTrack = z.infer<typeof ServerTrack>;
 
 export const WorkspacePlatform = z.enum(['slack', 'feishu']);
 export type WorkspacePlatform = z.infer<typeof WorkspacePlatform>;
+
+export const DashboardAuth = z.object({
+  enabled: z.boolean().optional(),
+  passwordHash: z.string().min(1).optional(),
+  sessionSecret: z.string().min(16).optional(),
+  sessionTtlHours: z.number().int().positive().max(24 * 365).optional(),
+}).strict();
+export type DashboardAuth = z.infer<typeof DashboardAuth>;

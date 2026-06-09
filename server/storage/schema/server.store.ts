@@ -7,9 +7,16 @@ import { z } from 'zod';
 
 import { resolveAnimaHome } from '../../anima-home.js';
 import { JsonStore } from '../json-store.js';
-import { ReleaseTrack, ServerTrack, SidebarOrder, WorkspacePlatform } from '../../../shared/server-settings.js';
+import {
+  DashboardAuth,
+  ReleaseTrack,
+  ServerTrack,
+  SidebarOrder,
+  WorkspacePlatform,
+} from '../../../shared/server-settings.js';
 
 export const ServerConfig = z.object({
+  dashboardAuth: DashboardAuth.optional(),
   dashboardHost: z.string().min(1).optional(),
   dashboardPort: z.number().int().positive().max(65535).optional(),
   releaseTrack: ReleaseTrack.optional(),

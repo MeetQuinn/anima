@@ -17,6 +17,11 @@ import RouteErrorBoundary from './components/RouteErrorBoundary';
 
 export const router = createBrowserRouter([
   {
+    path: 'login',
+    lazy: () => import('./views/login').then((m) => ({ Component: m.LoginPage })),
+    errorElement: <RouteErrorBoundary />,
+  },
+  {
     path: 'onboarding',
     lazy: () => import('./views/onboarding').then((m) => ({ Component: m.OnboardingPage })),
     errorElement: <RouteErrorBoundary />,
