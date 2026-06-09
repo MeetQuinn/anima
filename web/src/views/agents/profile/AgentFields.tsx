@@ -22,12 +22,11 @@ import { providerKindLabel, providerValueLabel } from '@/lib/provider-display';
 const RESERVED_ENV_KEYS = new Set<string>(ANIMA_MANAGED_PROVIDER_ENV_KEYS);
 const DEFAULT_CLAUDE_CODE_TRANSPORT: ClaudeCodeTransport = 'stream-json';
 const CLAUDE_CODE_TRANSPORT_OPTIONS: Array<{
-  disabled?: boolean;
   label: string;
   value: ClaudeCodeTransport;
 }> = [
   { value: 'stream-json', label: 'Current CLI mode' },
-  { value: 'channel', label: 'Claude Code Channels', disabled: true },
+  { value: 'channel', label: 'Claude Code Channels' },
 ];
 
 // ── InlineTextRow ─────────────────────────────────────────────────────────────
@@ -431,13 +430,9 @@ export function ProviderInlineRow({
                     <SelectItem
                       key={opt.value}
                       value={opt.value}
-                      disabled={opt.disabled}
                       className="font-serif text-[14px]"
                     >
                       {opt.label}
-                      {opt.disabled && (
-                        <span className="font-sans text-[11px] text-text-subtle">Next adapter</span>
-                      )}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -446,7 +441,7 @@ export function ProviderInlineRow({
           </div>
           {hasDraftTransport && (
             <div className="max-w-xl font-sans text-[11px] leading-snug text-text-muted">
-              Current CLI mode uses Anima's existing Claude Code stream bridge. Claude Code Channels will become selectable once the Channel adapter lands.
+              Current CLI mode uses Anima's existing Claude Code stream bridge. Claude Code Channels runs Claude Code in an interactive channel session and sends replies through Anima.
             </div>
           )}
           {kindChanged && (
