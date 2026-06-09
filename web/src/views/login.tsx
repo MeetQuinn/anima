@@ -1,10 +1,11 @@
 import type { FormEvent } from 'react';
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, LockKeyhole, ShieldCheck } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 
 import { fetchDashboardAuthSession, loginDashboard } from '@/api/auth';
+import AnimaIcon from '@/components/AnimaIcon';
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -40,31 +41,16 @@ export function LoginPage() {
 
   return (
     <main className="grid min-h-dvh bg-page px-4 py-8 text-text-on-spine sm:px-6">
-      <div className="mx-auto flex w-full max-w-md flex-col justify-center">
-        <div className="mb-8 flex items-center gap-3">
-          <div className="grid size-10 place-items-center rounded-md border border-avatar-ring-spine bg-spine-elevated text-text-on-spine">
-            <ShieldCheck className="size-5" aria-hidden="true" />
-          </div>
-          <div>
-            <p className="chrome text-xs uppercase tracking-[0.16em] text-text-on-spine-subtle">Anima dashboard</p>
-            <h1 className="display text-3xl font-semibold text-text-on-spine">Sign in</h1>
-          </div>
+      <div className="mx-auto flex w-full max-w-sm flex-col justify-center">
+        <div className="mb-7 flex items-center justify-center gap-3 text-text-on-spine">
+          <AnimaIcon className="size-9" />
+          <h1 className="display text-[34px] font-semibold leading-none">Anima</h1>
         </div>
 
         <form
           onSubmit={submit}
           className="rounded-lg border border-spine-border bg-surface p-5 text-text shadow-deep sm:p-6"
         >
-          <div className="mb-5">
-            <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
-              <LockKeyhole className="size-4 text-accent" aria-hidden="true" />
-              <span>Dashboard password</span>
-            </div>
-            <p className="text-sm text-text-muted">
-              Enter the password configured for this Anima runtime.
-            </p>
-          </div>
-
           <label className="chrome mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-text-subtle" htmlFor="dashboard-password">
             Password
           </label>
