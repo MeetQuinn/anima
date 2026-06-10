@@ -15,7 +15,7 @@ import { nowIso } from '../ids.js';
 import { AgentHealthStore, defaultAgentHealthStore } from './agent-health.store.js';
 import { defaultAgentRestartCommandStore } from './agent-restart-command.store.js';
 import { findActiveRuntimeItem } from './active-item.js';
-import { latestPrimaryRunningItem, processAlive } from './item-state.js';
+import { latestPrimaryRunningItem, processAlive, providerChildIssueReason } from './item-state.js';
 
 export class RuntimeServiceError extends Error {
   readonly statusCode: number;
@@ -168,12 +168,7 @@ function runtimeProcessReason(
 ): AgentHealthReason | undefined {
   if (!runtime) return undefined;
   if (runtime.processId && !processAlive(runtime.processId)) return 'start_failed';
-  if (!runtime.providerChildExpected) return undefined;
-  const child = runtime.providerChild;
-  if (!child) return 'provider_child_missing';
-  if (child.pid && !processAlive(child.pid)) return 'provider_child_exited';
-  if (child.exited || !child.alive || !child.stdinWritable) return 'provider_child_exited';
-  return undefined;
+  return providerChildIssueReason(runtime, { checkPid: true });
 }
 
 function syntheticHealth(

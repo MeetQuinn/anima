@@ -30,7 +30,7 @@ import {
 import { AgentHealthStore } from './agent-health.store.js';
 import { startRunningAgent, type RunningAgentHandle } from './agent-runner.js';
 import { findActiveRuntimeItem } from './active-item.js';
-import { latestPrimaryRunningItem, processAlive } from './item-state.js';
+import { latestPrimaryRunningItem, processAlive, providerChildIssueReason } from './item-state.js';
 import { notificationTargetForAgentItem } from './notification-target.js';
 import type { RuntimeWorkerConfig } from './types.js';
 import type {
@@ -819,12 +819,8 @@ interface RuntimeHealthSnapshot {
 
 function healthForRuntime(runtime: AgentRuntimeHandleSnapshot | undefined): RuntimeHealthSnapshot {
   if (!runtime) return { reason: 'start_failed', state: 'unhealthy' };
-  if (!runtime.providerChildExpected) return { state: 'healthy' };
-  const child = runtime.providerChild;
-  if (!child) return { reason: 'provider_child_missing', state: 'unhealthy' };
-  if (child.exited || !child.alive || !child.stdinWritable) {
-    return { reason: 'provider_child_exited', state: 'unhealthy' };
-  }
+  const childReason = providerChildIssueReason(runtime);
+  if (childReason) return { reason: childReason, state: 'unhealthy' };
   return { state: 'healthy' };
 }
 
@@ -857,10 +853,7 @@ async function staleRunningItemForAgent(
 }
 
 function providerChildUnhealthy(runtime: AgentRuntimeHandleSnapshot): boolean {
-  const child = runtime.providerChild;
-  if (!child) return true;
-  if (child.pid && !processAlive(child.pid)) return true;
-  return child.exited || !child.alive || !child.stdinWritable;
+  return Boolean(providerChildIssueReason(runtime, { checkPid: true }));
 }
 
 function restartStatus(
