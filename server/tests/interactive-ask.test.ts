@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { createServer, type IncomingMessage } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { mkdir, mkdtemp } from 'node:fs/promises';
@@ -17,6 +16,7 @@ import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import { AgentStore } from '../storage/schema/agent.store.js';
 import { InteractiveAskStore } from '../storage/schema/interactive-ask.store.js';
 import { SubscriptionStore } from '../storage/schema/subscription.store.js';
+import { slackBlocks, slackRequestBody, startSlackApiMock } from './helpers/slack-api.js';
 import type { InteractiveAskRecord } from '../storage/schema/interactive-ask.store.js';
 
 const cliPath = resolve('dist/server/cli/anima.js');
@@ -384,62 +384,4 @@ async function runNode(
   else child.stdin.end();
   const [code] = await once(child, 'close') as [number | null];
   return { stdout, stderr, status: code };
-}
-
-async function startSlackApiMock(
-  handler: (method: string, body: string, request: IncomingMessage) => unknown,
-): Promise<{ close: () => Promise<void>; url: string }> {
-  const server = createServer(async (request, response) => {
-    try {
-      const body = await readBody(request);
-      const method = request.url?.split('/').pop() ?? '';
-      const payload = handler(method, body, request);
-      response.setHeader('content-type', 'application/json');
-      response.end(JSON.stringify(payload));
-    } catch (error) {
-      response.statusCode = 500;
-      response.setHeader('content-type', 'application/json');
-      response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error), ok: false }));
-    }
-  });
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Expected TCP address');
-  return {
-    close: async () => {
-      server.close();
-      await once(server, 'close');
-    },
-    url: `http://127.0.0.1:${address.port}/api`,
-  };
-}
-
-function slackRequestBody(body: string): Record<string, unknown> {
-  try {
-    return JSON.parse(body) as Record<string, unknown>;
-  } catch {
-    return Object.fromEntries(new URLSearchParams(body));
-  }
-}
-
-function slackBlocks(body: Record<string, unknown>): Array<{
-  action_id?: string;
-  elements?: Array<{ action_id?: string; value?: string }>;
-  type: string;
-}> {
-  if (Array.isArray(body['blocks'])) {
-    return body['blocks'] as Array<{ type: string }>;
-  }
-  assert.equal(typeof body['blocks'], 'string');
-  return JSON.parse(body['blocks'] as string) as Array<{ type: string }>;
-}
-
-async function readBody(request: IncomingMessage): Promise<string> {
-  let body = '';
-  request.setEncoding('utf8');
-  for await (const chunk of request) {
-    body += chunk;
-  }
-  return body;
 }
