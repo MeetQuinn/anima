@@ -23,6 +23,7 @@ import {
 import type { AgentRuntimeInput } from './contract.js';
 import { truncateForActivity } from '../activities/format.js';
 import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
+import { LineBuffer } from './line-buffer.js';
 
 interface CodexThread {
   id: string;
@@ -53,7 +54,7 @@ interface PendingCodexSubagentSpawn {
 
 export class CodexAppServerController {
   private activeInput?: AgentRuntimeInput;
-  private buffer = '';
+  private readonly stdoutLines = new LineBuffer();
   private initialized = false;
   private nextId = 1;
   private readonly pending = new Map<number, { reject(error: unknown): void; resolve(value: unknown): void }>();
@@ -234,10 +235,7 @@ export class CodexAppServerController {
 
   async acceptStdoutChunk(chunk: string): Promise<void> {
     this.activeInput?.onActivity?.();
-    this.buffer += chunk;
-    const lines = this.buffer.split(/\r?\n/);
-    this.buffer = lines.pop() ?? '';
-    for (const line of lines) await this.acceptLine(line);
+    for (const line of this.stdoutLines.accept(chunk)) await this.acceptLine(line);
   }
 
   async acceptStderrChunk(chunk: string): Promise<void> {
