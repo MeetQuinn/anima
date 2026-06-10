@@ -27,6 +27,7 @@
     "dist/shared/",
     "dist/web/",
     "docs/*.md",
+    "docs/agent/*.md",
     "docs/architecture/*.md",
     "docs/guide/*.md",
     "templates/",

@@ -87,6 +87,8 @@ async function runPackSmoke() {
         `npm pack did not report a tarball filename: ${pack.stdout}`,
       );
     }
+    assertPackedFile(packInfo, "docs/agent/guide.md");
+    assertPackedFile(packInfo, "docs/agent/reference.md");
     const tarballPath = join(packDir, basename(packInfo.filename));
 
     await writeFile(
@@ -144,6 +146,13 @@ async function runPackSmoke() {
     console.log("animactl package smoke OK");
   } finally {
     await rm(workDir, { force: true, recursive: true });
+  }
+}
+
+function assertPackedFile(packInfo, path) {
+  const files = Array.isArray(packInfo.files) ? packInfo.files : [];
+  if (!files.some((file) => file?.path === path)) {
+    throw new Error(`animactl package is missing required file: ${path}`);
   }
 }
 
