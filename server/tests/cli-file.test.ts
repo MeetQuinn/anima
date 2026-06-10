@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { createServer, type IncomingMessage } from 'node:http';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { allActivities, loadState } from './helpers/state.js';
 import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
 import { makeSlackEvent } from './helpers/slack.js';
+import { readHttpBody, slackRequestBody, startSlackApiMock } from './helpers/slack-api.js';
 import { ingestEvent } from './helpers/inbox.js';
 import { withAnimaHome } from './anima-home.js';
 
@@ -22,7 +23,7 @@ test('file send uploads a local file and records an audited Slack output', async
   const uploadServerPosts: string[] = [];
 
   const uploadServer = createServer((request, response) => {
-    void readBody(request).then((body) => {
+    void readHttpBody(request).then((body) => {
       uploadServerPosts.push(body);
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ ok: true }));
@@ -374,7 +375,7 @@ test('file send records external.effect.failed when Slack rejects completeUpload
 test('file send records audit without an active item', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-file-no-item-test-'));
   const uploadServer = createServer((request, response) => {
-    void readBody(request).then(() => {
+    void readHttpBody(request).then(() => {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ ok: true }));
     });
@@ -605,37 +606,6 @@ async function runNode(
   return { status, stderr, stdout };
 }
 
-async function startSlackApiMock(
-  handler: (method: string, body: string) => object,
-): Promise<{ close: () => Promise<void>; url: string }> {
-  const server = createServer(async (request, response) => {
-    const body = await readBody(request);
-    try {
-      const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
-      const normalizedMethod = pathname.replace(/^\/api\//, '');
-      const payload = handler(normalizedMethod, body);
-      response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify(payload));
-    } catch (error) {
-      response.writeHead(500, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error), ok: false }));
-    }
-  });
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    throw new Error('Expected Slack API mock to listen on a TCP address.');
-  }
-  return {
-    close: async () => {
-      server.close();
-      await once(server, 'close');
-    },
-    url: `http://127.0.0.1:${address.port}/api`,
-  };
-}
-
 function parseFilesField(value: unknown): Array<{ id: string; title?: string }> {
   if (typeof value !== 'string') return Array.isArray(value) ? value : [];
   try {
@@ -644,19 +614,4 @@ function parseFilesField(value: unknown): Array<{ id: string; title?: string }> 
   } catch {
     return [];
   }
-}
-
-function slackRequestBody(body: string): Record<string, unknown> {
-  try {
-    return JSON.parse(body) as Record<string, unknown>;
-  } catch {
-    return Object.fromEntries(new URLSearchParams(body));
-  }
-}
-
-async function readBody(request: IncomingMessage): Promise<string> {
-  let body = '';
-  request.setEncoding('utf8');
-  for await (const chunk of request) body += chunk;
-  return body;
 }
