@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { WebClient } from '@slack/web-api';
 
+import { slackShortcutHandoffServiceForAgent } from '../inbox/slack-shortcut-handoff.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { SlackShortcutService, type ShortcutModalView } from '../slack-interactions/shortcut.service.js';
 import { SLACK_STOP_CONFIRM_VIEW_CALLBACK_ID } from '../slack-interactions/shortcut-ids.js';
@@ -258,6 +259,7 @@ test('message shortcut hands the source message to the agent thread and responds
             { activityId: 'actv_test', createdAt: '2026-05-26T12:00:00.000Z', ...input }
           ),
         } as never,
+        handoffService: slackShortcutHandoffServiceForAgent('scout'),
       });
       await service.handMessageToAgent({
         agentId: 'scout',
@@ -277,6 +279,7 @@ test('message shortcut hands the source message to the agent thread and responds
       assert.equal(item.channelId, 'C1');
       assert.equal(item.threadTs, '1779790000.123456');
       assert.equal(item.messageTs, '1779790000.123456');
+      assert.equal(item.actor?.userId, 'U_SOURCE');
       assert.match(item.text, /<@U_HANDOFF> used the Slack message shortcut/);
       assert.match(item.text, /Please turn this into a task\./);
     });
