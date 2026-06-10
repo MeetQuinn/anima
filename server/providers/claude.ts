@@ -7,6 +7,7 @@ import { classifyProviderFailureReason } from '../runtime/provider-failure.js';
 import { ActiveRuntimeRun } from './active-runtime.js';
 import { startChildProcess, terminateChildProcess, type RunningChildProcess } from './child-process.js';
 import { createClaudeJsonlActivityMapper, parseClaudeRuntimeOutput } from './claude-events.js';
+import { watchProviderCompletion } from './completion-watch.js';
 import { LineBuffer } from './line-buffer.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
 import {
@@ -182,11 +183,9 @@ export class ClaudeCodeAgentRuntime implements AgentRuntime {
       },
     }));
     this.controller = controller;
-    controller.completion
-      .catch(() => {})
-      .finally(() => {
-        if (this.controller === controller) this.controller = undefined;
-      });
+    watchProviderCompletion(controller.completion, () => {
+      if (this.controller === controller) this.controller = undefined;
+    });
     return controller;
   }
 
