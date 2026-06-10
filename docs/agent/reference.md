@@ -184,6 +184,25 @@ anima inbox
 anima outbox
 ```
 
+## Search messages you saw or sent (`anima message search`)
+
+Use this when you need to find an older decision or thread by keyword without guessing a time
+window. This searches your local Anima message ledger: conversations you were actually part of,
+meaning messages delivered to you and messages you sent.
+
+This is agent-visible history, not workspace search. It cannot find messages from channels or
+threads where you were never present, and transcripts fetched with `anima message read` are not
+searchable yet.
+
+```
+anima message search launch criteria
+anima message search "invoice bug" --channel '#support' --since 2026-06-01
+```
+
+Search uses AND matching by default: every keyword must match. Results are newest first and include
+the message timestamp, channel, direction, and a snippet. Use `--before <iso>` with the
+`next_cursor` line to page older matches.
+
 ## Send a file, or open one you received (`anima file`)
 
 Use this to upload a local file to the chat, or to open a file a teammate sent you. Sending fails

@@ -17,6 +17,14 @@ export interface MessageListInput {
   since?: string;
 }
 
+export interface MessageSearchInput {
+  before?: string;
+  channel?: string;
+  keywords: string[];
+  limit?: number;
+  since?: string;
+}
+
 export class MessageService {
   constructor(
     agentId: string,
@@ -43,6 +51,24 @@ export class MessageService {
     await this.backfillLegacyMessages();
     const limit = normalizeMessageLimit(input.limit);
     const entries = await this.store.readLatest({ ...input, limit: limit + 1 });
+    const page = entries.slice(0, limit);
+    const nextCursor = entries.length > limit ? (page.at(-1)?.timestamp ?? null) : null;
+    return { entries: page, nextCursor };
+  }
+
+  async search(input: MessageSearchInput): Promise<AgentMessageHistoryPage> {
+    await this.backfillLegacyMessages();
+    const keywords = normalizeSearchKeywords(input.keywords);
+    if (keywords.length === 0) return { entries: [], nextCursor: null };
+    const limit = normalizeMessageLimit(input.limit);
+    const entries = (await this.store.readAll())
+      .filter((entry) =>
+        (!input.before || entry.timestamp < input.before) &&
+        (!input.since || entry.timestamp >= input.since) &&
+        (!input.channel || messageMatchesChannel(entry, input.channel)) &&
+        messageMatchesKeywords(entry, keywords)
+      )
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
     const page = entries.slice(0, limit);
     const nextCursor = entries.length > limit ? (page.at(-1)?.timestamp ?? null) : null;
     return { entries: page, nextCursor };
@@ -80,4 +106,54 @@ export function messageServiceForAgent(agentId: string): MessageService {
 function normalizeMessageLimit(limit: number | undefined): number {
   if (!Number.isFinite(limit)) return 100;
   return Math.min(Math.max(1, Math.trunc(limit as number)), 500);
+}
+
+function normalizeSearchKeywords(keywords: string[]): string[] {
+  return keywords
+    .flatMap((keyword) => keyword.split(/\s+/g))
+    .map((keyword) => keyword.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function messageMatchesKeywords(entry: AgentMessageRecord, keywords: string[]): boolean {
+  const haystack = [
+    entry.actor,
+    entry.actorDisplayName,
+    entry.actorHandle,
+    entry.channelDisplayName,
+    entry.channelId,
+    entry.channelKind,
+    entry.channelName,
+    entry.dmHandle,
+    entry.dmUserId,
+    entry.messageTs,
+    entry.platform,
+    entry.text,
+    entry.threadTs,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join('\n')
+    .toLowerCase();
+  return keywords.every((keyword) => haystack.includes(keyword));
+}
+
+function messageMatchesChannel(entry: AgentMessageRecord, channel: string): boolean {
+  const needle = normalizeChannelSearchTerm(channel);
+  if (!needle) return true;
+  const candidates = [
+    entry.channelId,
+    entry.channelName,
+    entry.channelDisplayName,
+    entry.dmHandle,
+    entry.dmUserId,
+  ];
+  return candidates.some((candidate) => {
+    if (!candidate) return false;
+    const normalized = normalizeChannelSearchTerm(candidate);
+    return normalized === needle || candidate.trim().toLowerCase() === channel.trim().toLowerCase();
+  });
+}
+
+function normalizeChannelSearchTerm(value: string): string {
+  return value.trim().toLowerCase().replace(/^[@#]/, '').replace(/^dm with @/i, '');
 }

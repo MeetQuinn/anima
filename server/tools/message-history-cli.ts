@@ -13,6 +13,14 @@ const MessageHistorySchema = z.object({
 
 type MessageHistoryInput = z.infer<typeof MessageHistorySchema>;
 
+export interface MessageSearchCliInput {
+  before?: string;
+  channel?: string;
+  keywords: string[];
+  limit?: number;
+  since?: string;
+}
+
 export function registerMessageHistoryCommands(program: Command): void {
   program
     .command('inbox')
@@ -55,6 +63,26 @@ async function runMessageHistory(direction: AgentMessageDirection, opts: Message
   console.log(`[page has_more=${Boolean(page.nextCursor)} next_cursor=${page.nextCursor ?? '-'}]`);
 }
 
+export async function runMessageSearch(opts: MessageSearchCliInput): Promise<void> {
+  const agentId = resolveToolAgentId({});
+  if (!agentId) throw new Error('message search requires current agent context');
+  const keywords = normalizeSearchKeywords(opts.keywords);
+  if (keywords.length === 0) throw new Error('message search requires at least one keyword');
+  const page = await messageServiceForAgent(agentId).search({
+    channel: opts.channel,
+    keywords,
+    ...normalizeTimeWindow(opts),
+    limit: opts.limit ?? 20,
+  });
+  if (page.entries.length === 0) {
+    console.log('Message search found no matches in this agent-visible history.');
+    return;
+  }
+  console.log(`Message search (${page.entries.length} match${page.entries.length === 1 ? '' : 'es'}, newest first)`);
+  for (const entry of page.entries) console.log(formatSearchEntry(entry, keywords));
+  console.log(`[page has_more=${Boolean(page.nextCursor)} next_cursor=${page.nextCursor ?? '-'}]`);
+}
+
 function normalizeTimeWindow(opts: MessageHistoryInput): { before?: string; since?: string } {
   return {
     ...(opts.before ? { before: normalizeIsoCursor(opts.before, '--before') } : {}),
@@ -62,10 +90,28 @@ function normalizeTimeWindow(opts: MessageHistoryInput): { before?: string; sinc
   };
 }
 
+function normalizeSearchKeywords(keywords: string[]): string[] {
+  return keywords
+    .flatMap((keyword) => keyword.split(/\s+/g))
+    .map((keyword) => keyword.trim())
+    .filter(Boolean);
+}
+
 function normalizeIsoCursor(value: string, flag: string): string {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) throw new Error(`${flag} must be an ISO timestamp`);
   return date.toISOString();
+}
+
+function formatSearchEntry(entry: AgentMessageRecord, keywords: string[]): string {
+  const attrs = [`time=${entry.timestamp}`, `direction=${entry.direction}`];
+  const surface = surfaceLabel(entry);
+  if (surface) attrs.push(`channel=${surface}`);
+  if (entry.channelId && entry.channelId !== surface) attrs.push(`channel_id=${entry.channelId}`);
+  if (entry.threadTs) attrs.push(`thread_ts=${entry.threadTs}`);
+  if (entry.messageTs) attrs.push(`message_ts=${entry.messageTs}`);
+  const lead = entry.direction === 'in' ? `${entry.actor ?? 'Unknown'}:` : `${outboxVerb(entry)}:`;
+  return `[${attrs.join(' ')}] ${lead} ${snippet(entry.text, keywords)}`;
 }
 
 function formatHistoryEntry(entry: AgentMessageRecord): string {
@@ -77,6 +123,19 @@ function formatHistoryEntry(entry: AgentMessageRecord): string {
   if (entry.messageTs) attrs.push(`message_ts=${entry.messageTs}`);
   const lead = entry.direction === 'in' ? `${entry.actor ?? 'Unknown'}:` : `${outboxVerb(entry)}:`;
   return `[${attrs.join(' ')}] ${lead} ${oneLineText(entry.text)}`;
+}
+
+function snippet(text: string, keywords: string[]): string {
+  const normalized = text.replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim();
+  if (normalized.length <= 240) return normalized;
+  const lower = normalized.toLowerCase();
+  const firstMatch = keywords
+    .map((keyword) => lower.indexOf(keyword.toLowerCase()))
+    .filter((index) => index >= 0)
+    .sort((a, b) => a - b)[0] ?? 0;
+  const start = Math.max(0, Math.min(firstMatch - 80, normalized.length - 240));
+  const end = Math.min(normalized.length, start + 240);
+  return `${start > 0 ? '...' : ''}${normalized.slice(start, end)}${end < normalized.length ? '...' : ''}`;
 }
 
 function outboxVerb(entry: AgentMessageRecord): string {
