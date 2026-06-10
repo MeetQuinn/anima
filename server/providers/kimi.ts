@@ -4,6 +4,7 @@ import { ActiveRuntimeRun } from './active-runtime.js';
 import { runtimeErrorPayload, truncateForActivity } from '../activities/format.js';
 import { startChildProcess, terminateChildProcess, type RunningChildProcess } from './child-process.js';
 import { exposedReasoningEvent } from './reasoning-events.js';
+import { LineBuffer } from './line-buffer.js';
 import {
   providerSessionPayload,
   type AgentRuntimeCloseOptions,
@@ -173,7 +174,7 @@ interface PendingTool {
 }
 
 class KimiAcpController {
-  private buffer = '';
+  private readonly stdoutLines = new LineBuffer();
   private initialized?: Promise<void>;
   private nextRequestId = 1;
   private readonly pending = new Map<string, PendingRpc>();
@@ -234,10 +235,7 @@ class KimiAcpController {
   }
 
   async acceptStdoutChunk(chunk: string): Promise<void> {
-    this.buffer += chunk;
-    const lines = this.buffer.split(/\r?\n/);
-    this.buffer = lines.pop() ?? '';
-    for (const line of lines) {
+    for (const line of this.stdoutLines.accept(chunk)) {
       await this.acceptLine(line);
     }
   }

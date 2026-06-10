@@ -7,6 +7,7 @@ import { classifyProviderFailureReason } from '../runtime/provider-failure.js';
 import { ActiveRuntimeRun } from './active-runtime.js';
 import { startChildProcess, terminateChildProcess, type RunningChildProcess } from './child-process.js';
 import { createClaudeJsonlActivityMapper, parseClaudeRuntimeOutput } from './claude-events.js';
+import { LineBuffer } from './line-buffer.js';
 import {
   CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW,
   CLAUDE_DISALLOWED_TOOLS,
@@ -278,7 +279,7 @@ async function writeSystemPromptFile(input: AgentRuntimeInput): Promise<string |
 
 class ClaudeStreamJsonController {
   private readonly activeToolUseIds = new Set<string>();
-  private buffer = '';
+  private readonly stdoutLines = new LineBuffer();
   private compacting = false;
   private stderrText = '';
   private currentTurn?: {
@@ -407,10 +408,7 @@ class ClaudeStreamJsonController {
   async acceptStdoutChunk(chunk: string): Promise<void> {
     this.currentTurn?.input.onActivity?.();
     await this.currentTurn?.jsonlMapper.accept(chunk);
-    this.buffer += chunk;
-    const lines = this.buffer.split(/\r?\n/);
-    this.buffer = lines.pop() ?? '';
-    for (const line of lines) this.acceptStdoutLine(line);
+    for (const line of this.stdoutLines.accept(chunk)) this.acceptStdoutLine(line);
   }
 
   async acceptStderrChunk(chunk: string): Promise<void> {
