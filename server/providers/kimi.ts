@@ -20,6 +20,16 @@ import {
 const KIMI_COMMAND = 'kimi';
 const KIMI_RUNTIME_KIND = 'kimi-cli';
 
+class KimiJsonRpcError extends Error {
+  constructor(
+    readonly method: string,
+    readonly error: Record<string, unknown>,
+  ) {
+    super(jsonRpcErrorMessage(method, error));
+    this.name = 'KimiJsonRpcError';
+  }
+}
+
 export class KimiCliAgentRuntime implements AgentRuntime {
   readonly env: Record<string, string> | undefined;
   readonly kind = KIMI_RUNTIME_KIND;
@@ -283,20 +293,25 @@ class KimiAcpController {
 
     const requestedSessionId = input.providerSession?.id;
     if (requestedSessionId) {
-      const result = await this.request('session/resume', {
-        cwd: input.cwd,
-        mcpServers: [],
-        sessionId: requestedSessionId,
-      });
-      this.sessionId = extractSessionId(result) ?? requestedSessionId;
+      try {
+        const result = await this.request('session/resume', {
+          cwd: input.cwd,
+          mcpServers: [],
+          sessionId: requestedSessionId,
+        });
+        this.sessionId = extractSessionId(result) ?? requestedSessionId;
+      } catch (error) {
+        if (!isKimiSessionNotFoundError(error)) throw error;
+        await input.effects.recordEvent({
+          eventType: 'kimi.session.resume_missing',
+          providerSession: providerSessionPayload(input.providerSession, KIMI_RUNTIME_KIND),
+          runtimeKind: KIMI_RUNTIME_KIND,
+          transport: 'acp',
+        });
+        this.sessionId = await this.createSession(input);
+      }
     } else {
-      const result = await this.request('session/new', {
-        cwd: input.cwd,
-        mcpServers: [],
-      });
-      const sessionId = extractSessionId(result);
-      if (!sessionId) throw new Error('Kimi ACP session/new returned no sessionId');
-      this.sessionId = sessionId;
+      this.sessionId = await this.createSession(input);
     }
 
     if (model) {
@@ -305,6 +320,16 @@ class KimiAcpController {
         sessionId: this.sessionId,
       });
     }
+  }
+
+  private async createSession(input: AgentRuntimeInput): Promise<string> {
+    const result = await this.request('session/new', {
+      cwd: input.cwd,
+      mcpServers: [],
+    });
+    const sessionId = extractSessionId(result);
+    if (!sessionId) throw new Error('Kimi ACP session/new returned no sessionId');
+    return sessionId;
   }
 
   private async runTurnQueue(firstPrompt: string): Promise<void> {
@@ -382,7 +407,7 @@ class KimiAcpController {
     this.pending.delete(id);
     const error = isRecord(message['error']) ? message['error'] : undefined;
     if (error) {
-      pending.reject(new Error(jsonRpcErrorMessage(pending.method, error)));
+      pending.reject(new KimiJsonRpcError(pending.method, error));
       return;
     }
     pending.resolve(isRecord(message['result']) ? message['result'] : undefined);
@@ -644,6 +669,12 @@ class KimiAcpController {
 function kimiPrimaryPrompt(input: AgentRuntimeInput): string {
   const systemPrompt = input.systemPrompt?.trim();
   return systemPrompt ? `${systemPrompt}\n\n---\n\n${input.prompt}` : input.prompt;
+}
+
+function isKimiSessionNotFoundError(error: unknown): boolean {
+  if (!(error instanceof KimiJsonRpcError)) return false;
+  if (error.method !== 'session/resume') return false;
+  return /unknown\s+sessionid/i.test(error.message);
 }
 
 function kimiPermissionApprovalOptionId(message: Record<string, unknown>): string | undefined {
