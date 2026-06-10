@@ -69,7 +69,7 @@ export class RuntimeService {
     const queue = new WakeQueueService(agent.id);
     const items = await queue.listRunnable();
     const running = latestRunningItem(items);
-    const active = running ? await findActiveRuntimeItem(agent.id) : undefined;
+    const active = running ? await findActiveRuntimeItem(agent.id, queue) : undefined;
     const currentItemStartedAt = active?.startedAt ?? running?.handling.startedAt;
     const health = await this.healthForAgent(agent, {
       ...(active ? { active } : {}),

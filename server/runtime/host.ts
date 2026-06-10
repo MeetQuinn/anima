@@ -532,9 +532,9 @@ export class RuntimeHost {
     agentId: string,
     runtime: AgentRuntimeHandleSnapshot | undefined,
   ): Promise<void> {
-    const stale = await staleRunningItemForAgent(agentId, runtime);
-    if (!stale) return;
     const queue = new WakeQueueService(agentId);
+    const stale = await staleRunningItemForAgent(agentId, runtime, queue);
+    if (!stale) return;
     await queue.fail(stale.id);
     await queue.requeueAppendedTo(stale.id);
     const current = await this.healthStore.get(agentId);
@@ -842,10 +842,11 @@ function isProviderFailureReason(reason: AgentHealthReason | undefined): boolean
 async function staleRunningItemForAgent(
   agentId: string,
   runtime: AgentRuntimeHandleSnapshot | undefined,
+  queue: Pick<WakeQueueService, 'listRunnable' | 'list'> = new WakeQueueService(agentId),
 ): Promise<InboxItem | undefined> {
-  const running = latestPrimaryRunningItem(await new WakeQueueService(agentId).listRunnable());
+  const running = latestPrimaryRunningItem(await queue.listRunnable());
   if (!running) return undefined;
-  const active = await findActiveRuntimeItem(agentId);
+  const active = await findActiveRuntimeItem(agentId, queue);
   if (!active) return running;
   if (!runtime) return running;
   if (!runtime.workerId || runtime.workerId !== active.workerId) return running;
