@@ -502,9 +502,26 @@ test('inbox and outbox commands show recent received and sent history', async ()
     assert.equal(outbox.status, 0, outbox.stderr || outbox.stdout);
     assert.match(outbox.stdout, /^Outbox \(1 entry, newest first\)/);
     assert.match(outbox.stdout, /\[time=2026-05-11T00:06:00\.000Z channel=@alice channel_id=D-alice message_ts=1770000206\.000001\] sent: Sent the summary\./);
+
+    const search = await runNode([cliPath, 'message', 'search', 'launch', 'thread'], { env });
+    assert.equal(search.status, 0, search.stderr || search.stdout);
+    assert.match(search.stdout, /^Message search \(1 match, newest first\)/);
+    assert.match(search.stdout, /\[time=2026-05-11T00:00:00\.000Z direction=in channel=#product channel_id=C-product thread_ts=1770000200\.000001 message_ts=1770000200\.000002\] Alice Cooper \(@alice\): Can you summarize the launch thread\?/);
+    assert.doesNotMatch(search.stdout, /Second message for pagination/);
+
+    const dmSearch = await runNode([cliPath, 'message', 'search', 'summary', '--channel', '@alice'], { env });
+    assert.equal(dmSearch.status, 0, dmSearch.stderr || dmSearch.stdout);
+    assert.match(dmSearch.stdout, /^Message search \(1 match, newest first\)/);
+    assert.match(dmSearch.stdout, /\[time=2026-05-11T00:06:00\.000Z direction=out channel=@alice channel_id=D-alice message_ts=1770000206\.000001\] sent: Sent the summary\./);
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }
+});
+
+test('message search help states agent-visible history boundary', async () => {
+  const help = await runNode([cliPath, 'message', 'search', '--help']);
+  assert.equal(help.status, 0, help.stderr || help.stdout);
+  assert.match(help.stdout, /Search this agent-visible message history, not workspace search\./);
 });
 
 test('inbox command defaults to twenty entries', async () => {

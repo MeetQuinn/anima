@@ -8,6 +8,7 @@ import {
   runMessageSend,
   runMessageUpdate,
 } from './messages.js';
+import { runMessageSearch } from './message-history-cli.js';
 
 const GlobalFlags = z.object({});
 
@@ -29,6 +30,14 @@ const MessageSendSchema = GlobalFlags.extend({
   chatId: z.string().optional(),
   channel: z.string().optional(),
   threadTs: z.string().optional(),
+});
+
+const MessageSearchSchema = GlobalFlags.extend({
+  before: z.string().optional(),
+  channel: z.string().optional(),
+  keywords: z.array(z.string()).min(1),
+  limit: z.coerce.number().int().positive().optional(),
+  since: z.string().optional(),
 });
 
 const MessageUpdateSchema = GlobalFlags.extend({
@@ -87,6 +96,22 @@ export function registerMessageCommands(program: Command): void {
   // Input:   anima message send --chat-id <oc_...> [--thread-ts <om_or_omt>] < body (stdin)
   // Output:  sent successfully. (channel=#<name> | dm=<handle>)[, thread_ts=<ts>], message_ts=<ts>.
   // Failure: human-readable error to stderr; exit 1.
+  message
+    .command('search')
+    .description('Search this agent-visible message history, not workspace search.')
+    .argument('<keywords...>', 'keywords to search for; all keywords must match')
+    .option('--channel <channel>', 'only search one channel/DM by id or display label')
+    .option('--limit <n>', 'max matches to return (default: 20; hard cap: 500)')
+    .option('--before <iso>', 'matches before this ISO timestamp')
+    .option('--since <iso>', 'matches at or after this ISO timestamp')
+    .action(async (keywords: string[], _: unknown, command: Command) => {
+      const opts = MessageSearchSchema.parse({
+        ...command.optsWithGlobals(),
+        keywords,
+      });
+      await runMessageSearch(opts);
+    });
+
   message
     .command('send')
     .description('Post a Slack or Feishu message.\nMessage body is read from stdin.')
