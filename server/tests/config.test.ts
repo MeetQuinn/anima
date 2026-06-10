@@ -266,9 +266,35 @@ test('kimi provider does not expose or retain reasoning effort', async () => {
   }
 });
 
+test('claude-code catalog includes current official model ids and legacy aliases', () => {
+  const catalog = providerCatalogEntry('claude-code');
+
+  assert.equal(catalog?.defaultModel, 'claude-fable-5');
+  assert.deepEqual(catalog?.models.slice(0, 4), [
+    'claude-fable-5',
+    'claude-opus-4-8',
+    'claude-sonnet-4-6',
+    'claude-haiku-4-5',
+  ]);
+  assert.ok(catalog?.models.includes('opus'));
+
+  assert.equal(
+    AgentCreateRequest.parse({
+      name: 'Claude',
+      homePath: 'agents/claude',
+      role: 'general purpose',
+      provider: {
+        kind: 'claude-code',
+        model: 'claude-opus-4-8',
+      },
+    }).provider.model,
+    'claude-opus-4-8',
+  );
+});
+
 test('provider idle timeout defaults to 30 minutes for all providers', async () => {
   for (const provider of [
-    { kind: 'claude-code', model: 'opus' },
+    { kind: 'claude-code', model: 'claude-fable-5' },
     { kind: 'codex-cli', model: 'gpt-5.5' },
     { kind: 'kimi-cli', model: 'kimi-code/kimi-for-coding' },
   ]) {
@@ -464,7 +490,7 @@ test('agent provider kind patch resets provider defaults, preserves env, and arc
         kind: 'claude-code',
       });
       assert.equal(agent.provider.kind, 'claude-code');
-      assert.equal(agent.provider.model, 'opus');
+      assert.equal(agent.provider.model, 'claude-fable-5');
       assert.ok('reasoningEffort' in agent.provider);
       assert.equal(agent.provider.reasoningEffort, 'xhigh');
       assert.deepEqual(agent.provider.env, { CUSTOM_LAUNCH_FLAG: 'kept' });

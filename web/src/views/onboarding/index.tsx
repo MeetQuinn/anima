@@ -25,6 +25,7 @@ import {
   providerUnavailableHint,
   unavailableProviderHints,
 } from '@/lib/provider-availability';
+import { providerValueLabel } from '@/lib/provider-display';
 import AnimaIcon from '@/components/AnimaIcon';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -351,7 +352,6 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
   // Display helpers — Base UI SelectValue shows raw value before items register;
   // use render-prop form to always resolve a human label.
   const displayProvider = (v: string) => providerOptions.find((r) => r.kind === v)?.label ?? v;
-  const displayModel = (v: string) => v ? v.charAt(0).toUpperCase() + v.slice(1) : v;
   const displayEffort = (v: string) => v === 'xhigh' ? 'Extra High' : (v ? v.charAt(0).toUpperCase() + v.slice(1) : v);
   const currentProvider = providerOptions.find((o) => o.kind === providerKind);
   const selectedProviderReady = providerReady(currentProvider, providerAvailability);
@@ -809,11 +809,11 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
                   </Select>
                   <Select value={model} onValueChange={(v) => { if (v) setModel(v); }}>
                     <SelectTrigger className="!h-auto w-full py-2 font-serif text-[15px]">
-                      <SelectValue>{(v: string) => displayModel(v)}</SelectValue>
+                      <SelectValue>{(v: string) => providerValueLabel(v)}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {(currentProvider?.models ?? []).map((m) => (
-                        <SelectItem key={m} value={m}>{displayModel(m)}</SelectItem>
+                        <SelectItem key={m} value={m}>{providerValueLabel(m)}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

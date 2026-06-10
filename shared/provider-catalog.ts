@@ -21,6 +21,16 @@ export type ProviderAvailability = z.infer<typeof ProviderAvailability>;
 export const DEFAULT_PROVIDER_KIND: ProviderCatalogEntry['kind'] = 'claude-code';
 export const DEFAULT_REASONING_EFFORT = 'xhigh';
 const STANDARD_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh'];
+const CLAUDE_CODE_MODELS = [
+  'claude-fable-5',
+  'claude-opus-4-8',
+  'claude-sonnet-4-6',
+  'claude-haiku-4-5',
+  // Claude Code also accepts short aliases; keep them valid for existing configs.
+  'opus',
+  'sonnet',
+  'haiku',
+];
 
 export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
   {
@@ -28,8 +38,8 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     label: 'Claude Code',
     command: 'claude',
     installHint: 'Install Claude Code so `claude --version` works.',
-    models: ['opus', 'sonnet', 'haiku'],
-    defaultModel: 'opus',
+    models: CLAUDE_CODE_MODELS,
+    defaultModel: 'claude-fable-5',
     reasoningEfforts: STANDARD_REASONING_EFFORTS,
   },
   {
