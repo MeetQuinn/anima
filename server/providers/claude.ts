@@ -9,6 +9,7 @@ import { startChildProcess, terminateChildProcess, type RunningChildProcess } fr
 import { createClaudeJsonlActivityMapper, parseClaudeRuntimeOutput } from './claude-events.js';
 import {
   CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW,
+  CLAUDE_DISALLOWED_TOOLS,
   type AgentRuntimeCloseOptions,
   providerSessionPayload,
   type ProviderSessionRecord,
@@ -26,15 +27,6 @@ const CLAUDE_COMMAND = 'claude';
 const CLAUDE_DEFAULT_ENV = {
   CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW),
 };
-export const CLAUDE_DISALLOWED_TOOLS = [
-  'AskUserQuestion',
-  'CronCreate',
-  'CronDelete',
-  'CronList',
-  'ScheduleWakeup',
-  'RemoteTrigger',
-  'PushNotification',
-];
 const CLAUDE_TRANSIENT_CONTINUE_PROMPT =
   'The previous provider turn ended with a transient API or transport error after partial progress. Continue from the current conversation state. Do not repeat completed tool calls, chat messages, file sends, or file edits; inspect state first if needed, then finish the requested task.';
 

@@ -14,6 +14,15 @@ export type {
 };
 
 export const CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW = 200000;
+export const CLAUDE_DISALLOWED_TOOLS = [
+  'AskUserQuestion',
+  'CronCreate',
+  'CronDelete',
+  'CronList',
+  'ScheduleWakeup',
+  'RemoteTrigger',
+  'PushNotification',
+];
 
 export interface ProviderSessionRecord {
   id: string;
@@ -83,6 +92,17 @@ export interface AgentRuntimeHealth {
   child?: ProviderChildHealthSnapshot;
   childExpected: boolean;
 }
+
+export interface AgentRuntimeNotificationTarget {
+  channel?: string;
+  platform?: string;
+  threadTs?: string;
+}
+
+export type AgentRuntimeNotificationTargetResolver = (
+  agentId: string,
+  itemId: string,
+) => Promise<AgentRuntimeNotificationTarget | undefined>;
 
 export interface AgentRuntime {
   readonly env?: Record<string, string>;

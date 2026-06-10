@@ -30,6 +30,7 @@ import {
 import { AgentHealthStore } from './agent-health.store.js';
 import { startRunningAgent, type RunningAgentHandle } from './agent-runner.js';
 import { findActiveRuntimeItem } from './active-item.js';
+import { notificationTargetForAgentItem } from './notification-target.js';
 import type { RuntimeWorkerConfig } from './types.js';
 import type {
   AgentHealthReason,
@@ -651,6 +652,7 @@ async function startAgentFromConfig(agent: AgentConfig, animaHome: string): Prom
     ...server.config,
     agentRuntime: createAgentRuntime(
       runtimeWithEnv(server.runtime, managedEnv),
+      { notificationTargetResolver: notificationTargetForAgentItem },
     ),
     ...(server.slack ? { appToken: server.slack.appToken, botToken: server.slack.botToken } : {}),
     feishu: server.feishu,
