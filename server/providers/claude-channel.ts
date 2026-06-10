@@ -5,12 +5,11 @@ import { fileURLToPath } from 'node:url';
 import { isRecord, numberField, stringField } from '../json.js';
 import { runtimeErrorPayload } from '../activities/format.js';
 import { resolveAnimaHome } from '../anima-home.js';
-import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { ActiveRuntimeRun } from './active-runtime.js';
-import { CLAUDE_DISALLOWED_TOOLS } from './claude.js';
 import { startChildProcess, terminateChildProcess, type RunningChildProcess } from './child-process.js';
 import {
   CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW,
+  CLAUDE_DISALLOWED_TOOLS,
   type AgentRuntime,
   type AgentRuntimeCloseOptions,
   type AgentRuntimeDrainInput,
@@ -18,11 +17,12 @@ import {
   type AgentRuntimeFollowupResult,
   type AgentRuntimeHealth,
   type AgentRuntimeInput,
+  type AgentRuntimeNotificationTarget,
+  type AgentRuntimeNotificationTargetResolver,
   type AgentRuntimeResult,
   type ClaudeCodeAgentProviderConfig,
   providerSessionPayload,
 } from './contract.js';
-import type { InboxItem } from '../../shared/inbox.js';
 
 const CLAUDE_COMMAND = 'claude';
 const CHANNEL_READY_TIMEOUT_MS = 15_000;
@@ -40,12 +40,6 @@ interface ClaudeChannelNotifyResult {
   text?: string;
 }
 
-interface NotificationTarget {
-  channel?: string;
-  platform?: string;
-  threadTs?: string;
-}
-
 export class ClaudeCodeChannelAgentRuntime implements AgentRuntime {
   readonly env: Record<string, string> | undefined;
   readonly kind = 'claude-code';
@@ -53,9 +47,14 @@ export class ClaudeCodeChannelAgentRuntime implements AgentRuntime {
   private activeAgentId?: string;
   private controller?: ClaudeChannelController;
   private readonly config: ClaudeCodeAgentProviderConfig;
+  private readonly notificationTargetResolver?: AgentRuntimeNotificationTargetResolver;
 
-  constructor(config: ClaudeCodeAgentProviderConfig) {
+  constructor(
+    config: ClaudeCodeAgentProviderConfig,
+    options: { notificationTargetResolver?: AgentRuntimeNotificationTargetResolver } = {},
+  ) {
     this.config = config;
+    this.notificationTargetResolver = options.notificationTargetResolver;
     this.env = {
       ...CLAUDE_CHANNEL_DEFAULT_ENV,
       ...(config.env ?? {}),
@@ -109,7 +108,7 @@ export class ClaudeCodeChannelAgentRuntime implements AgentRuntime {
     void controller.notify({
       itemId: input.itemId,
       prompt: input.prompt,
-      ...(agentId ? { target: await notificationTargetForAgentItem(agentId, input.itemId) } : {}),
+      ...(agentId ? { target: await this.notificationTargetForAgentItem(agentId, input.itemId) } : {}),
     }).catch((error: unknown) => {
       process.stderr.write(`[anima-channel] follow-up notification failed: ${error instanceof Error ? error.message : String(error)}\n`);
     });
@@ -128,7 +127,7 @@ export class ClaudeCodeChannelAgentRuntime implements AgentRuntime {
         itemId: input.itemId,
         prompt: input.prompt,
         signal: input.signal,
-        target: await notificationTargetForRuntimeInput(input),
+        target: await this.notificationTargetForRuntimeInput(input),
       });
     } finally {
       controller.clearCurrentInput(input);
@@ -192,6 +191,21 @@ export class ClaudeCodeChannelAgentRuntime implements AgentRuntime {
     if (this.config.reasoningEffort) args.push('--effort', this.config.reasoningEffort);
     if (systemPromptFilePath) args.push('--system-prompt-file', systemPromptFilePath);
     return args;
+  }
+
+  private async notificationTargetForRuntimeInput(
+    input: AgentRuntimeInput,
+  ): Promise<AgentRuntimeNotificationTarget | undefined> {
+    const agentId = input.env.ANIMA_AGENT_ID;
+    if (!agentId) return undefined;
+    return this.notificationTargetForAgentItem(agentId, input.itemId);
+  }
+
+  private async notificationTargetForAgentItem(
+    agentId: string,
+    itemId: string,
+  ): Promise<AgentRuntimeNotificationTarget | undefined> {
+    return this.notificationTargetResolver?.(agentId, itemId);
   }
 }
 
@@ -258,7 +272,7 @@ class ClaudeChannelController {
     itemId: string;
     prompt: string;
     signal?: AbortSignal;
-    target?: NotificationTarget;
+    target?: AgentRuntimeNotificationTarget;
   }): Promise<ClaudeChannelNotifyResult> {
     const server = await this.ready();
     const response = await fetch(`http://${server.host}:${server.port}/notify`, {
@@ -320,49 +334,6 @@ async function writeChannelPlugin(input: AgentRuntimeInput): Promise<{ root: str
     'utf8',
   );
   return { root, stateFile };
-}
-
-async function notificationTargetForRuntimeInput(input: AgentRuntimeInput): Promise<NotificationTarget | undefined> {
-  const agentId = input.env.ANIMA_AGENT_ID;
-  if (!agentId) return undefined;
-  return notificationTargetForAgentItem(agentId, input.itemId);
-}
-
-async function notificationTargetForAgentItem(agentId: string, itemId: string): Promise<NotificationTarget | undefined> {
-  const item = await new WakeQueueService(agentId).find(itemId);
-  if (!item) return undefined;
-  return targetForInboxItem(item);
-}
-
-function targetForInboxItem(item: InboxItem): NotificationTarget | undefined {
-  if (item.kind === 'slack' || item.kind === 'onboarding') {
-    return {
-      channel: item.channelId,
-      platform: 'slack',
-      ...(item.kind === 'slack' && item.threadTs ? { threadTs: item.threadTs } : {}),
-    };
-  }
-  if (item.kind === 'choice_response') {
-    return {
-      channel: item.channelId,
-      platform: 'slack',
-      threadTs: item.threadTs,
-    };
-  }
-  if (item.kind === 'feishu') {
-    return {
-      channel: item.chatId,
-      platform: 'feishu',
-      ...(item.threadId ? { threadTs: item.threadId } : {}),
-    };
-  }
-  if (item.kind === 'feishu_onboarding') {
-    return {
-      channel: item.target.receiveId,
-      platform: 'feishu',
-    };
-  }
-  return undefined;
 }
 
 async function readChannelStateFile(path: string): Promise<ClaudeChannelServerInfo | undefined> {

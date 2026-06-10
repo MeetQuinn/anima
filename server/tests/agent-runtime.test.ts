@@ -5,8 +5,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createAgentRuntime } from '../providers/factory.js';
-import { CLAUDE_DISALLOWED_TOOLS } from '../providers/claude.js';
+import { CLAUDE_DISALLOWED_TOOLS } from '../providers/contract.js';
 import { AgentRuntimeBridge } from '../runtime/runtime-bridge.js';
+import { notificationTargetForAgentItem } from '../runtime/notification-target.js';
 import type { AgentRuntime } from '../providers/contract.js';
 import { makeSlackEvent } from './helpers/slack.js';
 import { ingestEvent } from './helpers/inbox.js';
@@ -910,13 +911,16 @@ test('claude-code channel transport launches plugin channel and completes after 
       { agentId: 'anima', stateDir },
     );
 
-    runtime = createAgentRuntime({
-      env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
-      kind: 'claude-code',
-      model: 'opus',
-      reasoningEffort: 'xhigh',
-      transport: 'channel',
-    });
+    runtime = createAgentRuntime(
+      {
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'claude-code',
+        model: 'opus',
+        reasoningEffort: 'xhigh',
+        transport: 'channel',
+      },
+      { notificationTargetResolver: notificationTargetForAgentItem },
+    );
 
     let resultText: string | undefined;
     try {
