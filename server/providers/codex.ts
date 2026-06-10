@@ -3,6 +3,7 @@ import { runtimeErrorPayload } from '../activities/format.js';
 import { ActiveRuntimeRun } from './active-runtime.js';
 import { startChildProcess, terminateChildProcess } from './child-process.js';
 import { CodexAppServerController } from './codex-app-server.js';
+import { watchProviderCompletion } from './completion-watch.js';
 import {
   providerSessionPayload,
   type AgentRuntimeCloseOptions,
@@ -120,11 +121,9 @@ export class CodexCliAgentRuntime implements AgentRuntime {
       this.kind,
     );
     this.controller = controller;
-    controller.completion
-      .catch(() => {})
-      .finally(() => {
-        if (this.controller === controller) this.controller = undefined;
-      });
+    watchProviderCompletion(controller.completion, () => {
+      if (this.controller === controller) this.controller = undefined;
+    });
     return controller;
   }
 

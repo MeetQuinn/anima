@@ -7,6 +7,7 @@ import { runtimeErrorPayload } from '../activities/format.js';
 import { resolveAnimaHome } from '../anima-home.js';
 import { ActiveRuntimeRun } from './active-runtime.js';
 import { startChildProcess, terminateChildProcess, type RunningChildProcess } from './child-process.js';
+import { watchProviderCompletion } from './completion-watch.js';
 import {
   CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW,
   CLAUDE_DISALLOWED_TOOLS,
@@ -159,11 +160,9 @@ export class ClaudeCodeChannelAgentRuntime implements AgentRuntime {
       stateFile: plugin.stateFile,
     });
     this.controller = controller;
-    controller.completion
-      .catch(() => {})
-      .finally(() => {
-        if (this.controller === controller) this.controller = undefined;
-      });
+    watchProviderCompletion(controller.completion, () => {
+      if (this.controller === controller) this.controller = undefined;
+    });
     await controller.ready();
     return controller;
   }

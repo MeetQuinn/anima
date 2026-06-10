@@ -3,6 +3,7 @@ import { isRecord, numberField, singleLineForActivity, stringField } from '../js
 import { ActiveRuntimeRun } from './active-runtime.js';
 import { runtimeErrorPayload, truncateForActivity } from '../activities/format.js';
 import { startChildProcess, terminateChildProcess, type RunningChildProcess } from './child-process.js';
+import { watchProviderCompletion } from './completion-watch.js';
 import { exposedReasoningEvent } from './reasoning-events.js';
 import { LineBuffer } from './line-buffer.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
@@ -122,11 +123,9 @@ export class KimiCliAgentRuntime implements AgentRuntime {
         }),
       );
       this.controller = controller;
-      controller.completion
-        .catch(() => {})
-        .finally(() => {
-          if (this.controller === controller) this.controller = undefined;
-        });
+      watchProviderCompletion(controller.completion, () => {
+        if (this.controller === controller) this.controller = undefined;
+      });
     }
     try {
       await this.controller.ensureSession(input, this.config.model);
