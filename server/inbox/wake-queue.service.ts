@@ -68,13 +68,14 @@ export class WakeQueueService {
     excludedItemIds?: Iterable<string>;
     workerId: string;
   }): Promise<InboxItem | undefined> {
-    const activeItem = (await this.listRunnable()).find((item) => item.id === input.activeItemId);
+    const runnable = await this.listRunnable();
+    const activeItem = runnable.find((item) => item.id === input.activeItemId);
     if (!activeItem || activeItem.handling.status !== 'running' || activeItem.handling.workerId !== input.workerId) {
       return undefined;
     }
 
     const excludedItemIds = new Set(input.excludedItemIds ?? []);
-    const items = (await this.listRunnable())
+    const items = runnable
       .filter((item) => item.handling.status === 'queued' && !excludedItemIds.has(item.id));
     return this.claimFirstQueued(input.workerId, items);
   }
