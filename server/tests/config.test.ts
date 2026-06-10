@@ -266,6 +266,12 @@ test('kimi provider does not expose or retain reasoning effort', async () => {
   }
 });
 
+test('claude-code catalog includes Fable without changing the default model', () => {
+  const entry = providerCatalogEntry('claude-code');
+  assert.deepEqual(entry?.models, ['opus', 'sonnet', 'haiku', 'fable']);
+  assert.equal(entry?.defaultModel, 'opus');
+});
+
 test('provider idle timeout defaults to 30 minutes for all providers', async () => {
   for (const provider of [
     { kind: 'claude-code', model: 'opus' },

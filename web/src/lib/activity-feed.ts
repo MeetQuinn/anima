@@ -789,6 +789,7 @@ function buildSubagentStreams(
 export function shortenModelLabel(model: string | undefined): string | undefined {
   if (!model) return undefined;
   const m = model.toLowerCase();
+  if (m.includes('fable')) return 'Fable';
   if (m.includes('haiku')) return 'Haiku';
   if (m.includes('sonnet')) return 'Sonnet';
   if (m.includes('opus')) return 'Opus';
