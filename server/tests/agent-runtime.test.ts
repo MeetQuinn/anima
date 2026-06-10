@@ -1768,6 +1768,112 @@ test('kimi-cli ACP permission requests select the Kimi-provided allow option', a
   }
 });
 
+test('kimi-cli ACP falls back to a new session when resume session is missing', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'kimi-acp-resume-missing-calls.jsonl');
+      const fakeKimi = join(stateDir, 'kimi');
+      await writeFile(
+        fakeKimi,
+        [
+          '#!/usr/bin/env node',
+          "const fs = require('fs');",
+          "process.stdin.setEncoding('utf8');",
+          "let buffer = '';",
+          'function send(message) { process.stdout.write(JSON.stringify(message) + "\\n"); }',
+          'function update(update) { send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "kimi-session-fresh", update } }); }',
+          'process.stdin.on("data", (chunk) => {',
+          '  buffer += chunk;',
+          '  const lines = buffer.split(/\\r?\\n/);',
+          '  buffer = lines.pop() || "";',
+          '  for (const line of lines) {',
+          '    if (!line.trim()) continue;',
+          '    const msg = JSON.parse(line);',
+          '    fs.appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + "\\n");',
+          '    if (msg.method === "initialize") {',
+          '      send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, serverInfo: { name: "Kimi Code CLI", version: "0.12.0" }, agentCapabilities: { loadSession: true } } });',
+          '      return;',
+          '    }',
+          '    if (msg.method === "session/resume") {',
+          '      send({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "Invalid params: Unknown sessionId: kimi-session-stale", data: { sessionId: msg.params.sessionId } } });',
+          '      return;',
+          '    }',
+          '    if (msg.method === "session/new") {',
+          '      send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "kimi-session-fresh" } });',
+          '      return;',
+          '    }',
+          '    if (msg.method === "session/set_model") {',
+          '      if (msg.params.sessionId !== "kimi-session-fresh") process.exit(43);',
+          '      send({ jsonrpc: "2.0", id: msg.id, result: {} });',
+          '      return;',
+          '    }',
+          '    if (msg.method === "session/prompt") {',
+          '      if (msg.params.sessionId !== "kimi-session-fresh") process.exit(44);',
+          '      update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "fresh session reply" } });',
+          '      send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });',
+          '      return;',
+          '    }',
+          '  }',
+          '});',
+        ].join('\n'),
+        'utf8',
+      );
+      await chmod(fakeKimi, 0o755);
+
+      const ctx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-kimi-resume-missing',
+          teamId: 'T-demo',
+          text: 'Start Kimi from a stale session.',
+          ts: '1770000660.000001',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+      const sessionPath = join(stateDir, 'agents/anima/sessions.json');
+      const session = JSON.parse(await readFile(sessionPath, 'utf8')) as Record<string, unknown>;
+      await writeFile(
+        sessionPath,
+        `${JSON.stringify({
+          ...session,
+          current: {
+            id: 'kimi-session-stale',
+            kind: 'kimi-cli',
+            updatedAt: '2026-06-10T04:00:00.000Z',
+          },
+        }, null, 2)}\n`,
+        'utf8',
+      );
+
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'kimi-cli',
+        model: 'kimi-code/kimi-for-coding',
+      });
+      const result = await runtime.run(await runtimeInput(runtime, ctx, await loadState()));
+      assert.equal(result.text, 'fresh session reply');
+
+      const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
+      assert.deepEqual(
+        calls.filter((call) => call.method?.startsWith('session/')).map((call) => call.method),
+        ['session/resume', 'session/new', 'session/set_model', 'session/prompt'],
+      );
+      const state = await loadState();
+      assert.equal(state.sessions.anima?.current?.id, 'kimi-session-fresh');
+      assert.ok(allActivities(state).some((activity) =>
+        activity.type === 'runtime.event'
+        && activity.payload?.['eventType'] === 'kimi.session.resume_missing'
+        && (activity.payload?.['providerSession'] as { id?: string } | undefined)?.id === 'kimi-session-stale'
+      ));
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('kimi-cli closed stdin startup failure stays on provider promise', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
   const unhandledRejections: unknown[] = [];
