@@ -217,13 +217,13 @@ function mergeSessionStats(
   const summary = providerSessionStatsSummary(activity, runtimeKind, runtimeEnv, payload);
   const usedTokens =
     stringField(payload, 'eventType') === 'kimi.context.stats' ? undefined : summary.usedTokens;
-  return compact({
+  return providerStatsSummary({
     ...summary,
     contextWindow: summary.contextWindow ?? current?.contextWindow,
     currentContextTokens: summary.currentContextTokens ?? current?.currentContextTokens,
     sessionCompactionCount: current?.sessionCompactionCount,
     sessionTokenUsage: addOptional(current?.sessionTokenUsage, usedTokens),
-  }) as unknown as ProviderSessionStatsSummary;
+  });
 }
 
 function mergeContextStats(
@@ -234,7 +234,7 @@ function mergeContextStats(
   payload: Record<string, unknown>,
 ): ProviderSessionStatsSummary {
   const keepProviderStatsStamp = hasProviderSessionStats(current);
-  return compact({
+  return providerStatsSummary({
     ...(current ?? {}),
     activityId: keepProviderStatsStamp ? current?.activityId : activity.activityId,
     autoCompactWindow: autoCompactWindowFor(runtimeKind, runtimeEnv),
@@ -242,7 +242,7 @@ function mergeContextStats(
     runtimeKind: stringField(payload, 'runtimeKind') ?? current?.runtimeKind ?? runtimeKind,
     contextWindow: numberField(payload, 'contextWindow') ?? current?.contextWindow,
     currentContextTokens: numberField(payload, 'currentContextTokens') ?? current?.currentContextTokens,
-  }) as unknown as ProviderSessionStatsSummary;
+  });
 }
 
 function mergeCompactionStats(
@@ -252,14 +252,14 @@ function mergeCompactionStats(
   runtimeEnv: Record<string, string> | undefined,
 ): ProviderSessionStatsSummary {
   const keepProviderStatsStamp = hasProviderSessionStats(current);
-  return compact({
+  return providerStatsSummary({
     ...(current ?? {}),
     activityId: keepProviderStatsStamp ? current?.activityId : activity.activityId,
     autoCompactWindow: autoCompactWindowFor(runtimeKind, runtimeEnv),
     createdAt: keepProviderStatsStamp ? current?.createdAt : activity.createdAt,
     runtimeKind: stringField(activity.payload, 'runtimeKind') ?? current?.runtimeKind ?? runtimeKind,
     sessionCompactionCount: (current?.sessionCompactionCount ?? 0) + 1,
-  }) as unknown as ProviderSessionStatsSummary;
+  });
 }
 
 function providerSessionStatsSummary(
@@ -268,7 +268,7 @@ function providerSessionStatsSummary(
   runtimeEnv: Record<string, string> | undefined,
   payload: Record<string, unknown>,
 ): ProviderSessionStatsSummary {
-  const summary = compact({
+  const summary = providerStatsSummary({
     activityId: activity.activityId,
     autoCompactWindow: autoCompactWindowFor(runtimeKind, runtimeEnv),
     cacheCreationInputTokens: numberField(payload, 'cacheCreationInputTokens'),
@@ -283,9 +283,13 @@ function providerSessionStatsSummary(
     serviceTier: stringField(payload, 'serviceTier'),
     terminalReason: stringField(payload, 'terminalReason'),
     totalTokens: numberField(payload, 'totalTokens'),
-  }) as unknown as ProviderSessionStatsSummary;
+  });
   const usedTokens = providerUsedTokens(summary);
   return usedTokens !== undefined ? { ...summary, usedTokens } : summary;
+}
+
+function providerStatsSummary(value: Record<string, unknown>): ProviderSessionStatsSummary {
+  return compact(value) as unknown as ProviderSessionStatsSummary;
 }
 
 function providerSessionStatsPayload(payload: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
