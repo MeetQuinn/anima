@@ -15,6 +15,7 @@ import { WakeQueueService, type InboxItem } from '../inbox/wake-queue.service.js
 import { createAgentRuntime } from '../providers/factory.js';
 import type { AgentProviderConfig } from '../providers/contract.js';
 import { isPrimaryRunningInboxItem } from '../../shared/inbox.js';
+import { cacheDelete } from '../storage/json-file.js';
 import {
   FEISHU_OPEN_API_BASE_URL,
   fetchFeishuTenantAccessToken,
@@ -571,7 +572,7 @@ export class RuntimeHost {
       if (this.configWatchers.has(key)) continue;
       try {
         const watcher = watch(path, { persistent: false }, (_event, filename) => {
-          if (key !== 'agents' && !isConfigFileEvent(filename)) return;
+          if (!invalidateConfigCacheForWatchEvent(key, path, filename)) return;
           this.scheduleConfigReconcile();
         });
         watcher.on('error', (error: unknown) => {
@@ -693,8 +694,16 @@ function stableJson(value: unknown): string {
   return JSON.stringify(stableValue(value));
 }
 
-function isConfigFileEvent(filename: Buffer | string | null): boolean {
-  return filename?.toString() === 'config.json';
+export function invalidateConfigCacheForWatchEvent(
+  key: string,
+  path: string,
+  filename: Buffer | string | null,
+): boolean {
+  if (key === 'agents') return true;
+  const name = filename?.toString();
+  if (name !== 'config.json') return false;
+  cacheDelete(join(path, name));
+  return true;
 }
 
 function stableValue(value: unknown): unknown {
