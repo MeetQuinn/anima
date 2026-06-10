@@ -25,8 +25,8 @@ const CLAUDE_CODE_TRANSPORT_OPTIONS: Array<{
   label: string;
   value: ClaudeCodeTransport;
 }> = [
-  { value: 'stream-json', label: 'Current CLI mode' },
-  { value: 'channel', label: 'Claude Code Channels' },
+  { value: 'stream-json', label: 'Standard mode' },
+  { value: 'channel', label: 'Interactive session' },
 ];
 
 // ── InlineTextRow ─────────────────────────────────────────────────────────────
@@ -441,7 +441,7 @@ export function ProviderInlineRow({
           </div>
           {hasDraftTransport && (
             <div className="max-w-xl font-sans text-[11px] leading-snug text-text-muted">
-              Current CLI mode uses Anima's existing Claude Code stream bridge. Claude Code Channels runs Claude Code in an interactive channel session and sends replies through Anima.
+              Standard mode uses Anima's existing Claude Code CLI integration. Interactive session keeps Claude Code open between turns and sends replies through Anima.
             </div>
           )}
           {kindChanged && (
@@ -685,7 +685,7 @@ export function ConfirmRestartModal({
   onCancel: () => void;
 }) {
   const sessionCopy = sessionBoundaryChanged
-    ? ' Switching provider or Claude Code mode starts a fresh provider session; MEMORY.md, notes, and activity history stay intact.'
+    ? ' Switching provider or Claude Code session mode starts a fresh provider session; MEMORY.md, notes, and activity history stay intact.'
     : '';
   return (
     <ConfirmModal
