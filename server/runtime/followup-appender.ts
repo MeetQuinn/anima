@@ -61,7 +61,7 @@ async function tryOneFollowupItem(
   let appended = false;
   let context: RuntimeItemContext | undefined;
   try {
-    context = await runtimeContextForItemId(item.id, input.runtimeConfig);
+    context = await runtimeContextForItemId(item.id, input.runtimeConfig, input.queue);
     const followup = await appendRuntimeFollowup({
       activeContext: input.activeContext,
       agentRuntime: input.agentRuntime,

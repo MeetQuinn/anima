@@ -4,11 +4,62 @@ import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { FeishuInboxItem } from '../../shared/inbox.js';
-import { findToolAuditRuntimeItem } from '../runtime/active-item.js';
+import type { FeishuInboxItem, InboxItem } from '../../shared/inbox.js';
+import {
+  clearActiveRuntimeItem,
+  findActiveRuntimeItem,
+  findToolAuditRuntimeItem,
+  setActiveRuntimeItem,
+  type ActiveRuntimeItemQueue,
+} from '../runtime/active-item.js';
 import { resolveToolItemId } from '../tools/tool-context.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { withAnimaHome } from './anima-home.js';
+
+test('active runtime helpers accept an injected wake queue', async () => {
+  const createdAt = new Date().toISOString();
+  const running = {
+    ...makeFeishuItem({
+      chatId: 'oc_group',
+      chatType: 'group',
+      createdAt,
+      messageId: 'om_running',
+    }),
+    handling: {
+      createdAt,
+      queuedAt: createdAt,
+      startedAt: createdAt,
+      status: 'running' as const,
+      updatedAt: createdAt,
+      workerId: 'worker-running',
+    },
+  } satisfies InboxItem;
+  const calls: string[] = [];
+  const queue: ActiveRuntimeItemQueue = {
+    async list() {
+      calls.push('list');
+      return [running];
+    },
+    async markRunning(input) {
+      calls.push(`running:${input.itemId}:${input.workerId}`);
+      return running;
+    },
+    async markSettled(input) {
+      calls.push(`settled:${input.itemId}:${input.workerId}`);
+      return running;
+    },
+  };
+
+  await setActiveRuntimeItem({ agentId: 'scout', itemId: running.id, workerId: 'worker-running' }, queue);
+  assert.equal((await findActiveRuntimeItem('scout', queue))?.itemId, running.id);
+  await clearActiveRuntimeItem({ agentId: 'scout', itemId: running.id, workerId: 'worker-running' }, queue);
+
+  assert.deepEqual(calls, [
+    `running:${running.id}:worker-running`,
+    'list',
+    `settled:${running.id}:worker-running`,
+  ]);
+});
 
 test('tool audit item resolution prefers running group over newer settled p2p', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-active-item-running-group-test-'));

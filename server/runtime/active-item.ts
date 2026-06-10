@@ -10,6 +10,19 @@ export interface ActiveRuntimeItemRecord {
   workerId: string;
 }
 
+export interface ActiveRuntimeItemQueue {
+  list(): Promise<InboxItem[]>;
+  markRunning(input: {
+    itemId: string;
+    startedAt?: string;
+    workerId: string;
+  }): Promise<InboxItem>;
+  markSettled(input: {
+    itemId: string;
+    workerId: string;
+  }): Promise<InboxItem | undefined>;
+}
+
 // Tool processes can outlive the provider call by a few moments; keep a short
 // settled pointer so Slack output can still resolve recent channel context.
 const TOOL_AUDIT_SETTLED_ITEM_GRACE_MS = 2 * 60 * 1000;
@@ -19,28 +32,34 @@ export async function setActiveRuntimeItem(input: {
   itemId: string;
   startedAt?: string;
   workerId: string;
-}): Promise<void> {
-  await new WakeQueueService(input.agentId).markRunning(input);
+}, queue: ActiveRuntimeItemQueue = new WakeQueueService(input.agentId)): Promise<void> {
+  await queue.markRunning(input);
 }
 
 export async function clearActiveRuntimeItem(input: {
   agentId: string;
   itemId: string;
   workerId: string;
-}): Promise<void> {
-  await new WakeQueueService(input.agentId).markSettled(input);
+}, queue: ActiveRuntimeItemQueue = new WakeQueueService(input.agentId)): Promise<void> {
+  await queue.markSettled(input);
 }
 
-export async function findActiveRuntimeItem(agentId: string): Promise<ActiveRuntimeItemRecord | undefined> {
-  const running = (await new WakeQueueService(agentId).list())
+export async function findActiveRuntimeItem(
+  agentId: string,
+  queue: Pick<ActiveRuntimeItemQueue, 'list'> = new WakeQueueService(agentId),
+): Promise<ActiveRuntimeItemRecord | undefined> {
+  const running = (await queue.list())
     .filter((event) => isPrimaryRunningInboxItem(event) && event.handling.workerId && !event.handling.settledAt)
     .sort((a, b) => (b.handling.startedAt ?? b.handling.updatedAt).localeCompare(a.handling.startedAt ?? a.handling.updatedAt))[0];
   if (!running?.handling.workerId) return undefined;
   return runtimeRecordFromEvent(agentId, running);
 }
 
-export async function findToolAuditRuntimeItem(agentId: string): Promise<ActiveRuntimeItemRecord | undefined> {
-  const candidates = (await new WakeQueueService(agentId).list())
+export async function findToolAuditRuntimeItem(
+  agentId: string,
+  queue: Pick<ActiveRuntimeItemQueue, 'list'> = new WakeQueueService(agentId),
+): Promise<ActiveRuntimeItemRecord | undefined> {
+  const candidates = (await queue.list())
     .filter((event) => event.handling.workerId);
   const running = candidates
     .filter((event) => isPrimaryRunningInboxItem(event) && !event.handling.settledAt)

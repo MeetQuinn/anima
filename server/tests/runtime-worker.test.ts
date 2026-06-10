@@ -25,6 +25,7 @@ import { runtimeContextForItemId } from '../runtime/context.js';
 import type { RuntimeWorkerConfig, RuntimeItemContext } from '../runtime/types.js';
 import { findActiveRuntimeItem } from '../runtime/active-item.js';
 import { addProcessingReaction, removeProcessingReactions } from '../runtime/processing-reactions.js';
+import { ReminderStore } from '../storage/schema/reminder.store.js';
 
 type TestInboxDecision = WakeQueueEnqueueResult & { ctx: RuntimeItemContext };
 
@@ -589,6 +590,7 @@ test('runtime worker appends queued reminder wakes into an active runtime', asyn
     const drain = worker.drainOnce();
     await waitFor(() => runtime.calls.length === 1);
 
+    await seedReminder('scout', 'reminder-followup', '2026-05-18T17:00:00.000Z');
     const reminder = await enqueueInbox(
       makeReminderInboxItem({
         eventId: 'evt-reminder-followup-second',
@@ -911,6 +913,20 @@ async function waitForInboxItemAppendedTo(
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+}
+
+async function seedReminder(agentId: string, reminderId: string, timestamp: string): Promise<void> {
+  await new ReminderStore(agentId).create({
+    createdAt: timestamp,
+    firedCount: 0,
+    instructions: 'Reminder test instructions',
+    nextDueAt: timestamp,
+    reminderId,
+    schedule: { kind: 'once' },
+    status: 'scheduled',
+    title: 'Reminder test',
+    updatedAt: timestamp,
+  });
 }
 
 const silentLogger = {
