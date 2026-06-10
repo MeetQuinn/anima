@@ -8,6 +8,7 @@ import { ActiveRuntimeRun } from './active-runtime.js';
 import { startChildProcess, terminateChildProcess, type RunningChildProcess } from './child-process.js';
 import { createClaudeJsonlActivityMapper, parseClaudeRuntimeOutput } from './claude-events.js';
 import { LineBuffer } from './line-buffer.js';
+import { QuiescentWaiterSet } from './quiescent-waiters.js';
 import {
   CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW,
   CLAUDE_DISALLOWED_TOOLS,
@@ -295,11 +296,7 @@ class ClaudeStreamJsonController {
     resolve(): void;
     text: string;
   }> = [];
-  private readonly quiescentWaiters = new Set<{
-    cleanup(): void;
-    reject(error: unknown): void;
-    resolve(): void;
-  }>();
+  private readonly quiescentWaiters = new QuiescentWaiterSet();
   private startedSession = false;
 
   constructor(private readonly child: RunningChildProcess) {
@@ -379,30 +376,7 @@ class ClaudeStreamJsonController {
   }
 
   waitForQuiescent(signal?: AbortSignal): Promise<void> {
-    if (!this.inputGateClosed()) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      const waiter = {
-        cleanup: () => {
-          signal?.removeEventListener('abort', onAbort);
-          this.quiescentWaiters.delete(waiter);
-        },
-        reject: (error: unknown) => {
-          waiter.cleanup();
-          reject(error);
-        },
-        resolve: () => {
-          waiter.cleanup();
-          resolve();
-        },
-      };
-      const onAbort = () => waiter.reject(signal?.reason ?? new Error('Drain wait aborted'));
-      if (signal?.aborted) {
-        reject(signal.reason ?? new Error('Drain wait aborted'));
-        return;
-      }
-      signal?.addEventListener('abort', onAbort, { once: true });
-      this.quiescentWaiters.add(waiter);
-    });
+    return this.quiescentWaiters.waitUntilReady(() => !this.inputGateClosed(), signal);
   }
 
   async acceptStdoutChunk(chunk: string): Promise<void> {
@@ -517,12 +491,11 @@ class ClaudeStreamJsonController {
   }
 
   private resolveQuiescentWaitersIfReady(): void {
-    if (this.inputGateClosed()) return;
-    for (const waiter of [...this.quiescentWaiters]) waiter.resolve();
+    this.quiescentWaiters.resolveIfReady(() => !this.inputGateClosed());
   }
 
   private rejectQuiescentWaiters(error: unknown): void {
-    for (const waiter of [...this.quiescentWaiters]) waiter.reject(error);
+    this.quiescentWaiters.reject(error);
   }
 
   private rejectQueuedMessages(error: unknown): void {

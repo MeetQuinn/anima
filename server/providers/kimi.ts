@@ -5,6 +5,7 @@ import { runtimeErrorPayload, truncateForActivity } from '../activities/format.j
 import { startChildProcess, terminateChildProcess, type RunningChildProcess } from './child-process.js';
 import { exposedReasoningEvent } from './reasoning-events.js';
 import { LineBuffer } from './line-buffer.js';
+import { QuiescentWaiterSet } from './quiescent-waiters.js';
 import {
   providerSessionPayload,
   type AgentRuntimeCloseOptions,
@@ -181,11 +182,7 @@ class KimiAcpController {
   private readonly pendingTools = new Map<string, PendingTool>();
   private currentTurn?: KimiTurn;
   private readonly activeToolIds = new Set<string>();
-  private readonly quiescentWaiters = new Set<{
-    cleanup(): void;
-    reject(error: unknown): void;
-    resolve(): void;
-  }>();
+  private readonly quiescentWaiters = new QuiescentWaiterSet();
   private latestUsage?: Record<string, unknown>;
   readonly completion: Promise<{ stdout: string; stderr: string }>;
   sessionId = '';
@@ -254,30 +251,7 @@ class KimiAcpController {
   }
 
   waitForQuiescent(signal?: AbortSignal): Promise<void> {
-    if (this.activeToolIds.size === 0) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      const waiter = {
-        cleanup: () => {
-          signal?.removeEventListener('abort', onAbort);
-          this.quiescentWaiters.delete(waiter);
-        },
-        reject: (error: unknown) => {
-          waiter.cleanup();
-          reject(error);
-        },
-        resolve: () => {
-          waiter.cleanup();
-          resolve();
-        },
-      };
-      const onAbort = () => waiter.reject(signal?.reason ?? new Error('Drain wait aborted'));
-      if (signal?.aborted) {
-        reject(signal.reason ?? new Error('Drain wait aborted'));
-        return;
-      }
-      signal?.addEventListener('abort', onAbort, { once: true });
-      this.quiescentWaiters.add(waiter);
-    });
+    return this.quiescentWaiters.waitUntilReady(() => this.activeToolIds.size === 0, signal);
   }
 
   private async initializeSession(input: AgentRuntimeInput, model: string | undefined): Promise<void> {
@@ -644,12 +618,11 @@ class KimiAcpController {
   }
 
   private resolveQuiescentWaitersIfReady(): void {
-    if (this.activeToolIds.size > 0) return;
-    for (const waiter of [...this.quiescentWaiters]) waiter.resolve();
+    this.quiescentWaiters.resolveIfReady(() => this.activeToolIds.size === 0);
   }
 
   private rejectQuiescentWaiters(error: unknown): void {
-    for (const waiter of [...this.quiescentWaiters]) waiter.reject(error);
+    this.quiescentWaiters.reject(error);
   }
 
   private rejectAllPending(error: unknown): void {

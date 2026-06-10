@@ -24,6 +24,7 @@ import type { AgentRuntimeInput } from './contract.js';
 import { truncateForActivity } from '../activities/format.js';
 import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
 import { LineBuffer } from './line-buffer.js';
+import { QuiescentWaiterSet } from './quiescent-waiters.js';
 
 interface CodexThread {
   id: string;
@@ -66,11 +67,7 @@ export class CodexAppServerController {
   private readonly recordedSubagentChildren = new Set<string>();
   private readonly recordedSubagentParents = new Set<string>();
   private readonly providerToolsById = new Map<string, Record<string, unknown>>();
-  private readonly quiescentWaiters = new Set<{
-    cleanup(): void;
-    reject(error: unknown): void;
-    resolve(): void;
-  }>();
+  private readonly quiescentWaiters = new QuiescentWaiterSet();
   private currentTurn?: ActiveCodexTurn;
   private sessionFilePath?: string;
   threadId = '';
@@ -179,30 +176,7 @@ export class CodexAppServerController {
   }
 
   waitForQuiescent(signal?: AbortSignal): Promise<void> {
-    if (this.activeProviderToolIds.size === 0) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      const waiter = {
-        cleanup: () => {
-          signal?.removeEventListener('abort', onAbort);
-          this.quiescentWaiters.delete(waiter);
-        },
-        reject: (error: unknown) => {
-          waiter.cleanup();
-          reject(error);
-        },
-        resolve: () => {
-          waiter.cleanup();
-          resolve();
-        },
-      };
-      const onAbort = () => waiter.reject(signal?.reason ?? new Error('Drain wait aborted'));
-      if (signal?.aborted) {
-        reject(signal.reason ?? new Error('Drain wait aborted'));
-        return;
-      }
-      signal?.addEventListener('abort', onAbort, { once: true });
-      this.quiescentWaiters.add(waiter);
-    });
+    return this.quiescentWaiters.waitUntilReady(() => this.activeProviderToolIds.size === 0, signal);
   }
 
   request(method: string, params: Record<string, unknown> | undefined): Promise<unknown> {
@@ -352,12 +326,11 @@ export class CodexAppServerController {
   }
 
   private resolveQuiescentWaitersIfReady(): void {
-    if (this.activeProviderToolIds.size > 0) return;
-    for (const waiter of [...this.quiescentWaiters]) waiter.resolve();
+    this.quiescentWaiters.resolveIfReady(() => this.activeProviderToolIds.size === 0);
   }
 
   private rejectQuiescentWaiters(error: unknown): void {
-    for (const waiter of [...this.quiescentWaiters]) waiter.reject(error);
+    this.quiescentWaiters.reject(error);
   }
 
   private acceptAgentMessageDelta(params: Record<string, unknown> | undefined): void {
