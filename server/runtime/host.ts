@@ -14,7 +14,6 @@ import { errorMessage, nowIso } from '../ids.js';
 import { WakeQueueService, type InboxItem } from '../inbox/wake-queue.service.js';
 import { createAgentRuntime } from '../providers/factory.js';
 import type { AgentProviderConfig } from '../providers/contract.js';
-import { isPrimaryRunningInboxItem } from '../../shared/inbox.js';
 import { cacheDelete } from '../storage/json-file.js';
 import {
   FEISHU_OPEN_API_BASE_URL,
@@ -31,6 +30,7 @@ import {
 import { AgentHealthStore } from './agent-health.store.js';
 import { startRunningAgent, type RunningAgentHandle } from './agent-runner.js';
 import { findActiveRuntimeItem } from './active-item.js';
+import { latestPrimaryRunningItem, processAlive } from './item-state.js';
 import { notificationTargetForAgentItem } from './notification-target.js';
 import type { RuntimeWorkerConfig } from './types.js';
 import type {
@@ -856,16 +856,6 @@ async function staleRunningItemForAgent(
   return undefined;
 }
 
-function latestPrimaryRunningItem(items: InboxItem[]): InboxItem | undefined {
-  return items
-    .filter((item) => isPrimaryRunningInboxItem(item))
-    .sort((a, b) => {
-      const aTime = a.handling.startedAt ?? a.handling.updatedAt;
-      const bTime = b.handling.startedAt ?? b.handling.updatedAt;
-      return bTime.localeCompare(aTime);
-    })[0];
-}
-
 function providerChildUnhealthy(runtime: AgentRuntimeHandleSnapshot): boolean {
   const child = runtime.providerChild;
   if (!child) return true;
@@ -888,15 +878,6 @@ function restartStatus(
     requestedAt: command.requestedAt,
     ...(runtime?.processId ? { workerPid: runtime.processId } : {}),
   };
-}
-
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'EPERM');
-  }
 }
 
 async function awaitShutdown(stop: () => Promise<void>): Promise<void> {
