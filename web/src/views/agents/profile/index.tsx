@@ -40,7 +40,11 @@ import {
   agentSlackConnected,
   agentTransportLabel,
 } from '@shared/agent-transports';
-import type { AgentConfig, ClaudeCodeTransport } from '@shared/agent-config';
+import type {
+  AgentConfig,
+  AgentUpdateProviderRequest,
+  ClaudeCodeTransport,
+} from '@shared/agent-config';
 
 type PendingRestart = {
   kind: string;
@@ -229,16 +233,11 @@ export default function Profile() {
   }
 
   async function handleConfirmRestart() {
-    if (!pendingRestart || restartSaving || !agentId) return;
+    if (!pendingRestart || restartSaving || !agentId || !agent) return;
     setRestartSaving(true);
     setRestartSaveError(null);
     try {
-      await updateAgentProvider(agentId, {
-        kind: pendingRestart.kind,
-        model: pendingRestart.model,
-        ...(pendingRestart.effort ? { reasoningEffort: pendingRestart.effort } : {}),
-        ...(pendingRestart.transport ? { transport: pendingRestart.transport } : {}),
-      });
+      await updateAgentProvider(agentId, providerUpdateForRestart(agent.provider, pendingRestart));
       setPendingRestart(null);
       showApplyNoticeIfActive();
       refreshAgentData(agentId);
@@ -585,4 +584,21 @@ function providerSessionBoundaryWillChange(
     next.transport !== undefined &&
     next.transport !== (current.transport ?? 'stream-json')
   );
+}
+
+function providerUpdateForRestart(
+  current: NonNullable<AgentConfig['provider']>,
+  next: PendingRestart,
+): AgentUpdateProviderRequest {
+  const update: AgentUpdateProviderRequest = {
+    kind: next.kind,
+    model: next.model,
+    ...(next.effort ? { reasoningEffort: next.effort } : {}),
+  };
+  const currentTransport =
+    current.kind === 'claude-code' ? (current.transport ?? 'stream-json') : undefined;
+  if (next.transport !== undefined && next.transport !== currentTransport) {
+    update.transport = next.transport;
+  }
+  return update;
 }
