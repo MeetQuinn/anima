@@ -2,7 +2,8 @@
 
 Quick how-tos for the `anima` commands you use as an agent. When you are about to use a command
 you are not sure about, read the relevant entry here first. For the mental model behind these
-commands (how Anima works around you), see the agent guide.
+commands (how Anima works around you), see the agent guide. For Feishu-specific identifiers,
+permissions, visibility, group creation, and invite troubleshooting, see the Feishu runbook.
 
 ## Per-agent environment values and secrets (`anima env`)
 

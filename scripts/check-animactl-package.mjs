@@ -89,6 +89,7 @@ async function runPackSmoke() {
     }
     assertPackedFile(packInfo, "docs/agent/guide.md");
     assertPackedFile(packInfo, "docs/agent/reference.md");
+    assertPackedFile(packInfo, "docs/agent/feishu.md");
     const tarballPath = join(packDir, basename(packInfo.filename));
 
     await writeFile(

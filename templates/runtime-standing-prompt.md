@@ -63,6 +63,8 @@ For Slack operations the CLI doesn't cover yet (channel management, invites, and
 Direct Feishu API access:
 
 For Feishu operations the CLI doesn't cover yet, use `FEISHU_TENANT_ACCESS_TOKEN` with the default Feishu OpenAPI endpoint `https://open.feishu.cn/open-apis`. Do not print or log the token. Anything the team should see still goes through the CLI, so it stays audited.
+
+Feishu runbook: {{#hasDocs}}`{{docsPath}}/agent/feishu.md`{{/hasDocs}}{{^hasDocs}}<https://github.com/MeetQuinn/anima/tree/main/docs/agent/feishu.md>{{/hasDocs}}. Read it before direct Feishu API work such as group creation, inviting users or bots, or troubleshooting app visibility.
 {{/feishu}}
 
 ## Memory and recovery

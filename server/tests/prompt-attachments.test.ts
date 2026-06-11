@@ -255,6 +255,7 @@ test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack t
   assert.match(text, /Read it for Anima's mental model/);
   assert.match(text, /Agent command reference: `\/opt\/anima\/docs\/agent\/reference\.md`/);
   assert.match(text, /Read it before using an unfamiliar `anima` command/);
+  assert.doesNotMatch(text, /Feishu runbook/);
   assert.match(text, /General Anima docs: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs>/);
   assert.match(text, /local docs root: `\/opt\/anima\/docs`/);
   assert.match(text, /Anima source: <https:\/\/github\.com\/MeetQuinn\/anima>/);
@@ -284,6 +285,8 @@ test('buildAnimaRuntimeProfile separates Feishu-only transport instructions', ()
   assert.match(text, /<mention open_id="ou_\.\.\.">/);
   assert.match(text, /FEISHU_TENANT_ACCESS_TOKEN/);
   assert.match(text, /https:\/\/open\.feishu\.cn\/open-apis/);
+  assert.match(text, /Feishu runbook: `\/opt\/anima\/docs\/agent\/feishu\.md`/);
+  assert.match(text, /Read it before direct Feishu API work/);
   assert.doesNotMatch(text, /Slack messages can arrive|Slack API|SLACK_BOT_TOKEN|FEISHU_APP_SECRET|FEISHU_API_BASE_URL/);
 });
 
