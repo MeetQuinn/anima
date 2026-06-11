@@ -842,7 +842,7 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
   }
 });
 
-test('claude-code channel transport launches plugin channel and completes after reply callback', async () => {
+test('claude-code channel transport launches an interactive prompt and completes after reply callback', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
   let runtime: AgentRuntime | undefined;
   try {
@@ -853,8 +853,8 @@ test('claude-code channel transport launches plugin channel and completes after 
       fakeClaude,
       [
         '#!/usr/bin/env node',
-        "import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';",
-        "import { createServer } from 'node:http';",
+        "import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';",
+        "import { dirname } from 'node:path';",
         "const fail = (code, reason) => { appendFileSync(process.env.CALLS_PATH, JSON.stringify({ type: 'fail', code, reason }) + '\\n'); process.exit(code); };",
         "process.on('uncaughtException', (error) => fail(99, error.stack || error.message));",
         'const argv = process.argv.slice(2);',
@@ -862,39 +862,29 @@ test('claude-code channel transport launches plugin channel and completes after 
         "if (argv.includes('--output-format')) fail(40, 'output-format should not be present');",
         "if (argv.includes('--input-format')) fail(41, 'input-format should not be present');",
         "if (argv[argv.indexOf('--permission-mode') + 1] !== 'bypassPermissions') fail(42, `bad permission mode: ${argv.join(' ')}`);",
-        `if (argv[argv.indexOf('--disallowedTools') + 1] !== ${JSON.stringify(CLAUDE_DISALLOWED_TOOLS.join(','))}) fail(43, 'bad disallowed tools');`,
-        "const pluginIndex = argv.indexOf('--plugin-dir');",
-        "if (pluginIndex === -1) fail(44, 'missing plugin dir');",
-        "const pluginRoot = argv[pluginIndex + 1];",
-        "const plugin = JSON.parse(readFileSync(`${pluginRoot}/.claude-plugin/plugin.json`, 'utf8'));",
-        "const mcp = JSON.parse(readFileSync(`${pluginRoot}/.mcp.json`, 'utf8'));",
-        "if (plugin.name !== 'anima-channel') fail(45, 'bad plugin name');",
-        "if (!mcp.mcpServers?.anima?.args?.[0]?.includes('claude-channel-mcp-server.js')) fail(46, JSON.stringify(mcp));",
-        "const server = createServer((req, res) => {",
-        "  if (req.method !== 'POST' || req.url !== '/notify') {",
-        "    res.writeHead(404, { 'content-type': 'application/json' });",
-        "    res.end('{\"error\":\"not found\"}\\n');",
-        "    return;",
-        "  }",
-        "  const chunks = [];",
-        "  req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));",
-        "  req.on('end', () => {",
-        "    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));",
-        "    appendFileSync(process.env.CALLS_PATH, JSON.stringify({ type: 'notify', body }) + '\\n');",
-        "    if (!body.prompt.includes('New Slack message:')) fail(47, 'missing slack prompt');",
-        "    if (!body.prompt.includes('What did I ask over channel?')) fail(48, 'missing message text');",
-        "    if (body.channel !== 'D-anima') fail(49, `bad channel: ${body.channel}`);",
-        "    if (body.platform !== 'slack') fail(50, `bad platform: ${body.platform}`);",
-        "    res.writeHead(200, { 'content-type': 'application/json' });",
-        "    res.end(JSON.stringify({ text: 'channel reply delivered' }) + '\\n');",
-        "  });",
-        "});",
-        "server.listen(0, '127.0.0.1', () => {",
-        "  const address = server.address();",
-        "  writeFileSync(process.env.ANIMA_CLAUDE_CHANNEL_STATE_FILE, JSON.stringify({ host: '127.0.0.1', port: address.port }) + '\\n', 'utf8');",
-        "});",
-        "process.on('SIGTERM', () => server.close(() => process.exit(0)));",
+        `if (!argv.includes(${JSON.stringify(`--disallowedTools=${CLAUDE_DISALLOWED_TOOLS.join(',')}`)})) fail(43, 'bad disallowed tools');`,
+        "if (argv.includes('--plugin-dir')) fail(44, 'plugin dir should not be used');",
+        "if (!argv.includes('--strict-mcp-config')) fail(45, 'missing strict mcp config');",
+        "const mcpIndex = argv.indexOf('--mcp-config');",
+        "if (mcpIndex === -1) fail(46, 'missing mcp config');",
+        "const mcp = JSON.parse(readFileSync(argv[mcpIndex + 1], 'utf8'));",
+        "const mcpArgs = mcp.mcpServers?.anima?.args;",
+        "if (!mcpArgs?.[0]?.includes('claude-channel-mcp-server.js')) fail(47, JSON.stringify(mcp));",
+        "if (mcpArgs[mcpArgs.indexOf('--agent-id') + 1] !== 'anima') fail(48, `bad agent id args: ${JSON.stringify(mcpArgs)}`);",
+        "if (!mcpArgs[mcpArgs.indexOf('--item-id') + 1]) fail(49, `missing item id args: ${JSON.stringify(mcpArgs)}`);",
+        "if (mcpArgs[mcpArgs.indexOf('--channel') + 1] !== 'D-anima') fail(54, `bad channel args: ${JSON.stringify(mcpArgs)}`);",
+        "const replyFile = mcpArgs[mcpArgs.indexOf('--reply-file') + 1];",
+        "if (!replyFile) fail(55, `missing reply file args: ${JSON.stringify(mcpArgs)}`);",
+        "const prompt = argv.at(-1) || '';",
+        "if (!prompt.includes('mcp__anima__reply')) fail(50, 'missing reply tool instruction');",
+        "if (!prompt.includes('item_id')) fail(51, 'missing item id instruction');",
+        "if (!prompt.includes('New Slack message:')) fail(52, 'missing slack prompt');",
+        "if (!prompt.includes('What did I ask over channel?')) fail(53, 'missing message text');",
+        "mkdirSync(dirname(replyFile), { recursive: true });",
+        "writeFileSync(replyFile, JSON.stringify({ text: 'channel reply delivered' }) + '\\n', 'utf8');",
+        "process.on('SIGTERM', () => process.exit(0));",
         "process.stdin.resume();",
+        "setInterval(() => {}, 1000);",
         '',
       ].join('\n'),
       'utf8',
@@ -936,11 +926,21 @@ test('claude-code channel transport launches plugin channel and completes after 
       type: string;
     });
     assert.equal(calls[0]?.type, 'argv');
-    assert.equal(calls[0]?.argv?.includes('--plugin-dir'), true);
+    assert.equal(calls[0]?.argv?.includes('--mcp-config'), true);
+    assert.equal(calls[0]?.argv?.includes('--strict-mcp-config'), true);
+    assert.equal(calls[0]?.argv?.includes('--plugin-dir'), false);
     assert.equal(calls[0]?.argv?.includes('--output-format'), false);
     assert.equal(calls[0]?.argv?.includes('--input-format'), false);
-    assert.equal(calls[1]?.type, 'notify');
-    assert.equal(calls[1]?.body?.['itemId'], ctx.item.id);
+    assert.equal(calls[0]?.argv?.at(-1)?.includes(ctx.item.id), true);
+    const argv = calls[0]?.argv ?? [];
+    const mcpConfigPath = argv[argv.indexOf('--mcp-config') + 1];
+    if (!mcpConfigPath) throw new Error('missing mcp config path');
+    const mcpConfig = JSON.parse(await readFile(mcpConfigPath, 'utf8')) as {
+      mcpServers?: { anima?: { args?: string[] } };
+    };
+    const mcpArgs = mcpConfig.mcpServers?.anima?.args ?? [];
+    assert.equal(mcpArgs[mcpArgs.indexOf('--item-id') + 1], ctx.item.id);
+    assert.equal(mcpArgs[mcpArgs.indexOf('--channel') + 1], 'D-anima');
 
     const activities = await activitiesForInboxItemWindow('anima', ctx.item.id);
     const started = activities.find((activity) => activity.type === 'runtime.started');
