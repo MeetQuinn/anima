@@ -255,7 +255,7 @@ function feishuTargetFromChannelArg(
 ): FeishuSendTarget | undefined {
   if (!channel) return undefined;
   if (channel.startsWith('oc_')) {
-    const feishuItem = item?.kind === 'feishu' ? item : undefined;
+    const feishuItem = item?.kind === 'feishu' && item.chatId === channel ? item : undefined;
     return {
       displayName: feishuItem ? feishuChatDisplayName(feishuItem) : 'Feishu chat',
       receiveId: channel,

@@ -85,6 +85,37 @@ user to authorize the recommended Feishu permissions, publish a new app version,
 the API says the bot cannot manage chat members, the current bot may not be allowed to invite
 members in that group.
 
+## Create a Feishu group chat
+
+Use this when the user asks you to create a Feishu group and there is no `anima` command for group
+creation yet.
+
+You need at least one user `open_id` to seed the group. In a Feishu DM, use the sender `open_id`
+from the message envelope. Do not guess people from display names.
+
+Call Feishu's chat-create API with the runtime tenant token:
+
+```
+curl -sS -X POST \
+  "https://open.feishu.cn/open-apis/im/v1/chats?user_id_type=open_id" \
+  -H "Authorization: Bearer $FEISHU_TENANT_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"name":"<chat_name>","description":"<description>","user_id_list":["<owner_open_id>"],"chat_mode":"group","chat_type":"private"}'
+```
+
+Read the JSON response before trying again. If it includes a `chat_id`, the group was created. Use
+the audited CLI for the visible follow-up message:
+
+```
+anima message send --chat-id <chat_id> <<'ANIMA_MESSAGE'
+<message>
+ANIMA_MESSAGE
+```
+
+Do not print or log `$FEISHU_TENANT_ACCESS_TOKEN`. Do not create a second group just because you
+are unsure whether the first call worked. Check the response for `chat_id`, then send a message to
+that `chat_id`.
+
 ## Invite a Feishu user into a chat
 
 Use this when the user asks you to add a human teammate to the current Feishu chat and there is no
@@ -132,6 +163,10 @@ Replace `<chat_id>` with the Feishu `oc_...` chat ID and `<target_open_id>` with
 Do not print or log `$FEISHU_TENANT_ACCESS_TOKEN`. The current agent's Feishu app must have the
 recommended member-invite and user-lookup permissions authorized and published. If the API says the
 bot cannot manage chat members, the current bot may not be allowed to invite members in that group.
+If Feishu returns `232024` with a message like "Users do not have the visibility of the app", ask
+the user to add the target person to the app's availability or visibility range in the Feishu
+developer console, publish or save that change, then retry. If the target is an external
+collaborator, the workspace may also need external collaboration permission.
 
 ## Ask a one-click question (`anima ask`)
 
