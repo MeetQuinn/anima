@@ -26,11 +26,12 @@ import { providerKindLabel, providerValueLabel } from '@/lib/provider-display';
 const RESERVED_ENV_KEYS = new Set<string>(ANIMA_MANAGED_PROVIDER_ENV_KEYS);
 const DEFAULT_CLAUDE_CODE_TRANSPORT: ClaudeCodeTransport = 'stream-json';
 const CLAUDE_CODE_TRANSPORT_OPTIONS: Array<{
+  disabled?: boolean;
   label: string;
   value: ClaudeCodeTransport;
 }> = [
   { value: 'stream-json', label: 'Standard mode' },
-  { value: 'channel', label: 'Interactive session' },
+  { value: 'channel', label: 'Interactive session', disabled: true },
 ];
 
 // ── InlineTextRow ─────────────────────────────────────────────────────────────
@@ -349,12 +350,18 @@ export function ProviderInlineRow({
   const nextEffort = hasDraftEffort ? draftEffort : undefined;
   const currentEffort = hasCurrentEffort ? effort : undefined;
   const nextTransport = hasDraftTransport ? draftTransport : undefined;
+  const selectedTransportUnavailable =
+    hasDraftTransport &&
+    CLAUDE_CODE_TRANSPORT_OPTIONS.some(
+      (option) => option.value === draftTransport && option.disabled,
+    );
   const providerDraftChanged =
     draftKind !== kind ||
     draftModel !== model ||
     nextEffort !== currentEffort ||
     nextTransport !== currentTransport;
-  const saveBlocked = providerDraftChanged && !draftProviderInstalled;
+  const saveBlocked =
+    providerDraftChanged && (!draftProviderInstalled || selectedTransportUnavailable);
 
   function providerSelectable(option: ProviderCatalogEntry): boolean {
     if (option.kind === kind) return true;
@@ -459,6 +466,8 @@ export function ProviderInlineRow({
               <Select
                 value={draftTransport}
                 onValueChange={(v) => {
+                  const option = CLAUDE_CODE_TRANSPORT_OPTIONS.find((item) => item.value === v);
+                  if (option?.disabled) return;
                   if (isClaudeCodeTransport(v)) setDraftTransport(v);
                 }}
               >
@@ -470,9 +479,11 @@ export function ProviderInlineRow({
                     <SelectItem
                       key={opt.value}
                       value={opt.value}
+                      disabled={opt.disabled}
                       className="font-serif text-[14px]"
                     >
                       {opt.label}
+                      {opt.disabled ? ' · temporarily unavailable' : ''}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -482,7 +493,7 @@ export function ProviderInlineRow({
           {hasDraftTransport && (
             <div className="max-w-xl font-sans text-[11px] leading-snug text-text-muted">
               Standard mode uses Anima's existing Claude Code CLI integration. Interactive session
-              keeps Claude Code open between turns and sends replies through Anima.
+              is temporarily unavailable while we harden live handoffs.
             </div>
           )}
           {draftProviderUnavailableHint && (
