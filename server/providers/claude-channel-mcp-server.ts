@@ -178,16 +178,25 @@ async function replyTargetFor(itemId: string): Promise<ReplyTarget | undefined> 
       ...(cli.threadTs ? { threadTs: cli.threadTs } : {}),
     };
   }
-  const value: unknown = JSON.parse(await readFile(cli.targetFile, 'utf8'));
+  const value: unknown = await readTargetFile(cli.targetFile);
   if (!isTargetRecord(value)) return undefined;
   if (itemId !== value.itemId) return undefined;
   return value;
 }
 
+async function readTargetFile(path: string): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(path, 'utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
 function isTargetRecord(value: unknown): value is ReplyTarget {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
-  return typeof record.itemId === 'string'
+  return record.active === true
+    && typeof record.itemId === 'string'
     && typeof record.replyFile === 'string'
     && (record.channel === undefined || typeof record.channel === 'string')
     && (record.threadTs === undefined || typeof record.threadTs === 'string');

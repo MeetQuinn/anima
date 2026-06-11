@@ -160,8 +160,10 @@ export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
       throw new Error(
         "ANIMA_AGENT_ID is required for Claude Code tmux runtime",
       );
+    const animaHome = input.env.ANIMA_HOME || resolveAnimaHome();
     const sessionName = tmuxSessionName({
       agentId,
+      animaHome,
       effort: this.config.reasoningEffort,
       model: this.config.model,
     });
@@ -171,9 +173,10 @@ export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
       return existing;
 
     const files = await writeTmuxFiles(input, sessionName);
+    const systemPromptFilePath = await writeSystemPromptFile(input);
     const command = shellCommand([
       CLAUDE_COMMAND,
-      ...this.claudeArgs(files.mcpConfigFile),
+      ...this.claudeArgs(files.mcpConfigFile, systemPromptFilePath),
     ]);
     if (!tmuxSessionExists(sessionName, input.env)) {
       tmux(["new-session", "-d", "-s", sessionName, "-c", input.cwd, command], {
@@ -212,23 +215,31 @@ export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
       `reply-${safeName(input.itemId)}.json`,
     );
     await writeTargetFile(session.targetFile, {
+      active: true,
       itemId: input.itemId,
       replyFile,
       ...(replyTarget?.channel ? { channel: replyTarget.channel } : {}),
       ...(replyTarget?.threadTs ? { threadTs: replyTarget.threadTs } : {}),
     });
     await rm(replyFile, { force: true });
-    await waitForTmuxReady(session, input);
-    await sendTmuxPrompt({
-      env: session.env,
-      prompt: tmuxPrompt(input),
-      session: session.name,
-      workDir: dirname(session.targetFile),
-    });
-    return waitForReplyFile(replyFile, input);
+    try {
+      await waitForTmuxReady(session, input);
+      await sendTmuxPrompt({
+        env: session.env,
+        prompt: tmuxPrompt(input),
+        session: session.name,
+        workDir: dirname(session.targetFile),
+      });
+      return await waitForReplyFile(replyFile, input);
+    } finally {
+      await clearTargetFile(session.targetFile);
+    }
   }
 
-  private claudeArgs(mcpConfigFile: string): string[] {
+  private claudeArgs(
+    mcpConfigFile: string,
+    systemPromptFilePath: string | undefined,
+  ): string[] {
     const args = [
       "--mcp-config",
       mcpConfigFile,
@@ -240,6 +251,8 @@ export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
     if (this.config.model) args.push("--model", this.config.model);
     if (this.config.reasoningEffort)
       args.push("--effort", this.config.reasoningEffort);
+    if (systemPromptFilePath)
+      args.push("--system-prompt-file", systemPromptFilePath);
     return args;
   }
 
@@ -307,6 +320,7 @@ async function writeTmuxFiles(
 async function writeTargetFile(
   path: string,
   target: {
+    active: true;
     channel?: string;
     itemId: string;
     replyFile: string;
@@ -315,6 +329,31 @@ async function writeTargetFile(
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(target, null, 2)}\n`, "utf8");
+}
+
+async function clearTargetFile(path: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(
+    path,
+    `${JSON.stringify(
+      {
+        active: false,
+        clearedAt: nowIso(),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+}
+
+async function writeSystemPromptFile(
+  input: AgentRuntimeInput,
+): Promise<string | undefined> {
+  if (!input.systemPrompt || !input.systemPromptFilePath) return undefined;
+  await mkdir(dirname(input.systemPromptFilePath), { recursive: true });
+  await writeFile(input.systemPromptFilePath, input.systemPrompt, "utf8");
+  return input.systemPromptFilePath;
 }
 
 function tmuxPrompt(input: AgentRuntimeInput): string {
@@ -469,10 +508,20 @@ function tmuxSessionExists(session: string, env?: NodeJS.ProcessEnv): boolean {
 
 function tmuxSessionName(input: {
   agentId: string;
+  animaHome: string;
   effort?: string;
   model?: string;
 }): string {
-  return `anima-${safeName(input.agentId)}-${safeName(input.model ?? "default")}-${safeName(input.effort ?? "default")}`;
+  return `anima-${safeName(input.agentId)}-${shortHash(input.animaHome)}-${safeName(input.model ?? "default")}-${safeName(input.effort ?? "default")}`;
+}
+
+function shortHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (const char of value) {
+    hash ^= char.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(36);
 }
 
 function safeName(value: string): string {

@@ -990,7 +990,11 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
         "  state.sessions[session] = { command, capture: 'bypass permissions on' };",
         "  const match = command.match(/'--mcp-config'\\s+'([^']+)'/);",
         "  if (!match) process.exit(91);",
+        "  const systemPromptMatch = command.match(/'--system-prompt-file'\\s+'([^']+)'/);",
+        "  if (!systemPromptMatch) process.exit(93);",
         "  state.mcpConfig = match[1];",
+        "  state.systemPromptFile = systemPromptMatch[1];",
+        "  state.systemPrompt = readFileSync(systemPromptMatch[1], 'utf8');",
         "  save(state);",
         "  process.exit(0);",
         "}",
@@ -1013,8 +1017,10 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
         "      const mcpArgs = mcp.mcpServers.anima.args;",
         "      const targetFile = mcpArgs[mcpArgs.indexOf('--target-file') + 1];",
         "      const target = JSON.parse(readFileSync(targetFile, 'utf8'));",
+        "      if (target.active !== true) process.exit(94);",
         "      writeFileSync(target.replyFile, JSON.stringify({ text: 'tmux reply delivered' }) + '\\n', 'utf8');",
         "      state.target = target;",
+        "      state.targetFile = targetFile;",
         "    }",
         "  }",
         "  save(state);",
@@ -1073,16 +1079,22 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
     const state = JSON.parse(await readFile(tmuxStatePath, 'utf8')) as {
       mcpConfig: string;
       prompts: string[];
+      systemPrompt: string;
       sessions: Record<string, { command: string }>;
-      target: { channel?: string; itemId?: string; replyFile?: string };
+      target: { active?: boolean; channel?: string; itemId?: string; replyFile?: string };
+      targetFile: string;
     };
     const command = Object.values(state.sessions)[0]?.command ?? '';
     assert.match(command, /'claude'/);
     assert.match(command, /'--mcp-config'/);
     assert.match(command, /'--strict-mcp-config'/);
+    assert.match(command, /'--system-prompt-file'/);
     assert.doesNotMatch(command, /--output-format/);
     assert.doesNotMatch(command, /--input-format/);
     assert.doesNotMatch(command, /'\-p'/);
+    assert.match(state.systemPrompt, /You are Anima, general-purpose Anima agent\./);
+    assert.match(state.systemPrompt, /anima message send <target flags>/);
+    assert.equal(state.target.active, true);
     assert.equal(state.target.itemId, ctx.item.id);
     assert.equal(state.target.channel, 'D-anima');
     assert.ok(state.target.replyFile?.endsWith('.json'));
@@ -1095,6 +1107,8 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
     const mcpArgs = mcpConfig.mcpServers?.anima?.args ?? [];
     assert.equal(mcpArgs.includes('--target-file'), true);
     assert.equal(mcpArgs.includes('--item-id'), false);
+    const clearedTarget = JSON.parse(await readFile(state.targetFile, 'utf8')) as { active?: boolean };
+    assert.equal(clearedTarget.active, false);
 
     const activities = await activitiesForInboxItemWindow('anima', ctx.item.id);
     const started = activities.find((activity) => activity.type === 'runtime.started');
@@ -1103,6 +1117,39 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
     const agentText = activities.find((activity) => activity.type === 'agent.text');
     assert.equal(agentText?.payload?.['text'], 'tmux reply delivered');
     assert.equal(activities.some((activity) => activity.type === 'runtime.output'), false);
+    await runtime.close?.();
+    runtime = undefined;
+
+    const secondHome = join(stateDir, 'second-home');
+    await mkdir(secondHome, { recursive: true });
+    const secondCtx = await ingestEvent(
+      makeSlackEvent({
+        channelId: 'D-anima',
+        teamId: 'T-demo',
+        text: 'Second home over tmux.',
+        ts: '1770000900.000001',
+        userId: 'U1',
+      }),
+      { agentId: 'anima', stateDir: secondHome },
+    );
+    runtime = createAgentRuntime(
+      {
+        env: runtimeTestEnv(stateDir, { TMUX_CALLS_PATH: callsPath, TMUX_STATE_PATH: tmuxStatePath }),
+        kind: 'claude-code',
+        model: 'opus',
+        reasoningEffort: 'high',
+        transport: 'tmux',
+      },
+      { notificationTargetResolver: notificationTargetForAgentItem },
+    );
+    const secondResult = await runtime.run(await runtimeInput(runtime, secondCtx, await loadState()));
+    assert.equal(secondResult.text, 'tmux reply delivered');
+    const finalState = JSON.parse(await readFile(tmuxStatePath, 'utf8')) as {
+      sessions: Record<string, { command: string }>;
+    };
+    const sessionNames = Object.keys(finalState.sessions);
+    assert.equal(sessionNames.length, 2);
+    assert.notEqual(sessionNames[0], sessionNames[1]);
     await runtime.close?.();
     runtime = undefined;
     });
