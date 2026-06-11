@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Check, X } from 'lucide-react';
-import { DEFAULT_REASONING_EFFORT, type ProviderCatalogEntry } from '@shared/provider-catalog';
+import {
+  DEFAULT_REASONING_EFFORT,
+  type ProviderAvailability,
+  type ProviderCatalogEntry,
+} from '@shared/provider-catalog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-} from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import ConfirmModal from '@/components/ConfirmModal';
 import DirectoryPicker from '@/components/DirectoryPicker';
 import { EditAffordance, ErrorHint, Field, SavedHint } from './Primitives';
@@ -17,6 +16,11 @@ import {
   type AgentProviderConfig,
   type ClaudeCodeTransport,
 } from '@shared/agent-config';
+import {
+  providerReady,
+  providerUnavailableHint,
+  providerUnavailableLabel,
+} from '@/lib/provider-availability';
 import { providerKindLabel, providerValueLabel } from '@/lib/provider-display';
 
 const RESERVED_ENV_KEYS = new Set<string>(ANIMA_MANAGED_PROVIDER_ENV_KEYS);
@@ -112,7 +116,9 @@ export function InlineTextRow({
         <div className="flex flex-wrap items-center gap-2">
           <EditAffordance onEdit={begin}>
             {value ? (
-              <span className="block break-words font-serif text-[13px] md:text-[15px] text-text">{value}</span>
+              <span className="block break-words font-serif text-[13px] md:text-[15px] text-text">
+                {value}
+              </span>
             ) : (
               <span className="font-serif italic text-[14px] text-text-subtle">
                 {placeholder ?? '—'}
@@ -217,7 +223,9 @@ export function HomeRow({
         {pendingPath !== null ? (
           <div className="space-y-3">
             <div>
-              <span className="block break-words font-mono text-[13px] text-text">{pendingPath}</span>
+              <span className="block break-words font-mono text-[13px] text-text">
+                {pendingPath}
+              </span>
               <span className="font-sans text-[11px] tracking-wide text-text-muted">
                 Applies automatically when this agent is idle.
               </span>
@@ -258,7 +266,9 @@ export function HomeRow({
               className="group -mx-2 -my-1 flex min-w-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-1 outline-none transition-colors hover:bg-surface-elevated focus-visible:bg-surface-elevated"
             >
               {value ? (
-                <span className="block break-words font-serif text-[13px] md:text-[15px] text-text">{value}</span>
+                <span className="block break-words font-serif text-[13px] md:text-[15px] text-text">
+                  {value}
+                </span>
               ) : (
                 <span className="font-serif italic text-[14px] text-text-subtle">
                   Not configured
@@ -298,6 +308,7 @@ export function ProviderInlineRow({
   effort,
   transport,
   providerOptions,
+  providerAvailability,
   onRequestSave,
 }: {
   kind: string;
@@ -305,13 +316,21 @@ export function ProviderInlineRow({
   effort: string;
   transport?: ClaudeCodeTransport;
   providerOptions: ProviderCatalogEntry[];
-  onRequestSave: (kind: string, model: string, effort?: string, transport?: ClaudeCodeTransport) => void;
+  providerAvailability?: ProviderAvailability[] | null;
+  onRequestSave: (
+    kind: string,
+    model: string,
+    effort?: string,
+    transport?: ClaudeCodeTransport,
+  ) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draftKind, setDraftKind] = useState('');
   const [draftModel, setDraftModel] = useState('');
   const [draftEffort, setDraftEffort] = useState('');
-  const [draftTransport, setDraftTransport] = useState<ClaudeCodeTransport>(DEFAULT_CLAUDE_CODE_TRANSPORT);
+  const [draftTransport, setDraftTransport] = useState<ClaudeCodeTransport>(
+    DEFAULT_CLAUDE_CODE_TRANSPORT,
+  );
   const draftProvider = providerOptions.find((option) => option.kind === draftKind);
   const draftModelOptions = draftProvider?.models ?? [];
   const draftEffortOptions = draftProvider?.reasoningEfforts ?? [];
@@ -319,10 +338,29 @@ export function ProviderInlineRow({
   const hasDraftTransport = draftKind === 'claude-code';
   const currentProvider = providerOptions.find((option) => option.kind === kind);
   const hasCurrentEffort = (currentProvider?.reasoningEfforts ?? []).length > 0;
-  const currentTransport = kind === 'claude-code'
-    ? transport ?? DEFAULT_CLAUDE_CODE_TRANSPORT
-    : undefined;
+  const currentTransport =
+    kind === 'claude-code' ? (transport ?? DEFAULT_CLAUDE_CODE_TRANSPORT) : undefined;
   const kindChanged = draftKind !== kind;
+  const draftProviderUnavailableHint = providerAvailability
+    ? providerUnavailableHint(draftProvider, providerAvailability)
+    : undefined;
+  const draftProviderInstalled =
+    !providerAvailability || !draftProvider || providerReady(draftProvider, providerAvailability);
+  const nextEffort = hasDraftEffort ? draftEffort : undefined;
+  const currentEffort = hasCurrentEffort ? effort : undefined;
+  const nextTransport = hasDraftTransport ? draftTransport : undefined;
+  const providerDraftChanged =
+    draftKind !== kind ||
+    draftModel !== model ||
+    nextEffort !== currentEffort ||
+    nextTransport !== currentTransport;
+  const saveBlocked = providerDraftChanged && !draftProviderInstalled;
+
+  function providerSelectable(option: ProviderCatalogEntry): boolean {
+    if (option.kind === kind) return true;
+    if (!providerAvailability) return true;
+    return providerReady(option, providerAvailability);
+  }
 
   function begin() {
     setDraftKind(kind);
@@ -336,6 +374,7 @@ export function ProviderInlineRow({
     if (!next) return;
     const nextProvider = providerOptions.find((option) => option.kind === next);
     if (!nextProvider) return;
+    if (!providerSelectable(nextProvider)) return;
     setDraftKind(nextProvider.kind);
     setDraftModel(nextProvider.defaultModel);
     setDraftEffort(defaultEffortForProvider(nextProvider));
@@ -343,18 +382,11 @@ export function ProviderInlineRow({
   }
 
   function handleSave() {
-    const nextEffort = hasDraftEffort ? draftEffort : undefined;
-    const currentEffort = hasCurrentEffort ? effort : undefined;
-    const nextTransport = hasDraftTransport ? draftTransport : undefined;
-    if (
-      draftKind === kind
-      && draftModel === model
-      && nextEffort === currentEffort
-      && nextTransport === currentTransport
-    ) {
+    if (!providerDraftChanged) {
       setEditing(false);
       return;
     }
+    if (saveBlocked) return;
     setEditing(false);
     onRequestSave(draftKind, draftModel, nextEffort, nextTransport);
   }
@@ -364,19 +396,27 @@ export function ProviderInlineRow({
       {editing ? (
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <Select
-              value={draftKind}
-              onValueChange={handleKindChange}
-            >
+            <Select value={draftKind} onValueChange={handleKindChange}>
               <SelectTrigger className="h-8 w-40 font-serif text-[14px]">
                 {providerKindLabel(draftKind, providerOptions)}
               </SelectTrigger>
               <SelectContent>
-                {providerOptions.map((opt) => (
-                  <SelectItem key={opt.kind} value={opt.kind} className="font-serif text-[14px]">
-                    {opt.label}
-                  </SelectItem>
-                ))}
+                {providerOptions.map((opt) => {
+                  const unavailableLabel = providerAvailability
+                    ? providerUnavailableLabel(opt, providerAvailability)
+                    : undefined;
+                  return (
+                    <SelectItem
+                      key={opt.kind}
+                      value={opt.kind}
+                      disabled={!providerSelectable(opt)}
+                      className="font-serif text-[14px]"
+                    >
+                      {opt.label}
+                      {unavailableLabel ? ` · ${unavailableLabel}` : ''}
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
             <Select
@@ -441,17 +481,23 @@ export function ProviderInlineRow({
           </div>
           {hasDraftTransport && (
             <div className="max-w-xl font-sans text-[11px] leading-snug text-text-muted">
-              Standard mode uses Anima's existing Claude Code CLI integration. Interactive session keeps Claude Code open between turns and sends replies through Anima.
+              Standard mode uses Anima's existing Claude Code CLI integration. Interactive session
+              keeps Claude Code open between turns and sends replies through Anima.
+            </div>
+          )}
+          {draftProviderUnavailableHint && (
+            <div className="max-w-xl font-sans text-[11px] leading-snug text-text-muted">
+              {draftProviderUnavailableHint}
             </div>
           )}
           {kindChanged && (
             <div className="max-w-xl font-sans text-[11px] leading-snug text-text-muted">
-              Switching provider starts a fresh provider session. MEMORY.md, notes, and activity history stay intact;
-              the old provider session is archived.
+              Switching provider starts a fresh provider session. MEMORY.md, notes, and activity
+              history stay intact; the old provider session is archived.
             </div>
           )}
           <div className="flex items-center gap-2">
-            <Button size="xs" onClick={handleSave}>
+            <Button size="xs" disabled={saveBlocked} onClick={handleSave}>
               <Check />
               Save
             </Button>
@@ -464,19 +510,27 @@ export function ProviderInlineRow({
       ) : (
         <div className="flex flex-wrap items-baseline">
           <EditAffordance onEdit={begin}>
-            <span className="font-serif text-[13px] md:text-[15px] text-text-muted">{providerKindLabel(kind, providerOptions)}</span>
+            <span className="font-serif text-[13px] md:text-[15px] text-text-muted">
+              {providerKindLabel(kind, providerOptions)}
+            </span>
             <span className="font-sans mx-1.5 text-[12px] text-text-subtle">·</span>
-            <span className="font-serif text-[13px] md:text-[15px] text-text">{providerValueLabel(model) || '—'}</span>
+            <span className="font-serif text-[13px] md:text-[15px] text-text">
+              {providerValueLabel(model) || '—'}
+            </span>
             {hasCurrentEffort && (
               <>
                 <span className="font-sans mx-1.5 text-[12px] text-text-subtle">·</span>
-                <span className="font-serif text-[13px] md:text-[15px] text-text-muted">{providerValueLabel(effort)}</span>
+                <span className="font-serif text-[13px] md:text-[15px] text-text-muted">
+                  {providerValueLabel(effort)}
+                </span>
               </>
             )}
             {currentTransport && (
               <>
                 <span className="font-sans mx-1.5 text-[12px] text-text-subtle">·</span>
-                <span className="font-serif text-[13px] md:text-[15px] text-text-muted">{claudeCodeTransportLabel(currentTransport)}</span>
+                <span className="font-serif text-[13px] md:text-[15px] text-text-muted">
+                  {claudeCodeTransportLabel(currentTransport)}
+                </span>
               </>
             )}
           </EditAffordance>
@@ -490,7 +544,7 @@ function defaultEffortForProvider(provider: ProviderCatalogEntry): string {
   if (provider.reasoningEfforts.length === 0) return '';
   return provider.reasoningEfforts.includes(DEFAULT_REASONING_EFFORT)
     ? DEFAULT_REASONING_EFFORT
-    : provider.reasoningEfforts[0] ?? '';
+    : (provider.reasoningEfforts[0] ?? '');
 }
 
 function isClaudeCodeTransport(value: string | null | undefined): value is ClaudeCodeTransport {
@@ -581,7 +635,9 @@ export function ProviderEnvRow({
             className="group -mx-2 -my-1 flex min-w-0 cursor-pointer items-baseline gap-2 rounded-sm px-2 py-1 outline-none transition-colors hover:bg-surface-elevated focus-visible:bg-surface-elevated"
           >
             <span className="font-serif text-[13px] md:text-[15px] text-text">
-              {keys.length === 0 ? 'None' : `${keys.length} variable${keys.length === 1 ? '' : 's'}`}
+              {keys.length === 0
+                ? 'None'
+                : `${keys.length} variable${keys.length === 1 ? '' : 's'}`}
             </span>
             {keys.length > 0 && (
               <span className="max-w-sm truncate font-mono text-[12px] text-text-muted">
@@ -631,7 +687,8 @@ export function ProviderEnvRow({
                   disabled={busy}
                   onClick={() => {
                     if (row.originalKey) updateRow(row.id, { deleted: !row.deleted });
-                    else setRows((current) => current.filter((candidate) => candidate.id !== row.id));
+                    else
+                      setRows((current) => current.filter((candidate) => candidate.id !== row.id));
                   }}
                 >
                   {row.deleted ? 'Keep' : 'Remove'}
@@ -656,7 +713,13 @@ export function ProviderEnvRow({
               <Check />
               {busy ? 'Saving…' : 'Save'}
             </Button>
-            <Button type="button" size="xs" variant="ghost" disabled={busy} onClick={() => setOpen(false)}>
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => setOpen(false)}
+            >
               <X />
               Cancel
             </Button>
@@ -708,15 +771,19 @@ export function ConfirmRestartModal({
 }
 
 function draftRowsFor(env?: Record<string, string>): EnvDraftRow[] {
-  return Object.keys(env ?? {}).sort().map((key) => ({
-    id: `existing-${key}`,
-    key,
-    originalKey: key,
-    value: '',
-  }));
+  return Object.keys(env ?? {})
+    .sort()
+    .map((key) => ({
+      id: `existing-${key}`,
+      key,
+      originalKey: key,
+      value: '',
+    }));
 }
 
-function envPatchFromDraft(rows: EnvDraftRow[]): { patch: Record<string, string | null> } | { error: string } {
+function envPatchFromDraft(
+  rows: EnvDraftRow[],
+): { patch: Record<string, string | null> } | { error: string } {
   const patch: Record<string, string | null> = {};
   const seen = new Set<string>();
   for (const row of rows) {
@@ -756,7 +823,8 @@ export function modelOptionsFor(
   provider: AgentProviderConfig,
   providerOptions: ProviderCatalogEntry[],
 ): string[] {
-  const catalogModels = providerOptions.find((option) => option.kind === provider.kind)?.models ?? [];
+  const catalogModels =
+    providerOptions.find((option) => option.kind === provider.kind)?.models ?? [];
   return [...catalogModels, provider.model].filter((m): m is string => Boolean(m));
 }
 
@@ -764,10 +832,9 @@ export function effortOptionsFor(
   provider: AgentProviderConfig,
   providerOptions: ProviderCatalogEntry[],
 ): string[] {
-  const catalogEfforts = providerOptions.find((option) => option.kind === provider.kind)?.reasoningEfforts ?? [];
+  const catalogEfforts =
+    providerOptions.find((option) => option.kind === provider.kind)?.reasoningEfforts ?? [];
   if (catalogEfforts.length === 0) return [];
   const providerEffort = 'reasoningEffort' in provider ? provider.reasoningEffort : undefined;
-  return [...catalogEfforts, providerEffort].filter((effort): effort is string =>
-    Boolean(effort),
-  );
+  return [...catalogEfforts, providerEffort].filter((effort): effort is string => Boolean(effort));
 }
