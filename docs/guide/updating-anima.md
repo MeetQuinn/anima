@@ -34,9 +34,10 @@ If you run Anima without the dashboard, re-run the same install command you star
 curl -fsSL https://anima.meetquinn.ai/install.sh | sh
 ```
 
-It installs the latest version over your existing setup and only replaces the Anima program itself.
-Your home folder (`~/.anima` by default), your agents, their memory and notes, and your knowledge base
-are left untouched.
+It installs the latest version over your existing setup. If Anima is already running and the runtime
+version changed, the command restarts the local services so the new version is actually serving the
+dashboard and agent runtime. Your home folder (`~/.anima` by default), your agents, their memory and
+notes, and your knowledge base are left untouched.
 
 ## A note on the restart
 
