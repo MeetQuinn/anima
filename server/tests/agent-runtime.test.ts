@@ -880,6 +880,8 @@ test('claude-code channel transport launches an interactive prompt and completes
         "if (!prompt.includes('item_id')) fail(51, 'missing item id instruction');",
         "if (!prompt.includes('New Slack message:')) fail(52, 'missing slack prompt');",
         "if (!prompt.includes('What did I ask over channel?')) fail(53, 'missing message text');",
+        "process.stdout.write('\\x1b[2D\\r* thinking terminal frame');",
+        "process.stderr.write('\\x1b[1Adebug terminal frame');",
         "mkdirSync(dirname(replyFile), { recursive: true });",
         "writeFileSync(replyFile, JSON.stringify({ text: 'channel reply delivered' }) + '\\n', 'utf8');",
         "process.on('SIGTERM', () => process.exit(0));",
@@ -948,6 +950,7 @@ test('claude-code channel transport launches an interactive prompt and completes
     assert.equal(started?.payload?.['transport'], 'channel');
     const agentText = activities.find((activity) => activity.type === 'agent.text');
     assert.equal(agentText?.payload?.['text'], 'channel reply delivered');
+    assert.equal(activities.some((activity) => activity.type === 'runtime.output'), false);
     await runtime.close?.();
     runtime = undefined;
     });
