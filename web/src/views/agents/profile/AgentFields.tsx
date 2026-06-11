@@ -482,7 +482,7 @@ export function ProviderInlineRow({
           {hasDraftTransport && (
             <div className="max-w-xl font-sans text-[11px] leading-snug text-text-muted">
               Standard mode uses Anima's existing Claude Code CLI integration. Interactive session
-              keeps Claude Code open between turns and sends replies through Anima.
+              runs Claude Code interactively for each turn and sends replies back through Anima.
             </div>
           )}
           {draftProviderUnavailableHint && (
