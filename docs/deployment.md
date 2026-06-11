@@ -53,14 +53,16 @@ npx -y @meetquinn/animactl@latest status
 npx -y @meetquinn/animactl@latest stop
 ```
 
-The curl installer is a bootstrap convenience for first-run stable installs. It checks for Node/npm,
-then runs the `latest` npm dist-tag for `@meetquinn/animactl`. `start` is the first-run path, or for
-starting stopped services. On an interactive desktop it launches the dashboard automatically; use
-`--no-browser` for headless scripts. `dashboard` launches the current home's dashboard without
-starting services. `restart` is the command-line upgrade path: it installs the package version
-selected by `npx` into `~/.anima/runtime/current`, then restarts services with drain-and-resume.
-Docs use `@latest` explicitly because the installer does not add `animactl` to the user's `PATH`.
-Use `@canary` or an exact version suffix when you want a different target.
+The curl installer is a bootstrap convenience for stable installs. It checks for Node/npm, then runs
+the `latest` npm dist-tag for `@meetquinn/animactl`. `start` is the first-run path, or for starting
+stopped services. If `start` installs a newer managed runtime over an existing install, it promotes
+the service action to a drain-and-resume restart so already-running services do not keep serving the
+old version. On an interactive desktop it launches the dashboard automatically; use `--no-browser`
+for headless scripts. `dashboard` launches the current home's dashboard without starting services.
+`restart` is the explicit command-line upgrade path: it installs the package version selected by
+`npx` into `~/.anima/runtime/current`, then restarts services with drain-and-resume. Docs use
+`@latest` explicitly because the installer does not add `animactl` to the user's `PATH`. Use
+`@canary` or an exact version suffix when you want a different target.
 
 The admin CLI exposes the lower-level runtime status/install commands:
 

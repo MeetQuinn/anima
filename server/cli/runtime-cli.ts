@@ -44,6 +44,14 @@ interface RuntimeCliOptions {
 
 type ServiceCommand = 'restart' | 'start' | 'status' | 'stop';
 
+interface RuntimeInstallForServiceResult {
+  paths: RuntimeStatus['paths'];
+  previousInstalled: boolean;
+  previousVersion?: string;
+  runtimeChanged: boolean;
+  version: string;
+}
+
 export function registerRuntimeCommand(program: Command): void {
   const runtime = program
     .command('runtime')
@@ -268,9 +276,8 @@ async function runManagedServiceCommand(command: ServiceCommand, options: Runtim
     ? undefined
     : await readManagedRuntimeStatus({ packageName, runtimeDir: options.runtimeDir });
 
-  const paths = shouldInstall
-    ? (await installRuntimeForService(options)).paths
-    : status?.paths;
+  const install = shouldInstall ? await installRuntimeForService(options) : undefined;
+  const paths = install?.paths ?? status?.paths;
   if (!paths) throw new Error('Unable to resolve managed runtime paths.');
 
   if (!shouldInstall) {
@@ -281,7 +288,14 @@ async function runManagedServiceCommand(command: ServiceCommand, options: Runtim
     }
   }
 
-  const exitCode = await runAnimactlServices(paths.animactlScript, paths.packageDir, command, options);
+  const serviceAction = serviceCommandAfterRuntimeInstall(command, install);
+  if (serviceAction !== command) {
+    console.log(
+      `runtime: ${install?.previousVersion ?? 'previous'} -> ${install?.version ?? 'current'}; restarting running services to apply upgrade`,
+    );
+  }
+
+  const exitCode = await runAnimactlServices(paths.animactlScript, paths.packageDir, serviceAction, options);
   if (exitCode !== 0) {
     process.exitCode = exitCode;
     return;
@@ -290,8 +304,12 @@ async function runManagedServiceCommand(command: ServiceCommand, options: Runtim
   await handleDashboardAfterServiceCommand(command, options);
 }
 
-async function installRuntimeForService(options: RuntimeCliOptions): Promise<{ paths: RuntimeStatus['paths'] }> {
+async function installRuntimeForService(options: RuntimeCliOptions): Promise<RuntimeInstallForServiceResult> {
   const current = await currentRuntimePackageInfo();
+  const previous = await readManagedRuntimeStatus({
+    packageName: options.packageName ?? current.name,
+    runtimeDir: options.runtimeDir,
+  });
   const result = await ensureManagedRuntime(runtimeInstallOptions({
     ...options,
     packageName: options.packageName ?? current.name,
@@ -301,7 +319,22 @@ async function installRuntimeForService(options: RuntimeCliOptions): Promise<{ p
   const action = result.installed ? 'installed' : 'using';
   console.log(`runtime: ${action} ${result.metadata.packageName}@${result.metadata.version}`);
   console.log(`dir: ${result.paths.runtimeDir}`);
-  return { paths: result.paths };
+  return {
+    paths: result.paths,
+    previousInstalled: previous.installed,
+    previousVersion: previous.version,
+    runtimeChanged: previous.version !== undefined && previous.version !== result.metadata.version,
+    version: result.metadata.version,
+  };
+}
+
+export function serviceCommandAfterRuntimeInstall(
+  command: ServiceCommand,
+  install: Pick<RuntimeInstallForServiceResult, 'previousInstalled' | 'runtimeChanged'> | undefined,
+): ServiceCommand {
+  if (command !== 'start') return command;
+  if (!install?.previousInstalled) return 'start';
+  return install.runtimeChanged ? 'restart' : 'start';
 }
 
 async function runDashboardCommand(): Promise<void> {
