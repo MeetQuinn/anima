@@ -212,11 +212,10 @@ class ClaudeChannelController {
     if (this.currentInput === input) this.currentInput = undefined;
   }
 
-  async acceptOutput(stream: 'stderr' | 'stdout', chunk: string): Promise<void> {
+  async acceptOutput(_stream: 'stderr' | 'stdout', _chunk: string): Promise<void> {
     const input = this.currentInput;
     if (!input) return;
     input.onActivity?.();
-    await input.effects.recordOutput(stream, chunk);
   }
 
   async waitForReply(signal: AbortSignal | undefined): Promise<ClaudeChannelNotifyResult> {
