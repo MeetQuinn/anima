@@ -2379,6 +2379,56 @@ test('message send can target a Feishu chat explicitly', async () => {
   }
 });
 
+test('message send to explicit Feishu chat does not inherit active DM labels', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-explicit-chat-label-test-'));
+  const previousItemId = process.env.ANIMA_INBOX_ITEM_ID;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir);
+      const now = '2026-06-02T14:20:00.000Z';
+      await new WakeQueueService('scout').enqueue({
+        chatId: 'oc_dm_chat',
+        chatType: 'p2p',
+        handling: { createdAt: now, queuedAt: now, status: 'queued', updatedAt: now },
+        id: 'feishu:tenant_test:oc_dm_chat:om_dm_message',
+        kind: 'feishu',
+        messageId: 'om_dm_message',
+        receivedAt: now,
+        tenantKey: 'tenant_test',
+        text: 'create a group',
+      });
+      process.env.ANIMA_INBOX_ITEM_ID = 'feishu:tenant_test:oc_dm_chat:om_dm_message';
+
+      await runMessageSend(
+        { agent: 'scout', channel: 'oc_new_group', text: 'hello group' },
+        {
+          createFeishuMessageClient() {
+            return testFeishuMessageClient({
+              async sendPost(input) {
+                assert.equal(input.receiveId, 'oc_new_group');
+                assert.equal(input.receiveIdType, 'chat_id');
+                return { chatId: 'oc_new_group', messageId: 'om_sent' };
+              },
+            });
+          },
+        },
+      );
+
+      const completed = allActivities(await loadState()).at(-1);
+      assert.equal(completed?.type, 'external.effect.completed');
+      assert.equal(completed?.payload?.['effect'], 'feishu.message.send');
+      assert.equal(completed?.payload?.['receiveId'], 'oc_new_group');
+      assert.equal(completed?.payload?.['receiveIdType'], 'chat_id');
+      assert.equal(completed?.payload?.['channelDisplayName'], 'Feishu chat');
+      assert.equal(completed?.payload?.['channelKind'], undefined);
+    });
+  } finally {
+    if (previousItemId === undefined) delete process.env.ANIMA_INBOX_ITEM_ID;
+    else process.env.ANIMA_INBOX_ITEM_ID = previousItemId;
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('message update can edit a Feishu message explicitly', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-message-update-test-'));
   const updates: FeishuPostUpdateInput[] = [];
