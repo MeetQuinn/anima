@@ -14,6 +14,7 @@ import { errorMessage, nowIso } from '../ids.js';
 import { WakeQueueService, type InboxItem } from '../inbox/wake-queue.service.js';
 import { createAgentRuntime } from '../providers/factory.js';
 import type { AgentProviderConfig } from '../providers/contract.js';
+import { isRestartDrainActive } from '../services/restart-drain.js';
 import { cacheDelete } from '../storage/json-file.js';
 import {
   FEISHU_OPEN_API_BASE_URL,
@@ -163,7 +164,8 @@ export class RuntimeHost {
     });
     const handles = [...this.agentHandles.values()].map((record) => record.handle);
     this.agentHandles.clear();
-    await Promise.allSettled(handles.map((handle) => handle.stop()));
+    const stopOptions = await this.shutdownStopOptions();
+    await Promise.allSettled(handles.map((handle) => handle.stop(stopOptions)));
   }
 
   async reconcileOnce(): Promise<void> {
@@ -624,6 +626,15 @@ export class RuntimeHost {
   private closeRestartCommandWatcher(): void {
     this.restartCommandWatcher?.close();
     this.restartCommandWatcher = undefined;
+  }
+
+  private async shutdownStopOptions(): Promise<Parameters<RunningAgentHandle['stop']>[0]> {
+    const restartDrainActive = await isRestartDrainActive().catch(() => false);
+    if (!restartDrainActive) return undefined;
+    return {
+      abortReason: 'restart_drain',
+      forceAfterMs: this.forceRestartTimeoutMs,
+    };
   }
 }
 

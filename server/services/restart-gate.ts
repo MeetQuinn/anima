@@ -58,11 +58,13 @@ export async function waitForRestartDrain(input: {
   continueOnTimeout?: boolean;
   drainTimeoutMs?: number;
   markerTtlMs?: number;
+  onInitialRunning?: (blockers: RestartBlocker[]) => void;
 } = {}): Promise<RestartDrainResult> {
   const drainTimeoutMs = input.drainTimeoutMs ?? DEFAULT_RESTART_DRAIN_TIMEOUT_MS;
   const startedAt = Date.now();
   await requestRestartDrain(input.markerTtlMs ?? drainTimeoutMs + 60_000);
   const initialRunning = await listRestartBlockers({ statuses: ['running'] });
+  input.onInitialRunning?.(initialRunning);
   if (initialRunning.length === 0) {
     return { fallbackToIdle: true, mode: 'drain-active', requestedCount: 0, resumedCount: 0, status: 'succeeded' };
   }
@@ -138,7 +140,24 @@ export async function listRestartBlockers(options: {
   );
 }
 
-async function countRequeuedItems(blockers: RestartBlocker[]): Promise<number> {
+export async function recoverInterruptedRestartItems(blockers: RestartBlocker[]): Promise<number> {
+  let count = 0;
+  await Promise.all(blockers.map(async ({ agentId, item }) => {
+    const queue = new WakeQueueService(agentId);
+    const current = await queue.find(item.id).catch(() => undefined);
+    if (!current || current.handling.status === 'completed') return;
+    if (current.handling.status === 'queued' && !current.handling.drainRequestedAt) {
+      count += 1;
+      return;
+    }
+    if (!current.handling.drainRequestedAt) return;
+    await queue.requeue(current.id, { resumeReason: 'runtime_restart' });
+    count += 1;
+  }));
+  return count;
+}
+
+export async function countRequeuedItems(blockers: RestartBlocker[]): Promise<number> {
   let count = 0;
   await Promise.all(blockers.map(async ({ agentId, item }) => {
     const current = await new WakeQueueService(agentId).find(item.id).catch(() => undefined);

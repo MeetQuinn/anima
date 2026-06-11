@@ -425,15 +425,10 @@ test('services restart drain mode continues after timeout and leaves running ite
         status?: string;
       };
     }>;
-    assert.match(inbox['item_running']?.handling?.status ?? '', /^(queued|running)$/);
-    if (inbox['item_running']?.handling?.status === 'queued') {
-      assert.equal(inbox['item_running']?.handling?.resumeReason, 'runtime_restart');
-      assert.equal(inbox['item_running']?.handling?.drainRequestedAt, undefined);
-      assert.equal(inbox['item_running']?.handling?.drainTimeoutMs, undefined);
-    } else {
-      assert.ok(inbox['item_running']?.handling?.drainRequestedAt);
-      assert.equal(inbox['item_running']?.handling?.drainTimeoutMs, 0);
-    }
+    assert.equal(inbox['item_running']?.handling?.status, 'queued');
+    assert.equal(inbox['item_running']?.handling?.resumeReason, 'runtime_restart');
+    assert.equal(inbox['item_running']?.handling?.drainRequestedAt, undefined);
+    assert.equal(inbox['item_running']?.handling?.drainTimeoutMs, undefined);
     const result = JSON.parse(await readFile(resultPath, 'utf8')) as {
       interruptedCount?: number;
       requestedCount?: number;
@@ -442,7 +437,7 @@ test('services restart drain mode continues after timeout and leaves running ite
     };
     assert.equal(result.status, 'succeeded');
     assert.equal(result.requestedCount, 1);
-    assert.equal(result.resumedCount, 0);
+    assert.equal(result.resumedCount, 1);
     assert.equal(result.interruptedCount, 1);
   } finally {
     for (const pid of childPids) {
