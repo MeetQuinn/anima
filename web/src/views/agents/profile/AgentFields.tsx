@@ -31,6 +31,7 @@ const CLAUDE_CODE_TRANSPORT_OPTIONS: Array<{
 }> = [
   { value: 'stream-json', label: 'Standard mode' },
   { value: 'channel', label: 'Interactive session' },
+  { value: 'tmux', label: 'Tmux session' },
 ];
 
 // ── InlineTextRow ─────────────────────────────────────────────────────────────
@@ -482,7 +483,8 @@ export function ProviderInlineRow({
           {hasDraftTransport && (
             <div className="max-w-xl font-sans text-[11px] leading-snug text-text-muted">
               Standard mode uses Anima's existing Claude Code CLI integration. Interactive session
-              runs Claude Code interactively for each turn and sends replies back through Anima.
+              runs Claude Code interactively for each turn. Tmux session keeps Claude Code running
+              in a tmux-backed terminal for steering across turns.
             </div>
           )}
           {draftProviderUnavailableHint && (
@@ -548,7 +550,7 @@ function defaultEffortForProvider(provider: ProviderCatalogEntry): string {
 }
 
 function isClaudeCodeTransport(value: string | null | undefined): value is ClaudeCodeTransport {
-  return value === 'stream-json' || value === 'channel';
+  return value === 'stream-json' || value === 'channel' || value === 'tmux';
 }
 
 function claudeCodeTransportLabel(value: ClaudeCodeTransport): string {

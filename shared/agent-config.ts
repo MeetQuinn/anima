@@ -16,7 +16,7 @@ import {
 } from './provider-catalog.js';
 
 export const PROVIDER_IDLE_TIMEOUT_MS_DEFAULT = 30 * 60 * 1000;
-export const ClaudeCodeTransport = z.enum(['stream-json', 'channel']);
+export const ClaudeCodeTransport = z.enum(['stream-json', 'channel', 'tmux']);
 export type ClaudeCodeTransport = z.infer<typeof ClaudeCodeTransport>;
 export const ANIMA_MANAGED_PROVIDER_ENV_KEYS = [
   'ANIMA_AGENT_ID',
@@ -112,7 +112,7 @@ const AgentProviderUpdateRequest = z.object({
   kind: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1).optional(),
   reasoningEffort: z.string().trim().min(1).optional(),
-  transport: z.enum(['stream-json', 'channel']).optional(),
+  transport: ClaudeCodeTransport.optional(),
 }).strict();
 
 export const AgentCreateRequest = z.object({
