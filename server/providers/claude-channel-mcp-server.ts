@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -7,6 +7,22 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 
 import { errorMessage, nowIso } from '../ids.js';
 import { runMessageSend } from '../tools/messages.js';
+
+interface CliArgs {
+  agentId: string;
+  channel?: string;
+  itemId?: string;
+  replyFile?: string;
+  targetFile?: string;
+  threadTs?: string;
+}
+
+interface ReplyTarget {
+  channel?: string;
+  itemId: string;
+  replyFile: string;
+  threadTs?: string;
+}
 
 const cli = parseArgs(process.argv.slice(2));
 
@@ -64,13 +80,14 @@ mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true,
     };
   }
-  if (itemId !== cli.itemId) {
+  const target = await replyTargetFor(itemId);
+  if (!target) {
     return {
       content: [{ type: 'text', text: `No active Anima notification for item_id ${itemId}` }],
       isError: true,
     };
   }
-  if (!cli.channel) {
+  if (!target.channel) {
     return {
       content: [{ type: 'text', text: `Anima item ${itemId} does not have a reply target` }],
       isError: true,
@@ -80,10 +97,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
     await runMessageSend(
       {
         agent: cli.agentId,
-        channel: cli.channel,
+        channel: target.channel,
         item: itemId,
         text,
-        ...(cli.threadTs ? { threadTs: cli.threadTs } : {}),
+        ...(target.threadTs ? { threadTs: target.threadTs } : {}),
       },
       {
         writeOutput(line) {
@@ -91,7 +108,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
         },
       },
     );
-    await writeReplyFile(cli.replyFile, { status: 'replied', text });
+    await writeReplyFile(target.replyFile, { status: 'replied', text });
     return {
       content: [{ type: 'text', text: `sent reply for ${itemId}` }],
     };
@@ -123,26 +140,22 @@ async function writeReplyFile(path: string, payload: Record<string, unknown>): P
   );
 }
 
-function parseArgs(args: string[]): {
-  agentId: string;
-  channel?: string;
-  itemId: string;
-  replyFile: string;
-  threadTs?: string;
-} {
+function parseArgs(args: string[]): CliArgs {
   const agentId = stringArg(args, '--agent-id');
   const channel = stringArg(args, '--channel');
   const itemId = stringArg(args, '--item-id');
   const replyFile = stringArg(args, '--reply-file');
+  const targetFile = stringArg(args, '--target-file');
   const threadTs = stringArg(args, '--thread-ts');
   if (!agentId) throw new Error('--agent-id is required');
-  if (!itemId) throw new Error('--item-id is required');
-  if (!replyFile) throw new Error('--reply-file is required');
+  if (!targetFile && !itemId) throw new Error('--item-id or --target-file is required');
+  if (!targetFile && !replyFile) throw new Error('--reply-file is required');
   return {
     agentId,
     ...(channel ? { channel } : {}),
-    itemId,
-    replyFile,
+    ...(itemId ? { itemId } : {}),
+    ...(replyFile ? { replyFile } : {}),
+    ...(targetFile ? { targetFile } : {}),
     ...(threadTs ? { threadTs } : {}),
   };
 }
@@ -152,4 +165,30 @@ function stringArg(args: string[], flag: string): string | undefined {
   if (index === -1) return undefined;
   const value = args[index + 1]?.trim();
   return value || undefined;
+}
+
+async function replyTargetFor(itemId: string): Promise<ReplyTarget | undefined> {
+  if (!cli.targetFile) {
+    if (!cli.itemId || !cli.replyFile) return undefined;
+    if (itemId !== cli.itemId) return undefined;
+    return {
+      itemId: cli.itemId,
+      replyFile: cli.replyFile,
+      ...(cli.channel ? { channel: cli.channel } : {}),
+      ...(cli.threadTs ? { threadTs: cli.threadTs } : {}),
+    };
+  }
+  const value: unknown = JSON.parse(await readFile(cli.targetFile, 'utf8'));
+  if (!isTargetRecord(value)) return undefined;
+  if (itemId !== value.itemId) return undefined;
+  return value;
+}
+
+function isTargetRecord(value: unknown): value is ReplyTarget {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.itemId === 'string'
+    && typeof record.replyFile === 'string'
+    && (record.channel === undefined || typeof record.channel === 'string')
+    && (record.threadTs === undefined || typeof record.threadTs === 'string');
 }
