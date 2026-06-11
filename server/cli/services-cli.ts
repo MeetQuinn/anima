@@ -12,8 +12,11 @@ import {
 import {
   DEFAULT_RESTART_DRAIN_TIMEOUT_MS,
   DEFAULT_RESTART_IDLE_TIMEOUT_MS,
+  countRequeuedItems,
   listRestartBlockers,
+  recoverInterruptedRestartItems,
   RestartBlockedError,
+  type RestartBlocker,
   type RestartDrainResult,
   restartBlockedError,
   waitForRestartDrain,
@@ -135,6 +138,7 @@ async function runRestart(opts: ServicesCliOptions): Promise<void> {
     gate = await prepareRestartGate(specs, opts);
     for (const spec of specs) await stopService(spec);
     stopped = true;
+    await refreshRestartGateResult(gate);
     await gate.beforeStart();
     for (const spec of specs) await startService(spec, supervisor);
     await printStatus(specs);
@@ -245,6 +249,7 @@ interface RestartGateLease {
   cleanup(): Promise<void>;
   drainResult?: RestartDrainResult;
   result: ServicesRestartResultDraft;
+  trackedItems?: RestartBlocker[];
 }
 
 async function prepareRestartGate(specs: ServiceSpec[], opts: ServicesCliOptions): Promise<RestartGateLease> {
@@ -257,16 +262,21 @@ async function prepareRestartGate(specs: ServiceSpec[], opts: ServicesCliOptions
   if (!agentSpec || opts.force || !(await isServiceRunning(agentSpec))) return noop;
 
   if (opts.drainActive || opts.resumeRunning) {
+    let trackedItems: RestartBlocker[] = [];
     const drainResult = await waitForRestartDrain({
       continueOnTimeout: true,
       drainTimeoutMs: opts.drainTimeoutMs ?? DEFAULT_RESTART_DRAIN_TIMEOUT_MS,
       markerTtlMs: (opts.drainTimeoutMs ?? DEFAULT_RESTART_DRAIN_TIMEOUT_MS) + 60_000,
+      onInitialRunning: (blockers) => {
+        trackedItems = blockers;
+      },
     });
     return {
       beforeStart: clearRestartDrain,
       cleanup: clearRestartDrain,
       drainResult,
       result: drainResult,
+      trackedItems,
     };
   }
 
@@ -277,6 +287,18 @@ async function prepareRestartGate(specs: ServiceSpec[], opts: ServicesCliOptions
     throw restartBlockedError(finalBlockers, 'Agents became busy before restart.', 'became_busy');
   }
   return noop;
+}
+
+async function refreshRestartGateResult(gate: RestartGateLease | undefined): Promise<void> {
+  if (!gate?.drainResult || !gate.trackedItems?.length) return;
+  await recoverInterruptedRestartItems(gate.trackedItems);
+  const resumedCount = await countRequeuedItems(gate.trackedItems);
+  if (resumedCount <= gate.drainResult.resumedCount) return;
+  gate.drainResult = {
+    ...gate.drainResult,
+    resumedCount,
+  };
+  gate.result = gate.drainResult;
 }
 
 function validateRestartDrainOptions(opts: ServicesCliOptions): void {

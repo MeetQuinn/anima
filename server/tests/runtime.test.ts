@@ -13,6 +13,7 @@ import { activityServiceForAgent } from '../activities/activity.service.js';
 import { isFirstClassAnimaCliCommand } from '../activities/format.js';
 import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
 import { startChildProcess, terminateChildProcess } from '../providers/child-process.js';
+import { clearRestartDrain, requestRestartDrain } from '../services/restart-drain.js';
 import { AgentHealthStore } from '../runtime/agent-health.store.js';
 import { AgentRestartCommandStore } from '../runtime/agent-restart-command.store.js';
 import { managedProviderEnvForAgent, RuntimeHost, type RunningAgentHandle } from '../runtime/host.js';
@@ -280,6 +281,35 @@ test('runtime host bounds idle config reload shutdown with a force timeout', asy
   assert.deepEqual(stopOptions[0], { drainActive: true, forceAfterMs: 123 });
 
   await host.stop();
+});
+
+test('runtime host uses restart-drain aborts while the restart drain marker is active', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-restart-drain-stop-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await requestRestartDrain(60_000);
+      const stopOptions: Array<Parameters<RunningAgentHandle['stop']>[0]> = [];
+      const host = new RuntimeHost({}, {
+        animaHome: stateDir,
+        forceRestartTimeoutMs: 123,
+        loadAgents: async () => [runtimeHostAgent('scout', { connected: true })],
+        logger: silentLogger,
+        startAgent: async (agent) => stopHandle(agent.id, [], undefined, (options) => {
+          stopOptions.push(options);
+        }),
+        validateAgent: async () => {},
+      });
+
+      await host.reconcileOnce();
+      await host.stop();
+
+      assert.deepEqual(stopOptions, [{ abortReason: 'restart_drain', forceAfterMs: 123 }]);
+      await clearRestartDrain();
+    });
+  } finally {
+    await withAnimaHome(stateDir, async () => clearRestartDrain().catch(() => undefined));
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 test('runtime host stops a running agent after it becomes disabled', async () => {
