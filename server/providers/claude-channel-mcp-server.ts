@@ -1,4 +1,3 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
@@ -9,24 +8,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { errorMessage, nowIso } from '../ids.js';
 import { runMessageSend } from '../tools/messages.js';
 
-interface PendingNotification {
-  channel?: string;
-  itemId: string;
-  response: ServerResponse;
-  threadTs?: string;
-}
-
-interface NotifyRequest {
-  channel?: string;
-  itemId?: string;
-  platform?: string;
-  prompt?: string;
-  threadTs?: string;
-}
-
-const agentId = requiredEnv('ANIMA_AGENT_ID');
-const stateFile = requiredEnv('ANIMA_CLAUDE_CHANNEL_STATE_FILE');
-const pendingByItemId = new Map<string, PendingNotification>();
+const cli = parseArgs(process.argv.slice(2));
 
 const mcp = new Server(
   { name: 'anima', version: '0.1.0' },
@@ -82,14 +64,13 @@ mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true,
     };
   }
-  const pending = pendingByItemId.get(itemId);
-  if (!pending) {
+  if (itemId !== cli.itemId) {
     return {
       content: [{ type: 'text', text: `No active Anima notification for item_id ${itemId}` }],
       isError: true,
     };
   }
-  if (!pending.channel) {
+  if (!cli.channel) {
     return {
       content: [{ type: 'text', text: `Anima item ${itemId} does not have a reply target` }],
       isError: true,
@@ -98,11 +79,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     await runMessageSend(
       {
-        agent: agentId,
-        channel: pending.channel,
+        agent: cli.agentId,
+        channel: cli.channel,
         item: itemId,
         text,
-        ...(pending.threadTs ? { threadTs: pending.threadTs } : {}),
+        ...(cli.threadTs ? { threadTs: cli.threadTs } : {}),
       },
       {
         writeOutput(line) {
@@ -110,7 +91,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
         },
       },
     );
-    completePending(pending, { status: 'replied', text });
+    await writeReplyFile(cli.replyFile, { status: 'replied', text });
     return {
       content: [{ type: 'text', text: `sent reply for ${itemId}` }],
     };
@@ -124,116 +105,51 @@ mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 await mcp.connect(new StdioServerTransport());
 
-const httpServer = createServer((request, response) => {
-  void handleHttpRequest(request, response).catch((error: unknown) => {
-    sendJson(response, 500, { error: errorMessage(error) });
-  });
-});
-
-httpServer.listen(0, '127.0.0.1', async () => {
-  const address = httpServer.address();
-  if (!address || typeof address === 'string') {
-    process.stderr.write('[anima-channel] failed to determine HTTP listener address\n');
-    process.exit(1);
-  }
-  await mkdir(dirname(stateFile), { recursive: true });
-  await writeFile(
-    stateFile,
-    `${JSON.stringify({
-      host: '127.0.0.1',
-      pid: process.pid,
-      port: address.port,
-      startedAt: nowIso(),
-    })}\n`,
-    'utf8',
-  );
-  process.stderr.write(`[anima-channel] listening on 127.0.0.1:${address.port}\n`);
-});
-
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    httpServer.close();
     process.exit(0);
   });
 }
 
-async function handleHttpRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
-  const url = new URL(request.url ?? '/', 'http://127.0.0.1');
-  if (request.method === 'GET' && url.pathname === '/health') {
-    sendJson(response, 200, { ok: true, pending: pendingByItemId.size });
-    return;
-  }
-  if (request.method !== 'POST' || url.pathname !== '/notify') {
-    sendJson(response, 404, { error: 'not found' });
-    return;
-  }
+async function writeReplyFile(path: string, payload: Record<string, unknown>): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(
+    path,
+    `${JSON.stringify({
+      ...payload,
+      repliedAt: nowIso(),
+    })}\n`,
+    'utf8',
+  );
+}
 
-  const body = await readJsonBody(request) as NotifyRequest;
-  const itemId = body.itemId?.trim();
-  const prompt = body.prompt?.trim();
-  if (!itemId || !prompt) {
-    sendJson(response, 400, { error: 'itemId and prompt are required' });
-    return;
-  }
-  if (pendingByItemId.has(itemId)) {
-    sendJson(response, 409, { error: `item ${itemId} is already pending` });
-    return;
-  }
-  const pending: PendingNotification = {
+function parseArgs(args: string[]): {
+  agentId: string;
+  channel?: string;
+  itemId: string;
+  replyFile: string;
+  threadTs?: string;
+} {
+  const agentId = stringArg(args, '--agent-id');
+  const channel = stringArg(args, '--channel');
+  const itemId = stringArg(args, '--item-id');
+  const replyFile = stringArg(args, '--reply-file');
+  const threadTs = stringArg(args, '--thread-ts');
+  if (!agentId) throw new Error('--agent-id is required');
+  if (!itemId) throw new Error('--item-id is required');
+  if (!replyFile) throw new Error('--reply-file is required');
+  return {
+    agentId,
+    ...(channel ? { channel } : {}),
     itemId,
-    response,
-    ...(body.channel ? { channel: body.channel } : {}),
-    ...(body.threadTs ? { threadTs: body.threadTs } : {}),
+    replyFile,
+    ...(threadTs ? { threadTs } : {}),
   };
-  pendingByItemId.set(itemId, pending);
-  response.on('close', () => {
-    if (!response.writableEnded) pendingByItemId.delete(itemId);
-  });
-  await mcp.notification({
-    method: 'notifications/claude/channel',
-    params: {
-      content: prompt,
-      meta: {
-        item_id: itemId,
-        ...(body.channel ? { channel: body.channel } : {}),
-        ...(body.platform ? { platform: body.platform } : {}),
-        ...(body.threadTs ? { thread_ts: body.threadTs } : {}),
-      },
-    },
-  });
 }
 
-function completePending(pending: PendingNotification, payload: Record<string, unknown>): void {
-  pendingByItemId.delete(pending.itemId);
-  sendJson(pending.response, 200, payload);
-}
-
-function sendJson(response: ServerResponse, status: number, payload: Record<string, unknown>): void {
-  if (response.writableEnded) return;
-  response.writeHead(status, { 'content-type': 'application/json' });
-  response.end(`${JSON.stringify(payload)}\n`);
-}
-
-function readJsonBody(request: IncomingMessage): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    request.on('data', (chunk: Buffer | string) => {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    });
-    request.on('error', reject);
-    request.on('end', () => {
-      try {
-        const text = Buffer.concat(chunks).toString('utf8');
-        resolve(text ? JSON.parse(text) : {});
-      } catch (error) {
-        reject(error);
-      }
-    });
-  });
-}
-
-function requiredEnv(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) throw new Error(`${name} is required`);
-  return value;
+function stringArg(args: string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  if (index === -1) return undefined;
+  const value = args[index + 1]?.trim();
+  return value || undefined;
 }
