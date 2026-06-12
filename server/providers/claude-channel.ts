@@ -24,13 +24,13 @@ import {
 } from './contract.js';
 
 const CLAUDE_COMMAND = 'claude';
-const CHANNEL_REPLY_POLL_INTERVAL_MS = 100;
+const CHANNEL_COMPLETION_POLL_INTERVAL_MS = 100;
 const CHANNEL_PLUGIN_NAME = 'anima-channel';
 const CLAUDE_CHANNEL_DEFAULT_ENV = {
   CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW),
 };
 
-interface ClaudeChannelNotifyResult {
+interface ClaudeChannelCompletionResult {
   text?: string;
 }
 
@@ -95,11 +95,11 @@ export class ClaudeCodeChannelAgentRuntime implements AgentRuntime {
     if (!this.activeRun.accepts(input)) return;
   }
 
-  private async runTurn(input: AgentRuntimeInput): Promise<ClaudeChannelNotifyResult> {
+  private async runTurn(input: AgentRuntimeInput): Promise<ClaudeChannelCompletionResult> {
     const controller = await this.startController(input);
     controller.setCurrentInput(input);
     try {
-      return await controller.waitForReply(input.signal);
+      return await controller.waitForCompletion(input.signal);
     } finally {
       controller.clearCurrentInput(input);
       if (this.controller === controller) this.controller = undefined;
@@ -110,7 +110,7 @@ export class ClaudeCodeChannelAgentRuntime implements AgentRuntime {
   private async startController(input: AgentRuntimeInput): Promise<ClaudeChannelController> {
     const systemPromptFilePath = await writeSystemPromptFile(input);
     const channelFiles = await writeChannelFiles(input);
-    await rm(channelFiles.replyFile, { force: true });
+    await rm(channelFiles.completionFile, { force: true });
     let controller!: ClaudeChannelController;
     const launch = claudePtyLaunch(this.claudeArgs(
       channelFiles.mcpConfigFile,
@@ -132,7 +132,7 @@ export class ClaudeCodeChannelAgentRuntime implements AgentRuntime {
         signal: input.signal,
         stdin: 'ignore',
       }),
-      replyFile: channelFiles.replyFile,
+      completionFile: channelFiles.completionFile,
     });
     this.controller = controller;
     watchProviderCompletion(controller.completion, () => {
@@ -176,7 +176,7 @@ export class ClaudeCodeChannelAgentRuntime implements AgentRuntime {
 class ClaudeChannelController {
   private currentInput?: AgentRuntimeInput;
 
-  constructor(private readonly input: { child: RunningChildProcess; replyFile: string }) {}
+  constructor(private readonly input: { child: RunningChildProcess; completionFile: string }) {}
 
   get completion(): Promise<{ stdout: string; stderr: string }> {
     return this.input.child.completion;
@@ -204,18 +204,18 @@ class ClaudeChannelController {
     input.onActivity?.();
   }
 
-  async waitForReply(signal: AbortSignal | undefined): Promise<ClaudeChannelNotifyResult> {
+  async waitForCompletion(signal: AbortSignal | undefined): Promise<ClaudeChannelCompletionResult> {
     for (;;) {
       if (signal?.aborted) throw new Error('Claude Code channel turn aborted');
-      const parsed = await readReplyFile(this.input.replyFile).catch(() => undefined);
+      const parsed = await readCompletionFile(this.input.completionFile).catch(() => undefined);
       if (parsed) return parsed;
       await Promise.race([
-        sleep(CHANNEL_REPLY_POLL_INTERVAL_MS),
+        sleep(CHANNEL_COMPLETION_POLL_INTERVAL_MS),
         this.input.child.completion.then(
           async () => {
-            const settledReply = await readReplyFile(this.input.replyFile).catch(() => undefined);
-            if (settledReply) return;
-            throw new Error('Claude Code channel runtime exited before sending a reply');
+            const settledCompletion = await readCompletionFile(this.input.completionFile).catch(() => undefined);
+            if (settledCompletion) return;
+            throw new Error('Claude Code channel runtime exited before completing the turn');
           },
           (error: unknown) => {
             throw error;
@@ -237,20 +237,20 @@ async function writeChannelFiles(
   input: AgentRuntimeInput,
 ): Promise<{
   mcpConfigFile: string;
-  replyFile: string;
+  completionFile: string;
 }> {
   const agentId = input.env.ANIMA_AGENT_ID;
   if (!agentId) throw new Error('ANIMA_AGENT_ID is required for Claude Code channel runtime');
   const animaHome = input.env.ANIMA_HOME || resolveAnimaHome();
   const root = join(animaHome, 'run', 'agents', agentId, CHANNEL_PLUGIN_NAME);
   const mcpConfigFile = join(root, 'mcp.json');
-  const replyFile = join(root, 'reply.json');
+  const completionFile = join(root, 'completion.json');
   const serverEntry = fileURLToPath(new URL('./claude-channel-mcp-server.js', import.meta.url));
   const serverArgs = [
     serverEntry,
     '--agent-id', agentId,
     '--item-id', input.itemId,
-    '--reply-file', replyFile,
+    '--completion-file', completionFile,
   ];
   await mkdir(root, { recursive: true });
   await writeFile(
@@ -265,10 +265,10 @@ async function writeChannelFiles(
     }, null, 2)}\n`,
     'utf8',
   );
-  return { mcpConfigFile, replyFile };
+  return { mcpConfigFile, completionFile };
 }
 
-async function readReplyFile(path: string): Promise<ClaudeChannelNotifyResult | undefined> {
+async function readCompletionFile(path: string): Promise<ClaudeChannelCompletionResult | undefined> {
   const value: unknown = JSON.parse(await readFile(path, 'utf8'));
   if (!isRecord(value)) return undefined;
   return { text: stringField(value, 'text') };

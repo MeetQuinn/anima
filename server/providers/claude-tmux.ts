@@ -27,14 +27,14 @@ const CLAUDE_COMMAND = "claude";
 const CLAUDE_TMUX_DEFAULT_ENV = {
   CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW),
 };
-const TMUX_REPLY_POLL_INTERVAL_MS = 250;
+const TMUX_COMPLETION_POLL_INTERVAL_MS = 250;
 const TMUX_READY_POLL_INTERVAL_MS = 500;
 const TMUX_READY_TIMEOUT_MS = 30_000;
 const TMUX_TURN_TIMEOUT_MS = 10 * 60 * 1000;
 const TMUX_TRANSPORT_NAME = "tmux";
 const TMUX_SESSION_PROTOCOL = "cli-complete-v1";
 
-interface ClaudeTmuxReplyResult {
+interface ClaudeTmuxCompletionResult {
   text?: string;
 }
 
@@ -200,17 +200,17 @@ export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
   private async runTurn(
     input: AgentRuntimeInput,
     session: TmuxSession,
-  ): Promise<ClaudeTmuxReplyResult> {
-    const replyFile = join(
+  ): Promise<ClaudeTmuxCompletionResult> {
+    const completionFile = join(
       dirname(session.targetFile),
-      `reply-${safeName(input.itemId)}.json`,
+      `completion-${safeName(input.itemId)}.json`,
     );
     await writeTargetFile(session.targetFile, {
       active: true,
+      completionFile,
       itemId: input.itemId,
-      replyFile,
     });
-    await rm(replyFile, { force: true });
+    await rm(completionFile, { force: true });
     try {
       await waitForTmuxReady(session, input);
       await sendTmuxPrompt({
@@ -219,7 +219,7 @@ export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
         session: session.name,
         workDir: dirname(session.targetFile),
       });
-      return await waitForReplyFile(replyFile, input);
+      return await waitForCompletionFile(completionFile, input);
     } finally {
       await clearTargetFile(session.targetFile);
     }
@@ -303,8 +303,8 @@ async function writeTargetFile(
   target: {
     active: true;
     channel?: string;
+    completionFile: string;
     itemId: string;
-    replyFile: string;
     threadTs?: string;
   },
 ): Promise<void> {
@@ -428,24 +428,24 @@ async function waitForTmuxReady(
   );
 }
 
-async function waitForReplyFile(
+async function waitForCompletionFile(
   path: string,
   input: AgentRuntimeInput,
-): Promise<ClaudeTmuxReplyResult> {
+): Promise<ClaudeTmuxCompletionResult> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < TMUX_TURN_TIMEOUT_MS) {
     if (input.signal?.aborted) throw new Error("Claude Code tmux turn aborted");
     input.onActivity?.();
-    const parsed = await readReplyFile(path).catch(() => undefined);
+    const parsed = await readCompletionFile(path).catch(() => undefined);
     if (parsed) return parsed;
-    await sleep(TMUX_REPLY_POLL_INTERVAL_MS);
+    await sleep(TMUX_COMPLETION_POLL_INTERVAL_MS);
   }
-  throw new Error("Claude Code tmux turn timed out before sending a reply");
+  throw new Error("Claude Code tmux turn timed out before completing");
 }
 
-async function readReplyFile(
+async function readCompletionFile(
   path: string,
-): Promise<ClaudeTmuxReplyResult | undefined> {
+): Promise<ClaudeTmuxCompletionResult | undefined> {
   const value: unknown = JSON.parse(await readFile(path, "utf8"));
   if (!isRecord(value)) return undefined;
   return { text: stringField(value, "text") };

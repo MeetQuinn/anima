@@ -9,14 +9,14 @@ import { errorMessage, nowIso } from '../ids.js';
 
 interface CliArgs {
   agentId: string;
+  completionFile?: string;
   itemId?: string;
-  replyFile?: string;
   targetFile?: string;
 }
 
 interface CompletionTarget {
+  completionFile: string;
   itemId: string;
-  replyFile: string;
 }
 
 const cli = parseArgs(process.argv.slice(2));
@@ -85,7 +85,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
   }
   try {
-    await writeReplyFile(target.replyFile, {
+    await writeCompletionFile(target.completionFile, {
       status: 'completed',
       ...(text ? { text } : {}),
     });
@@ -108,13 +108,13 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   });
 }
 
-async function writeReplyFile(path: string, payload: Record<string, unknown>): Promise<void> {
+async function writeCompletionFile(path: string, payload: Record<string, unknown>): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(
     path,
     `${JSON.stringify({
       ...payload,
-      repliedAt: nowIso(),
+      completedAt: nowIso(),
     })}\n`,
     'utf8',
   );
@@ -122,16 +122,16 @@ async function writeReplyFile(path: string, payload: Record<string, unknown>): P
 
 function parseArgs(args: string[]): CliArgs {
   const agentId = stringArg(args, '--agent-id');
+  const completionFile = stringArg(args, '--completion-file');
   const itemId = stringArg(args, '--item-id');
-  const replyFile = stringArg(args, '--reply-file');
   const targetFile = stringArg(args, '--target-file');
   if (!agentId) throw new Error('--agent-id is required');
   if (!targetFile && !itemId) throw new Error('--item-id or --target-file is required');
-  if (!targetFile && !replyFile) throw new Error('--reply-file is required');
+  if (!targetFile && !completionFile) throw new Error('--completion-file is required');
   return {
     agentId,
+    ...(completionFile ? { completionFile } : {}),
     ...(itemId ? { itemId } : {}),
-    ...(replyFile ? { replyFile } : {}),
     ...(targetFile ? { targetFile } : {}),
   };
 }
@@ -145,11 +145,11 @@ function stringArg(args: string[], flag: string): string | undefined {
 
 async function completionTargetFor(itemId: string): Promise<CompletionTarget | undefined> {
   if (!cli.targetFile) {
-    if (!cli.itemId || !cli.replyFile) return undefined;
+    if (!cli.completionFile || !cli.itemId) return undefined;
     if (itemId !== cli.itemId) return undefined;
     return {
+      completionFile: cli.completionFile,
       itemId: cli.itemId,
-      replyFile: cli.replyFile,
     };
   }
   const value: unknown = await readTargetFile(cli.targetFile);
@@ -169,7 +169,9 @@ async function readTargetFile(path: string): Promise<unknown> {
 function isTargetRecord(value: unknown): value is CompletionTarget {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
-  return record.active === true
-    && typeof record.itemId === 'string'
-    && typeof record.replyFile === 'string';
+  return (
+    record.active === true &&
+    typeof record.completionFile === 'string' &&
+    typeof record.itemId === 'string'
+  );
 }

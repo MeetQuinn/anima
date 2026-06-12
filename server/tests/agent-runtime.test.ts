@@ -889,8 +889,8 @@ test('claude-code channel transport launches an interactive prompt and completes
         "if (!mcpArgs[mcpArgs.indexOf('--item-id') + 1]) fail(49, `missing item id args: ${JSON.stringify(mcpArgs)}`);",
         "if (mcpArgs.includes('--channel')) fail(54, `unexpected channel args: ${JSON.stringify(mcpArgs)}`);",
         "if (mcpArgs.includes('--thread-ts')) fail(56, `unexpected thread args: ${JSON.stringify(mcpArgs)}`);",
-        "const replyFile = mcpArgs[mcpArgs.indexOf('--reply-file') + 1];",
-        "if (!replyFile) fail(55, `missing reply file args: ${JSON.stringify(mcpArgs)}`);",
+        "const completionFile = mcpArgs[mcpArgs.indexOf('--completion-file') + 1];",
+        "if (!completionFile) fail(55, `missing completion file args: ${JSON.stringify(mcpArgs)}`);",
         "const prompt = argv.at(-1) || '';",
         "if (prompt.includes('mcp__anima__reply')) fail(50, 'unexpected reply tool instruction');",
         "if (!prompt.includes('mcp__anima__complete')) fail(57, 'missing complete tool instruction');",
@@ -900,8 +900,8 @@ test('claude-code channel transport launches an interactive prompt and completes
         "if (!prompt.includes('What did I ask over channel?')) fail(53, 'missing message text');",
         "process.stdout.write('\\x1b[2D\\r* thinking terminal frame');",
         "process.stderr.write('\\x1b[1Adebug terminal frame');",
-        "mkdirSync(dirname(replyFile), { recursive: true });",
-        "writeFileSync(replyFile, JSON.stringify({ status: 'completed' }) + '\\n', 'utf8');",
+        "mkdirSync(dirname(completionFile), { recursive: true });",
+        "writeFileSync(completionFile, JSON.stringify({ status: 'completed' }) + '\\n', 'utf8');",
         "process.on('SIGTERM', () => process.exit(0));",
         "process.stdin.resume();",
         "setInterval(() => {}, 1000);",
@@ -1000,15 +1000,15 @@ test('claude-code channel transport lets targetless reminders complete without a
         "if (!mcpArgs?.[0]?.includes('claude-channel-mcp-server.js')) fail(47, JSON.stringify(mcp));",
         "if (mcpArgs[mcpArgs.indexOf('--item-id') + 1] !== 'reminder:daily-standup:fire:1') fail(48, `bad item id args: ${JSON.stringify(mcpArgs)}`);",
         "if (mcpArgs.includes('--channel')) fail(49, `unexpected channel args: ${JSON.stringify(mcpArgs)}`);",
-        "const replyFile = mcpArgs[mcpArgs.indexOf('--reply-file') + 1];",
-        "if (!replyFile) fail(50, `missing reply file args: ${JSON.stringify(mcpArgs)}`);",
+        "const completionFile = mcpArgs[mcpArgs.indexOf('--completion-file') + 1];",
+        "if (!completionFile) fail(50, `missing completion file args: ${JSON.stringify(mcpArgs)}`);",
         "const prompt = argv.at(-1) || '';",
         "if (!prompt.includes('mcp__anima__complete')) fail(51, 'missing complete tool instruction');",
         "if (prompt.includes('mcp__anima__reply')) fail(52, 'unexpected reply tool instruction');",
         "if (!prompt.includes('Scheduled reminder:')) fail(53, 'missing reminder prompt');",
         "if (!prompt.includes('Post a daily stand-up to #team.')) fail(54, 'missing reminder instructions');",
-        "mkdirSync(dirname(replyFile), { recursive: true });",
-        "writeFileSync(replyFile, JSON.stringify({ text: 'completed reminder after using normal Anima tools' }) + '\\n', 'utf8');",
+        "mkdirSync(dirname(completionFile), { recursive: true });",
+        "writeFileSync(completionFile, JSON.stringify({ text: 'completed reminder after using normal Anima tools' }) + '\\n', 'utf8');",
         "process.on('SIGTERM', () => process.exit(0));",
         "process.stdin.resume();",
         "setInterval(() => {}, 1000);",
@@ -1125,7 +1125,7 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
         "      const shouldComplete = !isReminder || promptCount >= 5;",
         "      if (shouldComplete) {",
         "        const payload = isReminder ? { text: 'tmux targetless reminder completed' } : { status: 'completed' };",
-        "        writeFileSync(target.replyFile, JSON.stringify(payload) + '\\n', 'utf8');",
+        "        writeFileSync(target.completionFile, JSON.stringify(payload) + '\\n', 'utf8');",
         "      }",
         "      state.target = target;",
         "      state.targetFile = targetFile;",
@@ -1188,7 +1188,7 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
       prompts: string[];
       systemPrompt: string;
       sessions: Record<string, { command: string }>;
-      target: { active?: boolean; itemId?: string; replyFile?: string };
+      target: { active?: boolean; completionFile?: string; itemId?: string };
       targetFile: string;
     };
     const command = Object.values(state.sessions)[0]?.command ?? '';
@@ -1203,7 +1203,7 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
     assert.match(state.systemPrompt, /anima message send <target flags>/);
     assert.equal(state.target.active, true);
     assert.equal(state.target.itemId, ctx.item.id);
-    assert.ok(state.target.replyFile?.endsWith('.json'));
+    assert.ok(state.target.completionFile?.endsWith('.json'));
     assert.equal(state.prompts.some((prompt) => prompt.includes('What did I ask over tmux?')), true);
     assert.equal(state.prompts.some((prompt) => prompt.includes('Steering update from Anima')), true);
     assert.equal(state.prompts.some((prompt) => prompt.includes('mcp__anima__reply')), false);
@@ -1298,7 +1298,7 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
 
     const finalState = JSON.parse(await readFile(tmuxStatePath, 'utf8')) as {
       prompts: string[];
-      target: { active?: boolean; itemId?: string; replyFile?: string };
+      target: { active?: boolean; completionFile?: string; itemId?: string };
       sessions: Record<string, { command: string }>;
     };
     const sessionNames = Object.keys(finalState.sessions);
