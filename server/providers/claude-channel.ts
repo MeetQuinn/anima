@@ -123,7 +123,7 @@ export class ClaudeCodeChannelAgentRuntime implements AgentRuntime {
     const launch = claudePtyLaunch(this.claudeArgs(
       channelFiles.mcpConfigFile,
       systemPromptFilePath,
-      channelPrompt(input),
+      channelPrompt(input, replyTarget),
     ));
     controller = new ClaudeChannelController({
       child: startChildProcess({
@@ -291,14 +291,21 @@ async function readReplyFile(path: string): Promise<ClaudeChannelNotifyResult | 
   return { text: stringField(value, 'text') };
 }
 
-function channelPrompt(input: AgentRuntimeInput): string {
+function channelPrompt(input: AgentRuntimeInput, replyTarget: AgentRuntimeNotificationTarget | undefined): string {
   return [
     'Anima delivered this team message to you.',
-    `When you need to reply, call the MCP tool mcp__anima__reply with item_id ${JSON.stringify(input.itemId)} and your reply text.`,
-    'Plain terminal output is not visible to the team. The team only sees messages sent through the reply tool.',
+    channelCompletionInstructions(input, replyTarget),
+    'Plain terminal output is not visible to the team. The team only sees messages sent through Anima tools.',
     '',
     input.prompt,
   ].join('\n');
+}
+
+function channelCompletionInstructions(input: AgentRuntimeInput, replyTarget: AgentRuntimeNotificationTarget | undefined): string {
+  if (replyTarget?.channel) {
+    return `When you need to reply, call the MCP tool mcp__anima__reply with item_id ${JSON.stringify(input.itemId)} and your reply text.`;
+  }
+  return `This item has no direct reply target. Use the normal Anima CLI/tools from the standing prompt for any needed team action, then call the MCP tool mcp__anima__complete with item_id ${JSON.stringify(input.itemId)} and a short completion note.`;
 }
 
 function sleep(ms: number): Promise<void> {
