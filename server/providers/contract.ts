@@ -93,17 +93,6 @@ export interface AgentRuntimeHealth {
   childExpected: boolean;
 }
 
-export interface AgentRuntimeNotificationTarget {
-  channel?: string;
-  platform?: string;
-  threadTs?: string;
-}
-
-export type AgentRuntimeNotificationTargetResolver = (
-  agentId: string,
-  itemId: string,
-) => Promise<AgentRuntimeNotificationTarget | undefined>;
-
 export interface AgentRuntime {
   readonly env?: Record<string, string>;
   readonly kind: string;
