@@ -18,8 +18,6 @@ import {
   type AgentRuntimeFollowupResult,
   type AgentRuntimeHealth,
   type AgentRuntimeInput,
-  type AgentRuntimeNotificationTarget,
-  type AgentRuntimeNotificationTargetResolver,
   type AgentRuntimeResult,
   type ClaudeCodeAgentProviderConfig,
   providerSessionPayload,
@@ -34,6 +32,7 @@ const TMUX_READY_POLL_INTERVAL_MS = 500;
 const TMUX_READY_TIMEOUT_MS = 30_000;
 const TMUX_TURN_TIMEOUT_MS = 10 * 60 * 1000;
 const TMUX_TRANSPORT_NAME = "tmux";
+const TMUX_SESSION_PROTOCOL = "cli-complete-v1";
 
 interface ClaudeTmuxReplyResult {
   text?: string;
@@ -53,17 +52,10 @@ export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
   readonly kind = "claude-code";
   private readonly activeRun = new ActiveRuntimeRun();
   private readonly config: ClaudeCodeAgentProviderConfig;
-  private readonly notificationTargetResolver?: AgentRuntimeNotificationTargetResolver;
   private session?: TmuxSession;
 
-  constructor(
-    config: ClaudeCodeAgentProviderConfig,
-    options: {
-      notificationTargetResolver?: AgentRuntimeNotificationTargetResolver;
-    } = {},
-  ) {
+  constructor(config: ClaudeCodeAgentProviderConfig) {
     this.config = config;
-    this.notificationTargetResolver = options.notificationTargetResolver;
     this.env = {
       ...CLAUDE_TMUX_DEFAULT_ENV,
       ...(config.env ?? {}),
@@ -209,7 +201,6 @@ export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
     input: AgentRuntimeInput,
     session: TmuxSession,
   ): Promise<ClaudeTmuxReplyResult> {
-    const replyTarget = await this.replyTarget(input);
     const replyFile = join(
       dirname(session.targetFile),
       `reply-${safeName(input.itemId)}.json`,
@@ -218,15 +209,13 @@ export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
       active: true,
       itemId: input.itemId,
       replyFile,
-      ...(replyTarget?.channel ? { channel: replyTarget.channel } : {}),
-      ...(replyTarget?.threadTs ? { threadTs: replyTarget.threadTs } : {}),
     });
     await rm(replyFile, { force: true });
     try {
       await waitForTmuxReady(session, input);
       await sendTmuxPrompt({
         env: session.env,
-        prompt: tmuxPrompt(input, replyTarget),
+        prompt: tmuxPrompt(input),
         session: session.name,
         workDir: dirname(session.targetFile),
       });
@@ -254,14 +243,6 @@ export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
     if (systemPromptFilePath)
       args.push("--system-prompt-file", systemPromptFilePath);
     return args;
-  }
-
-  private async replyTarget(
-    input: AgentRuntimeInput,
-  ): Promise<AgentRuntimeNotificationTarget | undefined> {
-    const agentId = input.env.ANIMA_AGENT_ID;
-    if (!agentId || !this.notificationTargetResolver) return undefined;
-    return this.notificationTargetResolver(agentId, input.itemId);
   }
 }
 
@@ -358,11 +339,10 @@ async function writeSystemPromptFile(
 
 function tmuxPrompt(
   input: AgentRuntimeInput,
-  replyTarget: AgentRuntimeNotificationTarget | undefined,
 ): string {
   return [
     "Anima delivered this team message to you.",
-    tmuxCompletionInstructions(input, replyTarget),
+    tmuxCompletionInstructions(input),
     "Plain terminal output is not visible to the team. The team only sees messages sent through Anima tools.",
     "",
     input.prompt,
@@ -371,18 +351,18 @@ function tmuxPrompt(
 
 function tmuxCompletionInstructions(
   input: AgentRuntimeInput,
-  replyTarget: AgentRuntimeNotificationTarget | undefined,
 ): string {
-  if (replyTarget?.channel) {
-    return `When you need to reply, call the MCP tool mcp__anima__reply with item_id ${JSON.stringify(input.itemId)} and your reply text.`;
-  }
-  return `This item has no direct reply target. Use the normal Anima CLI/tools from the standing prompt for any needed team action, then call the MCP tool mcp__anima__complete with item_id ${JSON.stringify(input.itemId)} and a short completion note.`;
+  return [
+    "Use the normal Anima CLI/tools from the standing prompt for any needed team action, including replies.",
+    `When this turn is finished, call the MCP tool mcp__anima__complete with item_id ${JSON.stringify(input.itemId)}.`,
+    "If you already sent the needed team message through Anima CLI, call complete without text. For a no-op or targetless turn, include a short completion note.",
+  ].join(" ");
 }
 
 function tmuxSteeringPrompt(input: AgentRuntimeFollowupInput): string {
   return [
     "Steering update from Anima for the active team-message turn.",
-    "Use this update before completing the current turn through the MCP tool named in the current turn instructions.",
+    "Use this update before any needed Anima CLI action, then finish the current turn through mcp__anima__complete.",
     "",
     input.prompt,
   ].join("\n");
@@ -525,7 +505,7 @@ function tmuxSessionName(input: {
   effort?: string;
   model?: string;
 }): string {
-  return `anima-${safeName(input.agentId)}-${shortHash(input.animaHome)}-${safeName(input.model ?? "default")}-${safeName(input.effort ?? "default")}`;
+  return `anima-${safeName(input.agentId)}-${shortHash(input.animaHome)}-${TMUX_SESSION_PROTOCOL}-${safeName(input.model ?? "default")}-${safeName(input.effort ?? "default")}`;
 }
 
 function shortHash(value: string): string {

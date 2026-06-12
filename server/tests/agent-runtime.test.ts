@@ -7,7 +7,6 @@ import assert from 'node:assert/strict';
 import { createAgentRuntime } from '../providers/factory.js';
 import { CLAUDE_DISALLOWED_TOOLS } from '../providers/contract.js';
 import { AgentRuntimeBridge } from '../runtime/runtime-bridge.js';
-import { notificationTargetForAgentItem } from '../runtime/notification-target.js';
 import type { AgentRuntime } from '../providers/contract.js';
 import { makeSlackEvent } from './helpers/slack.js';
 import { ingestEvent, makeReminderInboxItem } from './helpers/inbox.js';
@@ -858,7 +857,7 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
   }
 });
 
-test('claude-code channel transport launches an interactive prompt and completes after reply callback', async () => {
+test('claude-code channel transport launches an interactive prompt and completes after Anima CLI actions', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
   let runtime: AgentRuntime | undefined;
   try {
@@ -888,18 +887,21 @@ test('claude-code channel transport launches an interactive prompt and completes
         "if (!mcpArgs?.[0]?.includes('claude-channel-mcp-server.js')) fail(47, JSON.stringify(mcp));",
         "if (mcpArgs[mcpArgs.indexOf('--agent-id') + 1] !== 'anima') fail(48, `bad agent id args: ${JSON.stringify(mcpArgs)}`);",
         "if (!mcpArgs[mcpArgs.indexOf('--item-id') + 1]) fail(49, `missing item id args: ${JSON.stringify(mcpArgs)}`);",
-        "if (mcpArgs[mcpArgs.indexOf('--channel') + 1] !== 'D-anima') fail(54, `bad channel args: ${JSON.stringify(mcpArgs)}`);",
+        "if (mcpArgs.includes('--channel')) fail(54, `unexpected channel args: ${JSON.stringify(mcpArgs)}`);",
+        "if (mcpArgs.includes('--thread-ts')) fail(56, `unexpected thread args: ${JSON.stringify(mcpArgs)}`);",
         "const replyFile = mcpArgs[mcpArgs.indexOf('--reply-file') + 1];",
         "if (!replyFile) fail(55, `missing reply file args: ${JSON.stringify(mcpArgs)}`);",
         "const prompt = argv.at(-1) || '';",
-        "if (!prompt.includes('mcp__anima__reply')) fail(50, 'missing reply tool instruction');",
+        "if (prompt.includes('mcp__anima__reply')) fail(50, 'unexpected reply tool instruction');",
+        "if (!prompt.includes('mcp__anima__complete')) fail(57, 'missing complete tool instruction');",
+        "if (!prompt.includes('normal Anima CLI/tools')) fail(58, 'missing CLI action instruction');",
         "if (!prompt.includes('item_id')) fail(51, 'missing item id instruction');",
         "if (!prompt.includes('New Slack message:')) fail(52, 'missing slack prompt');",
         "if (!prompt.includes('What did I ask over channel?')) fail(53, 'missing message text');",
         "process.stdout.write('\\x1b[2D\\r* thinking terminal frame');",
         "process.stderr.write('\\x1b[1Adebug terminal frame');",
         "mkdirSync(dirname(replyFile), { recursive: true });",
-        "writeFileSync(replyFile, JSON.stringify({ text: 'channel reply delivered' }) + '\\n', 'utf8');",
+        "writeFileSync(replyFile, JSON.stringify({ status: 'completed' }) + '\\n', 'utf8');",
         "process.on('SIGTERM', () => process.exit(0));",
         "process.stdin.resume();",
         "setInterval(() => {}, 1000);",
@@ -927,7 +929,6 @@ test('claude-code channel transport launches an interactive prompt and completes
         reasoningEffort: 'xhigh',
         transport: 'channel',
       },
-      { notificationTargetResolver: notificationTargetForAgentItem },
     );
 
     let resultText: string | undefined;
@@ -937,7 +938,7 @@ test('claude-code channel transport launches an interactive prompt and completes
       console.error(await readFile(callsPath, 'utf8').catch(() => 'no calls log'));
       throw error;
     }
-    assert.equal(resultText, 'channel reply delivered');
+    assert.equal(resultText, undefined);
     const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as {
       argv?: string[];
       body?: Record<string, unknown>;
@@ -958,14 +959,13 @@ test('claude-code channel transport launches an interactive prompt and completes
     };
     const mcpArgs = mcpConfig.mcpServers?.anima?.args ?? [];
     assert.equal(mcpArgs[mcpArgs.indexOf('--item-id') + 1], ctx.item.id);
-    assert.equal(mcpArgs[mcpArgs.indexOf('--channel') + 1], 'D-anima');
+    assert.equal(mcpArgs.includes('--channel'), false);
 
     const activities = await activitiesForInboxItemWindow('anima', ctx.item.id);
     const started = activities.find((activity) => activity.type === 'runtime.started');
     assert.equal(started?.payload?.['inputFormat'], 'channel');
     assert.equal(started?.payload?.['transport'], 'channel');
-    const agentText = activities.find((activity) => activity.type === 'agent.text');
-    assert.equal(agentText?.payload?.['text'], 'channel reply delivered');
+    assert.equal(activities.some((activity) => activity.type === 'agent.text'), false);
     assert.equal(activities.some((activity) => activity.type === 'runtime.output'), false);
     await runtime.close?.();
     runtime = undefined;
@@ -1040,7 +1040,6 @@ test('claude-code channel transport lets targetless reminders complete without a
         reasoningEffort: 'xhigh',
         transport: 'channel',
       },
-      { notificationTargetResolver: notificationTargetForAgentItem },
     );
 
     const result = await runtime.run(await runtimeInput(runtime, ctx, await loadState()));
@@ -1121,11 +1120,12 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
         "      const targetFile = mcpArgs[mcpArgs.indexOf('--target-file') + 1];",
         "      const target = JSON.parse(readFileSync(targetFile, 'utf8'));",
         "      if (target.active !== true) process.exit(94);",
+        "      const isReminder = String(target.itemId || '').startsWith('reminder:');",
         "      const promptCount = state.prompts.length;",
-        "      const shouldComplete = target.channel || promptCount >= 5;",
+        "      const shouldComplete = !isReminder || promptCount >= 5;",
         "      if (shouldComplete) {",
-        "        const text = target.channel ? 'tmux reply delivered' : 'tmux targetless reminder completed';",
-        "        writeFileSync(target.replyFile, JSON.stringify({ text }) + '\\n', 'utf8');",
+        "        const payload = isReminder ? { text: 'tmux targetless reminder completed' } : { status: 'completed' };",
+        "        writeFileSync(target.replyFile, JSON.stringify(payload) + '\\n', 'utf8');",
         "      }",
         "      state.target = target;",
         "      state.targetFile = targetFile;",
@@ -1159,7 +1159,6 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
         reasoningEffort: 'high',
         transport: 'tmux',
       },
-      { notificationTargetResolver: notificationTargetForAgentItem },
     );
 
     const run = runtime.run(await runtimeInput(runtime, ctx, await loadState()));
@@ -1182,14 +1181,14 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
     assert.equal(followup.accepted, true);
 
     const result = await run;
-    assert.equal(result.text, 'tmux reply delivered');
+    assert.equal(result.text, undefined);
 
     const state = JSON.parse(await readFile(tmuxStatePath, 'utf8')) as {
       mcpConfig: string;
       prompts: string[];
       systemPrompt: string;
       sessions: Record<string, { command: string }>;
-      target: { active?: boolean; channel?: string; itemId?: string; replyFile?: string };
+      target: { active?: boolean; itemId?: string; replyFile?: string };
       targetFile: string;
     };
     const command = Object.values(state.sessions)[0]?.command ?? '';
@@ -1204,10 +1203,11 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
     assert.match(state.systemPrompt, /anima message send <target flags>/);
     assert.equal(state.target.active, true);
     assert.equal(state.target.itemId, ctx.item.id);
-    assert.equal(state.target.channel, 'D-anima');
     assert.ok(state.target.replyFile?.endsWith('.json'));
     assert.equal(state.prompts.some((prompt) => prompt.includes('What did I ask over tmux?')), true);
     assert.equal(state.prompts.some((prompt) => prompt.includes('Steering update from Anima')), true);
+    assert.equal(state.prompts.some((prompt) => prompt.includes('mcp__anima__reply')), false);
+    assert.equal(state.prompts.some((prompt) => prompt.includes('mcp__anima__complete')), true);
 
     const mcpConfig = JSON.parse(await readFile(state.mcpConfig, 'utf8')) as {
       mcpServers?: { anima?: { args?: string[] } };
@@ -1222,8 +1222,7 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
     const started = activities.find((activity) => activity.type === 'runtime.started');
     assert.equal(started?.payload?.['inputFormat'], 'tmux');
     assert.equal(started?.payload?.['transport'], 'tmux');
-    const agentText = activities.find((activity) => activity.type === 'agent.text');
-    assert.equal(agentText?.payload?.['text'], 'tmux reply delivered');
+    assert.equal(activities.some((activity) => activity.type === 'agent.text'), false);
     assert.equal(activities.some((activity) => activity.type === 'runtime.output'), false);
     await runtime.close?.();
     runtime = undefined;
@@ -1248,10 +1247,9 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
         reasoningEffort: 'high',
         transport: 'tmux',
       },
-      { notificationTargetResolver: notificationTargetForAgentItem },
     );
     const secondResult = await runtime.run(await runtimeInput(runtime, secondCtx, await loadState()));
-    assert.equal(secondResult.text, 'tmux reply delivered');
+    assert.equal(secondResult.text, undefined);
 
     await runtime.close?.();
     runtime = createAgentRuntime(
@@ -1262,7 +1260,6 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
         reasoningEffort: 'high',
         transport: 'tmux',
       },
-      { notificationTargetResolver: notificationTargetForAgentItem },
     );
     await seedReminder('anima', {
       instructions: 'Post a daily stand-up to #team.',
@@ -1301,7 +1298,7 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
 
     const finalState = JSON.parse(await readFile(tmuxStatePath, 'utf8')) as {
       prompts: string[];
-      target: { active?: boolean; channel?: string; itemId?: string; replyFile?: string };
+      target: { active?: boolean; itemId?: string; replyFile?: string };
       sessions: Record<string, { command: string }>;
     };
     const sessionNames = Object.keys(finalState.sessions);
@@ -1309,14 +1306,13 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
     assert.notEqual(sessionNames[0], sessionNames[1]);
     assert.equal(finalState.target.active, true);
     assert.equal(finalState.target.itemId, reminderCtx.item.id);
-    assert.equal(finalState.target.channel, undefined);
     const reminderPrompt = finalState.prompts.find((prompt) => prompt.includes('Post a daily stand-up to #team.'));
     assert.ok(reminderPrompt);
     assert.match(reminderPrompt, /mcp__anima__complete/);
     assert.doesNotMatch(reminderPrompt, /mcp__anima__reply/);
     const reminderSteeringPrompt = finalState.prompts.find((prompt) => prompt.includes('Steering update from Anima') && prompt.includes('Scheduled reminder:'));
     assert.ok(reminderSteeringPrompt);
-    assert.match(reminderSteeringPrompt, /MCP tool named in the current turn instructions/);
+    assert.match(reminderSteeringPrompt, /mcp__anima__complete/);
     assert.doesNotMatch(reminderSteeringPrompt, /mcp__anima__reply/);
 
     const reminderActivities = await activitiesForInboxItemWindow('anima', reminderCtx.item.id);

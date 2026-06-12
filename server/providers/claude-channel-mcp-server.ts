@@ -6,22 +6,17 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import { errorMessage, nowIso } from '../ids.js';
-import { runMessageSend } from '../tools/messages.js';
 
 interface CliArgs {
   agentId: string;
-  channel?: string;
   itemId?: string;
   replyFile?: string;
   targetFile?: string;
-  threadTs?: string;
 }
 
-interface ReplyTarget {
-  channel?: string;
+interface CompletionTarget {
   itemId: string;
   replyFile: string;
-  threadTs?: string;
 }
 
 const cli = parseArgs(process.argv.slice(2));
@@ -35,9 +30,10 @@ const mcp = new Server(
     },
     instructions: [
       'Anima delivers team messages through this channel.',
-      'Each message has an item_id attribute. If the current turn has a reply target, call reply with that item_id and the message text.',
-      'If the current turn has no reply target, use normal Anima tools for any needed action, then call complete with that item_id and a short completion note.',
-      'The tools route through Anima, so do not print or log secrets in replies or completion notes.',
+      'Each message has an item_id attribute. Use normal Anima CLI tools for any needed team action.',
+      'When the current turn is finished, call complete with that item_id.',
+      'Include text only when a short completion note is useful, such as a no-op reminder or targetless turn.',
+      'Do not print or log secrets in completion notes.',
     ].join('\n'),
   },
 );
@@ -45,26 +41,8 @@ const mcp = new Server(
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
-      name: 'reply',
-      description: 'Send a reply to the Anima team message that delivered this channel notification.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          item_id: {
-            type: 'string',
-            description: 'The item_id from the channel notification metadata.',
-          },
-          text: {
-            type: 'string',
-            description: 'Markdown reply text to send through Anima.',
-          },
-        },
-        required: ['item_id', 'text'],
-      },
-    },
-    {
       name: 'complete',
-      description: 'Mark the active Anima notification complete after using other Anima tools for any needed action.',
+      description: 'Mark the active Anima notification complete after using normal Anima CLI tools for any needed action.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -74,17 +52,17 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           text: {
             type: 'string',
-            description: 'Short completion note for Anima activity.',
+            description: 'Optional short completion note for Anima activity. Leave empty after an ordinary reply sent with Anima CLI.',
           },
         },
-        required: ['item_id', 'text'],
+        required: ['item_id'],
       },
     },
   ],
 }));
 
 mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
-  if (request.params.name !== 'reply' && request.params.name !== 'complete') {
+  if (request.params.name !== 'complete') {
     return {
       content: [{ type: 'text', text: `unknown tool: ${request.params.name}` }],
       isError: true,
@@ -93,53 +71,30 @@ mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
   const args = request.params.arguments ?? {};
   const itemId = typeof args['item_id'] === 'string' ? args['item_id'].trim() : '';
   const text = typeof args['text'] === 'string' ? args['text'].trimEnd() : '';
-  if (!itemId || !text) {
+  if (!itemId) {
     return {
-      content: [{ type: 'text', text: 'reply requires item_id and text' }],
+      content: [{ type: 'text', text: 'complete requires item_id' }],
       isError: true,
     };
   }
-  const target = await replyTargetFor(itemId);
+  const target = await completionTargetFor(itemId);
   if (!target) {
     return {
       content: [{ type: 'text', text: `No active Anima notification for item_id ${itemId}` }],
       isError: true,
     };
   }
-  if (request.params.name === 'complete') {
-    await writeReplyFile(target.replyFile, { status: 'completed', text });
+  try {
+    await writeReplyFile(target.replyFile, {
+      status: 'completed',
+      ...(text ? { text } : {}),
+    });
     return {
       content: [{ type: 'text', text: `completed ${itemId}` }],
     };
-  }
-  if (!target.channel) {
-    return {
-      content: [{ type: 'text', text: `Anima item ${itemId} does not have a reply target` }],
-      isError: true,
-    };
-  }
-  try {
-    await runMessageSend(
-      {
-        agent: cli.agentId,
-        channel: target.channel,
-        item: itemId,
-        text,
-        ...(target.threadTs ? { threadTs: target.threadTs } : {}),
-      },
-      {
-        writeOutput(line) {
-          process.stderr.write(`[anima-channel] ${line}\n`);
-        },
-      },
-    );
-    await writeReplyFile(target.replyFile, { status: 'replied', text });
-    return {
-      content: [{ type: 'text', text: `sent reply for ${itemId}` }],
-    };
   } catch (error) {
     return {
-      content: [{ type: 'text', text: `reply failed: ${errorMessage(error)}` }],
+      content: [{ type: 'text', text: `complete failed: ${errorMessage(error)}` }],
       isError: true,
     };
   }
@@ -167,21 +122,17 @@ async function writeReplyFile(path: string, payload: Record<string, unknown>): P
 
 function parseArgs(args: string[]): CliArgs {
   const agentId = stringArg(args, '--agent-id');
-  const channel = stringArg(args, '--channel');
   const itemId = stringArg(args, '--item-id');
   const replyFile = stringArg(args, '--reply-file');
   const targetFile = stringArg(args, '--target-file');
-  const threadTs = stringArg(args, '--thread-ts');
   if (!agentId) throw new Error('--agent-id is required');
   if (!targetFile && !itemId) throw new Error('--item-id or --target-file is required');
   if (!targetFile && !replyFile) throw new Error('--reply-file is required');
   return {
     agentId,
-    ...(channel ? { channel } : {}),
     ...(itemId ? { itemId } : {}),
     ...(replyFile ? { replyFile } : {}),
     ...(targetFile ? { targetFile } : {}),
-    ...(threadTs ? { threadTs } : {}),
   };
 }
 
@@ -192,15 +143,13 @@ function stringArg(args: string[], flag: string): string | undefined {
   return value || undefined;
 }
 
-async function replyTargetFor(itemId: string): Promise<ReplyTarget | undefined> {
+async function completionTargetFor(itemId: string): Promise<CompletionTarget | undefined> {
   if (!cli.targetFile) {
     if (!cli.itemId || !cli.replyFile) return undefined;
     if (itemId !== cli.itemId) return undefined;
     return {
       itemId: cli.itemId,
       replyFile: cli.replyFile,
-      ...(cli.channel ? { channel: cli.channel } : {}),
-      ...(cli.threadTs ? { threadTs: cli.threadTs } : {}),
     };
   }
   const value: unknown = await readTargetFile(cli.targetFile);
@@ -217,12 +166,10 @@ async function readTargetFile(path: string): Promise<unknown> {
   }
 }
 
-function isTargetRecord(value: unknown): value is ReplyTarget {
+function isTargetRecord(value: unknown): value is CompletionTarget {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
   return record.active === true
     && typeof record.itemId === 'string'
-    && typeof record.replyFile === 'string'
-    && (record.channel === undefined || typeof record.channel === 'string')
-    && (record.threadTs === undefined || typeof record.threadTs === 'string');
+    && typeof record.replyFile === 'string';
 }

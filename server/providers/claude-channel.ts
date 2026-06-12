@@ -18,8 +18,6 @@ import {
   type AgentRuntimeFollowupResult,
   type AgentRuntimeHealth,
   type AgentRuntimeInput,
-  type AgentRuntimeNotificationTarget,
-  type AgentRuntimeNotificationTargetResolver,
   type AgentRuntimeResult,
   type ClaudeCodeAgentProviderConfig,
   providerSessionPayload,
@@ -42,14 +40,9 @@ export class ClaudeCodeChannelAgentRuntime implements AgentRuntime {
   private readonly activeRun = new ActiveRuntimeRun();
   private controller?: ClaudeChannelController;
   private readonly config: ClaudeCodeAgentProviderConfig;
-  private readonly notificationTargetResolver?: AgentRuntimeNotificationTargetResolver;
 
-  constructor(
-    config: ClaudeCodeAgentProviderConfig,
-    options: { notificationTargetResolver?: AgentRuntimeNotificationTargetResolver } = {},
-  ) {
+  constructor(config: ClaudeCodeAgentProviderConfig) {
     this.config = config;
-    this.notificationTargetResolver = options.notificationTargetResolver;
     this.env = {
       ...CLAUDE_CHANNEL_DEFAULT_ENV,
       ...(config.env ?? {}),
@@ -116,14 +109,13 @@ export class ClaudeCodeChannelAgentRuntime implements AgentRuntime {
 
   private async startController(input: AgentRuntimeInput): Promise<ClaudeChannelController> {
     const systemPromptFilePath = await writeSystemPromptFile(input);
-    const replyTarget = await this.replyTarget(input);
-    const channelFiles = await writeChannelFiles(input, replyTarget);
+    const channelFiles = await writeChannelFiles(input);
     await rm(channelFiles.replyFile, { force: true });
     let controller!: ClaudeChannelController;
     const launch = claudePtyLaunch(this.claudeArgs(
       channelFiles.mcpConfigFile,
       systemPromptFilePath,
-      channelPrompt(input, replyTarget),
+      channelPrompt(input),
     ));
     controller = new ClaudeChannelController({
       child: startChildProcess({
@@ -178,12 +170,6 @@ export class ClaudeCodeChannelAgentRuntime implements AgentRuntime {
     if (systemPromptFilePath) args.push('--system-prompt-file', systemPromptFilePath);
     args.push(prompt);
     return args;
-  }
-
-  private async replyTarget(input: AgentRuntimeInput): Promise<AgentRuntimeNotificationTarget | undefined> {
-    const agentId = input.env.ANIMA_AGENT_ID;
-    if (!agentId || !this.notificationTargetResolver) return undefined;
-    return this.notificationTargetResolver(agentId, input.itemId);
   }
 }
 
@@ -249,7 +235,6 @@ async function writeSystemPromptFile(input: AgentRuntimeInput): Promise<string |
 
 async function writeChannelFiles(
   input: AgentRuntimeInput,
-  replyTarget: AgentRuntimeNotificationTarget | undefined,
 ): Promise<{
   mcpConfigFile: string;
   replyFile: string;
@@ -267,8 +252,6 @@ async function writeChannelFiles(
     '--item-id', input.itemId,
     '--reply-file', replyFile,
   ];
-  if (replyTarget?.channel) serverArgs.push('--channel', replyTarget.channel);
-  if (replyTarget?.threadTs) serverArgs.push('--thread-ts', replyTarget.threadTs);
   await mkdir(root, { recursive: true });
   await writeFile(
     mcpConfigFile,
@@ -291,21 +274,22 @@ async function readReplyFile(path: string): Promise<ClaudeChannelNotifyResult | 
   return { text: stringField(value, 'text') };
 }
 
-function channelPrompt(input: AgentRuntimeInput, replyTarget: AgentRuntimeNotificationTarget | undefined): string {
+function channelPrompt(input: AgentRuntimeInput): string {
   return [
     'Anima delivered this team message to you.',
-    channelCompletionInstructions(input, replyTarget),
+    channelCompletionInstructions(input),
     'Plain terminal output is not visible to the team. The team only sees messages sent through Anima tools.',
     '',
     input.prompt,
   ].join('\n');
 }
 
-function channelCompletionInstructions(input: AgentRuntimeInput, replyTarget: AgentRuntimeNotificationTarget | undefined): string {
-  if (replyTarget?.channel) {
-    return `When you need to reply, call the MCP tool mcp__anima__reply with item_id ${JSON.stringify(input.itemId)} and your reply text.`;
-  }
-  return `This item has no direct reply target. Use the normal Anima CLI/tools from the standing prompt for any needed team action, then call the MCP tool mcp__anima__complete with item_id ${JSON.stringify(input.itemId)} and a short completion note.`;
+function channelCompletionInstructions(input: AgentRuntimeInput): string {
+  return [
+    'Use the normal Anima CLI/tools from the standing prompt for any needed team action, including replies.',
+    `When this turn is finished, call the MCP tool mcp__anima__complete with item_id ${JSON.stringify(input.itemId)}.`,
+    'If you already sent the needed team message through Anima CLI, call complete without text. For a no-op or targetless turn, include a short completion note.',
+  ].join(' ');
 }
 
 function sleep(ms: number): Promise<void> {

@@ -3,34 +3,17 @@ import { ClaudeCodeChannelAgentRuntime } from './claude-channel.js';
 import { ClaudeCodeTmuxAgentRuntime } from './claude-tmux.js';
 import { CodexCliAgentRuntime } from './codex.js';
 import { KimiCliAgentRuntime } from './kimi.js';
-import type {
-  AgentRuntime,
-  AgentProviderConfig,
-  AgentRuntimeNotificationTargetResolver,
-} from './contract.js';
-
-export interface AgentRuntimeFactoryOptions {
-  notificationTargetResolver?: AgentRuntimeNotificationTargetResolver;
-}
+import type { AgentRuntime, AgentProviderConfig } from './contract.js';
 
 export function createAgentRuntime(
   config: AgentProviderConfig,
-  options: AgentRuntimeFactoryOptions = {},
 ): AgentRuntime {
   if (config.kind === 'codex-cli') return new CodexCliAgentRuntime(config);
   if (config.kind === 'claude-code' && config.transport === 'channel') {
-    return new ClaudeCodeChannelAgentRuntime(config, {
-      ...(options.notificationTargetResolver
-        ? { notificationTargetResolver: options.notificationTargetResolver }
-        : {}),
-    });
+    return new ClaudeCodeChannelAgentRuntime(config);
   }
   if (config.kind === 'claude-code' && config.transport === 'tmux') {
-    return new ClaudeCodeTmuxAgentRuntime(config, {
-      ...(options.notificationTargetResolver
-        ? { notificationTargetResolver: options.notificationTargetResolver }
-        : {}),
-    });
+    return new ClaudeCodeTmuxAgentRuntime(config);
   }
   if (config.kind === 'claude-code') return new ClaudeCodeAgentRuntime(config);
   if (config.kind === 'kimi-cli') return new KimiCliAgentRuntime(config);
