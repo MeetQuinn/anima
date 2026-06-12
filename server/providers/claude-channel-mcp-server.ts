@@ -35,8 +35,9 @@ const mcp = new Server(
     },
     instructions: [
       'Anima delivers team messages through this channel.',
-      'Each message has an item_id attribute. Reply by calling the reply tool with that item_id and the message text.',
-      'The reply tool routes through Anima, so do not print or log secrets in replies.',
+      'Each message has an item_id attribute. If the current turn has a reply target, call reply with that item_id and the message text.',
+      'If the current turn has no reply target, use normal Anima tools for any needed action, then call complete with that item_id and a short completion note.',
+      'The tools route through Anima, so do not print or log secrets in replies or completion notes.',
     ].join('\n'),
   },
 );
@@ -61,11 +62,29 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['item_id', 'text'],
       },
     },
+    {
+      name: 'complete',
+      description: 'Mark the active Anima notification complete after using other Anima tools for any needed action.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          item_id: {
+            type: 'string',
+            description: 'The item_id from the channel notification metadata.',
+          },
+          text: {
+            type: 'string',
+            description: 'Short completion note for Anima activity.',
+          },
+        },
+        required: ['item_id', 'text'],
+      },
+    },
   ],
 }));
 
 mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
-  if (request.params.name !== 'reply') {
+  if (request.params.name !== 'reply' && request.params.name !== 'complete') {
     return {
       content: [{ type: 'text', text: `unknown tool: ${request.params.name}` }],
       isError: true,
@@ -85,6 +104,12 @@ mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
     return {
       content: [{ type: 'text', text: `No active Anima notification for item_id ${itemId}` }],
       isError: true,
+    };
+  }
+  if (request.params.name === 'complete') {
+    await writeReplyFile(target.replyFile, { status: 'completed', text });
+    return {
+      content: [{ type: 'text', text: `completed ${itemId}` }],
     };
   }
   if (!target.channel) {

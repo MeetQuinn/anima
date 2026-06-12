@@ -10,13 +10,14 @@ import { AgentRuntimeBridge } from '../runtime/runtime-bridge.js';
 import { notificationTargetForAgentItem } from '../runtime/notification-target.js';
 import type { AgentRuntime } from '../providers/contract.js';
 import { makeSlackEvent } from './helpers/slack.js';
-import { ingestEvent } from './helpers/inbox.js';
+import { ingestEvent, makeReminderInboxItem } from './helpers/inbox.js';
 import type { RuntimeItemContext } from '../runtime/types.js';
 import { allActivities, loadState } from './helpers/state.js';
 import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { withAnimaHome } from './anima-home.js';
 import type { TestState } from './helpers/state.js';
+import { ReminderStore } from '../storage/schema/reminder.store.js';
 
 async function runtimeInput(runtime: AgentRuntime, context: RuntimeItemContext, state?: TestState) {
   return new AgentRuntimeBridge(runtime).runInput({
@@ -33,6 +34,21 @@ async function runtimeFollowupInput(
   _state?: unknown,
 ) {
   return new AgentRuntimeBridge(runtime).followupInput({ activeContext, context });
+}
+
+async function seedReminder(agentId: string, input: { instructions: string; reminderId: string; title: string }): Promise<void> {
+  const now = '2026-05-18T16:00:00.000Z';
+  await new ReminderStore(agentId).create({
+    createdAt: now,
+    firedCount: 1,
+    instructions: input.instructions,
+    lastFiredAt: now,
+    reminderId: input.reminderId,
+    schedule: { kind: 'daily', repeatRule: 'FREQ=DAILY', time: '01:30', timezone: 'UTC' },
+    status: 'scheduled',
+    title: input.title,
+    updatedAt: now,
+  });
 }
 
 test('codex-cli app-server transport starts a turn and appends subscription follow-up input', async () => {
@@ -960,6 +976,90 @@ test('claude-code channel transport launches an interactive prompt and completes
   }
 });
 
+test('claude-code channel transport lets targetless reminders complete without a reply target', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+    const callsPath = join(stateDir, 'claude-channel-reminder-calls.jsonl');
+    const fakeClaude = join(stateDir, 'claude');
+    await writeFile(
+      fakeClaude,
+      [
+        '#!/usr/bin/env node',
+        "import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';",
+        "import { dirname } from 'node:path';",
+        "const fail = (code, reason) => { appendFileSync(process.env.CALLS_PATH, JSON.stringify({ type: 'fail', code, reason }) + '\\n'); process.exit(code); };",
+        "process.on('uncaughtException', (error) => fail(99, error.stack || error.message));",
+        'const argv = process.argv.slice(2);',
+        "appendFileSync(process.env.CALLS_PATH, JSON.stringify({ type: 'argv', argv }) + '\\n');",
+        "const mcpIndex = argv.indexOf('--mcp-config');",
+        "if (mcpIndex === -1) fail(46, 'missing mcp config');",
+        "const mcp = JSON.parse(readFileSync(argv[mcpIndex + 1], 'utf8'));",
+        "const mcpArgs = mcp.mcpServers?.anima?.args;",
+        "if (!mcpArgs?.[0]?.includes('claude-channel-mcp-server.js')) fail(47, JSON.stringify(mcp));",
+        "if (mcpArgs[mcpArgs.indexOf('--item-id') + 1] !== 'reminder:daily-standup:fire:1') fail(48, `bad item id args: ${JSON.stringify(mcpArgs)}`);",
+        "if (mcpArgs.includes('--channel')) fail(49, `unexpected channel args: ${JSON.stringify(mcpArgs)}`);",
+        "const replyFile = mcpArgs[mcpArgs.indexOf('--reply-file') + 1];",
+        "if (!replyFile) fail(50, `missing reply file args: ${JSON.stringify(mcpArgs)}`);",
+        "const prompt = argv.at(-1) || '';",
+        "if (!prompt.includes('mcp__anima__complete')) fail(51, 'missing complete tool instruction');",
+        "if (prompt.includes('mcp__anima__reply')) fail(52, 'unexpected reply tool instruction');",
+        "if (!prompt.includes('Scheduled reminder:')) fail(53, 'missing reminder prompt');",
+        "if (!prompt.includes('Post a daily stand-up to #team.')) fail(54, 'missing reminder instructions');",
+        "mkdirSync(dirname(replyFile), { recursive: true });",
+        "writeFileSync(replyFile, JSON.stringify({ text: 'completed reminder after using normal Anima tools' }) + '\\n', 'utf8');",
+        "process.on('SIGTERM', () => process.exit(0));",
+        "process.stdin.resume();",
+        "setInterval(() => {}, 1000);",
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await chmod(fakeClaude, 0o755);
+
+    await seedReminder('anima', {
+      instructions: 'Post a daily stand-up to #team.',
+      reminderId: 'daily-standup',
+      title: 'Daily stand-up',
+    });
+    const ctx = await ingestEvent(
+      makeReminderInboxItem({
+        eventId: 'reminder:daily-standup:fire:1',
+        reminderId: 'daily-standup',
+        timestamp: '2026-05-18T17:00:00.000Z',
+      }),
+      { agentId: 'anima', stateDir },
+    );
+
+    runtime = createAgentRuntime(
+      {
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'claude-code',
+        model: 'opus',
+        reasoningEffort: 'xhigh',
+        transport: 'channel',
+      },
+      { notificationTargetResolver: notificationTargetForAgentItem },
+    );
+
+    const result = await runtime.run(await runtimeInput(runtime, ctx, await loadState()));
+    assert.equal(result.text, 'completed reminder after using normal Anima tools');
+
+    const activities = await activitiesForInboxItemWindow('anima', ctx.item.id);
+    const started = activities.find((activity) => activity.type === 'runtime.started');
+    assert.equal(started?.payload?.['inputFormat'], 'channel');
+    assert.ok(activities.some((activity) => activity.type === 'runtime.completed'));
+    assert.equal(activities.some((activity) => activity.type === 'runtime.failed'), false);
+    await runtime.close?.();
+    runtime = undefined;
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('claude-code tmux transport reuses a session and accepts steering follow-ups', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
   let runtime: AgentRuntime | undefined;
@@ -1012,13 +1112,21 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
         "if (args[0] === 'send-keys') {",
         "  if (args.includes('C-m')) {",
         "    state.sends += 1;",
-        "    if (state.sends >= 2 && state.mcpConfig) {",
-        "      const mcp = JSON.parse(readFileSync(state.mcpConfig, 'utf8'));",
+        "    const session = valueAfter('-t');",
+        "    const command = state.sessions[session]?.command || '';",
+        "    const mcpMatch = command.match(/'--mcp-config'\\s+'([^']+)'/);",
+        "    if (state.sends >= 2 && mcpMatch) {",
+        "      const mcp = JSON.parse(readFileSync(mcpMatch[1], 'utf8'));",
         "      const mcpArgs = mcp.mcpServers.anima.args;",
         "      const targetFile = mcpArgs[mcpArgs.indexOf('--target-file') + 1];",
         "      const target = JSON.parse(readFileSync(targetFile, 'utf8'));",
         "      if (target.active !== true) process.exit(94);",
-        "      writeFileSync(target.replyFile, JSON.stringify({ text: 'tmux reply delivered' }) + '\\n', 'utf8');",
+        "      const promptCount = state.prompts.length;",
+        "      const shouldComplete = target.channel || promptCount >= 5;",
+        "      if (shouldComplete) {",
+        "        const text = target.channel ? 'tmux reply delivered' : 'tmux targetless reminder completed';",
+        "        writeFileSync(target.replyFile, JSON.stringify({ text }) + '\\n', 'utf8');",
+        "      }",
         "      state.target = target;",
         "      state.targetFile = targetFile;",
         "    }",
@@ -1144,12 +1252,76 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
     );
     const secondResult = await runtime.run(await runtimeInput(runtime, secondCtx, await loadState()));
     assert.equal(secondResult.text, 'tmux reply delivered');
+
+    await runtime.close?.();
+    runtime = createAgentRuntime(
+      {
+        env: runtimeTestEnv(stateDir, { TMUX_CALLS_PATH: callsPath, TMUX_STATE_PATH: tmuxStatePath }),
+        kind: 'claude-code',
+        model: 'opus',
+        reasoningEffort: 'high',
+        transport: 'tmux',
+      },
+      { notificationTargetResolver: notificationTargetForAgentItem },
+    );
+    await seedReminder('anima', {
+      instructions: 'Post a daily stand-up to #team.',
+      reminderId: 'daily-standup',
+      title: 'Daily stand-up',
+    });
+    const reminderCtx = await ingestEvent(
+      makeReminderInboxItem({
+        eventId: 'reminder:daily-standup:fire:1',
+        reminderId: 'daily-standup',
+        timestamp: '2026-05-18T17:00:00.000Z',
+      }),
+      { agentId: 'anima', stateDir },
+    );
+    const reminderRun = runtime.run(await runtimeInput(runtime, reminderCtx, await loadState()));
+    await waitFor(async () => {
+      const currentState = JSON.parse(await readFile(tmuxStatePath, 'utf8')) as { prompts?: string[] };
+      return currentState.prompts?.some((prompt) => prompt.includes('Post a daily stand-up to #team.')) === true;
+    });
+
+    const reminderFollowupCtx = await ingestEvent(
+      makeReminderInboxItem({
+        eventId: 'reminder:daily-standup:fire:2',
+        reminderId: 'daily-standup',
+        timestamp: '2026-05-18T17:00:01.000Z',
+      }),
+      { agentId: 'anima', stateDir },
+    );
+    const reminderFollowup = await runtime.appendToActiveRun(
+      await runtimeFollowupInput(runtime, reminderCtx, reminderFollowupCtx),
+    );
+    assert.equal(reminderFollowup.accepted, true);
+
+    const reminderResult = await reminderRun;
+    assert.equal(reminderResult.text, 'tmux targetless reminder completed');
+
     const finalState = JSON.parse(await readFile(tmuxStatePath, 'utf8')) as {
+      prompts: string[];
+      target: { active?: boolean; channel?: string; itemId?: string; replyFile?: string };
       sessions: Record<string, { command: string }>;
     };
     const sessionNames = Object.keys(finalState.sessions);
     assert.equal(sessionNames.length, 2);
     assert.notEqual(sessionNames[0], sessionNames[1]);
+    assert.equal(finalState.target.active, true);
+    assert.equal(finalState.target.itemId, reminderCtx.item.id);
+    assert.equal(finalState.target.channel, undefined);
+    const reminderPrompt = finalState.prompts.find((prompt) => prompt.includes('Post a daily stand-up to #team.'));
+    assert.ok(reminderPrompt);
+    assert.match(reminderPrompt, /mcp__anima__complete/);
+    assert.doesNotMatch(reminderPrompt, /mcp__anima__reply/);
+    const reminderSteeringPrompt = finalState.prompts.find((prompt) => prompt.includes('Steering update from Anima') && prompt.includes('Scheduled reminder:'));
+    assert.ok(reminderSteeringPrompt);
+    assert.match(reminderSteeringPrompt, /MCP tool named in the current turn instructions/);
+    assert.doesNotMatch(reminderSteeringPrompt, /mcp__anima__reply/);
+
+    const reminderActivities = await activitiesForInboxItemWindow('anima', reminderCtx.item.id);
+    assert.ok(reminderActivities.some((activity) => activity.type === 'runtime.completed'));
+    assert.equal(reminderActivities.some((activity) => activity.type === 'runtime.failed'), false);
     await runtime.close?.();
     runtime = undefined;
     });

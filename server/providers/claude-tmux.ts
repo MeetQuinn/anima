@@ -226,7 +226,7 @@ export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
       await waitForTmuxReady(session, input);
       await sendTmuxPrompt({
         env: session.env,
-        prompt: tmuxPrompt(input),
+        prompt: tmuxPrompt(input, replyTarget),
         session: session.name,
         workDir: dirname(session.targetFile),
       });
@@ -356,20 +356,33 @@ async function writeSystemPromptFile(
   return input.systemPromptFilePath;
 }
 
-function tmuxPrompt(input: AgentRuntimeInput): string {
+function tmuxPrompt(
+  input: AgentRuntimeInput,
+  replyTarget: AgentRuntimeNotificationTarget | undefined,
+): string {
   return [
     "Anima delivered this team message to you.",
-    `When you need to reply, call the MCP tool mcp__anima__reply with item_id ${JSON.stringify(input.itemId)} and your reply text.`,
-    "Plain terminal output is not visible to the team. The team only sees messages sent through the reply tool.",
+    tmuxCompletionInstructions(input, replyTarget),
+    "Plain terminal output is not visible to the team. The team only sees messages sent through Anima tools.",
     "",
     input.prompt,
   ].join("\n");
 }
 
+function tmuxCompletionInstructions(
+  input: AgentRuntimeInput,
+  replyTarget: AgentRuntimeNotificationTarget | undefined,
+): string {
+  if (replyTarget?.channel) {
+    return `When you need to reply, call the MCP tool mcp__anima__reply with item_id ${JSON.stringify(input.itemId)} and your reply text.`;
+  }
+  return `This item has no direct reply target. Use the normal Anima CLI/tools from the standing prompt for any needed team action, then call the MCP tool mcp__anima__complete with item_id ${JSON.stringify(input.itemId)} and a short completion note.`;
+}
+
 function tmuxSteeringPrompt(input: AgentRuntimeFollowupInput): string {
   return [
     "Steering update from Anima for the active team-message turn.",
-    "Use this update before sending the final reply through mcp__anima__reply.",
+    "Use this update before completing the current turn through the MCP tool named in the current turn instructions.",
     "",
     input.prompt,
   ].join("\n");
