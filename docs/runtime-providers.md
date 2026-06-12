@@ -307,7 +307,7 @@ Agent text:
 
 - `agent.text`: assistant text observed from provider stdout.
 
-Slack tool activities are separate. When the spawned code agent calls `anima message send`, that goes through `server/slack/messages.ts` and records `tool.call.started` / `tool.call.completed` / `tool.call.failed` for the Slack side effect. Provider shell/Bash wrapper rows for first-class Anima CLI tools (`anima message read/send/update/react`, `anima file send`) are suppressed so the activity stream shows the semantic Slack tool row once.
+Slack tool activities are separate. When the spawned code agent calls `anima message send`, that goes through `server/tools/messages.ts` and records `tool.call.started` / `tool.call.completed` / `tool.call.failed` for the Slack side effect. Provider shell/Bash wrapper rows for first-class Anima CLI tools (`anima message read/send/update/react`, `anima file send`) are suppressed so the activity stream shows the semantic Slack tool row once.
 
 ## Current Boundaries and Tradeoffs
 
