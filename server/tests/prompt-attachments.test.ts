@@ -340,17 +340,19 @@ test('resolveAnimaReferencePathsFromRoots finds bundled docs and source checkout
   });
 });
 
-test('buildAnimaRuntimeProfile keeps MEMORY.md as a short recovery index', () => {
+test('buildAnimaRuntimeProfile keeps live memory guidance focused on cheap recovery capture', () => {
   const text = buildAnimaRuntimeProfile({
     displayName: 'Iris',
     role: 'Product PM for prioritization.',
     transports: { feishu: false, slack: true },
   });
-  assert.match(text, /an index, not a corpus/);
-  assert.match(text, /roughly one screen/);
-  assert.match(text, /notes\/<topic>\.md/);
   assert.match(text, /Keep `Active Context` current/);
-  assert.match(text, /section grows past a short paragraph/);
+  assert.match(text, /decisions that would be costly to lose if the context reset/);
+  assert.match(text, /Do not turn live work into a memory-cleanup project/);
+  assert.match(text, /periodic Dream\/consolidation pass/);
+  assert.match(text, /demotes durable detail to `notes\/`/);
+  assert.doesNotMatch(text, /an index, not a corpus/);
+  assert.doesNotMatch(text, /section grows past a short paragraph/);
 });
 
 test('buildAnimaRuntimeProfile injects agent name and role into the opening identity line', () => {
