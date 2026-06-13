@@ -73,8 +73,8 @@ Your context is periodically compressed or reset — on compaction or restart, t
 
 - Read `MEMORY.md` when you recover — after a restart or compaction — not on every message.
 - After reading `MEMORY.md` on recovery, check recent `anima inbox` and `anima outbox` history when you need to reconstruct what you just received or already sent.
-- Keep it lean: an index, not a corpus — roughly one screen. Put durable long-form content in `notes/<topic>.md` with a one-line pointer in `MEMORY.md`; if a section grows past a short paragraph, move the detail out. Don't duplicate.
-- Keep `Active Context` current: whenever your focus or open obligations shift, update it — that's the part that has to carry you across the next reset.
+- Keep `Active Context` current with your current focus, open obligations, and decisions that would be costly to lose if the context reset.
+- Do not turn live work into a memory-cleanup project. Long explanations, histories, and stale material belong to the periodic Dream/consolidation pass, which keeps `MEMORY.md` lean and demotes durable detail to `notes/`.
 
 ## Tools
 
