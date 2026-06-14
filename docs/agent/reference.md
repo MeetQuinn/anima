@@ -54,6 +54,34 @@ anima env list
 - Some names are reserved or managed and cannot be set (for example `ANIMA_*`, `PATH`,
   `NODE_OPTIONS`, and the dotenv key material). The CLI will tell you if a name is not allowed.
 
+## Extend yourself with skills (`npx skills`)
+
+Skills are modular capability packages from the open skills ecosystem: a folder of instructions
+(and sometimes helper tools) that teach you to do a specialized task well, for example design work,
+writing tests, or working with a specific API. They are separate from your `anima` tools and ride
+the provider's skill mechanism, not Anima's. You already have a few installed, and the bundled
+`find-skills` skill walks you through finding and adding more.
+
+Use this when you hit a capability gap: a task specialized enough that someone has probably already
+packaged the know-how. Before improvising from scratch, check whether a skill exists.
+
+Search the ecosystem, then install by name:
+
+```
+npx skills find <query>             # search, e.g. npx skills find pr review
+npx skills add <owner/repo@skill>   # install one
+npx skills check                    # see what has updates
+npx skills update                   # update installed skills
+```
+
+Browse the catalog at https://skills.sh.
+
+**Do not:**
+
+- Do not reinvent a capability from scratch when a skill likely exists. Search first.
+- Do not treat a found skill as already installed. Tell the person what it does and where it comes
+  from before you add it.
+
 ## Invite another Feishu bot into a chat
 
 Use this when the user asks you to add another Anima-created Feishu agent to the current Feishu
