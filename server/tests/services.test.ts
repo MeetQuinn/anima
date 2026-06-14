@@ -625,6 +625,7 @@ async function runAnimactl(
     ...process.env,
     // Clear any inherited runtime env so refuse checks see a clean slate
     // unless the test explicitly opts back in via options.env.
+    ANIMA_AGENT_ID: '',
     ANIMA_INBOX_ITEM_ID: '',
     ANIMA_HOME: '',
     ANIMA_RUNTIME_HOME: '',
@@ -658,6 +659,7 @@ async function runAnimactlUntil(
 ): Promise<{ status: number | null; stderr: string; stdout: string }> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    ANIMA_AGENT_ID: '',
     ANIMA_INBOX_ITEM_ID: '',
     ANIMA_HOME: '',
     ANIMA_RUNTIME_HOME: '',
