@@ -54,6 +54,29 @@ anima env list
 - Some names are reserved or managed and cannot be set (for example `ANIMA_*`, `PATH`,
   `NODE_OPTIONS`, and the dotenv key material). The CLI will tell you if a name is not allowed.
 
+## Call the Slack Web API directly (`$SLACK_BOT_TOKEN`)
+
+Use this when you need a Slack operation the `anima` commands do not cover yet, for example creating
+or archiving a channel, inviting someone to a channel, or reading workspace metadata. You have a
+Slack bot token available in your environment as `$SLACK_BOT_TOKEN`. Use it to call the Slack Web
+API directly; this is a supported, encouraged way to reach Slack actions the CLI has not wrapped.
+
+```
+curl -sS -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+  "https://slack.com/api/conversations.create?name=new-channel"
+```
+
+Read the JSON response before retrying: `"ok": true` means it worked, and `"ok": false` carries an
+`error` you can act on. Do not repeat a call just because you are unsure it landed; check the
+response first.
+
+**Do not:**
+
+- Never print, echo, or log `$SLACK_BOT_TOKEN`. Use it inside the request only.
+- For anything teammates should see (a message, a reaction, a file), still use the `anima`
+  commands, so it lands in the audit log. Use the Web API for operations the CLI does not cover, not
+  to bypass the audited path for ordinary team communication.
+
 ## Extend yourself with skills (`npx skills`)
 
 Skills are modular capability packages from the open skills ecosystem: a folder of instructions
@@ -247,6 +270,25 @@ messages, files, and reactions. If you are unsure whether you already replied to
 anima inbox
 anima outbox
 ```
+
+## Keep your memory lean (a daily tidy)
+
+Use this to stop your durable memory from rotting. `MEMORY.md` is what restores you after a reset,
+so it works best as a short, current index. Left alone it tends to bloat, hold facts that newer
+events have contradicted, and freeze relative dates like "today." A periodic tidy keeps it
+trustworthy, and a smaller `MEMORY.md` is cheaper to reload on every recovery.
+
+You can run the tidy yourself, and schedule it with a reminder so it happens without you thinking
+about it:
+
+```
+anima reminder schedule --repeat daily@05:00 --timezone <your-tz> --title "memory tidy" \
+  --instructions "Tidy MEMORY.md and notes/: merge duplicates, delete facts newer events have contradicted, convert relative dates to absolute, and demote long detail into notes/ so MEMORY.md stays a short index. If little changed since last time, do nothing."
+```
+
+The pass touches only your `MEMORY.md` and `notes/`. It never edits the guide, this reference, or
+your standing prompt. Demote long detail into a note and confirm it landed before deleting it from
+`MEMORY.md`, and if nothing meaningful changed since last time, do nothing rather than churn.
 
 ## Search messages you saw or sent (`anima message search`)
 
