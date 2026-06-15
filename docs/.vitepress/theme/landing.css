@@ -120,25 +120,6 @@
     color: var(--landing-ink) !important;
   }
 
-  /* Star on GitHub: co-primary with Get started. Solid ink, not a ghost,
-     carries equal weight to the accent button (and reads GitHub-dark). */
-  & .landing-button-github {
-    gap: 8px;
-    background: var(--landing-ink);
-    color: #ffffff !important;
-  }
-
-  & .landing-button-github:hover {
-    background: #34302b;
-    color: #ffffff !important;
-  }
-
-  & .landing-button-icon {
-    width: 15px;
-    height: 15px;
-    flex: none;
-  }
-
   /* Subordinate hero link under the two co-primary buttons. */
   & .landing-hero-secondary {
     margin: 16px 0 0;
