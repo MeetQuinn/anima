@@ -29,27 +29,55 @@ export default {
       const handleClick = async (event: MouseEvent) => {
         const target = event.target;
         if (!(target instanceof Element)) return;
+        // Matches both the raw-command Copy button and the secondary
+        // "Share it with your team" handoff button (copies a link to send on).
         const button = target.closest<HTMLButtonElement>(
-          ".landing-copy-command",
+          "button[data-command]",
         );
         if (!button) return;
 
         const command = button.dataset.command ?? INSTALL_COMMAND;
         const originalText = button.textContent ?? "Copy";
+        const copiedLabel = button.dataset.copiedLabel ?? "Copied";
         try {
           await copyToClipboard(command);
-          button.textContent = "Copied";
+          button.textContent = copiedLabel;
         } catch {
           button.textContent = "Copy failed";
         } finally {
           window.setTimeout(() => {
             button.textContent = originalText;
-          }, 1400);
+          }, 1600);
         }
       };
 
-      onMounted(() => document.addEventListener("click", handleClick));
-      onBeforeUnmount(() => document.removeEventListener("click", handleClick));
+      // Pause the hero relay loop while it is scrolled out of view, so it does
+      // not burn battery/CPU on mobile when nobody is looking at it.
+      let observer: IntersectionObserver | undefined;
+      const observeHeroLoop = () => {
+        const thread = document.querySelector<HTMLElement>(".hero-relay-thread");
+        if (!thread || typeof IntersectionObserver === "undefined") return;
+        observer = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              thread.style.animationPlayState = entry.isIntersecting
+                ? "running"
+                : "paused";
+            }
+          },
+          { threshold: 0 },
+        );
+        observer.observe(thread);
+      };
+
+      onMounted(() => {
+        document.addEventListener("click", handleClick);
+        observeHeroLoop();
+      });
+      onBeforeUnmount(() => {
+        document.removeEventListener("click", handleClick);
+        observer?.disconnect();
+      });
 
       return () => h(DefaultTheme.Layout);
     },
