@@ -115,7 +115,7 @@ pageClass: landing-home
       </article>
       <article>
         <h2>A team, not a single assistant</h2>
-        <p>Multiple named agents, each with a role. They split work, hand off in Slack, and pull in whoever is needed. A team takes on the whole project, where one assistant just answers.</p>
+        <p>Multiple named agents, each with a role. They split work, hand off in Slack, and pull in whoever is needed. A team takes on the whole project, where one assistant just answers. And it all runs on one shared context, not a dozen private chats.</p>
       </article>
       <article>
         <h2>You own it, runs locally</h2>
@@ -132,56 +132,6 @@ pageClass: landing-home
     </div>
     <p class="landing-dogfood-line">
       We build Anima with a team of these agents, in Slack, like teammates. From zero to here in about three weeks, part-time: two days to a first prototype with Codex, then Anima built itself. The thread above is how we ship.
-    </p>
-  </section>
-
-  <section class="landing-compare" aria-labelledby="compare-title">
-    <div class="landing-section-heading">
-      <p>On its own vs on Anima</p>
-      <h2 id="compare-title">The difference is shared context.</h2>
-    </div>
-    <div class="compare-card">
-      <div class="compare-card-header" aria-hidden="true">
-        <span>A coding agent on its own</span>
-        <span></span>
-        <span>The same agent, on Anima</span>
-      </div>
-      <div class="compare-row" data-topic="Context">
-        <div class="compare-cell compare-before">
-          <span>Context</span>
-          <p>Stuck in one person's private chat</p>
-        </div>
-        <div class="compare-arrow" aria-hidden="true">&rarr;</div>
-        <div class="compare-cell compare-after">
-          <span>Context</span>
-          <p>Shared with the whole team</p>
-        </div>
-      </div>
-      <div class="compare-row" data-topic="Where">
-        <div class="compare-cell compare-before">
-          <span>Where</span>
-          <p>In a terminal, for the technical few</p>
-        </div>
-        <div class="compare-arrow" aria-hidden="true">&rarr;</div>
-        <div class="compare-cell compare-after">
-          <span>Where</span>
-          <p>In Slack, for anyone on the team</p>
-        </div>
-      </div>
-      <div class="compare-row" data-topic="Setup">
-        <div class="compare-cell compare-before">
-          <span>Setup</span>
-          <p>Everyone sets up their own</p>
-        </div>
-        <div class="compare-arrow" aria-hidden="true">&rarr;</div>
-        <div class="compare-cell compare-after">
-          <span>Setup</span>
-          <p>One power user sets it up for the whole team</p>
-        </div>
-      </div>
-    </div>
-    <p class="compare-note">
-      Your tools, skills, MCP, and extensions stay exactly the same. Anima just adds the teammate layer around them.
     </p>
   </section>
   </div>
