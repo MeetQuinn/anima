@@ -281,6 +281,14 @@
     line-height: 1.46;
     color: var(--landing-ink);
   }
+  /* Grouped consecutive message: a second line from the same person, Slack-
+     style. Avatar + name + time show once on the first bubble; this row tucks
+     tight underneath (empty avatar gutter, no head, reduced top padding) so
+     "On it." then "Okay, that's cleaned up." reads as one person typing twice,
+     not two stitched bubbles. */
+  & .relay-cont {
+    padding-top: 0;
+  }
   & .relay-kbd {
     font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
     font-size: 12.5px;
@@ -440,6 +448,16 @@
   }
   & .hero-stage-review {
     color: var(--landing-ink);
+  }
+
+  /* Slack-style @mention chip inside a bubble (the single review hand-off ping
+     -- Nora asks Tess to take a look). */
+  & .relay-mention {
+    color: #1264a3;
+    background: rgba(18, 100, 163, 0.1);
+    border-radius: 3px;
+    padding: 0 3px;
+    font-weight: 600;
   }
 
   /* Gate: the human's approve action. Rust pill so the "you decide" tap is the

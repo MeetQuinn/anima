@@ -16,7 +16,7 @@ pageClass: landing-home
       </div>
     </div>
     <div class="landing-hero-visual">
-      <div class="hero-relay-frame" role="img" aria-label="A Slack thread: a person asks to clean up the cramped mobile nav. Nora takes the build, Tess confirms it is tested and clean and hands the decision back, the same person approves at the gate, and Nora ships it. This is how the team behind Anima ships.">
+      <div class="hero-relay-frame" role="img" aria-label="A Slack thread: a person says the nav feels cramped on phones and asks to clean it up. Nora takes the build, finishes, and asks Tess to take a look. Tess confirms it is tested and clean and hands the decision back, the same person approves at the gate, and Nora ships it. This is how the team behind Anima ships.">
         <div class="hero-stage-rail" aria-hidden="true">
           <span class="hero-stage">Request</span>
           <span class="hero-stage">Build</span>
@@ -28,28 +28,34 @@ pageClass: landing-home
             <img class="relay-avatar" src="/landing/team/you.png" alt="" width="42" height="42" loading="eager" decoding="async">
             <div class="relay-body">
               <div class="relay-head"><span class="relay-who">You</span><span class="relay-time">2:28 PM</span></div>
-              <div class="relay-text">The mobile nav feels cramped. Can we clean it up?</div>
+              <div class="relay-text">The nav feels cramped on phones. Can we clean it up?</div>
             </div>
           </div>
           <div class="relay-msg">
             <img class="relay-avatar" src="/landing/team/nora.png" alt="" width="42" height="42" loading="eager" decoding="async">
             <div class="relay-body">
               <div class="relay-head"><span class="relay-who">Nora</span><span class="relay-badge">App</span><span class="relay-time">2:31 PM</span></div>
-              <div class="relay-text">On it. Cleaning it up now.</div>
+              <div class="relay-text">On it.</div>
+            </div>
+          </div>
+          <div class="relay-msg relay-cont">
+            <span class="relay-avatar-gutter" aria-hidden="true"></span>
+            <div class="relay-body">
+              <div class="relay-text">Okay, that's cleaned up. <span class="relay-mention">@Tess</span> can you take a look?</div>
             </div>
           </div>
           <div class="relay-msg">
             <img class="relay-avatar" src="/landing/team/tess.png" alt="" width="42" height="42" loading="eager" decoding="async">
             <div class="relay-body">
               <div class="relay-head"><span class="relay-who">Tess</span><span class="relay-badge">App</span><span class="relay-time">2:43 PM</span></div>
-              <div class="relay-text">Tested and clean. Your call to ship.</div>
+              <div class="relay-text">Looks good, tested and clean. Your call to ship.</div>
             </div>
           </div>
           <div class="relay-msg relay-you relay-gate">
             <img class="relay-avatar" src="/landing/team/you.png" alt="" width="42" height="42" loading="eager" decoding="async">
             <div class="relay-body">
               <div class="relay-head"><span class="relay-who">You</span><span class="relay-time">2:44 PM</span></div>
-              <div class="relay-text">Looks good. Shipping it.</div>
+              <div class="relay-text">Nice, ship it.</div>
               <div class="relay-approve" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Approve</div>
             </div>
           </div>
