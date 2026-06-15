@@ -205,7 +205,7 @@
     box-sizing: border-box;
     min-height: 100%;
     height: auto;
-    padding: 20px 24px 22px;
+    padding: 52px 24px 22px;
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
@@ -399,6 +399,118 @@
   & .relay-merged svg {
     width: 12px;
     height: 12px;
+  }
+
+  /* Persistent stage rail: pinned across the top of the frame so a cold
+     visitor reads the whole pattern (Request to Shipped) in one glance, even
+     mid-loop before every bubble has cycled in. Opaque, so the thread scrolls
+     up underneath it. Memory + Gate carry light emphasis (our differentiator
+     + the human spine). */
+  & .hero-stage-rail {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    height: 40px;
+    padding: 0 16px;
+    background: #ffffff;
+    border-bottom: 1px solid var(--landing-line);
+  }
+  & .hero-stage {
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: #a8a39a;
+  }
+  & .hero-stage + .hero-stage::before {
+    content: "";
+    display: inline-block;
+    width: 4px;
+    height: 4px;
+    margin-right: 7px;
+    border-radius: 50%;
+    background: var(--landing-line);
+    vertical-align: middle;
+  }
+  & .hero-stage-memory {
+    color: var(--landing-accent);
+  }
+  & .hero-stage-gate {
+    color: var(--landing-ink);
+  }
+
+  /* Slack-style @mention chip inside a bubble (the handoff target). */
+  & .relay-mention {
+    color: #1264a3;
+    background: rgba(18, 100, 163, 0.1);
+    border-radius: 3px;
+    padding: 0 3px;
+    font-weight: 600;
+  }
+
+  /* Memory beat: a faint highlight + the recall reference, so beat 4 reads as
+     THE differentiator at a glance. The recall line ties the cue to one
+     specific prior decision (the agreed layout setup) -- continuity, never an
+     ambient "remembers everything" claim. */
+  & .relay-memory {
+    background: rgba(179, 64, 31, 0.04);
+    border-radius: 9px;
+    margin: 0 -10px;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  & .relay-recall-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    color: var(--landing-accent);
+    background: rgba(179, 64, 31, 0.08);
+    border-radius: 999px;
+    padding: 2px 7px 2px 6px;
+  }
+  & .relay-recall-tag svg {
+    width: 11px;
+    height: 11px;
+  }
+  & .relay-recall {
+    display: inline-block;
+    margin: 0 0 5px;
+    padding: 4px 10px;
+    border-left: 2px solid rgba(179, 64, 31, 0.4);
+    background: rgba(179, 64, 31, 0.05);
+    border-radius: 0 5px 5px 0;
+    font-size: 12.5px;
+    line-height: 1.4;
+    color: #8a6a5c;
+  }
+
+  /* Gate: the human's approve action. Rust pill so the "you decide" tap is the
+     visual climax of the thread. aria-hidden -- it is a still of an action, not
+     an interactive control. */
+  & .relay-approve {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 9px;
+    background: var(--landing-accent);
+    color: #ffffff;
+    font-size: 12.5px;
+    font-weight: 800;
+    padding: 6px 14px;
+    border-radius: 8px;
+  }
+  & .relay-approve svg {
+    width: 13px;
+    height: 13px;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -1217,31 +1329,34 @@
     opacity: 1;
     transform: translateY(0);
   }
-  16% {
+  13% {
     transform: translateY(0);
   }
-  21% {
+  18% {
     transform: translateY(calc((472px - 100%) * 0.3));
   }
-  37% {
+  29% {
     transform: translateY(calc((472px - 100%) * 0.3));
   }
-  42% {
+  34% {
+    transform: translateY(calc((472px - 100%) * 0.58));
+  }
+  /* Memory dwell: hold on Milo's callback so the differentiator registers. */
+  51% {
     transform: translateY(calc((472px - 100%) * 0.58));
   }
   56% {
-    transform: translateY(calc((472px - 100%) * 0.58));
-  }
-  61% {
     transform: translateY(calc((472px - 100%) * 0.82));
   }
-  72% {
+  66% {
     transform: translateY(calc((472px - 100%) * 0.82));
   }
-  77% {
+  71% {
     transform: translateY(calc(472px - 100%));
   }
-  90% {
+  /* Gate + Shipped dwell: the emotional payoff (you approve, it ships) gets
+     the longest hold before the loop fades out and resets. */
+  91% {
     opacity: 1;
     transform: translateY(calc(472px - 100%));
   }
