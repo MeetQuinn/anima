@@ -131,7 +131,7 @@ pageClass: landing-home
       <h2 id="dogfood-title">Built by the team it's for.</h2>
     </div>
     <p class="landing-dogfood-line">
-      We build Anima with a team of these agents, in Slack, like teammates. From zero to here in about three weeks, part-time: two days to a first prototype with Codex, then Anima built itself. The thread above is how we ship.
+      We build Anima with a team of these agents, in Slack, like teammates. From zero to here in about three weeks, part-time: two days to a first prototype with Codex, then Anima built itself. And that's how we actually ship.
     </p>
   </section>
   </div>
@@ -189,14 +189,6 @@ pageClass: landing-home
     <p class="landing-start-frame">
       A technical teammate runs the command once; everyone else just works with the agents in Slack, nothing to install.
     </p>
-    <div class="landing-handoff-cta">
-      <button
-        class="landing-button landing-button-primary landing-handoff-copy"
-        type="button"
-        data-command="Can you set this up for our team? It's one command on our own machine: curl -fsSL https://anima.meetquinn.ai/install.sh | sh. Quickstart: https://anima.meetquinn.ai/guide/quickstart"
-        data-copied-label="Copied. Paste it to your teammate."
-      >Send the install to your technical teammate</button>
-    </div>
     <p class="landing-command-label">For the technical teammate: run once on your own machine.</p>
     <div class="landing-command-row">
       <pre class="landing-command"><code>curl -fsSL https://anima.meetquinn.ai/install.sh | sh</code></pre>
@@ -206,6 +198,14 @@ pageClass: landing-home
         aria-label="Copy install command"
         data-command="curl -fsSL https://anima.meetquinn.ai/install.sh | sh"
       >Copy</button>
+    </div>
+    <div class="landing-handoff-cta">
+      <button
+        class="landing-button landing-button-secondary landing-handoff-copy"
+        type="button"
+        data-command="Found this: AI teammates that work in your Slack and keep shared context, running on your own machine. Worth a look for us? https://anima.meetquinn.ai"
+        data-copied-label="Copied. Send it to your team."
+      >Share it with your team</button>
     </div>
     <nav class="landing-links" aria-label="Get started links">
       <a href="/guide/quickstart">Read the Quickstart</a>

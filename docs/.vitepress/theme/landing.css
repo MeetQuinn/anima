@@ -892,25 +892,34 @@
     text-align: center;
   }
 
-  /* Decider-path primary: the action the non-technical champion can take:
-     hand the install to whoever runs it. Sits above the builder command. */
+  /* Secondary share action: the champion's low-commitment path (copies a link
+     to send on). Sits below the primary install command, styled secondary. */
   & .landing-handoff-cta {
     display: flex;
     justify-content: center;
     margin: 26px auto 0;
   }
 
+  /* White + bordered so the share button reads as a real (secondary) button
+     against the soft footer card, where landing-button-secondary's soft fill
+     would otherwise blend in and look like plain text. */
   & .landing-handoff-copy {
     max-width: 100%;
     padding: 0 26px;
     text-align: center;
     cursor: pointer;
-    border: 0;
+    border: 1px solid var(--landing-line);
+    background: #ffffff;
+    color: var(--landing-ink) !important;
     font-family: inherit;
   }
 
-  /* Builder-path label: names who the raw command is for, so the decider
-     doesn't read it as their step. */
+  & .landing-handoff-copy:hover {
+    background: var(--landing-soft);
+  }
+
+  /* Names who the install is for; leads the primary command block so the
+     non-technical champion reads it as the technical teammate's step. */
   & .landing-command-label {
     margin: 30px auto 0;
     color: var(--landing-muted);

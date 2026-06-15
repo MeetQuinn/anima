@@ -29,8 +29,8 @@ export default {
       const handleClick = async (event: MouseEvent) => {
         const target = event.target;
         if (!(target instanceof Element)) return;
-        // Matches both the raw-command Copy button and the decider-path
-        // "Send the install to your technical teammate" handoff button.
+        // Matches both the raw-command Copy button and the secondary
+        // "Share it with your team" handoff button (copies a link to send on).
         const button = target.closest<HTMLButtonElement>(
           "button[data-command]",
         );
