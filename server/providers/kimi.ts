@@ -2,8 +2,8 @@ import { nowIso } from '../ids.js';
 import { isRecord, numberField, singleLineForActivity, stringField } from '../json.js';
 import { ActiveRuntimeRun } from './active-runtime.js';
 import { runtimeErrorPayload, truncateForActivity } from '../activities/format.js';
-import { startChildProcess, terminateChildProcess, type RunningChildProcess } from './child-process.js';
-import { watchProviderCompletion } from './completion-watch.js';
+import { startChildProcess, type RunningChildProcess } from './child-process.js';
+import { ProviderControllerSlot } from './controller-slot.js';
 import { exposedReasoningEvent } from './reasoning-events.js';
 import { LineBuffer } from './line-buffer.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
@@ -37,7 +37,7 @@ export class KimiCliAgentRuntime implements AgentRuntime {
   readonly env: Record<string, string> | undefined;
   readonly kind = KIMI_RUNTIME_KIND;
   private readonly config: KimiCliAgentProviderConfig;
-  private controller?: KimiAcpController;
+  private readonly slot = new ProviderControllerSlot<KimiAcpController>();
   private readonly activeRun = new ActiveRuntimeRun();
 
   constructor(config: KimiCliAgentProviderConfig) {
@@ -46,12 +46,13 @@ export class KimiCliAgentRuntime implements AgentRuntime {
   }
 
   async close(options: AgentRuntimeCloseOptions = {}): Promise<void> {
-    await this.resetController(options.signal, options);
+    await this.slot.reset(options.signal, options);
   }
 
   health(): AgentRuntimeHealth {
+    const controller = this.slot.get();
     return {
-      ...(this.controller ? { child: this.controller.snapshot() } : {}),
+      ...(controller ? { child: controller.snapshot() } : {}),
       childExpected: this.activeRun.isActive(),
     };
   }
@@ -63,7 +64,7 @@ export class KimiCliAgentRuntime implements AgentRuntime {
       transport: 'acp',
     });
 
-    const finishRun = this.activeRun.start(input, 'Kimi', (signal) => void this.resetController(signal));
+    const finishRun = this.activeRun.start(input, 'Kimi', (signal) => void this.slot.reset(signal));
     try {
       const controller = await this.ensureController(input);
       await input.effects.persistProviderSession({
@@ -84,7 +85,7 @@ export class KimiCliAgentRuntime implements AgentRuntime {
   }
 
   async appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<AgentRuntimeFollowupResult> {
-    const controller = this.controller;
+    const controller = this.slot.get();
     if (!this.activeRun.accepts(input)) return { accepted: false };
     if (!controller) return { accepted: false };
     if (!controller.appendPrompt(input.prompt)) return { accepted: false };
@@ -92,7 +93,7 @@ export class KimiCliAgentRuntime implements AgentRuntime {
   }
 
   async requestDrain(input: AgentRuntimeDrainInput): Promise<void> {
-    const controller = this.controller;
+    const controller = this.slot.get();
     if (!this.activeRun.accepts(input)) return;
     if (!controller) return;
     await controller.waitForQuiescent(input.signal);
@@ -100,15 +101,17 @@ export class KimiCliAgentRuntime implements AgentRuntime {
 
   private async ensureController(input: AgentRuntimeInput): Promise<KimiAcpController> {
     const requestedSessionId = input.providerSession?.id;
-    if (this.controller && requestedSessionId && this.controller.sessionId !== requestedSessionId) {
-      await this.resetController();
+    const existing = this.slot.get();
+    if (existing && requestedSessionId && existing.sessionId !== requestedSessionId) {
+      await this.slot.reset();
     }
-    if (this.controller && !requestedSessionId && this.controller.sessionId) {
-      await this.resetController();
+    if (existing && !requestedSessionId && existing.sessionId) {
+      await this.slot.reset();
     }
-    if (!this.controller) {
-      let controller!: KimiAcpController;
-      controller = new KimiAcpController(
+    let controller = this.slot.get();
+    if (!controller) {
+      let started!: KimiAcpController;
+      started = new KimiAcpController(
         startChildProcess({
           args: ['--yolo', 'acp'],
           bufferOutput: false,
@@ -116,37 +119,21 @@ export class KimiCliAgentRuntime implements AgentRuntime {
           cwd: input.cwd,
           env: input.env,
           label: 'Kimi ACP runtime',
-          onStderrChunk: (chunk) => controller.acceptStderrChunk(chunk),
+          onStderrChunk: (chunk) => started.acceptStderrChunk(chunk),
           onStdoutChunk: async (chunk) => {
-            await controller.acceptStdoutChunk(chunk);
+            await started.acceptStdoutChunk(chunk);
           },
         }),
       );
-      this.controller = controller;
-      watchProviderCompletion(controller.completion, () => {
-        if (this.controller === controller) this.controller = undefined;
-      });
+      controller = this.slot.install(started);
     }
     try {
-      await this.controller.ensureSession(input, this.config.model);
-      return this.controller;
+      await controller.ensureSession(input, this.config.model);
+      return controller;
     } catch (error) {
-      await this.resetController();
+      await this.slot.reset();
       throw error;
     }
-  }
-
-  private async resetController(
-    signal: NodeJS.Signals = 'SIGTERM',
-    options: Pick<AgentRuntimeCloseOptions, 'forceAfterMs'> = {},
-  ): Promise<void> {
-    const controller = this.controller;
-    if (!controller) return;
-    this.controller = undefined;
-    await terminateChildProcess(controller, {
-      signal,
-      ...(options.forceAfterMs === undefined ? {} : { forceAfterMs: options.forceAfterMs }),
-    });
   }
 }
 

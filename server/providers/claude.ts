@@ -5,9 +5,9 @@ import { isRecord, stringField } from '../json.js';
 import { runtimeErrorPayload } from '../activities/format.js';
 import { classifyProviderFailureReason } from '../runtime/provider-failure.js';
 import { ActiveRuntimeRun } from './active-runtime.js';
-import { startChildProcess, terminateChildProcess, type RunningChildProcess } from './child-process.js';
+import { startChildProcess, type RunningChildProcess } from './child-process.js';
 import { createClaudeJsonlActivityMapper, parseClaudeRuntimeOutput } from './claude-events.js';
-import { watchProviderCompletion } from './completion-watch.js';
+import { ProviderControllerSlot } from './controller-slot.js';
 import { LineBuffer } from './line-buffer.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
 import {
@@ -37,7 +37,7 @@ export class ClaudeCodeAgentRuntime implements AgentRuntime {
   readonly env: Record<string, string> | undefined;
   readonly kind = 'claude-code';
   private readonly config: ClaudeCodeAgentProviderConfig;
-  private controller?: ClaudeStreamJsonController;
+  private readonly slot = new ProviderControllerSlot<ClaudeStreamJsonController>();
   private readonly activeRun = new ActiveRuntimeRun();
 
   constructor(config: ClaudeCodeAgentProviderConfig) {
@@ -49,12 +49,13 @@ export class ClaudeCodeAgentRuntime implements AgentRuntime {
   }
 
   async close(options: AgentRuntimeCloseOptions = {}): Promise<void> {
-    await this.resetController(options.signal, options);
+    await this.slot.reset(options.signal, options);
   }
 
   health(): AgentRuntimeHealth {
+    const controller = this.slot.get();
     return {
-      ...(this.controller ? { child: this.controller.snapshot() } : {}),
+      ...(controller ? { child: controller.snapshot() } : {}),
       childExpected: this.activeRun.isActive(),
     };
   }
@@ -66,10 +67,10 @@ export class ClaudeCodeAgentRuntime implements AgentRuntime {
       providerSession: providerSessionPayload(input.providerSession, this.kind),
     });
     const jsonlMapper = createClaudeJsonlActivityMapper(input.effects, this.kind);
-    const finishRun = this.activeRun.start(input, 'Claude Code', (signal) => void this.resetController(signal));
+    const finishRun = this.activeRun.start(input, 'Claude Code', (signal) => void this.slot.reset(signal));
     try {
-      if (!input.providerSession && this.controller?.hasStartedSession()) {
-        await this.resetController();
+      if (!input.providerSession && this.slot.get()?.hasStartedSession()) {
+        await this.slot.reset();
       }
       let result: string;
       let retriedProviderError = false;
@@ -102,7 +103,7 @@ export class ClaudeCodeAgentRuntime implements AgentRuntime {
               !error.sideEffectFree &&
               !continuedAfterProviderError &&
               !input.signal?.aborted &&
-              this.controller?.hasStartedSession()
+              this.slot.get()?.hasStartedSession()
             ) {
               continuedAfterProviderError = true;
               await input.effects.recordEvent({
@@ -124,7 +125,7 @@ export class ClaudeCodeAgentRuntime implements AgentRuntime {
           providerSession: providerSessionPayload(input.providerSession, this.kind),
           runtimeKind: this.kind,
         });
-        await this.resetController();
+        await this.slot.reset();
         result = await this.runTurn({ ...input, providerSession: undefined }, jsonlMapper);
       }
       await jsonlMapper.flush();
@@ -150,7 +151,7 @@ export class ClaudeCodeAgentRuntime implements AgentRuntime {
   }
 
   async appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<AgentRuntimeFollowupResult> {
-    const controller = this.controller;
+    const controller = this.slot.get();
     if (!this.activeRun.accepts(input)) return { accepted: false };
     if (!controller) return { accepted: false };
     await controller.writeUserMessage(input.prompt);
@@ -158,14 +159,15 @@ export class ClaudeCodeAgentRuntime implements AgentRuntime {
   }
 
   async requestDrain(input: AgentRuntimeDrainInput): Promise<void> {
-    const controller = this.controller;
+    const controller = this.slot.get();
     if (!this.activeRun.accepts(input)) return;
     if (!controller) return;
     await controller.waitForQuiescent(input.signal);
   }
 
   private async ensureController(input: AgentRuntimeInput): Promise<ClaudeStreamJsonController> {
-    if (this.controller) return this.controller;
+    const existing = this.slot.get();
+    if (existing) return existing;
     const systemPromptFilePath = await writeSystemPromptFile(input);
     let controller!: ClaudeStreamJsonController;
     controller = new ClaudeStreamJsonController(startChildProcess({
@@ -182,11 +184,7 @@ export class ClaudeCodeAgentRuntime implements AgentRuntime {
         await controller.acceptStdoutChunk(chunk);
       },
     }));
-    this.controller = controller;
-    watchProviderCompletion(controller.completion, () => {
-      if (this.controller === controller) this.controller = undefined;
-    });
-    return controller;
+    return this.slot.install(controller);
   }
 
   private async runTurn(
@@ -203,19 +201,6 @@ export class ClaudeCodeAgentRuntime implements AgentRuntime {
       throw error;
     }
     return turn;
-  }
-
-  private async resetController(
-    signal: NodeJS.Signals = 'SIGTERM',
-    options: Pick<AgentRuntimeCloseOptions, 'forceAfterMs'> = {},
-  ): Promise<void> {
-    const controller = this.controller;
-    if (!controller) return;
-    this.controller = undefined;
-    await terminateChildProcess(controller, {
-      signal,
-      ...(options.forceAfterMs === undefined ? {} : { forceAfterMs: options.forceAfterMs }),
-    });
   }
 
   private claudeArgs(providerSession: ProviderSessionRecord | undefined, systemPromptFilePath: string | undefined): string[] {
