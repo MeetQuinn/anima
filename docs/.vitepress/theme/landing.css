@@ -892,7 +892,7 @@
     text-align: center;
   }
 
-  /* Decider-path primary: the action the non-technical champion can take —
+  /* Decider-path primary: the action the non-technical champion can take:
      hand the install to whoever runs it. Sits above the builder command. */
   & .landing-handoff-cta {
     display: flex;
