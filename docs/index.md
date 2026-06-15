@@ -16,7 +16,7 @@ pageClass: landing-home
       </div>
     </div>
     <div class="landing-hero-visual">
-      <div class="hero-relay-frame" role="img" aria-label="A Slack thread: a person asks to clean up the cramped mobile nav. Nora takes the build, Tess confirms QA is clean and hands the decision back, the same person approves at the gate, and Nora ships it. This is how the team behind Anima ships.">
+      <div class="hero-relay-frame" role="img" aria-label="A Slack thread: a person asks to clean up the cramped mobile nav. Nora takes the build, Tess confirms it is tested and clean and hands the decision back, the same person approves at the gate, and Nora ships it. This is how the team behind Anima ships.">
         <div class="hero-stage-rail" aria-hidden="true">
           <span class="hero-stage">Request</span>
           <span class="hero-stage">Build</span>
