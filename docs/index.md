@@ -16,12 +16,11 @@ pageClass: landing-home
       </div>
     </div>
     <div class="landing-hero-visual">
-      <div class="hero-relay-frame" role="img" aria-label="A Slack thread: a person asks to clean up the cramped mobile nav. Iris hands the build to Nora, Nora asks Milo to wire up the new layout, and Milo picks up where the team left off, reusing a setup they had already agreed on. Tess confirms QA is clean, the same person approves at the gate, and Nora ships it. This is how the team behind Anima ships.">
+      <div class="hero-relay-frame" role="img" aria-label="A Slack thread: a person asks to clean up the cramped mobile nav. Nora takes the build, Tess confirms QA is clean and hands the decision back, the same person approves at the gate, and Nora ships it. This is how the team behind Anima ships.">
         <div class="hero-stage-rail" aria-hidden="true">
           <span class="hero-stage">Request</span>
           <span class="hero-stage">Build</span>
-          <span class="hero-stage hero-stage-memory">Memory</span>
-          <span class="hero-stage hero-stage-gate">Gate</span>
+          <span class="hero-stage hero-stage-review">Review</span>
           <span class="hero-stage">Shipped</span>
         </div>
         <div class="hero-relay-thread" aria-hidden="true">
@@ -33,32 +32,17 @@ pageClass: landing-home
             </div>
           </div>
           <div class="relay-msg">
-            <img class="relay-avatar" src="/landing/team/iris.png" alt="" width="42" height="42" loading="eager" decoding="async">
-            <div class="relay-body">
-              <div class="relay-head"><span class="relay-who">Iris</span><span class="relay-badge">App</span><span class="relay-time">2:31 PM</span></div>
-              <div class="relay-text">Got it. <span class="relay-mention">@Nora</span>, can you take the build?</div>
-            </div>
-          </div>
-          <div class="relay-msg">
             <img class="relay-avatar" src="/landing/team/nora.png" alt="" width="42" height="42" loading="eager" decoding="async">
             <div class="relay-body">
-              <div class="relay-head"><span class="relay-who">Nora</span><span class="relay-badge">App</span><span class="relay-time">2:34 PM</span></div>
-              <div class="relay-text">On the design. <span class="relay-mention">@Milo</span>, wire up the new layout?</div>
-            </div>
-          </div>
-          <div class="relay-msg relay-memory">
-            <img class="relay-avatar" src="/landing/team/milo.png" alt="" width="42" height="42" loading="eager" decoding="async">
-            <div class="relay-body">
-              <div class="relay-head"><span class="relay-who">Milo</span><span class="relay-badge">App</span><span class="relay-time">2:37 PM</span><span class="relay-recall-tag"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5a4.5 4.5 0 1 1-4.27 5.92" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M3.2 6.2 3.5 9l2.8-.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>remembered</span></div>
-              <div class="relay-recall">Agreed: nav stays on the shared layout.</div>
-              <div class="relay-text">Picking up where we left off. Reusing that layout, so it's quick.</div>
+              <div class="relay-head"><span class="relay-who">Nora</span><span class="relay-badge">App</span><span class="relay-time">2:31 PM</span></div>
+              <div class="relay-text">On it. Cleaning it up now.</div>
             </div>
           </div>
           <div class="relay-msg">
             <img class="relay-avatar" src="/landing/team/tess.png" alt="" width="42" height="42" loading="eager" decoding="async">
             <div class="relay-body">
               <div class="relay-head"><span class="relay-who">Tess</span><span class="relay-badge">App</span><span class="relay-time">2:43 PM</span></div>
-              <div class="relay-text">QA's clean. Your call to ship.</div>
+              <div class="relay-text">Tested and clean. Your call to ship.</div>
             </div>
           </div>
           <div class="relay-msg relay-you relay-gate">
@@ -73,7 +57,6 @@ pageClass: landing-home
             <img class="relay-avatar" src="/landing/team/nora.png" alt="" width="42" height="42" loading="eager" decoding="async">
             <div class="relay-body">
               <div class="relay-head"><span class="relay-who">Nora</span><span class="relay-badge">App</span><span class="relay-time">2:45 PM</span></div>
-              <div class="relay-text">Done.</div>
               <div class="relay-merged"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="#1a7f55" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Shipped</div>
             </div>
           </div>
