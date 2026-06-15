@@ -7,6 +7,13 @@ export interface JsonStoreOptions<T> {
 }
 
 export class JsonStore<T> {
+  // Memoize validation by raw-input identity. JsonFile returns the same cached
+  // object reference for an unchanged file, so a hot poll loop reads the same
+  // reference repeatedly; without this it would re-run the full schema parse on
+  // every read. A WeakMap keyed by the raw value lets a write (new reference)
+  // fall through to a fresh parse.
+  private readonly validated = new WeakMap<object, T>();
+
   constructor(private readonly options: JsonStoreOptions<T>) {}
 
   async read(): Promise<T> {
@@ -32,8 +39,15 @@ export class JsonStore<T> {
   }
 
   private parse(value: unknown, path: string): T {
+    const memoKey = typeof value === 'object' && value !== null ? (value as object) : undefined;
+    if (memoKey) {
+      const cached = this.validated.get(memoKey);
+      if (cached !== undefined) return cached;
+    }
     try {
-      return this.options.parse(value);
+      const result = this.options.parse(value);
+      if (memoKey) this.validated.set(memoKey, result);
+      return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`${path}: ${message}`);
