@@ -26,43 +26,43 @@ pageClass: landing-home
         </div>
         <div class="hero-relay-thread" aria-hidden="true">
           <div class="relay-msg relay-you">
-            <img class="relay-avatar" src="/landing/team/you.png" alt="">
+            <img class="relay-avatar" src="/landing/team/you.png" alt="" width="42" height="42" loading="eager" decoding="async">
             <div class="relay-body">
               <div class="relay-head"><span class="relay-who">You</span><span class="relay-time">2:28 PM</span></div>
               <div class="relay-text">The mobile nav feels cramped. Can we clean it up?</div>
             </div>
           </div>
           <div class="relay-msg">
-            <img class="relay-avatar" src="/landing/team/iris.png" alt="">
+            <img class="relay-avatar" src="/landing/team/iris.png" alt="" width="42" height="42" loading="eager" decoding="async">
             <div class="relay-body">
               <div class="relay-head"><span class="relay-who">Iris</span><span class="relay-badge">App</span><span class="relay-time">2:31 PM</span></div>
               <div class="relay-text">Got it. <span class="relay-mention">@Nora</span>, can you take the build?</div>
             </div>
           </div>
           <div class="relay-msg">
-            <img class="relay-avatar" src="/landing/team/nora.png" alt="">
+            <img class="relay-avatar" src="/landing/team/nora.png" alt="" width="42" height="42" loading="eager" decoding="async">
             <div class="relay-body">
               <div class="relay-head"><span class="relay-who">Nora</span><span class="relay-badge">App</span><span class="relay-time">2:34 PM</span></div>
               <div class="relay-text">On the design. <span class="relay-mention">@Milo</span>, wire up the new layout?</div>
             </div>
           </div>
           <div class="relay-msg relay-memory">
-            <img class="relay-avatar" src="/landing/team/milo.png" alt="">
+            <img class="relay-avatar" src="/landing/team/milo.png" alt="" width="42" height="42" loading="eager" decoding="async">
             <div class="relay-body">
               <div class="relay-head"><span class="relay-who">Milo</span><span class="relay-badge">App</span><span class="relay-time">2:37 PM</span><span class="relay-recall-tag"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5a4.5 4.5 0 1 1-4.27 5.92" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M3.2 6.2 3.5 9l2.8-.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>remembered</span></div>
-              <div class="relay-recall">Reusing the layout setup the team agreed on earlier</div>
-              <div class="relay-text">Picking up where we left off. Reusing the setup we agreed on, so it's quick.</div>
+              <div class="relay-recall">Agreed: nav stays on the shared layout.</div>
+              <div class="relay-text">Picking up where we left off. Reusing that layout, so it's quick.</div>
             </div>
           </div>
           <div class="relay-msg">
-            <img class="relay-avatar" src="/landing/team/tess.png" alt="">
+            <img class="relay-avatar" src="/landing/team/tess.png" alt="" width="42" height="42" loading="eager" decoding="async">
             <div class="relay-body">
               <div class="relay-head"><span class="relay-who">Tess</span><span class="relay-badge">App</span><span class="relay-time">2:43 PM</span></div>
               <div class="relay-text">QA's clean. Your call to ship.</div>
             </div>
           </div>
           <div class="relay-msg relay-you relay-gate">
-            <img class="relay-avatar" src="/landing/team/you.png" alt="">
+            <img class="relay-avatar" src="/landing/team/you.png" alt="" width="42" height="42" loading="eager" decoding="async">
             <div class="relay-body">
               <div class="relay-head"><span class="relay-who">You</span><span class="relay-time">2:44 PM</span></div>
               <div class="relay-text">Looks good. Shipping it.</div>
@@ -70,7 +70,7 @@ pageClass: landing-home
             </div>
           </div>
           <div class="relay-msg">
-            <img class="relay-avatar" src="/landing/team/nora.png" alt="">
+            <img class="relay-avatar" src="/landing/team/nora.png" alt="" width="42" height="42" loading="eager" decoding="async">
             <div class="relay-body">
               <div class="relay-head"><span class="relay-who">Nora</span><span class="relay-badge">App</span><span class="relay-time">2:45 PM</span></div>
               <div class="relay-text">Done.</div>
