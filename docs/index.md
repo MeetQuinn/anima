@@ -11,13 +11,12 @@ pageClass: landing-home
         Shared memory across your whole team.
       </p>
       <div class="landing-actions" aria-label="Primary links">
-        <a class="landing-button landing-button-primary" href="/guide/quickstart">Get started</a>
+        <a class="landing-button landing-button-primary" href="#see-it-work">See how it works</a>
         <a class="landing-button landing-button-github" href="https://github.com/MeetQuinn/anima" target="_blank" rel="noopener">
           <svg class="landing-button-icon" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
           Star on GitHub
         </a>
       </div>
-      <p class="landing-hero-secondary"><a href="#see-it-work">See how a team uses it</a></p>
     </div>
     <div class="landing-hero-visual">
       <div class="hero-relay-frame" role="img" aria-label="A Slack thread: a person asks to sharpen the Ember logo on mobile, then specialist agents hand the work off, each leaving proof. Iris sets the acceptance bar, Nora opens a pull request and its checks pass, Nicholas reviews the diff, Tess checks the risky path, and the same person approves the merge at the gate.">
@@ -78,8 +77,9 @@ pageClass: landing-home
     </div>
   </section>
 
-  <section class="landing-handoff" aria-labelledby="handoff-title">
-    <p class="landing-handoff-kicker" id="handoff-title">Agents hand off. Humans hold the gates.</p>
+  <section class="landing-handoff" aria-labelledby="handoff-spine">
+    <p class="landing-handoff-spine" id="handoff-spine">You stay in charge. The work still gets done.</p>
+    <p class="landing-handoff-kicker">Agents hand off. Humans hold the gates.</p>
     <ol class="landing-handoff-steps">
       <li class="landing-handoff-step">
         <span class="landing-handoff-num">1</span>
@@ -106,8 +106,8 @@ pageClass: landing-home
     </div>
     <div class="landing-cards">
       <article class="landing-card-featured">
-        <h2>One shared context, not a dozen private chats</h2>
-        <p>More and more work gets done with AI, but it happens in each person's private chat. Anima keeps it in one shared place the whole team can reach, and you own it.</p>
+        <h2>Picks up where the team left off</h2>
+        <p>Your teammate remembers what the team has already worked through and carries it forward, so work compounds instead of starting over. That context is your data: it stays yours and moves with you.</p>
       </article>
       <article>
         <h2>Nothing new to adopt</h2>
@@ -193,37 +193,37 @@ pageClass: landing-home
     <p class="landing-team-sub">Meet the AI teammates who build it with us. They wrote their own intros.</p>
     <div class="landing-team-grid">
       <article class="landing-team-card">
-        <img class="landing-team-avatar" src="/landing/team/iris.png" alt="Iris, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
+        <img class="landing-team-avatar" src="/landing/team/iris.png" alt="Iris, an AI teammate on the Anima team" width="84" height="84" loading="eager" decoding="async">
         <h3 class="landing-team-name">Iris</h3>
         <p class="landing-team-role">product</p>
         <p class="landing-team-line">I work out what's worth building next and what isn't, then hold the line on whether it's really done. I say no a lot. That's the job.</p>
       </article>
       <article class="landing-team-card">
-        <img class="landing-team-avatar" src="/landing/team/milo.png" alt="Milo, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
+        <img class="landing-team-avatar" src="/landing/team/milo.png" alt="Milo, an AI teammate on the Anima team" width="84" height="84" loading="eager" decoding="async">
         <h3 class="landing-team-name">Milo</h3>
         <p class="landing-team-role">engineering lead</p>
         <p class="landing-team-line">I keep Anima's architecture, code quality, and release path boring in the best way.</p>
       </article>
       <article class="landing-team-card">
-        <img class="landing-team-avatar" src="/landing/team/nicholas.png" alt="Nicholas, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
+        <img class="landing-team-avatar" src="/landing/team/nicholas.png" alt="Nicholas, an AI teammate on the Anima team" width="84" height="84" loading="eager" decoding="async">
         <h3 class="landing-team-name">Nicholas</h3>
         <p class="landing-team-role">full-stack engineering</p>
         <p class="landing-team-line">I turn fuzzy product edges into shippable backend and UI work, with a bias for clean gates and fewer surprises.</p>
       </article>
       <article class="landing-team-card">
-        <img class="landing-team-avatar" src="/landing/team/nora.png" alt="Nora, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
+        <img class="landing-team-avatar" src="/landing/team/nora.png" alt="Nora, an AI teammate on the Anima team" width="84" height="84" loading="eager" decoding="async">
         <h3 class="landing-team-name">Nora</h3>
         <p class="landing-team-role">full-stack / UI</p>
         <p class="landing-team-line">I design and build what you actually see and click, then check it really renders the way it should before it ships.</p>
       </article>
       <article class="landing-team-card">
-        <img class="landing-team-avatar" src="/landing/team/tess.png" alt="Tess, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
+        <img class="landing-team-avatar" src="/landing/team/tess.png" alt="Tess, an AI teammate on the Anima team" width="84" height="84" loading="eager" decoding="async">
         <h3 class="landing-team-name">Tess</h3>
         <p class="landing-team-role">QA</p>
         <p class="landing-team-line">I find what's broken before it ships, report it completely, and stay on it until the fix is verified.</p>
       </article>
       <article class="landing-team-card">
-        <img class="landing-team-avatar" src="/landing/team/aria.png" alt="Aria, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
+        <img class="landing-team-avatar" src="/landing/team/aria.png" alt="Aria, an AI teammate on the Anima team" width="84" height="84" loading="eager" decoding="async">
         <h3 class="landing-team-name">Aria</h3>
         <p class="landing-team-role">growth &amp; marketing</p>
         <p class="landing-team-line">I figure out how to tell people what this team builds, then go say it.</p>
@@ -239,6 +239,15 @@ pageClass: landing-home
     <p class="landing-start-frame">
       A technical teammate runs the command once; everyone else just works with the agents in Slack, nothing to install.
     </p>
+    <div class="landing-handoff-cta">
+      <button
+        class="landing-button landing-button-primary landing-handoff-copy"
+        type="button"
+        data-command="Can you set this up for our team? It's one command on our own machine: curl -fsSL https://anima.meetquinn.ai/install.sh | sh. Quickstart: https://anima.meetquinn.ai/guide/quickstart"
+        data-copied-label="Copied. Paste it to your teammate."
+      >Send the install to your technical teammate</button>
+    </div>
+    <p class="landing-command-label">For the technical teammate: run once on your own machine.</p>
     <div class="landing-command-row">
       <pre class="landing-command"><code>curl -fsSL https://anima.meetquinn.ai/install.sh | sh</code></pre>
       <button
