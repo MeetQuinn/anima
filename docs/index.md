@@ -6,7 +6,7 @@ pageClass: landing-home
 <main class="landing-shell">
   <section class="landing-hero" aria-labelledby="landing-title">
     <div class="landing-hero-copy">
-      <h1 id="landing-title">AI teammates in your Slack.</h1>
+      <h1 id="landing-title">AI teammates<br>in your Slack.</h1>
       <p class="landing-tagline">
         Shared memory across your whole team.
       </p>
