@@ -388,6 +388,12 @@ export interface AgentFeishuRecommendedScopeStatusItem {
   scope: string;
 }
 
+export interface AgentFeishuScopeAuthUrl {
+  authUrl: string;
+  label: string;
+  scopes: string[];
+}
+
 export interface AgentFeishuScopeStatus {
   appId?: string;
   connected: boolean;
@@ -400,6 +406,7 @@ export interface AgentFeishuScopeStatus {
   };
   recommended: {
     authUrl?: string;
+    authUrls?: AgentFeishuScopeAuthUrl[];
     granted: boolean;
     message?: string;
     missingScopes: string[];

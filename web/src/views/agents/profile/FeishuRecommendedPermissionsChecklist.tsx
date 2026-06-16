@@ -2,7 +2,10 @@ import { Check, ChevronDown, CircleAlert, ExternalLink, Loader2, RotateCw, X } f
 import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import type { AgentFeishuRecommendedScopeStatusItem } from '@shared/agent-config';
+import type {
+  AgentFeishuRecommendedScopeStatusItem,
+  AgentFeishuScopeAuthUrl,
+} from '@shared/agent-config';
 import { feishuOfficialScopeName } from './feishu-scope-names';
 
 // Shared "Authorize Feishu permissions" guided checklist. Rendered by both the
@@ -69,6 +72,7 @@ export function FeishuRecheckMissingVerdict({ anyGranted }: { anyGranted: boolea
 interface ChecklistProps {
   scopes: AgentFeishuRecommendedScopeStatusItem[];
   authUrl?: string;
+  authUrls?: AgentFeishuScopeAuthUrl[];
   /**
    * A recheck ran and at least one recommended scope is still ungranted: shows
    * the red verdict banner, rings the publish step, force-opens the list, and
@@ -91,6 +95,7 @@ interface ChecklistProps {
 export function FeishuRecommendedPermissionsChecklist({
   scopes,
   authUrl,
+  authUrls,
   confirmedMissing,
   showPerms,
   onTogglePerms,
@@ -100,6 +105,11 @@ export function FeishuRecommendedPermissionsChecklist({
   footer,
 }: ChecklistProps) {
   const open = showPerms || confirmedMissing;
+  const permissionLinks = authUrls?.length
+    ? authUrls
+    : authUrl
+      ? [{ authUrl, label: 'Recommended permissions', scopes: [] }]
+      : [];
   return (
     <div className="space-y-4 rounded-md border border-border-soft bg-surface px-4 py-4">
       <div className="space-y-1.5">
@@ -122,15 +132,26 @@ export function FeishuRecommendedPermissionsChecklist({
             <span className="font-serif text-[13px] leading-snug text-text">
               Add the permissions
             </span>
-            {authUrl && (
-              <Button
-                size="sm"
-                className="w-full sm:w-auto"
-                render={<a href={authUrl} rel="noreferrer" target="_blank" />}
-              >
-                Open Feishu
-                <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-              </Button>
+            {permissionLinks.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="font-serif text-[12px] leading-snug text-text-subtle">
+                  Open the groups you need in Feishu.
+                </p>
+                <div className="grid gap-1.5 sm:grid-cols-2">
+                  {permissionLinks.map((link) => (
+                    <Button
+                      key={`${link.label}:${link.authUrl}`}
+                      size="sm"
+                      variant="outline"
+                      className="w-full justify-between"
+                      render={<a href={link.authUrl} rel="noreferrer" target="_blank" />}
+                    >
+                      <span className="min-w-0 truncate">{link.label}</span>
+                      <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                    </Button>
+                  ))}
+                </div>
+              </div>
             )}
             <div className="pt-0.5">
               <button

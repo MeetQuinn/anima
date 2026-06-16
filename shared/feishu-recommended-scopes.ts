@@ -15,21 +15,19 @@ export interface FeishuRecommendedScope {
   scope: string;
 }
 
-// Only tenant/app identity scopes can be requested through the Feishu app auth
-// URL we generate. Some ccm scopes are user-identity-only; keep those out of the
-// recommended bundle or Feishu rejects the auth page as "invalid parameter".
+// Only tenant/app identity scopes that Feishu still accepts can be requested
+// through the app auth URL we generate. Some ccm scopes are user-identity-only,
+// deprecated, or marked offline; keep those out of the recommended bundle or
+// Feishu rejects the auth page as "invalid parameter".
 const FEISHU_CLOUD_DOCS_SCOPES = [
   ['bitable:app', 'View, comment, edit and manage Base'],
   ['bitable:app:readonly', 'View, comment, and export Base'],
-  ['bitable:bitable', 'View, comment, edit, and manage Base (In Suite)'],
-  ['bitable:bitable:readonly', 'View, comment, and export Base (In Suite)'],
   ['board:whiteboard:node:create', 'Create board node'],
   ['board:whiteboard:node:delete', 'Delete board node'],
   ['board:whiteboard:node:read', 'View board node'],
   ['board:whiteboard:node:update', 'Update board node'],
   ['docs:doc', 'View, comment, edit, and manage Docs'],
   ['docs:doc:readonly', 'View, comment, and export Docs'],
-  ['docs:docs:operate_as_user', 'Access Docs as a user'],
   ['docs:document.comment:create', 'Add and reply to comment in document'],
   ['docs:document.comment:delete', 'Delete comment in document'],
   ['docs:document.comment:read', 'Get comments in document'],
@@ -51,12 +49,10 @@ const FEISHU_CLOUD_DOCS_SCOPES = [
   ['docs:permission.member:auth', "Verify user's access to document"],
   ['docs:permission.member:create', 'Add document collaborator'],
   ['docs:permission.member:delete', 'Remove document collaborator'],
-  ['docs:permission.member:read', 'View collaborator permissions for cloud documents'],
   ['docs:permission.member:readonly', 'View document collaborators (legacy version)'],
   ['docs:permission.member:retrieve', 'Get document collaborators'],
   ['docs:permission.member:transfer', 'Transfer ownership of document'],
   ['docs:permission.member:update', 'Update collaborator permission of document'],
-  ['docs:permission.public:read', 'View document permission settings access'],
   ['docs:permission.setting', 'View and update document permission settings'],
   ['docs:permission.setting:read', 'Query permission settings of document'],
   ['docs:permission.setting:readonly', 'View document permission settings'],
@@ -159,12 +155,6 @@ const FEISHU_CORE_RECOMMENDED_SCOPES = [
     description: 'Let the bot see messages in Feishu group chats.',
     label: 'See group messages',
     scope: 'im:message.group_msg',
-  },
-  {
-    capability: 'bot_message_visibility',
-    description: 'Let the bot receive group messages sent by other Feishu bots.',
-    label: 'See bot messages in groups',
-    scope: 'im:message.bot_event:read',
   },
   {
     capability: 'bot_message_visibility',

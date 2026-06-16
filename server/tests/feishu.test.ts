@@ -1932,15 +1932,20 @@ test('Feishu service reports missing recommended scopes with authorization link'
       assert.equal(status.recommended.state, 'missing');
       assert.equal(status.recommended.granted, false);
       assert.deepEqual(status.recommended.missingScopes, FEISHU_RECOMMENDED_SCOPE_NAMES);
-      assert.equal(FEISHU_RECOMMENDED_SCOPE_NAMES.length, 103);
+      assert.equal(FEISHU_RECOMMENDED_SCOPE_NAMES.length, 97);
       assert.ok(status.recommended.missingScopes.includes('im:message.group_msg'));
-      assert.ok(status.recommended.missingScopes.includes('im:message.bot_event:read'));
       assert.ok(status.recommended.missingScopes.includes('im:message.group_at_msg.include_bot:readonly'));
       assert.ok(status.recommended.missingScopes.includes('drive:drive'));
       assert.ok(status.recommended.missingScopes.includes('space:folder:create'));
       assert.ok(status.recommended.missingScopes.includes('docx:document'));
       assert.ok(status.recommended.missingScopes.includes('bitable:app'));
       assert.ok(status.recommended.missingScopes.includes('wiki:wiki'));
+      assert.ok(!status.recommended.missingScopes.includes('bitable:bitable'));
+      assert.ok(!status.recommended.missingScopes.includes('bitable:bitable:readonly'));
+      assert.ok(!status.recommended.missingScopes.includes('docs:docs:operate_as_user'));
+      assert.ok(!status.recommended.missingScopes.includes('docs:permission.member:read'));
+      assert.ok(!status.recommended.missingScopes.includes('docs:permission.public:read'));
+      assert.ok(!status.recommended.missingScopes.includes('im:message.bot_event:read'));
       assert.ok(!status.recommended.missingScopes.includes('docs:permission.member:apply'));
       assert.ok(!status.recommended.missingScopes.includes('docs:secure_label:readonly'));
       assert.ok(!status.recommended.missingScopes.includes('docs:secure_label:write_only'));
@@ -1951,16 +1956,36 @@ test('Feishu service reports missing recommended scopes with authorization link'
         status.recommended.authUrl ?? '',
         /^https:\/\/open\.feishu\.cn\/app\/cli_test\/auth\?/,
       );
+      assert.deepEqual(
+        status.recommended.authUrls?.map((link) => link.label),
+        [
+          'Core chat and teammates',
+          'Base and whiteboards',
+          'Docs',
+          'Sheets and Slides',
+          'Drive spaces and Wiki',
+        ],
+      );
+      assert.equal(status.recommended.authUrl, status.recommended.authUrls?.[0]?.authUrl);
+      const allAuthScopes = [...new Set((status.recommended.authUrls ?? []).flatMap((link) => link.scopes))].sort();
+      assert.deepEqual(allAuthScopes, [...FEISHU_RECOMMENDED_SCOPE_NAMES].sort());
+      const allAuthUrls = (status.recommended.authUrls ?? []).map((link) => link.authUrl).join('\n');
       for (const scope of FEISHU_RECOMMENDED_SCOPE_NAMES) {
-        assert.match(status.recommended.authUrl ?? '', new RegExp(escapeRegExp(encodeURIComponent(scope))));
+        assert.match(allAuthUrls, new RegExp(escapeRegExp(encodeURIComponent(scope))));
       }
       for (const scope of [
         'docs:permission.member:apply',
         'docs:secure_label:readonly',
         'docs:secure_label:write_only',
         'drive:quota_detail:read_one',
+        'bitable:bitable',
+        'bitable:bitable:readonly',
+        'docs:docs:operate_as_user',
+        'docs:permission.member:read',
+        'docs:permission.public:read',
+        'im:message.bot_event:read',
       ]) {
-        assert.doesNotMatch(status.recommended.authUrl ?? '', new RegExp(escapeRegExp(encodeURIComponent(scope))));
+        assert.ok(!allAuthScopes.includes(scope));
       }
     });
   } finally {
@@ -1995,6 +2020,10 @@ test('Feishu service keeps profile-name compatibility while recommended scopes a
         FEISHU_RECOMMENDED_SCOPE_NAMES.filter((scope) => scope !== 'contact:user.basic_profile:readonly'),
       );
       assert.match(status.recommended.authUrl ?? '', /im%3Achat\.members%3Awrite_only/);
+      assert.deepEqual(
+        [...new Set((status.recommended.authUrls ?? []).flatMap((link) => link.scopes))].sort(),
+        [...status.recommended.missingScopes].sort(),
+      );
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
@@ -2023,6 +2052,7 @@ test('Feishu service reports granted recommended scopes', async () => {
       assert.equal(status.recommended.granted, true);
       assert.deepEqual(status.recommended.missingScopes, []);
       assert.equal(status.recommended.authUrl, undefined);
+      assert.equal(status.recommended.authUrls, undefined);
       assert.deepEqual(status.recommended.scopes.map((scope) => scope.scope), FEISHU_RECOMMENDED_SCOPE_NAMES);
       assert.deepEqual(status.recommended.scopes.map((scope) => scope.granted), FEISHU_RECOMMENDED_SCOPE_NAMES.map(() => true));
     });
