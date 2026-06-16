@@ -39,7 +39,7 @@ export interface ClaudeJsonlMapperState {
   pendingUnlinkedTexts: PendingClaudeAgentText[];
   pendingUnlinkedToolsById: Map<string, Record<string, unknown>>;
   providerToolsById: Map<string, Record<string, unknown>>;
-  subagentIdByToolId: Map<string, string>;
+  subagentIdByToolId: Map<string, { agentId: string; model?: string }>;
   subagentMetadataByKey: Map<string, Record<string, unknown> | undefined>;
 }
 
@@ -120,14 +120,17 @@ export async function subagentActivityLinkageFromClaudeJson(
 ): Promise<Record<string, unknown>> {
   if (!isRecord(value)) return {};
   const toolUseResult = isRecord(value['toolUseResult']) ? value['toolUseResult'] : undefined;
+  const subagentInfo = await claudeSubagentInfoFromToolIds(value, state);
   const agentId =
     stringField(value, 'agentId') ??
     stringField(value, 'agent_id') ??
     stringField(toolUseResult, 'agentId') ??
     stringField(toolUseResult, 'agent_id') ??
-    await claudeSubagentIdFromToolIds(value, state);
+    subagentInfo?.agentId;
   const metadata = await claudeSubagentMetadata(value, agentId, state);
-  return claudeSubagentLinkage(value, agentId, metadata);
+  const linkage = claudeSubagentLinkage(value, agentId, metadata);
+  if (subagentInfo?.model) linkage['model'] = subagentInfo.model;
+  return linkage;
 }
 
 export function claudeSubagentLinkage(
@@ -195,10 +198,10 @@ async function claudeSubagentMetadata(
   return metadata;
 }
 
-async function claudeSubagentIdFromToolIds(
+async function claudeSubagentInfoFromToolIds(
   value: Record<string, unknown>,
   state: ClaudeJsonlMapperState,
-): Promise<string | undefined> {
+): Promise<{ agentId: string; model?: string } | undefined> {
   const cwd = stringField(value, 'cwd') ?? state.context.cwd;
   const sessionId = stringField(value, 'sessionId') ?? stringField(value, 'session_id') ?? state.context.sessionId;
   if (!cwd || !sessionId) return undefined;
@@ -206,10 +209,10 @@ async function claudeSubagentIdFromToolIds(
     const cacheKey = `${cwd}\u0000${sessionId}\u0000${toolId}`;
     const cached = state.subagentIdByToolId.get(cacheKey);
     if (cached) return cached;
-    const agentId = await readClaudeSubagentIdForToolId(cwd, sessionId, toolId);
-    if (agentId) {
-      state.subagentIdByToolId.set(cacheKey, agentId);
-      return agentId;
+    const info = await readClaudeSubagentInfoForToolId(cwd, sessionId, toolId);
+    if (info) {
+      state.subagentIdByToolId.set(cacheKey, info);
+      return info;
     }
   }
   return undefined;
@@ -241,11 +244,11 @@ export async function readClaudeSubagentMetadata(
   }
 }
 
-async function readClaudeSubagentIdForToolId(
+async function readClaudeSubagentInfoForToolId(
   cwd: string,
   sessionId: string,
   toolId: string,
-): Promise<string | undefined> {
+): Promise<{ agentId: string; model?: string } | undefined> {
   try {
     const dir = claudeSubagentsDir(cwd, sessionId);
     const entries = await readdir(dir, { withFileTypes: true });
@@ -253,9 +256,13 @@ async function readClaudeSubagentIdForToolId(
       if (!entry.isFile()) continue;
       const match = /^agent-(.+)\.jsonl$/.exec(entry.name);
       if (!match) continue;
+      const agentId = match[1];
+      if (!agentId) continue;
       const path = join(dir, entry.name);
       const contents = await readFile(path, 'utf8');
-      if (contents.includes(toolId)) return match[1];
+      if (contents.includes(toolId)) {
+        return { agentId, model: claudeSubagentModelFromContents(contents) };
+      }
     }
   } catch {
     return undefined;
