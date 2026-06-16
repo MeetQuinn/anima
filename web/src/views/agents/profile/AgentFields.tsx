@@ -11,11 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/u
 import ConfirmModal from '@/components/ConfirmModal';
 import DirectoryPicker from '@/components/DirectoryPicker';
 import { EditAffordance, ErrorHint, Field, SavedHint } from './Primitives';
-import {
-  ANIMA_MANAGED_PROVIDER_ENV_KEYS,
-  type AgentProviderConfig,
-  type ClaudeCodeTransport,
-} from '@shared/agent-config';
+import { ANIMA_MANAGED_PROVIDER_ENV_KEYS, type AgentProviderConfig } from '@shared/agent-config';
 import {
   providerReady,
   providerUnavailableHint,
@@ -24,15 +20,6 @@ import {
 import { providerKindLabel, providerValueLabel } from '@/lib/provider-display';
 
 const RESERVED_ENV_KEYS = new Set<string>(ANIMA_MANAGED_PROVIDER_ENV_KEYS);
-const DEFAULT_CLAUDE_CODE_TRANSPORT: ClaudeCodeTransport = 'stream-json';
-const CLAUDE_CODE_TRANSPORT_OPTIONS: Array<{
-  label: string;
-  value: ClaudeCodeTransport;
-}> = [
-  { value: 'stream-json', label: 'Standard mode' },
-  { value: 'channel', label: 'Interactive session' },
-  { value: 'tmux', label: 'Tmux session' },
-];
 
 // ── InlineTextRow ─────────────────────────────────────────────────────────────
 
@@ -307,7 +294,6 @@ export function ProviderInlineRow({
   kind,
   model,
   effort,
-  transport,
   providerOptions,
   providerAvailability,
   onRequestSave,
@@ -315,32 +301,20 @@ export function ProviderInlineRow({
   kind: string;
   model: string;
   effort: string;
-  transport?: ClaudeCodeTransport;
   providerOptions: ProviderCatalogEntry[];
   providerAvailability?: ProviderAvailability[] | null;
-  onRequestSave: (
-    kind: string,
-    model: string,
-    effort?: string,
-    transport?: ClaudeCodeTransport,
-  ) => void;
+  onRequestSave: (kind: string, model: string, effort?: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draftKind, setDraftKind] = useState('');
   const [draftModel, setDraftModel] = useState('');
   const [draftEffort, setDraftEffort] = useState('');
-  const [draftTransport, setDraftTransport] = useState<ClaudeCodeTransport>(
-    DEFAULT_CLAUDE_CODE_TRANSPORT,
-  );
   const draftProvider = providerOptions.find((option) => option.kind === draftKind);
   const draftModelOptions = draftProvider?.models ?? [];
   const draftEffortOptions = draftProvider?.reasoningEfforts ?? [];
   const hasDraftEffort = draftEffortOptions.length > 0;
-  const hasDraftTransport = draftKind === 'claude-code';
   const currentProvider = providerOptions.find((option) => option.kind === kind);
   const hasCurrentEffort = (currentProvider?.reasoningEfforts ?? []).length > 0;
-  const currentTransport =
-    kind === 'claude-code' ? (transport ?? DEFAULT_CLAUDE_CODE_TRANSPORT) : undefined;
   const kindChanged = draftKind !== kind;
   const draftProviderUnavailableHint = providerAvailability
     ? providerUnavailableHint(draftProvider, providerAvailability)
@@ -349,12 +323,8 @@ export function ProviderInlineRow({
     !providerAvailability || !draftProvider || providerReady(draftProvider, providerAvailability);
   const nextEffort = hasDraftEffort ? draftEffort : undefined;
   const currentEffort = hasCurrentEffort ? effort : undefined;
-  const nextTransport = hasDraftTransport ? draftTransport : undefined;
   const providerDraftChanged =
-    draftKind !== kind ||
-    draftModel !== model ||
-    nextEffort !== currentEffort ||
-    nextTransport !== currentTransport;
+    draftKind !== kind || draftModel !== model || nextEffort !== currentEffort;
   const saveBlocked = providerDraftChanged && !draftProviderInstalled;
 
   function providerSelectable(option: ProviderCatalogEntry): boolean {
@@ -367,7 +337,6 @@ export function ProviderInlineRow({
     setDraftKind(kind);
     setDraftModel(model);
     setDraftEffort(hasCurrentEffort ? effort : '');
-    setDraftTransport(currentTransport ?? DEFAULT_CLAUDE_CODE_TRANSPORT);
     setEditing(true);
   }
 
@@ -379,7 +348,6 @@ export function ProviderInlineRow({
     setDraftKind(nextProvider.kind);
     setDraftModel(nextProvider.defaultModel);
     setDraftEffort(defaultEffortForProvider(nextProvider));
-    setDraftTransport(DEFAULT_CLAUDE_CODE_TRANSPORT);
   }
 
   function handleSave() {
@@ -389,7 +357,7 @@ export function ProviderInlineRow({
     }
     if (saveBlocked) return;
     setEditing(false);
-    onRequestSave(draftKind, draftModel, nextEffort, nextTransport);
+    onRequestSave(draftKind, draftModel, nextEffort);
   }
 
   return (
@@ -456,37 +424,7 @@ export function ProviderInlineRow({
                 </SelectContent>
               </Select>
             )}
-            {hasDraftTransport && (
-              <Select
-                value={draftTransport}
-                onValueChange={(v) => {
-                  if (isClaudeCodeTransport(v)) setDraftTransport(v);
-                }}
-              >
-                <SelectTrigger className="h-8 w-52 font-serif text-[14px]">
-                  {claudeCodeTransportLabel(draftTransport)}
-                </SelectTrigger>
-                <SelectContent>
-                  {CLAUDE_CODE_TRANSPORT_OPTIONS.map((opt) => (
-                    <SelectItem
-                      key={opt.value}
-                      value={opt.value}
-                      className="font-serif text-[14px]"
-                    >
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
           </div>
-          {hasDraftTransport && (
-            <div className="max-w-xl font-sans text-[11px] leading-snug text-text-muted">
-              Standard mode uses Anima's existing Claude Code CLI integration. Interactive session
-              runs Claude Code interactively for each turn. Tmux session keeps Claude Code running
-              in a tmux-backed terminal for steering across turns.
-            </div>
-          )}
           {draftProviderUnavailableHint && (
             <div className="max-w-xl font-sans text-[11px] leading-snug text-text-muted">
               {draftProviderUnavailableHint}
@@ -527,14 +465,6 @@ export function ProviderInlineRow({
                 </span>
               </>
             )}
-            {currentTransport && (
-              <>
-                <span className="font-sans mx-1.5 text-[12px] text-text-subtle">·</span>
-                <span className="font-serif text-[13px] md:text-[15px] text-text-muted">
-                  {claudeCodeTransportLabel(currentTransport)}
-                </span>
-              </>
-            )}
           </EditAffordance>
         </div>
       )}
@@ -547,14 +477,6 @@ function defaultEffortForProvider(provider: ProviderCatalogEntry): string {
   return provider.reasoningEfforts.includes(DEFAULT_REASONING_EFFORT)
     ? DEFAULT_REASONING_EFFORT
     : (provider.reasoningEfforts[0] ?? '');
-}
-
-function isClaudeCodeTransport(value: string | null | undefined): value is ClaudeCodeTransport {
-  return value === 'stream-json' || value === 'channel' || value === 'tmux';
-}
-
-function claudeCodeTransportLabel(value: ClaudeCodeTransport): string {
-  return CLAUDE_CODE_TRANSPORT_OPTIONS.find((option) => option.value === value)?.label ?? value;
 }
 
 // ── ProviderEnvRow ──────────────────────────────────────────────────────────

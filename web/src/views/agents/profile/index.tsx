@@ -40,17 +40,12 @@ import {
   agentSlackConnected,
   agentTransportLabel,
 } from '@shared/agent-transports';
-import type {
-  AgentConfig,
-  AgentUpdateProviderRequest,
-  ClaudeCodeTransport,
-} from '@shared/agent-config';
+import type { AgentConfig, AgentUpdateProviderRequest } from '@shared/agent-config';
 
 type PendingRestart = {
   kind: string;
   model: string;
   effort?: string;
-  transport?: ClaudeCodeTransport;
 };
 
 function FeishuMeta({ label, value }: { label: string; value?: string }) {
@@ -237,7 +232,7 @@ export default function Profile() {
     setRestartSaving(true);
     setRestartSaveError(null);
     try {
-      await updateAgentProvider(agentId, providerUpdateForRestart(agent.provider, pendingRestart));
+      await updateAgentProvider(agentId, providerUpdateForRestart(pendingRestart));
       setPendingRestart(null);
       showApplyNoticeIfActive();
       refreshAgentData(agentId);
@@ -284,12 +279,9 @@ export default function Profile() {
               ('reasoningEffort' in agent.provider ? agent.provider.reasoningEffort : undefined) ??
               ''
             }
-            transport={agent.provider.kind === 'claude-code' ? agent.provider.transport : undefined}
             providerOptions={providerOptions}
             providerAvailability={providerAvailability}
-            onRequestSave={(kind, model, effort, transport) =>
-              setPendingRestart({ kind, model, effort, transport })
-            }
+            onRequestSave={(kind, model, effort) => setPendingRestart({ kind, model, effort })}
           />
           <ProviderEnvRow env={agent.provider.env} onCommit={commitProviderEnv} />
           <Field label="Platform">
@@ -578,27 +570,14 @@ function providerSessionBoundaryWillChange(
   current: NonNullable<AgentConfig['provider']>,
   next: PendingRestart,
 ): boolean {
-  if (next.kind !== current.kind) return true;
-  return (
-    current.kind === 'claude-code' &&
-    next.transport !== undefined &&
-    next.transport !== (current.transport ?? 'stream-json')
-  );
+  return next.kind !== current.kind;
 }
 
-function providerUpdateForRestart(
-  current: NonNullable<AgentConfig['provider']>,
-  next: PendingRestart,
-): AgentUpdateProviderRequest {
+function providerUpdateForRestart(next: PendingRestart): AgentUpdateProviderRequest {
   const update: AgentUpdateProviderRequest = {
     kind: next.kind,
     model: next.model,
     ...(next.effort ? { reasoningEffort: next.effort } : {}),
   };
-  const currentTransport =
-    current.kind === 'claude-code' ? (current.transport ?? 'stream-json') : undefined;
-  if (next.transport !== undefined && next.transport !== currentTransport) {
-    update.transport = next.transport;
-  }
   return update;
 }
