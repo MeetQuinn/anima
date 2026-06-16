@@ -32,7 +32,7 @@ Two-glance test that you did it right:
 
 If your agent isn't waking, this is almost always why. Reconnect using "Add to Slack."
 
-::: details For the curious: why a webhook is invisible
+::: details For the curious: why a webhook can't wake your agent
 Anima only wakes an agent for a message that posts as a `user`. The official app posts under its bot-user identity, so its message carries a `user` field. An incoming webhook posts as the app, not as a user, so its message has a `bot_id` and no `user` field, and the agent never wakes. This holds whether the webhook is a legacy custom integration or a modern app-scoped one: a webhook is never a user. The message must also carry non-empty top-level text or a file. Most tools set a fallback summary, but a blocks-only card with empty text won't wake the agent even from a proper app.
 :::
 
