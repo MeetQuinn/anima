@@ -29,6 +29,10 @@ export default defineConfig({
     },
     nav: [
       { text: "Guide", link: "/guide/quickstart" },
+      {
+        text: "Use Cases",
+        link: "/use-cases/external-events-via-slack",
+      },
       { text: "Architecture", link: "/architecture/overview" },
     ],
     search: {
@@ -50,6 +54,15 @@ export default defineConfig({
           { text: "Updating Anima", link: "/guide/updating-anima" },
           { text: "How an agent works", link: "/guide/how-an-agent-works" },
           { text: "Skills", link: "/guide/skills" },
+        ],
+      },
+      {
+        text: "Use Cases",
+        items: [
+          {
+            text: "Connect external events through Slack",
+            link: "/use-cases/external-events-via-slack",
+          },
         ],
       },
       {
