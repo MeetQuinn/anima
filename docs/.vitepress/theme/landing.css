@@ -180,7 +180,7 @@
      Reduced-motion falls back to the full static thread-with-tags. ---- */
   & .hero-relay-frame {
     position: relative;
-    height: 472px;
+    height: 360px;
     overflow: hidden;
     background: #ffffff;
     border-radius: 10px;
@@ -205,7 +205,7 @@
     box-sizing: border-box;
     min-height: 100%;
     height: auto;
-    padding: 20px 24px 22px;
+    padding: 52px 24px 22px;
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
@@ -213,11 +213,12 @@
     animation: relay-thread-cycle 15s linear infinite;
   }
 
-  /* All six messages are present in the thread from the first frame. The
+  /* All five messages are present in the thread from the first frame. The
      thread opens at the TOP (the human's ask is fully visible), then the whole
-     column scrolls up one handoff at a time -- so the oldest message is never
-     clipped at the start and the newest (the gate) lands at the bottom. The
-     scroll lives on .hero-relay-thread's transform, not per-message reveals. */
+     column scrolls up one step at a time -- so the oldest message is never
+     clipped at the start and the resting frame (review, approve, shipped) lands
+     at the bottom. The scroll lives on .hero-relay-thread's transform, not
+     per-message reveals. */
   & .relay-msg {
     display: grid;
     grid-template-columns: 42px minmax(0, 1fr);
@@ -279,6 +280,14 @@
     font-size: 15px;
     line-height: 1.46;
     color: var(--landing-ink);
+  }
+  /* Grouped consecutive message: a second line from the same person, Slack-
+     style. Avatar + name + time show once on the first bubble; this row tucks
+     tight underneath (empty avatar gutter, no head, reduced top padding) so
+     "On it." then "Okay, that's cleaned up." reads as one person typing twice,
+     not two stitched bubbles. */
+  & .relay-cont {
+    padding-top: 0;
   }
   & .relay-kbd {
     font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
@@ -399,6 +408,76 @@
   & .relay-merged svg {
     width: 12px;
     height: 12px;
+  }
+
+  /* Persistent stage rail: pinned across the top of the frame so a cold
+     visitor reads the whole pattern (Request to Shipped) in one glance, even
+     mid-loop before every bubble has cycled in. Opaque, so the thread scrolls
+     up underneath it. Review carries light emphasis (the human spine: your
+     call to ship). */
+  & .hero-stage-rail {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    height: 40px;
+    padding: 0 16px;
+    background: #ffffff;
+    border-bottom: 1px solid var(--landing-line);
+  }
+  & .hero-stage {
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: #a8a39a;
+  }
+  & .hero-stage + .hero-stage::before {
+    content: "";
+    display: inline-block;
+    width: 4px;
+    height: 4px;
+    margin-right: 7px;
+    border-radius: 50%;
+    background: var(--landing-line);
+    vertical-align: middle;
+  }
+  & .hero-stage-review {
+    color: var(--landing-ink);
+  }
+
+  /* Slack-style @mention chip inside a bubble (the single review hand-off ping
+     -- Nora asks Tess to take a look). */
+  & .relay-mention {
+    color: #1264a3;
+    background: rgba(18, 100, 163, 0.1);
+    border-radius: 3px;
+    padding: 0 3px;
+    font-weight: 600;
+  }
+
+  /* Gate: the human's approve action. Rust pill so the "you decide" tap is the
+     visual climax of the thread. aria-hidden -- it is a still of an action, not
+     an interactive control. */
+  & .relay-approve {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 9px;
+    background: var(--landing-accent);
+    color: #ffffff;
+    font-size: 12.5px;
+    font-weight: 800;
+    padding: 6px 14px;
+    border-radius: 8px;
+  }
+  & .relay-approve svg {
+    width: 13px;
+    height: 13px;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -1194,20 +1273,15 @@
 
 /* Hero relay reveal -- keyframes MUST live at top level (they are global; an
    @keyframes nested inside the .landing-home rule is invalid and dropped).
-   The thread opens already in progress: msgs 1-3 (ask, spec, PR proof card)
-   are present from frame 1, so it never looks empty. The verification handoff
-   reveals one-by-one (4 review -> 5 QA -> 6 gate). The thread is bottom-
-   anchored (flex-end), so each newly revealed message pins to the bottom and
-   pushes the rest up, the oldest clipping under the top fade. No pixel-tuned
-   scroll -> this auto-adapts to any content height (desktop and mobile alike).
-   The opacity cycle masks the loop reset (4-6 collapse back while invisible). */
-/* The thread opens at the top (You's ask fully visible), holds, then steps
-   down through the handoffs one beat at a time, settling on the gate at the
-   bottom. The scroll distance is self-computing: translateY(calc(472px - 100%))
-   aligns the thread BOTTOM to the frame bottom regardless of how tall the
-   content wraps -- so it stays correct on desktop and 375px without any
-   per-message pixel offsets. Intermediate stops are fractions of that same
-   distance, so the whole step sequence is viewport-independent. */
+   All five messages are present from frame 1, so it never looks empty. The
+   thread opens at the top (You's ask + Nora "on it" fully visible), holds,
+   then steps down to reveal review, settling on the resting frame at the
+   bottom (Tess review -> You approve -> Nora shipped). The scroll distance is
+   self-computing: translateY(calc(360px - 100%)) aligns the thread BOTTOM to
+   the frame bottom regardless of how tall the content wraps -- so it stays
+   correct on desktop and 375px without any per-message pixel offsets. The one
+   intermediate stop is a fraction of that same distance, so the step sequence
+   is viewport-independent. The opacity cycle masks the loop reset. */
 @keyframes relay-thread-cycle {
   0% {
     opacity: 0;
@@ -1217,37 +1291,30 @@
     opacity: 1;
     transform: translateY(0);
   }
-  16% {
+  /* Build dwell: hold at the top so "On it. Cleaning it up now." reads as work
+     happening, not ask-then-done. */
+  20% {
     transform: translateY(0);
   }
-  21% {
-    transform: translateY(calc((472px - 100%) * 0.3));
+  30% {
+    transform: translateY(calc((360px - 100%) * 0.5));
   }
-  37% {
-    transform: translateY(calc((472px - 100%) * 0.3));
+  /* Review dwell: hold on Tess handing the decision back. */
+  44% {
+    transform: translateY(calc((360px - 100%) * 0.5));
   }
-  42% {
-    transform: translateY(calc((472px - 100%) * 0.58));
+  54% {
+    transform: translateY(calc(360px - 100%));
   }
-  56% {
-    transform: translateY(calc((472px - 100%) * 0.58));
-  }
-  61% {
-    transform: translateY(calc((472px - 100%) * 0.82));
-  }
-  72% {
-    transform: translateY(calc((472px - 100%) * 0.82));
-  }
-  77% {
-    transform: translateY(calc(472px - 100%));
-  }
-  90% {
+  /* Resting frame: review -> approve -> shipped gets the longest hold (control
+     + outcome, two distinct agents on screen) before the loop fades and resets. */
+  91% {
     opacity: 1;
-    transform: translateY(calc(472px - 100%));
+    transform: translateY(calc(360px - 100%));
   }
   96% {
     opacity: 0;
-    transform: translateY(calc(472px - 100%));
+    transform: translateY(calc(360px - 100%));
   }
   100% {
     opacity: 0;
