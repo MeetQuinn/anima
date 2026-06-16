@@ -40,8 +40,9 @@ Feishu and send the request again. The mention metadata gives Anima stable IDs.
 Feishu has two separate gates:
 
 - **API permissions**, also called scopes. These let the app perform actions like send messages,
-  read group messages, add group members, or look up users by email or phone. Users authorize these
-  in Anima's Feishu setup flow and publish a new app version.
+  read group messages from users and bots, add group members, look up users by email or phone, or
+  work with Feishu Drive and cloud documents. Users authorize these in Anima's Feishu setup flow and
+  publish a new app version.
 - **App visibility or availability range.** This controls which users can see or use the app. It is
   configured in the Feishu developer console or admin console. The app cannot grant itself wider
   visibility through OpenAPI.

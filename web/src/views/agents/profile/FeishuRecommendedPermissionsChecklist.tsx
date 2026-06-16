@@ -107,8 +107,9 @@ export function FeishuRecommendedPermissionsChecklist({
           Authorize Feishu permissions
         </div>
         <p className="font-serif text-[13px] leading-relaxed text-text-muted">
-          These let your Feishu bot recognize teammates by name, take part in group chats, and look
-          people up by email or phone.
+          These let your Feishu bot recognize teammates by name, take part in group chats with
+          people and other bots, look people up by email or phone, and work with Feishu Drive and
+          cloud documents.
         </p>
       </div>
 
@@ -145,7 +146,7 @@ export function FeishuRecommendedPermissionsChecklist({
                 />
               </button>
               {open && (
-                <ul className="mt-2 space-y-1">
+                <ul className="mt-2 max-h-72 space-y-1 overflow-y-auto pr-1">
                   {scopes.map((scope) => (
                     <li
                       key={scope.scope}
