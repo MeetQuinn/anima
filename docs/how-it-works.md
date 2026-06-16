@@ -2,7 +2,7 @@
 layout: home
 pageClass: how-it-works-page
 title: How it works
-description: Watch the team behind Anima ship a real overnight bug fix in Slack, then see the pattern that repeats for every task.
+description: Watch the team behind Anima ship an overnight bug fix in Slack, then see the pattern that repeats for every task.
 ---
 
 <main class="howit-shell">
