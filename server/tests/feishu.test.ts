@@ -1932,7 +1932,7 @@ test('Feishu service reports missing recommended scopes with authorization link'
       assert.equal(status.recommended.state, 'missing');
       assert.equal(status.recommended.granted, false);
       assert.deepEqual(status.recommended.missingScopes, FEISHU_RECOMMENDED_SCOPE_NAMES);
-      assert.equal(FEISHU_RECOMMENDED_SCOPE_NAMES.length, 107);
+      assert.equal(FEISHU_RECOMMENDED_SCOPE_NAMES.length, 103);
       assert.ok(status.recommended.missingScopes.includes('im:message.group_msg'));
       assert.ok(status.recommended.missingScopes.includes('im:message.bot_event:read'));
       assert.ok(status.recommended.missingScopes.includes('im:message.group_at_msg.include_bot:readonly'));
@@ -1941,6 +1941,10 @@ test('Feishu service reports missing recommended scopes with authorization link'
       assert.ok(status.recommended.missingScopes.includes('docx:document'));
       assert.ok(status.recommended.missingScopes.includes('bitable:app'));
       assert.ok(status.recommended.missingScopes.includes('wiki:wiki'));
+      assert.ok(!status.recommended.missingScopes.includes('docs:permission.member:apply'));
+      assert.ok(!status.recommended.missingScopes.includes('docs:secure_label:readonly'));
+      assert.ok(!status.recommended.missingScopes.includes('docs:secure_label:write_only'));
+      assert.ok(!status.recommended.missingScopes.includes('drive:quota_detail:read_one'));
       assert.equal(new Set(FEISHU_RECOMMENDED_SCOPE_NAMES).size, FEISHU_RECOMMENDED_SCOPE_NAMES.length);
       assert.equal(status.recommended.scopes.length, FEISHU_RECOMMENDED_SCOPE_NAMES.length);
       assert.match(
@@ -1949,6 +1953,14 @@ test('Feishu service reports missing recommended scopes with authorization link'
       );
       for (const scope of FEISHU_RECOMMENDED_SCOPE_NAMES) {
         assert.match(status.recommended.authUrl ?? '', new RegExp(escapeRegExp(encodeURIComponent(scope))));
+      }
+      for (const scope of [
+        'docs:permission.member:apply',
+        'docs:secure_label:readonly',
+        'docs:secure_label:write_only',
+        'drive:quota_detail:read_one',
+      ]) {
+        assert.doesNotMatch(status.recommended.authUrl ?? '', new RegExp(escapeRegExp(encodeURIComponent(scope))));
       }
     });
   } finally {
