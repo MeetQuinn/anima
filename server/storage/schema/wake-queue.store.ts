@@ -52,8 +52,7 @@ export class WakeQueueStore {
   ) {}
 
   async find(itemId: string): Promise<InboxItem | undefined> {
-    const item = (await this.store.read())[itemId];
-    return item ? InboxItemSchema.parse(item) : undefined;
+    return (await this.store.read())[itemId];
   }
 
   async insertIfAbsent(event: InboxItem): Promise<{ inserted: boolean; item: InboxItem }> {
@@ -62,7 +61,7 @@ export class WakeQueueStore {
     await this.store.update((current) => {
       const existing = current[item.id];
       if (existing) {
-        result = { inserted: false, item: InboxItemSchema.parse(existing) };
+        result = { inserted: false, item: existing };
         return current;
       }
       result = { inserted: true, item };
@@ -83,7 +82,6 @@ export class WakeQueueStore {
 
   async list(): Promise<InboxItem[]> {
     return Object.values(await this.store.read())
-      .map((item) => InboxItemSchema.parse(item))
       .sort((a, b) => a.handling.createdAt.localeCompare(b.handling.createdAt));
   }
 
@@ -98,11 +96,10 @@ export class WakeQueueStore {
       pruned = 0;
       const next: WakeQueueFile = {};
       for (const [itemId, item] of Object.entries(current)) {
-        const parsed = InboxItemSchema.parse(item);
-        if (isSettledBefore(parsed, cutoffIso)) {
+        if (isSettledBefore(item, cutoffIso)) {
           pruned += 1;
         } else {
-          next[itemId] = parsed;
+          next[itemId] = item;
         }
       }
       return pruned > 0 ? next : current;
@@ -298,10 +295,9 @@ export class WakeQueueStore {
       const now = nowIso();
       updated.length = 0;
       const next: WakeQueueFile = {};
-      for (const [itemId, rawItem] of Object.entries(current)) {
-        const item = InboxItemSchema.parse(rawItem);
+      for (const [itemId, item] of Object.entries(current)) {
         if (item.handling.status === 'running' && item.handling.appendedToItemId === parentItemId) {
-          const nextItem = InboxItemSchema.parse(update(item, now));
+          const nextItem = update(item, now);
           next[itemId] = nextItem;
           updated.push(nextItem);
         } else {
@@ -328,12 +324,11 @@ export class WakeQueueStore {
   ): Promise<InboxItem | undefined> {
     let updated: InboxItem | undefined;
     await this.store.update((current) => {
-      const rawItem = current[itemId];
-      if (!rawItem) return current;
-      const item = InboxItemSchema.parse(rawItem);
+      const item = current[itemId];
+      if (!item) return current;
       const nextItem = update(item, nowIso());
       if (!nextItem) return current;
-      updated = InboxItemSchema.parse(nextItem);
+      updated = nextItem;
       return { ...current, [itemId]: updated };
     });
     return updated;

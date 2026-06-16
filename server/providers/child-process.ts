@@ -143,7 +143,7 @@ function isProcessAlive(pid: number | undefined): boolean {
 }
 
 export async function terminateChildProcess(
-  child: Pick<RunningChildProcess, 'completion' | 'kill'>,
+  child: { completion: Promise<unknown>; kill: RunningChildProcess['kill'] },
   options: ChildProcessTerminationOptions = {},
 ): Promise<{ forced: boolean }> {
   let forced = false;
