@@ -373,7 +373,9 @@ interface FeishuSdkReactionDeleteInput {
 
 interface FeishuSdkMessageResourceGetInput {
   params: {
-    type: FeishuMessageResourceType;
+    // Feishu resource download API only accepts 'image' or 'file'.
+    // Audio resources are stored as files and must use 'file' as the type.
+    type: 'file' | 'image';
   };
   path: {
     file_key: string;
@@ -700,7 +702,8 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
       }
       const response = await client.im.messageResource.get({
         params: {
-          type: input.resourceType,
+          // Audio resources are stored as files in Feishu; use 'file' type for download.
+          type: input.resourceType === 'image' ? 'image' : 'file',
         },
         path: {
           file_key: input.fileKey,
