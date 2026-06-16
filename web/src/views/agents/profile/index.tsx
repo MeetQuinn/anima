@@ -12,7 +12,7 @@ import {
   updateAgentProfile,
   updateAgentProvider,
 } from '@/api/agents';
-import { fetchWorkspacePlatform } from '@/api/system';
+import { fetchProviderAvailability, fetchWorkspacePlatform } from '@/api/system';
 import { queryKeys } from '@/lib/query-keys';
 import { useNow } from '@/hooks/useNow';
 
@@ -40,16 +40,19 @@ import {
   agentSlackConnected,
   agentTransportLabel,
 } from '@shared/agent-transports';
+import type { AgentConfig, AgentUpdateProviderRequest } from '@shared/agent-config';
 
-type PendingRestart = { kind: string; model: string; effort?: string };
+type PendingRestart = {
+  kind: string;
+  model: string;
+  effort?: string;
+};
 
 function FeishuMeta({ label, value }: { label: string; value?: string }) {
   return (
     <div className="min-w-0">
       <div className="chrome text-[10px] tracking-[0.1em] text-text-subtle">{label}</div>
-      <div className="mt-0.5 break-all font-mono text-[12px] text-text">
-        {value || '—'}
-      </div>
+      <div className="mt-0.5 break-all font-mono text-[12px] text-text">{value || '—'}</div>
     </div>
   );
 }
@@ -68,10 +71,17 @@ export default function Profile() {
     enabled: !!agentId,
     retry: false,
   });
-  const { data: agentStatuses = [] } = useQuery({ queryKey: queryKeys.agentStatuses(), queryFn: fetchAgentStatuses });
+  const { data: agentStatuses = [] } = useQuery({
+    queryKey: queryKeys.agentStatuses(),
+    queryFn: fetchAgentStatuses,
+  });
   const { data: workspacePlatform = 'slack' } = useQuery({
     queryKey: queryKeys.workspacePlatform(),
     queryFn: fetchWorkspacePlatform,
+  });
+  const { data: providerAvailability = null } = useQuery({
+    queryKey: queryKeys.providerAvailability(),
+    queryFn: fetchProviderAvailability,
   });
 
   const currentItemId = agentStatuses.find((s) => s.agentId === agentId)?.currentItemId;
@@ -97,7 +107,9 @@ export default function Profile() {
   const [restartSaveError, setRestartSaveError] = useState<string | null>(null);
 
   const [applyNotice, setApplyNotice] = useState<string | null>(null);
-  function flashApplyNotice(message = 'Saved. This agent will apply the change when the current item finishes.') {
+  function flashApplyNotice(
+    message = 'Saved. This agent will apply the change when the current item finishes.',
+  ) {
     setApplyNotice(message);
     setTimeout(() => setApplyNotice(null), 6000);
   }
@@ -131,17 +143,17 @@ export default function Profile() {
   if (!agent.provider) return null;
 
   const stats = session?.latestProviderStats;
-  const isActive = Boolean(
-    agentStatuses.find((s) => s.agentId === agentId)?.currentItemId,
-  );
+  const isActive = Boolean(agentStatuses.find((s) => s.agentId === agentId)?.currentItemId);
   const sessionsArchived = session?.archived?.length ?? 0;
   const createdAt = agent.createdAt ?? session?.createdAt;
   const slackConnected = agentSlackConnected(agent);
   const feishuConnected = agentFeishuConnected(agent);
   const transportConnected = agentHasConnectedTransport(agent);
   const platformLabel = agentTransportLabel(agent);
-  const showFeishuSetup = feishuConnected || (!transportConnected && workspacePlatform === 'feishu');
-  const showSlackSetup = !feishuConnected && (slackConnected || (!transportConnected && workspacePlatform === 'slack'));
+  const showFeishuSetup =
+    feishuConnected || (!transportConnected && workspacePlatform === 'feishu');
+  const showSlackSetup =
+    !feishuConnected && (slackConnected || (!transportConnected && workspacePlatform === 'slack'));
 
   // Per-row commit: sends only the changed fields to the owning profile/provider API.
   async function commitProfile(
@@ -209,20 +221,18 @@ export default function Profile() {
   async function commitProviderEnv(env: Record<string, string | null>) {
     if (!agentId) return;
     await updateAgentProvider(agentId, { env });
-    showApplyNoticeIfActive('Saved. This agent will apply launch env changes when the current item finishes.');
+    showApplyNoticeIfActive(
+      'Saved. This agent will apply launch env changes when the current item finishes.',
+    );
     refreshAgentData(agentId);
   }
 
   async function handleConfirmRestart() {
-    if (!pendingRestart || restartSaving || !agentId) return;
+    if (!pendingRestart || restartSaving || !agentId || !agent) return;
     setRestartSaving(true);
     setRestartSaveError(null);
     try {
-      await updateAgentProvider(agentId, {
-        kind: pendingRestart.kind,
-        model: pendingRestart.model,
-        ...(pendingRestart.effort ? { reasoningEffort: pendingRestart.effort } : {}),
-      });
+      await updateAgentProvider(agentId, providerUpdateForRestart(pendingRestart));
       setPendingRestart(null);
       showApplyNoticeIfActive();
       refreshAgentData(agentId);
@@ -234,20 +244,16 @@ export default function Profile() {
     }
   }
 
-
   return (
     <div
       ref={containerRef}
       className="absolute inset-0 overflow-y-auto bg-surface px-6 py-8 md:px-10 md:py-8"
     >
       <div className="max-w-3xl">
-
         {applyNotice && (
           <div className="relative mb-8 rounded-sm border border-health-warn/30 bg-health-warn-soft px-4 py-3 pl-5">
             <span aria-hidden className="absolute left-0 top-2 bottom-2 w-px bg-health-warn/60" />
-            <span className="font-serif text-[14px] text-text">
-              {applyNotice}
-            </span>
+            <span className="font-serif text-[14px] text-text">{applyNotice}</span>
           </div>
         )}
 
@@ -269,14 +275,15 @@ export default function Profile() {
           <ProviderInlineRow
             kind={agent.provider.kind}
             model={agent.provider.model ?? ''}
-            effort={('reasoningEffort' in agent.provider ? agent.provider.reasoningEffort : undefined) ?? ''}
+            effort={
+              ('reasoningEffort' in agent.provider ? agent.provider.reasoningEffort : undefined) ??
+              ''
+            }
             providerOptions={providerOptions}
+            providerAvailability={providerAvailability}
             onRequestSave={(kind, model, effort) => setPendingRestart({ kind, model, effort })}
           />
-          <ProviderEnvRow
-            env={agent.provider.env}
-            onCommit={commitProviderEnv}
-          />
+          <ProviderEnvRow env={agent.provider.env} onCommit={commitProviderEnv} />
           <Field label="Platform">
             <ReadonlyValue value={platformLabel} />
           </Field>
@@ -312,7 +319,11 @@ export default function Profile() {
             {agent.owner ? (
               <div className="flex items-center gap-2">
                 {agent.owner.avatarUrl ? (
-                  <img src={agent.owner.avatarUrl} alt="" className="h-5 w-5 shrink-0 rounded-full object-cover" />
+                  <img
+                    src={agent.owner.avatarUrl}
+                    alt=""
+                    className="h-5 w-5 shrink-0 rounded-full object-cover"
+                  />
                 ) : (
                   <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted font-sans text-[10px] font-bold text-text-muted">
                     {agent.owner.displayName.charAt(0).toUpperCase()}
@@ -321,7 +332,10 @@ export default function Profile() {
                 <span className="font-serif text-[15px] text-text">
                   {agent.owner.displayName}
                   {agent.owner.handle && (
-                    <span className="font-sans text-[13px] text-text-muted"> @{agent.owner.handle}</span>
+                    <span className="font-sans text-[13px] text-text-muted">
+                      {' '}
+                      @{agent.owner.handle}
+                    </span>
                   )}
                 </span>
                 {slackConnected && (
@@ -366,7 +380,10 @@ export default function Profile() {
                   <OwnerPickerForm
                     key={agentId}
                     agentId={agentId}
-                    onConfirm={() => { setOwnerPickerOpen(false); refreshAgentData(agentId); }}
+                    onConfirm={() => {
+                      setOwnerPickerOpen(false);
+                      refreshAgentData(agentId);
+                    }}
                     submitLabel={agent.owner ? 'Change owner →' : 'Assign owner →'}
                     autoFocus
                     showRationale
@@ -386,51 +403,56 @@ export default function Profile() {
         {showSlackSetup && (
           <Section title="Slack">
             {slackConnected ? (
-            <div className="space-y-3">
-              <div className="flex items-center gap-3 overflow-hidden rounded-sm border border-border-soft bg-surface-elevated px-4 py-3">
-                {agent.slack.avatarUrl ? (
-                  <img src={agent.slack.avatarUrl} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover ring-1 ring-border-soft" />
-                ) : (
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted font-serif text-[17px] font-semibold text-text-muted ring-1 ring-border-soft">
-                    {(agent.profile?.displayName ?? agent.id).charAt(0).toUpperCase()}
-                  </span>
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="font-serif text-[15px] font-semibold leading-snug text-text">@{agent.id}</div>
-                  {agent.slack.workspaceName && (
-                    <div className="font-sans mt-0.5 text-[13px] text-text-muted">{agent.slack.workspaceName}</div>
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 overflow-hidden rounded-sm border border-border-soft bg-surface-elevated px-4 py-3">
+                  {agent.slack.avatarUrl ? (
+                    <img
+                      src={agent.slack.avatarUrl}
+                      alt=""
+                      className="h-9 w-9 shrink-0 rounded-lg object-cover ring-1 ring-border-soft"
+                    />
+                  ) : (
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted font-serif text-[17px] font-semibold text-text-muted ring-1 ring-border-soft">
+                      {(agent.profile?.displayName ?? agent.id).charAt(0).toUpperCase()}
+                    </span>
                   )}
-                </div>
-                <div className="flex shrink-0 items-center gap-0.5">
-                  {agent.slack.appId && (
-                    <a
-                      href={`https://api.slack.com/apps/${agent.slack.appId}/general`}
-                      target="_blank"
-                      rel="noreferrer"
-                      title="Slack App Settings"
-                      className="flex h-7 w-7 items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-page hover:opacity-100"
+                  <div className="min-w-0 flex-1">
+                    <div className="font-serif text-[15px] font-semibold leading-snug text-text">
+                      @{agent.id}
+                    </div>
+                    {agent.slack.workspaceName && (
+                      <div className="font-sans mt-0.5 text-[13px] text-text-muted">
+                        {agent.slack.workspaceName}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-0.5">
+                    {agent.slack.appId && (
+                      <a
+                        href={`https://api.slack.com/apps/${agent.slack.appId}/general`}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Slack App Settings"
+                        className="flex h-7 w-7 items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-page hover:opacity-100"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    )}
+                    <button
+                      onClick={() => void handleSyncAvatar()}
+                      disabled={syncingAvatar}
+                      title="Sync avatar from Slack"
+                      className="flex h-7 w-7 items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-page hover:opacity-100 disabled:opacity-20"
                     >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </a>
-                  )}
-                  <button
-                    onClick={() => void handleSyncAvatar()}
-                    disabled={syncingAvatar}
-                    title="Sync avatar from Slack"
-                    className="flex h-7 w-7 items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-page hover:opacity-100 disabled:opacity-20"
-                  >
-                    <RotateCcw className={`h-3.5 w-3.5 ${syncingAvatar ? 'animate-spin' : ''}`} />
-                  </button>
+                      <RotateCcw className={`h-3.5 w-3.5 ${syncingAvatar ? 'animate-spin' : ''}`} />
+                    </button>
+                  </div>
                 </div>
+                <SlackManifestUpdateCard agentId={agentId} />
               </div>
-              <SlackManifestUpdateCard agentId={agentId} />
-            </div>
-          ) : (
-            <SlackConnectStepper
-              agentId={agentId}
-              onConnect={() => refreshAgentData(agentId)}
-            />
-          )}
+            ) : (
+              <SlackConnectStepper agentId={agentId} onConnect={() => refreshAgentData(agentId)} />
+            )}
           </Section>
         )}
 
@@ -439,53 +461,61 @@ export default function Profile() {
           <Section title="Feishu">
             {feishuConnected ? (
               <div className="space-y-3">
-              <div className="rounded-sm border border-border-soft bg-surface-elevated px-4 py-3">
-                <div className="flex items-start gap-3">
-                  {agent.feishu.avatarUrl ? (
-                    <img src={agent.feishu.avatarUrl} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover ring-1 ring-border-soft" />
-                  ) : (
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent ring-1 ring-border-soft">
-                      <MessageCircle className="h-4 w-4" />
-                    </span>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-start gap-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-serif text-[15px] font-semibold leading-snug text-text">
-                            Feishu
-                          </span>
-                          <span className="font-sans rounded-sm border border-health-ok/30 bg-health-ok-soft px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-health-ok">
-                            Connected
-                          </span>
+                <div className="rounded-sm border border-border-soft bg-surface-elevated px-4 py-3">
+                  <div className="flex items-start gap-3">
+                    {agent.feishu.avatarUrl ? (
+                      <img
+                        src={agent.feishu.avatarUrl}
+                        alt=""
+                        className="h-9 w-9 shrink-0 rounded-lg object-cover ring-1 ring-border-soft"
+                      />
+                    ) : (
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent ring-1 ring-border-soft">
+                        <MessageCircle className="h-4 w-4" />
+                      </span>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-serif text-[15px] font-semibold leading-snug text-text">
+                              Feishu
+                            </span>
+                            <span className="font-sans rounded-sm border border-health-ok/30 bg-health-ok-soft px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-health-ok">
+                              Connected
+                            </span>
+                          </div>
+                          {agent.feishu.avatarUrl && (
+                            <div className="font-sans mt-0.5 text-[13px] text-text-muted">
+                              Synced from your Feishu app
+                            </div>
+                          )}
                         </div>
-                        {agent.feishu.avatarUrl && (
-                          <div className="font-sans mt-0.5 text-[13px] text-text-muted">Synced from your Feishu app</div>
-                        )}
+                        <button
+                          onClick={() => void handleSyncFeishuAvatar()}
+                          disabled={syncingFeishuAvatar}
+                          title="Sync avatar from Feishu"
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-page hover:opacity-100 disabled:opacity-20"
+                        >
+                          <RotateCcw
+                            className={`h-3.5 w-3.5 ${syncingFeishuAvatar ? 'animate-spin' : ''}`}
+                          />
+                        </button>
                       </div>
-                      <button
-                        onClick={() => void handleSyncFeishuAvatar()}
-                        disabled={syncingFeishuAvatar}
-                        title="Sync avatar from Feishu"
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-page hover:opacity-100 disabled:opacity-20"
-                      >
-                        <RotateCcw className={`h-3.5 w-3.5 ${syncingFeishuAvatar ? 'animate-spin' : ''}`} />
-                      </button>
-                    </div>
-                    <div className="mt-2 grid gap-2 text-[12px] md:grid-cols-2">
-                      <FeishuMeta label="App ID" value={agent.feishu.appId} />
-                      <FeishuMeta label="Bot Open ID" value={agent.feishu.botOpenId} />
-                      <FeishuMeta label="Credentials" value="Configured" />
-                      <FeishuMeta label="Delivery" value="Long-lived connection" />
+                      <div className="mt-2 grid gap-2 text-[12px] md:grid-cols-2">
+                        <FeishuMeta label="App ID" value={agent.feishu.appId} />
+                        <FeishuMeta label="Bot Open ID" value={agent.feishu.botOpenId} />
+                        <FeishuMeta label="Credentials" value="Configured" />
+                        <FeishuMeta label="Delivery" value="Long-lived connection" />
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-              <p className="font-sans text-[12px] leading-relaxed text-text-muted">
-                Feishu credentials are stored in the agent config and injected by Anima
-                at runtime. Secret values are hidden in the dashboard.
-              </p>
-              <FeishuScopeStatusCard agentId={agentId} />
+                <p className="font-sans text-[12px] leading-relaxed text-text-muted">
+                  Feishu credentials are stored in the agent config and injected by Anima at
+                  runtime. Secret values are hidden in the dashboard.
+                </p>
+                <FeishuScopeStatusCard agentId={agentId} />
               </div>
             ) : (
               <FeishuConnectStepper
@@ -514,7 +544,7 @@ export default function Profile() {
       {pendingRestart && (
         <ConfirmRestartModal
           isActive={isActive}
-          kindChanged={pendingRestart.kind !== agent.provider.kind}
+          sessionBoundaryChanged={providerSessionBoundaryWillChange(agent.provider, pendingRestart)}
           saving={restartSaving}
           onConfirm={() => void handleConfirmRestart()}
           onCancel={() => setPendingRestart(null)}
@@ -534,4 +564,20 @@ export default function Profile() {
       )}
     </div>
   );
+}
+
+function providerSessionBoundaryWillChange(
+  current: NonNullable<AgentConfig['provider']>,
+  next: PendingRestart,
+): boolean {
+  return next.kind !== current.kind;
+}
+
+function providerUpdateForRestart(next: PendingRestart): AgentUpdateProviderRequest {
+  const update: AgentUpdateProviderRequest = {
+    kind: next.kind,
+    model: next.model,
+    ...(next.effort ? { reasoningEffort: next.effort } : {}),
+  };
+  return update;
 }

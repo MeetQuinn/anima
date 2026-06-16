@@ -91,18 +91,25 @@ function mergeProviderSelection(
     const currentEffort = 'reasoningEffort' in current ? current.reasoningEffort : undefined;
     const model = update.model ?? current.model;
     const reasoningEffort = update.reasoningEffort ?? currentEffort;
+    if (update.transport !== undefined && current.kind !== 'claude-code') {
+      throw new AgentConfigError(400, `unsupported transport for ${current.kind}: ${update.transport}`);
+    }
     validateProviderShape(current.kind, model, reasoningEffort);
 
     const { env: _env, ...rest } = current;
     const next: Record<string, unknown> = { ...rest };
     if (update.model !== undefined) next.model = update.model;
     if (update.reasoningEffort !== undefined) next.reasoningEffort = update.reasoningEffort;
+    if (update.transport !== undefined) next.transport = update.transport;
     return next;
   }
 
   // Kind change: drop the old model/effort and adopt the new kind's catalog defaults.
   const entry = providerCatalogEntry(update.kind);
   if (!entry) throw new AgentConfigError(400, `unsupported provider kind ${update.kind}`);
+  if (update.transport !== undefined && entry.kind !== 'claude-code') {
+    throw new AgentConfigError(400, `unsupported transport for ${entry.kind}: ${update.transport}`);
+  }
   const model = update.model ?? entry.defaultModel;
   const reasoningEffort = update.reasoningEffort ?? defaultReasoningEffort(entry);
   validateProviderShape(entry.kind, model, reasoningEffort);
@@ -110,6 +117,7 @@ function mergeProviderSelection(
   const next: Record<string, unknown> = { kind: entry.kind, model };
   if (current.idleTimeoutMs !== undefined) next.idleTimeoutMs = current.idleTimeoutMs;
   if (reasoningEffort !== undefined) next.reasoningEffort = reasoningEffort;
+  if (entry.kind === 'claude-code' && update.transport !== undefined) next.transport = update.transport;
   return next;
 }
 

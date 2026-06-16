@@ -425,15 +425,10 @@ test('services restart drain mode continues after timeout and leaves running ite
         status?: string;
       };
     }>;
-    assert.match(inbox['item_running']?.handling?.status ?? '', /^(queued|running)$/);
-    if (inbox['item_running']?.handling?.status === 'queued') {
-      assert.equal(inbox['item_running']?.handling?.resumeReason, 'runtime_restart');
-      assert.equal(inbox['item_running']?.handling?.drainRequestedAt, undefined);
-      assert.equal(inbox['item_running']?.handling?.drainTimeoutMs, undefined);
-    } else {
-      assert.ok(inbox['item_running']?.handling?.drainRequestedAt);
-      assert.equal(inbox['item_running']?.handling?.drainTimeoutMs, 0);
-    }
+    assert.equal(inbox['item_running']?.handling?.status, 'queued');
+    assert.equal(inbox['item_running']?.handling?.resumeReason, 'runtime_restart');
+    assert.equal(inbox['item_running']?.handling?.drainRequestedAt, undefined);
+    assert.equal(inbox['item_running']?.handling?.drainTimeoutMs, undefined);
     const result = JSON.parse(await readFile(resultPath, 'utf8')) as {
       interruptedCount?: number;
       requestedCount?: number;
@@ -442,7 +437,7 @@ test('services restart drain mode continues after timeout and leaves running ite
     };
     assert.equal(result.status, 'succeeded');
     assert.equal(result.requestedCount, 1);
-    assert.equal(result.resumedCount, 0);
+    assert.equal(result.resumedCount, 1);
     assert.equal(result.interruptedCount, 1);
   } finally {
     for (const pid of childPids) {
@@ -630,6 +625,7 @@ async function runAnimactl(
     ...process.env,
     // Clear any inherited runtime env so refuse checks see a clean slate
     // unless the test explicitly opts back in via options.env.
+    ANIMA_AGENT_ID: '',
     ANIMA_INBOX_ITEM_ID: '',
     ANIMA_HOME: '',
     ANIMA_RUNTIME_HOME: '',
@@ -663,6 +659,7 @@ async function runAnimactlUntil(
 ): Promise<{ status: number | null; stderr: string; stdout: string }> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    ANIMA_AGENT_ID: '',
     ANIMA_INBOX_ITEM_ID: '',
     ANIMA_HOME: '',
     ANIMA_RUNTIME_HOME: '',

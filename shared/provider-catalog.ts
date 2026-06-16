@@ -28,7 +28,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     label: 'Claude Code',
     command: 'claude',
     installHint: 'Install Claude Code so `claude --version` works.',
-    models: ['opus', 'sonnet', 'haiku'],
+    models: ['opus', 'sonnet', 'haiku', 'fable'],
     defaultModel: 'opus',
     reasoningEfforts: STANDARD_REASONING_EFFORTS,
   },

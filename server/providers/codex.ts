@@ -1,8 +1,9 @@
 import { nowIso } from '../ids.js';
 import { runtimeErrorPayload } from '../activities/format.js';
 import { ActiveRuntimeRun } from './active-runtime.js';
-import { startChildProcess, terminateChildProcess } from './child-process.js';
+import { startChildProcess } from './child-process.js';
 import { CodexAppServerController } from './codex-app-server.js';
+import { ProviderControllerSlot } from './controller-slot.js';
 import {
   providerSessionPayload,
   type AgentRuntimeCloseOptions,
@@ -22,7 +23,7 @@ export class CodexCliAgentRuntime implements AgentRuntime {
   readonly env: Record<string, string> | undefined;
   readonly kind = 'codex-cli';
   private readonly config: CodexCliAgentProviderConfig;
-  private controller?: CodexAppServerController;
+  private readonly slot = new ProviderControllerSlot<CodexAppServerController>();
   private readonly activeRun = new ActiveRuntimeRun();
 
   constructor(config: CodexCliAgentProviderConfig) {
@@ -31,12 +32,13 @@ export class CodexCliAgentRuntime implements AgentRuntime {
   }
 
   async close(options: AgentRuntimeCloseOptions = {}): Promise<void> {
-    await this.resetController(options.signal, options);
+    await this.slot.reset(options.signal, options);
   }
 
   health(): AgentRuntimeHealth {
+    const controller = this.slot.get();
     return {
-      ...(this.controller ? { child: this.controller.snapshot() } : {}),
+      ...(controller ? { child: controller.snapshot() } : {}),
       childExpected: this.activeRun.isActive(),
     };
   }
@@ -48,10 +50,10 @@ export class CodexCliAgentRuntime implements AgentRuntime {
       transport: 'app-server',
     });
 
-    const finishRun = this.activeRun.start(input, 'Codex', (signal) => void this.resetController(signal));
+    const finishRun = this.activeRun.start(input, 'Codex', (signal) => void this.slot.reset(signal));
     try {
-      if (!input.providerSession && this.controller?.threadId) {
-        await this.resetController();
+      if (!input.providerSession && this.slot.get()?.threadId) {
+        await this.slot.reset();
       }
       const controller = this.ensureController(input);
       controller.attachRun(input);
@@ -73,14 +75,14 @@ export class CodexCliAgentRuntime implements AgentRuntime {
       }
       throw error;
     } finally {
-      this.controller?.detachRun(input);
+      this.slot.get()?.detachRun(input);
       finishRun();
     }
   }
 
   async appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<AgentRuntimeFollowupResult> {
     if (!this.activeRun.accepts(input)) return { accepted: false };
-    const controller = this.controller;
+    const controller = this.slot.get();
     if (!controller) return { accepted: false };
     const turnId = await controller.waitForActiveTurnId();
     try {
@@ -90,7 +92,7 @@ export class CodexCliAgentRuntime implements AgentRuntime {
         threadId: controller.threadId,
       });
     } catch (error) {
-      if (isCodexTurnSteerDesyncError(error)) await this.resetController();
+      if (isCodexTurnSteerDesyncError(error)) await this.slot.reset();
       throw error;
     }
     return { accepted: true, text: `appended to ${turnId}` };
@@ -98,13 +100,14 @@ export class CodexCliAgentRuntime implements AgentRuntime {
 
   async requestDrain(input: AgentRuntimeDrainInput): Promise<void> {
     if (!this.activeRun.accepts(input)) return;
-    const controller = this.controller;
+    const controller = this.slot.get();
     if (!controller) return;
     await controller.waitForQuiescent(input.signal);
   }
 
   private ensureController(input: AgentRuntimeInput): CodexAppServerController {
-    if (this.controller) return this.controller;
+    const existing = this.slot.get();
+    if (existing) return existing;
     let controller!: CodexAppServerController;
     controller = new CodexAppServerController(
       startChildProcess({
@@ -119,26 +122,7 @@ export class CodexCliAgentRuntime implements AgentRuntime {
       }),
       this.kind,
     );
-    this.controller = controller;
-    controller.completion
-      .catch(() => {})
-      .finally(() => {
-        if (this.controller === controller) this.controller = undefined;
-      });
-    return controller;
-  }
-
-  private async resetController(
-    signal: NodeJS.Signals = 'SIGTERM',
-    options: Pick<AgentRuntimeCloseOptions, 'forceAfterMs'> = {},
-  ): Promise<void> {
-    const controller = this.controller;
-    if (!controller) return;
-    this.controller = undefined;
-    await terminateChildProcess(controller, {
-      signal,
-      ...(options.forceAfterMs === undefined ? {} : { forceAfterMs: options.forceAfterMs }),
-    });
+    return this.slot.install(controller);
   }
 
   private threadParams(input: AgentRuntimeInput): Record<string, unknown> {

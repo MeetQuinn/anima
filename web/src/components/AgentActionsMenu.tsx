@@ -39,6 +39,7 @@ import {
 } from './AgentHealthIndicator';
 import { useConfirm } from '@/hooks/useConfirm';
 import { formatAgentDiagnostics } from '@/lib/diagnostics';
+import { copyTextToClipboard } from '@/lib/clipboard';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 
 
@@ -128,7 +129,7 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
     setCopyingDiagnostics(true);
     try {
       const diagnostics = await fetchAgentDiagnostics(agentId);
-      await writeClipboard(formatAgentDiagnostics(diagnostics));
+      await copyTextToClipboard(formatAgentDiagnostics(diagnostics));
       setDiagnosticsCopied(true);
       if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
       copiedTimerRef.current = setTimeout(() => {
@@ -346,28 +347,4 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
       {modal}
     </>
   );
-}
-
-async function writeClipboard(value: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(value);
-      return;
-    } catch {
-      // Fall through to the local textarea fallback when browser permissions
-      // reject the async clipboard API.
-    }
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = value;
-  textarea.setAttribute('readonly', 'true');
-  textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
-  document.body.appendChild(textarea);
-  textarea.select();
-  try {
-    document.execCommand('copy');
-  } finally {
-    textarea.remove();
-  }
 }

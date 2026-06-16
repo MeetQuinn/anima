@@ -6,6 +6,7 @@ import {
   type AgentConnectFeishuRequest,
   type AgentFeishuRegisterAppRequest,
   type AgentFeishuRecommendedScopeStatusItem,
+  type AgentFeishuScopeAuthUrl,
   type AgentFeishuScopeGrant,
   type AgentFeishuScopeStatus,
 } from '../../shared/agent-config.js';
@@ -154,7 +155,7 @@ export class AgentFeishuService {
           state: 'unknown',
         },
         recommended: {
-          authUrl: feishuScopeAuthUrl(agent.feishu.appId, FEISHU_RECOMMENDED_SCOPE_NAMES),
+          ...recommendedScopeAuthUrls(agent.feishu.appId, FEISHU_RECOMMENDED_SCOPE_NAMES),
           granted: false,
           message,
           missingScopes: [...FEISHU_RECOMMENDED_SCOPE_NAMES],
@@ -386,11 +387,63 @@ function recommendedScopeStatus(
   const missingScopes = scopes.filter((scope) => !scope.granted).map((scope) => scope.scope);
   const granted = missingScopes.length === 0;
   return {
-    ...(granted ? {} : { authUrl: feishuScopeAuthUrl(appId, missingScopes) }),
+    ...(granted ? {} : recommendedScopeAuthUrls(appId, missingScopes)),
     granted,
     missingScopes,
     scopes,
     state: granted ? 'granted' : 'missing',
+  };
+}
+
+const RECOMMENDED_SCOPE_AUTH_GROUPS: readonly {
+  label: string;
+  matches: (scope: string) => boolean;
+}[] = [
+  {
+    label: 'Core chat and teammates',
+    matches: (scope) => scope.startsWith('contact:') || scope.startsWith('im:'),
+  },
+  {
+    label: 'Base and whiteboards',
+    matches: (scope) => scope.startsWith('bitable:') || scope.startsWith('board:'),
+  },
+  {
+    label: 'Docs',
+    matches: (scope) => scope.startsWith('docs:') || scope.startsWith('docx:'),
+  },
+  {
+    label: 'Sheets and Slides',
+    matches: (scope) => scope.startsWith('sheets:') || scope.startsWith('slides:'),
+  },
+  {
+    label: 'Drive spaces and Wiki',
+    matches: (scope) =>
+      scope.startsWith('drive:') || scope.startsWith('space:') || scope.startsWith('wiki:'),
+  },
+];
+
+function recommendedScopeAuthUrls(
+  appId: string,
+  missingScopes: readonly string[],
+): { authUrl?: string; authUrls?: AgentFeishuScopeAuthUrl[] } {
+  const groupedScopes = new Set<string>();
+  const authUrls: AgentFeishuScopeAuthUrl[] = [];
+  for (const group of RECOMMENDED_SCOPE_AUTH_GROUPS) {
+    const scopes = missingScopes.filter((scope) => group.matches(scope));
+    if (!scopes.length) continue;
+    const authUrl = feishuScopeAuthUrl(appId, scopes);
+    if (!authUrl) continue;
+    authUrls.push({ authUrl, label: group.label, scopes });
+    for (const scope of scopes) groupedScopes.add(scope);
+  }
+  const otherScopes = missingScopes.filter((scope) => !groupedScopes.has(scope));
+  if (otherScopes.length) {
+    const authUrl = feishuScopeAuthUrl(appId, otherScopes);
+    if (authUrl) authUrls.push({ authUrl, label: 'Other permissions', scopes: otherScopes });
+  }
+  return {
+    ...(authUrls[0]?.authUrl ? { authUrl: authUrls[0].authUrl } : {}),
+    ...(authUrls.length ? { authUrls } : {}),
   };
 }
 

@@ -20,10 +20,10 @@ test('seed memory render uses bundled template and only substitutes display name
   assert.match(body, /parent and ancestor directories/);
 });
 
-test('bundled agent feature reference documents the env how-to', async () => {
-  const body = await readFile(join(process.cwd(), 'docs', 'guide', 'agent-features.md'), 'utf8');
+test('bundled agent command reference documents the env how-to', async () => {
+  const body = await readFile(join(process.cwd(), 'docs', 'agent', 'reference.md'), 'utf8');
 
-  assert.match(body, /^# Agent feature reference/m);
+  assert.match(body, /^# Agent command reference/m);
   assert.match(body, /anima env set SERVICE_REGION us-west-2/);
   assert.ok(body.includes('printf \'%s\' "$THE_SECRET_VALUE" | anima env set OPENAI_API_KEY --secret'));
   assert.match(body, /anima env run --keys OPENAI_API_KEY -- some-tool --do-the-thing/);

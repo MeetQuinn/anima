@@ -5,17 +5,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createAgentRuntime } from '../providers/factory.js';
-import { CLAUDE_DISALLOWED_TOOLS } from '../providers/claude.js';
+import { CLAUDE_DISALLOWED_TOOLS } from '../providers/contract.js';
 import { AgentRuntimeBridge } from '../runtime/runtime-bridge.js';
 import type { AgentRuntime } from '../providers/contract.js';
 import { makeSlackEvent } from './helpers/slack.js';
-import { ingestEvent } from './helpers/inbox.js';
+import { ingestEvent, makeReminderInboxItem } from './helpers/inbox.js';
 import type { RuntimeItemContext } from '../runtime/types.js';
 import { allActivities, loadState } from './helpers/state.js';
 import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { withAnimaHome } from './anima-home.js';
 import type { TestState } from './helpers/state.js';
+import { ReminderStore } from '../storage/schema/reminder.store.js';
 
 async function runtimeInput(runtime: AgentRuntime, context: RuntimeItemContext, state?: TestState) {
   return new AgentRuntimeBridge(runtime).runInput({
@@ -32,6 +33,21 @@ async function runtimeFollowupInput(
   _state?: unknown,
 ) {
   return new AgentRuntimeBridge(runtime).followupInput({ activeContext, context });
+}
+
+async function seedReminder(agentId: string, input: { instructions: string; reminderId: string; title: string }): Promise<void> {
+  const now = '2026-05-18T16:00:00.000Z';
+  await new ReminderStore(agentId).create({
+    createdAt: now,
+    firedCount: 1,
+    instructions: input.instructions,
+    lastFiredAt: now,
+    reminderId: input.reminderId,
+    schedule: { kind: 'daily', repeatRule: 'FREQ=DAILY', time: '01:30', timezone: 'UTC' },
+    status: 'scheduled',
+    title: input.title,
+    updatedAt: now,
+  });
 }
 
 test('codex-cli app-server transport starts a turn and appends subscription follow-up input', async () => {
@@ -659,20 +675,17 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
         '  console.log(JSON.stringify({ type: "assistant", agentId: "claude-child-meta", attributionAgent: "general-purpose", message: { usage: { input_tokens: 11, cache_read_input_tokens: 200, cache_creation_input_tokens: 6 }, content: [{ type: "tool_use", id: "toolu_child_meta_read", name: "Read", input: { file_path: "/tmp/child-meta.md" } }] } }));',
         '  console.log(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_bash_1", content: "", is_error: false, tool_use_result: { stdout: "command output", stderr: "", interrupted: false, isImage: false, noOutputExpected: false } }] }, session_id: "claude-session-1" }));',
         '  console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_result_task", name: "Agent", input: { description: "Result child", prompt: "Read the child file." } }] }, session_id: "claude-session-1" }));',
-        '  console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_child_result_read", name: "Read", input: { file_path: "/tmp/child-result.md" } }] }, session_id: "claude-session-1" }));',
-        '  setTimeout(() => {',
-        '    writeFileSync(process.env.CLAUDE_RESULT_SUBAGENT_LOG, [',
-        '      JSON.stringify({ agentId: "claude-child-result", type: "user", message: { role: "user", content: "Read the child file." }, cwd: process.env.CLAUDE_SUBAGENT_CWD, sessionId: "claude-session-1" }),',
-        '      JSON.stringify({ agentId: "claude-child-result", attributionAgent: "general-purpose", type: "assistant", message: { model: "claude-haiku-4-5-test", content: [{ type: "tool_use", id: "toolu_child_result_read", name: "Read", input: { file_path: "/tmp/child-result.md" } }] }, cwd: process.env.CLAUDE_SUBAGENT_CWD, sessionId: "claude-session-1" }),',
-        '      JSON.stringify({ agentId: "claude-child-result", type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_child_result_read", content: "child result contents", is_error: false }] }, cwd: process.env.CLAUDE_SUBAGENT_CWD, sessionId: "claude-session-1" }),',
-        '      JSON.stringify({ agentId: "claude-child-result", attributionAgent: "general-purpose", type: "assistant", message: { content: [{ type: "text", text: "child result summary" }] }, cwd: process.env.CLAUDE_SUBAGENT_CWD, sessionId: "claude-session-1" }),',
-        '    ].join("\\n") + "\\n", "utf8");',
-        '    writeFileSync(process.env.CLAUDE_PARENT_TRANSCRIPT_LOG, JSON.stringify({ type: "user", cwd: process.env.CLAUDE_SUBAGENT_CWD, sessionId: "claude-session-1", message: { content: [{ type: "tool_result", tool_use_id: "toolu_result_task", content: "child result done", is_error: false, tool_use_result: { stdout: "child result done" } }] }, toolUseResult: { status: "completed", agentId: "claude-child-result", agentType: "general-purpose" } }) + "\\n", "utf8");',
-        '    console.log(JSON.stringify({ type: "assistant", message: { usage: { input_tokens: 12, cache_read_input_tokens: 220, cache_creation_input_tokens: 8 }, content: [{ type: "text", text: "checking via Claude" }] }, session_id: "claude-session-1" }));',
-        '    console.log(JSON.stringify({ type: "system", subtype: "status", status: "compacting", session_id: "claude-session-1" }));',
-        '    console.log(JSON.stringify({ type: "system", subtype: "compact_boundary", session_id: "claude-session-1" }));',
-        '    console.log(JSON.stringify({ type: "result", subtype: "success", result: "first run", session_id: "claude-session-1", duration_ms: 1200, duration_api_ms: 900, ttft_ms: 42, num_turns: 1, usage: { cache_read_input_tokens: 1000, output_tokens: 10, server_tool_use: { web_search_requests: 1, web_fetch_requests: 2 } }, modelUsage: { "claude-opus-test": { contextWindow: 200000, maxOutputTokens: 32000, costUSD: 0.05 } }, permission_denials: [{ tool_name: "Bash" }], terminal_reason: "completed", fast_mode_state: "disabled" }));',
-        '  }, 20);',
+        '  writeFileSync(process.env.CLAUDE_RESULT_SUBAGENT_LOG, [',
+        '    JSON.stringify({ agentId: "claude-child-result", type: "user", message: { role: "user", content: "Read the child file." }, cwd: process.env.CLAUDE_SUBAGENT_CWD, sessionId: "claude-session-1" }),',
+        '    JSON.stringify({ agentId: "claude-child-result", attributionAgent: "general-purpose", type: "assistant", message: { model: "claude-haiku-4-5-test", content: [{ type: "tool_use", id: "toolu_child_result_read", name: "Read", input: { file_path: "/tmp/child-result.md" } }] }, cwd: process.env.CLAUDE_SUBAGENT_CWD, sessionId: "claude-session-1" }),',
+        '    JSON.stringify({ agentId: "claude-child-result", type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_child_result_read", content: "child result contents", is_error: false }] }, cwd: process.env.CLAUDE_SUBAGENT_CWD, sessionId: "claude-session-1" }),',
+        '    JSON.stringify({ agentId: "claude-child-result", attributionAgent: "general-purpose", type: "assistant", message: { content: [{ type: "text", text: "child result summary" }] }, cwd: process.env.CLAUDE_SUBAGENT_CWD, sessionId: "claude-session-1" }),',
+        '  ].join("\\n") + "\\n", "utf8");',
+        '  writeFileSync(process.env.CLAUDE_PARENT_TRANSCRIPT_LOG, JSON.stringify({ type: "user", cwd: process.env.CLAUDE_SUBAGENT_CWD, sessionId: "claude-session-1", message: { content: [{ type: "tool_result", tool_use_id: "toolu_result_task", content: "child result done", is_error: false, tool_use_result: { stdout: "child result done" } }] }, toolUseResult: { status: "completed", agentId: "claude-child-result", agentType: "general-purpose" } }) + "\\n", "utf8");',
+        '  console.log(JSON.stringify({ type: "assistant", message: { usage: { input_tokens: 12, cache_read_input_tokens: 220, cache_creation_input_tokens: 8 }, content: [{ type: "text", text: "checking via Claude" }] }, session_id: "claude-session-1" }));',
+        '  console.log(JSON.stringify({ type: "system", subtype: "status", status: "compacting", session_id: "claude-session-1" }));',
+        '  console.log(JSON.stringify({ type: "system", subtype: "compact_boundary", session_id: "claude-session-1" }));',
+        '  console.log(JSON.stringify({ type: "result", subtype: "success", result: "first run", session_id: "claude-session-1", duration_ms: 1200, duration_api_ms: 900, ttft_ms: 42, num_turns: 1, usage: { cache_read_input_tokens: 1000, output_tokens: 10, server_tool_use: { web_search_requests: 1, web_fetch_requests: 2 } }, modelUsage: { "claude-opus-test": { contextWindow: 200000, maxOutputTokens: 32000, costUSD: 0.05 } }, permission_denials: [{ tool_name: "Bash" }], terminal_reason: "completed", fast_mode_state: "disabled" }));',
         '  return;',
         '});',
         '',
@@ -837,6 +850,274 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
     await runtime?.close?.();
     if (previousClaudeProjectsDir === undefined) delete process.env.CLAUDE_PROJECTS_DIR;
     else process.env.CLAUDE_PROJECTS_DIR = previousClaudeProjectsDir;
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('claude-code tmux transport reuses a session and accepts steering follow-ups', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+    const callsPath = join(stateDir, 'tmux-calls.jsonl');
+    const tmuxStatePath = join(stateDir, 'tmux-state.json');
+    const fakeTmux = join(stateDir, 'tmux');
+    await writeFile(
+      fakeTmux,
+      [
+        '#!/usr/bin/env node',
+        "import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';",
+        "const callsPath = process.env.TMUX_CALLS_PATH;",
+        "const statePath = process.env.TMUX_STATE_PATH;",
+        "if (!callsPath || !statePath) process.exit(90);",
+        "const args = process.argv.slice(2);",
+        "appendFileSync(callsPath, JSON.stringify({ args }) + '\\n');",
+        "const load = () => existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : { buffers: {}, prompts: [], sends: 0, sessions: {} };",
+        "const save = (state) => writeFileSync(statePath, JSON.stringify(state, null, 2));",
+        "const valueAfter = (flag) => args[args.indexOf(flag) + 1];",
+        "const state = load();",
+        "if (args[0] === '-V') { console.log('tmux 3.4-test'); process.exit(0); }",
+        "if (args[0] === 'has-session') process.exit(state.sessions[valueAfter('-t')] ? 0 : 1);",
+        "if (args[0] === 'new-session') {",
+        "  const session = valueAfter('-s');",
+        "  const command = args.at(-1);",
+        "  state.sessions[session] = { command, capture: 'bypass permissions on' };",
+        "  const match = command.match(/'--mcp-config'\\s+'([^']+)'/);",
+        "  if (!match) process.exit(91);",
+        "  const systemPromptMatch = command.match(/'--system-prompt-file'\\s+'([^']+)'/);",
+        "  if (!systemPromptMatch) process.exit(93);",
+        "  state.mcpConfig = match[1];",
+        "  state.systemPromptFile = systemPromptMatch[1];",
+        "  state.systemPrompt = readFileSync(systemPromptMatch[1], 'utf8');",
+        "  save(state);",
+        "  process.exit(0);",
+        "}",
+        "if (args[0] === 'pipe-pane') { save(state); process.exit(0); }",
+        "if (args[0] === 'capture-pane') { console.log(state.sessions[valueAfter('-t')]?.capture || 'bypass permissions on'); process.exit(0); }",
+        "if (args[0] === 'load-buffer') { state.buffers[valueAfter('-b')] = args.at(-1); save(state); process.exit(0); }",
+        "if (args[0] === 'paste-buffer') {",
+        "  const buffer = valueAfter('-b');",
+        "  const prompt = readFileSync(state.buffers[buffer], 'utf8');",
+        "  state.prompts.push(prompt);",
+        "  save(state);",
+        "  process.exit(0);",
+        "}",
+        "if (args[0] === 'delete-buffer') { delete state.buffers[valueAfter('-b')]; save(state); process.exit(0); }",
+        "if (args[0] === 'send-keys') {",
+        "  if (args.includes('C-m')) {",
+        "    state.sends += 1;",
+        "    const session = valueAfter('-t');",
+        "    const command = state.sessions[session]?.command || '';",
+        "    const mcpMatch = command.match(/'--mcp-config'\\s+'([^']+)'/);",
+        "    if (state.sends >= 2 && mcpMatch) {",
+        "      const mcp = JSON.parse(readFileSync(mcpMatch[1], 'utf8'));",
+        "      const mcpArgs = mcp.mcpServers.anima.args;",
+        "      const targetFile = mcpArgs[mcpArgs.indexOf('--target-file') + 1];",
+        "      const target = JSON.parse(readFileSync(targetFile, 'utf8'));",
+        "      if (target.active !== true) process.exit(94);",
+        "      const isReminder = String(target.itemId || '').startsWith('reminder:');",
+        "      const promptCount = state.prompts.length;",
+        "      const shouldComplete = !isReminder || promptCount >= 5;",
+        "      if (shouldComplete) {",
+        "        const payload = isReminder ? { text: 'tmux targetless reminder completed' } : { status: 'completed' };",
+        "        writeFileSync(target.completionFile, JSON.stringify(payload) + '\\n', 'utf8');",
+        "      }",
+        "      state.target = target;",
+        "      state.targetFile = targetFile;",
+        "    }",
+        "  }",
+        "  save(state);",
+        "  process.exit(0);",
+        "}",
+        "process.exit(92);",
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await chmod(fakeTmux, 0o755);
+
+    const ctx = await ingestEvent(
+      makeSlackEvent({
+        channelId: 'D-anima',
+        teamId: 'T-demo',
+        text: 'What did I ask over tmux?',
+        userId: 'U1',
+      }),
+      { agentId: 'anima', stateDir },
+    );
+
+    runtime = createAgentRuntime(
+      {
+        env: runtimeTestEnv(stateDir, { TMUX_CALLS_PATH: callsPath, TMUX_STATE_PATH: tmuxStatePath }),
+        kind: 'claude-code',
+        model: 'opus',
+        reasoningEffort: 'high',
+        transport: 'tmux',
+      },
+    );
+
+    const run = runtime.run(await runtimeInput(runtime, ctx, await loadState()));
+    await waitFor(async () => {
+      const state = JSON.parse(await readFile(tmuxStatePath, 'utf8')) as { sends?: number };
+      return state.sends === 1;
+    });
+
+    const followupCtx = await ingestEvent(
+      makeSlackEvent({
+        channelId: 'D-anima',
+        teamId: 'T-demo',
+        text: 'Steer the tmux turn.',
+        ts: '1770000800.000002',
+        userId: 'U1',
+      }),
+      { agentId: 'anima', stateDir },
+    );
+    const followup = await runtime.appendToActiveRun(await runtimeFollowupInput(runtime, ctx, followupCtx));
+    assert.equal(followup.accepted, true);
+
+    const result = await run;
+    assert.equal(result.text, undefined);
+
+    const state = JSON.parse(await readFile(tmuxStatePath, 'utf8')) as {
+      mcpConfig: string;
+      prompts: string[];
+      systemPrompt: string;
+      sessions: Record<string, { command: string }>;
+      target: { active?: boolean; completionFile?: string; itemId?: string };
+      targetFile: string;
+    };
+    const command = Object.values(state.sessions)[0]?.command ?? '';
+    assert.match(command, /'claude'/);
+    assert.match(command, /'--mcp-config'/);
+    assert.match(command, /'--strict-mcp-config'/);
+    assert.match(command, /'--system-prompt-file'/);
+    assert.doesNotMatch(command, /--output-format/);
+    assert.doesNotMatch(command, /--input-format/);
+    assert.doesNotMatch(command, /'\-p'/);
+    assert.match(state.systemPrompt, /You are Anima, general-purpose Anima agent\./);
+    assert.match(state.systemPrompt, /anima message send <target flags>/);
+    assert.equal(state.target.active, true);
+    assert.equal(state.target.itemId, ctx.item.id);
+    assert.ok(state.target.completionFile?.endsWith('.json'));
+    assert.equal(state.prompts.some((prompt) => prompt.includes('What did I ask over tmux?')), true);
+    assert.equal(state.prompts.some((prompt) => prompt.includes('Steering update from Anima')), true);
+    assert.equal(state.prompts.some((prompt) => prompt.includes('mcp__anima__reply')), false);
+    assert.equal(state.prompts.some((prompt) => prompt.includes('mcp__anima__complete')), true);
+
+    const mcpConfig = JSON.parse(await readFile(state.mcpConfig, 'utf8')) as {
+      mcpServers?: { anima?: { args?: string[] } };
+    };
+    const mcpArgs = mcpConfig.mcpServers?.anima?.args ?? [];
+    assert.equal(mcpArgs.includes('--target-file'), true);
+    assert.equal(mcpArgs.includes('--item-id'), false);
+    const clearedTarget = JSON.parse(await readFile(state.targetFile, 'utf8')) as { active?: boolean };
+    assert.equal(clearedTarget.active, false);
+
+    const activities = await activitiesForInboxItemWindow('anima', ctx.item.id);
+    const started = activities.find((activity) => activity.type === 'runtime.started');
+    assert.equal(started?.payload?.['inputFormat'], 'tmux');
+    assert.equal(started?.payload?.['transport'], 'tmux');
+    assert.equal(activities.some((activity) => activity.type === 'agent.text'), false);
+    assert.equal(activities.some((activity) => activity.type === 'runtime.output'), false);
+    await runtime.close?.();
+    runtime = undefined;
+
+    const secondHome = join(stateDir, 'second-home');
+    await mkdir(secondHome, { recursive: true });
+    const secondCtx = await ingestEvent(
+      makeSlackEvent({
+        channelId: 'D-anima',
+        teamId: 'T-demo',
+        text: 'Second home over tmux.',
+        ts: '1770000900.000001',
+        userId: 'U1',
+      }),
+      { agentId: 'anima', stateDir: secondHome },
+    );
+    runtime = createAgentRuntime(
+      {
+        env: runtimeTestEnv(stateDir, { TMUX_CALLS_PATH: callsPath, TMUX_STATE_PATH: tmuxStatePath }),
+        kind: 'claude-code',
+        model: 'opus',
+        reasoningEffort: 'high',
+        transport: 'tmux',
+      },
+    );
+    const secondResult = await runtime.run(await runtimeInput(runtime, secondCtx, await loadState()));
+    assert.equal(secondResult.text, undefined);
+
+    await runtime.close?.();
+    runtime = createAgentRuntime(
+      {
+        env: runtimeTestEnv(stateDir, { TMUX_CALLS_PATH: callsPath, TMUX_STATE_PATH: tmuxStatePath }),
+        kind: 'claude-code',
+        model: 'opus',
+        reasoningEffort: 'high',
+        transport: 'tmux',
+      },
+    );
+    await seedReminder('anima', {
+      instructions: 'Post a daily stand-up to #team.',
+      reminderId: 'daily-standup',
+      title: 'Daily stand-up',
+    });
+    const reminderCtx = await ingestEvent(
+      makeReminderInboxItem({
+        eventId: 'reminder:daily-standup:fire:1',
+        reminderId: 'daily-standup',
+        timestamp: '2026-05-18T17:00:00.000Z',
+      }),
+      { agentId: 'anima', stateDir },
+    );
+    const reminderRun = runtime.run(await runtimeInput(runtime, reminderCtx, await loadState()));
+    await waitFor(async () => {
+      const currentState = JSON.parse(await readFile(tmuxStatePath, 'utf8')) as { prompts?: string[] };
+      return currentState.prompts?.some((prompt) => prompt.includes('Post a daily stand-up to #team.')) === true;
+    });
+
+    const reminderFollowupCtx = await ingestEvent(
+      makeReminderInboxItem({
+        eventId: 'reminder:daily-standup:fire:2',
+        reminderId: 'daily-standup',
+        timestamp: '2026-05-18T17:00:01.000Z',
+      }),
+      { agentId: 'anima', stateDir },
+    );
+    const reminderFollowup = await runtime.appendToActiveRun(
+      await runtimeFollowupInput(runtime, reminderCtx, reminderFollowupCtx),
+    );
+    assert.equal(reminderFollowup.accepted, true);
+
+    const reminderResult = await reminderRun;
+    assert.equal(reminderResult.text, 'tmux targetless reminder completed');
+
+    const finalState = JSON.parse(await readFile(tmuxStatePath, 'utf8')) as {
+      prompts: string[];
+      target: { active?: boolean; completionFile?: string; itemId?: string };
+      sessions: Record<string, { command: string }>;
+    };
+    const sessionNames = Object.keys(finalState.sessions);
+    assert.equal(sessionNames.length, 2);
+    assert.notEqual(sessionNames[0], sessionNames[1]);
+    assert.equal(finalState.target.active, true);
+    assert.equal(finalState.target.itemId, reminderCtx.item.id);
+    const reminderPrompt = finalState.prompts.find((prompt) => prompt.includes('Post a daily stand-up to #team.'));
+    assert.ok(reminderPrompt);
+    assert.match(reminderPrompt, /mcp__anima__complete/);
+    assert.doesNotMatch(reminderPrompt, /mcp__anima__reply/);
+    const reminderSteeringPrompt = finalState.prompts.find((prompt) => prompt.includes('Steering update from Anima') && prompt.includes('Scheduled reminder:'));
+    assert.ok(reminderSteeringPrompt);
+    assert.match(reminderSteeringPrompt, /mcp__anima__complete/);
+    assert.doesNotMatch(reminderSteeringPrompt, /mcp__anima__reply/);
+
+    const reminderActivities = await activitiesForInboxItemWindow('anima', reminderCtx.item.id);
+    assert.ok(reminderActivities.some((activity) => activity.type === 'runtime.completed'));
+    assert.equal(reminderActivities.some((activity) => activity.type === 'runtime.failed'), false);
+    await runtime.close?.();
+    runtime = undefined;
+    });
+  } finally {
+    await runtime?.close?.();
     await rm(stateDir, { force: true, recursive: true });
   }
 });
@@ -1649,6 +1930,112 @@ test('kimi-cli ACP permission requests select the Kimi-provided allow option', a
         optionId: 'allow_always_option',
         outcome: 'selected',
       });
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('kimi-cli ACP falls back to a new session when resume session is missing', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'kimi-acp-resume-missing-calls.jsonl');
+      const fakeKimi = join(stateDir, 'kimi');
+      await writeFile(
+        fakeKimi,
+        [
+          '#!/usr/bin/env node',
+          "const fs = require('fs');",
+          "process.stdin.setEncoding('utf8');",
+          "let buffer = '';",
+          'function send(message) { process.stdout.write(JSON.stringify(message) + "\\n"); }',
+          'function update(update) { send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "kimi-session-fresh", update } }); }',
+          'process.stdin.on("data", (chunk) => {',
+          '  buffer += chunk;',
+          '  const lines = buffer.split(/\\r?\\n/);',
+          '  buffer = lines.pop() || "";',
+          '  for (const line of lines) {',
+          '    if (!line.trim()) continue;',
+          '    const msg = JSON.parse(line);',
+          '    fs.appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + "\\n");',
+          '    if (msg.method === "initialize") {',
+          '      send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, serverInfo: { name: "Kimi Code CLI", version: "0.12.0" }, agentCapabilities: { loadSession: true } } });',
+          '      return;',
+          '    }',
+          '    if (msg.method === "session/resume") {',
+          '      send({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "Invalid params: Unknown sessionId: kimi-session-stale", data: { sessionId: msg.params.sessionId } } });',
+          '      return;',
+          '    }',
+          '    if (msg.method === "session/new") {',
+          '      send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "kimi-session-fresh" } });',
+          '      return;',
+          '    }',
+          '    if (msg.method === "session/set_model") {',
+          '      if (msg.params.sessionId !== "kimi-session-fresh") process.exit(43);',
+          '      send({ jsonrpc: "2.0", id: msg.id, result: {} });',
+          '      return;',
+          '    }',
+          '    if (msg.method === "session/prompt") {',
+          '      if (msg.params.sessionId !== "kimi-session-fresh") process.exit(44);',
+          '      update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "fresh session reply" } });',
+          '      send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });',
+          '      return;',
+          '    }',
+          '  }',
+          '});',
+        ].join('\n'),
+        'utf8',
+      );
+      await chmod(fakeKimi, 0o755);
+
+      const ctx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-kimi-resume-missing',
+          teamId: 'T-demo',
+          text: 'Start Kimi from a stale session.',
+          ts: '1770000660.000001',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+      const sessionPath = join(stateDir, 'agents/anima/sessions.json');
+      const session = JSON.parse(await readFile(sessionPath, 'utf8')) as Record<string, unknown>;
+      await writeFile(
+        sessionPath,
+        `${JSON.stringify({
+          ...session,
+          current: {
+            id: 'kimi-session-stale',
+            kind: 'kimi-cli',
+            updatedAt: '2026-06-10T04:00:00.000Z',
+          },
+        }, null, 2)}\n`,
+        'utf8',
+      );
+
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'kimi-cli',
+        model: 'kimi-code/kimi-for-coding',
+      });
+      const result = await runtime.run(await runtimeInput(runtime, ctx, await loadState()));
+      assert.equal(result.text, 'fresh session reply');
+
+      const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
+      assert.deepEqual(
+        calls.filter((call) => call.method?.startsWith('session/')).map((call) => call.method),
+        ['session/resume', 'session/new', 'session/set_model', 'session/prompt'],
+      );
+      const state = await loadState();
+      assert.equal(state.sessions.anima?.current?.id, 'kimi-session-fresh');
+      assert.ok(allActivities(state).some((activity) =>
+        activity.type === 'runtime.event'
+        && activity.payload?.['eventType'] === 'kimi.session.resume_missing'
+        && (activity.payload?.['providerSession'] as { id?: string } | undefined)?.id === 'kimi-session-stale'
+      ));
     });
   } finally {
     await runtime?.close?.();

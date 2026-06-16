@@ -1,7 +1,6 @@
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { isAgentRunnable } from '../agents/agent-config-ops.js';
-import { WakeQueueService, type InboxItem } from '../inbox/wake-queue.service.js';
-import { isPrimaryRunningInboxItem } from '../../shared/inbox.js';
+import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import type {
   AgentConfig,
 } from '../../shared/agent-config.js';
@@ -16,6 +15,7 @@ import { nowIso } from '../ids.js';
 import { AgentHealthStore, defaultAgentHealthStore } from './agent-health.store.js';
 import { defaultAgentRestartCommandStore } from './agent-restart-command.store.js';
 import { findActiveRuntimeItem } from './active-item.js';
+import { latestPrimaryRunningItem, processAlive, providerChildIssueReason } from './item-state.js';
 
 export class RuntimeServiceError extends Error {
   readonly statusCode: number;
@@ -41,7 +41,7 @@ export class RuntimeService {
 
   async stopCurrentItem(agentId: string): Promise<void> {
     const queue = new WakeQueueService(agentId);
-    const running = latestRunningItem(await queue.listRunnable());
+    const running = latestPrimaryRunningItem(await queue.listRunnable());
     if (!running) throw new RuntimeServiceError(409, `No running item for agent ${agentId}`);
     await queue.requestStop(running.id);
   }
@@ -68,8 +68,8 @@ export class RuntimeService {
   private async statusForAgent(agent: AgentConfig): Promise<AgentStatusSummary> {
     const queue = new WakeQueueService(agent.id);
     const items = await queue.listRunnable();
-    const running = latestRunningItem(items);
-    const active = running ? await findActiveRuntimeItem(agent.id) : undefined;
+    const running = latestPrimaryRunningItem(items);
+    const active = running ? await findActiveRuntimeItem(agent.id, queue) : undefined;
     const currentItemStartedAt = active?.startedAt ?? running?.handling.startedAt;
     const health = await this.healthForAgent(agent, {
       ...(active ? { active } : {}),
@@ -115,16 +115,6 @@ export class RuntimeService {
 }
 
 export const defaultRuntimeService = new RuntimeService();
-
-function latestRunningItem(items: InboxItem[]): InboxItem | undefined {
-  return items
-    .filter((item) => isPrimaryRunningInboxItem(item))
-    .sort((a, b) => {
-      const aTime = a.handling.startedAt ?? a.handling.updatedAt;
-      const bTime = b.handling.startedAt ?? b.handling.updatedAt;
-      return bTime.localeCompare(aTime);
-    })[0];
-}
 
 const STARTING_TIMEOUT_MS = 30_000;
 const FRESH_RUNNING_STALE_GRACE_MS = 10_000;
@@ -178,12 +168,7 @@ function runtimeProcessReason(
 ): AgentHealthReason | undefined {
   if (!runtime) return undefined;
   if (runtime.processId && !processAlive(runtime.processId)) return 'start_failed';
-  if (!runtime.providerChildExpected) return undefined;
-  const child = runtime.providerChild;
-  if (!child) return 'provider_child_missing';
-  if (child.pid && !processAlive(child.pid)) return 'provider_child_exited';
-  if (child.exited || !child.alive || !child.stdinWritable) return 'provider_child_exited';
-  return undefined;
+  return providerChildIssueReason(runtime, { checkPid: true });
 }
 
 function syntheticHealth(
@@ -204,13 +189,4 @@ function freshRunningItem(startedAt: string | undefined): boolean {
   if (!startedAt) return false;
   const startedAtMs = Date.parse(startedAt);
   return Number.isFinite(startedAtMs) && Date.now() - startedAtMs < FRESH_RUNNING_STALE_GRACE_MS;
-}
-
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'EPERM');
-  }
 }

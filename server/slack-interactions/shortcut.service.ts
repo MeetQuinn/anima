@@ -5,7 +5,6 @@ import type { AgentStatusSummary } from '../../shared/snapshot.js';
 import { defaultActivityRecorder, type ActivityRecorder } from '../activities/activity.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { nowIso } from '../ids.js';
-import { WakeQueueService, type InboxItem } from '../inbox/wake-queue.service.js';
 import { reminderServiceForAgent, type ReminderService } from '../reminders/reminder.service.js';
 import { defaultRuntimeService, RuntimeServiceError } from '../runtime/runtime.service.js';
 import { escapeMrkdwn, homeView, reminderDetailView, remindersView, shortcutModal } from './shortcut-views.js';
@@ -53,9 +52,31 @@ interface ShortcutAgentService {
 
 type ReminderServiceFactory = (agentId: string) => ReminderService;
 
+export interface SlackShortcutHandoffInput {
+  channelId: string;
+  channelName?: string;
+  messageTs: string;
+  receivedAt: string;
+  sourceUserId?: string;
+  teamId: string;
+  text: string;
+  threadTs: string;
+}
+
+export interface SlackShortcutHandoffResult {
+  duplicate: boolean;
+  itemId: string;
+  queued: boolean;
+}
+
+export interface SlackShortcutHandoffService {
+  handMessageToAgent(input: SlackShortcutHandoffInput): Promise<SlackShortcutHandoffResult>;
+}
+
 interface SlackShortcutServiceDeps {
   activityRecorder?: ActivityRecorder;
   agentService?: ShortcutAgentService;
+  handoffService?: SlackShortcutHandoffService;
   now?: () => Date;
   reminderServiceForAgent?: ReminderServiceFactory;
   runtimeService?: ShortcutRuntimeService;
@@ -68,6 +89,7 @@ interface StopConfirmMetadata {
 export class SlackShortcutService {
   private readonly activityRecorder: ActivityRecorder;
   private readonly agentService: ShortcutAgentService;
+  private readonly handoffService?: SlackShortcutHandoffService;
   private readonly now: () => Date;
   private readonly reminderServiceForAgent: ReminderServiceFactory;
   private readonly runtimeService: ShortcutRuntimeService;
@@ -75,6 +97,7 @@ export class SlackShortcutService {
   constructor(deps: SlackShortcutServiceDeps = {}) {
     this.activityRecorder = deps.activityRecorder ?? defaultActivityRecorder;
     this.agentService = deps.agentService ?? defaultAgentRegistryService;
+    this.handoffService = deps.handoffService;
     this.now = deps.now ?? (() => new Date());
     this.reminderServiceForAgent = deps.reminderServiceForAgent ?? reminderServiceForAgent;
     this.runtimeService = deps.runtimeService ?? defaultRuntimeService;
@@ -215,28 +238,22 @@ export class SlackShortcutService {
     }
 
     const receivedAt = slackTsToIsoOrNow(message.ts);
-    const now = nowIso();
     const threadTs = message.thread_ts ?? message.ts;
-    const item: InboxItem = {
-      actor: {
-        ...(message.user ? { userId: message.user } : {}),
-      },
+    if (!this.handoffService) throw new Error('Slack shortcut handoff service is not configured');
+    const result = await this.handoffService.handMessageToAgent({
       channelId,
       ...(input.body.channel?.name ? { channelName: input.body.channel.name } : {}),
-      handling: { createdAt: now, queuedAt: now, status: 'queued', updatedAt: now },
-      id: `slack-shortcut-handoff:${teamId}:${channelId}:${message.ts}`,
-      kind: 'slack',
       messageTs: message.ts,
       receivedAt,
+      ...(message.user ? { sourceUserId: message.user } : {}),
       teamId,
       text: handoffText(message.text ?? '', input.body.user?.id),
       threadTs,
-    };
-    const result = await new WakeQueueService(input.agentId).enqueue(item);
+    });
     await this.recordShortcutActivity(input.agentId, 'anima.shortcut.handoff', {
       channelId,
       duplicate: result.duplicate,
-      itemId: result.item.id,
+      itemId: result.itemId,
       messageTs: message.ts,
       queued: result.queued,
       threadTs,
@@ -270,8 +287,6 @@ export class SlackShortcutService {
     await this.activityRecorder.record(agentId, { type, payload });
   }
 }
-
-export const defaultSlackShortcutService = new SlackShortcutService();
 
 export function userIdFromShortcutBody(body: unknown): string | undefined {
   if (!isRecord(body)) return undefined;

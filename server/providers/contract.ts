@@ -14,6 +14,15 @@ export type {
 };
 
 export const CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW = 200000;
+export const CLAUDE_DISALLOWED_TOOLS = [
+  'AskUserQuestion',
+  'CronCreate',
+  'CronDelete',
+  'CronList',
+  'ScheduleWakeup',
+  'RemoteTrigger',
+  'PushNotification',
+];
 
 export interface ProviderSessionRecord {
   id: string;

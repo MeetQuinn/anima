@@ -2,8 +2,11 @@ import { nowIso } from '../ids.js';
 import { isRecord, numberField, singleLineForActivity, stringField } from '../json.js';
 import { ActiveRuntimeRun } from './active-runtime.js';
 import { runtimeErrorPayload, truncateForActivity } from '../activities/format.js';
-import { startChildProcess, terminateChildProcess, type RunningChildProcess } from './child-process.js';
+import { startChildProcess, type RunningChildProcess } from './child-process.js';
+import { ProviderControllerSlot } from './controller-slot.js';
 import { exposedReasoningEvent } from './reasoning-events.js';
+import { LineBuffer } from './line-buffer.js';
+import { QuiescentWaiterSet } from './quiescent-waiters.js';
 import {
   providerSessionPayload,
   type AgentRuntimeCloseOptions,
@@ -20,11 +23,21 @@ import {
 const KIMI_COMMAND = 'kimi';
 const KIMI_RUNTIME_KIND = 'kimi-cli';
 
+class KimiJsonRpcError extends Error {
+  constructor(
+    readonly method: string,
+    readonly error: Record<string, unknown>,
+  ) {
+    super(jsonRpcErrorMessage(method, error));
+    this.name = 'KimiJsonRpcError';
+  }
+}
+
 export class KimiCliAgentRuntime implements AgentRuntime {
   readonly env: Record<string, string> | undefined;
   readonly kind = KIMI_RUNTIME_KIND;
   private readonly config: KimiCliAgentProviderConfig;
-  private controller?: KimiAcpController;
+  private readonly slot = new ProviderControllerSlot<KimiAcpController>();
   private readonly activeRun = new ActiveRuntimeRun();
 
   constructor(config: KimiCliAgentProviderConfig) {
@@ -33,12 +46,13 @@ export class KimiCliAgentRuntime implements AgentRuntime {
   }
 
   async close(options: AgentRuntimeCloseOptions = {}): Promise<void> {
-    await this.resetController(options.signal, options);
+    await this.slot.reset(options.signal, options);
   }
 
   health(): AgentRuntimeHealth {
+    const controller = this.slot.get();
     return {
-      ...(this.controller ? { child: this.controller.snapshot() } : {}),
+      ...(controller ? { child: controller.snapshot() } : {}),
       childExpected: this.activeRun.isActive(),
     };
   }
@@ -50,7 +64,7 @@ export class KimiCliAgentRuntime implements AgentRuntime {
       transport: 'acp',
     });
 
-    const finishRun = this.activeRun.start(input, 'Kimi', (signal) => void this.resetController(signal));
+    const finishRun = this.activeRun.start(input, 'Kimi', (signal) => void this.slot.reset(signal));
     try {
       const controller = await this.ensureController(input);
       await input.effects.persistProviderSession({
@@ -71,7 +85,7 @@ export class KimiCliAgentRuntime implements AgentRuntime {
   }
 
   async appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<AgentRuntimeFollowupResult> {
-    const controller = this.controller;
+    const controller = this.slot.get();
     if (!this.activeRun.accepts(input)) return { accepted: false };
     if (!controller) return { accepted: false };
     if (!controller.appendPrompt(input.prompt)) return { accepted: false };
@@ -79,7 +93,7 @@ export class KimiCliAgentRuntime implements AgentRuntime {
   }
 
   async requestDrain(input: AgentRuntimeDrainInput): Promise<void> {
-    const controller = this.controller;
+    const controller = this.slot.get();
     if (!this.activeRun.accepts(input)) return;
     if (!controller) return;
     await controller.waitForQuiescent(input.signal);
@@ -87,15 +101,17 @@ export class KimiCliAgentRuntime implements AgentRuntime {
 
   private async ensureController(input: AgentRuntimeInput): Promise<KimiAcpController> {
     const requestedSessionId = input.providerSession?.id;
-    if (this.controller && requestedSessionId && this.controller.sessionId !== requestedSessionId) {
-      await this.resetController();
+    const existing = this.slot.get();
+    if (existing && requestedSessionId && existing.sessionId !== requestedSessionId) {
+      await this.slot.reset();
     }
-    if (this.controller && !requestedSessionId && this.controller.sessionId) {
-      await this.resetController();
+    if (existing && !requestedSessionId && existing.sessionId) {
+      await this.slot.reset();
     }
-    if (!this.controller) {
-      let controller!: KimiAcpController;
-      controller = new KimiAcpController(
+    let controller = this.slot.get();
+    if (!controller) {
+      let started!: KimiAcpController;
+      started = new KimiAcpController(
         startChildProcess({
           args: ['--yolo', 'acp'],
           bufferOutput: false,
@@ -103,39 +119,21 @@ export class KimiCliAgentRuntime implements AgentRuntime {
           cwd: input.cwd,
           env: input.env,
           label: 'Kimi ACP runtime',
-          onStderrChunk: (chunk) => controller.acceptStderrChunk(chunk),
+          onStderrChunk: (chunk) => started.acceptStderrChunk(chunk),
           onStdoutChunk: async (chunk) => {
-            await controller.acceptStdoutChunk(chunk);
+            await started.acceptStdoutChunk(chunk);
           },
         }),
       );
-      this.controller = controller;
-      controller.completion
-        .catch(() => {})
-        .finally(() => {
-          if (this.controller === controller) this.controller = undefined;
-        });
+      controller = this.slot.install(started);
     }
     try {
-      await this.controller.ensureSession(input, this.config.model);
-      return this.controller;
+      await controller.ensureSession(input, this.config.model);
+      return controller;
     } catch (error) {
-      await this.resetController();
+      await this.slot.reset();
       throw error;
     }
-  }
-
-  private async resetController(
-    signal: NodeJS.Signals = 'SIGTERM',
-    options: Pick<AgentRuntimeCloseOptions, 'forceAfterMs'> = {},
-  ): Promise<void> {
-    const controller = this.controller;
-    if (!controller) return;
-    this.controller = undefined;
-    await terminateChildProcess(controller, {
-      signal,
-      ...(options.forceAfterMs === undefined ? {} : { forceAfterMs: options.forceAfterMs }),
-    });
   }
 }
 
@@ -163,18 +161,14 @@ interface PendingTool {
 }
 
 class KimiAcpController {
-  private buffer = '';
+  private readonly stdoutLines = new LineBuffer();
   private initialized?: Promise<void>;
   private nextRequestId = 1;
   private readonly pending = new Map<string, PendingRpc>();
   private readonly pendingTools = new Map<string, PendingTool>();
   private currentTurn?: KimiTurn;
   private readonly activeToolIds = new Set<string>();
-  private readonly quiescentWaiters = new Set<{
-    cleanup(): void;
-    reject(error: unknown): void;
-    resolve(): void;
-  }>();
+  private readonly quiescentWaiters = new QuiescentWaiterSet();
   private latestUsage?: Record<string, unknown>;
   readonly completion: Promise<{ stdout: string; stderr: string }>;
   sessionId = '';
@@ -224,10 +218,7 @@ class KimiAcpController {
   }
 
   async acceptStdoutChunk(chunk: string): Promise<void> {
-    this.buffer += chunk;
-    const lines = this.buffer.split(/\r?\n/);
-    this.buffer = lines.pop() ?? '';
-    for (const line of lines) {
+    for (const line of this.stdoutLines.accept(chunk)) {
       await this.acceptLine(line);
     }
   }
@@ -246,30 +237,7 @@ class KimiAcpController {
   }
 
   waitForQuiescent(signal?: AbortSignal): Promise<void> {
-    if (this.activeToolIds.size === 0) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      const waiter = {
-        cleanup: () => {
-          signal?.removeEventListener('abort', onAbort);
-          this.quiescentWaiters.delete(waiter);
-        },
-        reject: (error: unknown) => {
-          waiter.cleanup();
-          reject(error);
-        },
-        resolve: () => {
-          waiter.cleanup();
-          resolve();
-        },
-      };
-      const onAbort = () => waiter.reject(signal?.reason ?? new Error('Drain wait aborted'));
-      if (signal?.aborted) {
-        reject(signal.reason ?? new Error('Drain wait aborted'));
-        return;
-      }
-      signal?.addEventListener('abort', onAbort, { once: true });
-      this.quiescentWaiters.add(waiter);
-    });
+    return this.quiescentWaiters.waitUntilReady(() => this.activeToolIds.size === 0, signal);
   }
 
   private async initializeSession(input: AgentRuntimeInput, model: string | undefined): Promise<void> {
@@ -283,20 +251,25 @@ class KimiAcpController {
 
     const requestedSessionId = input.providerSession?.id;
     if (requestedSessionId) {
-      const result = await this.request('session/resume', {
-        cwd: input.cwd,
-        mcpServers: [],
-        sessionId: requestedSessionId,
-      });
-      this.sessionId = extractSessionId(result) ?? requestedSessionId;
+      try {
+        const result = await this.request('session/resume', {
+          cwd: input.cwd,
+          mcpServers: [],
+          sessionId: requestedSessionId,
+        });
+        this.sessionId = extractSessionId(result) ?? requestedSessionId;
+      } catch (error) {
+        if (!isKimiSessionNotFoundError(error)) throw error;
+        await input.effects.recordEvent({
+          eventType: 'kimi.session.resume_missing',
+          providerSession: providerSessionPayload(input.providerSession, KIMI_RUNTIME_KIND),
+          runtimeKind: KIMI_RUNTIME_KIND,
+          transport: 'acp',
+        });
+        this.sessionId = await this.createSession(input);
+      }
     } else {
-      const result = await this.request('session/new', {
-        cwd: input.cwd,
-        mcpServers: [],
-      });
-      const sessionId = extractSessionId(result);
-      if (!sessionId) throw new Error('Kimi ACP session/new returned no sessionId');
-      this.sessionId = sessionId;
+      this.sessionId = await this.createSession(input);
     }
 
     if (model) {
@@ -305,6 +278,16 @@ class KimiAcpController {
         sessionId: this.sessionId,
       });
     }
+  }
+
+  private async createSession(input: AgentRuntimeInput): Promise<string> {
+    const result = await this.request('session/new', {
+      cwd: input.cwd,
+      mcpServers: [],
+    });
+    const sessionId = extractSessionId(result);
+    if (!sessionId) throw new Error('Kimi ACP session/new returned no sessionId');
+    return sessionId;
   }
 
   private async runTurnQueue(firstPrompt: string): Promise<void> {
@@ -382,7 +365,7 @@ class KimiAcpController {
     this.pending.delete(id);
     const error = isRecord(message['error']) ? message['error'] : undefined;
     if (error) {
-      pending.reject(new Error(jsonRpcErrorMessage(pending.method, error)));
+      pending.reject(new KimiJsonRpcError(pending.method, error));
       return;
     }
     pending.resolve(isRecord(message['result']) ? message['result'] : undefined);
@@ -621,12 +604,11 @@ class KimiAcpController {
   }
 
   private resolveQuiescentWaitersIfReady(): void {
-    if (this.activeToolIds.size > 0) return;
-    for (const waiter of [...this.quiescentWaiters]) waiter.resolve();
+    this.quiescentWaiters.resolveIfReady(() => this.activeToolIds.size === 0);
   }
 
   private rejectQuiescentWaiters(error: unknown): void {
-    for (const waiter of [...this.quiescentWaiters]) waiter.reject(error);
+    this.quiescentWaiters.reject(error);
   }
 
   private rejectAllPending(error: unknown): void {
@@ -644,6 +626,12 @@ class KimiAcpController {
 function kimiPrimaryPrompt(input: AgentRuntimeInput): string {
   const systemPrompt = input.systemPrompt?.trim();
   return systemPrompt ? `${systemPrompt}\n\n---\n\n${input.prompt}` : input.prompt;
+}
+
+function isKimiSessionNotFoundError(error: unknown): boolean {
+  if (!(error instanceof KimiJsonRpcError)) return false;
+  if (error.method !== 'session/resume') return false;
+  return /unknown\s+sessionid/i.test(error.message);
 }
 
 function kimiPermissionApprovalOptionId(message: Record<string, unknown>): string | undefined {

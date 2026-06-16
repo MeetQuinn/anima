@@ -14,7 +14,8 @@ import { errorMessage, nowIso } from '../ids.js';
 import { WakeQueueService, type InboxItem } from '../inbox/wake-queue.service.js';
 import { createAgentRuntime } from '../providers/factory.js';
 import type { AgentProviderConfig } from '../providers/contract.js';
-import { isPrimaryRunningInboxItem } from '../../shared/inbox.js';
+import { isRestartDrainActive } from '../services/restart-drain.js';
+import { cacheDelete } from '../storage/json-file.js';
 import {
   FEISHU_OPEN_API_BASE_URL,
   fetchFeishuTenantAccessToken,
@@ -30,6 +31,7 @@ import {
 import { AgentHealthStore } from './agent-health.store.js';
 import { startRunningAgent, type RunningAgentHandle } from './agent-runner.js';
 import { findActiveRuntimeItem } from './active-item.js';
+import { latestPrimaryRunningItem, processAlive, providerChildIssueReason } from './item-state.js';
 import type { RuntimeWorkerConfig } from './types.js';
 import type {
   AgentHealthReason,
@@ -161,7 +163,8 @@ export class RuntimeHost {
     });
     const handles = [...this.agentHandles.values()].map((record) => record.handle);
     this.agentHandles.clear();
-    await Promise.allSettled(handles.map((handle) => handle.stop()));
+    const stopOptions = await this.shutdownStopOptions();
+    await Promise.allSettled(handles.map((handle) => handle.stop(stopOptions)));
   }
 
   async reconcileOnce(): Promise<void> {
@@ -530,9 +533,9 @@ export class RuntimeHost {
     agentId: string,
     runtime: AgentRuntimeHandleSnapshot | undefined,
   ): Promise<void> {
-    const stale = await staleRunningItemForAgent(agentId, runtime);
-    if (!stale) return;
     const queue = new WakeQueueService(agentId);
+    const stale = await staleRunningItemForAgent(agentId, runtime, queue);
+    if (!stale) return;
     await queue.fail(stale.id);
     await queue.requeueAppendedTo(stale.id);
     const current = await this.healthStore.get(agentId);
@@ -570,7 +573,7 @@ export class RuntimeHost {
       if (this.configWatchers.has(key)) continue;
       try {
         const watcher = watch(path, { persistent: false }, (_event, filename) => {
-          if (key !== 'agents' && !isConfigFileEvent(filename)) return;
+          if (!invalidateConfigCacheForWatchEvent(key, path, filename)) return;
           this.scheduleConfigReconcile();
         });
         watcher.on('error', (error: unknown) => {
@@ -623,6 +626,15 @@ export class RuntimeHost {
     this.restartCommandWatcher?.close();
     this.restartCommandWatcher = undefined;
   }
+
+  private async shutdownStopOptions(): Promise<Parameters<RunningAgentHandle['stop']>[0]> {
+    const restartDrainActive = await isRestartDrainActive().catch(() => false);
+    if (!restartDrainActive) return undefined;
+    return {
+      abortReason: 'restart_drain',
+      forceAfterMs: this.forceRestartTimeoutMs,
+    };
+  }
 }
 
 export async function loadRuntimeAgents(opts: RuntimeHostOptions = {}): Promise<AgentConfig[]> {
@@ -649,9 +661,7 @@ async function startAgentFromConfig(agent: AgentConfig, animaHome: string): Prom
   );
   return startRunningAgent({
     ...server.config,
-    agentRuntime: createAgentRuntime(
-      runtimeWithEnv(server.runtime, managedEnv),
-    ),
+    agentRuntime: createAgentRuntime(runtimeWithEnv(server.runtime, managedEnv)),
     ...(server.slack ? { appToken: server.slack.appToken, botToken: server.slack.botToken } : {}),
     feishu: server.feishu,
     ...(server.runtime.idleTimeoutMs !== undefined ? { idleTimeoutMs: server.runtime.idleTimeoutMs } : {}),
@@ -691,8 +701,16 @@ function stableJson(value: unknown): string {
   return JSON.stringify(stableValue(value));
 }
 
-function isConfigFileEvent(filename: Buffer | string | null): boolean {
-  return filename?.toString() === 'config.json';
+export function invalidateConfigCacheForWatchEvent(
+  key: string,
+  path: string,
+  filename: Buffer | string | null,
+): boolean {
+  if (key === 'agents') return true;
+  const name = filename?.toString();
+  if (name !== 'config.json') return false;
+  cacheDelete(join(path, name));
+  return true;
 }
 
 function stableValue(value: unknown): unknown {
@@ -808,12 +826,8 @@ interface RuntimeHealthSnapshot {
 
 function healthForRuntime(runtime: AgentRuntimeHandleSnapshot | undefined): RuntimeHealthSnapshot {
   if (!runtime) return { reason: 'start_failed', state: 'unhealthy' };
-  if (!runtime.providerChildExpected) return { state: 'healthy' };
-  const child = runtime.providerChild;
-  if (!child) return { reason: 'provider_child_missing', state: 'unhealthy' };
-  if (child.exited || !child.alive || !child.stdinWritable) {
-    return { reason: 'provider_child_exited', state: 'unhealthy' };
-  }
+  const childReason = providerChildIssueReason(runtime);
+  if (childReason) return { reason: childReason, state: 'unhealthy' };
   return { state: 'healthy' };
 }
 
@@ -831,10 +845,11 @@ function isProviderFailureReason(reason: AgentHealthReason | undefined): boolean
 async function staleRunningItemForAgent(
   agentId: string,
   runtime: AgentRuntimeHandleSnapshot | undefined,
+  queue: Pick<WakeQueueService, 'listRunnable' | 'list'> = new WakeQueueService(agentId),
 ): Promise<InboxItem | undefined> {
-  const running = latestPrimaryRunningItem(await new WakeQueueService(agentId).listRunnable());
+  const running = latestPrimaryRunningItem(await queue.listRunnable());
   if (!running) return undefined;
-  const active = await findActiveRuntimeItem(agentId);
+  const active = await findActiveRuntimeItem(agentId, queue);
   if (!active) return running;
   if (!runtime) return running;
   if (!runtime.workerId || runtime.workerId !== active.workerId) return running;
@@ -844,21 +859,8 @@ async function staleRunningItemForAgent(
   return undefined;
 }
 
-function latestPrimaryRunningItem(items: InboxItem[]): InboxItem | undefined {
-  return items
-    .filter((item) => isPrimaryRunningInboxItem(item))
-    .sort((a, b) => {
-      const aTime = a.handling.startedAt ?? a.handling.updatedAt;
-      const bTime = b.handling.startedAt ?? b.handling.updatedAt;
-      return bTime.localeCompare(aTime);
-    })[0];
-}
-
 function providerChildUnhealthy(runtime: AgentRuntimeHandleSnapshot): boolean {
-  const child = runtime.providerChild;
-  if (!child) return true;
-  if (child.pid && !processAlive(child.pid)) return true;
-  return child.exited || !child.alive || !child.stdinWritable;
+  return Boolean(providerChildIssueReason(runtime, { checkPid: true }));
 }
 
 function restartStatus(
@@ -876,15 +878,6 @@ function restartStatus(
     requestedAt: command.requestedAt,
     ...(runtime?.processId ? { workerPid: runtime.processId } : {}),
   };
-}
-
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'EPERM');
-  }
 }
 
 async function awaitShutdown(stop: () => Promise<void>): Promise<void> {

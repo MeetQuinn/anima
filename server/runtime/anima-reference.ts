@@ -37,7 +37,8 @@ function packageRootCandidates(): string[] {
 
 function isAnimaDocsDir(path: string): boolean {
   return (
-    existsSync(join(path, 'guide', 'agent-features.md')) &&
+    existsSync(join(path, 'agent', 'guide.md')) &&
+    existsSync(join(path, 'agent', 'reference.md')) &&
     existsSync(join(path, 'guide', 'how-an-agent-works.md')) &&
     existsSync(join(path, 'guide', 'working-with-your-agent.md')) &&
     existsSync(join(path, 'guide', 'using-the-dashboard.md')) &&

@@ -97,6 +97,13 @@
   /* Shadows — warm, not cool grey. Subtle lift, not Material elevation. */
   --shadow-lift: 0 1px 0 rgba(94, 76, 50, 0.04), 0 2px 8px -2px rgba(94, 76, 50, 0.1);
   --shadow-deep: 0 1px 0 rgba(94, 76, 50, 0.06), 0 8px 24px -8px rgba(94, 76, 50, 0.18);
+
+  /* Platform brand identities — used only as faint hover glows on the
+     onboarding platform cards (identity through light, not words). */
+  --color-brand-slack: #4a154b; /* Slack aubergine */
+  --color-brand-feishu: #3370ff; /* Feishu blue */
+  --shadow-brand-slack: 0 10px 26px -12px rgba(74, 21, 75, 0.55);
+  --shadow-brand-feishu: 0 10px 26px -12px rgba(51, 112, 255, 0.55);
 }
 
 /* Base typography — Fraunces body via opsz axis. Body sits at opsz:14 so the

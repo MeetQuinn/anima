@@ -20,6 +20,13 @@ const HIDDEN_TYPES: ReadonlySet<string> = new Set([
   'runtime.steer_failed',
 ]);
 
+const DUPLICATE_AGENT_TEXT_WINDOW_MS = 10_000;
+
+interface RecentOutboundText {
+  text: string;
+  timestampMs: number;
+}
+
 // Provider protocol frames are filtered in TWO layers:
 //   Always hidden (even in show-all): raw streaming internals — `.stream.*`,
 //     `.reasoning.*`, `.content.part`, `.tool.call.part`, etc. These produce
@@ -180,6 +187,7 @@ export function buildActivityFeed(
   }
 
   const items: ActivityFeedItem[] = [];
+  const recentOutboundTexts: RecentOutboundText[] = [];
 
   for (const event of inboxItems) {
     const reminderId = event.kind === 'reminder' ? reminderIdForEvent(event) : undefined;
@@ -221,6 +229,7 @@ export function buildActivityFeed(
           surface: surfaceChipForOutbound(activity),
           isEdit: tool === 'anima.message.update' || effect === 'slack.message.update',
         });
+        rememberOutboundText(recentOutboundTexts, activity);
         continue;
       }
       if (tool === 'anima.file.send' || effect === 'slack.file.send') {
@@ -263,6 +272,8 @@ export function buildActivityFeed(
         continue;
       }
     }
+
+    if (isDuplicateAgentText(activity, recentOutboundTexts)) continue;
 
     // The corresponding "started" event for Anima CLI and external effects is
     // uninteresting noise (just "I'm about to send"). The completed row
@@ -789,6 +800,7 @@ function buildSubagentStreams(
 export function shortenModelLabel(model: string | undefined): string | undefined {
   if (!model) return undefined;
   const m = model.toLowerCase();
+  if (m.includes('fable')) return 'Fable';
   if (m.includes('haiku')) return 'Haiku';
   if (m.includes('sonnet')) return 'Sonnet';
   if (m.includes('opus')) return 'Opus';
@@ -814,6 +826,7 @@ function buildChildFeedItems(
   showHidden: boolean,
 ): ActivityFeedItem[] {
   const items: ActivityFeedItem[] = [];
+  const recentOutboundTexts: RecentOutboundText[] = [];
   for (const activity of activities) {
     if (activity.type === 'runtime.steer_failed') continue;
 
@@ -840,6 +853,7 @@ function buildChildFeedItems(
           surface: surfaceChipForOutbound(activity),
           isEdit: tool === 'anima.message.update' || effect === 'slack.message.update',
         });
+        rememberOutboundText(recentOutboundTexts, activity);
         continue;
       }
       if (tool === 'anima.file.send' || effect === 'slack.file.send') {
@@ -878,6 +892,8 @@ function buildChildFeedItems(
       }
     }
 
+    if (isDuplicateAgentText(activity, recentOutboundTexts)) continue;
+
     if (
       activity.type === 'tool.call.started' ||
       activity.type === 'tool.call.completed' ||
@@ -909,4 +925,35 @@ function buildChildFeedItems(
   }
   items.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   return items;
+}
+
+function rememberOutboundText(bucket: RecentOutboundText[], activity: ActivityRecord): void {
+  const text = normalizedActivityText(activity.payload?.['text']);
+  if (!text) return;
+  const timestampMs = Date.parse(activity.createdAt);
+  if (!Number.isFinite(timestampMs)) return;
+  bucket.push({ text, timestampMs });
+  const cutoff = timestampMs - DUPLICATE_AGENT_TEXT_WINDOW_MS;
+  while (bucket[0] && bucket[0].timestampMs < cutoff) bucket.shift();
+}
+
+function isDuplicateAgentText(
+  activity: ActivityRecord,
+  recentOutboundTexts: RecentOutboundText[],
+): boolean {
+  if (activity.type !== 'agent.text') return false;
+  const text = normalizedActivityText(activity.payload?.['text']);
+  if (!text) return false;
+  const timestampMs = Date.parse(activity.createdAt);
+  if (!Number.isFinite(timestampMs)) return false;
+  return recentOutboundTexts.some(
+    (candidate) =>
+      candidate.text === text &&
+      Math.abs(timestampMs - candidate.timestampMs) <= DUPLICATE_AGENT_TEXT_WINDOW_MS,
+  );
+}
+
+function normalizedActivityText(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.replace(/\s+/g, ' ').trim();
 }

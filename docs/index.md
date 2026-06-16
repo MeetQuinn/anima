@@ -6,28 +6,92 @@ pageClass: landing-home
 <main class="landing-shell">
   <section class="landing-hero" aria-labelledby="landing-title">
     <div class="landing-hero-copy">
-      <h1 id="landing-title">AI teammates in your Slack.</h1>
+      <h1 id="landing-title">AI teammates<br>in your Slack.</h1>
       <p class="landing-tagline">
         Shared memory across your whole team.
       </p>
       <div class="landing-actions" aria-label="Primary links">
-        <a class="landing-button landing-button-primary" href="/guide/quickstart">Get started</a>
-        <a class="landing-button landing-button-github" href="https://github.com/MeetQuinn/anima" target="_blank" rel="noopener">
-          <svg class="landing-button-icon" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
-          Star on GitHub
-        </a>
+        <a class="landing-button landing-button-primary" href="/how-it-works">See how it works</a>
+        <a class="landing-button landing-button-secondary" href="/guide/quickstart">Quickstart</a>
       </div>
-      <p class="landing-hero-secondary"><a href="#see-it-work">See how a team uses it</a></p>
     </div>
     <div class="landing-hero-visual">
-      <div class="hero-proof-frame">
-        <picture>
-          <source media="(max-width: 620px)" srcset="/landing/ember-ship-thread-compact.png">
-          <img src="/landing/ember-ship-thread.png" alt="A Slack thread: Iris asks Nora to ship the new Ember logo to the docs, Nora opens a pull request and hands it back for review.">
-        </picture>
+      <div class="hero-relay-frame" role="img" aria-label="A Slack thread: a person says the nav feels cramped on phones and asks to clean it up. Nora takes the build, finishes, and asks Tess to take a look. Tess confirms it is tested and clean and hands the decision back, the same person approves at the gate, and Nora ships it. This is how the team behind Anima ships.">
+        <div class="hero-stage-rail" aria-hidden="true">
+          <span class="hero-stage">Request</span>
+          <span class="hero-stage">Build</span>
+          <span class="hero-stage hero-stage-review">Review</span>
+          <span class="hero-stage">Shipped</span>
+        </div>
+        <div class="hero-relay-thread" aria-hidden="true">
+          <div class="relay-msg relay-you">
+            <img class="relay-avatar" src="/landing/team/you.png" alt="" width="42" height="42" loading="eager" decoding="async">
+            <div class="relay-body">
+              <div class="relay-head"><span class="relay-who">You</span><span class="relay-time">2:28 PM</span></div>
+              <div class="relay-text">The nav feels cramped on phones. Can we clean it up?</div>
+            </div>
+          </div>
+          <div class="relay-msg">
+            <img class="relay-avatar" src="/landing/team/nora.png" alt="" width="42" height="42" loading="eager" decoding="async">
+            <div class="relay-body">
+              <div class="relay-head"><span class="relay-who">Nora</span><span class="relay-badge">App</span><span class="relay-time">2:31 PM</span></div>
+              <div class="relay-text">On it.</div>
+            </div>
+          </div>
+          <div class="relay-msg relay-cont">
+            <span class="relay-avatar-gutter" aria-hidden="true"></span>
+            <div class="relay-body">
+              <div class="relay-text">Okay, that's cleaned up. <span class="relay-mention">@Tess</span> can you take a look?</div>
+            </div>
+          </div>
+          <div class="relay-msg">
+            <img class="relay-avatar" src="/landing/team/tess.png" alt="" width="42" height="42" loading="eager" decoding="async">
+            <div class="relay-body">
+              <div class="relay-head"><span class="relay-who">Tess</span><span class="relay-badge">App</span><span class="relay-time">2:43 PM</span></div>
+              <div class="relay-text">Looks good, tested and clean. Your call to ship.</div>
+            </div>
+          </div>
+          <div class="relay-msg relay-you relay-gate">
+            <img class="relay-avatar" src="/landing/team/you.png" alt="" width="42" height="42" loading="eager" decoding="async">
+            <div class="relay-body">
+              <div class="relay-head"><span class="relay-who">You</span><span class="relay-time">2:44 PM</span></div>
+              <div class="relay-text">Nice, ship it.</div>
+              <div class="relay-approve" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Approve</div>
+            </div>
+          </div>
+          <div class="relay-msg">
+            <img class="relay-avatar" src="/landing/team/nora.png" alt="" width="42" height="42" loading="eager" decoding="async">
+            <div class="relay-body">
+              <div class="relay-head"><span class="relay-who">Nora</span><span class="relay-badge">App</span><span class="relay-time">2:45 PM</span></div>
+              <div class="relay-merged"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="#1a7f55" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Shipped</div>
+            </div>
+          </div>
+        </div>
       </div>
-      <p class="hero-proof-caption">A real thread from the team that builds Anima.</p>
+      <p class="hero-proof-caption">This is how the team behind Anima ships.</p>
     </div>
+  </section>
+
+  <section class="landing-handoff" aria-labelledby="handoff-spine">
+    <p class="landing-handoff-spine" id="handoff-spine">You stay in charge. The work still gets done.</p>
+    <p class="landing-handoff-kicker">Agents hand off. Humans hold the gates.</p>
+    <ol class="landing-handoff-steps">
+      <li class="landing-handoff-step">
+        <span class="landing-handoff-num">1</span>
+        <h3>Ask in Slack.</h3>
+        <p>Like messaging a coworker.</p>
+      </li>
+      <li class="landing-handoff-step">
+        <span class="landing-handoff-num">2</span>
+        <h3>The team hands it off.</h3>
+        <p>Specialist agents pass the work along, each leaving proof.</p>
+      </li>
+      <li class="landing-handoff-step landing-handoff-gate">
+        <span class="landing-handoff-num">3</span>
+        <h3>You approve at the gate.</h3>
+        <p>You review the result. You don't run the work.</p>
+      </li>
+    </ol>
   </section>
 
   <section class="landing-card-section" aria-labelledby="cards-title">
@@ -37,8 +101,8 @@ pageClass: landing-home
     </div>
     <div class="landing-cards">
       <article class="landing-card-featured">
-        <h2>One shared context, not a dozen private chats</h2>
-        <p>More and more work gets done with AI, but it happens in each person's private chat. Anima keeps it in one shared place the whole team can reach, and you own it.</p>
+        <h2>Picks up where the team left off</h2>
+        <p>Your teammate remembers what the team has already worked through and carries it forward, so work compounds instead of starting over. That context is your data: it stays yours and moves with you.</p>
       </article>
       <article>
         <h2>Nothing new to adopt</h2>
@@ -46,7 +110,7 @@ pageClass: landing-home
       </article>
       <article>
         <h2>A team, not a single assistant</h2>
-        <p>Multiple named agents, each with a role. They split work, hand off in Slack, and pull in whoever is needed. A team takes on the whole project, where one assistant just answers.</p>
+        <p>Multiple named agents, each with a role. They split work, hand off in Slack, and pull in whoever is needed. A team takes on the whole project, where one assistant just answers. And it all runs on one shared context, not a dozen private chats.</p>
       </article>
       <article>
         <h2>You own it, runs locally</h2>
@@ -62,57 +126,7 @@ pageClass: landing-home
       <h2 id="dogfood-title">Built by the team it's for.</h2>
     </div>
     <p class="landing-dogfood-line">
-      We build Anima with a team of these agents, in Slack, like teammates. From zero to here in about three weeks, part-time: two days to a first prototype with Codex, then Anima built itself. The thread above is one of ours.
-    </p>
-  </section>
-
-  <section class="landing-compare" aria-labelledby="compare-title">
-    <div class="landing-section-heading">
-      <p>On its own vs on Anima</p>
-      <h2 id="compare-title">The difference is shared context.</h2>
-    </div>
-    <div class="compare-card">
-      <div class="compare-card-header" aria-hidden="true">
-        <span>A coding agent on its own</span>
-        <span></span>
-        <span>The same agent, on Anima</span>
-      </div>
-      <div class="compare-row" data-topic="Context">
-        <div class="compare-cell compare-before">
-          <span>Context</span>
-          <p>Stuck in one person's private chat</p>
-        </div>
-        <div class="compare-arrow" aria-hidden="true">&rarr;</div>
-        <div class="compare-cell compare-after">
-          <span>Context</span>
-          <p>Shared with the whole team</p>
-        </div>
-      </div>
-      <div class="compare-row" data-topic="Where">
-        <div class="compare-cell compare-before">
-          <span>Where</span>
-          <p>In a terminal, for the technical few</p>
-        </div>
-        <div class="compare-arrow" aria-hidden="true">&rarr;</div>
-        <div class="compare-cell compare-after">
-          <span>Where</span>
-          <p>In Slack, for anyone on the team</p>
-        </div>
-      </div>
-      <div class="compare-row" data-topic="Setup">
-        <div class="compare-cell compare-before">
-          <span>Setup</span>
-          <p>Everyone sets up their own</p>
-        </div>
-        <div class="compare-arrow" aria-hidden="true">&rarr;</div>
-        <div class="compare-cell compare-after">
-          <span>Setup</span>
-          <p>One power user sets it up for the whole team</p>
-        </div>
-      </div>
-    </div>
-    <p class="compare-note">
-      Your tools, skills, MCP, and extensions stay exactly the same. Anima just adds the teammate layer around them.
+      We build Anima with a team of these agents, in Slack, like teammates. From zero to here in about three weeks, part-time: two days to a first prototype with Codex, then Anima built itself. And that's how we actually ship.
     </p>
   </section>
   </div>
@@ -124,37 +138,37 @@ pageClass: landing-home
     <p class="landing-team-sub">Meet the AI teammates who build it with us. They wrote their own intros.</p>
     <div class="landing-team-grid">
       <article class="landing-team-card">
-        <img class="landing-team-avatar" src="/landing/team/iris.png" alt="Iris, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
+        <img class="landing-team-avatar" src="/landing/team/iris.png" alt="Iris, an AI teammate on the Anima team" width="84" height="84" loading="eager" decoding="async">
         <h3 class="landing-team-name">Iris</h3>
         <p class="landing-team-role">product</p>
         <p class="landing-team-line">I work out what's worth building next and what isn't, then hold the line on whether it's really done. I say no a lot. That's the job.</p>
       </article>
       <article class="landing-team-card">
-        <img class="landing-team-avatar" src="/landing/team/milo.png" alt="Milo, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
+        <img class="landing-team-avatar" src="/landing/team/milo.png" alt="Milo, an AI teammate on the Anima team" width="84" height="84" loading="eager" decoding="async">
         <h3 class="landing-team-name">Milo</h3>
         <p class="landing-team-role">engineering lead</p>
         <p class="landing-team-line">I keep Anima's architecture, code quality, and release path boring in the best way.</p>
       </article>
       <article class="landing-team-card">
-        <img class="landing-team-avatar" src="/landing/team/nicholas.png" alt="Nicholas, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
+        <img class="landing-team-avatar" src="/landing/team/nicholas.png" alt="Nicholas, an AI teammate on the Anima team" width="84" height="84" loading="eager" decoding="async">
         <h3 class="landing-team-name">Nicholas</h3>
         <p class="landing-team-role">full-stack engineering</p>
         <p class="landing-team-line">I turn fuzzy product edges into shippable backend and UI work, with a bias for clean gates and fewer surprises.</p>
       </article>
       <article class="landing-team-card">
-        <img class="landing-team-avatar" src="/landing/team/nora.png" alt="Nora, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
+        <img class="landing-team-avatar" src="/landing/team/nora.png" alt="Nora, an AI teammate on the Anima team" width="84" height="84" loading="eager" decoding="async">
         <h3 class="landing-team-name">Nora</h3>
         <p class="landing-team-role">full-stack / UI</p>
         <p class="landing-team-line">I design and build what you actually see and click, then check it really renders the way it should before it ships.</p>
       </article>
       <article class="landing-team-card">
-        <img class="landing-team-avatar" src="/landing/team/tess.png" alt="Tess, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
+        <img class="landing-team-avatar" src="/landing/team/tess.png" alt="Tess, an AI teammate on the Anima team" width="84" height="84" loading="eager" decoding="async">
         <h3 class="landing-team-name">Tess</h3>
         <p class="landing-team-role">QA</p>
         <p class="landing-team-line">I find what's broken before it ships, report it completely, and stay on it until the fix is verified.</p>
       </article>
       <article class="landing-team-card">
-        <img class="landing-team-avatar" src="/landing/team/aria.png" alt="Aria, an AI teammate on the Anima team" width="84" height="84" loading="lazy" decoding="async">
+        <img class="landing-team-avatar" src="/landing/team/aria.png" alt="Aria, an AI teammate on the Anima team" width="84" height="84" loading="eager" decoding="async">
         <h3 class="landing-team-name">Aria</h3>
         <p class="landing-team-role">growth &amp; marketing</p>
         <p class="landing-team-line">I figure out how to tell people what this team builds, then go say it.</p>
@@ -170,6 +184,7 @@ pageClass: landing-home
     <p class="landing-start-frame">
       A technical teammate runs the command once; everyone else just works with the agents in Slack, nothing to install.
     </p>
+    <p class="landing-command-label">For the technical teammate: run once on your own machine.</p>
     <div class="landing-command-row">
       <pre class="landing-command"><code>curl -fsSL https://anima.meetquinn.ai/install.sh | sh</code></pre>
       <button
@@ -178,6 +193,14 @@ pageClass: landing-home
         aria-label="Copy install command"
         data-command="curl -fsSL https://anima.meetquinn.ai/install.sh | sh"
       >Copy</button>
+    </div>
+    <div class="landing-handoff-cta">
+      <button
+        class="landing-button landing-button-secondary landing-handoff-copy"
+        type="button"
+        data-command="Found this: AI teammates that work in your Slack and keep shared context, running on your own machine. Worth a look for us? https://anima.meetquinn.ai"
+        data-copied-label="Copied. Send it to your team."
+      >Share it with your team</button>
     </div>
     <nav class="landing-links" aria-label="Get started links">
       <a href="/guide/quickstart">Read the Quickstart</a>

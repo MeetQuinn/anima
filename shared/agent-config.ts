@@ -16,6 +16,8 @@ import {
 } from './provider-catalog.js';
 
 export const PROVIDER_IDLE_TIMEOUT_MS_DEFAULT = 30 * 60 * 1000;
+export const ClaudeCodeTransport = z.enum(['stream-json', 'tmux']);
+export type ClaudeCodeTransport = z.infer<typeof ClaudeCodeTransport>;
 export const ANIMA_MANAGED_PROVIDER_ENV_KEYS = [
   'ANIMA_AGENT_ID',
   'ANIMA_HOME',
@@ -65,6 +67,7 @@ const AgentProviderCreateRequest = z.object({
   kind: z.string().trim().min(1),
   model: z.string().trim().min(1),
   reasoningEffort: z.string().trim().min(1).optional(),
+  transport: z.string().trim().min(1).optional(),
 }).strict().superRefine((provider, ctx) => {
   if (!isSupportedProviderKind(provider.kind)) {
     ctx.addIssue({
@@ -88,6 +91,20 @@ const AgentProviderCreateRequest = z.object({
       path: ['reasoningEffort'],
     });
   }
+  if (provider.transport && provider.kind !== 'claude-code') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `unsupported transport for ${provider.kind}: ${provider.transport}`,
+      path: ['transport'],
+    });
+  }
+  if (provider.transport && !ClaudeCodeTransport.options.includes(provider.transport as ClaudeCodeTransport)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `unsupported Claude Code transport ${provider.transport}`,
+      path: ['transport'],
+    });
+  }
 });
 
 const AgentProviderUpdateRequest = z.object({
@@ -95,6 +112,7 @@ const AgentProviderUpdateRequest = z.object({
   kind: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1).optional(),
   reasoningEffort: z.string().trim().min(1).optional(),
+  transport: ClaudeCodeTransport.optional(),
 }).strict();
 
 export const AgentCreateRequest = z.object({
@@ -222,6 +240,7 @@ export const ClaudeCodeAgentProviderConfig = z.object({
   kind: z.literal('claude-code'),
   model: z.string().optional(),
   reasoningEffort: z.string().optional(),
+  transport: ClaudeCodeTransport.optional(),
 });
 
 export type ClaudeCodeAgentProviderConfig = z.infer<typeof ClaudeCodeAgentProviderConfig>;
@@ -240,11 +259,20 @@ export const AgentProviderConfig = z.preprocess(
     const input = isRecord(value) ? value : {};
     const rawKind = typeof input.kind === 'string' ? input.kind : undefined;
     const kind = rawKind && isSupportedProviderKind(rawKind) ? rawKind : DEFAULT_PROVIDER_KIND;
+    const claudeTransport =
+      kind === 'claude-code'
+        ? input.transport === 'channel'
+          ? 'stream-json'
+          : typeof input.transport === 'string'
+            ? input.transport
+            : 'stream-json'
+        : undefined;
     return {
       ...input,
       ...(typeof input.idleTimeoutMs !== 'number' ? { idleTimeoutMs: PROVIDER_IDLE_TIMEOUT_MS_DEFAULT } : {}),
       kind,
       model: typeof input.model === 'string' ? input.model : defaultModelForProvider(kind),
+      ...(kind === 'claude-code' ? { transport: claudeTransport } : {}),
     };
   },
   z.discriminatedUnion('kind', [
@@ -360,6 +388,12 @@ export interface AgentFeishuRecommendedScopeStatusItem {
   scope: string;
 }
 
+export interface AgentFeishuScopeAuthUrl {
+  authUrl: string;
+  label: string;
+  scopes: string[];
+}
+
 export interface AgentFeishuScopeStatus {
   appId?: string;
   connected: boolean;
@@ -372,6 +406,7 @@ export interface AgentFeishuScopeStatus {
   };
   recommended: {
     authUrl?: string;
+    authUrls?: AgentFeishuScopeAuthUrl[];
     granted: boolean;
     message?: string;
     missingScopes: string[];

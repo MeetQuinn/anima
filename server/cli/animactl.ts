@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
 
 import { errorMessage } from '../ids.js';
+import { registerDashboardAuthCommand } from './dashboard-auth-cli.js';
 import { registerRuntimeCommand } from './runtime-cli.js';
 import { registerServiceCommands } from './service.js';
 import { registerServicesCommand } from './services-cli.js';
@@ -24,6 +25,7 @@ export function createAdminCliProgram(): Command {
   registerServiceCommands(program);
   registerServicesCommand(program);
   registerRuntimeCommand(program);
+  registerDashboardAuthCommand(program);
 
   return program;
 }

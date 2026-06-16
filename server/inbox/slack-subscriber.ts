@@ -7,7 +7,7 @@ import { interactiveAskServiceForAgent } from '../asks/interactive-ask.service.j
 import { errorMessage, slackMessageEventId } from '../ids.js';
 import { createSlackWebClient } from '../slack/client.js';
 import {
-  defaultSlackShortcutService,
+  SlackShortcutService,
   userIdFromShortcutBody,
   type SlackShortcutBody,
 } from '../slack-interactions/shortcut.service.js';
@@ -31,6 +31,7 @@ import {
   type SlackRawMessageEvent,
 } from './slack-events.js';
 import { SlackProfileResolver } from './slack-profiles.js';
+import { slackShortcutHandoffServiceForAgent } from './slack-shortcut-handoff.service.js';
 import { slackRuntimeDecision, type SlackRuntimeDecision } from './slack-subscription.service.js';
 import { WakeQueueService, type WakeQueueEnqueueResult } from './wake-queue.service.js';
 
@@ -43,12 +44,16 @@ export interface SlackInboxSubscriberOptions {
 
 export class SlackInboxSubscriber {
   private readonly app: App;
+  private readonly shortcutService: SlackShortcutService;
   private readonly slackProfiles = new SlackProfileResolver();
   // Guards the fire-and-forget bot display-info refresh so overlapping inbound
   // messages don't trigger concurrent syncs.
   private botDisplayInfoSyncInFlight = false;
 
   constructor(private readonly options: SlackInboxSubscriberOptions) {
+    this.shortcutService = new SlackShortcutService({
+      handoffService: slackShortcutHandoffServiceForAgent(options.queue.agentId),
+    });
     this.app = this.createApp();
   }
 
@@ -84,7 +89,7 @@ export class SlackInboxSubscriber {
       await ack();
       const triggerId = (body as { trigger_id?: string }).trigger_id;
       if (!triggerId) return;
-      await defaultSlackShortcutService.showRemindersView({
+      await this.shortcutService.showRemindersView({
         agentId: this.options.queue.agentId,
         client,
         triggerId,
@@ -95,7 +100,7 @@ export class SlackInboxSubscriber {
       const triggerId = (body as { trigger_id?: string }).trigger_id;
       const reminderId = (action as { value?: string }).value;
       if (!triggerId || !reminderId) return;
-      await defaultSlackShortcutService.showReminderDetailView({
+      await this.shortcutService.showReminderDetailView({
         agentId: this.options.queue.agentId,
         client,
         reminderId,
@@ -120,7 +125,7 @@ export class SlackInboxSubscriber {
       callback_id: SLACK_STOP_CONFIRM_VIEW_CALLBACK_ID,
       type: 'view_submission',
     }, async ({ ack, body, view }) => {
-      const resultView = await defaultSlackShortcutService.confirmStop({
+      const resultView = await this.shortcutService.confirmStop({
         agentId: this.options.queue.agentId,
         userId: userIdFromShortcutBody(body),
         view,
@@ -140,7 +145,7 @@ export class SlackInboxSubscriber {
 
   private async handleGlobalShortcut(body: unknown, client?: WebClient): Promise<void> {
     const webClient = client ?? createSlackWebClient(this.options.botToken);
-    await defaultSlackShortcutService.handleShortcut({
+    await this.shortcutService.handleShortcut({
       agentId: this.options.queue.agentId,
       body: body as SlackShortcutBody,
       client: webClient,
@@ -148,7 +153,7 @@ export class SlackInboxSubscriber {
   }
 
   private async handleMessageShortcut(body: unknown): Promise<void> {
-    await defaultSlackShortcutService.handMessageToAgent({
+    await this.shortcutService.handMessageToAgent({
       agentId: this.options.queue.agentId,
       body: body as SlackShortcutBody,
     });

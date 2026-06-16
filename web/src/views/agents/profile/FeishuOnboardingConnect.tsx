@@ -10,10 +10,7 @@ import {
   startAgentFeishuAppRegistration,
 } from '@/api/agents';
 import { Button } from '@/components/ui/button';
-import {
-  FeishuPublishNotAppliedVerdict,
-  FeishuRecommendedPermissionsChecklist,
-} from './FeishuRecommendedPermissionsChecklist';
+import { FeishuRecommendedPermissionsChecklist } from './FeishuRecommendedPermissionsChecklist';
 import { queryKeys } from '@/lib/query-keys';
 import {
   FEISHU_CONNECT_SLOW_SOFTEN_MS,
@@ -346,8 +343,7 @@ export function RecommendedPermissionsState({
         <div className="flex items-start gap-2">
           <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-health-ok" />
           <p className="font-serif text-[13px] leading-snug text-text">
-            Recommended Feishu permissions are on. Your agents can now use teammate names, see
-            group messages, look people up by email or phone, and invite members to chats.
+            Recommended Feishu permissions are on. Your Feishu bot is good to go.
           </p>
         </div>
         <Button className="w-full" onClick={onContinue}>Start activity</Button>
@@ -356,6 +352,7 @@ export function RecommendedPermissionsState({
   }
 
   const authUrl = data?.recommended.authUrl;
+  const authUrls = data?.recommended.authUrls;
   const scopes = recommendedScopesForDisplay(data);
   const confirmedMissing = recheckResult === 'missing';
   return (
@@ -363,12 +360,12 @@ export function RecommendedPermissionsState({
       <FeishuRecommendedPermissionsChecklist
         scopes={scopes}
         authUrl={authUrl}
+        authUrls={authUrls}
         confirmedMissing={confirmedMissing}
         showPerms={showPerms}
         onTogglePerms={() => setShowPerms((v) => !v)}
         onRecheck={() => void handleRecheck()}
         isRechecking={isFetching}
-        banner={<FeishuPublishNotAppliedVerdict />}
         statusLine={
           <>
             {data?.recommended.message && recheckResult !== 'missing' && (
@@ -407,12 +404,13 @@ export function RecommendedPermissionsState({
               <CircleAlert className="mt-0.5 h-[18px] w-[18px] shrink-0 text-health-error" aria-hidden />
               <div className="space-y-1.5">
                 <div className="font-serif text-[14px] font-semibold leading-tight text-text">
-                  Skipping leaves some teammate features off
+                  Skipping leaves some teammate and document features off
                 </div>
                 <p className="font-serif text-[13px] leading-relaxed text-text-muted">
                   Your Feishu bot keeps sending and receiving messages, but it won&rsquo;t recognize
-                  teammates by name or work fully in group chats. Looking people up by email or phone
-                  also stays off. You can authorize anytime from the agent&rsquo;s profile.
+                  teammates by name, work fully in group chats with people and other bots, or work
+                  with Feishu Drive and cloud documents. Looking people up by email or phone also
+                  stays off. You can authorize anytime from the agent&rsquo;s profile.
                 </p>
               </div>
             </div>
@@ -441,9 +439,11 @@ export function RecommendedPermissionsState({
 function recommendedScopesForDisplay(
   data: AgentFeishuScopeStatus | undefined,
 ): AgentFeishuRecommendedScopeStatusItem[] {
+  // Always show the full recommended set (with each scope's grant flag) so the
+  // list can mark passed vs still-missing after a recheck instead of dropping
+  // the granted rows.
   if (data?.recommended.scopes.length) {
-    const missing = data.recommended.scopes.filter((scope) => !scope.granted);
-    return missing.length ? missing : data.recommended.scopes;
+    return data.recommended.scopes;
   }
   return FEISHU_RECOMMENDED_SCOPES.map((scope) => ({
     capability: scope.capability,
@@ -473,6 +473,11 @@ function previewRecommendedScopeStatus(): AgentFeishuScopeStatus {
     },
     recommended: {
       authUrl: 'https://open.feishu.cn/app/cli_preview/auth?preview=recommended-scopes',
+      authUrls: [{
+        authUrl: 'https://open.feishu.cn/app/cli_preview/auth?preview=recommended-scopes',
+        label: 'Recommended permissions',
+        scopes: scopes.map((scope) => scope.scope),
+      }],
       granted: false,
       missingScopes: scopes.map((scope) => scope.scope),
       scopes,

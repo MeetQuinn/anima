@@ -251,9 +251,13 @@ test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack t
   assert.match(text, /Only `mute` a thread\/channel when it's clearly done with you AND still noisy/);
   assert.match(text, /anima reminder/);
   assert.match(text, /anima message send <target flags> \[--thread-ts <thread_or_topic_id>\]/);
-  assert.match(text, /Anima docs: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs>/);
-  assert.match(text, /local docs: `\/opt\/anima\/docs`/);
-  assert.match(text, /guide\/agent-features\.md/);
+  assert.match(text, /Agent platform guide: `\/opt\/anima\/docs\/agent\/guide\.md`/);
+  assert.match(text, /Read it for Anima's mental model/);
+  assert.match(text, /Agent command reference: `\/opt\/anima\/docs\/agent\/reference\.md`/);
+  assert.match(text, /Read it before using an unfamiliar `anima` command/);
+  assert.doesNotMatch(text, /Feishu runbook/);
+  assert.match(text, /General Anima docs: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs>/);
+  assert.match(text, /local docs root: `\/opt\/anima\/docs`/);
   assert.match(text, /Anima source: <https:\/\/github\.com\/MeetQuinn\/anima>/);
   assert.match(text, /local checkout: `\/work\/anima`/);
   assert.match(text, /Treat source as reference unless asked to modify Anima/);
@@ -261,6 +265,7 @@ test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack t
   assert.match(text, /\$SLACK_BOT_TOKEN/);
   assert.doesNotMatch(text, /Feishu messages can arrive|FEISHU_APP_SECRET/);
   assert.doesNotMatch(text, /ANIMA_FEATURES/);
+  assert.doesNotMatch(text, /guide\/agent-features\.md/);
   assert.doesNotMatch(text, /\$ANIMA_CHANNEL|\$ANIMA_THREAD/);
 });
 
@@ -280,6 +285,8 @@ test('buildAnimaRuntimeProfile separates Feishu-only transport instructions', ()
   assert.match(text, /<mention open_id="ou_\.\.\.">/);
   assert.match(text, /FEISHU_TENANT_ACCESS_TOKEN/);
   assert.match(text, /https:\/\/open\.feishu\.cn\/open-apis/);
+  assert.match(text, /Feishu runbook: `\/opt\/anima\/docs\/agent\/feishu\.md`/);
+  assert.match(text, /Read it before direct Feishu API work/);
   assert.doesNotMatch(text, /Slack messages can arrive|Slack API|SLACK_BOT_TOKEN|FEISHU_APP_SECRET|FEISHU_API_BASE_URL/);
 });
 
@@ -301,14 +308,17 @@ test('buildAnimaRuntimeProfile falls back cleanly when bundled docs are unavaila
     role: 'Product PM for prioritization.',
     transports: { feishu: false, slack: true },
   });
-  assert.match(text, /Anima docs: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs>/);
-  assert.doesNotMatch(text, /local docs:/);
+  assert.match(text, /Agent platform guide: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs\/agent\/guide\.md>/);
+  assert.match(text, /Agent command reference: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs\/agent\/reference\.md>/);
+  assert.match(text, /General Anima docs: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs>/);
+  assert.doesNotMatch(text, /local docs root:/);
   assert.match(text, /Anima source: <https:\/\/github\.com\/MeetQuinn\/anima>/);
   assert.doesNotMatch(text, /local checkout:/);
 });
 
 test('resolveAnimaReferencePathsFromRoots finds bundled docs and source checkout roots', async () => {
   const root = await mkdtemp(join(tmpdir(), 'anima-reference-root-'));
+  mkdirSync(join(root, 'docs', 'agent'), { recursive: true });
   mkdirSync(join(root, 'docs', 'guide'), { recursive: true });
   mkdirSync(join(root, 'docs', 'architecture'), { recursive: true });
   mkdirSync(join(root, '.git'), { recursive: true });
@@ -316,7 +326,8 @@ test('resolveAnimaReferencePathsFromRoots finds bundled docs and source checkout
   mkdirSync(join(root, 'shared'), { recursive: true });
   mkdirSync(join(root, 'web'), { recursive: true });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@meetquinn/anima' }));
-  writeFileSync(join(root, 'docs', 'guide', 'agent-features.md'), '# Features\n');
+  writeFileSync(join(root, 'docs', 'agent', 'guide.md'), '# Agent guide\n');
+  writeFileSync(join(root, 'docs', 'agent', 'reference.md'), '# Agent reference\n');
   writeFileSync(join(root, 'docs', 'guide', 'how-an-agent-works.md'), '# Agent\n');
   writeFileSync(join(root, 'docs', 'guide', 'working-with-your-agent.md'), '# Working\n');
   writeFileSync(join(root, 'docs', 'guide', 'using-the-dashboard.md'), '# Dashboard\n');
@@ -329,17 +340,19 @@ test('resolveAnimaReferencePathsFromRoots finds bundled docs and source checkout
   });
 });
 
-test('buildAnimaRuntimeProfile keeps MEMORY.md as a short recovery index', () => {
+test('buildAnimaRuntimeProfile keeps live memory guidance focused on cheap recovery capture', () => {
   const text = buildAnimaRuntimeProfile({
     displayName: 'Iris',
     role: 'Product PM for prioritization.',
     transports: { feishu: false, slack: true },
   });
-  assert.match(text, /an index, not a corpus/);
-  assert.match(text, /roughly one screen/);
-  assert.match(text, /notes\/<topic>\.md/);
   assert.match(text, /Keep `Active Context` current/);
-  assert.match(text, /section grows past a short paragraph/);
+  assert.match(text, /decisions that would be costly to lose if the context reset/);
+  assert.match(text, /Do not turn live work into a memory-cleanup project/);
+  assert.match(text, /periodic Dream\/consolidation pass/);
+  assert.match(text, /demotes durable detail to `notes\/`/);
+  assert.doesNotMatch(text, /an index, not a corpus/);
+  assert.doesNotMatch(text, /section grows past a short paragraph/);
 });
 
 test('buildAnimaRuntimeProfile injects agent name and role into the opening identity line', () => {

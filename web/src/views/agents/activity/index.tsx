@@ -29,6 +29,7 @@ import {
 import { MessageInRow, MessageOutRow, FileOutRow } from './MessageRows';
 import { ReactOutRow, StepRow, WorkingIndicator, DaySection } from './AuditRows';
 import type { Activity as ActivityRecord, AgentActivityFeedEvent } from '@shared/activity';
+import type { AgentFeishuScopeAuthUrl } from '@shared/agent-config';
 import type { AgentMessageRecord } from '@shared/messages';
 import type { AgentStatusSummary } from '@shared/snapshot';
 
@@ -254,28 +255,41 @@ function FeishuHelloBanner({ onDismiss }: { onDismiss: () => void }) {
 
 function FeishuRecommendedPermissionsConnectBanner({
   authUrl,
+  authUrls,
   onDismiss,
 }: {
   authUrl?: string;
+  authUrls?: AgentFeishuScopeAuthUrl[];
   onDismiss: () => void;
 }) {
+  const links = authUrls?.length
+    ? authUrls
+    : authUrl
+      ? [{ authUrl, label: 'Authorize in Feishu', scopes: [] }]
+      : [];
   return (
     <div className="flex shrink-0 items-start gap-3 border-b border-border-soft bg-health-warn-soft/60 px-4 py-2.5 md:px-10">
       <div className="min-w-0 flex-1">
         <p className="font-serif text-[13px] leading-snug text-text">
           Connected. Your agents can message your team right away. Optional: authorize recommended
-          Feishu permissions so they can use teammate names, see group messages, look people up by
-          email or phone, and invite members to chats.
+          Feishu permissions so they can use teammate names, take part in group chats with people
+          and other bots, look people up by email or phone, invite members to chats, and work with
+          Feishu Drive and cloud documents.
         </p>
-        {authUrl && (
-          <a
-            href={authUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-1.5 inline-flex items-center gap-1 font-sans text-[12px] text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
-          >
-            Authorize in Feishu <ExternalLink className="h-3 w-3" />
-          </a>
+        {links.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
+            {links.map((link) => (
+              <a
+                key={`${link.label}:${link.authUrl}`}
+                href={link.authUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 font-sans text-[12px] text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+              >
+                {link.label} <ExternalLink className="h-3 w-3" />
+              </a>
+            ))}
+          </div>
         )}
       </div>
       <button
@@ -740,6 +754,7 @@ export default function Activity() {
       {showRecommendedPermissionsConnectBanner && (
         <FeishuRecommendedPermissionsConnectBanner
           authUrl={feishuScopeStatus?.recommended.authUrl}
+          authUrls={feishuScopeStatus?.recommended.authUrls}
           onDismiss={dismissRecommendedPermissionsBanner}
         />
       )}

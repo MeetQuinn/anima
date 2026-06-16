@@ -178,7 +178,7 @@ export class AgentRuntimeWorker {
     let followupError: unknown;
     let appendedFollowupsSettled = false;
     try {
-      context = await runtimeContextForItemId(item.id, this.options);
+      context = await runtimeContextForItemId(item.id, this.options, this.queue);
       const activeContext = context;
       followupLoop = appendQueuedFollowupsUntilFinished({
         activeContext,
@@ -204,7 +204,7 @@ export class AgentRuntimeWorker {
         startedAt: isoFromMs(handle.startedAt),
         itemId: context.item.id,
         workerId: this.workerId,
-      });
+      }, this.queue);
       await this.notifyItemStarted(context);
       if (context.item.handling.resumeReason === 'runtime_restart') {
         await this.recordRestartResumeActivity(context);
@@ -293,7 +293,7 @@ export class AgentRuntimeWorker {
           agentId: this.options.agentId,
           itemId: context.item.id,
           workerId: this.workerId,
-        });
+        }, this.queue);
       }
       this.releaseActiveItem();
       if (context) {

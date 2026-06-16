@@ -22,6 +22,7 @@ import type { LucideIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
+import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
 import rehypeKatex from 'rehype-katex';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
@@ -1624,7 +1625,7 @@ export function FileContent({
             {frontmatter && <FrontmatterTable entries={frontmatter} />}
             <div className="md-prose">
               <ReactMarkdown
-                remarkPlugins={[remarkGfm, remarkMath]}
+                remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
                 rehypePlugins={[
                   rehypeRaw,
                   rehypeGithubAlerts,

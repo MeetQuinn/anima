@@ -1,6 +1,5 @@
 import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { createServer, type IncomingMessage } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -11,7 +10,10 @@ import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { createWebServer } from '../web/app.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
+import { defaultDashboardAuthService } from '../settings/dashboard-auth.service.js';
+import { defaultKbRegistryService } from '../kb/kb.service.js';
 import { makeSlackEvent } from './helpers/slack.js';
+import { bearerToken, slackRequestBody, startSlackApiMock } from './helpers/slack-api.js';
 import { ingestEvent } from './helpers/inbox.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { recordRuntimeEvent } from '../runtime/activity.js';
@@ -1538,7 +1540,7 @@ test('web API mutates agent configs with redacted responses', async () => {
 test('web API validates Slack tokens with structured reasons before persisting', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-slack-validate-test-'));
   const slackApi = await startSlackApiMock((method, body, request) => {
-    const token = bearerToken(request) || slackRequestBody(body)['token'] || '';
+    const token = bearerToken(request) || String(slackRequestBody(body)['token'] ?? '');
     if (method === 'apps.connections.open') {
       if (token.includes('missing-scope')) return { error: 'missing_scope', ok: false };
       return { ok: true, url: 'wss://socket.example.test/' };
@@ -1655,7 +1657,7 @@ test('web API validates Slack tokens with structured reasons before persisting',
 test('web API exposes Slack manifest update flow and bumps version after scoped bot token save', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-slack-manifest-test-'));
   const slackApi = await startSlackApiMock((method, body, request) => {
-    const token = bearerToken(request) || slackRequestBody(body)['token'] || '';
+    const token = bearerToken(request) || String(slackRequestBody(body)['token'] ?? '');
     if (method === 'apps.connections.open') {
       return { ok: true, url: 'wss://socket.example.test/' };
     }
@@ -1745,7 +1747,7 @@ test('web API exposes Slack manifest update flow and bumps version after scoped 
 test('web API sets Slack owner and queues onboarding wake-up', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-agent-owner-test-'));
   const homeDir = await mkdtemp(join(tmpdir(), 'anima-web-api-agent-owner-home-'));
-  const slackCalls: Array<{ body: Record<string, string>; method: string }> = [];
+  const slackCalls: Array<{ body: Record<string, unknown>; method: string }> = [];
   const slackApi = await startSlackApiMock((method, body) => {
     slackCalls.push({ method, body: slackRequestBody(body) });
     if (method === 'users.list') {
@@ -1983,7 +1985,7 @@ test('web API setOwner with introduce:false persists owner without enqueueing on
 
 test('web API syncs Slack avatar metadata and exposes app id without secrets', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-sync-avatar-test-'));
-  const slackCalls: Array<{ body: Record<string, string>; method: string }> = [];
+  const slackCalls: Array<{ body: Record<string, unknown>; method: string }> = [];
   const slackApi = await startSlackApiMock((method, body) => {
     slackCalls.push({ method, body: slackRequestBody(body) });
     if (method === 'auth.test') {
@@ -2089,7 +2091,7 @@ test('web API syncs Slack avatar metadata and exposes app id without secrets', a
 
 test('syncDisplayInfoIfStale refreshes once then throttles within the TTL', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-sync-throttle-test-'));
-  const slackCalls: Array<{ body: Record<string, string>; method: string }> = [];
+  const slackCalls: Array<{ body: Record<string, unknown>; method: string }> = [];
   const slackApi = await startSlackApiMock((method, body) => {
     slackCalls.push({ method, body: slackRequestBody(body) });
     if (method === 'auth.test') {
@@ -2424,6 +2426,102 @@ test('web API stamps and exposes createdAt through create response and snapshot'
   await rm(stateDir, { force: true, recursive: true });
 });
 
+test('dashboard auth protects dashboard APIs and static app while leaving health checks public', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-dashboard-auth-test-'));
+  const kbRepoDir = await mkdtemp(join(tmpdir(), 'anima-dashboard-auth-kb-'));
+  try {
+    await writeConfig(stateDir);
+    await mkdir(join(kbRepoDir, 'docs'), { recursive: true });
+    await writeFile(join(kbRepoDir, 'docs', 'report.html'), '<!doctype html><h1>Private KB</h1>\n', 'utf8');
+    await mkdir(join(stateDir, 'kbs', 'test'), { recursive: true });
+    await writeFile(
+      join(stateDir, 'kbs', 'test', 'config.json'),
+      `${JSON.stringify({ label: 'Test', path: kbRepoDir }, null, 2)}\n`,
+      'utf8',
+    );
+    await withAnimaHome(stateDir, async () => {
+      defaultKbRegistryService.clearCaches();
+      await defaultDashboardAuthService.setPassword('correct horse battery staple');
+      const storedConfig = await readFile(join(stateDir, 'config.json'), 'utf8');
+      assert.match(storedConfig, /"dashboardAuth"/);
+      assert.match(storedConfig, /"passwordHash"/);
+      assert.doesNotMatch(storedConfig, /correct horse battery staple/);
+
+      const server = await createWebServer();
+      try {
+        server.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Expected TCP address');
+        const base = `http://127.0.0.1:${address.port}`;
+
+        await assertStatus(await fetch(`${base}/api/health`), 200, 'health');
+        await assertStatus(await fetch(`${base}/api/server-info`), 200, 'server-info');
+
+        const unauthenticatedAgents = await fetch(`${base}/api/agents`);
+        await assertStatus(unauthenticatedAgents, 401, 'unauthenticated agents');
+        const unauthenticatedBody = (await unauthenticatedAgents.json()) as { error?: string };
+        assert.equal(unauthenticatedBody.error, 'authentication_required');
+
+        const unauthenticatedKbRaw = await fetch(`${base}/kb/raw/test/docs/report.html`);
+        await assertStatus(unauthenticatedKbRaw, 401, 'unauthenticated kb raw');
+        const unauthenticatedKbRawBody = (await unauthenticatedKbRaw.json()) as { error?: string };
+        assert.equal(unauthenticatedKbRawBody.error, 'authentication_required');
+
+        const rootRedirect = await fetch(`${base}/`, { redirect: 'manual' });
+        await assertStatus(rootRedirect, 302, 'dashboard root redirect');
+        assert.equal(rootRedirect.headers.get('location'), '/login?next=%2F');
+        const agentRouteRedirect = await fetch(`${base}/agents/anima/activity`, { redirect: 'manual' });
+        await assertStatus(agentRouteRedirect, 302, 'dashboard agent route redirect');
+        assert.equal(agentRouteRedirect.headers.get('location'), '/login?next=%2Fagents%2Fanima%2Factivity');
+        await assertStatus(await fetch(`${base}/login`), 200, 'login page');
+        await assertStatus(await fetch(`${base}/favicon.svg`), 200, 'favicon');
+
+        const missingAsset = await fetch(`${base}/assets/missing.js`);
+        await assertStatus(missingAsset, 404, 'missing asset');
+        assert.doesNotMatch(missingAsset.headers.get('content-type') ?? '', /text\/html/);
+        const assetLikeAppRoute = await fetch(`${base}/agents/anima/activity.json`);
+        await assertStatus(assetLikeAppRoute, 404, 'asset-like app route');
+        assert.doesNotMatch(assetLikeAppRoute.headers.get('content-type') ?? '', /text\/html/);
+
+        const badLogin = await postJson(`${base}/api/auth/login`, { password: 'wrong password' });
+        await assertStatus(badLogin, 401, 'bad login');
+        assert.equal(badLogin.headers.get('set-cookie')?.includes('Max-Age=0'), true);
+
+        const goodLogin = await postJson(`${base}/api/auth/login`, { password: 'correct horse battery staple' });
+        await assertStatus(goodLogin, 200, 'good login');
+        const sessionCookie = goodLogin.headers.get('set-cookie')?.split(';')[0];
+        assert.ok(sessionCookie?.startsWith('anima_dashboard_session='));
+        if (!sessionCookie) throw new Error('Expected dashboard auth session cookie');
+
+        await assertStatus(
+          await fetch(`${base}/api/agents`, { headers: { cookie: sessionCookie } }),
+          200,
+          'authenticated agents',
+        );
+        const authenticatedKbRaw = await fetch(`${base}/kb/raw/test/docs/report.html`, {
+          headers: { cookie: sessionCookie },
+        });
+        await assertStatus(authenticatedKbRaw, 200, 'authenticated kb raw');
+        assert.match(await authenticatedKbRaw.text(), /Private KB/);
+
+        const logout = await fetch(`${base}/api/auth/logout`, {
+          headers: { cookie: sessionCookie },
+          method: 'POST',
+        });
+        await assertStatus(logout, 200, 'logout');
+        assert.equal(logout.headers.get('set-cookie')?.includes('Max-Age=0'), true);
+      } finally {
+        server.close();
+        defaultKbRegistryService.clearCaches();
+      }
+    });
+  } finally {
+    await rm(kbRepoDir, { force: true, recursive: true });
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 function defaultAgentConfig(id: string) {
   return {
     id,
@@ -2465,47 +2563,6 @@ async function writeConfig(configDir: string, agents: TestAgentConfig[] = [defau
   }
 }
 
-type SlackApiMockResponse = object | { body: object; headers?: Record<string, string> };
-
-async function startSlackApiMock(
-  handler: (method: string, body: string, request: IncomingMessage) => SlackApiMockResponse,
-): Promise<{ close: () => Promise<void>; url: string }> {
-  const server = createServer(async (request, response) => {
-    const body = await readBody(request);
-    try {
-      const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
-      const method = pathname.replace(/^\/api\//, '');
-      const result = handler(method, body, request);
-      const payload = isMockResponseWithHeaders(result) ? result.body : result;
-      response.writeHead(200, {
-        'content-type': 'application/json',
-        ...(isMockResponseWithHeaders(result) ? result.headers : {}),
-      });
-      response.end(JSON.stringify(payload));
-    } catch (error) {
-      response.writeHead(500, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error), ok: false }));
-    }
-  });
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    throw new Error('Expected Slack API mock to listen on a TCP address.');
-  }
-  return {
-    close: async () => {
-      server.close();
-      await once(server, 'close');
-    },
-    url: `http://127.0.0.1:${address.port}/api`,
-  };
-}
-
-function isMockResponseWithHeaders(value: SlackApiMockResponse): value is { body: object; headers?: Record<string, string> } {
-  return 'body' in value && typeof value.body === 'object';
-}
-
 function postJson(url: string, body: unknown): Promise<Response> {
   return fetch(url, {
     body: JSON.stringify(body),
@@ -2518,26 +2575,4 @@ async function assertStatus(response: Response, expected: number, label: string)
   if (response.status === expected) return;
   const body = await response.clone().text().catch((error: unknown) => `failed to read body: ${String(error)}`);
   assert.equal(response.status, expected, `${label} returned ${response.status}: ${body}`);
-}
-
-function bearerToken(request: IncomingMessage): string {
-  const authorization = request.headers.authorization ?? '';
-  return authorization.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : '';
-}
-
-function slackRequestBody(body: string): Record<string, string> {
-  try {
-    return JSON.parse(body) as Record<string, string>;
-  } catch {
-    return Object.fromEntries(new URLSearchParams(body));
-  }
-}
-
-async function readBody(request: IncomingMessage): Promise<string> {
-  let body = '';
-  request.setEncoding('utf8');
-  for await (const chunk of request) {
-    body += chunk;
-  }
-  return body;
 }
