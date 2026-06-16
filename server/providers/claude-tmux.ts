@@ -270,7 +270,7 @@ async function writeTmuxFiles(
   const targetFile = join(root, "target.json");
   const logFile = join(root, "terminal.ansi.log");
   const serverEntry = fileURLToPath(
-    new URL("./claude-channel-mcp-server.js", import.meta.url),
+    new URL("./claude-completion-mcp-server.js", import.meta.url),
   );
   await mkdir(root, { recursive: true });
   await writeFile(

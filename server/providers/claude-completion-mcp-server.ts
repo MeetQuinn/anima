@@ -25,11 +25,10 @@ const mcp = new Server(
   { name: 'anima', version: '0.1.0' },
   {
     capabilities: {
-      experimental: { 'claude/channel': {} },
       tools: {},
     },
     instructions: [
-      'Anima delivers team messages through this channel.',
+      'Anima delivers each turn with an item_id.',
       'Each message has an item_id attribute. Use normal Anima CLI tools for any needed team action.',
       'When the current turn is finished, call complete with that item_id.',
       'Include text only when a short completion note is useful, such as a no-op reminder or targetless turn.',
@@ -48,7 +47,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           item_id: {
             type: 'string',
-            description: 'The item_id from the channel notification metadata.',
+            description: 'The item_id from the current Anima turn instructions.',
           },
           text: {
             type: 'string',

@@ -16,7 +16,7 @@ import {
 } from './provider-catalog.js';
 
 export const PROVIDER_IDLE_TIMEOUT_MS_DEFAULT = 30 * 60 * 1000;
-export const ClaudeCodeTransport = z.enum(['stream-json', 'channel', 'tmux']);
+export const ClaudeCodeTransport = z.enum(['stream-json', 'tmux']);
 export type ClaudeCodeTransport = z.infer<typeof ClaudeCodeTransport>;
 export const ANIMA_MANAGED_PROVIDER_ENV_KEYS = [
   'ANIMA_AGENT_ID',
@@ -259,12 +259,20 @@ export const AgentProviderConfig = z.preprocess(
     const input = isRecord(value) ? value : {};
     const rawKind = typeof input.kind === 'string' ? input.kind : undefined;
     const kind = rawKind && isSupportedProviderKind(rawKind) ? rawKind : DEFAULT_PROVIDER_KIND;
+    const claudeTransport =
+      kind === 'claude-code'
+        ? input.transport === 'channel'
+          ? 'stream-json'
+          : typeof input.transport === 'string'
+            ? input.transport
+            : 'stream-json'
+        : undefined;
     return {
       ...input,
       ...(typeof input.idleTimeoutMs !== 'number' ? { idleTimeoutMs: PROVIDER_IDLE_TIMEOUT_MS_DEFAULT } : {}),
       kind,
       model: typeof input.model === 'string' ? input.model : defaultModelForProvider(kind),
-      ...(kind === 'claude-code' && typeof input.transport !== 'string' ? { transport: 'stream-json' } : {}),
+      ...(kind === 'claude-code' ? { transport: claudeTransport } : {}),
     };
   },
   z.discriminatedUnion('kind', [
