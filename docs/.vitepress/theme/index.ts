@@ -2,6 +2,7 @@ import DefaultTheme from "vitepress/theme";
 import { h, onBeforeUnmount, onMounted } from "vue";
 import "./architecture.css";
 import "./landing.css";
+import "./how-it-works.css";
 
 const INSTALL_COMMAND = "curl -fsSL https://anima.meetquinn.ai/install.sh | sh";
 
@@ -29,6 +30,26 @@ export default {
       const handleClick = async (event: MouseEvent) => {
         const target = event.target;
         if (!(target instanceof Element)) return;
+
+        // /how-it-works film: click-to-play with a poster (no autoplay, so the
+        // reduced-motion experience is the default). The video carries no
+        // `controls` until first play, so there is no native dead-center play
+        // button competing with our center-high overlay glyph. After play we
+        // hand off to native controls for scrub/pause/replay.
+        const playButton = target.closest<HTMLButtonElement>(
+          "button[data-play-video]",
+        );
+        if (playButton) {
+          const video =
+            playButton.parentElement?.querySelector<HTMLVideoElement>("video");
+          if (video) {
+            video.setAttribute("controls", "");
+            playButton.hidden = true;
+            void video.play();
+          }
+          return;
+        }
+
         // Matches both the raw-command Copy button and the secondary
         // "Share it with your team" handoff button (copies a link to send on).
         const button = target.closest<HTMLButtonElement>(
