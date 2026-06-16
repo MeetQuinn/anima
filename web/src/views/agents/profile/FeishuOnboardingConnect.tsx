@@ -352,6 +352,7 @@ export function RecommendedPermissionsState({
   }
 
   const authUrl = data?.recommended.authUrl;
+  const authUrls = data?.recommended.authUrls;
   const scopes = recommendedScopesForDisplay(data);
   const confirmedMissing = recheckResult === 'missing';
   return (
@@ -359,6 +360,7 @@ export function RecommendedPermissionsState({
       <FeishuRecommendedPermissionsChecklist
         scopes={scopes}
         authUrl={authUrl}
+        authUrls={authUrls}
         confirmedMissing={confirmedMissing}
         showPerms={showPerms}
         onTogglePerms={() => setShowPerms((v) => !v)}
@@ -471,6 +473,11 @@ function previewRecommendedScopeStatus(): AgentFeishuScopeStatus {
     },
     recommended: {
       authUrl: 'https://open.feishu.cn/app/cli_preview/auth?preview=recommended-scopes',
+      authUrls: [{
+        authUrl: 'https://open.feishu.cn/app/cli_preview/auth?preview=recommended-scopes',
+        label: 'Recommended permissions',
+        scopes: scopes.map((scope) => scope.scope),
+      }],
       granted: false,
       missingScopes: scopes.map((scope) => scope.scope),
       scopes,

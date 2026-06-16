@@ -44,6 +44,7 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
     return null;
 
   const authUrl = recommended?.authUrl ?? data?.profileName.authUrl;
+  const authUrls = recommended?.authUrls;
   const scopes = recommendedScopesForDisplay(data);
   // Match the onboarding honesty model: only assert "still missing" (✗ rows,
   // red verdict, publish-step ring) after an explicit recheck comes back missing,
@@ -77,6 +78,7 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
     <FeishuRecommendedPermissionsChecklist
       scopes={scopes}
       authUrl={authUrl}
+      authUrls={authUrls}
       confirmedMissing={confirmedMissing}
       showPerms={showPerms}
       onTogglePerms={() => setShowPerms((v) => !v)}
