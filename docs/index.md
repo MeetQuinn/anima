@@ -11,7 +11,7 @@ pageClass: landing-home
         Shared memory across your whole team.
       </p>
       <div class="landing-actions" aria-label="Primary links">
-        <a class="landing-button landing-button-primary" href="#see-it-work">See how it works</a>
+        <a class="landing-button landing-button-primary" href="/how-it-works">See how it works</a>
         <a class="landing-button landing-button-secondary" href="/guide/quickstart">Quickstart</a>
       </div>
     </div>
