@@ -15,6 +15,9 @@ export interface FeishuRecommendedScope {
   scope: string;
 }
 
+// Only tenant/app identity scopes can be requested through the Feishu app auth
+// URL we generate. Some ccm scopes are user-identity-only; keep those out of the
+// recommended bundle or Feishu rejects the auth page as "invalid parameter".
 const FEISHU_CLOUD_DOCS_SCOPES = [
   ['bitable:app', 'View, comment, edit and manage Base'],
   ['bitable:app:readonly', 'View, comment, and export Base'],
@@ -45,7 +48,6 @@ const FEISHU_CLOUD_DOCS_SCOPES = [
   ['docs:event.document_opened:read', 'Receive document open event'],
   ['docs:event:subscribe', 'Subscribe to document-related events'],
   ['docs:permission.member', 'View, add, update, and delete document collaborators'],
-  ['docs:permission.member:apply', 'Request docs permission'],
   ['docs:permission.member:auth', "Verify user's access to document"],
   ['docs:permission.member:create', 'Add document collaborator'],
   ['docs:permission.member:delete', 'Remove document collaborator'],
@@ -59,8 +61,6 @@ const FEISHU_CLOUD_DOCS_SCOPES = [
   ['docs:permission.setting:read', 'Query permission settings of document'],
   ['docs:permission.setting:readonly', 'View document permission settings'],
   ['docs:permission.setting:write_only', 'Modify permission settings of document'],
-  ['docs:secure_label:readonly', "View document's security level label"],
-  ['docs:secure_label:write_only', 'Modify document security level'],
   ['docx:document', 'Create and edit upgraded Docs'],
   ['docx:document.block:convert', 'Convert text to cloud document block'],
   ['docx:document:create', 'Create upgraded Docs'],
@@ -80,7 +80,6 @@ const FEISHU_CLOUD_DOCS_SCOPES = [
   ['drive:file:readonly', 'View and download files in My Space'],
   ['drive:file:upload', 'Upload file'],
   ['drive:file:view_record:readonly', "Get document's view history"],
-  ['drive:quota_detail:read_one', 'Get personal storage quota information'],
   ['sheets:spreadsheet', 'View, comment, edit, and manage Sheets'],
   ['sheets:spreadsheet.meta:read', 'Query metadata of spreadsheet'],
   ['sheets:spreadsheet.meta:write_only', 'Modify metadata of spreadsheet'],
