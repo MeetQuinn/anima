@@ -1932,7 +1932,16 @@ test('Feishu service reports missing recommended scopes with authorization link'
       assert.equal(status.recommended.state, 'missing');
       assert.equal(status.recommended.granted, false);
       assert.deepEqual(status.recommended.missingScopes, FEISHU_RECOMMENDED_SCOPE_NAMES);
+      assert.equal(FEISHU_RECOMMENDED_SCOPE_NAMES.length, 107);
       assert.ok(status.recommended.missingScopes.includes('im:message.group_msg'));
+      assert.ok(status.recommended.missingScopes.includes('im:message.bot_event:read'));
+      assert.ok(status.recommended.missingScopes.includes('im:message.group_at_msg.include_bot:readonly'));
+      assert.ok(status.recommended.missingScopes.includes('drive:drive'));
+      assert.ok(status.recommended.missingScopes.includes('space:folder:create'));
+      assert.ok(status.recommended.missingScopes.includes('docx:document'));
+      assert.ok(status.recommended.missingScopes.includes('bitable:app'));
+      assert.ok(status.recommended.missingScopes.includes('wiki:wiki'));
+      assert.equal(new Set(FEISHU_RECOMMENDED_SCOPE_NAMES).size, FEISHU_RECOMMENDED_SCOPE_NAMES.length);
       assert.equal(status.recommended.scopes.length, FEISHU_RECOMMENDED_SCOPE_NAMES.length);
       assert.match(
         status.recommended.authUrl ?? '',

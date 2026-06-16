@@ -402,12 +402,13 @@ export function RecommendedPermissionsState({
               <CircleAlert className="mt-0.5 h-[18px] w-[18px] shrink-0 text-health-error" aria-hidden />
               <div className="space-y-1.5">
                 <div className="font-serif text-[14px] font-semibold leading-tight text-text">
-                  Skipping leaves some teammate features off
+                  Skipping leaves some teammate and document features off
                 </div>
                 <p className="font-serif text-[13px] leading-relaxed text-text-muted">
                   Your Feishu bot keeps sending and receiving messages, but it won&rsquo;t recognize
-                  teammates by name or work fully in group chats. Looking people up by email or phone
-                  also stays off. You can authorize anytime from the agent&rsquo;s profile.
+                  teammates by name, work fully in group chats with people and other bots, or work
+                  with Feishu Drive and cloud documents. Looking people up by email or phone also
+                  stays off. You can authorize anytime from the agent&rsquo;s profile.
                 </p>
               </div>
             </div>
