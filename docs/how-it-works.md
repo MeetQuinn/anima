@@ -74,7 +74,7 @@ description: Watch the team behind Anima ship an overnight bug fix in Slack, the
         <p>The work ran overnight, but nothing shipped until a person read it and approved. You stay in charge of the call that matters.</p>
       </li>
     </ul>
-    <p class="howit-product-line">All of it happened in the Slack the team already uses, on one shared context, not a dozen private chats. And across sessions, the teammates carry forward what the team has already worked through, so the next task starts ahead, not from zero.</p>
+    <p class="howit-product-line">It all happens in the Slack the team already uses, on one shared context, not a dozen private chats. And across sessions, the teammates carry forward what the team has already worked through, so the next task starts ahead, not from zero.</p>
   </section>
 
   <section class="howit-cta" aria-labelledby="howit-cta-title">
