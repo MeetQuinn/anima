@@ -5,7 +5,7 @@ import { useParams } from 'react-router-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { parseLocation, AGENT_TABS, DEFAULT_TAB, type AgentTab } from '@/lib/url-state';
 import { agentColor, initialOf } from '@/lib/avatars';
-import { agentAvatarUrl } from '@/lib/agent-avatar';
+import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { Button } from './ui/button';
 import AgentActionsMenu from './AgentActionsMenu';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
@@ -121,7 +121,7 @@ export default function AgentHeader() {
   if (!agent) return null;
 
   const color = agentColor(idx);
-  const displayName = agent.profile?.displayName ?? agent.id;
+  const displayName = agentDisplayName(agent);
   const avatarUrl = agentAvatarUrl(agent);
   const role = agent.profile?.role;
   const initial = initialOf(displayName);

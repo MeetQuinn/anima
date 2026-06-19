@@ -10,6 +10,7 @@ import {
   RuntimeUpgradeApplyError,
 } from '@/api/system';
 import { useRuntimeUpgrade } from '@/hooks/useRuntimeUpgrade';
+import { agentDisplayName } from '@/lib/agent-avatar';
 import { queryKeys } from '@/lib/query-keys';
 import { queryClient } from '@/query-client';
 import { BusyConfirmModal, restartEcho, resumedText } from './restart-shared';
@@ -513,7 +514,7 @@ function runningBlockerNames(
   blockers: RuntimeUpgradeGateBlocker[],
   agents: { id: string; profile?: { displayName?: string } }[],
 ): string[] {
-  const nameById = new Map(agents.map((a) => [a.id, a.profile?.displayName ?? a.id]));
+  const nameById = new Map(agents.map((a) => [a.id, agentDisplayName(a)]));
   return blockers
     .filter((b) => b.status === 'running')
     .map((b) => nameById.get(b.agentId) ?? b.agentId);

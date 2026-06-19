@@ -15,7 +15,7 @@ import ServerPanel from '@/components/ServerPanel';
 import type { AgentRuntimeHealthSummary } from '@shared/snapshot';
 import { AgentCreateModal, AddKbModal } from './Sidebar';
 import { agentColor, initialOf } from '@/lib/avatars';
-import { agentAvatarUrl } from '@/lib/agent-avatar';
+import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import {
   agentHasConnectedTransport,
 } from '@shared/agent-transports';
@@ -211,7 +211,7 @@ export default function MobileNavScreen({
               <div className="space-y-0.5">
                 {orderedAgents.map((agent) => {
                   const color = agentColor(agentIndexMap.get(agent.id) ?? 0);
-                  const name = agent.profile?.displayName ?? agent.id;
+                  const name = agentDisplayName(agent);
                   const avatarUrl = agentAvatarUrl(agent);
                   const initial = initialOf(name);
                   const isRunning = runningIds.has(agent.id);
