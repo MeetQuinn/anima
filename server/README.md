@@ -33,7 +33,7 @@ flowchart LR
   Slack["Slack events"]
   Reminders["due reminders"]
   Subscriber["subscriber / wake routing"]
-  Queue["InboxService"]
+  Queue["WakeQueueService"]
   Storage[("inbox storage")]
 
   Slack --> Subscriber
@@ -48,7 +48,7 @@ Slack events and due reminders are normalized into inbox items first. This keeps
 ```mermaid
 flowchart LR
   Storage[("inbox storage")]
-  Queue["InboxService"]
+  Queue["WakeQueueService"]
   Worker["AgentRuntimeWorker"]
   Bridge["AgentRuntimeBridge"]
   Provider["provider adapter"]
