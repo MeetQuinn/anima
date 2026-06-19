@@ -8,7 +8,9 @@ import assert from 'node:assert/strict';
 
 import { makeReminderInboxItem } from './helpers/inbox.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { ReminderInboxSubscriber } from '../inbox/reminder-subscriber.js';
 import { allActivities, loadAgentState, loadState } from './helpers/state.js';
+import { messageServiceForAgent } from '../messages/message.service.js';
 import { reminderServiceForAgent } from '../reminders/reminder.service.js';
 import { nextDueAtForSchedule, parseRepeatRule } from '../reminders/reminder.helper.js';
 import type {
@@ -121,6 +123,7 @@ test('due reminder delivery enters the inbox and records fire activity', async (
       const event = makeReminderInboxItem({
         eventId: `reminder:${dueReminder.reminderId}:fire:${dueReminder.firedCount + 1}`,
         reminderId: dueReminder.reminderId,
+        title: dueReminder.title,
         timestamp: firedAt.toISOString(),
       });
       const decision = await queue.enqueue(event);
@@ -175,6 +178,50 @@ test('due reminder delivery enters the inbox and records fire activity', async (
       assert.equal(Number.isFinite(Date.parse(String(fireActivity?.payload?.['firedAt']))), true);
       assert.equal(fireActivity?.payload?.['firedCount'], 1);
       assert.equal(fireActivity?.payload?.['scheduleKind'], 'once');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('reminder subscriber carries the human title into the inbox item and message record', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-reminder-title-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const reminder = await reminderService.scheduleReminder({
+        fireAt: '2026-05-14T09:00:00.000Z',
+        instructions: 'Review the launch queue.',
+        now: new Date('2026-05-14T08:00:00.000Z'),
+        title: 'Launch queue review',
+      });
+
+      const queue = new WakeQueueService('scout');
+      const subscriber = new ReminderInboxSubscriber(queue, reminderService);
+      subscriber.start();
+      try {
+        await waitUntil(async () => {
+          const items = await queue.listRunnable();
+          return items.some((item) => item.kind === 'reminder' && item.reminderId === reminder.reminderId);
+        });
+      } finally {
+        await subscriber.stop();
+      }
+
+      const item = (await queue.listRunnable()).find(
+        (candidate) => candidate.kind === 'reminder' && candidate.reminderId === reminder.reminderId,
+      );
+      assert.ok(item);
+      if (item.kind !== 'reminder') assert.fail('expected reminder inbox item');
+      assert.equal(item.title, 'Launch queue review');
+      assert.equal(item.reminderId, reminder.reminderId);
+
+      const message = (await messageServiceForAgent('scout').list()).entries.find(
+        (entry) => entry.reminderId === reminder.reminderId,
+      );
+      assert.ok(message);
+      assert.equal(message.kind, 'reminder');
+      assert.equal(message.reminderTitle, 'Launch queue review');
+      assert.equal(message.text, 'Reminder fired: Launch queue review');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

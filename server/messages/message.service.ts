@@ -128,6 +128,8 @@ function messageMatchesKeywords(entry: AgentMessageRecord, keywords: string[]): 
     entry.dmUserId,
     entry.messageTs,
     entry.platform,
+    entry.reminderId,
+    entry.reminderTitle,
     entry.text,
     entry.threadTs,
   ]

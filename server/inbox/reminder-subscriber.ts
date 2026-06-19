@@ -62,6 +62,7 @@ export class ReminderInboxSubscriber {
         updatedAt: receivedAt,
       },
       reminderId: reminder.reminderId,
+      title: reminder.title,
     };
     const decision = await this.queue.enqueue(event);
     const firedReminder = await this.reminderService.completeReminderFire({
@@ -79,4 +80,3 @@ export class ReminderInboxSubscriber {
     );
   }
 }
-

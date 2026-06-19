@@ -56,6 +56,7 @@ export interface AgentMessageRecord {
   question?: string;
   reaction?: AgentMessageReaction;
   reminderId?: string;
+  reminderTitle?: string;
   source: AgentMessageSource;
   text: string;
   threadTs?: string;
