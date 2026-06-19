@@ -22,8 +22,9 @@ export function messageFromInboxItem(item: InboxItem): AgentMessageRecord | unde
       kind: 'reminder',
       messageId: messageIdForInboxItem(item),
       reminderId: item.reminderId,
+      ...(item.title ? { reminderTitle: item.title } : {}),
       source: { id: item.id, kind: 'inbox' },
-      text: `Reminder fired: ${item.reminderId}`,
+      text: item.title ? `Reminder fired: ${item.title}` : 'Reminder fired',
       timestamp: item.receivedAt,
     };
   }

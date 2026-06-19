@@ -130,6 +130,7 @@ export type FeishuOnboardingInboxItem = z.infer<typeof FeishuOnboardingInboxItem
 export const ReminderInboxItem = InboxItemBase.extend({
   kind: z.literal('reminder'),
   reminderId: z.string(),
+  title: z.string().optional(),
 });
 
 export type ReminderInboxItem = z.infer<typeof ReminderInboxItem>;

@@ -428,6 +428,7 @@ function inboxItemForMessage(message: AgentMessageRecord): InboxItem {
       ...base,
       kind: 'reminder',
       reminderId: message.reminderId ?? message.source.id,
+      ...(message.reminderTitle ? { title: message.reminderTitle } : {}),
     };
   }
   if (message.kind === 'onboarding') {

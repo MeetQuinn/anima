@@ -11,6 +11,7 @@ export async function ingestEvent(event: InboxItem, config: RuntimeWorkerConfig)
 export function makeReminderInboxItem(opts: {
   eventId?: string;
   reminderId: string;
+  title?: string;
   timestamp?: string;
 }): ReminderInboxItem {
   const receivedAt = opts.timestamp ?? new Date().toISOString();
@@ -25,5 +26,6 @@ export function makeReminderInboxItem(opts: {
       updatedAt: receivedAt,
     },
     reminderId: opts.reminderId,
+    title: opts.title ?? 'Reminder test',
   };
 }

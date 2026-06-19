@@ -76,7 +76,7 @@ function isSlackItem(item: InboxItem): item is SlackInboxItem {
 }
 
 function reminderTitle(item: Extract<InboxItem, { kind: 'reminder' }>): string {
-  return item.reminderId ?? item.id ?? 'Reminder';
+  return item.title?.trim() || 'Reminder';
 }
 
 function onboardingTitle(): string {
