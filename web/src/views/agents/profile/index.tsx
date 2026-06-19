@@ -18,6 +18,7 @@ import { useNow } from '@/hooks/useNow';
 
 import { providerCatalog } from '@shared/provider-catalog';
 import { useParams } from 'react-router-dom';
+import { agentDisplayName } from '@/lib/agent-avatar';
 import { formatRelative, shortIso } from '@/lib/format';
 import { Field, ReadonlyValue, Section, extractError } from './Primitives';
 import {
@@ -413,7 +414,7 @@ export default function Profile() {
                     />
                   ) : (
                     <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted font-serif text-[17px] font-semibold text-text-muted ring-1 ring-border-soft">
-                      {(agent.profile?.displayName ?? agent.id).charAt(0).toUpperCase()}
+                      {agentDisplayName(agent).charAt(0).toUpperCase()}
                     </span>
                   )}
                   <div className="min-w-0 flex-1">

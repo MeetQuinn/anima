@@ -1,5 +1,5 @@
 import { agentColor, initialOf } from '@/lib/avatars';
-import { agentAvatarUrl } from '@/lib/agent-avatar';
+import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
 import type { AgentConfig } from '@shared/agent-config';
 import type { AgentRuntimeHealthSummary, AgentStatusSummary } from '@shared/snapshot';
@@ -51,7 +51,7 @@ export function AgentRow({
   focused?: boolean;
 }) {
   const color = agentColor(index);
-  const displayName = agent.profile?.displayName ?? agent.id;
+  const displayName = agentDisplayName(agent);
   const avatarUrl = agentAvatarUrl(agent);
   const initial = initialOf(displayName);
   // Connected is transport-level: Slack or Feishu credentials can make an

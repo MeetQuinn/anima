@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
 import { fetchAgents, fetchAgentStatuses } from '@/api/agents';
 import { pingHealth, restartServices } from '@/api/system';
+import { agentDisplayName } from '@/lib/agent-avatar';
 import { queryKeys } from '@/lib/query-keys';
 import { BusyConfirmModal } from './restart-shared';
 
@@ -144,7 +145,7 @@ function computeRunningAgentNames(
   agents: { id: string; profile?: { displayName?: string } }[],
   agentStatuses: { agentId: string; currentItemId?: string }[],
 ): string[] {
-  const nameById = new Map(agents.map((a) => [a.id, a.profile?.displayName ?? a.id]));
+  const nameById = new Map(agents.map((a) => [a.id, agentDisplayName(a)]));
   const running: string[] = [];
   for (const status of agentStatuses) {
     if (status.currentItemId) {

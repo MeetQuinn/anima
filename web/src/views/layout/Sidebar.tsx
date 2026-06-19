@@ -22,7 +22,7 @@ import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import { agentColor, initialOf } from '@/lib/avatars';
-import { agentAvatarUrl } from '@/lib/agent-avatar';
+import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
 import { AgentRow, sidebarDotColor, sidebarDotTitle } from './sidebar/AgentRow';
 import { agentOptionId, useSidebarAgentKeyboardNav } from './sidebar/useSidebarAgentKeyboardNav';
@@ -264,7 +264,7 @@ export default function Sidebar({
               const enabled = agent.enabled !== false;
               const notConnected = enabled && !agentHasConnectedTransport(agent);
               const color = agentColor(agentIndexMap.get(agent.id) ?? 0);
-              const displayName = agent.profile?.displayName ?? agent.id;
+              const displayName = agentDisplayName(agent);
               const avatarUrl = agentAvatarUrl(agent);
               const initial = initialOf(displayName);
               const collapsedStatus = statusByAgentId.get(agent.id);
