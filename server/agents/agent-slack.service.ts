@@ -30,7 +30,8 @@ import {
 } from '../slack/app-manifest.js';
 import { createSlackWebClient } from '../slack/client.js';
 import {
-  hasCommandsScope,
+  hasRequiredSlackManifestBotScopes,
+  missingRequiredSlackManifestBotScopes,
 } from '../slack/shortcuts.js';
 import { SlackWorkspaceDirectoryService } from '../slack/workspace-directory.service.js';
 
@@ -50,7 +51,7 @@ export class AgentSlackService {
       throw new AgentConfigError(400, 'Slack token validation failed');
     }
     const connection = validation.connection;
-    const hasCurrentManifest = hasCommandsScope(await getBotTokenScopes(input.botToken).catch(() => []));
+    const hasCurrentManifest = hasRequiredSlackManifestBotScopes(await getBotTokenScopes(input.botToken).catch(() => []));
     const current = await this.agentService.getConfig();
     return this.agentService.saveConfig({
       ...current,
@@ -99,10 +100,11 @@ export class AgentSlackService {
       throw new AgentConfigError(400, 'Slack token validation failed');
     }
     const scopes = await getBotTokenScopes(input.botToken);
-    if (!hasCommandsScope(scopes)) {
+    const missingScopes = missingRequiredSlackManifestBotScopes(scopes);
+    if (missingScopes.length > 0) {
       throw new AgentConfigError(
         400,
-        'New bot token is missing the commands scope. Update the Slack app manifest, reinstall the app, then paste the new Bot User OAuth Token.',
+        `New bot token is missing required manifest scopes (${missingScopes.join(', ')}). Update the Slack app manifest, reinstall the app, then paste the new Bot User OAuth Token.`,
       );
     }
 

@@ -69,6 +69,7 @@ test('shortcut manifest helper adds commands scope and required shortcuts idempo
 
   assert.deepEqual(inspectSlackShortcutManifest(manifest), {
     commandsScope: false,
+    missingRequiredBotScopes: ['commands', 'canvases:read', 'canvases:write', 'lists:read', 'lists:write'],
     missingShortcutCallbackIds: SLACK_SHORTCUTS.map((shortcut) => shortcut.callback_id),
     ready: false,
   });
@@ -77,6 +78,7 @@ test('shortcut manifest helper adds commands scope and required shortcuts idempo
   assert.equal(first.updated, true);
   assert.deepEqual(first.status, {
     commandsScope: true,
+    missingRequiredBotScopes: [],
     missingShortcutCallbackIds: [],
     ready: true,
   });
@@ -92,7 +94,15 @@ test('shortcut manifest helper adds commands scope and required shortcuts idempo
   assert.equal(shortcuts.some((shortcut) => shortcut.callback_id === 'anima.toggle_enabled'), false);
 
   const scopes = ((first.manifest.oauth_config as Record<string, unknown>).scopes as Record<string, unknown>).bot;
-  assert.deepEqual(scopes, ['chat:write', 'commands', 'users:read']);
+  assert.deepEqual(scopes, [
+    'canvases:read',
+    'canvases:write',
+    'chat:write',
+    'commands',
+    'lists:read',
+    'lists:write',
+    'users:read',
+  ]);
 
   const second = ensureSlackShortcutManifest(first.manifest);
   assert.equal(second.updated, false);
@@ -116,6 +126,7 @@ test('shortcut manifest helper corrects wrong shortcut type without byte-equalit
 
   const before = inspectSlackShortcutManifest(manifest);
   assert.equal(before.commandsScope, true);
+  assert.deepEqual(before.missingRequiredBotScopes, ['canvases:read', 'canvases:write', 'lists:read', 'lists:write']);
   assert.ok(before.missingShortcutCallbackIds.includes('anima.hand_to_agent'));
 
   const updated = ensureSlackShortcutManifest(manifest);
@@ -133,6 +144,10 @@ test('oauth scope header parser detects commands scope', () => {
 test('shortcut manifest update YAML describes the manual migration block', () => {
   const yaml = slackShortcutManifestUpdateYaml();
   assert.match(yaml, /oauth_config:\n  scopes:\n    bot:\n      - commands/);
+  assert.match(yaml, /- canvases:read/);
+  assert.match(yaml, /- canvases:write/);
+  assert.match(yaml, /- lists:read/);
+  assert.match(yaml, /- lists:write/);
   assert.match(yaml, /callback_id: anima.home/);
   assert.match(yaml, /callback_id: anima.hand_to_agent/);
   assert.doesNotMatch(yaml, /callback_id: anima.reminders/);

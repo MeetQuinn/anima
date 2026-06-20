@@ -2,7 +2,7 @@
 
 import { z } from 'zod';
 
-export const CURRENT_SLACK_MANIFEST_VERSION = 1;
+export const CURRENT_SLACK_MANIFEST_VERSION = 2;
 
 export interface AgentSlackManifestUpdateInfo {
   agentVersion: number;

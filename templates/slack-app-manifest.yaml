@@ -24,6 +24,8 @@ oauth_config:
       - app_mentions:read
       - bookmarks:read
       - bookmarks:write
+      - canvases:read
+      - canvases:write
       - chat:write
       - chat:write.customize
       - chat:write.public
@@ -47,6 +49,8 @@ oauth_config:
       - im:write
       - links:read
       - links:write
+      - lists:read
+      - lists:write
       - mpim:history
       - mpim:read
       - mpim:write
