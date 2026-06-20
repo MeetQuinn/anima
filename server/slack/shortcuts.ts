@@ -1,4 +1,11 @@
 export const SLACK_SHORTCUT_COMMANDS_SCOPE = 'commands';
+export const SLACK_CANVAS_SCOPES = ['canvases:read', 'canvases:write'] as const;
+export const SLACK_LIST_SCOPES = ['lists:read', 'lists:write'] as const;
+export const REQUIRED_SLACK_MANIFEST_BOT_SCOPES = [
+  SLACK_SHORTCUT_COMMANDS_SCOPE,
+  ...SLACK_CANVAS_SCOPES,
+  ...SLACK_LIST_SCOPES,
+] as const;
 
 export const SLACK_SHORTCUTS = [
   {
@@ -25,7 +32,7 @@ export function slackShortcutManifestUpdateYaml(): string {
     'oauth_config:',
     '  scopes:',
     '    bot:',
-    `      - ${SLACK_SHORTCUT_COMMANDS_SCOPE}`,
+    ...REQUIRED_SLACK_MANIFEST_BOT_SCOPES.map((scope) => `      - ${scope}`),
     'features:',
     '  shortcuts:',
     ...SLACK_SHORTCUTS.flatMap((shortcut) => [
@@ -39,6 +46,7 @@ export function slackShortcutManifestUpdateYaml(): string {
 
 export interface SlackShortcutManifestStatus {
   commandsScope: boolean;
+  missingRequiredBotScopes: string[];
   missingShortcutCallbackIds: string[];
   ready: boolean;
 }
@@ -67,10 +75,12 @@ export function inspectSlackShortcutManifest(manifest: unknown): SlackShortcutMa
     })
     .map((shortcut) => shortcut.callback_id);
   const commandsScope = botScopes.includes(SLACK_SHORTCUT_COMMANDS_SCOPE);
+  const missingRequiredBotScopes = missingRequiredSlackManifestBotScopes(botScopes);
   return {
     commandsScope,
+    missingRequiredBotScopes,
     missingShortcutCallbackIds,
-    ready: commandsScope && missingShortcutCallbackIds.length === 0,
+    ready: missingRequiredBotScopes.length === 0 && missingShortcutCallbackIds.length === 0,
   };
 }
 
@@ -81,8 +91,9 @@ export function ensureSlackShortcutManifest(manifest: unknown): SlackShortcutMan
   const oauthConfig = ensureRecord(next, 'oauth_config');
   const scopes = ensureRecord(oauthConfig, 'scopes');
   const botScopes = ensureStringArray(scopes, 'bot');
-  if (!botScopes.includes(SLACK_SHORTCUT_COMMANDS_SCOPE)) {
-    botScopes.push(SLACK_SHORTCUT_COMMANDS_SCOPE);
+  const missingBotScopes = missingRequiredSlackManifestBotScopes(botScopes);
+  if (missingBotScopes.length > 0) {
+    botScopes.push(...missingBotScopes);
     botScopes.sort();
   }
 
@@ -126,6 +137,14 @@ export function parseOauthScopesHeader(value: string | null | undefined): string
 
 export function hasCommandsScope(scopes: readonly string[]): boolean {
   return scopes.includes(SLACK_SHORTCUT_COMMANDS_SCOPE);
+}
+
+export function missingRequiredSlackManifestBotScopes(scopes: readonly string[]): string[] {
+  return REQUIRED_SLACK_MANIFEST_BOT_SCOPES.filter((scope) => !scopes.includes(scope));
+}
+
+export function hasRequiredSlackManifestBotScopes(scopes: readonly string[]): boolean {
+  return missingRequiredSlackManifestBotScopes(scopes).length === 0;
 }
 
 function cloneManifest(manifest: unknown): Record<string, unknown> {

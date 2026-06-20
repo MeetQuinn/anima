@@ -1662,7 +1662,9 @@ test('web API exposes Slack manifest update flow and bumps version after scoped 
       return { ok: true, url: 'wss://socket.example.test/' };
     }
     if (method === 'auth.test') {
-      const scopes = token.includes('with-commands') ? 'chat:write,commands,users:read' : 'chat:write,users:read';
+      const scopes = token.includes('with-commands')
+        ? 'canvases:read,canvases:write,chat:write,commands,lists:read,lists:write,users:read'
+        : 'chat:write,users:read';
       return {
         body: { app_id: 'ADEMO123', ok: true, team: 'Acme', team_id: 'T-acme', user: 'anima-bot', user_id: 'U-bot' },
         headers: { 'x-oauth-scopes': scopes },
@@ -2370,7 +2372,12 @@ test('web API exposes Slack manifest install links without secrets', async () =>
       const url = new URL(location);
       assert.equal(`${url.origin}${url.pathname}`, 'https://api.slack.com/apps');
       assert.equal(url.searchParams.get('new_app'), '1');
-      assert.match(url.searchParams.get('manifest_yaml') ?? '', /display_name: Lens/);
+      const manifestYaml = url.searchParams.get('manifest_yaml') ?? '';
+      assert.match(manifestYaml, /display_name: Lens/);
+      assert.match(manifestYaml, /- canvases:read/);
+      assert.match(manifestYaml, /- canvases:write/);
+      assert.match(manifestYaml, /- lists:read/);
+      assert.match(manifestYaml, /- lists:write/);
     } finally {
       server.close();
     }
