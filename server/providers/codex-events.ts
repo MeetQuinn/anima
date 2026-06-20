@@ -138,6 +138,7 @@ export function codexSubagentSpawnPairsFromSessionJsonl(contents: string, turnId
     if (!record) continue;
     const type = stringField(record, 'type');
     const payload = asRecord(record['payload']);
+    if (!payload) continue;
     const payloadTurnId = stringField(payload, 'turn_id') ?? stringField(payload, 'turnId');
     if ((type === 'turn_context' || type === 'event_msg') && payloadTurnId === turnId) {
       inTurn = true;
@@ -160,6 +161,40 @@ export function codexSubagentSpawnPairsFromSessionJsonl(contents: string, turnId
   }
 
   return pairs;
+}
+
+export function codexWebSearchesFromSessionJsonl(contents: string, turnId: string): Record<string, unknown>[] {
+  const searches: Record<string, unknown>[] = [];
+  let inTurn = false;
+
+  for (const line of contents.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const record = parseJsonRecord(line);
+    if (!record) continue;
+    const type = stringField(record, 'type');
+    const payload = asRecord(record['payload']);
+    if (!payload) continue;
+    const payloadTurnId = stringField(payload, 'turn_id') ?? stringField(payload, 'turnId');
+    if ((type === 'turn_context' || type === 'event_msg') && payloadTurnId === turnId) {
+      inTurn = true;
+    }
+    if (type === 'event_msg' && inTurn && payloadTurnId === turnId && stringField(payload, 'type') === 'task_complete') {
+      break;
+    }
+    if (!inTurn || type !== 'event_msg' || stringField(payload, 'type') !== 'web_search_end') continue;
+    const callId = stringField(payload, 'call_id') ?? stringField(payload, 'callId');
+    const details = webSearchDetails(payload);
+    if (!callId || !hasWebSearchDetails(details)) continue;
+    searches.push({
+      provider: 'codex-cli',
+      providerToolId: callId,
+      providerToolName: 'webSearch',
+      ...details,
+      tool: 'codex.webSearch',
+    });
+  }
+
+  return searches;
 }
 
 export function runtimeEventFromAppServerItem(
@@ -694,6 +729,15 @@ function webSearchDetails(item: Record<string, unknown>): Record<string, unknown
   if (url) return { target: singleLine(url), url };
   if (pattern) return { pattern: singleLine(pattern), target: singleLine(pattern) };
   return {};
+}
+
+function hasWebSearchDetails(details: Record<string, unknown>): boolean {
+  return Boolean(
+    stringField(details, 'query') ||
+    stringField(details, 'target') ||
+    stringField(details, 'url') ||
+    stringField(details, 'pattern'),
+  );
 }
 
 function webSearchQueries(action: Record<string, unknown> | undefined): string[] {

@@ -416,6 +416,16 @@ test('codex-cli records subagent delegation from session response items when app
             payload: { model: 'gpt-5.5', turn_id: 'turn-session-file' },
           }),
           JSON.stringify({
+            timestamp: '2026-06-03T07:13:05.000Z',
+            type: 'event_msg',
+            payload: {
+              action: { type: 'open_page', url: 'https://docs.slack.dev/reference/methods/search.query/' },
+              call_id: 'ws_from_session',
+              query: 'https://docs.slack.dev/reference/methods/search.query/',
+              type: 'web_search_end',
+            },
+          }),
+          JSON.stringify({
             timestamp: '2026-06-03T07:13:19.582Z',
             type: 'response_item',
             payload: {
@@ -475,6 +485,8 @@ test('codex-cli records subagent delegation from session response items when app
           "  }",
           "  if (msg.method === 'turn/start') {",
           "    send({ id: msg.id, result: { turn: { id: 'turn-session-file', status: 'inProgress', items: [], itemsView: 'full', error: null, startedAt: 1, completedAt: null, durationMs: null } } });",
+          "    send({ method: 'item/started', params: { threadId: 'codex-parent-session', turnId: 'turn-session-file', item: { id: 'ws_from_session', type: 'webSearch' } } });",
+          "    send({ method: 'item/completed', params: { threadId: 'codex-parent-session', turnId: 'turn-session-file', item: { id: 'ws_from_session', type: 'webSearch', status: 'completed' } } });",
           "    send({ method: 'item/agentMessage/delta', params: { threadId: 'codex-parent-session', turnId: 'turn-session-file', itemId: 'item-parent', delta: 'parent handled' } });",
           "    send({ method: 'turn/completed', params: { threadId: 'codex-parent-session', turn: { id: 'turn-session-file', status: 'completed', model: 'gpt-5.5', items: [], itemsView: 'full', error: null, startedAt: 1, completedAt: 2, durationMs: 1000 } } });",
           "  }",
@@ -503,10 +515,17 @@ test('codex-cli records subagent delegation from session response items when app
 
       assert.equal((await runtime.run(await runtimeInput(runtime, ctx, await loadState()))).text, 'parent handled');
       await waitFor(async () =>
-        (await activitiesForInboxItemWindow('anima', ctx.item.id))
-          .some((activity) => activity.type === 'agent.text' && activity.payload?.['subRunId'] === 'codex-child-from-session'),
+        {
+          const activities = await activitiesForInboxItemWindow('anima', ctx.item.id);
+          return activities.some((activity) => activity.type === 'agent.text' && activity.payload?.['subRunId'] === 'codex-child-from-session') &&
+            activities.some((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'ws_from_session' && activity.payload?.['target'] === 'https://docs.slack.dev/reference/methods/search.query/');
+        },
       );
       const activities = await activitiesForInboxItemWindow('anima', ctx.item.id);
+      const webSearches = activities.filter((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'ws_from_session');
+      assert.equal(webSearches.length, 2);
+      assert.ok(webSearches.some((activity) => activity.payload?.['target'] === 'https://docs.slack.dev/reference/methods/search.query/'));
+      assert.ok(webSearches.some((activity) => activity.payload?.['query'] === 'https://docs.slack.dev/reference/methods/search.query/'));
       const parent = activities.find((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'call_from_session');
       assert.equal(parent?.payload?.['providerToolName'], 'Agent');
       assert.equal(parent?.payload?.['tool'], 'codex.agent');

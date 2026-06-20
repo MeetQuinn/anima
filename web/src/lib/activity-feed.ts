@@ -60,6 +60,27 @@ function hiddenRuntimeEvent(eventType: string): boolean {
   return false;
 }
 
+function activityProviderToolId(activity: ActivityRecord): string | undefined {
+  return typeof activity.payload?.['providerToolId'] === 'string'
+    ? activity.payload['providerToolId']
+    : undefined;
+}
+
+function isWebSearchActivity(activity: ActivityRecord): boolean {
+  const payload = activity.payload ?? {};
+  const tool = String(payload['tool'] ?? '').toLowerCase();
+  const providerToolName = String(payload['providerToolName'] ?? '').toLowerCase();
+  return tool === 'codex.websearch' || providerToolName === 'websearch';
+}
+
+function hasWebSearchDisplayDetails(activity: ActivityRecord): boolean {
+  const payload = activity.payload ?? {};
+  return ['target', 'query', 'url', 'pattern'].some((key) => {
+    const value = payload[key];
+    return typeof value === 'string' && value.trim().length > 0;
+  });
+}
+
 export interface SurfaceChip {
   kind: 'channel' | 'thread' | 'dm' | 'reminder' | 'onboarding';
   label: string;
@@ -167,6 +188,18 @@ export function buildActivityFeed(
     byRun.set(subRunId, existing);
   }
 
+  // Newer Codex app-server builds can emit `item/started` for a webSearch
+  // before the query is known, then the query appears later in the session
+  // JSONL's `web_search_end`. The backend appends a detailed row with the same
+  // providerToolId, so suppress the earlier blank started row here.
+  const detailedWebSearchProviderToolIds = new Set<string>();
+  for (const activity of activities) {
+    if (activity.type !== 'tool.call.started') continue;
+    if (!isWebSearchActivity(activity) || !hasWebSearchDisplayDetails(activity)) continue;
+    const id = activityProviderToolId(activity);
+    if (id) detailedWebSearchProviderToolIds.add(id);
+  }
+
   // Pre-scan `anima.reminder.fire` activities so recurring reminder inbound
   // rows can show `fire #N`. Activities are agent-owned, so join on the
   // reminder id carried in both records rather than on a hidden item id.
@@ -206,6 +239,15 @@ export function buildActivityFeed(
   for (const activity of activities) {
     // Child activities are attached to their parent step row — skip from flat feed.
     if (typeof activity.payload?.['parentToolCallId'] === 'string') continue;
+
+    if (
+      activity.type === 'tool.call.started' &&
+      isWebSearchActivity(activity) &&
+      !hasWebSearchDisplayDetails(activity)
+    ) {
+      const id = activityProviderToolId(activity);
+      if (id && detailedWebSearchProviderToolIds.has(id)) continue;
+    }
 
     if (activity.type === 'runtime.steer_failed') continue;
 
