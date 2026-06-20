@@ -13,6 +13,7 @@ import {
   codexRuntimeEventFromNotification,
   codexSubagentLinkageFromRecord,
   codexSessionStatsFromTurn,
+  codexWebSearchesFromSessionJsonl,
   providerToolCallsFromAppServerItem,
   providerToolFailuresFromAppServerItem,
   recordParam,
@@ -67,6 +68,7 @@ export class CodexAppServerController {
   private readonly recordedSubagentChildren = new Set<string>();
   private readonly recordedSubagentParents = new Set<string>();
   private readonly providerToolsById = new Map<string, Record<string, unknown>>();
+  private readonly recordedWebSearchDetails = new Set<string>();
   private readonly quiescentWaiters = new QuiescentWaiterSet();
   private currentTurn?: ActiveCodexTurn;
   private sessionFilePath?: string;
@@ -275,6 +277,7 @@ export class CodexAppServerController {
         if (providerToolId) {
           this.providerToolsById.set(providerToolId, tool);
           this.activeProviderToolIds.add(providerToolId);
+          if (hasWebSearchDetails(tool)) this.recordedWebSearchDetails.add(providerToolId);
         }
         await turn.input.effects.recordToolStarted(tool);
       }
@@ -318,7 +321,7 @@ export class CodexAppServerController {
       const stats = codexSessionStatsFromTurn(turn, this.runtimeKind);
       const input = this.currentTurn?.input ?? this.activeInput;
       if (input) await this.flushLinkedAgentText(input);
-      if (input) void this.recordSessionFileSubagentSpawns(input, turnId).catch(() => undefined);
+      if (input) void this.recordSessionFileDetails(input, turnId).catch(() => undefined);
       if (stats && input) await input.effects.recordEvent(stats);
       this.completedTurns.add(turnId);
       if (this.currentTurn?.turnId === turnId) this.currentTurn.completed.resolve();
@@ -385,7 +388,7 @@ export class CodexAppServerController {
     return true;
   }
 
-  private async recordSessionFileSubagentSpawns(input: AgentRuntimeInput, turnId: string): Promise<void> {
+  private async recordSessionFileDetails(input: AgentRuntimeInput, turnId: string): Promise<void> {
     if (!this.threadId) return;
     const session = await readCodexSessionFile(this.threadId, input.env, this.sessionFilePath).catch(() => undefined);
     if (!session) return;
@@ -393,6 +396,12 @@ export class CodexAppServerController {
     for (const pair of codexSubagentSpawnPairsFromSessionJsonl(session.contents, turnId)) {
       await this.recordSubagentParentTool(input, pair.spawn);
       await this.recordSpawnedSubagent(input, pair.spawn, pair.output);
+    }
+    for (const search of codexWebSearchesFromSessionJsonl(session.contents, turnId)) {
+      const providerToolId = stringField(search, 'providerToolId');
+      if (!providerToolId || this.recordedWebSearchDetails.has(providerToolId)) continue;
+      this.recordedWebSearchDetails.add(providerToolId);
+      await input.effects.recordToolStarted(search);
     }
   }
 
@@ -518,4 +527,13 @@ function codexThreadMetadataFromResumeResponse(value: Record<string, unknown> | 
     ...(role ? { role } : {}),
     ...(model ? { model } : {}),
   };
+}
+
+function hasWebSearchDetails(payload: Record<string, unknown>): boolean {
+  return Boolean(
+    stringField(payload, 'query') ||
+    stringField(payload, 'target') ||
+    stringField(payload, 'url') ||
+    stringField(payload, 'pattern'),
+  );
 }
