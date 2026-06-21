@@ -22,6 +22,8 @@ interface RunningAgentOptions extends RuntimeWorkerConfig {
   botToken?: string;
   feishu?: FeishuConfig;
   idleTimeoutMs?: number;
+  startAbortForceAfterMs?: number;
+  startTimeoutMs?: number;
 }
 
 export interface RunningAgentHandle {
@@ -64,9 +66,15 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
   });
   try {
     worker.start();
-    await subscriber.start();
+    await startSubscriberWithTimeout(subscriber, options.startTimeoutMs);
   } catch (error) {
-    await Promise.allSettled([subscriber.stop(), worker.close()]);
+    await Promise.allSettled([
+      subscriber.stop(),
+      worker.close({
+        abortReason: 'operator_restart',
+        ...(options.startAbortForceAfterMs !== undefined ? { forceAfterMs: options.startAbortForceAfterMs } : {}),
+      }),
+    ]);
     throw error;
   }
   return {
@@ -83,4 +91,32 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
       ]);
     },
   };
+}
+
+async function startSubscriberWithTimeout(subscriber: InboxSubscriber, timeoutMs: number | undefined): Promise<void> {
+  if (timeoutMs === undefined) {
+    await subscriber.start();
+    return;
+  }
+  let timeout: NodeJS.Timeout | undefined;
+  let timedOut = false;
+  const startPromise = subscriber.start();
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      reject(new Error(`Inbox subscriber startup timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  try {
+    await Promise.race([startPromise, timeoutPromise]);
+  } catch (error) {
+    if (timedOut) {
+      void startPromise.catch((lateError: unknown) => {
+        console.error(`Timed-out inbox subscriber startup later failed: ${errorMessage(lateError)}`);
+      });
+    }
+    throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }

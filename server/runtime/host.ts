@@ -51,6 +51,11 @@ interface RunningAgentRecord {
   handle: RunningAgentHandle;
 }
 
+export interface StartAgentOptions {
+  forceStopAfterMs: number;
+  startTimeoutMs: number;
+}
+
 export interface RuntimeHostDependencies {
   animaHome?: string;
   forceRestartTimeoutMs?: number;
@@ -60,13 +65,15 @@ export interface RuntimeHostDependencies {
   healthStore?: AgentHealthStore;
   logger?: Pick<Console, 'error' | 'log'>;
   restartCommands?: AgentRestartCommandStore;
-  startAgent?: (agent: AgentConfig, animaHome: string) => Promise<RunningAgentHandle>;
+  startAgent?: (agent: AgentConfig, animaHome: string, options: StartAgentOptions) => Promise<RunningAgentHandle>;
+  startAgentTimeoutMs?: number;
   validateAgent?: (agent: AgentConfig) => Promise<void> | void;
 }
 
 const DEFAULT_RECONCILE_INTERVAL_MS = 30_000;
 const DEFAULT_HEALTH_INTERVAL_MS = 5_000;
 const STARTING_TIMEOUT_MS = 30_000;
+const DEFAULT_AGENT_START_TIMEOUT_MS = 30_000;
 const RUNTIME_CHILD_HEALTH_DEBOUNCE_MS = 10_000;
 const CONFIG_WATCH_DEBOUNCE_MS = 150;
 const AGENT_RESTART_FORCE_KILL_AFTER_MS = 5_000;
@@ -89,7 +96,8 @@ export class RuntimeHost {
   private readonly healthStore: AgentHealthStore;
   private readonly healthIntervalMs: number;
   private readonly forceRestartTimeoutMs: number;
-  private readonly startAgent: (agent: AgentConfig, animaHome: string) => Promise<RunningAgentHandle>;
+  private readonly startAgentTimeoutMs: number;
+  private readonly startAgent: (agent: AgentConfig, animaHome: string, options: StartAgentOptions) => Promise<RunningAgentHandle>;
   private readonly statusByAgent = new Map<string, string>();
   private readonly validateAgent: (agent: AgentConfig) => Promise<void> | void;
   private pollTimer?: NodeJS.Timeout;
@@ -116,6 +124,7 @@ export class RuntimeHost {
     this.healthStore = deps.healthStore ?? new AgentHealthStore({ animaHome: this.animaHome });
     this.healthIntervalMs = deps.healthIntervalMs ?? DEFAULT_HEALTH_INTERVAL_MS;
     this.forceRestartTimeoutMs = deps.forceRestartTimeoutMs ?? AGENT_RESTART_FORCE_KILL_AFTER_MS;
+    this.startAgentTimeoutMs = deps.startAgentTimeoutMs ?? DEFAULT_AGENT_START_TIMEOUT_MS;
     this.startAgent = deps.startAgent ?? startAgentFromConfig;
     this.validateAgent = deps.validateAgent ?? validateAgentConfig;
   }
@@ -331,10 +340,50 @@ export class RuntimeHost {
       state: 'starting',
       updatedAt: nowIso(),
     });
-    const handle = await this.startAgent(agent, this.animaHome);
+    const handle = await this.startAgentWithTimeout(agent);
     this.agentHandles.set(agent.id, { fingerprint, handle });
     this.statusByAgent.delete(agent.id);
     await this.publishHealthForAgent(agent, restartCommand);
+  }
+
+  private async startAgentWithTimeout(agent: AgentConfig): Promise<RunningAgentHandle> {
+    let timeout: NodeJS.Timeout | undefined;
+    let timedOut = false;
+    const startPromise = this.startAgent(agent, this.animaHome, {
+      forceStopAfterMs: this.forceRestartTimeoutMs,
+      startTimeoutMs: this.startAgentTimeoutMs,
+    });
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        timedOut = true;
+        reject(new Error(`Agent ${agent.id} startup timed out after ${this.startAgentTimeoutMs}ms`));
+      }, this.startAgentTimeoutMs);
+    });
+    try {
+      return await Promise.race([startPromise, timeoutPromise]);
+    } catch (error) {
+      if (timedOut) {
+        void startPromise.then(
+          async (lateHandle) => {
+            try {
+              await lateHandle.stop({
+                abortReason: 'operator_restart',
+                forceAfterMs: this.forceRestartTimeoutMs,
+              });
+              this.logger.log(`Agent ${agent.id}: stopped late startup handle after timeout.`);
+            } catch (stopError) {
+              this.logger.error(`Agent ${agent.id}: late startup handle stop failed: ${errorMessage(stopError)}`);
+            }
+          },
+          (lateError: unknown) => {
+            this.logger.error(`Agent ${agent.id}: timed-out startup later failed: ${errorMessage(lateError)}`);
+          },
+        );
+      }
+      throw error;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
   }
 
   private async stopMissingAgents(seenAgentIds: Set<string>): Promise<void> {
@@ -642,7 +691,11 @@ export async function loadRuntimeAgents(opts: RuntimeHostOptions = {}): Promise<
   return defaultAgentRegistryService.listAgentConfigs();
 }
 
-async function startAgentFromConfig(agent: AgentConfig, animaHome: string): Promise<RunningAgentHandle> {
+async function startAgentFromConfig(
+  agent: AgentConfig,
+  animaHome: string,
+  options: StartAgentOptions,
+): Promise<RunningAgentHandle> {
   await validateRunnableAgentConfig(agent);
   const server = runtimeServerConfigForAgent(agent);
   if (server.slack) await validateSlackConnectionForStart(agent.id, server.slack);
@@ -665,6 +718,8 @@ async function startAgentFromConfig(agent: AgentConfig, animaHome: string): Prom
     ...(server.slack ? { appToken: server.slack.appToken, botToken: server.slack.botToken } : {}),
     feishu: server.feishu,
     ...(server.runtime.idleTimeoutMs !== undefined ? { idleTimeoutMs: server.runtime.idleTimeoutMs } : {}),
+    startAbortForceAfterMs: options.forceStopAfterMs,
+    startTimeoutMs: options.startTimeoutMs,
   });
 }
 
