@@ -490,6 +490,77 @@ test('runtime host marks runnable agents starting before serial boot completes w
   }
 });
 
+test('runtime host times out a blocked agent start and continues booting later agents', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-start-timeout-test-'));
+  try {
+    const healthStore = new AgentHealthStore({ animaHome: stateDir });
+    const agents = [
+      runtimeHostAgent('alpha', { connected: true }),
+      runtimeHostAgent('bravo', { connected: true }),
+      runtimeHostAgent('charlie', { connected: true }),
+    ];
+    let releaseAlpha!: () => void;
+    let alphaStopOptions: Parameters<RunningAgentHandle['stop']>[0];
+    let alphaStopped!: () => void;
+    const alphaStoppedPromise = new Promise<void>((resolve) => {
+      alphaStopped = resolve;
+    });
+    const started: string[] = [];
+    const stopped: string[] = [];
+    const errors: string[] = [];
+    const host = new RuntimeHost({}, {
+      animaHome: stateDir,
+      healthStore,
+      loadAgents: async () => agents,
+      logger: {
+        error(message) {
+          errors.push(String(message));
+        },
+        log() {},
+      },
+      startAgent: async (agent) => {
+        started.push(agent.id);
+        if (agent.id === 'alpha') {
+          return new Promise<RunningAgentHandle>((resolve) => {
+            releaseAlpha = () => resolve(stopHandle('alpha', stopped, () => false, (options) => {
+              alphaStopOptions = options;
+              alphaStopped();
+              throw new Error('late stop failed');
+            }));
+          });
+        }
+        return healthHandle(agent.id, 1, stopped);
+      },
+      startAgentTimeoutMs: 10,
+      validateAgent: async () => {},
+    });
+
+    await host.reconcileOnce();
+
+    assert.deepEqual(started, ['alpha', 'bravo', 'charlie']);
+    const alpha = await healthStore.get('alpha');
+    assert.equal(alpha?.state, 'unhealthy');
+    assert.equal(alpha?.reason, 'start_failed');
+    const bravo = await healthStore.get('bravo');
+    assert.equal(bravo?.state, 'healthy');
+    const charlie = await healthStore.get('charlie');
+    assert.equal(charlie?.state, 'healthy');
+
+    releaseAlpha();
+    await alphaStoppedPromise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(stopped, ['alpha']);
+    assert.equal(alphaStopOptions?.abortReason, 'operator_restart');
+    assert.deepEqual(errors, [
+      'Agent alpha failed to start: Agent alpha startup timed out after 10ms',
+      'Agent alpha: late startup handle stop failed: late stop failed',
+    ]);
+    await host.stop();
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('runtime host debounces missing provider children before marking unhealthy', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-child-health-debounce-test-'));
   try {
