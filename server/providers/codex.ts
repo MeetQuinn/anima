@@ -18,6 +18,22 @@ import {
 } from './contract.js';
 
 const CODEX_COMMAND = 'codex';
+const CODEX_TOOL_ENV_BASE_INCLUDE = [
+  'COLORTERM',
+  'HOME',
+  'LANG',
+  'LC_*',
+  'LOGNAME',
+  'NO_COLOR',
+  'PATH',
+  'PWD',
+  'SHELL',
+  'TEMP',
+  'TERM',
+  'TMP',
+  'TMPDIR',
+  'USER',
+];
 
 export class CodexCliAgentRuntime implements AgentRuntime {
   readonly env: Record<string, string> | undefined;
@@ -111,7 +127,7 @@ export class CodexCliAgentRuntime implements AgentRuntime {
     let controller!: CodexAppServerController;
     controller = new CodexAppServerController(
       startChildProcess({
-        args: ['app-server', '--listen', 'stdio://'],
+        args: codexAppServerArgs(this.env),
         bufferOutput: false,
         command: CODEX_COMMAND,
         cwd: input.cwd,
@@ -139,6 +155,27 @@ export class CodexCliAgentRuntime implements AgentRuntime {
       config,
     };
   }
+}
+
+export function codexAppServerArgs(env: Record<string, string> | undefined): string[] {
+  return [
+    'app-server',
+    '-c',
+    'shell_environment_policy.inherit=all',
+    '-c',
+    'shell_environment_policy.ignore_default_excludes=true',
+    '-c',
+    `shell_environment_policy.include_only=${JSON.stringify(codexToolEnvIncludeList(env))}`,
+    '--listen',
+    'stdio://',
+  ];
+}
+
+export function codexToolEnvIncludeList(env: Record<string, string> | undefined): string[] {
+  return Array.from(new Set([
+    ...CODEX_TOOL_ENV_BASE_INCLUDE,
+    ...Object.keys(env ?? {}),
+  ])).sort((a, b) => a.localeCompare(b));
 }
 
 function codexTextInput(text: string): Record<string, unknown> {

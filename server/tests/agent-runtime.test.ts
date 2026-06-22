@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 
 import { createAgentRuntime } from '../providers/factory.js';
 import { CLAUDE_DISALLOWED_TOOLS } from '../providers/contract.js';
+import { codexAppServerArgs, codexToolEnvIncludeList } from '../providers/codex.js';
 import { AgentRuntimeBridge } from '../runtime/runtime-bridge.js';
 import type { AgentRuntime } from '../providers/contract.js';
 import { makeSlackEvent } from './helpers/slack.js';
@@ -49,6 +50,40 @@ async function seedReminder(agentId: string, input: { instructions: string; remi
     updatedAt: now,
   });
 }
+
+test('codex-cli app-server launch allows managed provider env into tool shells', () => {
+  const include = codexToolEnvIncludeList({
+    ANIMA_HOME: '/tmp/anima-home',
+    ANIMA_SLACK_BOT_TOKEN: 'xoxb-agent',
+    FEISHU_APP_SECRET: 'feishu-secret',
+    SERVICE_TOKEN: 'custom-provider-token',
+    SLACK_BOT_TOKEN: 'xoxb-agent',
+  });
+
+  assert.ok(include.includes('SLACK_BOT_TOKEN'));
+  assert.ok(include.includes('ANIMA_SLACK_BOT_TOKEN'));
+  assert.ok(include.includes('FEISHU_APP_SECRET'));
+  assert.ok(include.includes('SERVICE_TOKEN'));
+  assert.ok(include.includes('PATH'));
+  assert.equal(include.includes('ANIMA_*'), false);
+  assert.equal(include.includes('CODEX_*'), false);
+  assert.equal(include.includes('CODEX_THREAD_ID'), false);
+
+  const args = codexAppServerArgs({ SLACK_BOT_TOKEN: 'xoxb-agent' });
+  assert.deepEqual(args.slice(0, 6), [
+    'app-server',
+    '-c',
+    'shell_environment_policy.inherit=all',
+    '-c',
+    'shell_environment_policy.ignore_default_excludes=true',
+    '-c',
+  ]);
+  const includeArg = args.find((arg) => arg.startsWith('shell_environment_policy.include_only='));
+  assert.ok(includeArg);
+  assert.match(includeArg, /SLACK_BOT_TOKEN/);
+  assert.equal(args.at(-2), '--listen');
+  assert.equal(args.at(-1), 'stdio://');
+});
 
 test('codex-cli app-server transport starts a turn and appends subscription follow-up input', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
