@@ -5,6 +5,7 @@ import type {
   FeishuQuotedMessage,
   InboxItem,
   InboxFileMeta,
+  MemoryCoherenceInboxItem,
   OnboardingInboxItem,
   ReminderInboxItem,
 } from '../../shared/inbox.js';
@@ -49,6 +50,7 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
     return buildRuntimeRestartContinuationDeliveryPrompt();
   }
   if (event.kind === 'reminder') return buildReminderDeliveryPrompt(event, context);
+  if (event.kind === 'memory_coherence') return buildMemoryCoherenceDeliveryPrompt(event);
   if (event.kind === 'choice_response') return buildChoiceResponseDeliveryPrompt(event);
   if (event.kind === 'onboarding') return buildSlackOnboardingDeliveryPrompt(event);
   if (event.kind === 'feishu_onboarding') return buildFeishuOnboardingDeliveryPrompt(event);
@@ -153,6 +155,31 @@ function buildReminderDeliveryPrompt(
 
 Instructions:
 ${reminder.instructions}${provenance}`;
+}
+
+function buildMemoryCoherenceDeliveryPrompt(event: MemoryCoherenceInboxItem): string {
+  return `Memory coherence system wake:
+
+[time=${event.receivedAt} scheduled_slot_at=${event.scheduledSlotAt} scheduled_slot=${event.scheduledSlotLabel}]
+
+You are running your daily memory-coherence pass. Keep your durable memory lean and accurate.
+
+Full procedure: \`../../design/memory-coherence-procedure.md\` (canonical path from the team repo root: \`design/memory-coherence-procedure.md\`; read it if you need the steps).
+
+Boundary: edit only your own \`MEMORY.md\` and files under \`notes/\`. Do not touch anything else. If a step would require writing outside those paths, stop.
+
+Do: merge duplicates, drop facts that newer events have contradicted, fix stale dates, and demote long detail out of \`MEMORY.md\` into \`notes/\` (write the note first, confirm it landed, then remove the block from \`MEMORY.md\`).
+
+If little has changed since your last pass, do nothing and say so.
+
+When you finish, briefly summarize what you changed, or that nothing needed changing, in a line or two.
+
+End your final response with exactly one status line, and put nothing after it:
+\`Memory coherence outcome: completed\`
+or
+\`Memory coherence outcome: quiet_skipped\`
+
+If this note and anything else disagree, the boundary above wins.`;
 }
 
 export function buildRuntimeRestartContinuationDeliveryPrompt(): string {

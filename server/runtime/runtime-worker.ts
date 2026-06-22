@@ -5,6 +5,10 @@ import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { errorMessage, nowIso } from '../ids.js';
 import { PROVIDER_IDLE_TIMEOUT_MS_DEFAULT } from '../../shared/agent-config.js';
 import type { WakeQueueService } from '../inbox/wake-queue.service.js';
+import {
+  recordMemoryCoherenceCompleted,
+  recordMemoryCoherenceFailed,
+} from '../memory/memory-coherence-outcome.js';
 import { isRestartDrainActive } from '../services/restart-drain.js';
 import type {
   ItemStopReason,
@@ -251,6 +255,7 @@ export class AgentRuntimeWorker {
         state: 'healthy',
         updatedAt: nowIso(),
       });
+      await this.recordMemoryCoherenceCompleted(context, result.text, isoFromMs(handle.startedAt));
       await this.queue.complete(item.id);
       await this.queue.completeAppendedTo(item.id);
       appendedFollowupsSettled = true;
@@ -285,6 +290,9 @@ export class AgentRuntimeWorker {
           workerId: this.workerId,
         }, null, 2));
       } else {
+        if (context?.item.kind === 'memory_coherence') {
+          await this.recordMemoryCoherenceFailed(context, error, isoFromMs(handle.startedAt));
+        }
         this.logger.error(`Runtime worker failed for item ${item.id}: ${errorMessage(error)}`);
       }
     } finally {
@@ -329,6 +337,34 @@ export class AgentRuntimeWorker {
         message: 'Resumed after restart',
       },
     );
+  }
+
+  private async recordMemoryCoherenceCompleted(
+    context: RuntimeItemContext,
+    resultText: string | undefined,
+    startedAt: string,
+  ): Promise<void> {
+    if (context.item.kind !== 'memory_coherence') return;
+    await recordMemoryCoherenceCompleted({
+      agentId: this.options.agentId,
+      item: context.item,
+      resultText,
+      startedAt,
+    });
+  }
+
+  private async recordMemoryCoherenceFailed(
+    context: RuntimeItemContext,
+    error: unknown,
+    startedAt: string,
+  ): Promise<void> {
+    if (context.item.kind !== 'memory_coherence') return;
+    await recordMemoryCoherenceFailed({
+      agentId: this.options.agentId,
+      error,
+      item: context.item,
+      startedAt,
+    });
   }
 
   private releaseActiveItem(): void {

@@ -9,6 +9,7 @@ import { resolveAnimaHome } from '../../anima-home.js';
 import { JsonStore } from '../json-store.js';
 import {
   DashboardAuth,
+  MemoryCoherenceConfig,
   ReleaseTrack,
   ServerTrack,
   SidebarOrder,
@@ -19,6 +20,7 @@ export const ServerConfig = z.object({
   dashboardAuth: DashboardAuth.optional(),
   dashboardHost: z.string().min(1).optional(),
   dashboardPort: z.number().int().positive().max(65535).optional(),
+  memoryCoherence: MemoryCoherenceConfig.optional(),
   releaseTrack: ReleaseTrack.optional(),
   sidebarOrder: SidebarOrder.optional(),
   track: ServerTrack.optional(),
@@ -28,10 +30,12 @@ export const ServerConfig = z.object({
 export type ServerConfig = z.infer<typeof ServerConfig>;
 
 export class ServerConfigStore {
+  constructor(private readonly animaHome?: string) {}
+
   private readonly file = new JsonStore<ServerConfig>({
     empty: () => ({}),
     parse: ServerConfig.parse,
-    path: () => join(resolveAnimaHome(), 'config.json'),
+    path: () => join(this.animaHome ?? resolveAnimaHome(), 'config.json'),
   });
 
   read(): Promise<ServerConfig> {

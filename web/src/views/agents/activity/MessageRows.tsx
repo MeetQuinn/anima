@@ -47,6 +47,7 @@ function SlackLink({ href }: { href: string }) {
 }
 
 function actorName(item: InboxItem): string {
+  if (item.kind === 'memory_coherence') return 'Memory coherence';
   if (item.kind === 'slack') {
     const displayName = item.actor?.displayName || item.actor?.realName;
     const handle = item.actor?.handle?.replace(/^@/, '');
@@ -65,7 +66,7 @@ function actorName(item: InboxItem): string {
 }
 
 function inboxItemText(item: InboxItem): string {
-  if (item.kind === 'reminder') return '';
+  if (item.kind === 'reminder' || item.kind === 'memory_coherence') return '';
   if (item.kind === 'onboarding' || item.kind === 'feishu_onboarding') return item.text;
   if (item.kind === 'choice_response') return `Selected: ${item.optionLabel}\nQuestion: ${item.question}`;
   return item.text ?? '';
@@ -77,6 +78,10 @@ function isSlackItem(item: InboxItem): item is SlackInboxItem {
 
 function reminderTitle(item: Extract<InboxItem, { kind: 'reminder' }>): string {
   return item.title?.trim() || 'Reminder';
+}
+
+function memoryCoherenceTitle(): string {
+  return 'Memory coherence';
 }
 
 function onboardingTitle(): string {
@@ -123,12 +128,17 @@ export function MessageInRow({
     name = onboardingTitle();
   } else if (item.event.kind === 'reminder') {
     name = reminderTitle(item.event);
+  } else if (item.event.kind === 'memory_coherence') {
+    name = memoryCoherenceTitle();
   } else if (item.event.kind === 'choice_response') {
     name = choiceResponseTitle(item.event);
   } else {
     name = actorName(item.event);
   }
-  const dotColor = item.event.kind === 'reminder' || onboarding ? COLOR_REMINDER : COLOR_INBOUND;
+  const dotColor =
+    item.event.kind === 'reminder' || item.event.kind === 'memory_coherence' || onboarding
+      ? COLOR_REMINDER
+      : COLOR_INBOUND;
   const text = inboxItemText(item.event).trim();
   const files = isFileBearingInboxItem(item.event) ? inboundFiles(item.event) : [];
   const hasFiles = files.length > 0;

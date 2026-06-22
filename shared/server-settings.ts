@@ -22,3 +22,13 @@ export const DashboardAuth = z.object({
   sessionTtlHours: z.number().int().positive().max(24 * 365).optional(),
 }).strict();
 export type DashboardAuth = z.infer<typeof DashboardAuth>;
+
+export const MemoryCoherenceConfig = z.object({
+  enabled: z.boolean().optional(),
+  maxConcurrent: z.number().int().positive().max(100).optional(),
+  scopeAgentIds: z.array(z.string().min(1)).optional(),
+  timezone: z.string().min(1).optional(),
+  windowDurationMinutes: z.number().int().positive().max(24 * 60).optional(),
+  windowStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+}).strict();
+export type MemoryCoherenceConfig = z.infer<typeof MemoryCoherenceConfig>;
