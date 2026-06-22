@@ -12,10 +12,12 @@ import { ensureDefaultSkills } from '../agents/default-skills.js';
 import { resolveAnimaHome } from '../anima-home.js';
 import { errorMessage, nowIso } from '../ids.js';
 import { WakeQueueService, type InboxItem } from '../inbox/wake-queue.service.js';
+import { MemoryCoherenceScheduler } from '../memory/memory-coherence-scheduler.js';
 import { createAgentRuntime } from '../providers/factory.js';
 import type { AgentProviderConfig } from '../providers/contract.js';
 import { isRestartDrainActive } from '../services/restart-drain.js';
 import { cacheDelete } from '../storage/json-file.js';
+import { ServerConfigStore } from '../storage/schema/server.store.js';
 import {
   FEISHU_OPEN_API_BASE_URL,
   fetchFeishuTenantAccessToken,
@@ -64,6 +66,7 @@ export interface RuntimeHostDependencies {
   healthIntervalMs?: number;
   healthStore?: AgentHealthStore;
   logger?: Pick<Console, 'error' | 'log'>;
+  memoryCoherenceScheduler?: Pick<MemoryCoherenceScheduler, 'reconcile'>;
   restartCommands?: AgentRestartCommandStore;
   startAgent?: (agent: AgentConfig, animaHome: string, options: StartAgentOptions) => Promise<RunningAgentHandle>;
   startAgentTimeoutMs?: number;
@@ -92,6 +95,7 @@ export class RuntimeHost {
   private readonly loadAgents: (opts: RuntimeHostOptions) => Promise<AgentConfig[]>;
   private readonly ensureDefaultSkills: () => Promise<void>;
   private readonly logger: Pick<Console, 'error' | 'log'>;
+  private readonly memoryCoherenceScheduler: Pick<MemoryCoherenceScheduler, 'reconcile'>;
   private readonly restartCommands: AgentRestartCommandStore;
   private readonly healthStore: AgentHealthStore;
   private readonly healthIntervalMs: number;
@@ -120,6 +124,9 @@ export class RuntimeHost {
       await ensureDefaultSkills();
     });
     this.logger = deps.logger ?? console;
+    this.memoryCoherenceScheduler = deps.memoryCoherenceScheduler ?? new MemoryCoherenceScheduler({
+      readServerConfig: () => new ServerConfigStore(this.animaHome).read(),
+    });
     this.restartCommands = deps.restartCommands ?? new AgentRestartCommandStore({ animaHome: this.animaHome });
     this.healthStore = deps.healthStore ?? new AgentHealthStore({ animaHome: this.animaHome });
     this.healthIntervalMs = deps.healthIntervalMs ?? DEFAULT_HEALTH_INTERVAL_MS;
@@ -234,7 +241,16 @@ export class RuntimeHost {
     }
     await this.clearMissingRestartCommands(seenAgentIds, pendingRestartAgentIds);
     if (!this.opts.agent) await this.stopMissingAgents(seenAgentIds);
+    await this.reconcileMemoryCoherence(agents);
     await this.publishKnownHealthSnapshots();
+  }
+
+  private async reconcileMemoryCoherence(agents: AgentConfig[]): Promise<void> {
+    try {
+      await this.memoryCoherenceScheduler.reconcile(agents);
+    } catch (error) {
+      this.logger.error(`Memory coherence scheduler reconcile failed: ${errorMessage(error)}`);
+    }
   }
 
   private async initializeBootHealth(agents: AgentConfig[]): Promise<void> {

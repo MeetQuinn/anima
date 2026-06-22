@@ -9,7 +9,7 @@ import { makeSlackEvent } from './helpers/slack.js';
 import { makeReminderInboxItem } from './helpers/inbox.js';
 import { WakeQueueService, type WakeQueueEnqueueResult } from '../inbox/wake-queue.service.js';
 import { allActivities, loadState } from './helpers/state.js';
-import type { InboxItem, InboxItemStatus } from '../../shared/inbox.js';
+import type { InboxItem, InboxItemStatus, MemoryCoherenceInboxItem } from '../../shared/inbox.js';
 import type {
   AgentRuntime,
   AgentRuntimeCloseOptions,
@@ -762,6 +762,47 @@ test('runtime worker injects provider env while preserving Anima-managed env', a
   }
 });
 
+test('runtime worker records memory coherence quiet-skip outcome from exact marker', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-memory-coherence-worker-test-'));
+  const scheduledSlotAt = new Date(Date.now() - 60_000).toISOString();
+  const runtime = new StaticTextRuntime('Nothing needed changing.\nMemory coherence outcome: quiet_skipped');
+  const coordinator = { agentId: 'scout', stateDir };
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await ensureTestAgentConfig(coordinator);
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        queue: queueFor('scout'),
+        pollIntervalMs: 10_000,
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+      const item = makeMemoryCoherenceInboxItem({
+        scheduledSlotAt,
+        timestamp: scheduledSlotAt,
+      });
+      await queueFor('scout').enqueue(item);
+
+      assert.equal(await worker.drainOnce(), 1);
+      assert.equal((await queueFor('scout').find(item.id))?.handling.status, 'completed');
+
+      const outcome = allActivities(await loadState()).find((activity) =>
+        activity.type === 'memory_coherence.outcome'
+      );
+      assert.equal(outcome?.payload?.['outcome'], 'quiet_skipped');
+      assert.equal(outcome?.payload?.['summary'], 'Nothing needed changing.');
+      assert.equal(outcome?.payload?.['scheduledSlotAt'], scheduledSlotAt);
+      assert.equal(outcome?.payload?.['scheduledSlotLabel'], '05:47 agent-local');
+      assert.equal(typeof outcome?.payload?.['delayMs'], 'number');
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 class ControlledRuntime implements AgentRuntime {
   readonly kind = 'controlled';
   readonly calls: AgentRuntimeInput[] = [];
@@ -791,6 +832,20 @@ class ControlledRuntime implements AgentRuntime {
     const resolve = this.resolvers.shift();
     assert.ok(resolve, 'Expected an active runtime call');
     resolve();
+  }
+}
+
+class StaticTextRuntime implements AgentRuntime {
+  readonly kind = 'static-text';
+
+  constructor(private readonly text: string) {}
+
+  async run(_input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
+    return { text: this.text };
+  }
+
+  async appendToActiveRun(_input: AgentRuntimeFollowupInput): Promise<{ accepted: boolean }> {
+    return { accepted: false };
   }
 }
 
@@ -927,6 +982,25 @@ async function seedReminder(agentId: string, reminderId: string, timestamp: stri
     title: 'Reminder test',
     updatedAt: timestamp,
   });
+}
+
+function makeMemoryCoherenceInboxItem(input: {
+  scheduledSlotAt: string;
+  timestamp: string;
+}): MemoryCoherenceInboxItem {
+  return {
+    handling: {
+      createdAt: input.timestamp,
+      queuedAt: input.timestamp,
+      status: 'queued',
+      updatedAt: input.timestamp,
+    },
+    id: 'memory-coherence:scout:2026-06-22',
+    kind: 'memory_coherence',
+    receivedAt: input.timestamp,
+    scheduledSlotAt: input.scheduledSlotAt,
+    scheduledSlotLabel: '05:47 agent-local',
+  };
 }
 
 const silentLogger = {

@@ -42,6 +42,7 @@ const COLOR_IDLE = 'var(--color-health-ok)';
  */
 export function isNarrativeStep(activity: ActivityRecord): boolean {
   if (activityIsFailure(activity)) return true;
+  if (activity.type === 'memory_coherence.outcome') return true;
 
   if (activity.type === 'tool.call.started') {
     // Provider runtimes emit recordToolStarted but NOT recordToolCompleted on
@@ -136,6 +137,9 @@ export function isNarrativeStep(activity: ActivityRecord): boolean {
 }
 
 export function activityIsFailure(activity: ActivityRecord): boolean {
+  if (activity.type === 'memory_coherence.outcome') {
+    return activity.payload?.['outcome'] === 'failed';
+  }
   if (
     activity.type === 'runtime.event' &&
     String(activity.payload?.['eventType'] ?? '').endsWith('.failed')
@@ -155,6 +159,10 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     '',
   );
   const normalized = tool.toLowerCase();
+
+  if (activity.type === 'memory_coherence.outcome') {
+    return memoryCoherenceOutcomeRow(payload);
+  }
 
   if (activity.type !== 'runtime.event' && activityIsFailure(activity)) {
     const err = pickString(payload, ['summary', 'text', 'error']);
@@ -531,6 +539,39 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   // entirely rather than rendering an opaque "Recorded activity" placeholder.
   // Raw identifiers belong in persisted audit data, not the default stream.
   return { title: humanizeIdentifier(activity.type), color: COLOR_TOOL, kind: 'unknown' };
+}
+
+function memoryCoherenceOutcomeRow(payload: Record<string, unknown>): ActivityRow {
+  const outcome = pickString(payload, ['outcome']);
+  const summary = pickString(payload, ['summary']);
+  const failure = pickString(payload, ['failureReason']);
+  const scheduled = pickString(payload, ['scheduledSlotLabel']);
+  const delay = typeof payload['delayMs'] === 'number' && payload['delayMs'] > 0
+    ? `delayed ${formatDurationMinutes(payload['delayMs'])}`
+    : '';
+  const target = [summary || failure || scheduled, delay].filter(Boolean).join(' · ');
+  if (outcome === 'failed') {
+    return {
+      title: 'Memory coherence failed',
+      ...truncatedTarget(target, 200),
+      color: COLOR_FAILURE,
+      kind: 'failure',
+    };
+  }
+  if (outcome === 'quiet_skipped') {
+    return {
+      title: 'Memory coherence checked',
+      ...truncatedTarget(target || 'Nothing needed changing', 200),
+      color: COLOR_IDLE,
+      kind: 'lifecycle',
+    };
+  }
+  return {
+    title: 'Memory coherence updated',
+    ...truncatedTarget(target, 200),
+    color: COLOR_IDLE,
+    kind: 'lifecycle',
+  };
 }
 
 function tool_(title: string, target?: string, targetFull?: string): ActivityRow {

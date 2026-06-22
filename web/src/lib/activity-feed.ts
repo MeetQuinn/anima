@@ -661,6 +661,7 @@ function surfaceChipForEvent(event: InboxItem, wakeMeta?: ReminderWakeMeta): Sur
     const label = recurring ? `Reminder · fire #${wakeMeta.firedCount}` : 'Reminder';
     return { kind: 'reminder', label };
   }
+  if (event.kind === 'memory_coherence') return { kind: 'reminder', label: 'Memory coherence' };
   if (event.kind === 'choice_response') return surfaceChipForChoice(event);
   if (event.kind === 'feishu') return surfaceChipForFeishu(event);
   if (event.kind !== 'slack') return { kind: 'onboarding', label: 'Onboarding' };

@@ -107,6 +107,55 @@ test('runtime host idles with zero agents and starts a newly runnable agent once
   assert.deepEqual(stopped, ['aria']);
 });
 
+test('runtime host reconciles memory coherence scheduler after agent reconciliation', async () => {
+  const agents = [runtimeHostAgent('aria', { connected: true })];
+  const scheduled: string[][] = [];
+  const host = new RuntimeHost({}, {
+    animaHome: '/tmp/anima-home',
+    loadAgents: async () => agents,
+    logger: silentLogger,
+    memoryCoherenceScheduler: {
+      reconcile: async (runtimeAgents) => {
+        scheduled.push(runtimeAgents.map((agent) => agent.id));
+      },
+    },
+    startAgent: async (agent) => stopHandle(agent.id, []),
+    validateAgent: async () => {},
+  });
+
+  await host.reconcileOnce();
+
+  assert.deepEqual(scheduled, [['aria']]);
+  await host.stop();
+});
+
+test('runtime host contains memory coherence scheduler failures', async () => {
+  const errors: string[] = [];
+  const host = new RuntimeHost({}, {
+    animaHome: '/tmp/anima-home',
+    loadAgents: async () => [runtimeHostAgent('aria', { connected: true })],
+    logger: {
+      error(message) {
+        errors.push(String(message));
+      },
+      log() {},
+    },
+    memoryCoherenceScheduler: {
+      reconcile: async () => {
+        throw new Error('scheduler down');
+      },
+    },
+    startAgent: async (agent) => stopHandle(agent.id, []),
+    validateAgent: async () => {},
+  });
+
+  await host.reconcileOnce();
+
+  assert.deepEqual(host.runningAgentIds(), ['aria']);
+  assert.equal(errors.some((message) => message.includes('Memory coherence scheduler reconcile failed')), true);
+  await host.stop();
+});
+
 test('runtime host starts after Slack connection and reloads idle agents after config changes', async () => {
   let scout = runtimeHostAgent('scout', { connected: false });
   const started: string[] = [];

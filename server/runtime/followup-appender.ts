@@ -49,6 +49,12 @@ export async function appendQueuedFollowupsUntilFinished(input: RuntimeFollowupA
       await sleep(FOLLOWUP_POLL_MS, input.itemDone);
       continue;
     }
+    if (item.kind === 'memory_coherence') {
+      skippedItemIds.add(item.id);
+      await input.queue.requeue(item.id);
+      await sleep(FOLLOWUP_POLL_MS, input.itemDone);
+      continue;
+    }
     await tryOneFollowupItem(input, item, skippedItemIds);
   }
 }

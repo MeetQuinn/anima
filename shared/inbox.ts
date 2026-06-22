@@ -135,6 +135,14 @@ export const ReminderInboxItem = InboxItemBase.extend({
 
 export type ReminderInboxItem = z.infer<typeof ReminderInboxItem>;
 
+export const MemoryCoherenceInboxItem = InboxItemBase.extend({
+  kind: z.literal('memory_coherence'),
+  scheduledSlotAt: z.string(),
+  scheduledSlotLabel: z.string(),
+});
+
+export type MemoryCoherenceInboxItem = z.infer<typeof MemoryCoherenceInboxItem>;
+
 export const OnboardingInboxItem = InboxItemBase.extend({
   channelId: z.string(),
   kind: z.literal('onboarding'),
@@ -174,6 +182,7 @@ export const InboxItemSchema = z.discriminatedUnion('kind', [
   FeishuInboxItem,
   FeishuOnboardingInboxItem,
   ReminderInboxItem,
+  MemoryCoherenceInboxItem,
   OnboardingInboxItem,
   ChoiceResponseInboxItem,
 ]);

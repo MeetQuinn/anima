@@ -69,6 +69,19 @@ export interface RuntimeFollowupFailedPayload {
   reason: 'followup_failed' | 'steer_failed' | (string & {});
 }
 
+export type MemoryCoherenceOutcome = 'completed' | 'quiet_skipped' | 'failed';
+
+export interface MemoryCoherenceOutcomePayload {
+  completedAt: string;
+  delayMs?: number;
+  failureReason?: string;
+  outcome: MemoryCoherenceOutcome;
+  scheduledSlotAt: string;
+  scheduledSlotLabel: string;
+  startedAt: string;
+  summary?: string;
+}
+
 export interface RuntimeEventPayload extends RuntimePayload {
   eventType: string;
   [key: string]: unknown;
@@ -118,6 +131,7 @@ export type RuntimeLifecycleActivity =
 
 export type RuntimeOutputActivity = ActivityBase<'runtime.output', RuntimeOutputPayload>;
 export type ProviderEventActivity = ActivityBase<'runtime.event', RuntimeEventPayload>;
+export type MemoryCoherenceActivity = ActivityBase<'memory_coherence.outcome', MemoryCoherenceOutcomePayload>;
 
 export type ToolCallActivity =
   | ActivityBase<'tool.call.started', ToolCallPayload>
@@ -138,6 +152,7 @@ export type Activity =
   | RuntimeLifecycleActivity
   | RuntimeOutputActivity
   | ProviderEventActivity
+  | MemoryCoherenceActivity
   | ToolCallActivity
   | ExternalEffectActivity
   | ActivityBase<string, Record<string, unknown>>;
