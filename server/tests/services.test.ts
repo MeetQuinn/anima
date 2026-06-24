@@ -15,6 +15,16 @@ import {
   launchdStopActions,
   parseLaunchdRuntime,
 } from '../services/launchd.js';
+import {
+  buildSystemdUnit,
+  parseSystemdRuntime,
+  systemdActionInvocation,
+  systemdInstallActions,
+  systemdServiceName,
+  systemdStartActions,
+  systemdStopActions,
+  systemdUninstallActions,
+} from '../services/systemd.js';
 import { buildServiceEnvironment, buildServicePath, cleanServiceEnv } from '../services/env.js';
 
 const animactl = resolve('dist/server/cli/animactl.js');
@@ -168,6 +178,117 @@ test('launchd runtime parser treats print success without pid as loaded', () => 
     pid: 12345,
   });
   assert.deepEqual(parseLaunchdRuntime({ status: 113, stdout: '' }), { loaded: false });
+});
+
+test('systemd unit pins service command, environment, logs, restart, and install target', () => {
+  const spec = {
+    animaHome: join(homedir(), '.anima'),
+    args: ['web', '--host', '0.0.0.0', '--port', '4174'],
+    id: 'web',
+    legacyIds: ['ui'],
+    logName: 'web.log',
+    matchAny: [' web ', ' ui '],
+    url: 'http://127.0.0.1:4174',
+  };
+  const unit = buildSystemdUnit(spec, {
+    animactl: '/home/test/.anima/runtime/current/node_modules/@meetquinn/animactl/dist/server/cli/animactl.js',
+    cwd: '/home/test/.anima/runtime/current/node_modules/@meetquinn/animactl',
+  });
+
+  assert.equal(systemdServiceName(spec), 'ai.meetquinn.anima.web.service');
+  assert.match(unit, /Description=Anima web service/);
+  assert.match(unit, /WorkingDirectory=\/home\/test\/\.anima\/runtime\/current\/node_modules\/@meetquinn\/animactl/);
+  assert.match(unit, /ExecStart="[^"]*node" "\/home\/test\/\.anima\/runtime\/current\/node_modules\/@meetquinn\/animactl\/dist\/server\/cli\/animactl\.js" "web" "--host" "0\.0\.0\.0"/);
+  assert.match(unit, /Environment="ANIMA_HOME=.*\/\.anima"/);
+  assert.match(unit, /Environment="PATH=[^"]*\.local\/bin[^"]*\.kimi-code\/bin[^"]*\/usr\/sbin[^"]*"/);
+  assert.match(unit, /StandardOutput=append:.*\/\.anima\/logs\/web\.log/);
+  assert.match(unit, /StandardError=append:.*\/\.anima\/logs\/web\.log/);
+  assert.match(unit, /Restart=always/);
+  assert.match(unit, /RestartSec=5/);
+  assert.match(unit, /WantedBy=default\.target/);
+});
+
+test('systemd start/install/stop plans distinguish loaded from running', () => {
+  assert.deepEqual(systemdStartActions({ loaded: true, running: true }), []);
+  assert.deepEqual(systemdStartActions({ loaded: true, running: false }), ['start']);
+  assert.deepEqual(systemdStartActions({ loaded: false, running: false }), ['daemon-reload', 'start']);
+
+  assert.deepEqual(systemdInstallActions(), ['daemon-reload', 'enable', 'restart']);
+
+  assert.deepEqual(systemdStopActions({ loaded: true }), ['stop']);
+  assert.deepEqual(systemdStopActions({ loaded: false }), []);
+
+  assert.deepEqual(systemdUninstallActions({ loaded: true }), ['stop', 'disable']);
+  assert.deepEqual(systemdUninstallActions({ loaded: false }), ['disable']);
+});
+
+test('systemd action invocations dispatch user service commands', () => {
+  const spec = {
+    animaHome: join(homedir(), '.anima'),
+    args: ['web', '--host', '0.0.0.0', '--port', '4174'],
+    id: 'web',
+    legacyIds: ['ui'],
+    logName: 'web.log',
+    matchAny: [' web ', ' ui '],
+    url: 'http://127.0.0.1:4174',
+  };
+
+  assert.deepEqual(systemdActionInvocation('daemon-reload', spec), {
+    args: ['--user', 'daemon-reload'],
+    options: {},
+  });
+  assert.deepEqual(systemdActionInvocation('enable', spec), {
+    args: ['--user', 'enable', 'ai.meetquinn.anima.web.service'],
+    options: {},
+  });
+  assert.deepEqual(systemdActionInvocation('disable', spec), {
+    args: ['--user', 'disable', 'ai.meetquinn.anima.web.service'],
+    options: {},
+  });
+  assert.deepEqual(systemdActionInvocation('restart', spec), {
+    args: ['--user', 'restart', 'ai.meetquinn.anima.web.service'],
+    options: {},
+  });
+  assert.deepEqual(systemdActionInvocation('stop', spec), {
+    args: ['--user', 'stop', 'ai.meetquinn.anima.web.service'],
+    options: {},
+  });
+});
+
+test('systemd runtime parser reads active, inactive, and missing units', () => {
+  assert.deepEqual(parseSystemdRuntime({
+    status: 0,
+    stdout: 'LoadState=loaded\nActiveState=active\nMainPID=12345\nUnitFileState=enabled\n',
+  }), {
+    active: true,
+    enabled: true,
+    loaded: true,
+    pid: 12345,
+  });
+  assert.deepEqual(parseSystemdRuntime({
+    status: 0,
+    stdout: 'LoadState=loaded\nActiveState=inactive\nMainPID=0\nUnitFileState=disabled\n',
+  }), {
+    active: false,
+    enabled: false,
+    loaded: true,
+  });
+  assert.deepEqual(parseSystemdRuntime({
+    status: 0,
+    stdout: 'LoadState=loaded\nActiveState=activating\nMainPID=0\nUnitFileState=enabled\n',
+  }), {
+    active: false,
+    enabled: true,
+    loaded: true,
+  });
+  assert.deepEqual(parseSystemdRuntime({
+    status: 1,
+    stdout: 'LoadState=not-found\nActiveState=inactive\nMainPID=0\nUnitFileState=\n',
+  }), {
+    active: false,
+    enabled: false,
+    loaded: false,
+  });
 });
 
 test('services status reports stopped agent and web with web URL', async () => {
