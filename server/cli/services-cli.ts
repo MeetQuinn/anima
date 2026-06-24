@@ -136,6 +136,7 @@ export function registerServicesCommand(program: Command): void {
 
 async function runInstall(opts: ServicesCliOptions): Promise<void> {
   const { specs, supervisor } = await resolveServices(opts);
+  assertCanControlServices(specs);
   for (const spec of specs) await installService(spec, supervisor);
   await printStatus(specs);
   printDashboardHint(specs);

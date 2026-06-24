@@ -133,10 +133,12 @@ export async function isServiceRunning(spec: ServiceSpec): Promise<boolean> {
 
 export async function installService(spec: ServiceSpec, options: SupervisorOptions): Promise<void> {
   if (launchdSupported()) {
+    await stopPidFallbackService(spec);
     await installLaunchdService(spec, options);
     return;
   }
   if (systemdSupported()) {
+    await stopPidFallbackService(spec);
     await installSystemdService(spec, options);
     return;
   }
@@ -153,6 +155,15 @@ export async function uninstallService(spec: ServiceSpec): Promise<void> {
     return;
   }
   console.log(`${spec.id}: OS-managed service not installed`);
+}
+
+export async function stopPidFallbackService(spec: ServiceSpec): Promise<void> {
+  const pid = await runningPid(spec);
+  if (pid) {
+    await terminate(pid);
+    console.log(`${spec.id}: stopped pid ${pid}`);
+  }
+  await rmPidFiles(spec);
 }
 
 async function serviceStatus(spec: ServiceSpec): Promise<ServiceStatusEntry> {
