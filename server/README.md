@@ -130,7 +130,7 @@ Keep API and CLI thin. They should parse input, call a domain service, redact or
 
 Daemon supervision is intentionally separate from API and foreground runtime code.
 
-`services/supervisor.ts` owns process semantics: launchd-backed service control when an OS service is installed, detached pid-file fallback for development/CI homes, stale pid checks, log rotation, stop escalation, and child environment cleanup. `services/launchd.ts` owns LaunchAgent plist generation and `launchctl` interactions; `services/env.ts` owns the durable service environment and PATH. CLI service commands and web restart actions should share those semantics instead of implementing process control locally.
+`services/supervisor.ts` owns process semantics: OS-backed service control when a launchd or systemd user service is installed, detached pid-file fallback for development/CI homes, stale pid checks, log rotation, stop escalation, and child environment cleanup. `services/launchd.ts` owns LaunchAgent plist generation and `launchctl` interactions; `services/systemd.ts` owns systemd user unit generation and `systemctl --user` interactions; `services/env.ts` owns the durable service environment and PATH. CLI service commands and web restart actions should share those semantics instead of implementing process control locally.
 
 Same-environment restarts from inside an active runtime are refused because they would kill the item making the request. Use a fresh shell, the web restart control after the item finishes, or a different environment.
 

@@ -5,12 +5,22 @@ import { join } from 'node:path';
 import { cleanServiceEnv } from './env.js';
 import {
   installLaunchdService,
+  launchdSupported,
   launchdServiceInstalled,
   launchdServiceStatus,
   startLaunchdService,
   stopLaunchdService,
   uninstallLaunchdService,
 } from './launchd.js';
+import {
+  installSystemdService,
+  startSystemdService,
+  stopSystemdService,
+  systemdServiceInstalled,
+  systemdServiceStatus,
+  systemdSupported,
+  uninstallSystemdService,
+} from './systemd.js';
 
 export interface ServiceSpec {
   args: string[];
@@ -28,7 +38,7 @@ export interface ServiceSpec {
 interface ServiceStatusEntry {
   id: string;
   logPath: string;
-  manager?: 'launchd' | 'pid';
+  manager?: 'launchd' | 'pid' | 'systemd';
   pid?: number;
   status: 'running' | 'stopped';
   url?: string;
@@ -49,6 +59,14 @@ export async function startService(spec: ServiceSpec, options: SupervisorOptions
     const status = await startLaunchdService(spec);
     return statusEntry(spec, {
       manager: 'launchd',
+      pid: status.pid,
+      status: status.running ? 'running' : 'stopped',
+    });
+  }
+  if (await systemdServiceInstalled(spec)) {
+    const status = await startSystemdService(spec);
+    return statusEntry(spec, {
+      manager: 'systemd',
       pid: status.pid,
       status: status.running ? 'running' : 'stopped',
     });
@@ -88,6 +106,10 @@ export async function stopService(spec: ServiceSpec): Promise<void> {
     await stopLaunchdService(spec);
     return;
   }
+  if (await systemdServiceInstalled(spec)) {
+    await stopSystemdService(spec);
+    return;
+  }
 
   const pid = await readPid(spec);
   if (pid && await isRunning(pid)) {
@@ -103,15 +125,34 @@ export async function isServiceRunning(spec: ServiceSpec): Promise<boolean> {
   if (await launchdServiceInstalled(spec)) {
     return (await launchdServiceStatus(spec)).running;
   }
+  if (await systemdServiceInstalled(spec)) {
+    return (await systemdServiceStatus(spec)).running;
+  }
   return Boolean(await runningPid(spec));
 }
 
 export async function installService(spec: ServiceSpec, options: SupervisorOptions): Promise<void> {
-  await installLaunchdService(spec, options);
+  if (launchdSupported()) {
+    await installLaunchdService(spec, options);
+    return;
+  }
+  if (systemdSupported()) {
+    await installSystemdService(spec, options);
+    return;
+  }
+  throw new Error('OS-managed service installation is only supported on macOS launchd or Linux systemd user services.');
 }
 
 export async function uninstallService(spec: ServiceSpec): Promise<void> {
-  await uninstallLaunchdService(spec);
+  if (await launchdServiceInstalled(spec) || launchdSupported()) {
+    await uninstallLaunchdService(spec);
+    return;
+  }
+  if (await systemdServiceInstalled(spec) || systemdSupported()) {
+    await uninstallSystemdService(spec);
+    return;
+  }
+  console.log(`${spec.id}: OS-managed service not installed`);
 }
 
 async function serviceStatus(spec: ServiceSpec): Promise<ServiceStatusEntry> {
@@ -119,6 +160,14 @@ async function serviceStatus(spec: ServiceSpec): Promise<ServiceStatusEntry> {
     const status = await launchdServiceStatus(spec);
     return statusEntry(spec, {
       manager: 'launchd',
+      pid: status.pid,
+      status: status.running ? 'running' : 'stopped',
+    });
+  }
+  if (await systemdServiceInstalled(spec)) {
+    const status = await systemdServiceStatus(spec);
+    return statusEntry(spec, {
+      manager: 'systemd',
       pid: status.pid,
       status: status.running ? 'running' : 'stopped',
     });
@@ -135,7 +184,7 @@ export async function printStatus(specs: ServiceSpec[]): Promise<void> {
     const parts = [
       entry.id,
       entry.pid !== undefined ? `running pid ${entry.pid}` : 'stopped',
-      entry.manager === 'launchd' ? 'launchd' : undefined,
+      entry.manager === 'launchd' || entry.manager === 'systemd' ? entry.manager : undefined,
       entry.url,
       `log ${entry.logPath}`,
     ].filter(Boolean);
@@ -143,7 +192,7 @@ export async function printStatus(specs: ServiceSpec[]): Promise<void> {
   }
 }
 
-function statusEntry(spec: ServiceSpec, overrides: { manager?: 'launchd' | 'pid'; pid?: number; status: 'running' | 'stopped' }): ServiceStatusEntry {
+function statusEntry(spec: ServiceSpec, overrides: { manager?: 'launchd' | 'pid' | 'systemd'; pid?: number; status: 'running' | 'stopped' }): ServiceStatusEntry {
   return {
     id: spec.id,
     logPath: serviceLogPath(spec),
