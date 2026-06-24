@@ -26,6 +26,7 @@ import {
   systemdUninstallActions,
 } from '../services/systemd.js';
 import { buildServiceEnvironment, buildServicePath, cleanServiceEnv } from '../services/env.js';
+import { stopPidFallbackService } from '../services/supervisor.js';
 
 const animactl = resolve('dist/server/cli/animactl.js');
 
@@ -447,6 +448,28 @@ test('services restart refuses to stop its own active runtime', async () => {
   }
 });
 
+test('services install refuses to stop its own active runtime', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'anima-services-self-install-'));
+  try {
+    const configDir = join(tempDir, '.anima');
+    await writeMinimalConfig(configDir, {});
+
+    const install = await runAnimactl(['services', 'install'], {
+      env: {
+        ANIMA_INBOX_ITEM_ID: 'item_self_install',
+        ANIMA_HOME: configDir,
+        ANIMA_RUNTIME_HOME: configDir,
+      },
+    });
+
+    assert.equal(install.status, 1);
+    assert.match(install.stderr, /Refusing to stop or restart the agent service from inside its own active runtime/);
+    assert.doesNotMatch(install.stdout, /stopped pid/);
+  } finally {
+    await rm(tempDir, { force: true, recursive: true });
+  }
+});
+
 test('services restart permits web-only restart from inside its own active runtime', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'anima-services-self-web-restart-'));
   const childPids = new Set<number>();
@@ -470,6 +493,44 @@ test('services restart permits web-only restart from inside its own active runti
     assert.doesNotMatch(restart.stderr, /Refusing/);
     assert.doesNotMatch(restart.stdout, /agent:/);
     assert.match(restart.stdout, /web: started pid/);
+  } finally {
+    for (const pid of childPids) {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {}
+    }
+    await rm(tempDir, { force: true, recursive: true });
+  }
+});
+
+test('pid fallback cleanup stops a running web service before OS manager install', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'anima-services-install-pid-cleanup-'));
+  const childPids = new Set<number>();
+  try {
+    const configDir = join(tempDir, '.anima');
+    await writeMinimalConfig(configDir, { dashboardPort: 0 });
+
+    const start = await runAnimactl(['services', 'start', '--only', 'web'], {
+      env: { ANIMA_HOME: configDir },
+    });
+    collectStartedPids(start.stdout, childPids);
+    assert.equal(start.status, 0, start.stderr || start.stdout);
+    const [oldPid] = childPids;
+    assert.ok(oldPid);
+    assert.equal(pidIsRunning(oldPid), true);
+
+    await stopPidFallbackService({
+      animaHome: configDir,
+      args: ['web', '--host', '0.0.0.0', '--port', '0'],
+      id: 'web',
+      legacyIds: ['ui'],
+      logName: 'web.log',
+      matchAny: [' web ', ' ui '],
+      url: 'http://127.0.0.1:0',
+    });
+
+    assert.equal(pidIsRunning(oldPid), false);
+    await assert.rejects(stat(join(configDir, 'run', 'web.pid')), /ENOENT/);
   } finally {
     for (const pid of childPids) {
       try {
