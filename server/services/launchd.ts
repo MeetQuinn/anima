@@ -42,15 +42,20 @@ export async function installLaunchdService(spec: ServiceSpec, options: Supervis
   for (const action of launchdInstallActions(status)) {
     const invocation = launchdActionInvocation(action, spec, plistPath);
     await launchctl(invocation.args, invocation.options);
+    if (action === 'bootout') await waitForLaunchdUnloaded(spec, status.pid);
   }
-  console.log(`${spec.id}: installed launchd ${launchdLabel(spec)} plist ${plistPath}`);
+  const next = await waitForLaunchdRunning(spec);
+  const pidPart = next.pid !== undefined ? ` pid ${next.pid}` : '';
+  console.log(`${spec.id}: installed launchd ${launchdLabel(spec)}${pidPart} plist ${plistPath}`);
 }
 
 export async function uninstallLaunchdService(spec: ServiceSpec): Promise<void> {
   assertLaunchdSupported();
   const plistPath = launchdPlistPath(spec);
   if (await launchdServiceInstalled(spec)) {
+    const status = await launchdServiceStatus(spec);
     await launchctl(['bootout', launchdServiceTarget(spec)], { allowFailure: true });
+    await waitForLaunchdUnloaded(spec, status.pid);
     await rm(plistPath, { force: true });
     console.log(`${spec.id}: uninstalled launchd ${launchdLabel(spec)}`);
   } else {
@@ -76,7 +81,7 @@ export async function startLaunchdService(spec: ServiceSpec): Promise<LaunchdSta
     const invocation = launchdActionInvocation(action, spec, plistPath);
     await launchctl(invocation.args, invocation.options);
   }
-  const next = await launchdServiceStatus(spec);
+  const next = await waitForLaunchdRunning(spec);
   const pidPart = next.pid !== undefined ? ` pid ${next.pid}` : '';
   console.log(`${spec.id}: started launchd ${launchdLabel(spec)}${pidPart} log ${serviceLogPath(spec)}`);
   return next;
@@ -94,6 +99,7 @@ export async function stopLaunchdService(spec: ServiceSpec): Promise<void> {
     for (const action of actions) {
       const invocation = launchdActionInvocation(action, spec, launchdPlistPath(spec));
       await launchctl(invocation.args, invocation.options);
+      if (action === 'bootout') await waitForLaunchdUnloaded(spec, status.pid);
     }
     console.log(`${spec.id}: stopped launchd ${launchdLabel(spec)}`);
   } else {
@@ -198,6 +204,48 @@ export function parseLaunchdRuntime(result: { status: number | null; stdout: str
 async function readLaunchdRuntime(spec: ServiceSpec): Promise<{ loaded: boolean; pid?: number }> {
   const output = await launchctl(['print', launchdServiceTarget(spec)], { allowFailure: true });
   return parseLaunchdRuntime(output);
+}
+
+async function waitForLaunchdUnloaded(spec: ServiceSpec, previousPid?: number): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  let last = await launchdServiceStatus(spec);
+  while (last.loaded || (previousPid !== undefined && await isPidRunning(previousPid))) {
+    if (Date.now() >= deadline) {
+      const pidPart = last.pid !== undefined ? ` pid ${last.pid}` : '';
+      const previousPart = previousPid !== undefined && await isPidRunning(previousPid)
+        ? `; previous pid ${previousPid} still running`
+        : '';
+      throw new Error(`${spec.id}: launchd ${launchdLabel(spec)} did not unload after bootout${pidPart}${previousPart}`);
+    }
+    await sleep(100);
+    last = await launchdServiceStatus(spec);
+  }
+}
+
+async function waitForLaunchdRunning(spec: ServiceSpec): Promise<LaunchdStatus> {
+  const deadline = Date.now() + 10_000;
+  let last = await launchdServiceStatus(spec);
+  while (!last.running) {
+    if (Date.now() >= deadline) {
+      throw new Error(`${spec.id}: launchd ${launchdLabel(spec)} did not report a running pid after start`);
+    }
+    await sleep(100);
+    last = await launchdServiceStatus(spec);
+  }
+  return last;
+}
+
+async function isPidRunning(pid: number): Promise<boolean> {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
 
 function launchdDomainTarget(): string {
