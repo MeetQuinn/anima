@@ -41,8 +41,17 @@ export function composeChannelList(input: {
   memberChannels: MemberChannel[];
   subscriptions: SubscriptionRecord[];
   messages: AgentMessageRecord[];
+  // True when the authoritative `is_member` lookup succeeded (the happy path).
+  // Then a Slack *channel* row must be backed by real membership; a stale
+  // followed/muted subscription for a channel the agent was removed from must
+  // NOT appear. When false (membership lookup degraded), subscription-derived
+  // rows are kept as a best-effort fallback under `membershipPartial`. DMs are
+  // exempt either way (1:1 IMs have no `is_member` concept). Defaults to true.
+  membershipComplete?: boolean;
   nowMs?: number;
 }): AgentChannelListResponse {
+  const membershipComplete = input.membershipComplete ?? true;
+  const memberIds = new Set(input.memberChannels.map((channel) => channel.id));
   const map = attentionMapForSubscriptions({
     memberChannels: input.memberChannels,
     subscriptions: input.subscriptions,
@@ -52,6 +61,18 @@ export function composeChannelList(input: {
   const byId = new Map<string, AgentChannelSummary>();
   for (const channel of map.channels) {
     if (isFeishuChatId(channel.channelId)) continue; // Slack only in v1
+    // Honesty bar: on a successful membership lookup, channel rows come from
+    // real `is_member` data only. attentionMapForSubscriptions unions in every
+    // kind:'channel' subscription (correct for the inbox feature, a leak here),
+    // so drop channel-kind rows with no member backing. DMs (D-prefix) pass
+    // through; they are folded from message history, not membership.
+    if (
+      membershipComplete &&
+      kindForChannelId(channel.channelId) === 'channel' &&
+      !memberIds.has(channel.channelId)
+    ) {
+      continue;
+    }
     byId.set(channel.channelId, {
       id: channel.channelId,
       ...(channel.channelName ? { name: channel.channelName } : {}),
@@ -113,6 +134,7 @@ export async function buildAgentChannelList(agentId: string): Promise<AgentChann
     memberChannels: memberResult.channels,
     subscriptions,
     messages: page.entries,
+    membershipComplete: !memberResult.degraded,
   });
   return memberResult.degraded ? { ...list, membershipPartial: true } : list;
 }

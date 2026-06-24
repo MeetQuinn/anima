@@ -7,6 +7,7 @@ const distTestsDir = 'dist/server/tests';
 
 const groups = {
   unit: [
+    'agent-channels.test.js',
     'agent-config.test.js',
     'agent-seed-memory.test.js',
     'config.test.js',

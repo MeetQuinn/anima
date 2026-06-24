@@ -117,13 +117,45 @@ test('a DM muted as a subscription still renders with kind dm (D-prefix)', () =>
 
 test('channels are sorted by most recent activity, undated last', () => {
   const res = composeChannelList({
-    memberChannels: [{ id: 'C1', name: 'aaa' }],
+    memberChannels: [
+      { id: 'C1', name: 'aaa' },
+      { id: 'C2', name: 'bbb' },
+    ],
     subscriptions: [channelSub({ channelId: 'C2', lastActivityAt: '2026-06-22T00:00:00.000Z' })],
     messages: [dmMessage({ channelId: 'D9', timestamp: '2026-06-24T00:00:00.000Z', dmHandle: 'z' })],
   });
   assert.deepEqual(
     res.channels.map((c) => c.id),
     ['D9', 'C2', 'C1'],
+  );
+});
+
+test('on a successful member lookup, a subscription-only channel (not a member) is dropped', () => {
+  const res = composeChannelList({
+    memberChannels: [{ id: 'C1', name: 'prod' }],
+    subscriptions: [
+      // Stale follow/mute on a channel the agent was removed from.
+      channelSub({ channelId: 'C2', mutedAt: '2026-06-21T00:00:00.000Z' }),
+    ],
+    messages: [],
+    membershipComplete: true,
+  });
+  assert.deepEqual(
+    res.channels.map((c) => c.id),
+    ['C1'],
+  );
+});
+
+test('when membership degrades, subscription-derived channels survive as fallback', () => {
+  const res = composeChannelList({
+    memberChannels: [],
+    subscriptions: [channelSub({ channelId: 'C2', lastActivityAt: '2026-06-22T00:00:00.000Z' })],
+    messages: [],
+    membershipComplete: false,
+  });
+  assert.deepEqual(
+    res.channels.map((c) => c.id),
+    ['C2'],
   );
 });
 
