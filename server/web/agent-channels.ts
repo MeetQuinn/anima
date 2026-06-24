@@ -1,5 +1,5 @@
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
-import { memberChannelsForAgent, type MemberChannel } from '../inbox/member-channels.js';
+import { memberChannelsResultForAgent, type MemberChannel } from '../inbox/member-channels.js';
 import {
   attentionMapForSubscriptions,
   listSubscriptionsForAgent,
@@ -36,7 +36,7 @@ function laterOf(a: string | undefined, b: string | undefined): string | undefin
 
 // Pure composition: given the agent's real member channels, subscription
 // records, and a slice of message history, produce the Slack-only channel +
-// DM list sorted by most recent activity. No IO — directly unit-testable.
+// DM list sorted by most recent activity. No IO, so directly unit-testable.
 export function composeChannelList(input: {
   memberChannels: MemberChannel[];
   subscriptions: SubscriptionRecord[];
@@ -98,14 +98,21 @@ export function composeChannelList(input: {
 }
 
 // IO wrapper: fetch the three inputs in parallel, then compose. Returns an empty
-// list (never throws) when the agent has no Slack access — member lookup already
-// degrades to [] internally.
+// list (never throws) when the agent has no Slack access. When the authoritative
+// membership lookup FAILED (token present but Slack errored), flags
+// `membershipPartial` so the UI can signal the list may be missing silent member
+// channels rather than silently under-reporting.
 export async function buildAgentChannelList(agentId: string): Promise<AgentChannelListResponse> {
   const agent = await defaultAgentRegistryService.serviceFor(agentId).getConfig();
-  const [subscriptions, memberChannels, page] = await Promise.all([
+  const [subscriptions, memberResult, page] = await Promise.all([
     listSubscriptionsForAgent(agentId),
-    memberChannelsForAgent(agent),
+    memberChannelsResultForAgent(agent),
     messageServiceForAgent(agentId).list({ limit: DM_SCAN_LIMIT }),
   ]);
-  return composeChannelList({ memberChannels, subscriptions, messages: page.entries });
+  const list = composeChannelList({
+    memberChannels: memberResult.channels,
+    subscriptions,
+    messages: page.entries,
+  });
+  return memberResult.degraded ? { ...list, membershipPartial: true } : list;
 }

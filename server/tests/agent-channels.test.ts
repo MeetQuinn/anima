@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { composeChannelList } from '../web/agent-channels.js';
+import { memberChannelsResultForAgent } from '../inbox/member-channels.js';
 import type { SubscriptionRecord } from '../inbox/slack-subscription.service.js';
 import type { AgentMessageRecord } from '../../shared/messages.js';
 
@@ -124,4 +125,9 @@ test('channels are sorted by most recent activity, undated last', () => {
     res.channels.map((c) => c.id),
     ['D9', 'C2', 'C1'],
   );
+});
+
+test('memberChannelsResultForAgent: no Slack token is legitimately empty, not degraded', async () => {
+  const res = await memberChannelsResultForAgent({ id: 'a1' });
+  assert.deepEqual(res, { channels: [], degraded: false });
 });

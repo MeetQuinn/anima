@@ -86,4 +86,9 @@ export interface AgentChannelSummary {
 
 export interface AgentChannelListResponse {
   channels: AgentChannelSummary[];
+  // True when the authoritative Slack membership lookup failed, so `channels`
+  // is derived only from subscription + message history and may be missing
+  // silent member channels. The UI surfaces this as a "list may be incomplete"
+  // signal rather than silently under-reporting. Absent/false on the happy path.
+  membershipPartial?: boolean;
 }

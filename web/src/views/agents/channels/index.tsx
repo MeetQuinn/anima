@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { AtSign, BellOff, ChevronLeft, Hash, Loader2 } from 'lucide-react';
+import { AlertTriangle, AtSign, BellOff, ChevronLeft, Hash, Loader2 } from 'lucide-react';
 import { fetchAgentChannels, fetchAgentMessages } from '@/api/agents';
 import { buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
 import { clockHM, dateKey, formatRelativeShort } from '@/lib/format';
@@ -101,7 +101,7 @@ function DirPill({ dir, onChange }: { dir: Dir; onChange: (v: Dir) => void }) {
 }
 
 // ---------------------------------------------------------------------------
-// Detail pane — one channel's conversation. Reuses the Activity message rows
+// Detail pane: one channel's conversation. Reuses the Activity message rows
 // and feed builder; filters the global message feed to the selected channel
 // (server has no per-channel route in v1; client-side filter per spec).
 // ---------------------------------------------------------------------------
@@ -254,7 +254,7 @@ function ConversationPane({
 }
 
 // ---------------------------------------------------------------------------
-// Channels view — master-detail. Selected channel lives in the URL (?c=) so the
+// Channels view: master-detail. Selected channel lives in the URL (?c=) so the
 // browser back button drives the mobile list↔detail drill for free.
 // ---------------------------------------------------------------------------
 
@@ -302,7 +302,7 @@ export default function Channels() {
 
   return (
     <div className="flex h-full overflow-hidden bg-surface">
-      {/* Master list — full width on mobile, hidden once a channel is open */}
+      {/* Master list: full width on mobile, hidden once a channel is open */}
       <aside
         className={[
           'w-full shrink-0 flex-col overflow-y-auto border-border-soft md:flex md:w-80 md:border-r',
@@ -314,6 +314,15 @@ export default function Channels() {
             Channels &amp; DMs
           </span>
         </div>
+        {data?.membershipPartial && (
+          <div className="flex shrink-0 items-start gap-1.5 border-b border-border-soft bg-health-error/5 px-4 py-2">
+            <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0 text-health-error" aria-hidden />
+            <p className="font-sans text-[11px] leading-snug text-text-muted">
+              Couldn&apos;t reach Slack. Showing subscription history only, so this
+              list may be missing silent member channels.
+            </p>
+          </div>
+        )}
         {error ? (
           <p className="px-4 py-4 font-mono text-[11px] text-health-error">Could not load channels</p>
         ) : isLoading ? (
@@ -337,7 +346,7 @@ export default function Channels() {
         )}
       </aside>
 
-      {/* Detail — hidden on mobile until a channel is selected */}
+      {/* Detail: hidden on mobile until a channel is selected */}
       <section
         className={[
           'min-w-0 flex-1 flex-col overflow-hidden',
