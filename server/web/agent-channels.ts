@@ -1,5 +1,7 @@
+import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { memberChannelsResultForAgent, type MemberChannel } from '../inbox/member-channels.js';
+import { SlackProfileResolver } from '../inbox/slack-profiles.js';
 import {
   attentionMapForSubscriptions,
   listSubscriptionsForAgent,
@@ -136,5 +138,46 @@ export async function buildAgentChannelList(agentId: string): Promise<AgentChann
     messages: page.entries,
     membershipComplete: !memberResult.degraded,
   });
+
+  // Decorate DM rows with the counterpart's Slack avatar (best-effort).
+  const dmUserByChannel = new Map<string, string>();
+  for (const message of page.entries) {
+    if (message.channelKind === 'dm' && message.channelId && message.dmUserId) {
+      dmUserByChannel.set(message.channelId, message.dmUserId);
+    }
+  }
+  const avatars = await dmAvatarsForAgent(agent, dmUserByChannel);
+  for (const channel of list.channels) {
+    if (channel.kind === 'dm') {
+      const avatarUrl = avatars.get(channel.id);
+      if (avatarUrl) channel.avatarUrl = avatarUrl;
+    }
+  }
+
   return memberResult.degraded ? { ...list, membershipPartial: true } : list;
+}
+
+// Resolve DM counterpart avatars via the cached Slack users.info path. Purely
+// decorative: any failure (no token, Slack error) yields an empty map so the
+// channel list still renders, just without DM avatars.
+async function dmAvatarsForAgent(
+  agent: { id: string; slack?: { botToken?: string; teamId?: string } },
+  dmUserByChannel: Map<string, string>,
+): Promise<Map<string, string>> {
+  const avatars = new Map<string, string>();
+  if (!agent.slack?.botToken || dmUserByChannel.size === 0) return avatars;
+  try {
+    const client = await agentSlackServiceForAgent(agent.id).getWebClient();
+    const teamId = agent.slack.teamId ?? '';
+    const resolver = new SlackProfileResolver();
+    await Promise.all(
+      [...dmUserByChannel].map(async ([channelId, userId]) => {
+        const profile = await resolver.user({ client, teamId, userId });
+        if (profile?.avatarUrl) avatars.set(channelId, profile.avatarUrl);
+      }),
+    );
+  } catch {
+    // Decorative only: never let an avatar lookup break the channel list.
+  }
+  return avatars;
 }

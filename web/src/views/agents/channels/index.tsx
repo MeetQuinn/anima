@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { AlertTriangle, AtSign, BellOff, ChevronLeft, Hash, Loader2 } from 'lucide-react';
+import { AlertTriangle, BellOff, ChevronLeft, Loader2 } from 'lucide-react';
 import { fetchAgentChannels, fetchAgentMessages } from '@/api/agents';
 import { buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
 import { clockHM, dateKey, formatRelativeShort } from '@/lib/format';
@@ -13,10 +13,41 @@ import type { AgentChannelSummary, AgentMessageRecord } from '@shared/messages';
 
 type Dir = 'all' | 'in' | 'out';
 
-function channelLabel(channel: AgentChannelSummary): string {
-  const fallback = channel.id;
-  const name = channel.name ?? fallback;
-  return channel.kind === 'dm' ? `@${name}` : `#${name}`;
+// Channel/DM title: a channel shows its `#` flush against the name (one token);
+// a DM shows the bare handle (its avatar carries the "person" signal).
+function ChannelTitle({ channel }: { channel: AgentChannelSummary }) {
+  const name = channel.name ?? channel.id;
+  if (channel.kind === 'dm') return <>{name}</>;
+  return (
+    <>
+      <span className="text-text-subtle">#</span>
+      {name}
+    </>
+  );
+}
+
+// DM counterpart avatar, with an initial-letter fallback when Slack has no image.
+function DmAvatar({ channel, size = 'sm' }: { channel: AgentChannelSummary; size?: 'sm' | 'md' }) {
+  const dim = size === 'md' ? 'h-6 w-6' : 'h-5 w-5';
+  const initial = (channel.name ?? channel.id).trim().slice(0, 1).toUpperCase() || '?';
+  if (channel.avatarUrl) {
+    return (
+      <img
+        src={channel.avatarUrl}
+        alt=""
+        className={`${dim} shrink-0 rounded-full object-cover`}
+        loading="lazy"
+      />
+    );
+  }
+  return (
+    <span
+      className={`${dim} flex shrink-0 items-center justify-center rounded-full bg-surface-raised text-[10px] font-medium text-text-subtle`}
+      aria-hidden
+    >
+      {initial}
+    </span>
+  );
 }
 
 function isMessageItem(item: ActivityFeedItem): boolean {
@@ -43,7 +74,6 @@ function ChannelRow({
   now: Date;
   onSelect: () => void;
 }) {
-  const Icon = channel.kind === 'dm' ? AtSign : Hash;
   return (
     <button
       type="button"
@@ -55,13 +85,10 @@ function ChannelRow({
           : 'border-transparent hover:bg-surface-raised/40',
       ].join(' ')}
     >
-      <Icon
-        className={['h-3.5 w-3.5 shrink-0', active ? 'text-accent' : 'text-text-subtle'].join(' ')}
-        aria-hidden
-      />
+      {channel.kind === 'dm' && <DmAvatar channel={channel} />}
       <span className="min-w-0 flex-1">
         <span className="block truncate font-sans text-[13px] leading-tight text-text">
-          {channel.name ?? channel.id}
+          <ChannelTitle channel={channel} />
         </span>
         {channel.lastActivityAt && (
           <span className="block font-sans text-[10px] leading-tight text-text-subtle">
@@ -181,13 +208,9 @@ function ConversationPane({
         >
           <ChevronLeft className="h-4 w-4" aria-hidden />
         </button>
-        {channel.kind === 'dm' ? (
-          <AtSign className="h-3.5 w-3.5 shrink-0 text-text-subtle" aria-hidden />
-        ) : (
-          <Hash className="h-3.5 w-3.5 shrink-0 text-text-subtle" aria-hidden />
-        )}
+        {channel.kind === 'dm' && <DmAvatar channel={channel} size="md" />}
         <span className="min-w-0 flex-1 truncate font-sans text-[13px] font-medium text-text">
-          {channelLabel(channel)}
+          <ChannelTitle channel={channel} />
         </span>
         {channel.status === 'muted' && (
           <span className="chrome inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.1em] text-text-subtle">
@@ -273,6 +296,23 @@ export default function Channels() {
 
   const channels = data?.channels ?? [];
   const selected = channels.find((c) => c.id === selectedId);
+  const firstChannelId = channels[0]?.id;
+
+  // On desktop, auto-open the most recent channel (the list is sorted by recency)
+  // instead of resting on the empty state. Mobile keeps the list-first drill so
+  // the membership list, the whole point of the tab, is what you land on.
+  useEffect(() => {
+    if (selectedId || !firstChannelId) return;
+    if (!window.matchMedia('(min-width: 768px)').matches) return;
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('c', firstChannelId);
+        return next;
+      },
+      { replace: true },
+    );
+  }, [selectedId, firstChannelId, setSearchParams]);
 
   function select(id: string | null) {
     setSearchParams(
@@ -305,7 +345,7 @@ export default function Channels() {
       {/* Master list: full width on mobile, hidden once a channel is open */}
       <aside
         className={[
-          'w-full shrink-0 flex-col overflow-y-auto border-border-soft md:flex md:w-80 md:border-r',
+          'w-full shrink-0 flex-col overflow-y-auto border-border-soft md:flex md:w-64 md:border-r',
           selected ? 'hidden md:flex' : 'flex',
         ].join(' ')}
       >

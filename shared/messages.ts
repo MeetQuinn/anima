@@ -82,6 +82,9 @@ export interface AgentChannelSummary {
   status: 'following' | 'muted';
   lastActivityAt?: string;
   lastPostedAt?: string;
+  // DM only: the counterpart's Slack avatar (image_72), best-effort. Absent when
+  // the lookup is unavailable; the UI falls back to an initial placeholder.
+  avatarUrl?: string;
 }
 
 export interface AgentChannelListResponse {
