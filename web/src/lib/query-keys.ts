@@ -10,6 +10,7 @@ export const queryKeys = {
   agentStatuses: () => ['agent-statuses'] as const,
   agentActivities: (agentId: string) => ['agent-activities', agentId] as const,
   agentMessages: (agentId: string, dir: string) => ['agent-messages', agentId, dir] as const,
+  agentChannels: (agentId: string) => ['agent-channels', agentId] as const,
   agentReminders: (agentId: string) => ['reminders', agentId] as const,
   agentSessions: (agentId: string) => ['agent-session', agentId] as const,
   agentSession: (agentId: string, currentItemId?: string) =>

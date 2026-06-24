@@ -18,6 +18,7 @@ export interface SlackConversationProfile {
 }
 
 export interface SlackUserProfile {
+  avatarUrl?: string;
   displayName?: string;
   handle?: string;
   realName?: string;
@@ -168,8 +169,10 @@ function normalizeSlackUserProfile(
 ): SlackUserProfile {
   const realName = user?.profile?.real_name?.trim() || user?.real_name?.trim() || undefined;
   const handle = user?.name?.trim() || undefined;
+  const avatarUrl = user?.profile?.image_72?.trim() || undefined;
   const timezone = slackUserTimezone(user);
   return {
+    ...(avatarUrl ? { avatarUrl } : {}),
     displayName: user?.profile?.display_name?.trim() || realName || handle || userId,
     handle,
     realName,

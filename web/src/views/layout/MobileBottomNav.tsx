@@ -1,9 +1,10 @@
-import { MessageSquare, Bell, User } from 'lucide-react';
+import { MessageSquare, Hash, Bell, User } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { parseLocation, AGENT_TABS, DEFAULT_TAB, type AgentTab } from '@/lib/url-state';
 
 const NAV: { id: AgentTab; label: string; Icon: React.ElementType }[] = [
   { id: 'activity', label: 'Activity', Icon: MessageSquare },
+  { id: 'channels', label: 'Channels', Icon: Hash },
   { id: 'reminders', label: 'Reminders', Icon: Bell },
   { id: 'profile', label: 'Profile', Icon: User },
 ];

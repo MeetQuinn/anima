@@ -19,7 +19,11 @@ import type { Reminder } from '@shared/reminder';
 import type { Activity, AgentActivityFeedEvent, AgentActivityFeedPage } from '@shared/activity';
 import type { AgentDiagnosticsBundle } from '@shared/diagnostics';
 import type { InboxItem } from '@shared/inbox';
-import type { AgentMessageDirection, AgentMessageHistoryPage } from '@shared/messages';
+import type {
+  AgentChannelListResponse,
+  AgentMessageDirection,
+  AgentMessageHistoryPage,
+} from '@shared/messages';
 import type {
   AgentSessionSummary,
   AgentStatusSummary,
@@ -272,6 +276,14 @@ export async function fetchAgentMessages(
   if (input.direction) params.set('direction', input.direction);
   return apiRequest<AgentMessageHistoryPage>(
     `/api/agents/${encodeURIComponent(agentId)}/messages?${params.toString()}`,
+  );
+}
+
+// Channels tab: the Slack channels + DMs the agent is a member of (membership is
+// authoritative `is_member`, includes muted + silent; DMs folded from history).
+export async function fetchAgentChannels(agentId: string): Promise<AgentChannelListResponse> {
+  return apiRequest<AgentChannelListResponse>(
+    `/api/agents/${encodeURIComponent(agentId)}/subscriptions`,
   );
 }
 

@@ -67,3 +67,31 @@ export interface AgentMessageHistoryPage {
   entries: AgentMessageRecord[];
   nextCursor?: string | null;
 }
+
+// Channels tab: the channels + DMs an agent is a member of. Channel membership
+// is real (`is_member` from Slack), not message-derived; DMs are folded from
+// message history since a 1:1 conversation has no Slack "membership" concept.
+// Slack only in v1.
+export type AgentChannelKind = 'channel' | 'dm';
+
+export interface AgentChannelSummary {
+  id: string;
+  name?: string;
+  platform: 'slack';
+  kind: AgentChannelKind;
+  status: 'following' | 'muted';
+  lastActivityAt?: string;
+  lastPostedAt?: string;
+  // DM only: the counterpart's Slack avatar (image_72), best-effort. Absent when
+  // the lookup is unavailable; the UI falls back to an initial placeholder.
+  avatarUrl?: string;
+}
+
+export interface AgentChannelListResponse {
+  channels: AgentChannelSummary[];
+  // True when the authoritative Slack membership lookup failed, so `channels`
+  // is derived only from subscription + message history and may be missing
+  // silent member channels. The UI surfaces this as a "list may be incomplete"
+  // signal rather than silently under-reporting. Absent/false on the happy path.
+  membershipPartial?: boolean;
+}
