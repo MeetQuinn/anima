@@ -13,6 +13,7 @@ import { useActivityFilters, type ActivityLens, type ActivityDir } from '@/hooks
 
 const TABS: { id: AgentTab; label: string }[] = [
   { id: 'activity', label: 'Activity' },
+  { id: 'channels', label: 'Channels' },
   { id: 'profile', label: 'Profile' },
   { id: 'reminders', label: 'Reminders' },
 ];

@@ -45,6 +45,10 @@ export const router = createBrowserRouter([
             lazy: () => import('./views/agents/activity').then((m) => ({ Component: m.default })),
           },
           {
+            path: 'channels',
+            lazy: () => import('./views/agents/channels').then((m) => ({ Component: m.default })),
+          },
+          {
             path: 'profile',
             lazy: () => import('./views/agents/profile').then((m) => ({ Component: m.default })),
           },

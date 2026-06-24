@@ -4,13 +4,13 @@ import { z } from 'zod';
 import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { resolveAgentIdFrom } from '../cli/shared.js';
+import { memberChannelsForAgent } from '../inbox/member-channels.js';
 import {
   attentionMapForSubscriptions,
   listSubscriptionsForAgent,
   muteSubscriptionForAgent,
   type SubscriptionRecord,
 } from '../inbox/slack-subscription.service.js';
-import { SlackWorkspaceDirectoryService } from '../slack/workspace-directory.service.js';
 import { normalizeChatTargetOptions } from './chat-target-options.js';
 import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
 
@@ -147,24 +147,6 @@ function isFeishuChatId(channel: string): boolean {
 function subscriptionChannelRef(channel: { channelId: string; channelName?: string }): string {
   if (isFeishuChatId(channel.channelId) && !channel.channelName) return `feishu chat_id=${channel.channelId}`;
   return `channel=${channel.channelName ? `#${channel.channelName}` : channel.channelId}`;
-}
-
-async function memberChannelsForAgent(agent: { id: string; slack?: { botToken?: string; teamId?: string } }): Promise<Array<{ id: string; name?: string }>> {
-  if (!agent.slack?.botToken) return [];
-  try {
-    const client = await agentSlackServiceForAgent(agent.id).getWebClient();
-    const channels = await new SlackWorkspaceDirectoryService({
-      client,
-      teamId: agent.slack.teamId,
-    }).getMemberConversations();
-    return channels.flatMap((channel) => {
-      if (!channel.id) return [];
-      const name = channel.name_normalized?.trim() || channel.name?.trim();
-      return [{ id: channel.id, ...(name ? { name } : {}) }];
-    });
-  } catch {
-    return [];
-  }
 }
 
 function threadLine(sub: SubscriptionRecord): string {

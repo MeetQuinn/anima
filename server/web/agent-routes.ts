@@ -7,6 +7,7 @@ import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { buildAgentDiagnostics } from '../diagnostics/agent-diagnostics.service.js';
 import { defaultRuntimeService } from '../runtime/runtime.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
+import { buildAgentChannelList } from './agent-channels.js';
 import { reminderServiceForAgent } from '../reminders/reminder.service.js';
 import {
   AgentCreateRequest,
@@ -129,6 +130,13 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
       const direction = rawDirection === 'in' || rawDirection === 'out' ? rawDirection : undefined;
       return messageServiceForAgent(request.params.agentId).list({ before, direction, limit, since });
     },
+  );
+  // Channels tab: the Slack channels + DMs the agent is a member of. Channel
+  // membership is authoritative (`is_member`, includes muted + silent); DMs are
+  // folded from message history. See server/web/agent-channels.ts.
+  fastify.get<{ Params: { agentId: string } }>(
+    '/api/agents/:agentId/subscriptions',
+    async (request) => buildAgentChannelList(request.params.agentId),
   );
 
   // -------------------------------------------------------------------------

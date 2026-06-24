@@ -5,9 +5,9 @@
 
 import { agentHasConnectedTransport } from './agent-transports.js';
 
-export type AgentTab = 'activity' | 'profile' | 'reminders';
+export type AgentTab = 'activity' | 'channels' | 'profile' | 'reminders';
 
-export const AGENT_TABS: readonly AgentTab[] = ['activity', 'profile', 'reminders'] as const;
+export const AGENT_TABS: readonly AgentTab[] = ['activity', 'channels', 'profile', 'reminders'] as const;
 export const DEFAULT_TAB: AgentTab = 'activity';
 
 export interface UrlLocation {

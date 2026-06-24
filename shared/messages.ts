@@ -67,3 +67,23 @@ export interface AgentMessageHistoryPage {
   entries: AgentMessageRecord[];
   nextCursor?: string | null;
 }
+
+// Channels tab: the channels + DMs an agent is a member of. Channel membership
+// is real (`is_member` from Slack), not message-derived; DMs are folded from
+// message history since a 1:1 conversation has no Slack "membership" concept.
+// Slack only in v1.
+export type AgentChannelKind = 'channel' | 'dm';
+
+export interface AgentChannelSummary {
+  id: string;
+  name?: string;
+  platform: 'slack';
+  kind: AgentChannelKind;
+  status: 'following' | 'muted';
+  lastActivityAt?: string;
+  lastPostedAt?: string;
+}
+
+export interface AgentChannelListResponse {
+  channels: AgentChannelSummary[];
+}
