@@ -46,6 +46,7 @@ that pinned runtime:
 ```bash
 curl -fsSL https://anima.meetquinn.ai/install.sh | sh
 npx -y @meetquinn/animactl@latest start # first start on stable/latest
+npx -y @meetquinn/animactl@latest install-services # optional: install macOS launchd services
 npx -y @meetquinn/animactl@latest dashboard # launch the local dashboard
 npx -y @meetquinn/animactl@latest restart # command-line upgrade to stable/latest
 npx -y @meetquinn/animactl@canary restart # opt in to the prerelease restart path
@@ -58,7 +59,9 @@ the `latest` npm dist-tag for `@meetquinn/animactl`. `start` is the first-run pa
 stopped services. If `start` installs a newer managed runtime over an existing install, it promotes
 the service action to a drain-and-resume restart so already-running services do not keep serving the
 old version. On an interactive desktop it launches the dashboard automatically; use `--no-browser`
-for headless scripts. `dashboard` launches the current home's dashboard without starting services.
+for headless scripts. `install-services` installs OS-managed services from the pinned managed
+runtime; on macOS those services are launchd LaunchAgents with explicit service env/PATH,
+`RunAtLoad`, and `KeepAlive`. `dashboard` launches the current home's dashboard without starting services.
 `restart` is the explicit command-line upgrade path: it installs the package version selected by
 `npx` into `~/.anima/runtime/current`, then restarts services with drain-and-resume. Docs use
 `@latest` explicitly because the installer does not add `animactl` to the user's `PATH`. Use

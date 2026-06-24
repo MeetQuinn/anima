@@ -8,12 +8,17 @@ to inspect or directly control the local daemons behind an Anima home.
 home selected by `ANIMA_HOME`, or the default managed home `~/.anima` when `ANIMA_HOME` is unset.
 Anima records the visible runtime track (`dev`, `canary`, or `stable`) in that home's config; the
 track is shown in the dashboard so operators can tell which kind of runtime they are looking at.
+On macOS, `animactl services install` installs launchd LaunchAgents for the selected home. Once
+installed, `services start`, `stop`, `restart`, and `status` use launchd for those services. Homes
+without installed LaunchAgents keep using Anima's detached pid-file supervisor, which remains useful
+for source development and CI.
 
 For managed installs, operators normally drive the runtime with the public commands:
 
 ```bash
 curl -fsSL https://anima.meetquinn.ai/install.sh | sh
 npx -y @meetquinn/animactl@latest dashboard
+npx -y @meetquinn/animactl@latest install-services # optional: install launchd services on macOS
 npx -y @meetquinn/animactl@latest restart
 npx -y @meetquinn/animactl@latest status
 npx -y @meetquinn/animactl@latest stop
@@ -45,7 +50,26 @@ The agent service auto-starts newly runnable Slack-connected agents. Restart ser
 ANIMA_HOME=<path> npx -y @meetquinn/animactl@latest services status
 ```
 
-Status output includes each service id (`agent` / `web`), pid if running, web URL when relevant, and log path.
+Status output includes each service id (`agent` / `web`), pid if running, `launchd` when the service
+is OS-managed, web URL when relevant, and log path.
+
+## Install OS Services
+
+```bash
+ANIMA_HOME=<path> npx -y @meetquinn/animactl@latest install-services
+```
+
+On macOS this installs the selected package into that home's managed runtime directory, then writes
+LaunchAgent plists under `~/Library/LaunchAgents`, with `RunAtLoad` and `KeepAlive` enabled. The
+generated service environment is explicit because launchd does not load shell startup files. It
+includes the selected `ANIMA_HOME`, a durable `PATH` with Anima's runtime, local provider bins such
+as `~/.local/bin` and `~/.kimi-code/bin`, Homebrew locations, and system directories. It
+intentionally does not copy temporary provider/Codex shell paths or in-flight `ANIMA_*` item context.
+
+Use `--only agent` or `--only web` to install one service. Use `uninstall-services` to remove the
+LaunchAgent plists and return that home to pid-file supervision on the next start. The lower-level
+`animactl services install` command exists for the pinned runtime/admin CLI; avoid running that
+lower-level command from a transient `npx` cache because the generated plist records the CLI path.
 
 ## Restart
 
@@ -79,4 +103,5 @@ Logs live under the selected Anima home:
 - `$ANIMA_HOME/logs/agent.log`
 - `$ANIMA_HOME/logs/web.log`
 
-Pid files live under `$ANIMA_HOME/run/{agent,web}.pid`.
+Pid files live under `$ANIMA_HOME/run/{agent,web}.pid` for homes that have not installed OS-managed
+services. Launchd-managed services are inspected through `launchctl`, not pid files.

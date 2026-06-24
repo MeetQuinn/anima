@@ -3,6 +3,14 @@ import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/prom
 import { join } from 'node:path';
 
 import { cleanServiceEnv } from './env.js';
+import {
+  installLaunchdService,
+  launchdServiceInstalled,
+  launchdServiceStatus,
+  startLaunchdService,
+  stopLaunchdService,
+  uninstallLaunchdService,
+} from './launchd.js';
 
 export interface ServiceSpec {
   args: string[];
@@ -20,6 +28,7 @@ export interface ServiceSpec {
 interface ServiceStatusEntry {
   id: string;
   logPath: string;
+  manager?: 'launchd' | 'pid';
   pid?: number;
   status: 'running' | 'stopped';
   url?: string;
@@ -36,6 +45,15 @@ const LOG_ROTATE_BYTES = 20 * 1024 * 1024;
 const LOG_ROTATE_KEEP = 5;
 
 export async function startService(spec: ServiceSpec, options: SupervisorOptions): Promise<ServiceStatusEntry> {
+  if (await launchdServiceInstalled(spec)) {
+    const status = await startLaunchdService(spec);
+    return statusEntry(spec, {
+      manager: 'launchd',
+      pid: status.pid,
+      status: status.running ? 'running' : 'stopped',
+    });
+  }
+
   const existing = await runningPid(spec);
   if (existing) {
     console.log(`${spec.id}: already running pid ${existing}`);
@@ -66,6 +84,11 @@ export async function startService(spec: ServiceSpec, options: SupervisorOptions
 }
 
 export async function stopService(spec: ServiceSpec): Promise<void> {
+  if (await launchdServiceInstalled(spec)) {
+    await stopLaunchdService(spec);
+    return;
+  }
+
   const pid = await readPid(spec);
   if (pid && await isRunning(pid)) {
     await terminate(pid);
@@ -77,10 +100,30 @@ export async function stopService(spec: ServiceSpec): Promise<void> {
 }
 
 export async function isServiceRunning(spec: ServiceSpec): Promise<boolean> {
+  if (await launchdServiceInstalled(spec)) {
+    return (await launchdServiceStatus(spec)).running;
+  }
   return Boolean(await runningPid(spec));
 }
 
+export async function installService(spec: ServiceSpec, options: SupervisorOptions): Promise<void> {
+  await installLaunchdService(spec, options);
+}
+
+export async function uninstallService(spec: ServiceSpec): Promise<void> {
+  await uninstallLaunchdService(spec);
+}
+
 async function serviceStatus(spec: ServiceSpec): Promise<ServiceStatusEntry> {
+  if (await launchdServiceInstalled(spec)) {
+    const status = await launchdServiceStatus(spec);
+    return statusEntry(spec, {
+      manager: 'launchd',
+      pid: status.pid,
+      status: status.running ? 'running' : 'stopped',
+    });
+  }
+
   const pid = await runningPid(spec);
   if (pid) return statusEntry(spec, { pid, status: 'running' });
   return statusEntry(spec, { status: 'stopped' });
@@ -92,6 +135,7 @@ export async function printStatus(specs: ServiceSpec[]): Promise<void> {
     const parts = [
       entry.id,
       entry.pid !== undefined ? `running pid ${entry.pid}` : 'stopped',
+      entry.manager === 'launchd' ? 'launchd' : undefined,
       entry.url,
       `log ${entry.logPath}`,
     ].filter(Boolean);
@@ -99,10 +143,11 @@ export async function printStatus(specs: ServiceSpec[]): Promise<void> {
   }
 }
 
-function statusEntry(spec: ServiceSpec, overrides: { pid?: number; status: 'running' | 'stopped' }): ServiceStatusEntry {
+function statusEntry(spec: ServiceSpec, overrides: { manager?: 'launchd' | 'pid'; pid?: number; status: 'running' | 'stopped' }): ServiceStatusEntry {
   return {
     id: spec.id,
     logPath: serviceLogPath(spec),
+    ...(overrides.manager ? { manager: overrides.manager } : {}),
     status: overrides.status,
     ...(overrides.pid !== undefined ? { pid: overrides.pid } : {}),
     ...(spec.url ? { url: spec.url } : {}),

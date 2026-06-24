@@ -42,7 +42,7 @@ interface RuntimeCliOptions {
   verifyTimeoutMs?: number;
 }
 
-type ServiceCommand = 'restart' | 'start' | 'status' | 'stop';
+type ServiceCommand = 'install' | 'restart' | 'start' | 'status' | 'stop' | 'uninstall';
 
 interface RuntimeInstallForServiceResult {
   paths: RuntimeStatus['paths'];
@@ -174,6 +174,12 @@ function registerRuntimeCommands(program: Command, options: { topLevel: boolean 
       await runManagedServiceCommand('start', options);
     });
 
+  serviceCommand(program, 'install-services', { installable: true })
+    .description('Install OS-managed local Anima services from the managed runtime')
+    .action(async (options: RuntimeCliOptions) => {
+      await runManagedServiceCommand('install', options);
+    });
+
   serviceCommand(program, 'restart', { installable: true })
     .description('Install the managed runtime if needed, then restart local Anima services')
     .option('--drain-timeout-ms <ms>', 'How long to wait for active agents to reach a restart drain point', parseNonNegativeInteger)
@@ -187,6 +193,12 @@ function registerRuntimeCommands(program: Command, options: { topLevel: boolean 
     .description('Stop local Anima services from the managed runtime')
     .action(async (options: RuntimeCliOptions) => {
       await runManagedServiceCommand('stop', options);
+    });
+
+  serviceCommand(program, 'uninstall-services')
+    .description('Uninstall OS-managed local Anima services')
+    .action(async (options: RuntimeCliOptions) => {
+      await runManagedServiceCommand('uninstall', options);
     });
 
   if (!options.topLevel) {
@@ -261,8 +273,8 @@ function serviceCommand(runtime: Command, name: string, options: { installable?:
   if (options.installable) {
     command
       .option('--npm <command>', 'npm command to use', 'npm')
-      .option('--channel <tag>', 'npm dist-tag to install before start/restart, for example latest or canary')
-      .option('--version <version>', 'exact package version to install before start/restart')
+      .option('--channel <tag>', 'npm dist-tag to install before running the service command, for example latest or canary')
+      .option('--version <version>', 'exact package version to install before running the service command')
       .option('--skip-install', 'Use the currently installed runtime without running npm install first');
   }
   return command;
@@ -271,7 +283,7 @@ function serviceCommand(runtime: Command, name: string, options: { installable?:
 async function runManagedServiceCommand(command: ServiceCommand, options: RuntimeCliOptions): Promise<void> {
   assertServiceOptions(options);
   const packageName = options.packageName ?? DEFAULT_RUNTIME_PACKAGE;
-  const shouldInstall = (command === 'start' || command === 'restart') && !options.skipInstall;
+  const shouldInstall = (command === 'install' || command === 'start' || command === 'restart') && !options.skipInstall;
   const status = shouldInstall
     ? undefined
     : await readManagedRuntimeStatus({ packageName, runtimeDir: options.runtimeDir });
