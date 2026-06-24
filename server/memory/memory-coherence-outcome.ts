@@ -1,8 +1,12 @@
+import { createHash } from 'node:crypto';
+import { lstat, readdir, readFile, readlink } from 'node:fs/promises';
+import { join } from 'node:path';
+
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { truncateForActivity } from '../activities/format.js';
 import { errorMessage, nowIso } from '../ids.js';
 import type { MemoryCoherenceInboxItem } from '../../shared/inbox.js';
-import type { Activity, MemoryCoherenceOutcome, MemoryCoherenceOutcomePayload } from '../../shared/activity.js';
+import type { MemoryCoherenceOutcome, MemoryCoherenceOutcomePayload } from '../../shared/activity.js';
 
 export function memoryCoherenceSummary(text: string | undefined): string | undefined {
   const trimmed = (text ?? '').trim();
@@ -10,23 +14,23 @@ export function memoryCoherenceSummary(text: string | undefined): string | undef
   return truncateForActivity(trimmed);
 }
 
-export function determineMemoryCoherenceOutcome(activities: Activity[]): MemoryCoherenceOutcome {
-  const failedToolIds = new Set<string>();
-  for (const activity of activities) {
-    if (activity.type !== 'tool.call.failed') continue;
-    const id = stringPayloadField(activity, 'providerToolId');
-    if (id) failedToolIds.add(id);
-  }
-  return activities.some((activity) => isObservedEditActivity(activity, failedToolIds))
-    ? 'completed'
-    : 'quiet_skipped';
+export function determineMemoryCoherenceOutcome(memoryChanged: boolean): MemoryCoherenceOutcome {
+  return memoryChanged ? 'completed' : 'quiet_skipped';
+}
+
+export async function memoryCoherenceDigest(homePath: string): Promise<string> {
+  const hash = createHash('sha256');
+  hash.update('memory-coherence-v1\0');
+  await hashPath(hash, homePath, 'MEMORY.md');
+  await hashDirectory(hash, homePath, 'notes');
+  return hash.digest('hex');
 }
 
 export async function recordMemoryCoherenceCompleted(input: {
   agentId: string;
   completedAt?: string;
   item: MemoryCoherenceInboxItem;
-  observedActivities: Activity[];
+  memoryChanged: boolean;
   resultText?: string;
   startedAt: string;
 }): Promise<void> {
@@ -35,7 +39,7 @@ export async function recordMemoryCoherenceCompleted(input: {
   await activityServiceForAgent(input.agentId).record({
     payload: {
       ...payload,
-      outcome: determineMemoryCoherenceOutcome(input.observedActivities),
+      outcome: determineMemoryCoherenceOutcome(input.memoryChanged),
       ...(summary ? { summary } : {}),
     },
     type: 'memory_coherence.outcome',
@@ -82,30 +86,72 @@ function delayMs(startedAt: string, scheduledSlotAt: string): number {
   return Math.max(0, start - scheduled);
 }
 
-function isObservedEditActivity(activity: Activity, failedToolIds: Set<string>): boolean {
-  if (activity.type !== 'tool.call.started') return false;
-  const id = stringPayloadField(activity, 'providerToolId');
-  if (id && failedToolIds.has(id)) return false;
-  const tool = stringPayloadField(activity, 'tool')?.toLowerCase() ?? '';
-  const providerToolName = stringPayloadField(activity, 'providerToolName')?.toLowerCase() ?? '';
-  const names = [tool, providerToolName].filter(Boolean);
-  return names.some((name) => EDIT_TOOL_NAMES.has(name));
+async function hashDirectory(hash: ReturnType<typeof createHash>, homePath: string, relativePath: string): Promise<void> {
+  const fullPath = join(homePath, relativePath);
+  const stats = await safeLstat(fullPath);
+  if (!stats) {
+    hash.update(`missing-dir\0${relativePath}\0`);
+    return;
+  }
+  if (!stats.isDirectory()) {
+    await hashPath(hash, homePath, relativePath);
+    return;
+  }
+  const entries = await safeReaddir(fullPath);
+  if (!entries) {
+    hash.update(`missing-dir\0${relativePath}\0`);
+    return;
+  }
+  hash.update(`dir\0${relativePath}\0`);
+  for (const entry of entries) {
+    const child = join(relativePath, entry.name);
+    if (entry.isDirectory()) {
+      await hashDirectory(hash, homePath, child);
+    } else {
+      await hashPath(hash, homePath, child);
+    }
+  }
 }
 
-function stringPayloadField(activity: Activity, key: string): string | undefined {
-  const value = activity.payload?.[key];
-  return typeof value === 'string' ? value : undefined;
+async function hashPath(hash: ReturnType<typeof createHash>, homePath: string, relativePath: string): Promise<void> {
+  const fullPath = join(homePath, relativePath);
+  const stats = await safeLstat(fullPath);
+  if (!stats) {
+    hash.update(`missing\0${relativePath}\0`);
+    return;
+  }
+  if (stats.isSymbolicLink()) {
+    hash.update(`symlink\0${relativePath}\0${await readlink(fullPath)}\0`);
+    return;
+  }
+  if (!stats.isFile()) {
+    hash.update(`non-file\0${relativePath}\0`);
+    return;
+  }
+  hash.update(`file\0${relativePath}\0`);
+  hash.update(await readFile(fullPath));
+  hash.update('\0');
 }
 
-const EDIT_TOOL_NAMES = new Set([
-  'codex.filechange',
-  'edit',
-  'claude.edit',
-  'claude.multiedit',
-  'claude.write',
-  'multiedit',
-  'strreplacefile',
-  'write',
-  'kimi.strreplacefile',
-  'kimi.writefile',
-]);
+async function safeReaddir(path: string): Promise<Array<{ isDirectory(): boolean; name: string }> | undefined> {
+  try {
+    return (await readdir(path, { withFileTypes: true }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
+async function safeLstat(path: string): Promise<Awaited<ReturnType<typeof lstat>> | undefined> {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error;
+}

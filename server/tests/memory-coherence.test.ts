@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { AgentConfig } from '../../shared/agent-config.js';
 import type { InboxItem, MemoryCoherenceInboxItem } from '../../shared/inbox.js';
@@ -10,9 +13,9 @@ import {
 } from '../memory/memory-coherence-scheduler.js';
 import {
   determineMemoryCoherenceOutcome,
+  memoryCoherenceDigest,
   memoryCoherenceSummary,
 } from '../memory/memory-coherence-outcome.js';
-import type { Activity } from '../../shared/activity.js';
 
 test('memory coherence scheduler is off by default', async () => {
   const queues = new TestMemoryQueues();
@@ -108,28 +111,30 @@ test('memory coherence prompt uses the self-contained daily memory pass copy', (
   assert.doesNotMatch(prompt, /End your final response with exactly one status line/);
 });
 
-test('memory coherence outcome derives from observed edit activity', () => {
-  assert.equal(determineMemoryCoherenceOutcome([]), 'quiet_skipped');
-  assert.equal(
-    determineMemoryCoherenceOutcome([
-      activity('tool.call.started', { providerToolId: 'read-1', providerToolName: 'Read', tool: 'claude.Read' }),
-      activity('tool.call.started', { providerToolId: 'list-1', providerToolName: 'Glob', tool: 'claude.Glob' }),
-    ]),
-    'quiet_skipped',
-  );
-  assert.equal(
-    determineMemoryCoherenceOutcome([
-      activity('tool.call.started', { providerToolId: 'edit-1', providerToolName: 'Edit', target: 'MEMORY.md', tool: 'claude.Edit' }),
-    ]),
-    'completed',
-  );
-  assert.equal(
-    determineMemoryCoherenceOutcome([
-      activity('tool.call.started', { providerToolId: 'edit-1', providerToolName: 'Edit', target: 'MEMORY.md', tool: 'claude.Edit' }),
-      activity('tool.call.failed', { providerToolId: 'edit-1', providerToolName: 'Edit', tool: 'claude.Edit' }),
-    ]),
-    'quiet_skipped',
-  );
+test('memory coherence outcome derives from a coarse memory digest change boolean', () => {
+  assert.equal(determineMemoryCoherenceOutcome(false), 'quiet_skipped');
+  assert.equal(determineMemoryCoherenceOutcome(true), 'completed');
+});
+
+test('memory coherence digest changes when MEMORY.md or notes change', async () => {
+  const homePath = await mkdtemp(join(tmpdir(), 'anima-memory-digest-test-'));
+  try {
+    const empty = await memoryCoherenceDigest(homePath);
+    await writeFile(join(homePath, 'MEMORY.md'), '# Memory\n', 'utf8');
+    const memoryWritten = await memoryCoherenceDigest(homePath);
+    assert.notEqual(memoryWritten, empty);
+
+    await mkdir(join(homePath, 'notes'), { recursive: true });
+    await writeFile(join(homePath, 'notes', 'detail.md.tmp'), 'detail\n', 'utf8');
+    await rename(join(homePath, 'notes', 'detail.md.tmp'), join(homePath, 'notes', 'detail.md'));
+    const noteMovedIntoPlace = await memoryCoherenceDigest(homePath);
+    assert.notEqual(noteMovedIntoPlace, memoryWritten);
+
+    await writeFile(join(homePath, 'scratch.md'), 'outside scope\n', 'utf8');
+    assert.equal(await memoryCoherenceDigest(homePath), noteMovedIntoPlace);
+  } finally {
+    await rm(homePath, { force: true, recursive: true });
+  }
 });
 
 test('memory coherence summary preserves provider prose without parsing outcome markers', () => {
@@ -140,17 +145,6 @@ test('memory coherence summary preserves provider prose without parsing outcome 
   );
   assert.equal(memoryCoherenceSummary(''), undefined);
 });
-
-function activity(type: string, payload: Record<string, unknown>): Activity {
-  return {
-    activityId: `actv_${nextActivityId++}`,
-    createdAt: '2026-06-22T05:47:01.000Z',
-    payload,
-    type,
-  };
-}
-
-let nextActivityId = 1;
 
 class TestMemoryQueues {
   private readonly byAgent = new Map<string, InboxItem[]>();

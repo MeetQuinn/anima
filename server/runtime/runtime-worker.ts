@@ -6,6 +6,7 @@ import { errorMessage, nowIso } from '../ids.js';
 import { PROVIDER_IDLE_TIMEOUT_MS_DEFAULT } from '../../shared/agent-config.js';
 import type { WakeQueueService } from '../inbox/wake-queue.service.js';
 import {
+  memoryCoherenceDigest,
   recordMemoryCoherenceCompleted,
   recordMemoryCoherenceFailed,
 } from '../memory/memory-coherence-outcome.js';
@@ -18,7 +19,6 @@ import type {
 import type { InboxItem } from '../../shared/inbox.js';
 import { AgentRuntimeBridge } from './runtime-bridge.js';
 import { runtimeContextForItemId } from './context.js';
-import { activitiesForInboxItemWindow } from './item-activities.js';
 import { clearActiveRuntimeItem, setActiveRuntimeItem } from './active-item.js';
 import {
   recordRuntimeAborted,
@@ -176,6 +176,7 @@ export class AgentRuntimeWorker {
 
   private async processClaimedItem(item: InboxItem): Promise<void> {
     let context: RuntimeItemContext | undefined;
+    let memoryCoherenceBeforeDigest: string | undefined;
     let runtimeFailureRecorded = false;
     const itemAbort = new AbortController();
     const handle = this.registerActiveItem(item.id, itemAbort);
@@ -185,6 +186,7 @@ export class AgentRuntimeWorker {
     try {
       context = await runtimeContextForItemId(item.id, this.options, this.queue);
       const activeContext = context;
+      memoryCoherenceBeforeDigest = await this.memoryCoherenceDigest(context);
       followupLoop = appendQueuedFollowupsUntilFinished({
         activeContext,
         agentRuntime: this.options.agentRuntime,
@@ -256,7 +258,12 @@ export class AgentRuntimeWorker {
         state: 'healthy',
         updatedAt: nowIso(),
       });
-      await this.recordMemoryCoherenceCompleted(context, result.text, isoFromMs(handle.startedAt));
+      await this.recordMemoryCoherenceCompleted(
+        context,
+        result.text,
+        isoFromMs(handle.startedAt),
+        memoryCoherenceBeforeDigest,
+      );
       await this.queue.complete(item.id);
       await this.queue.completeAppendedTo(item.id);
       appendedFollowupsSettled = true;
@@ -344,16 +351,22 @@ export class AgentRuntimeWorker {
     context: RuntimeItemContext,
     resultText: string | undefined,
     startedAt: string,
+    beforeDigest: string | undefined,
   ): Promise<void> {
     if (context.item.kind !== 'memory_coherence') return;
-    const observedActivities = await activitiesForInboxItemWindow(context.agentId, context.item.id);
+    const afterDigest = await memoryCoherenceDigest(context.homePath);
     await recordMemoryCoherenceCompleted({
       agentId: this.options.agentId,
       item: context.item,
-      observedActivities,
+      memoryChanged: beforeDigest !== afterDigest,
       resultText,
       startedAt,
     });
+  }
+
+  private async memoryCoherenceDigest(context: RuntimeItemContext): Promise<string | undefined> {
+    if (context.item.kind !== 'memory_coherence') return undefined;
+    return memoryCoherenceDigest(context.homePath);
   }
 
   private async recordMemoryCoherenceFailed(
