@@ -162,24 +162,11 @@ function buildMemoryCoherenceDeliveryPrompt(event: MemoryCoherenceInboxItem): st
 
 [time=${event.receivedAt} scheduled_slot_at=${event.scheduledSlotAt} scheduled_slot=${event.scheduledSlotLabel}]
 
-You are running your daily memory-coherence pass. Keep your durable memory lean and accurate.
+You are running your daily memory pass.
 
-Full procedure: \`../../design/memory-coherence-procedure.md\` (canonical path from the team repo root: \`design/memory-coherence-procedure.md\`; read it if you need the steps).
+This is your scheduled moment to keep your durable memory in good shape: lean, accurate, and genuinely useful to the future you who will recover from it. Memory drifts over time. Duplication creeps in, facts go stale, detail piles up where a short pointer would do.
 
-Boundary: edit only your own \`MEMORY.md\` and files under \`notes/\`. Do not touch anything else. If a step would require writing outside those paths, stop.
-
-Do: merge duplicates, drop facts that newer events have contradicted, fix stale dates, and demote long detail out of \`MEMORY.md\` into \`notes/\` (write the note first, confirm it landed, then remove the block from \`MEMORY.md\`).
-
-If little has changed since your last pass, do nothing and say so.
-
-When you finish, briefly summarize what you changed, or that nothing needed changing, in a line or two.
-
-End your final response with exactly one status line, and put nothing after it:
-\`Memory coherence outcome: completed\`
-or
-\`Memory coherence outcome: quiet_skipped\`
-
-If this note and anything else disagree, the boundary above wins.`;
+Use your judgment. Consolidate what is redundant, fix what is outdated, and move detail that no longer needs to live in \`MEMORY.md\` out to your \`notes/\` (just make sure it lands there before it leaves \`MEMORY.md\`, so nothing is lost). You know your own memory best. If it is already in good shape, leaving it alone is the right call. Do not churn to look busy.`;
 }
 
 export function buildRuntimeRestartContinuationDeliveryPrompt(): string {

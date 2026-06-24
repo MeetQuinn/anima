@@ -762,10 +762,10 @@ test('runtime worker injects provider env while preserving Anima-managed env', a
   }
 });
 
-test('runtime worker records memory coherence quiet-skip outcome from exact marker', async () => {
+test('runtime worker records memory coherence quiet-skip outcome without parsing prose markers', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-memory-coherence-worker-test-'));
   const scheduledSlotAt = new Date(Date.now() - 60_000).toISOString();
-  const runtime = new StaticTextRuntime('Nothing needed changing.\nMemory coherence outcome: quiet_skipped');
+  const runtime = new StaticTextRuntime('Nothing needed changing.\nMemory coherence outcome: completed');
   const coordinator = { agentId: 'scout', stateDir };
   let worker: AgentRuntimeWorker | undefined;
   try {
@@ -792,10 +792,89 @@ test('runtime worker records memory coherence quiet-skip outcome from exact mark
         activity.type === 'memory_coherence.outcome'
       );
       assert.equal(outcome?.payload?.['outcome'], 'quiet_skipped');
-      assert.equal(outcome?.payload?.['summary'], 'Nothing needed changing.');
+      assert.equal(outcome?.payload?.['summary'], 'Nothing needed changing.\nMemory coherence outcome: completed');
       assert.equal(outcome?.payload?.['scheduledSlotAt'], scheduledSlotAt);
       assert.equal(outcome?.payload?.['scheduledSlotLabel'], '05:47 agent-local');
       assert.equal(typeof outcome?.payload?.['delayMs'], 'number');
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker derives memory coherence outcome from observed edit activity', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-memory-coherence-worker-test-'));
+  const scheduledSlotAt = new Date(Date.now() - 60_000).toISOString();
+  const runtime = new ToolActivityRuntime('Updated memory.', [
+    { providerToolId: 'edit-1', providerToolName: 'Edit', target: 'MEMORY.md', tool: 'claude.Edit' },
+  ]);
+  const coordinator = { agentId: 'scout', stateDir };
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await ensureTestAgentConfig(coordinator);
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        queue: queueFor('scout'),
+        pollIntervalMs: 10_000,
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+      const item = makeMemoryCoherenceInboxItem({
+        scheduledSlotAt,
+        timestamp: scheduledSlotAt,
+      });
+      await queueFor('scout').enqueue(item);
+
+      assert.equal(await worker.drainOnce(), 1);
+
+      const outcome = allActivities(await loadState()).find((activity) =>
+        activity.type === 'memory_coherence.outcome'
+      );
+      assert.equal(outcome?.payload?.['outcome'], 'completed');
+      assert.equal(outcome?.payload?.['summary'], 'Updated memory.');
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker does not mark memory coherence completed from read or list activity', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-memory-coherence-worker-test-'));
+  const scheduledSlotAt = new Date(Date.now() - 60_000).toISOString();
+  const runtime = new ToolActivityRuntime('Inspected memory; nothing to change.', [
+    { providerToolId: 'read-1', providerToolName: 'Read', target: 'MEMORY.md', tool: 'claude.Read' },
+    { providerToolId: 'glob-1', providerToolName: 'Glob', target: 'notes/*', tool: 'claude.Glob' },
+  ]);
+  const coordinator = { agentId: 'scout', stateDir };
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await ensureTestAgentConfig(coordinator);
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        queue: queueFor('scout'),
+        pollIntervalMs: 10_000,
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+      const item = makeMemoryCoherenceInboxItem({
+        scheduledSlotAt,
+        timestamp: scheduledSlotAt,
+      });
+      await queueFor('scout').enqueue(item);
+
+      assert.equal(await worker.drainOnce(), 1);
+
+      const outcome = allActivities(await loadState()).find((activity) =>
+        activity.type === 'memory_coherence.outcome'
+      );
+      assert.equal(outcome?.payload?.['outcome'], 'quiet_skipped');
+      assert.equal(outcome?.payload?.['summary'], 'Inspected memory; nothing to change.');
     });
   } finally {
     await worker?.close();
@@ -841,6 +920,26 @@ class StaticTextRuntime implements AgentRuntime {
   constructor(private readonly text: string) {}
 
   async run(_input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
+    return { text: this.text };
+  }
+
+  async appendToActiveRun(_input: AgentRuntimeFollowupInput): Promise<{ accepted: boolean }> {
+    return { accepted: false };
+  }
+}
+
+class ToolActivityRuntime implements AgentRuntime {
+  readonly kind = 'tool-activity';
+
+  constructor(
+    private readonly text: string,
+    private readonly toolCalls: Record<string, unknown>[],
+  ) {}
+
+  async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
+    for (const toolCall of this.toolCalls) {
+      await input.effects.recordToolStarted(toolCall);
+    }
     return { text: this.text };
   }
 

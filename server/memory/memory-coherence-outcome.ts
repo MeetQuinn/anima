@@ -2,34 +2,31 @@ import { activityServiceForAgent } from '../activities/activity.service.js';
 import { truncateForActivity } from '../activities/format.js';
 import { errorMessage, nowIso } from '../ids.js';
 import type { MemoryCoherenceInboxItem } from '../../shared/inbox.js';
-import type { MemoryCoherenceOutcome, MemoryCoherenceOutcomePayload } from '../../shared/activity.js';
-
-const COMPLETED_MARKER = 'Memory coherence outcome: completed';
-const QUIET_SKIPPED_MARKER = 'Memory coherence outcome: quiet_skipped';
-
-export function parseMemoryCoherenceOutcome(text: string | undefined): MemoryCoherenceOutcome {
-  const marker = finalNonEmptyLine(text);
-  if (marker === QUIET_SKIPPED_MARKER) return 'quiet_skipped';
-  return 'completed';
-}
+import type { Activity, MemoryCoherenceOutcome, MemoryCoherenceOutcomePayload } from '../../shared/activity.js';
 
 export function memoryCoherenceSummary(text: string | undefined): string | undefined {
   const trimmed = (text ?? '').trim();
   if (!trimmed) return undefined;
-  const lines = trimmed.split(/\r?\n/);
-  const finalLine = lines.at(-1)?.trim();
-  const withoutMarker =
-    finalLine === COMPLETED_MARKER || finalLine === QUIET_SKIPPED_MARKER
-      ? lines.slice(0, -1).join('\n').trim()
-      : trimmed;
-  if (!withoutMarker) return undefined;
-  return truncateForActivity(withoutMarker);
+  return truncateForActivity(trimmed);
+}
+
+export function determineMemoryCoherenceOutcome(activities: Activity[]): MemoryCoherenceOutcome {
+  const failedToolIds = new Set<string>();
+  for (const activity of activities) {
+    if (activity.type !== 'tool.call.failed') continue;
+    const id = stringPayloadField(activity, 'providerToolId');
+    if (id) failedToolIds.add(id);
+  }
+  return activities.some((activity) => isObservedEditActivity(activity, failedToolIds))
+    ? 'completed'
+    : 'quiet_skipped';
 }
 
 export async function recordMemoryCoherenceCompleted(input: {
   agentId: string;
   completedAt?: string;
   item: MemoryCoherenceInboxItem;
+  observedActivities: Activity[];
   resultText?: string;
   startedAt: string;
 }): Promise<void> {
@@ -38,7 +35,7 @@ export async function recordMemoryCoherenceCompleted(input: {
   await activityServiceForAgent(input.agentId).record({
     payload: {
       ...payload,
-      outcome: parseMemoryCoherenceOutcome(input.resultText),
+      outcome: determineMemoryCoherenceOutcome(input.observedActivities),
       ...(summary ? { summary } : {}),
     },
     type: 'memory_coherence.outcome',
@@ -78,18 +75,37 @@ function basePayload(input: {
   };
 }
 
-function finalNonEmptyLine(text: string | undefined): string {
-  return (text ?? '')
-    .trimEnd()
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .at(-1) ?? '';
-}
-
 function delayMs(startedAt: string, scheduledSlotAt: string): number {
   const start = Date.parse(startedAt);
   const scheduled = Date.parse(scheduledSlotAt);
   if (!Number.isFinite(start) || !Number.isFinite(scheduled)) return 0;
   return Math.max(0, start - scheduled);
 }
+
+function isObservedEditActivity(activity: Activity, failedToolIds: Set<string>): boolean {
+  if (activity.type !== 'tool.call.started') return false;
+  const id = stringPayloadField(activity, 'providerToolId');
+  if (id && failedToolIds.has(id)) return false;
+  const tool = stringPayloadField(activity, 'tool')?.toLowerCase() ?? '';
+  const providerToolName = stringPayloadField(activity, 'providerToolName')?.toLowerCase() ?? '';
+  const names = [tool, providerToolName].filter(Boolean);
+  return names.some((name) => EDIT_TOOL_NAMES.has(name));
+}
+
+function stringPayloadField(activity: Activity, key: string): string | undefined {
+  const value = activity.payload?.[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+const EDIT_TOOL_NAMES = new Set([
+  'codex.filechange',
+  'edit',
+  'claude.edit',
+  'claude.multiedit',
+  'claude.write',
+  'multiedit',
+  'strreplacefile',
+  'write',
+  'kimi.strreplacefile',
+  'kimi.writefile',
+]);

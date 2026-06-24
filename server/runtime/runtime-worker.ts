@@ -18,6 +18,7 @@ import type {
 import type { InboxItem } from '../../shared/inbox.js';
 import { AgentRuntimeBridge } from './runtime-bridge.js';
 import { runtimeContextForItemId } from './context.js';
+import { activitiesForInboxItemWindow } from './item-activities.js';
 import { clearActiveRuntimeItem, setActiveRuntimeItem } from './active-item.js';
 import {
   recordRuntimeAborted,
@@ -345,9 +346,11 @@ export class AgentRuntimeWorker {
     startedAt: string,
   ): Promise<void> {
     if (context.item.kind !== 'memory_coherence') return;
+    const observedActivities = await activitiesForInboxItemWindow(context.agentId, context.item.id);
     await recordMemoryCoherenceCompleted({
       agentId: this.options.agentId,
       item: context.item,
+      observedActivities,
       resultText,
       startedAt,
     });

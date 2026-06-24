@@ -9,9 +9,10 @@ import {
   stableAgentOffsetMinutes,
 } from '../memory/memory-coherence-scheduler.js';
 import {
+  determineMemoryCoherenceOutcome,
   memoryCoherenceSummary,
-  parseMemoryCoherenceOutcome,
 } from '../memory/memory-coherence-outcome.js';
+import type { Activity } from '../../shared/activity.js';
 
 test('memory coherence scheduler is off by default', async () => {
   const queues = new TestMemoryQueues();
@@ -95,33 +96,61 @@ test('memory coherence scheduler uses a stable per-agent offset', () => {
   assert.equal(first >= 0 && first < 120, true);
 });
 
-test('memory coherence prompt includes the exact outcome marker contract', () => {
+test('memory coherence prompt uses the self-contained daily memory pass copy', () => {
   const prompt = buildCodeAgentDeliveryPrompt(memoryItem('iris', '2026-06-22T05:47:00.000Z'));
 
   assert.match(prompt, /^Memory coherence system wake:/);
   assert.match(prompt, /scheduled_slot_at=2026-06-22T05:47:00\.000Z/);
-  assert.match(prompt, /Full procedure: `\.\.\/\.\.\/design\/memory-coherence-procedure\.md`/);
-  assert.match(prompt, /Boundary: edit only your own `MEMORY\.md` and files under `notes\/`/);
-  assert.match(prompt, /End your final response with exactly one status line/);
-  assert.match(prompt, /`Memory coherence outcome: completed`/);
-  assert.match(prompt, /`Memory coherence outcome: quiet_skipped`/);
+  assert.match(prompt, /You are running your daily memory pass\./);
+  assert.match(prompt, /Do not churn to look busy\./);
+  assert.doesNotMatch(prompt, /design\/memory-coherence-procedure\.md/);
+  assert.doesNotMatch(prompt, /Memory coherence outcome:/);
+  assert.doesNotMatch(prompt, /End your final response with exactly one status line/);
 });
 
-test('memory coherence outcome parser only accepts the exact quiet-skip marker', () => {
-  assert.equal(parseMemoryCoherenceOutcome('No changes.\nMemory coherence outcome: quiet_skipped'), 'quiet_skipped');
-  assert.equal(parseMemoryCoherenceOutcome('Updated notes.\nMemory coherence outcome: completed'), 'completed');
-  assert.equal(parseMemoryCoherenceOutcome('quiet_skipped'), 'completed');
-  assert.equal(parseMemoryCoherenceOutcome(undefined), 'completed');
+test('memory coherence outcome derives from observed edit activity', () => {
+  assert.equal(determineMemoryCoherenceOutcome([]), 'quiet_skipped');
+  assert.equal(
+    determineMemoryCoherenceOutcome([
+      activity('tool.call.started', { providerToolId: 'read-1', providerToolName: 'Read', tool: 'claude.Read' }),
+      activity('tool.call.started', { providerToolId: 'list-1', providerToolName: 'Glob', tool: 'claude.Glob' }),
+    ]),
+    'quiet_skipped',
+  );
+  assert.equal(
+    determineMemoryCoherenceOutcome([
+      activity('tool.call.started', { providerToolId: 'edit-1', providerToolName: 'Edit', target: 'MEMORY.md', tool: 'claude.Edit' }),
+    ]),
+    'completed',
+  );
+  assert.equal(
+    determineMemoryCoherenceOutcome([
+      activity('tool.call.started', { providerToolId: 'edit-1', providerToolName: 'Edit', target: 'MEMORY.md', tool: 'claude.Edit' }),
+      activity('tool.call.failed', { providerToolId: 'edit-1', providerToolName: 'Edit', tool: 'claude.Edit' }),
+    ]),
+    'quiet_skipped',
+  );
 });
 
-test('memory coherence summary removes the exact final marker', () => {
+test('memory coherence summary preserves provider prose without parsing outcome markers', () => {
+  assert.equal(memoryCoherenceSummary('No changes needed.'), 'No changes needed.');
   assert.equal(
     memoryCoherenceSummary('No changes needed.\nMemory coherence outcome: quiet_skipped'),
-    'No changes needed.',
+    'No changes needed.\nMemory coherence outcome: quiet_skipped',
   );
-  assert.equal(memoryCoherenceSummary('Memory coherence outcome: completed'), undefined);
-  assert.equal(memoryCoherenceSummary('Malformed marker: quiet_skipped'), 'Malformed marker: quiet_skipped');
+  assert.equal(memoryCoherenceSummary(''), undefined);
 });
+
+function activity(type: string, payload: Record<string, unknown>): Activity {
+  return {
+    activityId: `actv_${nextActivityId++}`,
+    createdAt: '2026-06-22T05:47:01.000Z',
+    payload,
+    type,
+  };
+}
+
+let nextActivityId = 1;
 
 class TestMemoryQueues {
   private readonly byAgent = new Map<string, InboxItem[]>();
