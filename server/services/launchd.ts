@@ -40,8 +40,8 @@ export async function installLaunchdService(spec: ServiceSpec, options: Supervis
 
   const status = await launchdServiceStatus(spec);
   for (const action of launchdInstallActions(status)) {
-    if (action === 'bootout') await launchctl(['bootout', launchdServiceTarget(spec)], { allowFailure: true });
-    else await launchctl(['bootstrap', launchdDomainTarget(), plistPath], { allowAlreadyLoaded: true });
+    const invocation = launchdActionInvocation(action, spec, plistPath);
+    await launchctl(invocation.args, invocation.options);
   }
   console.log(`${spec.id}: installed launchd ${launchdLabel(spec)} plist ${plistPath}`);
 }
@@ -73,8 +73,8 @@ export async function startLaunchdService(spec: ServiceSpec): Promise<LaunchdSta
     return status;
   }
   for (const action of actions) {
-    if (action === 'bootstrap') await launchctl(['bootstrap', launchdDomainTarget(), plistPath], { allowAlreadyLoaded: true });
-    else await launchctl(['kickstart', launchdServiceTarget(spec)]);
+    const invocation = launchdActionInvocation(action, spec, plistPath);
+    await launchctl(invocation.args, invocation.options);
   }
   const next = await launchdServiceStatus(spec);
   const pidPart = next.pid !== undefined ? ` pid ${next.pid}` : '';
@@ -92,7 +92,8 @@ export async function stopLaunchdService(spec: ServiceSpec): Promise<void> {
   const actions = launchdStopActions(status);
   if (actions.length) {
     for (const action of actions) {
-      if (action === 'bootout') await launchctl(['bootout', launchdServiceTarget(spec)], { allowFailure: true });
+      const invocation = launchdActionInvocation(action, spec, launchdPlistPath(spec));
+      await launchctl(invocation.args, invocation.options);
     }
     console.log(`${spec.id}: stopped launchd ${launchdLabel(spec)}`);
   } else {
@@ -117,7 +118,7 @@ export async function launchdServiceStatus(spec: ServiceSpec): Promise<LaunchdSt
 type LaunchdAction = 'bootout' | 'bootstrap' | 'kickstart';
 
 export function launchdInstallActions(status: Pick<LaunchdStatus, 'loaded'>): LaunchdAction[] {
-  return status.loaded ? ['bootout', 'bootstrap'] : ['bootstrap'];
+  return status.loaded ? ['bootout', 'bootstrap', 'kickstart'] : ['bootstrap', 'kickstart'];
 }
 
 export function launchdStartActions(status: Pick<LaunchdStatus, 'loaded' | 'running'>): LaunchdAction[] {
@@ -127,6 +128,23 @@ export function launchdStartActions(status: Pick<LaunchdStatus, 'loaded' | 'runn
 
 export function launchdStopActions(status: Pick<LaunchdStatus, 'loaded'>): LaunchdAction[] {
   return status.loaded ? ['bootout'] : [];
+}
+
+export function launchdActionInvocation(
+  action: LaunchdAction,
+  spec: ServiceSpec,
+  plistPath: string,
+): {
+  args: string[];
+  options: { allowAlreadyLoaded?: boolean; allowFailure?: boolean };
+} {
+  if (action === 'bootout') {
+    return { args: ['bootout', launchdServiceTarget(spec)], options: { allowFailure: true } };
+  }
+  if (action === 'bootstrap') {
+    return { args: ['bootstrap', launchdDomainTarget(), plistPath], options: { allowAlreadyLoaded: true } };
+  }
+  return { args: ['kickstart', launchdServiceTarget(spec)], options: {} };
 }
 
 export function buildLaunchdPlist(spec: ServiceSpec, options: SupervisorOptions): string {

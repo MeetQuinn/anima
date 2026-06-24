@@ -7,6 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  launchdActionInvocation,
   buildLaunchdPlist,
   launchdInstallActions,
   launchdLabel,
@@ -127,11 +128,37 @@ test('launchd start/install/stop plans distinguish loaded from running', () => {
   assert.deepEqual(launchdStartActions({ loaded: true, running: false }), ['kickstart']);
   assert.deepEqual(launchdStartActions({ loaded: false, running: false }), ['bootstrap', 'kickstart']);
 
-  assert.deepEqual(launchdInstallActions({ loaded: true }), ['bootout', 'bootstrap']);
-  assert.deepEqual(launchdInstallActions({ loaded: false }), ['bootstrap']);
+  assert.deepEqual(launchdInstallActions({ loaded: true }), ['bootout', 'bootstrap', 'kickstart']);
+  assert.deepEqual(launchdInstallActions({ loaded: false }), ['bootstrap', 'kickstart']);
 
   assert.deepEqual(launchdStopActions({ loaded: true }), ['bootout']);
   assert.deepEqual(launchdStopActions({ loaded: false }), []);
+});
+
+test('launchd action invocations dispatch bootstrap and kickstart distinctly', () => {
+  const spec = {
+    animaHome: join(homedir(), '.anima'),
+    args: ['web', '--host', '0.0.0.0', '--port', '4174'],
+    id: 'web',
+    legacyIds: ['ui'],
+    logName: 'web.log',
+    matchAny: [' web ', ' ui '],
+    url: 'http://127.0.0.1:4174',
+  };
+  const plistPath = '/Users/test/Library/LaunchAgents/ai.meetquinn.anima.web.plist';
+
+  assert.deepEqual(launchdActionInvocation('bootout', spec, plistPath), {
+    args: ['bootout', `gui/${process.getuid?.()}/ai.meetquinn.anima.web`],
+    options: { allowFailure: true },
+  });
+  assert.deepEqual(launchdActionInvocation('bootstrap', spec, plistPath), {
+    args: ['bootstrap', `gui/${process.getuid?.()}`, plistPath],
+    options: { allowAlreadyLoaded: true },
+  });
+  assert.deepEqual(launchdActionInvocation('kickstart', spec, plistPath), {
+    args: ['kickstart', `gui/${process.getuid?.()}/ai.meetquinn.anima.web`],
+    options: {},
+  });
 });
 
 test('launchd runtime parser treats print success without pid as loaded', () => {

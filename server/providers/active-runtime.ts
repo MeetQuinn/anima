@@ -1,12 +1,21 @@
 import type { AgentRuntimeInput } from './contract.js';
+import { errorMessage } from '../ids.js';
 
 export class ActiveRuntimeRun {
   private activeItemId?: string;
 
-  start(input: AgentRuntimeInput, label: string, abort: (signal?: NodeJS.Signals) => void): () => void {
+  start(input: AgentRuntimeInput, label: string, abort: (signal?: NodeJS.Signals) => Promise<void> | void): () => void {
     if (this.activeItemId) throw new Error(`${label} runtime is already running ${this.activeItemId}`);
     this.activeItemId = input.itemId;
-    const onAbort = (): void => abort('SIGTERM');
+    const onAbort = (): void => {
+      try {
+        void Promise.resolve(abort('SIGTERM')).catch((error: unknown) => {
+          console.error(`${label} runtime abort failed: ${errorMessage(error)}`);
+        });
+      } catch (error) {
+        console.error(`${label} runtime abort failed: ${errorMessage(error)}`);
+      }
+    };
     if (input.signal) {
       if (input.signal.aborted) onAbort();
       else input.signal.addEventListener('abort', onAbort, { once: true });
