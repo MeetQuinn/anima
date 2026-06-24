@@ -130,7 +130,7 @@ Keep API and CLI thin. They should parse input, call a domain service, redact or
 
 Daemon supervision is intentionally separate from API and foreground runtime code.
 
-`services/supervisor.ts` owns process semantics: detached spawn, pid files, stale pid checks, log rotation, stop escalation, and child environment cleanup. CLI service commands and web restart actions should share those semantics instead of implementing process control locally.
+`services/supervisor.ts` owns process semantics: launchd-backed service control when an OS service is installed, detached pid-file fallback for development/CI homes, stale pid checks, log rotation, stop escalation, and child environment cleanup. `services/launchd.ts` owns LaunchAgent plist generation and `launchctl` interactions; `services/env.ts` owns the durable service environment and PATH. CLI service commands and web restart actions should share those semantics instead of implementing process control locally.
 
 Same-environment restarts from inside an active runtime are refused because they would kill the item making the request. Use a fresh shell, the web restart control after the item finishes, or a different environment.
 
@@ -150,7 +150,7 @@ There is no global web SSE stream. Surfaces that need freshness own their own re
 - `tests/runtime-worker.test.ts`: queue claiming, active-run follow-up append, stop, idle timeout, recovery, and reminder wakes.
 - `tests/agent-runtime.test.ts`: provider adapters, provider sessions, prompt/env behavior, and runtime events.
 - `tests/reminders.test.ts`: schedule, cancel, snooze, repeat math, and reminder delivery.
-- `tests/services.test.ts`: daemon supervisor start/stop/restart/status/log behavior.
+- `tests/services.test.ts`: daemon supervisor start/stop/restart/status/log behavior and generated service environment/plist contracts.
 - `tests/subscriptions.test.ts`: Slack wake rules and subscription windows.
 
 ## Related Docs

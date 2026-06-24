@@ -30,9 +30,11 @@ import {
 } from '../services/restart-result.js';
 import {
   isServiceRunning,
+  installService,
   printStatus,
   startService,
   stopService,
+  uninstallService,
   type ServiceSpec,
   type SupervisorOptions,
 } from '../services/supervisor.js';
@@ -53,6 +55,24 @@ export function registerServicesCommand(program: Command): void {
   const services = program
     .command('services')
     .description('Supervise the agent and web daemons for this environment');
+
+  services
+    .command('install')
+    .description('Install OS-managed agent and web services for this environment')
+    .option('--only <service>', 'Install only one service: agent or web')
+    .action(async (_, command) => {
+      const opts = command.optsWithGlobals() as ServicesCliOptions;
+      await runInstall(opts);
+    });
+
+  services
+    .command('uninstall')
+    .description('Uninstall OS-managed agent and web services for this environment')
+    .option('--only <service>', 'Uninstall only one service: agent or web')
+    .action(async (_, command) => {
+      const opts = command.optsWithGlobals() as ServicesCliOptions;
+      await runUninstall(opts);
+    });
 
   services
     .command('start')
@@ -112,6 +132,20 @@ export function registerServicesCommand(program: Command): void {
       const opts = command.optsWithGlobals() as ServicesCliOptions;
       await runDashboard(opts);
     });
+}
+
+async function runInstall(opts: ServicesCliOptions): Promise<void> {
+  const { specs, supervisor } = await resolveServices(opts);
+  for (const spec of specs) await installService(spec, supervisor);
+  await printStatus(specs);
+  printDashboardHint(specs);
+}
+
+async function runUninstall(opts: ServicesCliOptions): Promise<void> {
+  const { specs } = await resolveServices(opts);
+  assertCanControlServices(specs);
+  for (const spec of specs) await uninstallService(spec);
+  await printStatus(specs);
 }
 
 async function runStart(opts: ServicesCliOptions): Promise<void> {

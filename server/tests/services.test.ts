@@ -1,12 +1,20 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { cleanServiceEnv } from '../services/env.js';
+import {
+  buildLaunchdPlist,
+  launchdInstallActions,
+  launchdLabel,
+  launchdStartActions,
+  launchdStopActions,
+  parseLaunchdRuntime,
+} from '../services/launchd.js';
+import { buildServiceEnvironment, buildServicePath, cleanServiceEnv } from '../services/env.js';
 
 const animactl = resolve('dist/server/cli/animactl.js');
 
@@ -44,6 +52,95 @@ test('cleanServiceEnv strips runtime item context before spawning services', () 
   assert.equal(env.FEISHU_APP_SECRET, undefined);
   assert.equal(env.FEISHU_TENANT_ACCESS_TOKEN, undefined);
   assert.equal(env.SLACK_BOT_TOKEN, undefined);
+});
+
+test('service environment builds a durable service PATH instead of copying caller PATH', () => {
+  const env = buildServiceEnvironment({
+    animaHome: '/Users/test/.anima',
+    baseEnv: {
+      ANIMA_AGENT_ID: 'milo',
+      ANIMA_INBOX_ITEM_ID: 'item_123',
+      HOME: '/Users/test',
+      PATH: '/tmp/codex-temp:/usr/bin',
+      SHELL: '/bin/zsh',
+      SLACK_BOT_TOKEN: 'xoxb-secret',
+      USER: 'test',
+    },
+    homeDir: '/Users/test',
+    nodePath: '/opt/homebrew/opt/node/bin/node',
+    platform: 'darwin',
+  });
+
+  assert.equal(env.ANIMA_HOME, '/Users/test/.anima');
+  assert.equal(env.HOME, '/Users/test');
+  assert.equal(env.SHELL, '/bin/zsh');
+  assert.equal(env.USER, 'test');
+  assert.equal(env.ANIMA_AGENT_ID, undefined);
+  assert.equal(env.SLACK_BOT_TOKEN, undefined);
+  const path = env.PATH ?? '';
+  assert.match(path, /^\/opt\/homebrew\/opt\/node\/bin:/);
+  assert.match(path, /\/Users\/test\/\.local\/bin/);
+  assert.match(path, /\/Users\/test\/\.kimi-code\/bin/);
+  assert.match(path, /\/opt\/homebrew\/bin/);
+  assert.match(path, /\/usr\/sbin/);
+  assert.doesNotMatch(path, /codex-temp/);
+});
+
+test('service PATH de-duplicates node bin and platform dirs', () => {
+  const path = buildServicePath({
+    homeDir: '/Users/test',
+    nodePath: '/usr/bin/node',
+    platform: 'darwin',
+  });
+
+  assert.equal(path.split(':').filter((entry) => entry === '/usr/bin').length, 1);
+});
+
+test('launchd plist pins service command, environment, logs, and keepalive', () => {
+  const spec = {
+    animaHome: join(homedir(), '.anima'),
+    args: ['web', '--host', '0.0.0.0', '--port', '4174'],
+    id: 'web',
+    legacyIds: ['ui'],
+    logName: 'web.log',
+    matchAny: [' web ', ' ui '],
+    url: 'http://127.0.0.1:4174',
+  };
+  const plist = buildLaunchdPlist(spec, {
+    animactl: '/Users/test/.anima/runtime/current/node_modules/@meetquinn/animactl/dist/server/cli/animactl.js',
+    cwd: '/Users/test/.anima/runtime/current/node_modules/@meetquinn/animactl',
+  });
+
+  assert.equal(launchdLabel(spec), 'ai.meetquinn.anima.web');
+  assert.match(plist, /<key>Label<\/key>\n<string>ai\.meetquinn\.anima\.web<\/string>/);
+  assert.match(plist, /<string>web<\/string>\n<string>--host<\/string>\n<string>0\.0\.0\.0<\/string>/);
+  assert.match(plist, /<key>ANIMA_HOME<\/key>\n<string>.*\/\.anima<\/string>/);
+  assert.match(plist, /<key>PATH<\/key>\n<string>.*\.kimi-code\/bin.*\/opt\/homebrew\/bin.*\/usr\/sbin.*<\/string>/s);
+  assert.match(plist, /<key>StandardOutPath<\/key>\n<string>.*\/\.anima\/logs\/web\.log<\/string>/);
+  assert.match(plist, /<key>StandardErrorPath<\/key>\n<string>.*\/\.anima\/logs\/web\.log<\/string>/);
+  assert.match(plist, /<key>RunAtLoad<\/key><true\/>/);
+  assert.match(plist, /<key>KeepAlive<\/key><true\/>/);
+});
+
+test('launchd start/install/stop plans distinguish loaded from running', () => {
+  assert.deepEqual(launchdStartActions({ loaded: true, running: true }), []);
+  assert.deepEqual(launchdStartActions({ loaded: true, running: false }), ['kickstart']);
+  assert.deepEqual(launchdStartActions({ loaded: false, running: false }), ['bootstrap', 'kickstart']);
+
+  assert.deepEqual(launchdInstallActions({ loaded: true }), ['bootout', 'bootstrap']);
+  assert.deepEqual(launchdInstallActions({ loaded: false }), ['bootstrap']);
+
+  assert.deepEqual(launchdStopActions({ loaded: true }), ['bootout']);
+  assert.deepEqual(launchdStopActions({ loaded: false }), []);
+});
+
+test('launchd runtime parser treats print success without pid as loaded', () => {
+  assert.deepEqual(parseLaunchdRuntime({ status: 0, stdout: 'state = waiting\n' }), { loaded: true });
+  assert.deepEqual(parseLaunchdRuntime({ status: 0, stdout: 'state = running\n\tpid = 12345\n' }), {
+    loaded: true,
+    pid: 12345,
+  });
+  assert.deepEqual(parseLaunchdRuntime({ status: 113, stdout: '' }), { loaded: false });
 });
 
 test('services status reports stopped agent and web with web URL', async () => {
