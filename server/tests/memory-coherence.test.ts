@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { AgentConfig } from '../../shared/agent-config.js';
 import type { InboxItem, MemoryCoherenceInboxItem } from '../../shared/inbox.js';
@@ -9,8 +12,9 @@ import {
   stableAgentOffsetMinutes,
 } from '../memory/memory-coherence-scheduler.js';
 import {
+  determineMemoryCoherenceOutcome,
+  memoryCoherenceDigest,
   memoryCoherenceSummary,
-  parseMemoryCoherenceOutcome,
 } from '../memory/memory-coherence-outcome.js';
 
 test('memory coherence scheduler is off by default', async () => {
@@ -95,32 +99,51 @@ test('memory coherence scheduler uses a stable per-agent offset', () => {
   assert.equal(first >= 0 && first < 120, true);
 });
 
-test('memory coherence prompt includes the exact outcome marker contract', () => {
+test('memory coherence prompt uses the self-contained daily memory pass copy', () => {
   const prompt = buildCodeAgentDeliveryPrompt(memoryItem('iris', '2026-06-22T05:47:00.000Z'));
 
   assert.match(prompt, /^Memory coherence system wake:/);
   assert.match(prompt, /scheduled_slot_at=2026-06-22T05:47:00\.000Z/);
-  assert.match(prompt, /Full procedure: `\.\.\/\.\.\/design\/memory-coherence-procedure\.md`/);
-  assert.match(prompt, /Boundary: edit only your own `MEMORY\.md` and files under `notes\/`/);
-  assert.match(prompt, /End your final response with exactly one status line/);
-  assert.match(prompt, /`Memory coherence outcome: completed`/);
-  assert.match(prompt, /`Memory coherence outcome: quiet_skipped`/);
+  assert.match(prompt, /You are running your daily memory pass\./);
+  assert.match(prompt, /Do not churn to look busy\./);
+  assert.doesNotMatch(prompt, /design\/memory-coherence-procedure\.md/);
+  assert.doesNotMatch(prompt, /Memory coherence outcome:/);
+  assert.doesNotMatch(prompt, /End your final response with exactly one status line/);
 });
 
-test('memory coherence outcome parser only accepts the exact quiet-skip marker', () => {
-  assert.equal(parseMemoryCoherenceOutcome('No changes.\nMemory coherence outcome: quiet_skipped'), 'quiet_skipped');
-  assert.equal(parseMemoryCoherenceOutcome('Updated notes.\nMemory coherence outcome: completed'), 'completed');
-  assert.equal(parseMemoryCoherenceOutcome('quiet_skipped'), 'completed');
-  assert.equal(parseMemoryCoherenceOutcome(undefined), 'completed');
+test('memory coherence outcome derives from a coarse memory digest change boolean', () => {
+  assert.equal(determineMemoryCoherenceOutcome(false), 'quiet_skipped');
+  assert.equal(determineMemoryCoherenceOutcome(true), 'completed');
 });
 
-test('memory coherence summary removes the exact final marker', () => {
+test('memory coherence digest changes when MEMORY.md or notes change', async () => {
+  const homePath = await mkdtemp(join(tmpdir(), 'anima-memory-digest-test-'));
+  try {
+    const empty = await memoryCoherenceDigest(homePath);
+    await writeFile(join(homePath, 'MEMORY.md'), '# Memory\n', 'utf8');
+    const memoryWritten = await memoryCoherenceDigest(homePath);
+    assert.notEqual(memoryWritten, empty);
+
+    await mkdir(join(homePath, 'notes'), { recursive: true });
+    await writeFile(join(homePath, 'notes', 'detail.md.tmp'), 'detail\n', 'utf8');
+    await rename(join(homePath, 'notes', 'detail.md.tmp'), join(homePath, 'notes', 'detail.md'));
+    const noteMovedIntoPlace = await memoryCoherenceDigest(homePath);
+    assert.notEqual(noteMovedIntoPlace, memoryWritten);
+
+    await writeFile(join(homePath, 'scratch.md'), 'outside scope\n', 'utf8');
+    assert.equal(await memoryCoherenceDigest(homePath), noteMovedIntoPlace);
+  } finally {
+    await rm(homePath, { force: true, recursive: true });
+  }
+});
+
+test('memory coherence summary preserves provider prose without parsing outcome markers', () => {
+  assert.equal(memoryCoherenceSummary('No changes needed.'), 'No changes needed.');
   assert.equal(
     memoryCoherenceSummary('No changes needed.\nMemory coherence outcome: quiet_skipped'),
-    'No changes needed.',
+    'No changes needed.\nMemory coherence outcome: quiet_skipped',
   );
-  assert.equal(memoryCoherenceSummary('Memory coherence outcome: completed'), undefined);
-  assert.equal(memoryCoherenceSummary('Malformed marker: quiet_skipped'), 'Malformed marker: quiet_skipped');
+  assert.equal(memoryCoherenceSummary(''), undefined);
 });
 
 class TestMemoryQueues {
