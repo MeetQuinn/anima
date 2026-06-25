@@ -1,10 +1,7 @@
 // Activity rendering — maps an ActivityRecord to a structured row used by
-// the Stream view: a colored dot, a verb-led title, an optional target, and
+// the Activity view: a colored dot, a verb-led title, an optional target, and
 // a "kind" that picks the dot color. Also exports `isNarrativeStep` which
-// classifies activities as visible in the default curated (conversation) view.
-
-// OFF = conversation (curated narrative), ON = audit (full raw/debug view).
-export type ActivityMode = 'conversation' | 'audit';
+// classifies activities as visible in the curated "Show tool steps" view.
 
 import { formatTimeShort } from './format';
 import type { Activity as ActivityRecord } from '@shared/activity';

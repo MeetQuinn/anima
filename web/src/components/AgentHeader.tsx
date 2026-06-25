@@ -9,7 +9,7 @@ import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { Button } from './ui/button';
 import AgentActionsMenu from './AgentActionsMenu';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
-import { useActivityFilters, type ActivityLens, type ActivityDir } from '@/hooks/useActivityFilters';
+import { useActivityFilters, type ActivityDir } from '@/hooks/useActivityFilters';
 
 const TABS: { id: AgentTab; label: string }[] = [
   { id: 'activity', label: 'Activity' },
@@ -66,36 +66,6 @@ function DirPill({
   );
 }
 
-function LensPill({
-  lens,
-  onChange,
-}: {
-  lens: ActivityLens;
-  onChange: (v: ActivityLens) => void;
-}) {
-  const base = 'chrome px-2.5 py-1 text-[11px] tracking-wide rounded-sm transition-colors';
-  const active = 'bg-accent/10 text-accent font-medium';
-  const inactive = 'text-text-muted hover:text-text';
-  return (
-    <div className="flex items-center rounded-sm border border-border-soft p-0.5">
-      <button
-        type="button"
-        onClick={() => onChange('messages')}
-        className={[base, lens === 'messages' ? active : inactive].join(' ')}
-      >
-        Conversation
-      </button>
-      <button
-        type="button"
-        onClick={() => onChange('activity')}
-        className={[base, lens === 'activity' ? active : inactive].join(' ')}
-      >
-        Activity
-      </button>
-    </div>
-  );
-}
-
 export default function AgentHeader() {
   const { data: agents = [] } = useQuery({ queryKey: queryKeys.agents(), queryFn: fetchAgents });
   const { data: agentStatuses = [] } = useQuery({
@@ -112,7 +82,8 @@ export default function AgentHeader() {
     if (!agentId) return;
     navigate(`/agents/${agentId}/${next}`);
   };
-  const { failedOnly, lens, dir, showAllSteps, setFailedOnly, setLens, setDir, setShowAllSteps } = useActivityFilters();
+  const { failedOnly, dir, showToolSteps, setFailedOnly, setDir, setShowToolSteps } =
+    useActivityFilters();
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState<string | null>(null);
   if (!agentId) return null;
@@ -215,16 +186,13 @@ export default function AgentHeader() {
         </div>
         {tab === 'activity' && (
           <div className="flex shrink-0 items-center gap-3">
-            {lens === 'activity' && (
-              <>
-                <FilterToggle label="Failed only" checked={failedOnly} onChange={setFailedOnly} />
-                <FilterToggle label="Show all steps" checked={showAllSteps} onChange={setShowAllSteps} />
-              </>
-            )}
-            {lens === 'messages' && (
-              <DirPill dir={dir} onChange={setDir} />
-            )}
-            <LensPill lens={lens} onChange={setLens} />
+            <FilterToggle label="Failed only" checked={failedOnly} onChange={setFailedOnly} />
+            <FilterToggle
+              label="Show tool steps"
+              checked={showToolSteps}
+              onChange={setShowToolSteps}
+            />
+            <DirPill dir={dir} onChange={setDir} />
           </div>
         )}
       </nav>
