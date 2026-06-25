@@ -309,8 +309,10 @@ function FeishuRecommendedPermissionsConnectBanner({
 //     history, byte-identical to the Channels tab. Reminders stay inline here.
 //   • Step layer = the activity feed's curated non-conversation rows
 //     (isNarrativeStep), toggle-gated, interleaved by timestamp as subordinate
-//     rows. Inherits the activity feed's 30-day retention — honest, never
-//     implied to be a complete step history.
+//     rows. The activity feed read path is count/cursor based (not time-bounded),
+//     so when steps are interleaved we auto-page it until its raw window spans
+//     the loaded conversation, then state any remaining boundary explicitly. The
+//     step layer is never implied to be a complete history.
 // ---------------------------------------------------------------------------
 
 export default function Activity() {
