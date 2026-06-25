@@ -12,7 +12,7 @@ import {
 import { buildActivityFeed, buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
 import { activityIsFailure, activityRow, isNarrativeStep } from '@/lib/activities';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
-import { clockHM, dateKey, formatRelativeShort } from '@/lib/format';
+import { clockHM, dateKey, dateLabel, formatRelativeShort } from '@/lib/format';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useActivityFilters, type ActivityDir } from '@/hooks/useActivityFilters';
 import { useNow } from '@/hooks/useNow';
@@ -451,6 +451,64 @@ export default function Activity() {
     return merged;
   }, [conversationItems, stepItems]);
 
+  // --- Coverage alignment (honesty contract) --------------------------------
+  // The conversation feed (messages store) and the step feed (activity store)
+  // paginate independently by count, so their loaded time-windows can diverge:
+  // the newest 100 activity events may span only hours while the newest 100
+  // messages span days. Left unaligned, older visible messages would render with
+  // no adjacent steps and read as "nothing happened" when the steps simply were
+  // not paged in. So whenever steps are interleaved with the conversation we keep
+  // fetching activity pages until the loaded activity window reaches at least as
+  // far back as the oldest loaded message (or the feed is exhausted). The
+  // residual case — the activity store exhausted before reaching the oldest
+  // loaded message (older steps no longer retained) — is made explicit with a
+  // boundary notice rather than left to imply silence.
+  const interleaving = showToolSteps && !failedOnly;
+
+  // Oldest loaded conversation timestamp (the older edge of the visible window).
+  const oldestMessageTs = useMemo(() => {
+    let min = Infinity;
+    for (const item of conversationItems) {
+      const t = Date.parse(item.timestamp);
+      if (Number.isFinite(t) && t < min) min = t;
+    }
+    return min === Infinity ? null : min;
+  }, [conversationItems]);
+
+  // Oldest loaded RAW activity event — coverage is measured by the feed window
+  // we have actually paged in, NOT the curated step subset (a covered region may
+  // legitimately have no narrative step; an un-paged region must not be confused
+  // with it).
+  const oldestActivityTs = useMemo(() => {
+    if (!activitiesData?.events.length) return null;
+    let min = Infinity;
+    for (const ev of activitiesData.events) {
+      const t = Date.parse(ev.timestamp);
+      if (Number.isFinite(t) && t < min) min = t;
+    }
+    return min === Infinity ? null : min;
+  }, [activitiesData]);
+
+  // Step coverage reaches the loaded conversation window when the oldest loaded
+  // activity event is at or before the oldest loaded message.
+  const activityCoversMessages =
+    oldestMessageTs === null ||
+    (oldestActivityTs !== null && oldestActivityTs <= oldestMessageTs);
+
+  // Explicit boundary: steps are interleaved and the conversation has loaded
+  // messages, but the activity feed is exhausted and still does not reach the
+  // oldest loaded message. Below this timestamp older steps are no longer
+  // retained, so we label it instead of implying those messages had no activity.
+  const stepCoverageFloorTs =
+    interleaving &&
+    activityQuery.hasNextPage === false &&
+    !activityQuery.isFetchingNextPage &&
+    oldestActivityTs !== null &&
+    oldestMessageTs !== null &&
+    oldestActivityTs > oldestMessageTs
+      ? oldestActivityTs
+      : null;
+
   const latestCurrentItemActivity = useMemo(() => {
     if (!currentItemId || !activitiesData) return undefined;
     const activities = activitiesData.events.flatMap((event) =>
@@ -663,12 +721,21 @@ export default function Activity() {
 
   // --- Infinite scroll: keep pagination drivers in a ref so the scroll listener
   // stays mounted once and always reads the latest message/step page state.
+  // Snapshot scroll height just before ANY older-page fetch (message OR
+  // activity) so the post-prepend restore keeps the viewport pinned. Guarded so
+  // a message + activity fetch that fire together don't clobber the baseline.
+  const snapshotScrollHeight = () => {
+    if (prevScrollHeightRef.current === 0) {
+      prevScrollHeightRef.current = scrollContainerRef.current?.scrollHeight ?? 0;
+    }
+  };
   const fetchOlder = () => {
     if (messageQuery.hasNextPage && !messageQuery.isFetchingNextPage) {
-      prevScrollHeightRef.current = scrollContainerRef.current?.scrollHeight ?? 0;
+      snapshotScrollHeight();
       void messageQuery.fetchNextPage();
     }
     if (stepsNeeded && activityQuery.hasNextPage && !activityQuery.isFetchingNextPage) {
+      snapshotScrollHeight();
       void activityQuery.fetchNextPage();
     }
   };
@@ -682,6 +749,28 @@ export default function Activity() {
   useEffect(() => {
     paginationRef.current = { fetchOlder, hasOlder, isFetchingOlder };
   });
+
+  // Coverage alignment: while steps are interleaved with the conversation, keep
+  // paging the activity feed (older) until it spans the loaded conversation
+  // window or is exhausted. One page per settle — react-query re-renders after
+  // each page and this re-evaluates, so the chain self-terminates once the
+  // oldest loaded activity reaches the oldest loaded message. Snapshot first so
+  // the prepended older steps don't shift the viewport.
+  const autoFetchActivity = activityQuery.fetchNextPage;
+  useEffect(() => {
+    if (!interleaving || activityCoversMessages) return;
+    if (!activityQuery.hasNextPage || activityQuery.isFetchingNextPage) return;
+    if (prevScrollHeightRef.current === 0) {
+      prevScrollHeightRef.current = scrollContainerRef.current?.scrollHeight ?? 0;
+    }
+    void autoFetchActivity();
+  }, [
+    interleaving,
+    activityCoversMessages,
+    activityQuery.hasNextPage,
+    activityQuery.isFetchingNextPage,
+    autoFetchActivity,
+  ]);
 
   // Keep isAtBottomRef in sync as the user scrolls; trigger an older-page fetch
   // when the user reaches the top. Mounted once — reads latest via the ref.
@@ -812,6 +901,16 @@ export default function Activity() {
               className="h-3.5 w-3.5 animate-spin text-text-subtle"
               aria-label="Loading older activity"
             />
+          </div>
+        )}
+        {stepCoverageFloorTs !== null && !showFirstRunHero && filteredItems.length > 0 && (
+          <div className="mx-auto mb-2 flex max-w-prose items-start gap-2 rounded-md border border-border-soft bg-surface-raised/40 px-3 py-2 text-[11px] leading-snug text-text-muted">
+            <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-text-subtle" />
+            <span>
+              Tool steps load back to {dateLabel(new Date(stepCoverageFloorTs).toISOString())}.
+              Messages older than that show without tool steps, because the activity history does
+              not reach further back.
+            </span>
           </div>
         )}
         {showFirstRunHero ? (
