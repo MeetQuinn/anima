@@ -28,6 +28,7 @@ import {
   isMessageItem,
   DayDivider,
   MessageGroupRow,
+  SystemEventRow,
   type Author,
   type AuthorResolver,
   type SurfaceResolver,
@@ -58,12 +59,13 @@ function StepLane({ children }: { children: ReactNode }) {
 // steps, preserving chronology. Message runs render as Slack groups; step runs
 // render in an indented lane. A step between two message groups naturally
 // breaks the grouping, which is the interleave the spec asks for.
-type DayBlock = { type: 'msgs' | 'steps'; items: ActivityFeedItem[] };
+type DayBlock = { type: 'msgs' | 'steps' | 'system'; items: ActivityFeedItem[] };
 
 function buildBlocks(items: ActivityFeedItem[]): DayBlock[] {
   const blocks: DayBlock[] = [];
   for (const item of items) {
-    const type: DayBlock['type'] = item.kind === 'step' ? 'steps' : 'msgs';
+    const type: DayBlock['type'] =
+      item.kind === 'step' ? 'steps' : item.kind === 'system-event' ? 'system' : 'msgs';
     const last = blocks[blocks.length - 1];
     if (last && last.type === type) last.items.push(item);
     else blocks.push({ type, items: [item] });
@@ -404,7 +406,11 @@ export default function Activity() {
   // Conversation layer items (hidden entirely under the failed-only debug filter).
   const conversationItems = useMemo(() => {
     if (failedOnly || !messagesData) return [];
-    return buildMessageFeed(messagesData).filter((item) => isMessageItem(item));
+    // Keep system-event rows (reminder / onboarding) alongside messages — they
+    // are conversation-layer timeline annotations, not tool steps.
+    return buildMessageFeed(messagesData).filter(
+      (item) => isMessageItem(item) || item.kind === 'system-event',
+    );
   }, [messagesData, failedOnly]);
 
   // Step layer items — curated isNarrativeStep set only (never the firehose;
@@ -981,18 +987,33 @@ export default function Activity() {
           byDay.map(([day, items]) => (
             <div key={day}>
               <DayDivider iso={items[0]!.timestamp} />
-              {buildBlocks(items).map((block, bi) =>
-                block.type === 'msgs' ? (
-                  <Fragment key={`${day}:b:${bi}`}>
-                    {groupByAuthor(block.items, resolveAuthor, resolveSurface).map((group, gi) => (
-                      <MessageGroupRow
-                        key={`${day}:b:${bi}:${gi}`}
-                        group={group}
-                        agentId={agentId ?? ''}
-                      />
-                    ))}
-                  </Fragment>
-                ) : (
+              {buildBlocks(items).map((block, bi) => {
+                if (block.type === 'msgs') {
+                  return (
+                    <Fragment key={`${day}:b:${bi}`}>
+                      {groupByAuthor(block.items, resolveAuthor, resolveSurface).map((group, gi) => (
+                        <MessageGroupRow
+                          key={`${day}:b:${bi}:${gi}`}
+                          group={group}
+                          agentId={agentId ?? ''}
+                        />
+                      ))}
+                    </Fragment>
+                  );
+                }
+                if (block.type === 'system') {
+                  return (
+                    <Fragment key={`${day}:b:${bi}`}>
+                      {block.items.map((item, si) => (
+                        <SystemEventRow
+                          key={`${day}:b:${bi}:${si}`}
+                          item={item as Extract<ActivityFeedItem, { kind: 'system-event' }>}
+                        />
+                      ))}
+                    </Fragment>
+                  );
+                }
+                return (
                   <StepLane key={`${day}:b:${bi}`}>
                     {block.items.map((item, si) => (
                       <StepRow
@@ -1002,8 +1023,8 @@ export default function Activity() {
                       />
                     ))}
                   </StepLane>
-                ),
-              )}
+                );
+              })}
             </div>
           ))}
         {currentItemId && !loadingActivities && !showFirstRunHero && (

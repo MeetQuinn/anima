@@ -1,4 +1,4 @@
-import { SmilePlus } from 'lucide-react';
+import { Bell, SmilePlus, UserPlus, type LucideIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { renderMrkdwn } from '@/lib/mrkdwn';
 import { clockHM, dateLabel } from '@/lib/format';
@@ -264,6 +264,44 @@ function GroupSurfaceChip({ chip, agentId }: { chip: SurfaceChip; agentId: strin
     >
       {chip.label}
     </Link>
+  );
+}
+
+// System-originated wake (reminder / onboarding): a centered, avatar-less line
+// so it reads as a timeline annotation, not a message someone sent. The type
+// icon + small-caps label name the event class; the muted body carries the
+// detail (reminder title / onboarding note). Short hairlines flank the pill on
+// wider viewports to echo the Slack centered-system-notice convention; they
+// drop on narrow widths so the pill never gets crushed.
+const SYSTEM_EVENT_ICON: Record<'reminder' | 'onboarding', LucideIcon> = {
+  reminder: Bell,
+  onboarding: UserPlus,
+};
+
+export function SystemEventRow({
+  item,
+}: {
+  item: Extract<ActivityFeedItem, { kind: 'system-event' }>;
+}) {
+  const Icon = SYSTEM_EVENT_ICON[item.eventKind];
+  return (
+    <div className="flex items-center justify-center gap-2.5 px-1 py-1.5">
+      <span aria-hidden className="hidden h-px w-8 shrink-0 bg-border-soft sm:block" />
+      <span className="inline-flex max-w-[85%] items-center gap-1.5 rounded-full border border-border-soft bg-surface-raised px-2.5 py-0.5">
+        <Icon className="h-3 w-3 shrink-0 text-text-subtle" aria-hidden />
+        <span className="shrink-0 font-sans text-[9.5px] font-semibold uppercase tracking-[0.12em] text-text-subtle">
+          {item.label}
+        </span>
+        <span className="truncate font-sans text-[12px] text-text-muted">{item.body}</span>
+        {item.meta && (
+          <span className="shrink-0 font-sans text-[10px] text-text-subtle">· {item.meta}</span>
+        )}
+        <span className="shrink-0 font-sans text-[10px] text-text-subtle">
+          {clockHM(item.timestamp)}
+        </span>
+      </span>
+      <span aria-hidden className="hidden h-px w-8 shrink-0 bg-border-soft sm:block" />
+    </div>
   );
 }
 

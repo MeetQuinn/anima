@@ -161,7 +161,54 @@ export type ActivityFeedItem =
       timestamp: string;
       surface: SurfaceChip;
     }
-  | { kind: 'step'; activity: ActivityRecord; timestamp: string; subagentStreams?: SubagentStream[] };
+  | { kind: 'step'; activity: ActivityRecord; timestamp: string; subagentStreams?: SubagentStream[] }
+  | {
+      // System-originated wake (reminder / onboarding) — not a message anyone
+      // sent. Rendered as a centered, avatar-less system line so it reads as a
+      // timeline annotation rather than competing with real conversation. The
+      // memory-coherence pass is NOT here: it is a `memory_coherence.outcome`
+      // activity rendered in the tool-steps lane, never the conversation layer.
+      kind: 'system-event';
+      eventKind: 'reminder' | 'onboarding';
+      label: string; // small-caps register label ('Reminder' | 'Onboarding')
+      body: string; // muted descriptive line (reminder title / onboarding note)
+      meta?: string; // optional trailing tag, e.g. recurring 'fire #3'
+      timestamp: string;
+    };
+
+// Map an inbound inbox event to a system-event timeline item when it is a
+// system wake (reminder / onboarding) rather than a person's message. Returns
+// null for real messages (slack/feishu) and for choice_response — a user's
+// explicit selection, which stays on the message side. Shared by both feed
+// builders so the conversation and activity feeds agree on what is a system row.
+function systemEventForInbox(
+  event: InboxItem,
+  timestamp: string,
+  wakeMeta?: ReminderWakeMeta,
+): Extract<ActivityFeedItem, { kind: 'system-event' }> | null {
+  if (isOnboardingWake(event)) {
+    const text = ('text' in event && typeof event.text === 'string' ? event.text : '').trim();
+    return {
+      kind: 'system-event',
+      eventKind: 'onboarding',
+      label: 'Onboarding',
+      body: text || 'Agent onboarding completed',
+      timestamp,
+    };
+  }
+  if (event.kind === 'reminder') {
+    const recurring = wakeMeta && wakeMeta.scheduleKind !== 'once';
+    return {
+      kind: 'system-event',
+      eventKind: 'reminder',
+      label: 'Reminder',
+      body: event.title?.trim() || 'Reminder fired',
+      ...(recurring ? { meta: `fire #${wakeMeta!.firedCount}` } : {}),
+      timestamp,
+    };
+  }
+  return null;
+}
 
 export function buildActivityFeed(
   activityFeed: AgentActivityFeedPage,
@@ -233,6 +280,11 @@ export function buildActivityFeed(
   for (const event of inboxItems) {
     const reminderId = event.kind === 'reminder' ? reminderIdForEvent(event) : undefined;
     const wakeMeta = reminderId ? wakeMetaByReminder.get(reminderId) : undefined;
+    const systemEvent = systemEventForInbox(event, eventTimestamp(event), wakeMeta);
+    if (systemEvent) {
+      items.push(systemEvent);
+      continue;
+    }
     items.push({
       kind: 'message-in',
       event,
@@ -403,6 +455,11 @@ export function buildMessageFeed(messagePage: AgentMessageHistoryPage): Activity
   for (const message of messagePage.entries) {
     if (message.direction === 'in') {
       const event = inboxItemForMessage(message);
+      const systemEvent = systemEventForInbox(event, message.timestamp);
+      if (systemEvent) {
+        items.push(systemEvent);
+        continue;
+      }
       items.push({
         kind: 'message-in',
         event,
