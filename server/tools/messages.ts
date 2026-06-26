@@ -114,7 +114,7 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
     basePayload,
     effectType: 'slack.message.send',
     op: async () => {
-      const slackText = await slackTextForPostMessage({ client, teamId, text });
+      const slackText = await slackTextForPostMessage({ channelId: channel.id, client, teamId, text });
       const content = slackMessageContentForText(slackText.text);
       const warnings = await mentionWarningsForTarget({
         channelId: channel.id,
@@ -342,7 +342,7 @@ export async function runMessageUpdate(
     basePayload,
     effectType: 'slack.message.update',
     op: async () => {
-      const slackText = await slackTextForPostMessage({ client, teamId, text });
+      const slackText = await slackTextForPostMessage({ channelId: channel.id, client, teamId, text });
       const content = slackMessageContentForText(slackText.text);
       const warnings = await mentionWarningsForTarget({
         channelId: channel.id,

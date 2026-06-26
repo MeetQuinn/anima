@@ -37,6 +37,7 @@ const LITERAL_READABLE_MENTION_HANDLES = new Set(['mention', 'mentions']);
 const SLACK_USER_ID_HANDLE = /^u[A-Z0-9]+$/i;
 
 export async function slackTextForPostMessage(input: {
+  channelId?: string;
   client: WebClient;
   teamId?: string;
   text: string;
@@ -45,6 +46,10 @@ export async function slackTextForPostMessage(input: {
   const channelIds = new Map<string, string>();
   const resolved: SlackMentionResolution[] = [];
   const unresolved: SlackMentionResolutionFailure[] = [];
+  const directory = new SlackWorkspaceDirectoryService({
+    client: input.client,
+    teamId: input.teamId,
+  });
 
   for (const userId of extractReadableSlackUserIdMentions(input.text)) {
     const id = userId.toUpperCase();
@@ -60,10 +65,9 @@ export async function slackTextForPostMessage(input: {
         return;
       }
       try {
-        const user = await new SlackWorkspaceDirectoryService({
-          client: input.client,
-          teamId: input.teamId,
-        }).getUserByHandle(handle);
+        const user = input.channelId
+          ? await directory.getUserByHandleForTarget(handle, { channelId: input.channelId })
+          : await directory.getUserByHandle(handle);
         if (!user.id) return;
         userIds.set(handle, user.id);
         resolved.push({ id: user.id, label: `@${handle}`, type: 'user' });

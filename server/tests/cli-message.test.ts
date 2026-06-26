@@ -675,6 +675,82 @@ test('message send warns for unresolved and out-of-channel mentions', async () =
   }
 });
 
+test('message send prefers the target-channel member for duplicate readable handles', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-message-target-member-mention-test-'));
+  const posts: Array<{ channel: string; text: string }> = [];
+  const slackApi = await startSlackApiMock((method, body) => {
+    if (method === 'users.list') {
+      return {
+        members: [
+          {
+            id: 'U0B68F373GU',
+            is_bot: true,
+            is_stranger: false,
+            name: 'felix',
+            team_id: 'T-demo',
+          },
+          {
+            id: 'U066WMQUL01',
+            is_stranger: true,
+            name: 'felix',
+            profile: { display_name: 'Felix' },
+            team_id: 'T-external',
+          },
+        ],
+        ok: true,
+      };
+    }
+    if (method === 'conversations.info') {
+      return {
+        channel: { id: 'C-product', is_channel: true, name: 'product', name_normalized: 'product' },
+        ok: true,
+      };
+    }
+    if (method === 'conversations.members') {
+      return {
+        members: ['U0B68F373GU'],
+        ok: true,
+      };
+    }
+    if (method !== 'chat.postMessage') throw new Error(`unexpected method ${method}`);
+    posts.push(slackRequestBody(body) as { channel: string; text: string });
+    return {
+      ok: true,
+      channel: 'C-product',
+      ts: '1770000200.000130',
+    };
+  });
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeSlackConfig(stateDir);
+      const itemId = await ingestSlackThread(stateDir);
+
+      const send = await runNode([cliPath, 'message', 'send', '--channel', 'C-product'], {
+        env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_INBOX_ITEM_ID: itemId, ANIMA_SLACK_API_URL: slackApi.url },
+        input: 'Can @felix take a look?',
+      });
+      assert.equal(send.status, 0, send.stderr || send.stdout);
+      assert.equal(send.stdout.trim(), 'sent successfully. channel=#product, message_ts=1770000200.000130.');
+      assert.deepEqual(posts, [{
+        blocks: JSON.stringify([{ type: 'markdown', text: 'Can <@U0B68F373GU> take a look?' }]),
+        channel: 'C-product',
+        text: 'Can <@U0B68F373GU> take a look?',
+      }]);
+
+      const completed = (await activitiesForInboxItemWindow('scout', itemId)).at(-1);
+      assert.equal(completed?.payload?.['slackText'], 'Can <@U0B68F373GU> take a look?');
+      assert.deepEqual(completed?.payload?.['resolvedMentions'], [
+        { id: 'U0B68F373GU', label: '@felix', type: 'user' },
+      ]);
+      assert.equal(completed?.payload?.['unresolvedMentions'], undefined);
+      assert.equal(completed?.payload?.['warnings'], undefined);
+    });
+  } finally {
+    await slackApi.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('message send treats literal mention placeholders as text', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-message-literal-mention-test-'));
   const posts: Array<{ channel: string; text: string }> = [];
