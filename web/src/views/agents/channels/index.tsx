@@ -1,18 +1,23 @@
 import { useEffect, useRef } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { AlertTriangle, BellOff, ChevronLeft, Loader2, SmilePlus } from 'lucide-react';
+import { AlertTriangle, BellOff, ChevronLeft, Loader2 } from 'lucide-react';
 import { fetchAgentChannels, fetchAgentMessages, fetchAgents } from '@/api/agents';
 import { buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
-import { renderMrkdwn } from '@/lib/mrkdwn';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
-import { clockHM, dateKey, dateLabel, formatRelativeShort } from '@/lib/format';
+import { dateKey, formatRelativeShort } from '@/lib/format';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useNow } from '@/hooks/useNow';
-import { AttachedFiles, UploadedFile } from '../activity/Attachments';
-import type { InboxItem } from '@shared/inbox';
+import {
+  groupByAuthor,
+  initialOf,
+  inboundAuthorName,
+  isMessageItem,
+  DayDivider,
+  MessageGroupRow,
+  type Author,
+} from '../conversation/SlackTimeline';
 import type { AgentChannelSummary, AgentMessageRecord } from '@shared/messages';
-import type { SlackFile } from '@/types';
 
 type Dir = 'all' | 'in' | 'out';
 
@@ -50,15 +55,6 @@ function DmAvatar({ channel, size = 'sm' }: { channel: AgentChannelSummary; size
     >
       {initial}
     </span>
-  );
-}
-
-function isMessageItem(item: ActivityFeedItem): boolean {
-  return (
-    item.kind === 'message-in' ||
-    item.kind === 'message-out' ||
-    item.kind === 'file-out' ||
-    item.kind === 'reaction-out'
   );
 }
 
@@ -131,62 +127,12 @@ function DirPill({ dir, onChange }: { dir: Dir; onChange: (v: Dir) => void }) {
 }
 
 // ---------------------------------------------------------------------------
-// Slack-style conversation renderer
-//
-// totoday round-2 ask: read the conversation like Slack, not like the Activity
-// audit register. So messages sit left-aligned with an author avatar + name +
-// time, consecutive same-author messages collapse under one header, and day
-// dividers separate the stream. Read-only (no composer). We still consume the
-// shared `ActivityFeedItem` normalization (buildMessageFeed) so the in→file /
-// out→file mapping stays in one tested place; this layer is presentation only.
+// Channel-scoped author resolver. The Slack-style renderer itself lives in the
+// shared `conversation/SlackTimeline` module (reused by the Activity tab); this
+// closure is the single-channel binding — in a DM the inbound counterpart is
+// fixed, so we reuse the channel's name + avatar so the byline and the
+// master-list row agree.
 // ---------------------------------------------------------------------------
-
-const GROUP_GAP_MS = 5 * 60 * 1000; // start a fresh author block after a 5-min lull
-
-interface Author {
-  key: string; // groups consecutive messages
-  name: string;
-  avatarUrl?: string;
-  initial: string;
-  isAgent: boolean;
-}
-
-function initialOf(name: string): string {
-  return name.trim().slice(0, 1).toUpperCase() || '?';
-}
-
-// Inbound author byline (Slack only in v1; other kinds degrade to a label).
-function inboundAuthorName(event: InboxItem): string {
-  if (event.kind === 'slack') {
-    return (
-      event.actor?.displayName ||
-      event.actor?.realName ||
-      event.actor?.handle?.replace(/^@/, '') ||
-      event.actor?.userId ||
-      'Unknown user'
-    );
-  }
-  if (event.kind === 'feishu') {
-    return event.actor?.displayName || event.actor?.openId || event.actor?.userId || 'Feishu user';
-  }
-  if (event.kind === 'choice_response') return event.answeredBy.handle?.replace(/^@/, '') || event.answeredBy.displayName || 'Choice response';
-  if (event.kind === 'reminder') return event.title?.trim() || 'Reminder';
-  if (event.kind === 'memory_coherence') return 'Memory coherence';
-  return 'Onboarding';
-}
-
-function inboundText(event: InboxItem): string {
-  if (event.kind === 'reminder' || event.kind === 'memory_coherence') return '';
-  if (event.kind === 'choice_response') return `Selected: ${event.optionLabel}`;
-  return ('text' in event ? event.text : '') ?? '';
-}
-
-function inboundFiles(event: InboxItem): SlackFile[] {
-  if (event.kind === 'slack' || event.kind === 'feishu') {
-    return (event.files ?? []) as SlackFile[];
-  }
-  return [];
-}
 
 function authorFor(item: ActivityFeedItem, channel: AgentChannelSummary, agent: Author): Author {
   if (item.kind !== 'message-in') return agent;
@@ -204,165 +150,16 @@ function authorFor(item: ActivityFeedItem, channel: AgentChannelSummary, agent: 
     };
   }
   const uid = item.event.kind === 'slack' ? item.event.actor?.userId : undefined;
-  return { key: `in:${uid ?? name}`, name, initial: initialOf(name), isAgent: false };
-}
-
-function MsgAvatar({ author }: { author: Author }) {
-  if (author.avatarUrl) {
-    return (
-      <img
-        src={author.avatarUrl}
-        alt=""
-        className="h-9 w-9 shrink-0 rounded-md object-cover"
-        loading="lazy"
-      />
-    );
-  }
-  return (
-    <span
-      className={[
-        'flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-[13px] font-semibold',
-        author.isAgent ? 'bg-accent/15 text-accent' : 'bg-surface-raised text-text-muted',
-      ].join(' ')}
-      aria-hidden
-    >
-      {author.initial}
-    </span>
-  );
-}
-
-// One message's content (text + files), avatar/byline handled by the group.
-function MessageBody({ item, agentId }: { item: ActivityFeedItem; agentId: string }) {
-  if (item.kind === 'message-in') {
-    const text = inboundText(item.event).trim();
-    const files = inboundFiles(item.event);
-    return (
-      <>
-        {text && (
-          <div className="whitespace-pre-wrap break-words font-sans text-[14px] leading-relaxed text-text">
-            {renderMrkdwn(text)}
-          </div>
-        )}
-        {files.length > 0 && <AttachedFiles files={files} agentId={agentId} />}
-      </>
-    );
-  }
-  if (item.kind === 'message-out') {
-    const text = item.text.trim();
-    if (!text) return <span className="font-serif text-[13px] italic text-text-subtle">(empty message)</span>;
-    return (
-      <div className="whitespace-pre-wrap break-words font-sans text-[14px] leading-relaxed text-text">
-        {renderMrkdwn(text)}
-      </div>
-    );
-  }
-  if (item.kind === 'file-out') {
-    const caption = item.caption.trim();
-    return (
-      <>
-        {caption && (
-          <div className="whitespace-pre-wrap break-words font-sans text-[14px] leading-relaxed text-text">
-            {renderMrkdwn(caption)}
-          </div>
-        )}
-        <div className="mt-1 flex flex-wrap gap-2">
-          {item.files.map((file) => (
-            <UploadedFile key={file.fileId} file={file} agentId={agentId} />
-          ))}
-        </div>
-      </>
-    );
-  }
-  if (item.kind !== 'reaction-out') return null;
-  // reaction-out: a lightweight signal, not a full message.
-  const verb = item.action === 'removed' ? 'removed reaction' : 'reacted';
-  return (
-    <span className="inline-flex items-center gap-1.5 font-sans text-[13px] text-text-muted">
-      <SmilePlus className="h-3.5 w-3.5 text-text-subtle" aria-hidden />
-      {verb}
-      {item.emoji && (
-        <code className="rounded-sm bg-surface-raised px-1 py-0.5 text-[12px] text-text-muted">
-          :{item.emoji}:
-        </code>
-      )}
-    </span>
-  );
-}
-
-// A run of consecutive messages from one author: avatar + byline once, bodies
-// stacked beneath (the Slack grouping rhythm).
-interface MessageGroup {
-  author: Author;
-  startTs: string;
-  items: { item: ActivityFeedItem; key: string }[];
-}
-
-function groupByAuthor(
-  items: ActivityFeedItem[],
-  channel: AgentChannelSummary,
-  agent: Author,
-): MessageGroup[] {
-  const groups: MessageGroup[] = [];
-  for (let i = 0; i < items.length; i += 1) {
-    const item = items[i]!;
-    const author = authorFor(item, channel, agent);
-    const tsMs = Date.parse(item.timestamp);
-    const last = groups[groups.length - 1];
-    const lastMs = last ? Date.parse(last.startTs) : 0;
-    const continues =
-      last &&
-      last.author.key === author.key &&
-      Number.isFinite(tsMs) &&
-      tsMs - Date.parse(last.items[last.items.length - 1]!.item.timestamp) <= GROUP_GAP_MS &&
-      Number.isFinite(lastMs);
-    if (continues) {
-      last!.items.push({ item, key: `${i}` });
-    } else {
-      groups.push({ author, startTs: item.timestamp, items: [{ item, key: `${i}` }] });
-    }
-  }
-  return groups;
-}
-
-function DayDivider({ iso }: { iso: string }) {
-  return (
-    <div className="my-3 flex items-center gap-3">
-      <span className="h-px flex-1 bg-border-soft" />
-      <span className="chrome rounded-full border border-border-soft bg-surface px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.1em] text-text-subtle">
-        {dateLabel(iso)}
-      </span>
-      <span className="h-px flex-1 bg-border-soft" />
-    </div>
-  );
-}
-
-function MessageGroupRow({
-  group,
-  agentId,
-}: {
-  group: MessageGroup;
-  agentId: string;
-}) {
-  return (
-    <div className="flex gap-2.5 px-1 py-1.5">
-      <MsgAvatar author={group.author} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-2">
-          <span className="truncate font-sans text-[13px] font-semibold text-text">
-            {group.author.name}
-          </span>
-          <span className="shrink-0 font-sans text-[11px] text-text-subtle">
-            {clockHM(group.startTs)}
-          </span>
-        </div>
-        <div className="mt-0.5 flex flex-col gap-1">
-          {group.items.map(({ item, key }) => (
-            <MessageBody key={key} item={item} agentId={agentId} />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
+  return {
+    key: `in:${uid ?? name}`,
+    name,
+    // Sender's real Slack avatar when resolved by the /messages enrichment
+    // (same source as the Activity tab, so avatars are identical across both);
+    // falls back to the initial when absent.
+    ...(item.avatarUrl ? { avatarUrl: item.avatarUrl } : {}),
+    initial: initialOf(name),
+    isAgent: false,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -497,9 +294,11 @@ function ConversationPane({
           byDay.map(([day, dayItems]) => (
             <div key={day}>
               <DayDivider iso={dayItems[0]!.timestamp} />
-              {groupByAuthor(dayItems, channel, agentAuthor).map((group, gi) => (
-                <MessageGroupRow key={`${day}::${gi}`} group={group} agentId={agentId} />
-              ))}
+              {groupByAuthor(dayItems, (item) => authorFor(item, channel, agentAuthor)).map(
+                (group, gi) => (
+                  <MessageGroupRow key={`${day}::${gi}`} group={group} agentId={agentId} />
+                ),
+              )}
             </div>
           ))
         )}
@@ -634,6 +433,17 @@ export default function Channels() {
             onDir={setDir}
             onBack={() => select(null)}
           />
+        ) : selectedId ? (
+          // Deep-linked (e.g. from an Activity surface chip) to a channel that
+          // isn't in the membership list — the agent may have left it, or it's a
+          // surface with no Channels detail target. Stay honest rather than
+          // silently resting on the first channel.
+          <div className="flex h-full items-center justify-center px-6 text-center">
+            <p className="max-w-prose font-serif italic text-[15px] text-text-subtle">
+              That conversation isn&apos;t in this list. The agent may have left the channel,
+              or it has no history here. Pick one from the list to read it.
+            </p>
+          </div>
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <p className="font-serif italic text-[15px] text-text-subtle">

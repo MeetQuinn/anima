@@ -35,6 +35,10 @@ export interface AgentMessageSource {
 
 export interface AgentMessageRecord {
   actor?: string;
+  // Inbound sender's Slack avatar (image_72), resolved best-effort at read time
+  // in the /messages route. Absent when the lookup is unavailable (left
+  // workspace, no photo, lookup failed); the UI falls back to an initial.
+  actorAvatarUrl?: string;
   actorDisplayName?: string;
   actorHandle?: string;
   actorUserId?: string;

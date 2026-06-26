@@ -84,6 +84,11 @@ function hasWebSearchDisplayDetails(activity: ActivityRecord): boolean {
 export interface SurfaceChip {
   kind: 'channel' | 'thread' | 'dm' | 'reminder' | 'onboarding';
   label: string;
+  // Slack channel/DM id (C…/D…) when the chip maps to a real conversation. The
+  // Activity timeline renders the chip as a link to that channel in the Channels
+  // tab (`?c=<channelId>`). Absent for reminder / onboarding / unknown surfaces,
+  // which have no channel to open.
+  channelId?: string;
 }
 
 export interface OutboundFile {
@@ -122,6 +127,9 @@ export type ActivityFeedItem =
       surface: SurfaceChip;
       followupAppended: boolean;
       wakeMeta?: ReminderWakeMeta;
+      // Inbound sender's Slack avatar (image_72), resolved best-effort by the
+      // /messages route. Absent → the author resolver falls back to an initial.
+      avatarUrl?: string;
     }
   | {
       kind: 'message-out';
@@ -401,6 +409,7 @@ export function buildMessageFeed(messagePage: AgentMessageHistoryPage): Activity
         timestamp: message.timestamp,
         surface: surfaceChipForEvent(event),
         followupAppended: false,
+        ...(message.actorAvatarUrl ? { avatarUrl: message.actorAvatarUrl } : {}),
       });
       continue;
     }
@@ -693,12 +702,16 @@ function surfaceChipForSlack(event: SlackInboxItem): SurfaceChip {
   // real data and at least lets the user look it up; the string literal
   // was a debugging placeholder that leaked into the UI (round-2 item 3).
   const channel = channelName ? `#${channelName}` : channelId;
+  // Carry the real channel id so the Activity timeline can link the chip to the
+  // Channels tab. Omit the placeholder so an unknown surface stays non-clickable
+  // rather than linking to nowhere (iris's honest-degrade bar).
+  const target = event.channelId ? { channelId: event.channelId } : {};
   if (kind === 'dm') {
     const handle = event.actor?.handle || event.actor?.displayName;
-    return { kind: 'dm', label: handle ? `@${handle.replace(/^@/, '')}` : 'DM' };
+    return { kind: 'dm', label: handle ? `@${handle.replace(/^@/, '')}` : 'DM', ...target };
   }
-  if (kind === 'thread') return { kind: 'thread', label: `${channel} · thread` };
-  return { kind: 'channel', label: channel };
+  if (kind === 'thread') return { kind: 'thread', label: `${channel} · thread`, ...target };
+  return { kind: 'channel', label: channel, ...target };
 }
 
 function surfaceChipForFeishu(event: FeishuInboxItem): SurfaceChip {

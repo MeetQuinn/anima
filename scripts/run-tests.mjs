@@ -15,6 +15,7 @@ const groups = {
     'feishu.test.js',
     'inbox.test.js',
     'interactive-ask.test.js',
+    'message-profiles.test.js',
     'messages.test.js',
     'message-transport.test.js',
     'prompt-attachments.test.js',

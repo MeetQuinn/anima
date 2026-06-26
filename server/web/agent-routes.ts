@@ -8,6 +8,7 @@ import { buildAgentDiagnostics } from '../diagnostics/agent-diagnostics.service.
 import { defaultRuntimeService } from '../runtime/runtime.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import { buildAgentChannelList } from './agent-channels.js';
+import { enrichInboundAvatars } from './message-profiles.js';
 import { reminderServiceForAgent } from '../reminders/reminder.service.js';
 import {
   AgentCreateRequest,
@@ -128,7 +129,15 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
       const since = queryParam(request.url, 'since') ?? undefined;
       const rawDirection = queryParam(request.url, 'direction');
       const direction = rawDirection === 'in' || rawDirection === 'out' ? rawDirection : undefined;
-      return messageServiceForAgent(request.params.agentId).list({ before, direction, limit, since });
+      const page = await messageServiceForAgent(request.params.agentId).list({
+        before,
+        direction,
+        limit,
+        since,
+      });
+      // Best-effort: decorate inbound rows with sender avatars. Never blocks or
+      // fails the history response (see enrichInboundAvatars).
+      return enrichInboundAvatars(request.params.agentId, page);
     },
   );
   // Channels tab: the Slack channels + DMs the agent is a member of. Channel

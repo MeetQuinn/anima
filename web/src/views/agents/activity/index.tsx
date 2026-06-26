@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef } from 'react';
+import { Fragment, useEffect, useMemo, useReducer, useRef, type ReactNode } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { AlertCircle, ExternalLink, Loader2, X } from 'lucide-react';
@@ -11,23 +11,28 @@ import {
 } from '@/api/agents';
 import { buildActivityFeed, buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
 import { activityIsFailure, activityRow, isNarrativeStep } from '@/lib/activities';
-import { clockHM, dateKey, formatRelativeShort } from '@/lib/format';
+import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
+import { clockHM, dateKey, dateLabel, formatRelativeShort } from '@/lib/format';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
-import {
-  applyLensOverride,
-  clearLensOverride,
-  useActivityFilters,
-  type ActivityLens,
-  type ActivityDir,
-} from '@/hooks/useActivityFilters';
+import { useActivityFilters, type ActivityDir } from '@/hooks/useActivityFilters';
 import { useNow } from '@/hooks/useNow';
 import {
   agentHealthDegradedText,
   agentHealthReasonText,
   agentHealthRecoveredFresh,
 } from '@/components/AgentHealthIndicator';
-import { MessageInRow, MessageOutRow, FileOutRow } from './MessageRows';
-import { ReactOutRow, StepRow, WorkingIndicator, DaySection } from './AuditRows';
+import {
+  groupByAuthor,
+  initialOf,
+  inboundAuthorName,
+  isMessageItem,
+  DayDivider,
+  MessageGroupRow,
+  type Author,
+  type AuthorResolver,
+  type SurfaceResolver,
+} from '../conversation/SlackTimeline';
+import { StepRow, WorkingIndicator } from './AuditRows';
 import type { Activity as ActivityRecord, AgentActivityFeedEvent } from '@shared/activity';
 import type { AgentFeishuScopeAuthUrl } from '@shared/agent-config';
 import type { AgentMessageRecord } from '@shared/messages';
@@ -35,7 +40,7 @@ import type { AgentStatusSummary } from '@shared/snapshot';
 
 // ---------------------------------------------------------------------------
 // Mobile direction sub-filter pill (All / Inbox / Outbox).
-// Desktop: lives in AgentHeader next to the lens pill (consistent header slot).
+// Desktop: lives in AgentHeader (consistent header slot).
 // ---------------------------------------------------------------------------
 
 function MobileDirPill({
@@ -45,7 +50,8 @@ function MobileDirPill({
   dir: ActivityDir;
   onChange: (v: ActivityDir) => void;
 }) {
-  const base = 'chrome px-2.5 py-1.5 text-[11px] tracking-wide rounded-sm transition-colors min-h-[36px] flex items-center';
+  const base =
+    'chrome px-2.5 py-1.5 text-[11px] tracking-wide rounded-sm transition-colors min-h-[36px] flex items-center';
   const active = 'bg-accent/10 text-accent font-medium';
   const inactive = 'text-text-muted hover:text-text';
   return (
@@ -65,51 +71,41 @@ function MobileDirPill({
 }
 
 // ---------------------------------------------------------------------------
-// LensPill — mobile lens toggle (mirrors desktop AgentHeader version)
+// Step lane — the subordinate register. A run of consecutive tool steps sits
+// indented under the conversation behind a hairline rule, smaller + muted
+// (chrome register), so steps read as a secondary trace beneath the Slack-style
+// messages rather than competing with them. Per-step expand-for-full lives in
+// StepRow itself (the depth that matters; iris-locked `795d974`).
 // ---------------------------------------------------------------------------
 
-function MobileLensPill({
-  lens,
-  onChange,
-}: {
-  lens: ActivityLens;
-  onChange: (v: ActivityLens) => void;
-}) {
-  const base = 'chrome px-2.5 py-1.5 text-[11px] tracking-wide rounded-sm transition-colors min-h-[36px] flex items-center';
-  const active = 'bg-accent/10 text-accent font-medium';
-  const inactive = 'text-text-muted hover:text-text';
+function StepLane({ children }: { children: ReactNode }) {
   return (
-    <div className="flex items-center rounded-sm border border-border-soft p-0.5">
-      <button
-        type="button"
-        onClick={() => onChange('messages')}
-        className={[base, lens === 'messages' ? active : inactive].join(' ')}
-      >
-        Conversation
-      </button>
-      <button
-        type="button"
-        onClick={() => onChange('activity')}
-        className={[base, lens === 'activity' ? active : inactive].join(' ')}
-      >
-        Activity
-      </button>
+    <div className="my-1 ml-1.5 border-l-2 border-border-soft/50 pl-2 md:ml-2 md:pl-3">
+      {children}
     </div>
   );
+}
+
+// Segment a day's items into maximal runs of conversation messages vs tool
+// steps, preserving chronology. Message runs render as Slack groups; step runs
+// render in an indented lane. A step between two message groups naturally
+// breaks the grouping, which is the interleave the spec asks for.
+type DayBlock = { type: 'msgs' | 'steps'; items: ActivityFeedItem[] };
+
+function buildBlocks(items: ActivityFeedItem[]): DayBlock[] {
+  const blocks: DayBlock[] = [];
+  for (const item of items) {
+    const type: DayBlock['type'] = item.kind === 'step' ? 'steps' : 'msgs';
+    const last = blocks[blocks.length - 1];
+    if (last && last.type === type) last.items.push(item);
+    else blocks.push({ type, items: [item] });
+  }
+  return blocks;
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function isMessageItem(item: ActivityFeedItem): boolean {
-  return (
-    item.kind === 'message-in' ||
-    item.kind === 'message-out' ||
-    item.kind === 'file-out' ||
-    item.kind === 'reaction-out'
-  );
-}
 
 function ActivityStatusSummary({
   status,
@@ -135,12 +131,18 @@ function ActivityStatusSummary({
     : recovered
       ? 'Recovered'
       : starting
-        ? health?.reason === 'restart_pending' ? 'Restarting' : 'Starting'
+        ? health?.reason === 'restart_pending'
+          ? 'Restarting'
+          : 'Starting'
         : degraded
           ? 'Retrying'
           : unknown
             ? 'Health unavailable'
-            : running ? 'Working' : queued ? 'Queued' : 'Idle';
+            : running
+              ? 'Working'
+              : queued
+                ? 'Queued'
+                : 'Idle';
   const dot = unhealthy
     ? 'var(--color-health-error)'
     : recovered
@@ -157,9 +159,8 @@ function ActivityStatusSummary({
     : degraded
       ? agentHealthDegradedText(health?.reason)
       : undefined;
-  const latest = latestActivity && isNarrativeStep(latestActivity)
-    ? activityRow(latestActivity)
-    : undefined;
+  const latest =
+    latestActivity && isNarrativeStep(latestActivity) ? activityRow(latestActivity) : undefined;
 
   return (
     <div className="shrink-0 border-b border-border-soft bg-surface-raised/30 px-4 py-2 md:px-10">
@@ -169,7 +170,12 @@ function ActivityStatusSummary({
           {state}
         </span>
         {reason && (
-          <span className={['font-sans text-[11px]', unhealthy ? 'text-health-error' : 'text-text-muted'].join(' ')}>
+          <span
+            className={[
+              'font-sans text-[11px]',
+              unhealthy ? 'text-health-error' : 'text-text-muted',
+            ].join(' ')}
+          >
             {reason}
           </span>
         )}
@@ -179,13 +185,12 @@ function ActivityStatusSummary({
           </span>
         )}
         {queued && (
-          <span className="font-sans text-[11px] text-text-subtle">
-            {status.queueDepth} queued
-          </span>
+          <span className="font-sans text-[11px] text-text-subtle">{status.queueDepth} queued</span>
         )}
         {latest && (
           <span className="min-w-0 flex-1 basis-64 truncate font-sans text-[11px] text-text-muted">
-            latest: {latest.title}{latest.target ? ` · ${latest.target}` : ''}
+            latest: {latest.title}
+            {latest.target ? ` · ${latest.target}` : ''}
           </span>
         )}
       </div>
@@ -203,13 +208,7 @@ function ActivityStatusSummary({
 // moment the first real activity arrives (filteredItems.length > 0).
 // ---------------------------------------------------------------------------
 
-function FirstRunHero({
-  agentName,
-  platform,
-}: {
-  agentName?: string;
-  platform: 'feishu' | 'slack';
-}) {
+function FirstRunHero({ agentName, platform }: { agentName?: string; platform: 'feishu' | 'slack' }) {
   const platformLabel = platform === 'feishu' ? 'Feishu' : 'Slack';
   return (
     <div className="mt-20 flex flex-col items-center px-6 text-center animate-in fade-in slide-in-from-bottom-2 fill-mode-both duration-500 motion-reduce:animate-none">
@@ -219,8 +218,7 @@ function FirstRunHero({
       </span>
       <p className="font-serif text-[19px] leading-tight text-text">Your agent is live.</p>
       <p className="mt-1.5 font-serif text-[15px] leading-snug text-text-muted">
-        Say hi to{' '}
-        {agentName ? <span className="font-medium text-text">{agentName}</span> : 'it'} in{' '}
+        Say hi to {agentName ? <span className="font-medium text-text">{agentName}</span> : 'it'} in{' '}
         {platformLabel}.
       </p>
     </div>
@@ -305,7 +303,16 @@ function FeishuRecommendedPermissionsConnectBanner({
 }
 
 // ---------------------------------------------------------------------------
-// Activity view
+// Activity view — one Slack-style timeline plus a single "Show tool steps"
+// toggle (iris-locked spec `795d974`). Layered sourcing (`1782412048`):
+//   • Conversation layer = the messages feed (buildMessageFeed), ALWAYS, complete
+//     history, byte-identical to the Channels tab. Reminders stay inline here.
+//   • Step layer = the activity feed's curated non-conversation rows
+//     (isNarrativeStep), toggle-gated, interleaved by timestamp as subordinate
+//     rows. The activity feed read path is count/cursor based (not time-bounded),
+//     so when steps are interleaved we auto-page it until its raw window spans
+//     the loaded conversation, then state any remaining boundary explicitly. The
+//     step layer is never implied to be a complete history.
 // ---------------------------------------------------------------------------
 
 export default function Activity() {
@@ -316,13 +323,15 @@ export default function Activity() {
     refetchInterval: refetchIntervals.agentStatuses,
   });
   const { agentId } = useParams<{ agentId: string }>();
+  const agent = agents.find((a) => a.id === agentId);
   const [searchParams] = useSearchParams();
   // Dev-only, side-effect-free preview of the first-run hero for screenshots /
   // on-render review (?_previewFirstRunHero=feishu|slack). Never honored in prod.
   const previewFirstRunHero = import.meta.env.DEV
     ? ((searchParams.get('_previewFirstRunHero') as 'feishu' | 'slack' | null) ?? undefined)
     : undefined;
-  const { failedOnly, lens, dir, showAllSteps, setFailedOnly, setLens, setDir, setShowAllSteps } = useActivityFilters();
+  const { failedOnly, dir, showToolSteps, setFailedOnly, setDir, setShowToolSteps } =
+    useActivityFilters();
   const now = useNow();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -331,54 +340,53 @@ export default function Activity() {
   // Scroll height snapshot taken just before a previous-page fetch so we can
   // restore the user's viewport position after the prepend.
   const prevScrollHeightRef = useRef(0);
+  // While true, keep the viewport pinned to the newest row as the feed settles
+  // after a filter/toggle change (activity steps page in, coverage aligns). Set
+  // when a new feed is first shown; released once the feed settles or the user
+  // scrolls away from the bottom. Without it, toggling Show tool steps would
+  // scroll to the conversation's bottom before the newest steps (activity
+  // page[0], some newer than the last message) finish loading, stranding the
+  // viewport above the true newest row.
+  const bottomPinUntilSettleRef = useRef(false);
 
+  // The step layer is needed when the user asks for steps, OR for the failed-only
+  // filter (failures are steps). Failed-only is a focused debugging filter: it
+  // shows only failure steps (the conversation is hidden), matching the retired
+  // lens behaviour and the filter's name.
+  const stepsNeeded = showToolSteps || failedOnly;
+
+  const messageDirection = dir === 'all' ? undefined : dir;
+  // Conversation layer — always loaded (complete history, Channels-identical).
+  const messageQuery = useInfiniteQuery({
+    queryKey: queryKeys.agentMessages(agentId ?? '', dir),
+    queryFn: ({ pageParam }) =>
+      fetchAgentMessages(agentId!, { before: pageParam, direction: messageDirection, limit: 100 }),
+    enabled: !!agentId,
+    initialPageParam: undefined as string | undefined,
+    // Forward pagination toward OLDER history: page[0] stays the newest page so a
+    // poll/refetch (which rebuilds the page list from page[0] forward via
+    // getNextPageParam) never drops the latest records once older history loads.
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    getPreviousPageParam: () => undefined,
+    refetchInterval: agentId ? refetchIntervals.agentActivities : false,
+  });
+
+  // Step layer — only loaded when steps are needed.
   const activityQuery = useInfiniteQuery({
     queryKey: queryKeys.agentActivities(agentId ?? ''),
     queryFn: ({ pageParam }) => fetchAgentActivities(agentId!, 100, pageParam),
-    enabled: !!agentId && lens === 'activity',
+    enabled: !!agentId && stepsNeeded,
     initialPageParam: undefined as string | undefined,
-    // Forward pagination toward OLDER history. page[0] is always the newest
-    // page (initialPageParam undefined); each page's nextCursor is the ISO
-    // timestamp of its oldest activity, so getNextPageParam loads the page of
-    // older activities that comes after it. We deliberately do NOT use
-    // getPreviousPageParam: on a poll/refetch react-query rebuilds the page
-    // list starting from page[0] and walking forward via getNextPageParam. If
-    // the newest page were not page[0], that walk would drop every page it
-    // can't reach, silently discarding the latest logs once the user has
-    // loaded older history. Display order is timestamp-sorted downstream, so
-    // array order has no effect on what the user sees.
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     getPreviousPageParam: () => undefined,
-    refetchInterval: agentId ? refetchIntervals.agentActivities : false,
+    refetchInterval: agentId && stepsNeeded ? refetchIntervals.agentActivities : false,
   });
-  const messageDirection = dir === 'all' ? undefined : dir;
-  const messageQuery = useInfiniteQuery({
-    queryKey: queryKeys.agentMessages(agentId ?? '', dir),
-    queryFn: ({ pageParam }) => fetchAgentMessages(agentId!, {
-      before: pageParam,
-      direction: messageDirection,
-      limit: 100,
-    }),
-    enabled: !!agentId && lens === 'messages',
-    initialPageParam: undefined as string | undefined,
-    // Same forward-toward-older pagination as the activity query above, for the
-    // same refetch-reconstruction reason. page[0] stays the newest page.
-    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-    getPreviousPageParam: () => undefined,
-    refetchInterval: agentId ? refetchIntervals.agentActivities : false,
-  });
-  const activitiesError = lens === 'messages' ? messageQuery.error : activityQuery.error;
-  const loadingActivities = lens === 'messages' ? messageQuery.isLoading : activityQuery.isLoading;
-  // "Older history" maps to react-query's forward (next) direction — see the
-  // pagination comment on activityQuery above.
-  const fetchOlder = lens === 'messages' ? messageQuery.fetchNextPage : activityQuery.fetchNextPage;
-  const hasOlder = lens === 'messages' ? messageQuery.hasNextPage : activityQuery.hasNextPage;
-  const isFetchingOlder = lens === 'messages'
-    ? messageQuery.isFetchingNextPage
-    : activityQuery.isFetchingNextPage;
 
-  // Merge all loaded pages into a single feed page.
-  // Feed events are deduplicated by their source IDs so that the
+  const feedError = messageQuery.error ?? (stepsNeeded ? activityQuery.error : null);
+  const loadingActivities =
+    messageQuery.isLoading || (stepsNeeded && activityQuery.isLoading);
+
+  // Merge all loaded pages into single feed pages, deduped by source id so the
   // live-refetch of the newest page never creates duplicates.
   const activitiesData = useMemo(() => {
     if (!activityQuery.data?.pages.length) return undefined;
@@ -392,9 +400,7 @@ export default function Activity() {
         eventMap.set(key, event);
       }
     }
-    return {
-      events: Array.from(eventMap.values()),
-    };
+    return { events: Array.from(eventMap.values()) };
   }, [activityQuery.data]);
 
   const messagesData = useMemo(() => {
@@ -412,60 +418,106 @@ export default function Activity() {
   const currentItemId = currentStatus?.currentItemId;
   const currentItemStartedAt = currentStatus?.currentItemStartedAt;
 
-  // Build the feed. In Activity lens, showAllSteps controls whether hidden
-  // lifecycle plumbing (HIDDEN_TYPES) is included — same as the old
-  // showHidden param. Messages lens always builds full (comms items are
-  // never in HIDDEN_TYPES, so it makes no difference, but full is correct).
-  const activityFeed = useMemo(
-    () => {
-      if (lens === 'messages') return messagesData ? buildMessageFeed(messagesData) : [];
-      return activitiesData ? buildActivityFeed(activitiesData, showAllSteps) : [];
-    },
-    [activitiesData, messagesData, lens, showAllSteps],
-  );
-
-  const filteredItems = useMemo(() => {
-    if (lens === 'messages') {
-      // Messages lens: communication rows only, direction sub-filter applied.
-      return activityFeed.filter((item) => {
-        if (!isMessageItem(item)) return false;
-        if (dir === 'in' && item.kind !== 'message-in') return false;
-        if (dir === 'out' && item.kind === 'message-in') return false;
-        return true;
-      });
-    }
-
-    // Activity lens — curated (showAllSteps=false) or full firehose (showAllSteps=true).
-    if (!showAllSteps) {
-      // Curated view: restore the pre-30d71f3 isNarrativeStep filter.
-      // Collect failed tool providerToolIds so we can suppress the matching
-      // started row (only the failure row should show, not both).
-      const failedProviderToolIds = new Set<string>();
-      for (const item of activityFeed) {
-        if (item.kind === 'step' && item.activity.type === 'tool.call.failed') {
-          const pid = item.activity.payload?.['providerToolId'];
-          if (typeof pid === 'string' && pid) failedProviderToolIds.add(pid);
-        }
-      }
-      return activityFeed.filter((item) => {
-        if (item.kind === 'step') {
-          if (!isNarrativeStep(item.activity)) return false;
-          if (item.activity.type === 'tool.call.started' && failedProviderToolIds.size > 0) {
-            const pid = item.activity.payload?.['providerToolId'];
-            if (typeof pid === 'string' && pid && failedProviderToolIds.has(pid)) return false;
-          }
-        }
-        if (failedOnly && (item.kind !== 'step' || !activityIsFailure(item.activity))) return false;
-        return true;
-      });
-    }
-
-    // Full firehose (showAllSteps=true): everything, with optional failed-only filter.
-    return activityFeed.filter((item) => {
-      if (failedOnly && (item.kind !== 'step' || !activityIsFailure(item.activity))) return false;
+  // Conversation layer items (hidden entirely under the failed-only debug filter).
+  const conversationItems = useMemo(() => {
+    if (failedOnly || !messagesData) return [];
+    return buildMessageFeed(messagesData).filter((item) => {
+      if (!isMessageItem(item)) return false;
+      if (dir === 'in' && item.kind !== 'message-in') return false;
+      if (dir === 'out' && item.kind === 'message-in') return false;
       return true;
     });
-  }, [activityFeed, lens, dir, failedOnly, showAllSteps]);
+  }, [messagesData, failedOnly, dir]);
+
+  // Step layer items — curated isNarrativeStep set only (never the firehose;
+  // iris-locked `795d974`). Suppress a tool's started row when its failure row is
+  // present so a failed tool shows once, as the failure.
+  const stepItems = useMemo(() => {
+    if (!stepsNeeded || !activitiesData) return [];
+    const feed = buildActivityFeed(activitiesData, false);
+    const failedProviderToolIds = new Set<string>();
+    for (const item of feed) {
+      if (item.kind === 'step' && item.activity.type === 'tool.call.failed') {
+        const pid = item.activity.payload?.['providerToolId'];
+        if (typeof pid === 'string' && pid) failedProviderToolIds.add(pid);
+      }
+    }
+    return feed.filter((item) => {
+      if (item.kind !== 'step') return false;
+      if (!isNarrativeStep(item.activity)) return false;
+      if (item.activity.type === 'tool.call.started' && failedProviderToolIds.size > 0) {
+        const pid = item.activity.payload?.['providerToolId'];
+        if (typeof pid === 'string' && pid && failedProviderToolIds.has(pid)) return false;
+      }
+      if (failedOnly && !activityIsFailure(item.activity)) return false;
+      return true;
+    });
+  }, [activitiesData, stepsNeeded, failedOnly]);
+
+  // The single interleaved timeline: conversation + steps, chronological.
+  const filteredItems = useMemo(() => {
+    const merged = [...conversationItems, ...stepItems];
+    merged.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+    return merged;
+  }, [conversationItems, stepItems]);
+
+  // --- Coverage alignment (honesty contract) --------------------------------
+  // The conversation feed (messages store) and the step feed (activity store)
+  // paginate independently by count, so their loaded time-windows can diverge:
+  // the newest 100 activity events may span only hours while the newest 100
+  // messages span days. Left unaligned, older visible messages would render with
+  // no adjacent steps and read as "nothing happened" when the steps simply were
+  // not paged in. So whenever steps are interleaved with the conversation we keep
+  // fetching activity pages until the loaded activity window reaches at least as
+  // far back as the oldest loaded message (or the feed is exhausted). The
+  // residual case — the activity store exhausted before reaching the oldest
+  // loaded message (older steps no longer retained) — is made explicit with a
+  // boundary notice rather than left to imply silence.
+  const interleaving = showToolSteps && !failedOnly;
+
+  // Oldest loaded conversation timestamp (the older edge of the visible window).
+  const oldestMessageTs = useMemo(() => {
+    let min = Infinity;
+    for (const item of conversationItems) {
+      const t = Date.parse(item.timestamp);
+      if (Number.isFinite(t) && t < min) min = t;
+    }
+    return min === Infinity ? null : min;
+  }, [conversationItems]);
+
+  // Oldest loaded RAW activity event — coverage is measured by the feed window
+  // we have actually paged in, NOT the curated step subset (a covered region may
+  // legitimately have no narrative step; an un-paged region must not be confused
+  // with it).
+  const oldestActivityTs = useMemo(() => {
+    if (!activitiesData?.events.length) return null;
+    let min = Infinity;
+    for (const ev of activitiesData.events) {
+      const t = Date.parse(ev.timestamp);
+      if (Number.isFinite(t) && t < min) min = t;
+    }
+    return min === Infinity ? null : min;
+  }, [activitiesData]);
+
+  // Step coverage reaches the loaded conversation window when the oldest loaded
+  // activity event is at or before the oldest loaded message.
+  const activityCoversMessages =
+    oldestMessageTs === null ||
+    (oldestActivityTs !== null && oldestActivityTs <= oldestMessageTs);
+
+  // Explicit boundary: steps are interleaved and the conversation has loaded
+  // messages, but the activity feed is exhausted and still does not reach the
+  // oldest loaded message. Below this timestamp older steps are no longer
+  // retained, so we label it instead of implying those messages had no activity.
+  const stepCoverageFloorTs =
+    interleaving &&
+    activityQuery.hasNextPage === false &&
+    !activityQuery.isFetchingNextPage &&
+    oldestActivityTs !== null &&
+    oldestMessageTs !== null &&
+    oldestActivityTs > oldestMessageTs
+      ? oldestActivityTs
+      : null;
 
   const latestCurrentItemActivity = useMemo(() => {
     if (!currentItemId || !activitiesData) return undefined;
@@ -481,11 +533,8 @@ export default function Activity() {
 
   // First-run hero gating. Show the live-moment invite in place of the generic
   // empty text only when the DEFAULT, unfiltered feed is empty (a brand-new
-  // agent), not when a filter (failed-only / direction) emptied the view — those
-  // keep their own specific "no matches" copy. Needs a known connected platform
-  // to phrase the invite ("in Feishu" / "in Slack") honestly; absent it, fall
-  // back to the plain empty text.
-  const agent = agents.find((a) => a.id === agentId);
+  // agent), not when a filter (failed-only / direction) emptied the view. Needs a
+  // known connected platform to phrase the invite honestly.
   const connectedPlatform: 'feishu' | 'slack' | undefined = agent?.feishu?.connected
     ? 'feishu'
     : agent?.slack?.connected
@@ -497,23 +546,19 @@ export default function Activity() {
     (!loadingActivities &&
       filteredItems.length === 0 &&
       !failedOnly &&
-      !(lens === 'messages' && dir !== 'all') &&
+      dir === 'all' &&
       connectedPlatform !== undefined);
 
   // --- Post-onboarding first landing -----------------------------------------
   // A fresh Feishu connect navigates here with router state:
   //   { onboardingConnected: 'feishu', feishuGreetingBanner?: boolean }
-  // On that arrival we (a) force the activity view regardless of the user's
-  // stored lens preference — the "agent is alive" payoff — without persisting
-  // that override, and (b) arm the one-time greeting banner, but ONLY when the
-  // app was auto-registered (feishuGreetingBanner true). The manual existing-app
-  // path has no owner open_id and is left ungreeted (#154), so it jumps to the
-  // activity view but shows no "say hi" promise.
+  // We arm the one-time greeting + recommended-permissions banners (no lens to
+  // force any more — the Activity tab is the only view). The manual existing-app
+  // path has no owner open_id and is left ungreeted (#154): it shows no "say hi".
   //
   // The signal is read from the *current* location every render and consumed via
   // a route-keyed effect, NOT captured at mount: React Router reuses this Activity
-  // component when the user creates another agent from an existing activity page,
-  // so a mount-only read would miss the freshly arrived state.
+  // component when the user creates another agent from an existing activity page.
   const location = useLocation();
   const navigate = useNavigate();
   const landingState = location.state as
@@ -522,17 +567,6 @@ export default function Activity() {
   const justConnectedFeishu = landingState?.onboardingConnected === 'feishu';
   const landingWantsBanner = justConnectedFeishu && landingState?.feishuGreetingBanner === true;
 
-  // Force the activity lens for any fresh connect landing (auto or manual).
-  // applyLensOverride is idempotent and non-persisting.
-  useEffect(() => {
-    if (justConnectedFeishu) applyLensOverride('activity');
-  }, [location.key, justConnectedFeishu]);
-
-  // The transient override applies only to the agent we landed on; drop it when
-  // the user navigates to a different agent (the route stays mounted across param
-  // changes) or leaves the activity view entirely.
-  useEffect(() => clearLensOverride, [agentId]);
-
   // --- One-time "say hi in Feishu" banner ------------------------------------
   // Dismissal is permanent and keyed to the connection (appId), so a fresh
   // reconnect can legitimately show it again, but within one connection it is
@@ -540,7 +574,7 @@ export default function Activity() {
   // and never claims the hello already happened.
   const previewHelloBanner = import.meta.env.DEV && searchParams.get('_previewHelloBanner') === '1';
   const feishuConnKey = agent?.feishu?.connected
-    ? (agent.feishu.appId?.trim() || 'connected')
+    ? agent.feishu.appId?.trim() || 'connected'
     : undefined;
   const [, forceHelloRerender] = useReducer((n: number) => n + 1, 0);
 
@@ -552,9 +586,6 @@ export default function Activity() {
   useEffect(() => {
     if (!justConnectedFeishu) return;
     if (landingProcessedRef.current === location.key) return;
-    // Wait for the appId; the effect re-fires when feishuConnKey resolves. The
-    // recommended-permissions banner is keyed to the connection, including manual
-    // existing-app connects where the greeting banner is intentionally absent.
     if (!agentId || !feishuConnKey) return;
     try {
       localStorage.setItem(`feishu-recommended-scopes-armed:${agentId}`, feishuConnKey);
@@ -569,8 +600,6 @@ export default function Activity() {
       }
     }
     landingProcessedRef.current = location.key;
-    // Consume the signal so a reload / back-navigation never replays it. The
-    // navigate re-renders, so the render-body read below picks up the new arm.
     navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
   }, [
     justConnectedFeishu,
@@ -638,9 +667,9 @@ export default function Activity() {
 
   const shouldCheckRecommendedPermissions = Boolean(
     agentId &&
-    recommendedPermissionsPersisted.armed &&
-    !recommendedPermissionsPersisted.dismissed &&
-    connectedPlatform === 'feishu',
+      recommendedPermissionsPersisted.armed &&
+      !recommendedPermissionsPersisted.dismissed &&
+      connectedPlatform === 'feishu',
   );
   const { data: feishuScopeStatus } = useQuery({
     queryKey: queryKeys.agentFeishuScopes(agentId ?? ''),
@@ -653,7 +682,8 @@ export default function Activity() {
     !recommendedPermissionsPersisted.dismissed &&
     (recommendedPermissionsState === 'missing' || recommendedPermissionsState === 'unknown');
 
-  const error = activitiesError instanceof Error ? activitiesError.message : activitiesError ? String(activitiesError) : null;
+  const error =
+    feedError instanceof Error ? feedError.message : feedError ? String(feedError) : null;
 
   const byDay = useMemo(() => {
     const m = new Map<string, ActivityFeedItem[]>();
@@ -669,12 +699,99 @@ export default function Activity() {
     return Array.from(m.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [filteredItems]);
 
+  // --- Author / surface resolvers for the shared Slack-style renderer --------
+  // Cross-channel axis: the agent bylines its own outbound rows; inbound rows
+  // byline their sender. Avatars fall back to initials cross-channel (no single
+  // DM channel to pull an image from). The surface resolver adds a per-group
+  // channel chip and breaks groups when the conversation jumps channels.
+  const agentDisplay = agent ? agentDisplayName(agent) : (agentId ?? '');
+  const agentAvatar = agentAvatarUrl(agent);
+  const agentAuthor: Author = {
+    key: 'agent',
+    name: agentDisplay,
+    ...(agentAvatar ? { avatarUrl: agentAvatar } : {}),
+    initial: initialOf(agentDisplay),
+    isAgent: true,
+  };
+  const resolveAuthor: AuthorResolver = (item) => {
+    if (item.kind !== 'message-in') return agentAuthor;
+    const name = inboundAuthorName(item.event);
+    const uid = item.event.kind === 'slack' ? item.event.actor?.userId : undefined;
+    return {
+      key: `in:${uid ?? name}`,
+      name,
+      // Sender's real Slack avatar when resolved (see /messages enrichment);
+      // falls back to the initial when absent (left workspace, no photo).
+      ...(item.avatarUrl ? { avatarUrl: item.avatarUrl } : {}),
+      initial: initialOf(name),
+      isAgent: false,
+    };
+  };
+  const resolveSurface: SurfaceResolver = (item) => {
+    const chip = 'surface' in item ? item.surface : undefined;
+    if (!chip) return { key: '' };
+    return { key: `${chip.kind}:${chip.label}`, chip };
+  };
+
   // Track which feed we've already scrolled to the bottom for, so we only do
-  // the initial-load scroll once per agent/lens/filter navigation.
+  // the initial-load scroll once per agent/filter navigation.
   const initialScrollFeedRef = useRef<string | null>(null);
 
-  // Keep isAtBottomRef in sync as the user scrolls. Also trigger a previous-page
-  // fetch when the user reaches the top of the container.
+  // --- Infinite scroll: keep pagination drivers in a ref so the scroll listener
+  // stays mounted once and always reads the latest message/step page state.
+  // Snapshot scroll height just before ANY older-page fetch (message OR
+  // activity) so the post-prepend restore keeps the viewport pinned. Guarded so
+  // a message + activity fetch that fire together don't clobber the baseline.
+  const snapshotScrollHeight = () => {
+    if (prevScrollHeightRef.current === 0) {
+      prevScrollHeightRef.current = scrollContainerRef.current?.scrollHeight ?? 0;
+    }
+  };
+  const fetchOlder = () => {
+    if (messageQuery.hasNextPage && !messageQuery.isFetchingNextPage) {
+      snapshotScrollHeight();
+      void messageQuery.fetchNextPage();
+    }
+    if (stepsNeeded && activityQuery.hasNextPage && !activityQuery.isFetchingNextPage) {
+      snapshotScrollHeight();
+      void activityQuery.fetchNextPage();
+    }
+  };
+  const hasOlder = messageQuery.hasNextPage || (stepsNeeded && !!activityQuery.hasNextPage);
+  const isFetchingOlder =
+    messageQuery.isFetchingNextPage || (stepsNeeded && activityQuery.isFetchingNextPage);
+  const paginationRef = useRef({ fetchOlder, hasOlder, isFetchingOlder });
+  // Keep the ref current after each render (refs must not be written during
+  // render — React Compiler lint). The scroll listener reads the latest drivers
+  // through this ref, so it can stay mounted once.
+  useEffect(() => {
+    paginationRef.current = { fetchOlder, hasOlder, isFetchingOlder };
+  });
+
+  // Coverage alignment: while steps are interleaved with the conversation, keep
+  // paging the activity feed (older) until it spans the loaded conversation
+  // window or is exhausted. One page per settle — react-query re-renders after
+  // each page and this re-evaluates, so the chain self-terminates once the
+  // oldest loaded activity reaches the oldest loaded message. Snapshot first so
+  // the prepended older steps don't shift the viewport.
+  const autoFetchActivity = activityQuery.fetchNextPage;
+  useEffect(() => {
+    if (!interleaving || activityCoversMessages) return;
+    if (!activityQuery.hasNextPage || activityQuery.isFetchingNextPage) return;
+    if (prevScrollHeightRef.current === 0) {
+      prevScrollHeightRef.current = scrollContainerRef.current?.scrollHeight ?? 0;
+    }
+    void autoFetchActivity();
+  }, [
+    interleaving,
+    activityCoversMessages,
+    activityQuery.hasNextPage,
+    activityQuery.isFetchingNextPage,
+    autoFetchActivity,
+  ]);
+
+  // Keep isAtBottomRef in sync as the user scrolls; trigger an older-page fetch
+  // when the user reaches the top. Mounted once — reads latest via the ref.
   useEffect(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
@@ -682,23 +799,51 @@ export default function Activity() {
     const TOP_THRESHOLD = 100;
     function handleScroll() {
       isAtBottomRef.current = el!.scrollHeight - el!.scrollTop - el!.clientHeight < BOTTOM_THRESHOLD;
-      // Load older history when the user scrolls near the top.
-      if (el!.scrollTop < TOP_THRESHOLD && hasOlder && !isFetchingOlder) {
-        prevScrollHeightRef.current = el!.scrollHeight;
-        void fetchOlder();
-      }
+      const { hasOlder: more, isFetchingOlder: busy, fetchOlder: load } = paginationRef.current;
+      if (el!.scrollTop < TOP_THRESHOLD && more && !busy) load();
+    }
+    // A deliberate wheel/touch gesture means the user is taking over scrolling,
+    // so drop the post-toggle bottom-pin (stop forcing them to the newest row).
+    // We use the gesture, not a derived "not at bottom" check, because coverage
+    // prepends fire scroll events that would momentarily read as not-at-bottom
+    // and release the pin before the feed has settled.
+    function releasePin() {
+      bottomPinUntilSettleRef.current = false;
     }
     el.addEventListener('scroll', handleScroll, { passive: true });
-    return () => el.removeEventListener('scroll', handleScroll);
-  }, [hasOlder, isFetchingOlder, fetchOlder]);
+    el.addEventListener('wheel', releasePin, { passive: true });
+    el.addEventListener('touchstart', releasePin, { passive: true });
+    return () => {
+      el.removeEventListener('scroll', handleScroll);
+      el.removeEventListener('wheel', releasePin);
+      el.removeEventListener('touchstart', releasePin);
+    };
+  }, []);
 
-  // After a previous page loads, restore the scroll position so the viewport
-  // doesn't jump. We recorded scrollHeight before the fetch; the delta between
-  // old and new scrollHeight equals the height of newly prepended content.
-  const pageCount = lens === 'messages'
-    ? (messageQuery.data?.pages.length ?? 0)
-    : (activityQuery.data?.pages.length ?? 0);
+  // After an older page loads, restore the scroll position so the viewport
+  // doesn't jump. The delta between old and new scrollHeight equals the height
+  // of newly prepended content.
+  const pageCount =
+    (messageQuery.data?.pages.length ?? 0) + (activityQuery.data?.pages.length ?? 0);
+
+  // The feed is still "settling" after a (re)load while its newest rows or
+  // coverage are still arriving: an initial layer is loading, an activity page
+  // is in flight, or coverage alignment still has older activity pages to
+  // fetch. Drives how long the post-toggle bottom-pin stays active.
+  const feedSettling =
+    loadingActivities ||
+    activityQuery.isFetchingNextPage ||
+    (interleaving && !activityCoversMessages && !!activityQuery.hasNextPage);
+
   useEffect(() => {
+    // While the post-toggle bottom-pin is active it owns the scroll position
+    // (it forces the newest row into view), so skip the prepend anchor to avoid
+    // a tug-of-war, and clear any height snapshot a coverage fetch left behind
+    // so a later (post-pin) prepend doesn't restore against a stale baseline.
+    if (bottomPinUntilSettleRef.current) {
+      prevScrollHeightRef.current = 0;
+      return;
+    }
     if (prevScrollHeightRef.current === 0) return;
     const el = scrollContainerRef.current;
     if (!el) return;
@@ -709,21 +854,39 @@ export default function Activity() {
     });
   }, [pageCount]);
 
-  // Scroll to bottom when activity data first loads for this agent.
+  // When a new feed (agent / direction / toggle) is first shown, pin to the
+  // newest row and keep it pinned while the feed settles (see the pin effect
+  // below). Fires once per feed identity.
   useEffect(() => {
-    const feedKey = agentId ? `${agentId}:${lens}:${dir}` : null;
-    const feedLoaded = lens === 'messages' ? messagesData : activitiesData;
+    const feedKey = agentId ? `${agentId}:${dir}:${stepsNeeded ? 's' : 'c'}:${failedOnly ? 'f' : ''}` : null;
+    const feedLoaded = failedOnly ? activitiesData : (messagesData ?? activitiesData);
     if (!feedLoaded || !feedKey || initialScrollFeedRef.current === feedKey) return;
     initialScrollFeedRef.current = feedKey;
     isAtBottomRef.current = true;
+    bottomPinUntilSettleRef.current = true;
+  }, [agentId, activitiesData, messagesData, dir, stepsNeeded, failedOnly]);
+
+  // Bottom-pin: while active, the pin owns the scroll position. Force the newest
+  // row into view on every content or settle change so late-arriving newest
+  // steps (activity page[0]) and coverage prepends never strand the viewport
+  // above the true bottom. Release only when the feed settles (one final scroll
+  // included) or the user takes over via a wheel/touch gesture (see the mount
+  // effect). We deliberately do NOT release on isAtBottomRef: coverage prepends
+  // briefly read as "not at bottom" and would drop the pin mid-settle.
+  useEffect(() => {
+    if (!bottomPinUntilSettleRef.current) return;
+    const settledNow = !feedSettling;
     const el = scrollContainerRef.current;
-    if (!el) return;
-    let inner: number;
-    const outer = requestAnimationFrame(() => {
-      inner = requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
-    });
-    return () => { cancelAnimationFrame(outer); cancelAnimationFrame(inner); };
-  }, [agentId, activitiesData, messagesData, lens, dir]);
+    if (el) {
+      requestAnimationFrame(() => {
+        const node = scrollContainerRef.current;
+        if (node && (bottomPinUntilSettleRef.current || settledNow)) {
+          node.scrollTop = node.scrollHeight;
+        }
+      });
+    }
+    if (settledNow) bottomPinUntilSettleRef.current = false;
+  }, [activitiesData, messagesData, pageCount, feedSettling]);
 
   // Always scroll to bottom when new work starts.
   useEffect(() => {
@@ -731,7 +894,9 @@ export default function Activity() {
     isAtBottomRef.current = true;
     const el = scrollContainerRef.current;
     if (!el) return;
-    const id = requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    const id = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
     return () => cancelAnimationFrame(id);
   }, [currentItemId]);
 
@@ -740,13 +905,11 @@ export default function Activity() {
     if (!latestCurrentItemActivity || !isAtBottomRef.current) return;
     const el = scrollContainerRef.current;
     if (!el) return;
-    const id = requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    const id = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
     return () => cancelAnimationFrame(id);
   }, [latestCurrentItemActivity]);
-
-  // messageRowMode controls the follow-up marker on MessageInRow.
-  // Show the ↳ marker only when in the full firehose (all context visible).
-  const messageRowMode = (lens === 'activity' && showAllSteps) ? 'audit' : 'conversation';
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-surface">
@@ -761,47 +924,42 @@ export default function Activity() {
       {error && (
         <div className="flex shrink-0 items-center gap-2.5 border-b border-health-error/30 bg-health-error-soft px-4 py-2 text-health-error">
           <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-          <span className="flex-1 font-mono text-[11px] leading-snug">
-            Could not load activity
-          </span>
+          <span className="flex-1 font-mono text-[11px] leading-snug">Could not load activity</span>
         </div>
       )}
 
       {/* Mobile filter bar */}
       <div className="flex flex-wrap items-center gap-2 border-b border-border-soft px-4 py-2 md:hidden">
-        <MobileLensPill lens={lens} onChange={setLens} />
-        {lens === 'messages' && (
-          <MobileDirPill dir={dir} onChange={setDir} />
+        {/* The direction filter and the step axis (Failed only + Show tool
+            steps) are mutually exclusive (see useActivityFilters): hide the
+            direction pill while either step toggle is on, and hide both step
+            toggles while a direction filter is active. */}
+        {!showToolSteps && !failedOnly && <MobileDirPill dir={dir} onChange={setDir} />}
+        {dir === 'all' && (
+          <label className="chrome inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 px-1 text-[11px] tracking-wide text-text-muted">
+            <input
+              type="checkbox"
+              checked={failedOnly}
+              onChange={(e) => setFailedOnly(e.target.checked)}
+              className="h-3 w-3 accent-[color:var(--color-accent)]"
+            />
+            Failed only
+          </label>
         )}
-        {lens === 'activity' && (
-          <>
-            <label className="chrome inline-flex cursor-pointer items-center gap-1.5 min-h-[36px] px-1 text-[11px] tracking-wide text-text-muted">
-              <input
-                type="checkbox"
-                checked={failedOnly}
-                onChange={(e) => setFailedOnly(e.target.checked)}
-                className="h-3 w-3 accent-[color:var(--color-accent)]"
-              />
-              Failed only
-            </label>
-            <label className="chrome inline-flex cursor-pointer items-center gap-1.5 min-h-[36px] px-1 text-[11px] tracking-wide text-text-muted">
-              <input
-                type="checkbox"
-                checked={showAllSteps}
-                onChange={(e) => setShowAllSteps(e.target.checked)}
-                className="h-3 w-3 accent-[color:var(--color-accent)]"
-              />
-              Show all steps
-            </label>
-          </>
+        {dir === 'all' && (
+          <label className="chrome inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 px-1 text-[11px] tracking-wide text-text-muted">
+            <input
+              type="checkbox"
+              checked={showToolSteps}
+              onChange={(e) => setShowToolSteps(e.target.checked)}
+              className="h-3 w-3 accent-[color:var(--color-accent)]"
+            />
+            Show tool steps
+          </label>
         )}
       </div>
 
-      <ActivityStatusSummary
-        status={currentStatus}
-        latestActivity={latestCurrentItemActivity}
-        now={now}
-      />
+      <ActivityStatusSummary status={currentStatus} latestActivity={latestCurrentItemActivity} now={now} />
 
       <div
         ref={scrollContainerRef}
@@ -810,7 +968,20 @@ export default function Activity() {
         {/* Load-more indicator: shown at the very top while fetching an older page */}
         {isFetchingOlder && (
           <div className="flex justify-center py-3">
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-text-subtle" aria-label="Loading older activity" />
+            <Loader2
+              className="h-3.5 w-3.5 animate-spin text-text-subtle"
+              aria-label="Loading older activity"
+            />
+          </div>
+        )}
+        {stepCoverageFloorTs !== null && !showFirstRunHero && filteredItems.length > 0 && (
+          <div className="mx-auto mb-2 flex max-w-prose items-start gap-2 rounded-md border border-border-soft bg-surface-raised/40 px-3 py-2 text-[11px] leading-snug text-text-muted">
+            <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-text-subtle" />
+            <span>
+              Tool steps load back to {dateLabel(new Date(stepCoverageFloorTs).toISOString())}.
+              Messages older than that show without tool steps, because the activity history does
+              not reach further back.
+            </span>
           </div>
         )}
         {showFirstRunHero ? (
@@ -821,50 +992,46 @@ export default function Activity() {
               <p className="font-serif italic text-[15px] text-text-subtle">
                 {loadingActivities
                   ? 'Loading activity...'
-                  : lens === 'messages' && dir !== 'all'
+                  : dir !== 'all'
                     ? `No ${dir === 'in' ? 'inbox' : 'outbox'} messages yet.`
-                    : lens === 'messages'
-                      ? 'No messages yet.'
-                      : failedOnly
-                        ? 'No activity matches the current filters.'
-                        : 'No activity yet.'}
+                    : failedOnly
+                      ? 'No failures to show.'
+                      : 'No activity yet.'}
               </p>
             </div>
           )
         )}
         {filteredItems.length > 0 &&
           !showFirstRunHero &&
-          byDay.map(([day, items]) => {
-            let lastTime = '';
-            return (
-              <DaySection key={day} date={items[0]!.timestamp}>
-                {items.map((item, i) => {
-                  const hm = clockHM(item.timestamp);
-                  const time = hm === lastTime ? '' : hm;
-                  lastTime = hm;
-                  const key = `${day}::${i}`;
-                  if (item.kind === 'message-in')
-                    return (
-                      <MessageInRow
-                        key={key}
-                        item={item}
-                        time={time}
+          byDay.map(([day, items]) => (
+            <div key={day}>
+              <DayDivider iso={items[0]!.timestamp} />
+              {buildBlocks(items).map((block, bi) =>
+                block.type === 'msgs' ? (
+                  <Fragment key={`${day}:b:${bi}`}>
+                    {groupByAuthor(block.items, resolveAuthor, resolveSurface).map((group, gi) => (
+                      <MessageGroupRow
+                        key={`${day}:b:${bi}:${gi}`}
+                        group={group}
                         agentId={agentId ?? ''}
-                        mode={messageRowMode}
                       />
-                    );
-                  if (item.kind === 'message-out')
-                    return <MessageOutRow key={key} item={item} time={time} />;
-                  if (item.kind === 'file-out')
-                    return <FileOutRow key={key} item={item} time={time} agentId={agentId ?? ''} />;
-                  if (item.kind === 'reaction-out')
-                    return <ReactOutRow key={key} item={item} time={time} />;
-                  return <StepRow key={key} item={item} time={time} />;
-                })}
-              </DaySection>
-            );
-          })}
-        {currentItemId && !loadingActivities && (
+                    ))}
+                  </Fragment>
+                ) : (
+                  <StepLane key={`${day}:b:${bi}`}>
+                    {block.items.map((item, si) => (
+                      <StepRow
+                        key={`${day}:b:${bi}:${si}`}
+                        item={item as Extract<ActivityFeedItem, { kind: 'step' }>}
+                        time={clockHM(item.timestamp)}
+                      />
+                    ))}
+                  </StepLane>
+                ),
+              )}
+            </div>
+          ))}
+        {stepsNeeded && currentItemId && !loadingActivities && (
           <WorkingIndicator latestActivity={latestCurrentItemActivity} />
         )}
         <div ref={bottomRef} className="h-4" />
