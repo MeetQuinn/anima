@@ -81,6 +81,35 @@ test('message service reads newest matching page without requiring a full ledger
   }
 });
 
+test('message service list scopes to a single channel when given a channel filter', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-message-channel-filter-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await new MessageStore('scout').appendManyIfAbsent([
+        channelMessage({ messageId: 'p1', timestamp: '2026-05-11T00:00:00.000Z', channelId: 'C-product', channelName: 'product' }),
+        channelMessage({ messageId: 'r1', timestamp: '2026-05-11T00:01:00.000Z', channelId: 'C-random', channelName: 'random' }),
+        channelMessage({ messageId: 'p2', timestamp: '2026-05-11T00:02:00.000Z', channelId: 'C-product', channelName: 'product' }),
+        dmMessage({ messageId: 'd1', timestamp: '2026-05-11T00:03:00.000Z', channelId: 'D-alice', dmHandle: 'alice', dmUserId: 'U-alice' }),
+      ]);
+      await new MessageStore('scout').markLegacyBackfilled();
+
+      const byId = await messageServiceForAgent('scout').list({ channel: 'C-product', limit: 10 });
+      assert.deepEqual(byId.entries.map((e) => e.messageId), ['p2', 'p1']);
+
+      const byName = await messageServiceForAgent('scout').list({ channel: '#product', limit: 10 });
+      assert.deepEqual(byName.entries.map((e) => e.messageId), ['p2', 'p1']);
+
+      const dmByHandle = await messageServiceForAgent('scout').list({ channel: '@alice', limit: 10 });
+      assert.deepEqual(dmByHandle.entries.map((e) => e.messageId), ['d1']);
+
+      const unscoped = await messageServiceForAgent('scout').list({ limit: 10 });
+      assert.equal(unscoped.entries.length, 4);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('wake queue enqueue writes inbound messages without duplicate ledger rows', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-message-inbox-write-test-'));
   try {
@@ -161,5 +190,24 @@ function testMessage(input: Pick<AgentMessageRecord, 'direction' | 'messageId' |
     source: { id: input.messageId, kind: 'activity' },
     text: input.messageId,
     timestamp: input.timestamp,
+  };
+}
+
+function channelMessage(input: { messageId: string; timestamp: string; channelId: string; channelName: string }): AgentMessageRecord {
+  return {
+    ...testMessage({ direction: 'in', messageId: input.messageId, timestamp: input.timestamp }),
+    channelKind: 'channel',
+    channelId: input.channelId,
+    channelName: input.channelName,
+  };
+}
+
+function dmMessage(input: { messageId: string; timestamp: string; channelId: string; dmHandle: string; dmUserId: string }): AgentMessageRecord {
+  return {
+    ...testMessage({ direction: 'in', messageId: input.messageId, timestamp: input.timestamp }),
+    channelKind: 'dm',
+    channelId: input.channelId,
+    dmHandle: input.dmHandle,
+    dmUserId: input.dmUserId,
   };
 }

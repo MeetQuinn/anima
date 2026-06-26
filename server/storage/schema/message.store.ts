@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { agentsDir } from './agent.store.js';
 import type { AgentMessageDirection, AgentMessageRecord } from '../../../shared/messages.js';
+import { messageMatchesChannel } from '../../messages/channel-match.js';
 import { nowIso } from '../../ids.js';
 import { DEFAULT_JSONL_ROTATE_BYTES, JsonlAppendLog } from '../jsonl-log.js';
 import { JsonStore } from '../json-store.js';
@@ -41,6 +42,7 @@ export class MessageStore {
 
   async readLatest(input: {
     before?: string;
+    channel?: string;
     direction?: AgentMessageDirection;
     limit: number;
     since?: string;
@@ -48,7 +50,8 @@ export class MessageStore {
     return this.log().readNewestMatching(input.limit, (entry) =>
       (!input.direction || entry.direction === input.direction) &&
       (!input.before || entry.timestamp < input.before) &&
-      (!input.since || entry.timestamp >= input.since)
+      (!input.since || entry.timestamp >= input.since) &&
+      (!input.channel || messageMatchesChannel(entry, input.channel))
     );
   }
 

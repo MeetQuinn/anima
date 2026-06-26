@@ -31,6 +31,16 @@ export interface SlackWorkspaceDirectoryEvent {
 
 const SLACK_WORKSPACE_DIRECTORY_TTL_MS = 10 * 60 * 1000;
 
+// Process-wide dedupe so that when many requests observe a stale channel cache
+// at once, at most one background `conversations.list` refresh runs per team.
+// A fresh service is constructed per request, so this guard lives at module
+// scope rather than on the instance.
+const inFlightConversationRefresh = new Map<string, Promise<SlackConversationInfo[]>>();
+
+function filterMemberConversations(channels: SlackConversationInfo[]): SlackConversationInfo[] {
+  return channels.filter((channel) => channel.is_member || channel.is_mpim || channel.is_group);
+}
+
 export class SlackWorkspaceDirectoryService {
   constructor(private readonly input: {
     client: WebClient;
@@ -123,9 +133,34 @@ export class SlackWorkspaceDirectoryService {
     throw new Error(`Slack channel not found: #${name}`);
   }
 
+  // The channels the bot belongs to, served cache-first so the Channels list
+  // never blocks on a live Slack round trip on the hot path:
+  //   - cache is fresh (< TTL)  -> return it immediately, no Slack call.
+  //   - cache is stale but present -> return it immediately AND kick off a
+  //     single background refresh (stale-while-revalidate), so the next request
+  //     sees fresh data without this one paying the latency.
+  //   - cache is empty (cold start) -> block on one live `conversations.list`.
   async getMemberConversations(types = 'public_channel,private_channel,mpim'): Promise<SlackConversationInfo[]> {
-    const channels = await this.refreshConversations(types);
-    return channels.filter((channel) => channel.is_member || channel.is_mpim || channel.is_group);
+    const fresh = await this.readFreshCache('channelsSyncedAt', (cache) => cache.channels);
+    if (fresh?.length) return filterMemberConversations(fresh);
+
+    const stale = await this.readCache((cache) => cache.channels);
+    if (stale?.length) {
+      this.triggerBackgroundConversationRefresh(types);
+      return filterMemberConversations(stale);
+    }
+
+    return filterMemberConversations(await this.refreshConversations(types));
+  }
+
+  private triggerBackgroundConversationRefresh(types?: string): void {
+    const teamId = this.input.teamId;
+    if (!teamId || inFlightConversationRefresh.has(teamId)) return;
+    const promise = this.refreshConversations(types);
+    inFlightConversationRefresh.set(teamId, promise);
+    promise.catch(() => {}).finally(() => {
+      inFlightConversationRefresh.delete(teamId);
+    });
   }
 
   async getWorkspaceIconUrl(teamId = this.input.teamId): Promise<string> {
