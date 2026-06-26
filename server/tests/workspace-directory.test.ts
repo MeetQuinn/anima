@@ -29,12 +29,15 @@ function countingClient(channels: SlackConversationInfo[], counter: { calls: num
 
 const STALE_ISO = '2000-01-01T00:00:00.000Z';
 
+const FULL_MEMBER_TYPES = 'public_channel,private_channel,mpim';
+
 async function seedCache(teamId: string, file: Partial<SlackWorkspaceDirectoryFile>): Promise<void> {
   await getSlackWorkspaceDirectoryStore(teamId).update((cache) => ({
     ...cache,
     teamId,
     channels: file.channels ?? [],
     ...(file.channelsSyncedAt ? { channelsSyncedAt: file.channelsSyncedAt } : {}),
+    ...(file.channelsSyncedTypes ? { channelsSyncedTypes: file.channelsSyncedTypes } : {}),
   }));
 }
 
@@ -59,13 +62,14 @@ test('getMemberConversations serves a fresh cache without hitting Slack', async 
       await seedCache(teamId, {
         channels: [{ id: 'C-1', name: 'one', is_member: true } as SlackConversationInfo],
         channelsSyncedAt: nowIso(),
+        channelsSyncedTypes: FULL_MEMBER_TYPES,
       });
       const counter = { calls: 0 };
       const service = new SlackWorkspaceDirectoryService({ client: countingClient([], counter), teamId });
 
       const channels = await service.getMemberConversations();
 
-      assert.equal(counter.calls, 0, 'fresh cache must not call conversations.list');
+      assert.equal(counter.calls, 0, 'fresh cache with full type coverage must not call conversations.list');
       assert.deepEqual(channels.map((c) => c.id), ['C-1']);
     });
   } finally {
@@ -92,6 +96,7 @@ test('getMemberConversations on a cold cache hits Slack once and populates the c
       const cache = await getSlackWorkspaceDirectoryStore(teamId).read();
       assert.deepEqual(cache.channels.map((c) => c.id).sort(), ['C-live', 'C-other']);
       assert.ok(cache.channelsSyncedAt, 'cold fetch stamps channelsSyncedAt');
+      assert.equal(cache.channelsSyncedTypes, 'public_channel,private_channel,mpim', 'cold fetch records the type coverage');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
@@ -106,6 +111,7 @@ test('getMemberConversations serves a stale cache immediately and refreshes in t
       await seedCache(teamId, {
         channels: [{ id: 'C-old', name: 'old', is_member: true } as SlackConversationInfo],
         channelsSyncedAt: STALE_ISO,
+        channelsSyncedTypes: FULL_MEMBER_TYPES,
       });
       const live: SlackConversationInfo[] = [
         { id: 'C-new', name: 'new', is_member: true } as SlackConversationInfo,
@@ -124,6 +130,41 @@ test('getMemberConversations serves a stale cache immediately and refreshes in t
   }
 });
 
+test('getMemberConversations does not serve a fresh cache that lacks mpim coverage', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-wd-coverage-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const teamId = 'T-coverage';
+      // A prior channel-name lookup left a FRESH cache, but it was populated with
+      // only public/private channels (no mpim). The membership list must not be
+      // fooled into treating this narrow-but-fresh snapshot as authoritative.
+      await seedCache(teamId, {
+        channels: [{ id: 'C-pub', name: 'pub', is_member: true } as SlackConversationInfo],
+        channelsSyncedAt: nowIso(),
+        channelsSyncedTypes: 'public_channel,private_channel',
+      });
+      const live: SlackConversationInfo[] = [
+        { id: 'C-pub', name: 'pub', is_member: true } as SlackConversationInfo,
+        { id: 'G-mpdm', name: 'mpdm-team', is_mpim: true } as SlackConversationInfo,
+      ];
+      const counter = { calls: 0 };
+      const service = new SlackWorkspaceDirectoryService({ client: countingClient(live, counter), teamId });
+
+      const channels = await service.getMemberConversations();
+
+      assert.equal(counter.calls, 1, 'narrow-but-fresh cache must trigger a widening fetch, not be served as-is');
+      assert.ok(
+        channels.some((c) => c.id === 'G-mpdm' && c.is_mpim),
+        'the mpim member row is present after the widening fetch',
+      );
+      const cache = await getSlackWorkspaceDirectoryStore(teamId).read();
+      assert.ok(cache.channelsSyncedTypes?.includes('mpim'), 'cache coverage is widened to include mpim');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('concurrent stale reads trigger only one background refresh', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-wd-dedupe-'));
   try {
@@ -132,6 +173,7 @@ test('concurrent stale reads trigger only one background refresh', async () => {
       await seedCache(teamId, {
         channels: [{ id: 'C-old', name: 'old', is_member: true } as SlackConversationInfo],
         channelsSyncedAt: STALE_ISO,
+        channelsSyncedTypes: FULL_MEMBER_TYPES,
       });
       const counter = { calls: 0 };
       const service = new SlackWorkspaceDirectoryService({

@@ -45,6 +45,11 @@ export type SlackFileCacheMeta = z.infer<typeof SlackFileCacheMeta>;
 export interface SlackWorkspaceDirectoryFile {
   channels: SlackConversationInfo[];
   channelsSyncedAt?: string;
+  // The conversation `types` set that populated `channels` on the last refresh
+  // (e.g. "public_channel,private_channel,mpim"). A cache hit is only honored
+  // when this coverage is a superset of what the caller asked for, so a narrow
+  // refresh (no mpim) can never masquerade as a complete membership list.
+  channelsSyncedTypes?: string;
   teamId: string;
   users: SlackUserInfo[];
   usersSyncedAt?: string;
@@ -80,6 +85,7 @@ export interface FeishuDirectoryFile {
 export const SlackWorkspaceDirectoryFileSchema = z.object({
   channels: z.array(z.object({ id: z.string() }).passthrough()).default([]),
   channelsSyncedAt: z.string().optional(),
+  channelsSyncedTypes: z.string().optional(),
   teamId: z.string(),
   users: z.array(z.object({ id: z.string() }).passthrough()).default([]),
   usersSyncedAt: z.string().optional(),

@@ -37,8 +37,29 @@ const SLACK_WORKSPACE_DIRECTORY_TTL_MS = 10 * 60 * 1000;
 // scope rather than on the instance.
 const inFlightConversationRefresh = new Map<string, Promise<SlackConversationInfo[]>>();
 
+const DEFAULT_CONVERSATION_TYPES = 'public_channel,private_channel';
+const MEMBER_CONVERSATION_TYPES = 'public_channel,private_channel,mpim';
+
 function filterMemberConversations(channels: SlackConversationInfo[]): SlackConversationInfo[] {
   return channels.filter((channel) => channel.is_member || channel.is_mpim || channel.is_group);
+}
+
+function parseConversationTypes(types: string): Set<string> {
+  return new Set(types.split(',').map((type) => type.trim()).filter(Boolean));
+}
+
+// A cached channels snapshot is only usable for a request when the `types` that
+// populated it cover everything the caller asked for. A narrow refresh (e.g. a
+// channel-name lookup that only pulled public/private channels) stamps the cache
+// fresh, so without this check `getMemberConversations` could serve that snapshot
+// and silently omit mpim / group-DM membership rows.
+function cacheCoversTypes(syncedTypes: string | undefined, requested: string): boolean {
+  if (!syncedTypes) return false;
+  const have = parseConversationTypes(syncedTypes);
+  for (const type of parseConversationTypes(requested)) {
+    if (!have.has(type)) return false;
+  }
+  return true;
 }
 
 export class SlackWorkspaceDirectoryService {
@@ -140,14 +161,24 @@ export class SlackWorkspaceDirectoryService {
   //     single background refresh (stale-while-revalidate), so the next request
   //     sees fresh data without this one paying the latency.
   //   - cache is empty (cold start) -> block on one live `conversations.list`.
-  async getMemberConversations(types = 'public_channel,private_channel,mpim'): Promise<SlackConversationInfo[]> {
-    const fresh = await this.readFreshCache('channelsSyncedAt', (cache) => cache.channels);
-    if (fresh?.length) return filterMemberConversations(fresh);
+  // A cache snapshot is only honored when its recorded type coverage is a
+  // superset of `types`; a fresh-but-narrow snapshot is treated as a cold start
+  // so mpim / group-DM rows are never silently dropped. Freshness is decided by
+  // the sync timestamp (not array length), so a genuinely empty workspace that
+  // has been synced does not fall into a permanent blocking refresh.
+  async getMemberConversations(types = MEMBER_CONVERSATION_TYPES): Promise<SlackConversationInfo[]> {
+    const covered = await this.readCache((cache) => (
+      cache.channelsSyncedAt && cacheCoversTypes(cache.channelsSyncedTypes, types)
+        ? { channels: cache.channels, syncedAt: cache.channelsSyncedAt }
+        : undefined
+    ));
 
-    const stale = await this.readCache((cache) => cache.channels);
-    if (stale?.length) {
+    if (covered) {
+      if (isFreshSlackCacheEntry(covered.syncedAt, SLACK_WORKSPACE_DIRECTORY_TTL_MS)) {
+        return filterMemberConversations(covered.channels);
+      }
       this.triggerBackgroundConversationRefresh(types);
-      return filterMemberConversations(stale);
+      return filterMemberConversations(covered.channels);
     }
 
     return filterMemberConversations(await this.refreshConversations(types));
@@ -318,6 +349,7 @@ export class SlackWorkspaceDirectoryService {
   }
 
   private async refreshConversations(types?: string): Promise<SlackConversationInfo[]> {
+    const resolvedTypes = types ?? DEFAULT_CONVERSATION_TYPES;
     const channels: SlackConversationInfo[] = [];
     let cursor = '';
     for (;;) {
@@ -325,7 +357,7 @@ export class SlackWorkspaceDirectoryService {
         ...(cursor ? { cursor } : {}),
         exclude_archived: true,
         limit: 200,
-        types: types ?? 'public_channel,private_channel',
+        types: resolvedTypes,
       });
       channels.push(...(body.channels ?? []).filter((channel): channel is SlackConversationInfo => Boolean(channel.id)));
       cursor = body.response_metadata?.next_cursor ?? '';
@@ -335,6 +367,7 @@ export class SlackWorkspaceDirectoryService {
       ...cache,
       channels,
       channelsSyncedAt: nowIso(),
+      channelsSyncedTypes: resolvedTypes,
     }));
     return channels;
   }
