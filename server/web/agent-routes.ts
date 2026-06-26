@@ -129,8 +129,13 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
       const since = queryParam(request.url, 'since') ?? undefined;
       const rawDirection = queryParam(request.url, 'direction');
       const direction = rawDirection === 'in' || rawDirection === 'out' ? rawDirection : undefined;
+      // Channel scope for the Channels detail pane: fetch (and paginate) only
+      // this channel's history rather than the whole agent stream filtered
+      // client-side.
+      const channel = queryParam(request.url, 'channel') ?? undefined;
       const page = await messageServiceForAgent(request.params.agentId).list({
         before,
+        channel,
         direction,
         limit,
         since,
@@ -142,11 +147,16 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
   );
   // Channels tab: the Slack channels + DMs the agent is a member of. Channel
   // membership is authoritative (`is_member`, includes muted + silent); DMs are
-  // folded from message history. See server/web/agent-channels.ts.
-  fastify.get<{ Params: { agentId: string } }>(
-    '/api/agents/:agentId/subscriptions',
-    async (request) => buildAgentChannelList(request.params.agentId),
-  );
+  // folded from message history. See server/web/agent-channels.ts. Served from
+  // the cached workspace directory so the list returns instantly; Slack is
+  // refreshed in the background when the cache is stale.
+  //
+  // `/channels` is the current name; `/subscriptions` is kept as a back-compat
+  // alias for any client still on the old path.
+  const serveChannelList = (request: { params: { agentId: string } }) =>
+    buildAgentChannelList(request.params.agentId);
+  fastify.get<{ Params: { agentId: string } }>('/api/agents/:agentId/channels', serveChannelList);
+  fastify.get<{ Params: { agentId: string } }>('/api/agents/:agentId/subscriptions', serveChannelList);
 
   // -------------------------------------------------------------------------
   // Sessions

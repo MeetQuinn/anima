@@ -267,12 +267,14 @@ export async function fetchAgentMessages(
   agentId: string,
   input: {
     before?: string;
+    channel?: string;
     direction?: AgentMessageDirection;
     limit?: number;
   } = {},
 ): Promise<AgentMessageHistoryPage> {
   const params = new URLSearchParams({ limit: String(input.limit ?? 100) });
   if (input.before) params.set('before', input.before);
+  if (input.channel) params.set('channel', input.channel);
   if (input.direction) params.set('direction', input.direction);
   return apiRequest<AgentMessageHistoryPage>(
     `/api/agents/${encodeURIComponent(agentId)}/messages?${params.toString()}`,
@@ -281,9 +283,10 @@ export async function fetchAgentMessages(
 
 // Channels tab: the Slack channels + DMs the agent is a member of (membership is
 // authoritative `is_member`, includes muted + silent; DMs folded from history).
+// Canonical path is /channels; /subscriptions stays as a back-compat alias.
 export async function fetchAgentChannels(agentId: string): Promise<AgentChannelListResponse> {
   return apiRequest<AgentChannelListResponse>(
-    `/api/agents/${encodeURIComponent(agentId)}/subscriptions`,
+    `/api/agents/${encodeURIComponent(agentId)}/channels`,
   );
 }
 

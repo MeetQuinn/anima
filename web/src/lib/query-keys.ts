@@ -10,6 +10,10 @@ export const queryKeys = {
   agentStatuses: () => ['agent-statuses'] as const,
   agentActivities: (agentId: string) => ['agent-activities', agentId] as const,
   agentMessages: (agentId: string, dir: string) => ['agent-messages', agentId, dir] as const,
+  // Channels detail pane: one channel's history, fetched server-side scoped to
+  // the channel (not the global stream filtered client-side).
+  agentChannelMessages: (agentId: string, channelId: string) =>
+    ['agent-messages', agentId, 'channel', channelId] as const,
   agentChannels: (agentId: string) => ['agent-channels', agentId] as const,
   agentReminders: (agentId: string) => ['reminders', agentId] as const,
   agentSessions: (agentId: string) => ['agent-session', agentId] as const,

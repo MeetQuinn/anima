@@ -9,9 +9,11 @@ import { ActivityStore } from '../storage/schema/activity.store.js';
 import { WakeQueueStore } from '../storage/schema/wake-queue.store.js';
 import { MessageStore } from '../storage/schema/message.store.js';
 import { messageFromActivity, messageFromInboxItem } from './message.projection.js';
+import { messageMatchesChannel } from './channel-match.js';
 
 export interface MessageListInput {
   before?: string;
+  channel?: string;
   direction?: AgentMessageDirection;
   limit?: number;
   since?: string;
@@ -137,25 +139,4 @@ function messageMatchesKeywords(entry: AgentMessageRecord, keywords: string[]): 
     .join('\n')
     .toLowerCase();
   return keywords.every((keyword) => haystack.includes(keyword));
-}
-
-function messageMatchesChannel(entry: AgentMessageRecord, channel: string): boolean {
-  const needle = normalizeChannelSearchTerm(channel);
-  if (!needle) return true;
-  const candidates = [
-    entry.channelId,
-    entry.channelName,
-    entry.channelDisplayName,
-    entry.dmHandle,
-    entry.dmUserId,
-  ];
-  return candidates.some((candidate) => {
-    if (!candidate) return false;
-    const normalized = normalizeChannelSearchTerm(candidate);
-    return normalized === needle || candidate.trim().toLowerCase() === channel.trim().toLowerCase();
-  });
-}
-
-function normalizeChannelSearchTerm(value: string): string {
-  return value.trim().toLowerCase().replace(/^[@#]/, '').replace(/^dm with @/i, '');
 }

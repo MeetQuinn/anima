@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { AlertTriangle, BellOff, ChevronLeft, Loader2 } from 'lucide-react';
 import { fetchAgentChannels, fetchAgentMessages, fetchAgents } from '@/api/agents';
 import { buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
@@ -18,8 +18,6 @@ import {
   type Author,
 } from '../conversation/SlackTimeline';
 import type { AgentChannelSummary, AgentMessageRecord } from '@shared/messages';
-
-type Dir = 'all' | 'in' | 'out';
 
 // Channel/DM title: a channel shows its `#` flush against the name (one token);
 // a DM shows the bare handle (its avatar carries the "person" signal).
@@ -103,30 +101,6 @@ function ChannelRow({
 }
 
 // ---------------------------------------------------------------------------
-// Direction filter pill (mirrors the Activity Conversation lens)
-// ---------------------------------------------------------------------------
-
-function DirPill({ dir, onChange }: { dir: Dir; onChange: (v: Dir) => void }) {
-  const base = 'chrome px-2.5 py-1 text-[11px] tracking-wide rounded-sm transition-colors';
-  const active = 'bg-accent/10 text-accent font-medium';
-  const inactive = 'text-text-muted hover:text-text';
-  return (
-    <div className="flex items-center rounded-sm border border-border-soft p-0.5">
-      {(['all', 'in', 'out'] as Dir[]).map((v) => (
-        <button
-          key={v}
-          type="button"
-          onClick={() => onChange(v)}
-          className={[base, dir === v ? active : inactive].join(' ')}
-        >
-          {v === 'all' ? 'All' : v === 'in' ? 'Inbox' : 'Outbox'}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Channel-scoped author resolver. The Slack-style renderer itself lives in the
 // shared `conversation/SlackTimeline` module (reused by the Activity tab); this
 // closure is the single-channel binding — in a DM the inbound counterpart is
@@ -163,26 +137,23 @@ function authorFor(item: ActivityFeedItem, channel: AgentChannelSummary, agent: 
 }
 
 // ---------------------------------------------------------------------------
-// Detail pane: one channel's conversation. Reuses the shared message-feed
-// normalization; renders Slack-style and filters the global feed to the
-// selected channel (server has no per-channel route in v1; client-side per spec).
+// Detail pane: one channel's conversation. Fetches this channel's history
+// server-side (scoped via ?channel=), so paging loads only this conversation
+// rather than the whole agent stream filtered client-side. Reuses the shared
+// message-feed normalization and Slack-style renderer. One unified timeline
+// (no inbox/outbox split — the direction split isn't meaningful per channel).
 // ---------------------------------------------------------------------------
 
 function ConversationPane({
   agentId,
   channel,
-  dir,
-  onDir,
   onBack,
 }: {
   agentId: string;
   channel: AgentChannelSummary;
-  dir: Dir;
-  onDir: (v: Dir) => void;
   onBack: () => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
-  const messageDirection = dir === 'all' ? undefined : dir;
 
   // The agent's own avatar/name byline its outbound messages, Slack-style.
   const agentsQuery = useQuery({ queryKey: queryKeys.agents(), queryFn: fetchAgents });
@@ -196,32 +167,25 @@ function ConversationPane({
   };
 
   const messageQuery = useInfiniteQuery({
-    queryKey: [...queryKeys.agentMessages(agentId, dir), 'channels'] as const,
+    queryKey: queryKeys.agentChannelMessages(agentId, channel.id),
     queryFn: ({ pageParam }) =>
-      fetchAgentMessages(agentId, { before: pageParam, direction: messageDirection, limit: 200 }),
+      fetchAgentMessages(agentId, { before: pageParam, channel: channel.id, limit: 200 }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     refetchInterval: refetchIntervals.agentActivities,
   });
 
-  // Merge loaded pages, dedupe, then filter to this channel. The React Compiler
-  // memoizes these derived values; manual useMemo here fights its analysis
+  // Merge loaded pages and dedupe. The server already scopes to this channel, so
+  // no client-side channel filter is needed. The React Compiler memoizes these
+  // derived values; manual useMemo here fights its analysis
   // (preserve-manual-memoization), so keep them plain.
-  const pages = messageQuery.data?.pages;
   const entryMap = new Map<string, AgentMessageRecord>();
-  for (const page of pages ?? []) {
+  for (const page of messageQuery.data?.pages ?? []) {
     for (const entry of page.entries ?? []) entryMap.set(entry.messageId, entry);
   }
-  const entries = Array.from(entryMap.values()).filter((e) => e.channelId === channel.id);
+  const entries = Array.from(entryMap.values());
 
-  // React Compiler memoizes these derived values; manual useMemo here fights the
-  // compiler's analysis (preserve-manual-memoization), so keep them plain.
-  const items = buildMessageFeed({ entries }).filter((item) => {
-    if (!isMessageItem(item)) return false;
-    if (dir === 'in' && item.kind !== 'message-in') return false;
-    if (dir === 'out' && item.kind === 'message-in') return false;
-    return true;
-  });
+  const items = buildMessageFeed({ entries }).filter(isMessageItem);
 
   const byDayMap = new Map<string, ActivityFeedItem[]>();
   for (const item of items) {
@@ -244,8 +208,9 @@ function ConversationPane({
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-surface">
-      {/* Detail header */}
-      <div className="flex shrink-0 items-center gap-2 border-b border-border-soft px-4 py-2.5 md:px-6">
+      {/* Detail header. Fixed h-11 so it lines up exactly with the master-list
+          header across panes, regardless of DM avatar / muted-pill content. */}
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border-soft px-4 md:px-6">
         <button
           type="button"
           onClick={onBack}
@@ -263,7 +228,6 @@ function ConversationPane({
             <BellOff className="h-3 w-3" aria-hidden /> Muted
           </span>
         )}
-        <DirPill dir={dir} onChange={onDir} />
       </div>
 
       {/* Conversation */}
@@ -283,11 +247,7 @@ function ConversationPane({
         {items.length === 0 ? (
           <div className="mt-20 text-center">
             <p className="font-serif italic text-[15px] text-text-subtle">
-              {loading
-                ? 'Loading conversation…'
-                : dir !== 'all'
-                  ? `No ${dir === 'in' ? 'inbox' : 'outbox'} messages in this channel yet.`
-                  : 'No messages in this channel yet.'}
+              {loading ? 'Loading conversation…' : 'No messages in this channel yet.'}
             </p>
           </div>
         ) : (
@@ -318,12 +278,17 @@ export default function Channels() {
   const [searchParams, setSearchParams] = useSearchParams();
   const now = useNow();
   const selectedId = searchParams.get('c');
-  const dir = ((searchParams.get('dir') as Dir | null) ?? 'all');
 
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.agentChannels(agentId ?? ''),
     queryFn: () => fetchAgentChannels(agentId!),
     enabled: !!agentId,
+    // The membership list is cheap to serve (cache-first on the backend) and
+    // changes rarely. Keep it warm so re-entering the tab paints instantly from
+    // cache and revalidates in the background, and keep showing the old list
+    // while a refetch is in flight rather than flashing the spinner.
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
   });
 
   const channels = data?.channels ?? [];
@@ -358,18 +323,6 @@ export default function Channels() {
     );
   }
 
-  function setDir(v: Dir) {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        if (v === 'all') next.delete('dir');
-        else next.set('dir', v);
-        return next;
-      },
-      { replace: true },
-    );
-  }
-
   if (!agentId) return null;
 
   return (
@@ -381,7 +334,7 @@ export default function Channels() {
           selected ? 'hidden md:flex' : 'flex',
         ].join(' ')}
       >
-        <div className="shrink-0 border-b border-border-soft px-4 py-2.5">
+        <div className="flex h-11 shrink-0 items-center border-b border-border-soft px-4">
           <span className="chrome text-[11px] font-medium uppercase tracking-[0.12em] text-text-muted">
             Channels &amp; DMs
           </span>
@@ -429,8 +382,6 @@ export default function Channels() {
           <ConversationPane
             agentId={agentId}
             channel={selected}
-            dir={dir}
-            onDir={setDir}
             onBack={() => select(null)}
           />
         ) : selectedId ? (
