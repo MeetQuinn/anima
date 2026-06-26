@@ -55,6 +55,15 @@ export class SlackWorkspaceDirectoryService {
     return getUniqueSlackUserByHandle(users, handle);
   }
 
+  async getUserByHandleForTarget(handleInput: string, target: { channelId?: string }): Promise<SlackUserInfo> {
+    const handle = normalizeSlackHandle(handleInput);
+    const cached = await this.cachedUsersByHandle(handle);
+    const matches = cached?.length
+      ? cached
+      : (await this.refreshUsers()).filter((user) => slackUserHandleCandidates(user).includes(handle));
+    return this.preferredUniqueUserByHandle(handle, matches, target);
+  }
+
   async getUsers(): Promise<SlackUserInfo[]> {
     const cached = await this.readFreshCache('usersSyncedAt', (cache) => cache.users);
     if (cached?.length) return cached;
@@ -208,6 +217,49 @@ export class SlackWorkspaceDirectoryService {
       return undefined;
     });
     return cached;
+  }
+
+  private async cachedUsersByHandle(handle: string): Promise<SlackUserInfo[] | undefined> {
+    return this.readFreshCache('usersSyncedAt', (cache) => (
+      cache.users.filter((user) => slackUserHandleCandidates(user).includes(handle))
+    ));
+  }
+
+  private async preferredUniqueUserByHandle(
+    handle: string,
+    matches: SlackUserInfo[],
+    target: { channelId?: string },
+  ): Promise<SlackUserInfo> {
+    const liveMatches = matches.filter((user) => !user.deleted);
+    const candidates = liveMatches.length ? liveMatches : matches;
+    if (!candidates.length) throw new Error(`Slack user not found: @${handle}`);
+
+    if (target.channelId && candidates.length > 1) {
+      try {
+        const memberIds = new Set(await this.getConversationMemberIds(target.channelId));
+        const memberMatches = candidates.filter((user) => user.id && memberIds.has(user.id));
+        if (memberMatches.length) return this.preferredUniqueWorkspaceUser(handle, memberMatches);
+      } catch {
+        // Membership is a preference signal. If Slack cannot provide it, fall back to workspace priority.
+      }
+    }
+
+    return this.preferredUniqueWorkspaceUser(handle, candidates);
+  }
+
+  private preferredUniqueWorkspaceUser(handle: string, users: SlackUserInfo[]): SlackUserInfo {
+    const match = users[0];
+    if (users.length === 1 && match) return match;
+
+    const sameWorkspace = this.input.teamId
+      ? users.filter((user) => !user.is_stranger && (!user.team_id || user.team_id === this.input.teamId))
+      : [];
+    if (sameWorkspace.length === 1 && sameWorkspace[0]) return sameWorkspace[0];
+
+    const nonStrangers = users.filter((user) => !user.is_stranger);
+    if (nonStrangers.length === 1 && nonStrangers[0]) return nonStrangers[0];
+
+    throw new Error(`Slack handle @${handle} matched multiple users`);
   }
 
   private async refreshUsers(): Promise<SlackUserInfo[]> {
