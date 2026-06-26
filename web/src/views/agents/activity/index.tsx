@@ -340,6 +340,14 @@ export default function Activity() {
   // Scroll height snapshot taken just before a previous-page fetch so we can
   // restore the user's viewport position after the prepend.
   const prevScrollHeightRef = useRef(0);
+  // While true, keep the viewport pinned to the newest row as the feed settles
+  // after a filter/toggle change (activity steps page in, coverage aligns). Set
+  // when a new feed is first shown; released once the feed settles or the user
+  // scrolls away from the bottom. Without it, toggling Show tool steps would
+  // scroll to the conversation's bottom before the newest steps (activity
+  // page[0], some newer than the last message) finish loading, stranding the
+  // viewport above the true newest row.
+  const bottomPinUntilSettleRef = useRef(false);
 
   // The step layer is needed when the user asks for steps, OR for the failed-only
   // filter (failures are steps). Failed-only is a focused debugging filter: it
@@ -709,7 +717,15 @@ export default function Activity() {
     if (item.kind !== 'message-in') return agentAuthor;
     const name = inboundAuthorName(item.event);
     const uid = item.event.kind === 'slack' ? item.event.actor?.userId : undefined;
-    return { key: `in:${uid ?? name}`, name, initial: initialOf(name), isAgent: false };
+    return {
+      key: `in:${uid ?? name}`,
+      name,
+      // Sender's real Slack avatar when resolved (see /messages enrichment);
+      // falls back to the initial when absent (left workspace, no photo).
+      ...(item.avatarUrl ? { avatarUrl: item.avatarUrl } : {}),
+      initial: initialOf(name),
+      isAgent: false,
+    };
   };
   const resolveSurface: SurfaceResolver = (item) => {
     const chip = 'surface' in item ? item.surface : undefined;
@@ -786,8 +802,22 @@ export default function Activity() {
       const { hasOlder: more, isFetchingOlder: busy, fetchOlder: load } = paginationRef.current;
       if (el!.scrollTop < TOP_THRESHOLD && more && !busy) load();
     }
+    // A deliberate wheel/touch gesture means the user is taking over scrolling,
+    // so drop the post-toggle bottom-pin (stop forcing them to the newest row).
+    // We use the gesture, not a derived "not at bottom" check, because coverage
+    // prepends fire scroll events that would momentarily read as not-at-bottom
+    // and release the pin before the feed has settled.
+    function releasePin() {
+      bottomPinUntilSettleRef.current = false;
+    }
     el.addEventListener('scroll', handleScroll, { passive: true });
-    return () => el.removeEventListener('scroll', handleScroll);
+    el.addEventListener('wheel', releasePin, { passive: true });
+    el.addEventListener('touchstart', releasePin, { passive: true });
+    return () => {
+      el.removeEventListener('scroll', handleScroll);
+      el.removeEventListener('wheel', releasePin);
+      el.removeEventListener('touchstart', releasePin);
+    };
   }, []);
 
   // After an older page loads, restore the scroll position so the viewport
@@ -795,7 +825,25 @@ export default function Activity() {
   // of newly prepended content.
   const pageCount =
     (messageQuery.data?.pages.length ?? 0) + (activityQuery.data?.pages.length ?? 0);
+
+  // The feed is still "settling" after a (re)load while its newest rows or
+  // coverage are still arriving: an initial layer is loading, an activity page
+  // is in flight, or coverage alignment still has older activity pages to
+  // fetch. Drives how long the post-toggle bottom-pin stays active.
+  const feedSettling =
+    loadingActivities ||
+    activityQuery.isFetchingNextPage ||
+    (interleaving && !activityCoversMessages && !!activityQuery.hasNextPage);
+
   useEffect(() => {
+    // While the post-toggle bottom-pin is active it owns the scroll position
+    // (it forces the newest row into view), so skip the prepend anchor to avoid
+    // a tug-of-war, and clear any height snapshot a coverage fetch left behind
+    // so a later (post-pin) prepend doesn't restore against a stale baseline.
+    if (bottomPinUntilSettleRef.current) {
+      prevScrollHeightRef.current = 0;
+      return;
+    }
     if (prevScrollHeightRef.current === 0) return;
     const el = scrollContainerRef.current;
     if (!el) return;
@@ -806,26 +854,39 @@ export default function Activity() {
     });
   }, [pageCount]);
 
-  // Scroll to bottom when feed data first loads for this agent/filter.
+  // When a new feed (agent / direction / toggle) is first shown, pin to the
+  // newest row and keep it pinned while the feed settles (see the pin effect
+  // below). Fires once per feed identity.
   useEffect(() => {
     const feedKey = agentId ? `${agentId}:${dir}:${stepsNeeded ? 's' : 'c'}:${failedOnly ? 'f' : ''}` : null;
     const feedLoaded = failedOnly ? activitiesData : (messagesData ?? activitiesData);
     if (!feedLoaded || !feedKey || initialScrollFeedRef.current === feedKey) return;
     initialScrollFeedRef.current = feedKey;
     isAtBottomRef.current = true;
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    let inner: number;
-    const outer = requestAnimationFrame(() => {
-      inner = requestAnimationFrame(() => {
-        el.scrollTop = el.scrollHeight;
-      });
-    });
-    return () => {
-      cancelAnimationFrame(outer);
-      cancelAnimationFrame(inner);
-    };
+    bottomPinUntilSettleRef.current = true;
   }, [agentId, activitiesData, messagesData, dir, stepsNeeded, failedOnly]);
+
+  // Bottom-pin: while active, the pin owns the scroll position. Force the newest
+  // row into view on every content or settle change so late-arriving newest
+  // steps (activity page[0]) and coverage prepends never strand the viewport
+  // above the true bottom. Release only when the feed settles (one final scroll
+  // included) or the user takes over via a wheel/touch gesture (see the mount
+  // effect). We deliberately do NOT release on isAtBottomRef: coverage prepends
+  // briefly read as "not at bottom" and would drop the pin mid-settle.
+  useEffect(() => {
+    if (!bottomPinUntilSettleRef.current) return;
+    const settledNow = !feedSettling;
+    const el = scrollContainerRef.current;
+    if (el) {
+      requestAnimationFrame(() => {
+        const node = scrollContainerRef.current;
+        if (node && (bottomPinUntilSettleRef.current || settledNow)) {
+          node.scrollTop = node.scrollHeight;
+        }
+      });
+    }
+    if (settledNow) bottomPinUntilSettleRef.current = false;
+  }, [activitiesData, messagesData, pageCount, feedSettling]);
 
   // Always scroll to bottom when new work starts.
   useEffect(() => {
@@ -869,25 +930,33 @@ export default function Activity() {
 
       {/* Mobile filter bar */}
       <div className="flex flex-wrap items-center gap-2 border-b border-border-soft px-4 py-2 md:hidden">
-        <MobileDirPill dir={dir} onChange={setDir} />
-        <label className="chrome inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 px-1 text-[11px] tracking-wide text-text-muted">
-          <input
-            type="checkbox"
-            checked={failedOnly}
-            onChange={(e) => setFailedOnly(e.target.checked)}
-            className="h-3 w-3 accent-[color:var(--color-accent)]"
-          />
-          Failed only
-        </label>
-        <label className="chrome inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 px-1 text-[11px] tracking-wide text-text-muted">
-          <input
-            type="checkbox"
-            checked={showToolSteps}
-            onChange={(e) => setShowToolSteps(e.target.checked)}
-            className="h-3 w-3 accent-[color:var(--color-accent)]"
-          />
-          Show tool steps
-        </label>
+        {/* The direction filter and the step axis (Failed only + Show tool
+            steps) are mutually exclusive (see useActivityFilters): hide the
+            direction pill while either step toggle is on, and hide both step
+            toggles while a direction filter is active. */}
+        {!showToolSteps && !failedOnly && <MobileDirPill dir={dir} onChange={setDir} />}
+        {dir === 'all' && (
+          <label className="chrome inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 px-1 text-[11px] tracking-wide text-text-muted">
+            <input
+              type="checkbox"
+              checked={failedOnly}
+              onChange={(e) => setFailedOnly(e.target.checked)}
+              className="h-3 w-3 accent-[color:var(--color-accent)]"
+            />
+            Failed only
+          </label>
+        )}
+        {dir === 'all' && (
+          <label className="chrome inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 px-1 text-[11px] tracking-wide text-text-muted">
+            <input
+              type="checkbox"
+              checked={showToolSteps}
+              onChange={(e) => setShowToolSteps(e.target.checked)}
+              className="h-3 w-3 accent-[color:var(--color-accent)]"
+            />
+            Show tool steps
+          </label>
+        )}
       </div>
 
       <ActivityStatusSummary status={currentStatus} latestActivity={latestCurrentItemActivity} now={now} />

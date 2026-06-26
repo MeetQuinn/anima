@@ -87,7 +87,7 @@ export interface ActivityFilters {
 export function useActivityFilters(): ActivityFilters {
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const showToolSteps = useSyncExternalStore(
+  const storedShowSteps = useSyncExternalStore(
     subscribeShowSteps,
     getShowSteps,
     readStoredShowSteps,
@@ -96,6 +96,20 @@ export function useActivityFilters(): ActivityFilters {
   // Direction sub-filter — URL param only.
   const rawDir = searchParams.get('dir');
   const dir: ActivityDir = rawDir === 'in' ? 'in' : rawDir === 'out' ? 'out' : 'all';
+
+  // The conversation-direction filter (Inbox/Outbox) and the step axis are
+  // mutually exclusive. Two axes: direction triages the conversation layer,
+  // while the step axis (Show tool steps AND Failed only) overlays the agent's
+  // own work/failures on the full timeline. A failure is a step/processing
+  // event, not a directional message, so Failed only lives on the step axis too.
+  // Mixing them (e.g. Inbox + steps, or Inbox + Failed only) reads incongruent.
+  // So a direction filter neutralizes BOTH step toggles. Deriving here (rather
+  // than mutating storage) keeps the user's preferences intact for when they
+  // return to All, and deterministically self-heals any legacy combo persisted
+  // before this rule existed: a non-All direction plus a step toggle resolves to
+  // the conversation view (direction kept, toggles read off) on load, with no
+  // transient, no flicker, and no possible "all controls hidden" dead end.
+  const showToolSteps = storedShowSteps && dir === 'all';
 
   function setDir(v: ActivityDir) {
     setSearchParams(
@@ -109,8 +123,9 @@ export function useActivityFilters(): ActivityFilters {
     );
   }
 
-  // Failed-only — URL param only.
-  const failedOnly = searchParams.get('failed') === '1';
+  // Failed-only — URL param only. On the step axis, so a direction filter
+  // neutralizes it (mirrors showToolSteps above).
+  const failedOnly = searchParams.get('failed') === '1' && dir === 'all';
 
   function setFailedOnly(v: boolean) {
     setSearchParams(

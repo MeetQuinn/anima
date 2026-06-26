@@ -150,7 +150,16 @@ function authorFor(item: ActivityFeedItem, channel: AgentChannelSummary, agent: 
     };
   }
   const uid = item.event.kind === 'slack' ? item.event.actor?.userId : undefined;
-  return { key: `in:${uid ?? name}`, name, initial: initialOf(name), isAgent: false };
+  return {
+    key: `in:${uid ?? name}`,
+    name,
+    // Sender's real Slack avatar when resolved by the /messages enrichment
+    // (same source as the Activity tab, so avatars are identical across both);
+    // falls back to the initial when absent.
+    ...(item.avatarUrl ? { avatarUrl: item.avatarUrl } : {}),
+    initial: initialOf(name),
+    isAgent: false,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -424,6 +433,17 @@ export default function Channels() {
             onDir={setDir}
             onBack={() => select(null)}
           />
+        ) : selectedId ? (
+          // Deep-linked (e.g. from an Activity surface chip) to a channel that
+          // isn't in the membership list — the agent may have left it, or it's a
+          // surface with no Channels detail target. Stay honest rather than
+          // silently resting on the first channel.
+          <div className="flex h-full items-center justify-center px-6 text-center">
+            <p className="max-w-prose font-serif italic text-[15px] text-text-subtle">
+              That conversation isn&apos;t in this list. The agent may have left the channel,
+              or it has no history here. Pick one from the list to read it.
+            </p>
+          </div>
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <p className="font-serif italic text-[15px] text-text-subtle">

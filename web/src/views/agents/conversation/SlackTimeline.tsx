@@ -1,4 +1,5 @@
 import { SmilePlus } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { renderMrkdwn } from '@/lib/mrkdwn';
 import { clockHM, dateLabel } from '@/lib/format';
 import { AttachedFiles, UploadedFile } from '../activity/Attachments';
@@ -238,11 +239,31 @@ export function DayDivider({ iso }: { iso: string }) {
 
 // Small muted surface chip for the cross-channel byline (Activity axis). The
 // label already carries its kind marker (`#prod` / `@handle`), so no icon.
-function GroupSurfaceChip({ chip }: { chip: SurfaceChip }) {
+//
+// When the chip maps to a real Slack conversation (`channelId` present), it
+// becomes a link to that channel in the Channels tab, so a user reading the
+// cross-channel Activity timeline can jump straight to a surface for detail.
+// The chip is the affordance (iris-locked): pointer + hover underline/accent so
+// it reads as clickable, focusable with an aria-label naming the destination.
+// Rows with no resolvable channel (reminder / onboarding / unknown) render the
+// plain non-interactive chip, so we never link to nowhere. This chip only
+// renders in Activity (Channels passes no surface resolver), so the link is
+// inherently active-only there.
+const SURFACE_CHIP_BASE =
+  'shrink-0 truncate rounded-sm bg-surface-raised px-1.5 py-px font-sans text-[10px] text-text-subtle';
+
+function GroupSurfaceChip({ chip, agentId }: { chip: SurfaceChip; agentId: string }) {
+  if (!chip.channelId || !agentId) {
+    return <span className={SURFACE_CHIP_BASE}>{chip.label}</span>;
+  }
   return (
-    <span className="shrink-0 truncate rounded-sm bg-surface-raised px-1.5 py-px font-sans text-[10px] text-text-subtle">
+    <Link
+      to={`/agents/${agentId}/channels?c=${encodeURIComponent(chip.channelId)}`}
+      aria-label={`Open ${chip.label} in the Channels tab`}
+      className={`${SURFACE_CHIP_BASE} cursor-pointer underline-offset-2 transition-colors hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
+    >
       {chip.label}
-    </span>
+    </Link>
   );
 }
 
@@ -258,7 +279,7 @@ export function MessageGroupRow({ group, agentId }: { group: MessageGroup; agent
           <span className="shrink-0 font-sans text-[11px] text-text-subtle">
             {clockHM(group.startTs)}
           </span>
-          {group.surface && <GroupSurfaceChip chip={group.surface} />}
+          {group.surface && <GroupSurfaceChip chip={group.surface} agentId={agentId} />}
         </div>
         <div className="mt-0.5 flex flex-col gap-1">
           {group.items.map(({ item, key }) => (

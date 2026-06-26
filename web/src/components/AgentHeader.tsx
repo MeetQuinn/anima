@@ -186,13 +186,21 @@ export default function AgentHeader() {
         </div>
         {tab === 'activity' && (
           <div className="flex shrink-0 items-center gap-3">
-            <FilterToggle label="Failed only" checked={failedOnly} onChange={setFailedOnly} />
-            <FilterToggle
-              label="Show tool steps"
-              checked={showToolSteps}
-              onChange={setShowToolSteps}
-            />
-            <DirPill dir={dir} onChange={setDir} />
+            {/* The direction filter and the step axis (Failed only + Show tool
+                steps) are mutually exclusive. Show the two step toggles only on
+                the full timeline; hide the direction filter while either step
+                toggle is on. */}
+            {dir === 'all' && (
+              <FilterToggle label="Failed only" checked={failedOnly} onChange={setFailedOnly} />
+            )}
+            {dir === 'all' && (
+              <FilterToggle
+                label="Show tool steps"
+                checked={showToolSteps}
+                onChange={setShowToolSteps}
+              />
+            )}
+            {!showToolSteps && !failedOnly && <DirPill dir={dir} onChange={setDir} />}
           </div>
         )}
       </nav>
