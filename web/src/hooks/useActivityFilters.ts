@@ -4,8 +4,9 @@ import { useSearchParams } from 'react-router-dom';
 // Shared hook for the Activity-view filter state.
 //
 // The Activity tab is one Slack-style timeline (the conversation) plus a single
-// "Show tool steps" toggle (iris-locked spec `795d974`). There is no lens: the
-// conversation is always primary; the toggle interleaves curated tool steps /
+// "Show tool steps" toggle (iris-locked spec `795d974`). There is no lens and no
+// direction sub-filter: the conversation is always primary and always shows both
+// inbound and outbound rows; the toggle interleaves curated tool steps /
 // memory-coherence / processing signals as subordinate rows.
 //
 // Show tool steps:
@@ -15,16 +16,11 @@ import { useSearchParams } from 'react-router-dom';
 //   - Migrated from the retired 'anima-activity-show-all-steps' pref: a user who
 //     had the old firehose on wanted steps visible, so it maps to ON.
 //
-// Direction sub-filter (applies to the conversation rows):
-//   - URL param `dir=in|out`; absent = 'all'. Not persisted.
-//
 // Failed-only filter:
 //   - URL param `failed=1`. Implies steps are shown (failure rows are steps).
 
 const SHOW_STEPS_STORAGE_KEY = 'anima-activity-show-tool-steps';
 const LEGACY_SHOW_ALL_STORAGE_KEY = 'anima-activity-show-all-steps';
-
-export type ActivityDir = 'all' | 'in' | 'out';
 
 // ---------------------------------------------------------------------------
 // Module-level reactive store — useSyncExternalStore pattern.
@@ -76,10 +72,8 @@ function subscribeShowSteps(listener: Listener): () => void {
 // ---------------------------------------------------------------------------
 
 export interface ActivityFilters {
-  dir: ActivityDir;
   failedOnly: boolean;
   showToolSteps: boolean;
-  setDir: (v: ActivityDir) => void;
   setFailedOnly: (v: boolean) => void;
   setShowToolSteps: (v: boolean) => void;
 }
@@ -87,45 +81,16 @@ export interface ActivityFilters {
 export function useActivityFilters(): ActivityFilters {
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const storedShowSteps = useSyncExternalStore(
+  const showToolSteps = useSyncExternalStore(
     subscribeShowSteps,
     getShowSteps,
     readStoredShowSteps,
   );
 
-  // Direction sub-filter — URL param only.
-  const rawDir = searchParams.get('dir');
-  const dir: ActivityDir = rawDir === 'in' ? 'in' : rawDir === 'out' ? 'out' : 'all';
-
-  // The conversation-direction filter (Inbox/Outbox) and the step axis are
-  // mutually exclusive. Two axes: direction triages the conversation layer,
-  // while the step axis (Show tool steps AND Failed only) overlays the agent's
-  // own work/failures on the full timeline. A failure is a step/processing
-  // event, not a directional message, so Failed only lives on the step axis too.
-  // Mixing them (e.g. Inbox + steps, or Inbox + Failed only) reads incongruent.
-  // So a direction filter neutralizes BOTH step toggles. Deriving here (rather
-  // than mutating storage) keeps the user's preferences intact for when they
-  // return to All, and deterministically self-heals any legacy combo persisted
-  // before this rule existed: a non-All direction plus a step toggle resolves to
-  // the conversation view (direction kept, toggles read off) on load, with no
-  // transient, no flicker, and no possible "all controls hidden" dead end.
-  const showToolSteps = storedShowSteps && dir === 'all';
-
-  function setDir(v: ActivityDir) {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        if (v === 'all') next.delete('dir');
-        else next.set('dir', v);
-        return next;
-      },
-      { replace: true },
-    );
-  }
-
-  // Failed-only — URL param only. On the step axis, so a direction filter
-  // neutralizes it (mirrors showToolSteps above).
-  const failedOnly = searchParams.get('failed') === '1' && dir === 'all';
+  // Failed-only: URL param only. Lives on the step axis (a failure is a step /
+  // processing event), so it shows failure rows regardless of the Show tool
+  // steps toggle.
+  const failedOnly = searchParams.get('failed') === '1';
 
   function setFailedOnly(v: boolean) {
     setSearchParams(
@@ -140,10 +105,8 @@ export function useActivityFilters(): ActivityFilters {
   }
 
   return {
-    dir,
     failedOnly,
     showToolSteps,
-    setDir,
     setFailedOnly,
     setShowToolSteps: setShowStepsGlobal,
   };

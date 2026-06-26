@@ -9,7 +9,7 @@ import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { Button } from './ui/button';
 import AgentActionsMenu from './AgentActionsMenu';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
-import { useActivityFilters, type ActivityDir } from '@/hooks/useActivityFilters';
+import { useActivityFilters } from '@/hooks/useActivityFilters';
 
 const TABS: { id: AgentTab; label: string }[] = [
   { id: 'activity', label: 'Activity' },
@@ -40,32 +40,6 @@ function FilterToggle({
   );
 }
 
-function DirPill({
-  dir,
-  onChange,
-}: {
-  dir: ActivityDir;
-  onChange: (v: ActivityDir) => void;
-}) {
-  const base = 'chrome px-2.5 py-1 text-[11px] tracking-wide rounded-sm transition-colors';
-  const active = 'bg-accent/10 text-accent font-medium';
-  const inactive = 'text-text-muted hover:text-text';
-  return (
-    <div className="flex items-center rounded-sm border border-border-soft p-0.5">
-      {(['all', 'in', 'out'] as ActivityDir[]).map((v) => (
-        <button
-          key={v}
-          type="button"
-          onClick={() => onChange(v)}
-          className={[base, dir === v ? active : inactive].join(' ')}
-        >
-          {v === 'all' ? 'All' : v === 'in' ? 'Inbox' : 'Outbox'}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 export default function AgentHeader() {
   const { data: agents = [] } = useQuery({ queryKey: queryKeys.agents(), queryFn: fetchAgents });
   const { data: agentStatuses = [] } = useQuery({
@@ -82,7 +56,7 @@ export default function AgentHeader() {
     if (!agentId) return;
     navigate(`/agents/${agentId}/${next}`);
   };
-  const { failedOnly, dir, showToolSteps, setFailedOnly, setDir, setShowToolSteps } =
+  const { failedOnly, showToolSteps, setFailedOnly, setShowToolSteps } =
     useActivityFilters();
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState<string | null>(null);
@@ -186,21 +160,12 @@ export default function AgentHeader() {
         </div>
         {tab === 'activity' && (
           <div className="flex shrink-0 items-center gap-3">
-            {/* The direction filter and the step axis (Failed only + Show tool
-                steps) are mutually exclusive. Show the two step toggles only on
-                the full timeline; hide the direction filter while either step
-                toggle is on. */}
-            {dir === 'all' && (
-              <FilterToggle label="Failed only" checked={failedOnly} onChange={setFailedOnly} />
-            )}
-            {dir === 'all' && (
-              <FilterToggle
-                label="Show tool steps"
-                checked={showToolSteps}
-                onChange={setShowToolSteps}
-              />
-            )}
-            {!showToolSteps && !failedOnly && <DirPill dir={dir} onChange={setDir} />}
+            <FilterToggle label="Failed only" checked={failedOnly} onChange={setFailedOnly} />
+            <FilterToggle
+              label="Show tool steps"
+              checked={showToolSteps}
+              onChange={setShowToolSteps}
+            />
           </div>
         )}
       </nav>

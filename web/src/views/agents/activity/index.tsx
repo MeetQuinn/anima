@@ -14,7 +14,7 @@ import { activityIsFailure, activityRow, isNarrativeStep } from '@/lib/activitie
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { clockHM, dateKey, dateLabel, formatRelativeShort } from '@/lib/format';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
-import { useActivityFilters, type ActivityDir } from '@/hooks/useActivityFilters';
+import { useActivityFilters } from '@/hooks/useActivityFilters';
 import { useNow } from '@/hooks/useNow';
 import {
   agentHealthDegradedText,
@@ -37,38 +37,6 @@ import type { Activity as ActivityRecord, AgentActivityFeedEvent } from '@shared
 import type { AgentFeishuScopeAuthUrl } from '@shared/agent-config';
 import type { AgentMessageRecord } from '@shared/messages';
 import type { AgentStatusSummary } from '@shared/snapshot';
-
-// ---------------------------------------------------------------------------
-// Mobile direction sub-filter pill (All / Inbox / Outbox).
-// Desktop: lives in AgentHeader (consistent header slot).
-// ---------------------------------------------------------------------------
-
-function MobileDirPill({
-  dir,
-  onChange,
-}: {
-  dir: ActivityDir;
-  onChange: (v: ActivityDir) => void;
-}) {
-  const base =
-    'chrome px-2.5 py-1.5 text-[11px] tracking-wide rounded-sm transition-colors min-h-[36px] flex items-center';
-  const active = 'bg-accent/10 text-accent font-medium';
-  const inactive = 'text-text-muted hover:text-text';
-  return (
-    <div className="flex items-center rounded-sm border border-border-soft p-0.5">
-      {(['all', 'in', 'out'] as ActivityDir[]).map((v) => (
-        <button
-          key={v}
-          type="button"
-          onClick={() => onChange(v)}
-          className={[base, dir === v ? active : inactive].join(' ')}
-        >
-          {v === 'all' ? 'All' : v === 'in' ? 'Inbox' : 'Outbox'}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Step lane — the subordinate register. A run of consecutive tool steps sits
@@ -330,7 +298,7 @@ export default function Activity() {
   const previewFirstRunHero = import.meta.env.DEV
     ? ((searchParams.get('_previewFirstRunHero') as 'feishu' | 'slack' | null) ?? undefined)
     : undefined;
-  const { failedOnly, dir, showToolSteps, setFailedOnly, setDir, setShowToolSteps } =
+  const { failedOnly, showToolSteps, setFailedOnly, setShowToolSteps } =
     useActivityFilters();
   const now = useNow();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -355,12 +323,12 @@ export default function Activity() {
   // lens behaviour and the filter's name.
   const stepsNeeded = showToolSteps || failedOnly;
 
-  const messageDirection = dir === 'all' ? undefined : dir;
   // Conversation layer — always loaded (complete history, Channels-identical).
+  // Always both directions; the inbox/outbox sub-filter was retired.
   const messageQuery = useInfiniteQuery({
-    queryKey: queryKeys.agentMessages(agentId ?? '', dir),
+    queryKey: queryKeys.agentMessages(agentId ?? ''),
     queryFn: ({ pageParam }) =>
-      fetchAgentMessages(agentId!, { before: pageParam, direction: messageDirection, limit: 100 }),
+      fetchAgentMessages(agentId!, { before: pageParam, limit: 100 }),
     enabled: !!agentId,
     initialPageParam: undefined as string | undefined,
     // Forward pagination toward OLDER history: page[0] stays the newest page so a
@@ -421,13 +389,8 @@ export default function Activity() {
   // Conversation layer items (hidden entirely under the failed-only debug filter).
   const conversationItems = useMemo(() => {
     if (failedOnly || !messagesData) return [];
-    return buildMessageFeed(messagesData).filter((item) => {
-      if (!isMessageItem(item)) return false;
-      if (dir === 'in' && item.kind !== 'message-in') return false;
-      if (dir === 'out' && item.kind === 'message-in') return false;
-      return true;
-    });
-  }, [messagesData, failedOnly, dir]);
+    return buildMessageFeed(messagesData).filter((item) => isMessageItem(item));
+  }, [messagesData, failedOnly]);
 
   // Step layer items — curated isNarrativeStep set only (never the firehose;
   // iris-locked `795d974`). Suppress a tool's started row when its failure row is
@@ -546,7 +509,6 @@ export default function Activity() {
     (!loadingActivities &&
       filteredItems.length === 0 &&
       !failedOnly &&
-      dir === 'all' &&
       connectedPlatform !== undefined);
 
   // --- Post-onboarding first landing -----------------------------------------
@@ -854,17 +816,17 @@ export default function Activity() {
     });
   }, [pageCount]);
 
-  // When a new feed (agent / direction / toggle) is first shown, pin to the
-  // newest row and keep it pinned while the feed settles (see the pin effect
-  // below). Fires once per feed identity.
+  // When a new feed (agent / toggle) is first shown, pin to the newest row and
+  // keep it pinned while the feed settles (see the pin effect below). Fires once
+  // per feed identity.
   useEffect(() => {
-    const feedKey = agentId ? `${agentId}:${dir}:${stepsNeeded ? 's' : 'c'}:${failedOnly ? 'f' : ''}` : null;
+    const feedKey = agentId ? `${agentId}:${stepsNeeded ? 's' : 'c'}:${failedOnly ? 'f' : ''}` : null;
     const feedLoaded = failedOnly ? activitiesData : (messagesData ?? activitiesData);
     if (!feedLoaded || !feedKey || initialScrollFeedRef.current === feedKey) return;
     initialScrollFeedRef.current = feedKey;
     isAtBottomRef.current = true;
     bottomPinUntilSettleRef.current = true;
-  }, [agentId, activitiesData, messagesData, dir, stepsNeeded, failedOnly]);
+  }, [agentId, activitiesData, messagesData, stepsNeeded, failedOnly]);
 
   // Bottom-pin: while active, the pin owns the scroll position. Force the newest
   // row into view on every content or settle change so late-arriving newest
@@ -930,33 +892,24 @@ export default function Activity() {
 
       {/* Mobile filter bar */}
       <div className="flex flex-wrap items-center gap-2 border-b border-border-soft px-4 py-2 md:hidden">
-        {/* The direction filter and the step axis (Failed only + Show tool
-            steps) are mutually exclusive (see useActivityFilters): hide the
-            direction pill while either step toggle is on, and hide both step
-            toggles while a direction filter is active. */}
-        {!showToolSteps && !failedOnly && <MobileDirPill dir={dir} onChange={setDir} />}
-        {dir === 'all' && (
-          <label className="chrome inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 px-1 text-[11px] tracking-wide text-text-muted">
-            <input
-              type="checkbox"
-              checked={failedOnly}
-              onChange={(e) => setFailedOnly(e.target.checked)}
-              className="h-3 w-3 accent-[color:var(--color-accent)]"
-            />
-            Failed only
-          </label>
-        )}
-        {dir === 'all' && (
-          <label className="chrome inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 px-1 text-[11px] tracking-wide text-text-muted">
-            <input
-              type="checkbox"
-              checked={showToolSteps}
-              onChange={(e) => setShowToolSteps(e.target.checked)}
-              className="h-3 w-3 accent-[color:var(--color-accent)]"
-            />
-            Show tool steps
-          </label>
-        )}
+        <label className="chrome inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 px-1 text-[11px] tracking-wide text-text-muted">
+          <input
+            type="checkbox"
+            checked={failedOnly}
+            onChange={(e) => setFailedOnly(e.target.checked)}
+            className="h-3 w-3 accent-[color:var(--color-accent)]"
+          />
+          Failed only
+        </label>
+        <label className="chrome inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 px-1 text-[11px] tracking-wide text-text-muted">
+          <input
+            type="checkbox"
+            checked={showToolSteps}
+            onChange={(e) => setShowToolSteps(e.target.checked)}
+            className="h-3 w-3 accent-[color:var(--color-accent)]"
+          />
+          Show tool steps
+        </label>
       </div>
 
       <ActivityStatusSummary status={currentStatus} latestActivity={latestCurrentItemActivity} now={now} />
@@ -992,11 +945,9 @@ export default function Activity() {
               <p className="font-serif italic text-[15px] text-text-subtle">
                 {loadingActivities
                   ? 'Loading activity...'
-                  : dir !== 'all'
-                    ? `No ${dir === 'in' ? 'inbox' : 'outbox'} messages yet.`
-                    : failedOnly
-                      ? 'No failures to show.'
-                      : 'No activity yet.'}
+                  : failedOnly
+                    ? 'No failures to show.'
+                    : 'No activity yet.'}
               </p>
             </div>
           )
@@ -1031,7 +982,7 @@ export default function Activity() {
               )}
             </div>
           ))}
-        {stepsNeeded && currentItemId && !loadingActivities && (
+        {currentItemId && !loadingActivities && !showFirstRunHero && (
           <WorkingIndicator latestActivity={latestCurrentItemActivity} />
         )}
         <div ref={bottomRef} className="h-4" />
