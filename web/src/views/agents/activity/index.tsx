@@ -386,6 +386,21 @@ export default function Activity() {
   const currentItemId = currentStatus?.currentItemId;
   const currentItemStartedAt = currentStatus?.currentItemStartedAt;
 
+  // Indicator-only activity slice. The live Working/Thinking label needs the
+  // current item's latest activity to tell tool.call.started (Working) from
+  // reasoning (Thinking). When steps are shown, activityQuery already has it;
+  // when steps are off we still fetch a small recent slice here, scoped to the
+  // indicator. This query is deliberately kept out of `loadingActivities` and
+  // `feedError`, so an indicator-only poll never blanks or blocks the message
+  // timeline. Disabled while steps are loaded (activitiesData covers it then).
+  const indicatorNeeded = !!agentId && !!currentItemId && !stepsNeeded;
+  const indicatorActivityQuery = useQuery({
+    queryKey: queryKeys.agentIndicatorActivity(agentId ?? ''),
+    queryFn: () => fetchAgentActivities(agentId!, 50),
+    enabled: indicatorNeeded,
+    refetchInterval: indicatorNeeded ? refetchIntervals.agentActivities : false,
+  });
+
   // Conversation layer items (hidden entirely under the failed-only debug filter).
   const conversationItems = useMemo(() => {
     if (failedOnly || !messagesData) return [];
@@ -482,9 +497,18 @@ export default function Activity() {
       ? oldestActivityTs
       : null;
 
+  // Source for the live indicator: the full step feed when steps are loaded,
+  // else the lightweight indicator-only slice. Either way the conversation
+  // timeline never waits on it.
+  const indicatorActivitiesData = useMemo(() => {
+    if (stepsNeeded) return activitiesData;
+    const events = indicatorActivityQuery.data?.events;
+    return events?.length ? { events } : undefined;
+  }, [stepsNeeded, activitiesData, indicatorActivityQuery.data]);
+
   const latestCurrentItemActivity = useMemo(() => {
-    if (!currentItemId || !activitiesData) return undefined;
-    const activities = activitiesData.events.flatMap((event) =>
+    if (!currentItemId || !indicatorActivitiesData) return undefined;
+    const activities = indicatorActivitiesData.events.flatMap((event) =>
       event.kind === 'activity' ? [event.activity] : [],
     );
     const itemActivities = currentItemStartedAt
@@ -492,7 +516,7 @@ export default function Activity() {
       : activities;
     if (!itemActivities.length) return undefined;
     return itemActivities.reduce((latest, a) => (a.createdAt > latest.createdAt ? a : latest));
-  }, [currentItemId, currentItemStartedAt, activitiesData]);
+  }, [currentItemId, currentItemStartedAt, indicatorActivitiesData]);
 
   // First-run hero gating. Show the live-moment invite in place of the generic
   // empty text only when the DEFAULT, unfiltered feed is empty (a brand-new

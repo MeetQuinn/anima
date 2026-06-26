@@ -767,7 +767,14 @@ function surfaceChipForOutbound(activity: ActivityRecord): SurfaceChip {
   }
 
   // Cross-surface send (or reminder item with no inbound context).
-  if (payloadDmHandle) return { kind: 'dm', label: `@${payloadDmHandle.replace(/^@/, '')}` };
+  if (payloadDmHandle) {
+    // Slack DM sends carry both `dmHandle` and `channel` (the D-id). This early
+    // return wins over the payloadChannel branch below, so attach the channel id
+    // here too, else outbound DM chips render as plain text while channel chips
+    // deep-link, the same asymmetry the channel fix below resolves.
+    const label = `@${payloadDmHandle.replace(/^@/, '')}`;
+    return payloadChannel ? { kind: 'dm', label, channelId: payloadChannel } : { kind: 'dm', label };
+  }
   if (payloadChannel) {
     // Carry the real Slack channel/DM id so the chip deep-links to the Channels
     // tab, mirroring the inbound path (surfaceChipForSlack). Without this,
