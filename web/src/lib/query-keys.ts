@@ -9,7 +9,12 @@ export const queryKeys = {
   agent: (agentId: string) => ['agent', agentId] as const,
   agentStatuses: () => ['agent-statuses'] as const,
   agentActivities: (agentId: string) => ['agent-activities', agentId] as const,
-  agentMessages: (agentId: string, dir: string) => ['agent-messages', agentId, dir] as const,
+  // Indicator-only activity slice: the live Working/Thinking label needs the
+  // current item's latest activity even when the step layer is hidden. Distinct
+  // key so it never collides with the infinite agentActivities feed.
+  agentIndicatorActivity: (agentId: string) =>
+    ['agent-activities', agentId, 'indicator'] as const,
+  agentMessages: (agentId: string) => ['agent-messages', agentId] as const,
   // Channels detail pane: one channel's history, fetched server-side scoped to
   // the channel (not the global stream filtered client-side).
   agentChannelMessages: (agentId: string, channelId: string) =>

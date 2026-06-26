@@ -767,8 +767,20 @@ function surfaceChipForOutbound(activity: ActivityRecord): SurfaceChip {
   }
 
   // Cross-surface send (or reminder item with no inbound context).
-  if (payloadDmHandle) return { kind: 'dm', label: `@${payloadDmHandle.replace(/^@/, '')}` };
+  if (payloadDmHandle) {
+    // Slack DM sends carry both `dmHandle` and `channel` (the D-id). This early
+    // return wins over the payloadChannel branch below, so attach the channel id
+    // here too, else outbound DM chips render as plain text while channel chips
+    // deep-link, the same asymmetry the channel fix below resolves.
+    const label = `@${payloadDmHandle.replace(/^@/, '')}`;
+    return payloadChannel ? { kind: 'dm', label, channelId: payloadChannel } : { kind: 'dm', label };
+  }
   if (payloadChannel) {
+    // Carry the real Slack channel/DM id so the chip deep-links to the Channels
+    // tab, mirroring the inbound path (surfaceChipForSlack). Without this,
+    // outbound rows rendered the surface as plain, unclickable text while the
+    // matching inbound rows linked, an asymmetry on the same conversation.
+    const target = { channelId: payloadChannel };
     // DM detection: explicit kind flag (slackTargetSummary) or Slack DM id prefix.
     const isDm =
       payloadChannelKind === 'dm' ||
@@ -779,7 +791,7 @@ function surfaceChipForOutbound(activity: ActivityRecord): SurfaceChip {
       // payloadDmHandle is empty here (the early-return above consumed it).
       const rawHandle = payloadChannelDisplayName.replace(/^DM with /i, '');
       const handle = rawHandle && rawHandle !== payloadChannelDisplayName ? rawHandle : '';
-      return { kind: 'dm', label: handle ? `@${handle.replace(/^@/, '')}` : 'DM' };
+      return { kind: 'dm', label: handle ? `@${handle.replace(/^@/, '')}` : 'DM', ...target };
     }
     // Channel label: channelName (explicit) > channelDisplayName from
     // slackTargetSummary > raw id as last resort. slackChannelDisplayName()
@@ -791,8 +803,8 @@ function surfaceChipForOutbound(activity: ActivityRecord): SurfaceChip {
           ? payloadChannelDisplayName
           : `#${payloadChannelDisplayName}`
         : payloadChannel;
-    if (payloadThreadTs) return { kind: 'thread', label: channel };
-    return { kind: 'channel', label: channel };
+    if (payloadThreadTs) return { kind: 'thread', label: channel, ...target };
+    return { kind: 'channel', label: channel, ...target };
   }
   // Fallback for outbound from a reminder item with no payload channel info
   return { kind: 'reminder', label: 'Reminder' };

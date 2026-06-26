@@ -294,11 +294,13 @@ export function WorkingIndicator({
 }) {
   const isWorking = latestActivity?.type === 'tool.call.started';
   const label = isWorking ? 'Working' : 'Thinking';
-  // Use the same 3-column grid as Row so the dot aligns with activity rows.
+  // Anchor the live pulse to the same left rail as message avatars (h-9 w-9 at
+  // px-1 + gap-2.5) instead of the tool-step gutter, so it reads as part of the
+  // conversation flow and sits at the same left edge whether or not tool steps
+  // are shown.
   return (
-    <div className="grid grid-cols-[2.5rem_0.75rem_minmax(0,1fr)] items-center gap-2 py-2 md:grid-cols-[3.5rem_0.75rem_minmax(0,1fr)] md:gap-3">
-      <span />
-      <span className="flex h-6 items-center" aria-hidden>
+    <div className="flex items-center gap-2.5 px-1 py-2">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center" aria-hidden>
         <span
           className="inline-block h-2 w-2 animate-pulse rounded-full"
           style={{ background: 'var(--color-health-warn)' }}
