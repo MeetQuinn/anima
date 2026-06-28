@@ -1,7 +1,15 @@
-import { Fragment, useEffect, useMemo, useReducer, useRef, type ReactNode } from 'react';
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { AlertCircle, ExternalLink, Loader2, X } from 'lucide-react';
+import { AlertCircle, ChevronRight, ExternalLink, Loader2, X } from 'lucide-react';
 import {
   fetchAgentStatuses,
   fetchAgentActivities,
@@ -10,11 +18,10 @@ import {
   fetchAgents,
 } from '@/api/agents';
 import { buildActivityFeed, buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
-import { activityIsFailure, activityRow, isNarrativeStep } from '@/lib/activities';
+import { activityRow, isNarrativeStep } from '@/lib/activities';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { clockHM, dateKey, dateLabel, formatRelativeShort } from '@/lib/format';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
-import { useActivityFilters } from '@/hooks/useActivityFilters';
 import { useNow } from '@/hooks/useNow';
 import {
   agentHealthDegradedText,
@@ -31,6 +38,7 @@ import {
   SystemEventRow,
   type Author,
   type AuthorResolver,
+  type MessageGroup,
   type SurfaceResolver,
 } from '../conversation/SlackTimeline';
 import { StepRow, WorkingIndicator } from './AuditRows';
@@ -71,6 +79,113 @@ function buildBlocks(items: ActivityFeedItem[]): DayBlock[] {
     else blocks.push({ type, items: [item] });
   }
   return blocks;
+}
+
+// ---------------------------------------------------------------------------
+// Per-turn steps — message-bound, collapsible (replaces the global toggle).
+//
+// Tool steps no longer live as their own interleaved rows behind a header
+// toggle. Each agent turn's curated steps attach to the agent message that
+// concludes the turn and tuck beneath it, collapsed by default behind a
+// `▸ N steps` disclosure. Click the disclosure OR the message to expand/collapse.
+// The live (running) turn's steps render under the WorkingIndicator and stay
+// auto-expanded while streaming; when the turn completes its steps fold into the
+// concluding message's (default-collapsed) disclosure — so completion reads as a
+// quiet collapse. Failure is shown only at the step level (existing red Row
+// styling), never as a message badge: routine non-zero exits stay quiet.
+// ---------------------------------------------------------------------------
+
+// Stable identity for a message group's expand state. The first item's timestamp
+// + author + surface is stable across refetches for the same turn, so the
+// expanded/collapsed choice survives polling; a newly concluded turn gets a fresh
+// key and so defaults to collapsed (the auto-collapse-on-done behaviour).
+function groupKey(group: MessageGroup): string {
+  return `${group.author.key}|${group.startTs}|${group.surfaceKey}`;
+}
+
+// Avatar-width left gutter so step content lines up under the message body (not
+// under the avatar), mirroring MessageGroupRow's `flex gap-2.5 px-1` + `h-9 w-9`.
+function StepGutter({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex gap-2.5 px-1">
+      <span className="h-9 w-9 shrink-0" aria-hidden />
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  );
+}
+
+function StepsDisclosure({
+  count,
+  expanded,
+  onToggle,
+}: {
+  count: number;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={expanded}
+      className="chrome -ml-1 mt-0.5 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-text-subtle transition-colors hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+    >
+      <ChevronRight
+        className={['h-3 w-3 transition-transform', expanded ? 'rotate-90' : ''].join(' ')}
+        aria-hidden
+      />
+      {count} step{count !== 1 ? 's' : ''}
+    </button>
+  );
+}
+
+function StepList({ steps }: { steps: Extract<ActivityFeedItem, { kind: 'step' }>[] }) {
+  return (
+    <StepLane>
+      {steps.map((item, si) => (
+        <StepRow key={`${item.activity.activityId}:${si}`} item={item} time={clockHM(item.timestamp)} />
+      ))}
+    </StepLane>
+  );
+}
+
+// One agent turn: the message group plus its collapsible step trace. Clicking
+// anywhere on the message toggles the steps too (a convenience over the
+// disclosure button), except on links/buttons inside the message, which keep
+// their own behaviour.
+function AgentTurnRow({
+  group,
+  agentId,
+  steps,
+  expanded,
+  onToggle,
+}: {
+  group: MessageGroup;
+  agentId: string;
+  steps: Extract<ActivityFeedItem, { kind: 'step' }>[];
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const hasSteps = steps.length > 0;
+  const handleMessageClick = (e: ReactMouseEvent) => {
+    if (!hasSteps) return;
+    if ((e.target as HTMLElement).closest('a,button')) return;
+    if (window.getSelection()?.toString()) return; // don't toggle on text selection
+    onToggle();
+  };
+  return (
+    <div>
+      <div onClick={handleMessageClick} className={hasSteps ? 'cursor-pointer' : undefined}>
+        <MessageGroupRow group={group} agentId={agentId} />
+      </div>
+      {hasSteps && (
+        <StepGutter>
+          <StepsDisclosure count={steps.length} expanded={expanded} onToggle={onToggle} />
+          {expanded && <StepList steps={steps} />}
+        </StepGutter>
+      )}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -300,9 +415,20 @@ export default function Activity() {
   const previewFirstRunHero = import.meta.env.DEV
     ? ((searchParams.get('_previewFirstRunHero') as 'feishu' | 'slack' | null) ?? undefined)
     : undefined;
-  const { failedOnly, showToolSteps, setFailedOnly, setShowToolSteps } =
-    useActivityFilters();
   const now = useNow();
+  // Per-turn step expand state. Keyed by groupKey(group); a key present = expanded.
+  // Default-collapsed (empty set); a concluded turn gets a fresh key so it folds
+  // shut on completion. Survives polling because group keys are stable.
+  const [expandedTurns, toggleTurn] = useReducer(
+    (set: Set<string>, key: string) => {
+      const next = new Set(set);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    },
+    undefined,
+    () => new Set<string>(),
+  );
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   // True when the user is near (or at) the bottom of the scroll container.
@@ -318,12 +444,6 @@ export default function Activity() {
   // page[0], some newer than the last message) finish loading, stranding the
   // viewport above the true newest row.
   const bottomPinUntilSettleRef = useRef(false);
-
-  // The step layer is needed when the user asks for steps, OR for the failed-only
-  // filter (failures are steps). Failed-only is a focused debugging filter: it
-  // shows only failure steps (the conversation is hidden), matching the retired
-  // lens behaviour and the filter's name.
-  const stepsNeeded = showToolSteps || failedOnly;
 
   // Conversation layer — always loaded (complete history, Channels-identical).
   // Always both directions; the inbox/outbox sub-filter was retired.
@@ -341,20 +461,23 @@ export default function Activity() {
     refetchInterval: agentId ? refetchIntervals.agentActivities : false,
   });
 
-  // Step layer — only loaded when steps are needed.
+  // Step layer — always loaded now (steps are per-turn, always available behind
+  // a collapsed disclosure rather than a global toggle). The conversation is
+  // still primary: an activity error or slow load never blocks or blanks the
+  // message timeline (feedError / loadingActivities track the conversation only);
+  // steps simply populate the disclosures as they arrive.
   const activityQuery = useInfiniteQuery({
     queryKey: queryKeys.agentActivities(agentId ?? ''),
     queryFn: ({ pageParam }) => fetchAgentActivities(agentId!, 100, pageParam),
-    enabled: !!agentId && stepsNeeded,
+    enabled: !!agentId,
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     getPreviousPageParam: () => undefined,
-    refetchInterval: agentId && stepsNeeded ? refetchIntervals.agentActivities : false,
+    refetchInterval: agentId ? refetchIntervals.agentActivities : false,
   });
 
-  const feedError = messageQuery.error ?? (stepsNeeded ? activityQuery.error : null);
-  const loadingActivities =
-    messageQuery.isLoading || (stepsNeeded && activityQuery.isLoading);
+  const feedError = messageQuery.error;
+  const loadingActivities = messageQuery.isLoading;
 
   // Merge all loaded pages into single feed pages, deduped by source id so the
   // live-refetch of the newest page never creates duplicates.
@@ -388,36 +511,23 @@ export default function Activity() {
   const currentItemId = currentStatus?.currentItemId;
   const currentItemStartedAt = currentStatus?.currentItemStartedAt;
 
-  // Indicator-only activity slice. The live Working/Thinking label needs the
-  // current item's latest activity to tell tool.call.started (Working) from
-  // reasoning (Thinking). When steps are shown, activityQuery already has it;
-  // when steps are off we still fetch a small recent slice here, scoped to the
-  // indicator. This query is deliberately kept out of `loadingActivities` and
-  // `feedError`, so an indicator-only poll never blanks or blocks the message
-  // timeline. Disabled while steps are loaded (activitiesData covers it then).
-  const indicatorNeeded = !!agentId && !!currentItemId && !stepsNeeded;
-  const indicatorActivityQuery = useQuery({
-    queryKey: queryKeys.agentIndicatorActivity(agentId ?? ''),
-    queryFn: () => fetchAgentActivities(agentId!, 50),
-    enabled: indicatorNeeded,
-    refetchInterval: indicatorNeeded ? refetchIntervals.agentActivities : false,
-  });
-
-  // Conversation layer items (hidden entirely under the failed-only debug filter).
+  // Conversation layer items — the timeline backbone. Keep system-event rows
+  // (reminder / onboarding) alongside messages: they are conversation-layer
+  // timeline annotations, not tool steps.
   const conversationItems = useMemo(() => {
-    if (failedOnly || !messagesData) return [];
-    // Keep system-event rows (reminder / onboarding) alongside messages — they
-    // are conversation-layer timeline annotations, not tool steps.
+    if (!messagesData) return [];
     return buildMessageFeed(messagesData).filter(
       (item) => isMessageItem(item) || item.kind === 'system-event',
     );
-  }, [messagesData, failedOnly]);
+  }, [messagesData]);
 
   // Step layer items — curated isNarrativeStep set only (never the firehose;
   // iris-locked `795d974`). Suppress a tool's started row when its failure row is
-  // present so a failed tool shows once, as the failure.
+  // present so a failed tool shows once, as the failure. These no longer render
+  // as their own timeline rows; they attach to the agent turn that concluded them
+  // (see stepsByTurn).
   const stepItems = useMemo(() => {
-    if (!stepsNeeded || !activitiesData) return [];
+    if (!activitiesData) return [] as Extract<ActivityFeedItem, { kind: 'step' }>[];
     const feed = buildActivityFeed(activitiesData, false);
     const failedProviderToolIds = new Set<string>();
     for (const item of feed) {
@@ -426,24 +536,60 @@ export default function Activity() {
         if (typeof pid === 'string' && pid) failedProviderToolIds.add(pid);
       }
     }
-    return feed.filter((item) => {
+    return feed.filter((item): item is Extract<ActivityFeedItem, { kind: 'step' }> => {
       if (item.kind !== 'step') return false;
       if (!isNarrativeStep(item.activity)) return false;
       if (item.activity.type === 'tool.call.started' && failedProviderToolIds.size > 0) {
         const pid = item.activity.payload?.['providerToolId'];
         if (typeof pid === 'string' && pid && failedProviderToolIds.has(pid)) return false;
       }
-      if (failedOnly && !activityIsFailure(item.activity)) return false;
       return true;
     });
-  }, [activitiesData, stepsNeeded, failedOnly]);
+  }, [activitiesData]);
 
-  // The single interleaved timeline: conversation + steps, chronological.
-  const filteredItems = useMemo(() => {
-    const merged = [...conversationItems, ...stepItems];
-    merged.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
-    return merged;
+  // Bind each step to the agent turn it belongs to. Steps carry no turn id, so we
+  // attach each step to the first agent OUTBOUND item at or after the step's time
+  // (the reply that concluded that stretch of work) — the inbound→steps→reply
+  // shape the timeline reads as. Steps after the last outbound item are
+  // "trailing": the live running turn (no reply yet) or a completed tool-only
+  // turn. We key the per-turn map by the outbound item reference so a message
+  // group can gather the steps of all its outbound items.
+  const { stepsByItem, trailingSteps } = useMemo(() => {
+    const outbound = conversationItems
+      .filter(
+        (it) =>
+          it.kind === 'message-out' || it.kind === 'file-out' || it.kind === 'reaction-out',
+      )
+      .map((it) => ({ it, ts: Date.parse(it.timestamp) }))
+      .filter((x) => Number.isFinite(x.ts))
+      .sort((a, b) => a.ts - b.ts);
+    const map = new Map<ActivityFeedItem, Extract<ActivityFeedItem, { kind: 'step' }>[]>();
+    const trailing: Extract<ActivityFeedItem, { kind: 'step' }>[] = [];
+    const steps = [...stepItems].sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+    let oi = 0;
+    for (const step of steps) {
+      const sts = Date.parse(step.timestamp);
+      if (!Number.isFinite(sts)) continue;
+      while (oi < outbound.length && outbound[oi]!.ts < sts) oi += 1;
+      if (oi < outbound.length) {
+        const target = outbound[oi]!.it;
+        const arr = map.get(target);
+        if (arr) arr.push(step);
+        else map.set(target, [step]);
+      } else {
+        trailing.push(step);
+      }
+    }
+    return { stepsByItem: map, trailingSteps: trailing };
   }, [conversationItems, stepItems]);
+
+  // The rendered timeline is the conversation, chronological. Steps live inside
+  // the agent turns (stepsByItem) and at the bottom (trailingSteps), not as rows.
+  const filteredItems = useMemo(() => {
+    return [...conversationItems].sort(
+      (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
+    );
+  }, [conversationItems]);
 
   // --- Coverage alignment (honesty contract) --------------------------------
   // The conversation feed (messages store) and the step feed (activity store)
@@ -451,13 +597,13 @@ export default function Activity() {
   // the newest 100 activity events may span only hours while the newest 100
   // messages span days. Left unaligned, older visible messages would render with
   // no adjacent steps and read as "nothing happened" when the steps simply were
-  // not paged in. So whenever steps are interleaved with the conversation we keep
-  // fetching activity pages until the loaded activity window reaches at least as
-  // far back as the oldest loaded message (or the feed is exhausted). The
-  // residual case — the activity store exhausted before reaching the oldest
+  // not paged in. Steps are always available now (per-turn disclosures), so we
+  // always keep fetching activity pages until the loaded activity window reaches
+  // at least as far back as the oldest loaded message (or the feed is exhausted).
+  // The residual case — the activity store exhausted before reaching the oldest
   // loaded message (older steps no longer retained) — is made explicit with a
   // boundary notice rather than left to imply silence.
-  const interleaving = showToolSteps && !failedOnly;
+  const interleaving = true;
 
   // Oldest loaded conversation timestamp (the older edge of the visible window).
   const oldestMessageTs = useMemo(() => {
@@ -503,18 +649,9 @@ export default function Activity() {
       ? oldestActivityTs
       : null;
 
-  // Source for the live indicator: the full step feed when steps are loaded,
-  // else the lightweight indicator-only slice. Either way the conversation
-  // timeline never waits on it.
-  const indicatorActivitiesData = useMemo(() => {
-    if (stepsNeeded) return activitiesData;
-    const events = indicatorActivityQuery.data?.events;
-    return events?.length ? { events } : undefined;
-  }, [stepsNeeded, activitiesData, indicatorActivityQuery.data]);
-
   const latestCurrentItemActivity = useMemo(() => {
-    if (!currentItemId || !indicatorActivitiesData) return undefined;
-    const activities = indicatorActivitiesData.events.flatMap((event) =>
+    if (!currentItemId || !activitiesData) return undefined;
+    const activities = activitiesData.events.flatMap((event) =>
       event.kind === 'activity' ? [event.activity] : [],
     );
     const itemActivities = currentItemStartedAt
@@ -522,12 +659,11 @@ export default function Activity() {
       : activities;
     if (!itemActivities.length) return undefined;
     return itemActivities.reduce((latest, a) => (a.createdAt > latest.createdAt ? a : latest));
-  }, [currentItemId, currentItemStartedAt, indicatorActivitiesData]);
+  }, [currentItemId, currentItemStartedAt, activitiesData]);
 
   // First-run hero gating. Show the live-moment invite in place of the generic
-  // empty text only when the DEFAULT, unfiltered feed is empty (a brand-new
-  // agent), not when a filter (failed-only / direction) emptied the view. Needs a
-  // known connected platform to phrase the invite honestly.
+  // empty text only when the feed is empty (a brand-new agent). Needs a known
+  // connected platform to phrase the invite honestly.
   const connectedPlatform: 'feishu' | 'slack' | undefined = agent?.feishu?.connected
     ? 'feishu'
     : agent?.slack?.connected
@@ -536,10 +672,7 @@ export default function Activity() {
   const heroPlatform = previewFirstRunHero ?? connectedPlatform;
   const showFirstRunHero =
     previewFirstRunHero !== undefined ||
-    (!loadingActivities &&
-      filteredItems.length === 0 &&
-      !failedOnly &&
-      connectedPlatform !== undefined);
+    (!loadingActivities && filteredItems.length === 0 && connectedPlatform !== undefined);
 
   // --- Post-onboarding first landing -----------------------------------------
   // A fresh Feishu connect navigates here with router state:
@@ -744,14 +877,13 @@ export default function Activity() {
       snapshotScrollHeight();
       void messageQuery.fetchNextPage();
     }
-    if (stepsNeeded && activityQuery.hasNextPage && !activityQuery.isFetchingNextPage) {
+    if (activityQuery.hasNextPage && !activityQuery.isFetchingNextPage) {
       snapshotScrollHeight();
       void activityQuery.fetchNextPage();
     }
   };
-  const hasOlder = messageQuery.hasNextPage || (stepsNeeded && !!activityQuery.hasNextPage);
-  const isFetchingOlder =
-    messageQuery.isFetchingNextPage || (stepsNeeded && activityQuery.isFetchingNextPage);
+  const hasOlder = messageQuery.hasNextPage || !!activityQuery.hasNextPage;
+  const isFetchingOlder = messageQuery.isFetchingNextPage || activityQuery.isFetchingNextPage;
   const paginationRef = useRef({ fetchOlder, hasOlder, isFetchingOlder });
   // Keep the ref current after each render (refs must not be written during
   // render — React Compiler lint). The scroll listener reads the latest drivers
@@ -846,17 +978,17 @@ export default function Activity() {
     });
   }, [pageCount]);
 
-  // When a new feed (agent / toggle) is first shown, pin to the newest row and
-  // keep it pinned while the feed settles (see the pin effect below). Fires once
-  // per feed identity.
+  // When a new feed (agent) is first shown, pin to the newest row and keep it
+  // pinned while the feed settles (see the pin effect below). Fires once per
+  // feed identity.
   useEffect(() => {
-    const feedKey = agentId ? `${agentId}:${stepsNeeded ? 's' : 'c'}:${failedOnly ? 'f' : ''}` : null;
-    const feedLoaded = failedOnly ? activitiesData : (messagesData ?? activitiesData);
+    const feedKey = agentId ?? null;
+    const feedLoaded = messagesData ?? activitiesData;
     if (!feedLoaded || !feedKey || initialScrollFeedRef.current === feedKey) return;
     initialScrollFeedRef.current = feedKey;
     isAtBottomRef.current = true;
     bottomPinUntilSettleRef.current = true;
-  }, [agentId, activitiesData, messagesData, stepsNeeded, failedOnly]);
+  }, [agentId, activitiesData, messagesData]);
 
   // Bottom-pin: while active, the pin owns the scroll position. Force the newest
   // row into view on every content or settle change so late-arriving newest
@@ -920,28 +1052,6 @@ export default function Activity() {
         </div>
       )}
 
-      {/* Mobile filter bar */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-border-soft px-4 py-2 md:hidden">
-        <label className="chrome inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 px-1 text-[11px] tracking-wide text-text-muted">
-          <input
-            type="checkbox"
-            checked={failedOnly}
-            onChange={(e) => setFailedOnly(e.target.checked)}
-            className="h-3 w-3 accent-[color:var(--color-accent)]"
-          />
-          Failed only
-        </label>
-        <label className="chrome inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 px-1 text-[11px] tracking-wide text-text-muted">
-          <input
-            type="checkbox"
-            checked={showToolSteps}
-            onChange={(e) => setShowToolSteps(e.target.checked)}
-            className="h-3 w-3 accent-[color:var(--color-accent)]"
-          />
-          Show tool steps
-        </label>
-      </div>
-
       <ActivityStatusSummary status={currentStatus} latestActivity={latestCurrentItemActivity} now={now} />
 
       <div
@@ -973,11 +1083,7 @@ export default function Activity() {
           filteredItems.length === 0 && (
             <div className="mt-20 text-center">
               <p className="font-serif italic text-[15px] text-text-subtle">
-                {loadingActivities
-                  ? 'Loading activity...'
-                  : failedOnly
-                    ? 'No failures to show.'
-                    : 'No activity yet.'}
+                {loadingActivities ? 'Loading activity...' : 'No activity yet.'}
               </p>
             </div>
           )
@@ -988,19 +1094,6 @@ export default function Activity() {
             <div key={day}>
               <DayDivider iso={items[0]!.timestamp} />
               {buildBlocks(items).map((block, bi) => {
-                if (block.type === 'msgs') {
-                  return (
-                    <Fragment key={`${day}:b:${bi}`}>
-                      {groupByAuthor(block.items, resolveAuthor, resolveSurface).map((group, gi) => (
-                        <MessageGroupRow
-                          key={`${day}:b:${bi}:${gi}`}
-                          group={group}
-                          agentId={agentId ?? ''}
-                        />
-                      ))}
-                    </Fragment>
-                  );
-                }
                 if (block.type === 'system') {
                   return (
                     <Fragment key={`${day}:b:${bi}`}>
@@ -1013,22 +1106,65 @@ export default function Activity() {
                     </Fragment>
                   );
                 }
+                // Conversation messages. Agent turns gather their bound steps into
+                // a collapsible disclosure; inbound groups render plain.
                 return (
-                  <StepLane key={`${day}:b:${bi}`}>
-                    {block.items.map((item, si) => (
-                      <StepRow
-                        key={`${day}:b:${bi}:${si}`}
-                        item={item as Extract<ActivityFeedItem, { kind: 'step' }>}
-                        time={clockHM(item.timestamp)}
-                      />
-                    ))}
-                  </StepLane>
+                  <Fragment key={`${day}:b:${bi}`}>
+                    {groupByAuthor(block.items, resolveAuthor, resolveSurface).map((group, gi) => {
+                      if (!group.author.isAgent) {
+                        return (
+                          <MessageGroupRow
+                            key={`${day}:b:${bi}:${gi}`}
+                            group={group}
+                            agentId={agentId ?? ''}
+                          />
+                        );
+                      }
+                      const turnSteps = group.items.flatMap(
+                        ({ item }) => stepsByItem.get(item) ?? [],
+                      );
+                      const key = groupKey(group);
+                      return (
+                        <AgentTurnRow
+                          key={`${day}:b:${bi}:${gi}`}
+                          group={group}
+                          agentId={agentId ?? ''}
+                          steps={turnSteps}
+                          expanded={expandedTurns.has(key)}
+                          onToggle={() => toggleTurn(key)}
+                        />
+                      );
+                    })}
+                  </Fragment>
                 );
               })}
             </div>
           ))}
+        {/* Completed trailing steps with no concluding reply (rare: a tool-only
+            turn). Not live, so keep them quiet behind a collapsed disclosure
+            rather than lost. */}
+        {!currentItemId && trailingSteps.length > 0 && !showFirstRunHero && (
+          <StepGutter>
+            <StepsDisclosure
+              count={trailingSteps.length}
+              expanded={expandedTurns.has('__trailing__')}
+              onToggle={() => toggleTurn('__trailing__')}
+            />
+            {expandedTurns.has('__trailing__') && <StepList steps={trailingSteps} />}
+          </StepGutter>
+        )}
+        {/* Live turn: indicator + its streaming steps, auto-expanded. When the
+            turn completes its steps fold into the concluding message's
+            (collapsed) disclosure — completion reads as a quiet collapse. */}
         {currentItemId && !loadingActivities && !showFirstRunHero && (
-          <WorkingIndicator latestActivity={latestCurrentItemActivity} />
+          <>
+            <WorkingIndicator latestActivity={latestCurrentItemActivity} />
+            {trailingSteps.length > 0 && (
+              <StepGutter>
+                <StepList steps={trailingSteps} />
+              </StepGutter>
+            )}
+          </>
         )}
         <div ref={bottomRef} className="h-4" />
       </div>
