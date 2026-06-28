@@ -9,7 +9,6 @@ import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { Button } from './ui/button';
 import AgentActionsMenu from './AgentActionsMenu';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
-import { useActivityFilters } from '@/hooks/useActivityFilters';
 
 const TABS: { id: AgentTab; label: string }[] = [
   { id: 'activity', label: 'Activity' },
@@ -17,28 +16,6 @@ const TABS: { id: AgentTab; label: string }[] = [
   { id: 'profile', label: 'Profile' },
   { id: 'reminders', label: 'Reminders' },
 ];
-
-function FilterToggle({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <label className="chrome inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-[11px] tracking-wide text-text-muted hover:text-text">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="h-3 w-3 accent-[color:var(--color-accent)]"
-      />
-      {label}
-    </label>
-  );
-}
 
 export default function AgentHeader() {
   const { data: agents = [] } = useQuery({ queryKey: queryKeys.agents(), queryFn: fetchAgents });
@@ -56,8 +33,6 @@ export default function AgentHeader() {
     if (!agentId) return;
     navigate(`/agents/${agentId}/${next}`);
   };
-  const { failedOnly, showToolSteps, setFailedOnly, setShowToolSteps } =
-    useActivityFilters();
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState<string | null>(null);
   if (!agentId) return null;
@@ -158,16 +133,6 @@ export default function AgentHeader() {
             );
           })}
         </div>
-        {tab === 'activity' && (
-          <div className="flex shrink-0 items-center gap-3">
-            <FilterToggle label="Failed only" checked={failedOnly} onChange={setFailedOnly} />
-            <FilterToggle
-              label="Show tool steps"
-              checked={showToolSteps}
-              onChange={setShowToolSteps}
-            />
-          </div>
-        )}
       </nav>
     </header>
   );
