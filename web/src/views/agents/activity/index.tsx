@@ -69,6 +69,12 @@ function StepLane({ children }: { children: ReactNode }) {
 // breaks the grouping, which is the interleave the spec asks for.
 type DayBlock = { type: 'msgs' | 'steps' | 'system'; items: ActivityFeedItem[] };
 
+// A day's timeline is a chronological mix of conversation items and standalone
+// memory-coherence passes (which are not part of any conversational turn).
+type DayEntry =
+  | { type: 'conv'; ts: number; timestamp: string; item: ActivityFeedItem }
+  | { type: 'mem'; ts: number; timestamp: string; pass: MemoryPass };
+
 function buildBlocks(items: ActivityFeedItem[]): DayBlock[] {
   const blocks: DayBlock[] = [];
   for (const item of items) {
@@ -185,6 +191,49 @@ function AgentTurnRow({
         </StepGutter>
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Memory-coherence pass — a standalone, non-conversational entry.
+//
+// A scheduled memory-coherence pass is tool-only work with no outbound reply:
+// the agent reads its MEMORY.md + notes, maybe writes, and records a
+// `memory_coherence.outcome`. Its steps must NOT bind to the next chat reply
+// (that would be false attribution). Instead each pass renders standalone at
+// its own time: the outcome row (red when failed, via the existing
+// activityIsFailure path) plus a `▸ N steps` disclosure for the surrounding
+// reads/writes. The pass is keyed by its outcome activityId; the read/write
+// steps are gathered by the outcome's [startedAt, completedAt] window.
+// ---------------------------------------------------------------------------
+interface MemoryPass {
+  id: string;
+  timestamp: string; // outcome timestamp — placement in the timeline
+  ts: number; // completedAt epoch — sort key
+  steps: Extract<ActivityFeedItem, { kind: 'step' }>[]; // window steps incl. the outcome
+}
+
+function MemoryPassRow({
+  pass,
+  expanded,
+  onToggle,
+}: {
+  pass: MemoryPass;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const outcome = pass.steps.find((s) => s.activity.type === 'memory_coherence.outcome');
+  const detail = pass.steps.filter((s) => s.activity.type !== 'memory_coherence.outcome');
+  return (
+    <StepGutter>
+      {outcome && <StepRow item={outcome} time={clockHM(outcome.timestamp)} />}
+      {detail.length > 0 && (
+        <div>
+          <StepsDisclosure count={detail.length} expanded={expanded} onToggle={onToggle} />
+          {expanded && <StepList steps={detail} />}
+        </div>
+      )}
+    </StepGutter>
   );
 }
 
@@ -547,6 +596,54 @@ export default function Activity() {
     });
   }, [activitiesData]);
 
+  // Pull scheduled memory-coherence passes out of the conversational stream. Each
+  // `memory_coherence.outcome` defines a [startedAt, completedAt] window; every
+  // narrative step in that window (the reads/writes + the outcome) belongs to the
+  // pass, not to any chat turn. These steps are CLAIMED so the turn sweep below
+  // never attaches them to a later outbound reply (the false-attribution bug). A
+  // memory pass runs as its own runtime item, so no conversational turn overlaps
+  // its window — claiming the whole window is safe.
+  const { memoryPasses, claimedSteps } = useMemo(() => {
+    const passes: MemoryPass[] = [];
+    const claimed = new Set<ActivityFeedItem>();
+    const outcomes = stepItems.filter((s) => s.activity.type === 'memory_coherence.outcome');
+    if (outcomes.length === 0) return { memoryPasses: passes, claimedSteps: claimed };
+    const sorted = [...stepItems].sort(
+      (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
+    );
+    for (const outcome of outcomes) {
+      const payload = outcome.activity.payload as
+        | { startedAt?: string; completedAt?: string }
+        | undefined;
+      const outcomeTs = Date.parse(outcome.timestamp);
+      const startMs = Date.parse(payload?.startedAt ?? outcome.timestamp);
+      const endMs = Date.parse(payload?.completedAt ?? outcome.timestamp);
+      const lo = Number.isFinite(startMs) ? startMs : outcomeTs;
+      const hi = Number.isFinite(endMs) ? endMs : outcomeTs;
+      const windowSteps: Extract<ActivityFeedItem, { kind: 'step' }>[] = [];
+      for (const s of sorted) {
+        if (s === outcome || claimed.has(s)) continue;
+        // Each outcome is its own pass; never fold one pass's outcome into another.
+        if (s.activity.type === 'memory_coherence.outcome') continue;
+        const ts = Date.parse(s.timestamp);
+        if (Number.isFinite(ts) && ts >= lo && ts <= hi) {
+          windowSteps.push(s);
+          claimed.add(s);
+        }
+      }
+      claimed.add(outcome);
+      passes.push({
+        id: `mem:${outcome.activity.activityId}`,
+        timestamp: outcome.timestamp,
+        ts: Number.isFinite(hi) ? hi : outcomeTs,
+        steps: [...windowSteps, outcome].sort(
+          (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
+        ),
+      });
+    }
+    return { memoryPasses: passes, claimedSteps: claimed };
+  }, [stepItems]);
+
   // Bind each step to the agent turn it belongs to. Steps carry no turn id, so we
   // attach each step to the first agent OUTBOUND item at or after the step's time
   // (the reply that concluded that stretch of work) — the inbound→steps→reply
@@ -565,7 +662,11 @@ export default function Activity() {
       .sort((a, b) => a.ts - b.ts);
     const map = new Map<ActivityFeedItem, Extract<ActivityFeedItem, { kind: 'step' }>[]>();
     const trailing: Extract<ActivityFeedItem, { kind: 'step' }>[] = [];
-    const steps = [...stepItems].sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+    // Skip steps claimed by a standalone memory-coherence pass — they render in
+    // their own entry, never under a chat reply.
+    const steps = stepItems
+      .filter((s) => !claimedSteps.has(s))
+      .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
     let oi = 0;
     for (const step of steps) {
       const sts = Date.parse(step.timestamp);
@@ -581,7 +682,7 @@ export default function Activity() {
       }
     }
     return { stepsByItem: map, trailingSteps: trailing };
-  }, [conversationItems, stepItems]);
+  }, [conversationItems, stepItems, claimedSteps]);
 
   // The rendered timeline is the conversation, chronological. Steps live inside
   // the agent turns (stepsByItem) and at the bottom (trailingSteps), not as rows.
@@ -672,7 +773,10 @@ export default function Activity() {
   const heroPlatform = previewFirstRunHero ?? connectedPlatform;
   const showFirstRunHero =
     previewFirstRunHero !== undefined ||
-    (!loadingActivities && filteredItems.length === 0 && connectedPlatform !== undefined);
+    (!loadingActivities &&
+      filteredItems.length === 0 &&
+      memoryPasses.length === 0 &&
+      connectedPlatform !== undefined);
 
   // --- Post-onboarding first landing -----------------------------------------
   // A fresh Feishu connect navigates here with router state:
@@ -810,19 +914,38 @@ export default function Activity() {
   const error =
     feedError instanceof Error ? feedError.message : feedError ? String(feedError) : null;
 
+  // Day buckets carry a chronological mix of conversation items and standalone
+  // memory-coherence passes. Within a day, conversation entries flow through the
+  // message-group renderer; a memory pass breaks the run and renders on its own.
   const byDay = useMemo(() => {
-    const m = new Map<string, ActivityFeedItem[]>();
-    for (const item of filteredItems) {
-      const k = dateKey(item.timestamp);
+    const m = new Map<string, DayEntry[]>();
+    const push = (k: string, e: DayEntry) => {
       let list = m.get(k);
       if (!list) {
         list = [];
         m.set(k, list);
       }
-      list.push(item);
+      list.push(e);
+    };
+    for (const item of filteredItems) {
+      push(dateKey(item.timestamp), {
+        type: 'conv',
+        ts: Date.parse(item.timestamp),
+        timestamp: item.timestamp,
+        item,
+      });
     }
+    for (const pass of memoryPasses) {
+      push(dateKey(pass.timestamp), {
+        type: 'mem',
+        ts: pass.ts,
+        timestamp: pass.timestamp,
+        pass,
+      });
+    }
+    for (const list of m.values()) list.sort((a, b) => a.ts - b.ts);
     return Array.from(m.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [filteredItems]);
+  }, [filteredItems, memoryPasses]);
 
   // --- Author / surface resolvers for the shared Slack-style renderer --------
   // Cross-channel axis: the agent bylines its own outbound rows; inbound rows
@@ -857,6 +980,54 @@ export default function Activity() {
     if (!chip) return { key: '' };
     return { key: `${chip.kind}:${chip.label}`, chip };
   };
+
+  // Render a chronological run of conversation items (no memory passes) into
+  // system rows + author-grouped message/agent-turn rows. Factored out so a day
+  // can render multiple runs split by interleaved standalone memory passes.
+  const renderConvRun = (items: ActivityFeedItem[], keyPrefix: string): ReactNode =>
+    buildBlocks(items).map((block, bi) => {
+      if (block.type === 'system') {
+        return (
+          <Fragment key={`${keyPrefix}:b:${bi}`}>
+            {block.items.map((item, si) => (
+              <SystemEventRow
+                key={`${keyPrefix}:b:${bi}:${si}`}
+                item={item as Extract<ActivityFeedItem, { kind: 'system-event' }>}
+              />
+            ))}
+          </Fragment>
+        );
+      }
+      // Conversation messages. Agent turns gather their bound steps into a
+      // collapsible disclosure; inbound groups render plain.
+      return (
+        <Fragment key={`${keyPrefix}:b:${bi}`}>
+          {groupByAuthor(block.items, resolveAuthor, resolveSurface).map((group, gi) => {
+            if (!group.author.isAgent) {
+              return (
+                <MessageGroupRow
+                  key={`${keyPrefix}:b:${bi}:${gi}`}
+                  group={group}
+                  agentId={agentId ?? ''}
+                />
+              );
+            }
+            const turnSteps = group.items.flatMap(({ item }) => stepsByItem.get(item) ?? []);
+            const key = groupKey(group);
+            return (
+              <AgentTurnRow
+                key={`${keyPrefix}:b:${bi}:${gi}`}
+                group={group}
+                agentId={agentId ?? ''}
+                steps={turnSteps}
+                expanded={expandedTurns.has(key)}
+                onToggle={() => toggleTurn(key)}
+              />
+            );
+          })}
+        </Fragment>
+      );
+    });
 
   // Track which feed we've already scrolled to the bottom for, so we only do
   // the initial-load scroll once per agent/filter navigation.
@@ -1080,7 +1251,7 @@ export default function Activity() {
         {showFirstRunHero ? (
           <FirstRunHero agentName={agent?.profile?.displayName} platform={heroPlatform!} />
         ) : (
-          filteredItems.length === 0 && (
+          byDay.length === 0 && (
             <div className="mt-20 text-center">
               <p className="font-serif italic text-[15px] text-text-subtle">
                 {loadingActivities ? 'Loading activity...' : 'No activity yet.'}
@@ -1088,58 +1259,48 @@ export default function Activity() {
             </div>
           )
         )}
-        {filteredItems.length > 0 &&
+        {byDay.length > 0 &&
           !showFirstRunHero &&
-          byDay.map(([day, items]) => (
-            <div key={day}>
-              <DayDivider iso={items[0]!.timestamp} />
-              {buildBlocks(items).map((block, bi) => {
-                if (block.type === 'system') {
-                  return (
-                    <Fragment key={`${day}:b:${bi}`}>
-                      {block.items.map((item, si) => (
-                        <SystemEventRow
-                          key={`${day}:b:${bi}:${si}`}
-                          item={item as Extract<ActivityFeedItem, { kind: 'system-event' }>}
-                        />
-                      ))}
-                    </Fragment>
-                  );
-                }
-                // Conversation messages. Agent turns gather their bound steps into
-                // a collapsible disclosure; inbound groups render plain.
-                return (
-                  <Fragment key={`${day}:b:${bi}`}>
-                    {groupByAuthor(block.items, resolveAuthor, resolveSurface).map((group, gi) => {
-                      if (!group.author.isAgent) {
-                        return (
-                          <MessageGroupRow
-                            key={`${day}:b:${bi}:${gi}`}
-                            group={group}
-                            agentId={agentId ?? ''}
-                          />
-                        );
-                      }
-                      const turnSteps = group.items.flatMap(
-                        ({ item }) => stepsByItem.get(item) ?? [],
-                      );
-                      const key = groupKey(group);
-                      return (
-                        <AgentTurnRow
-                          key={`${day}:b:${bi}:${gi}`}
-                          group={group}
-                          agentId={agentId ?? ''}
-                          steps={turnSteps}
-                          expanded={expandedTurns.has(key)}
-                          onToggle={() => toggleTurn(key)}
-                        />
-                      );
-                    })}
-                  </Fragment>
+          byDay.map(([day, entries]) => {
+            // Walk the day's chronological entries, flushing accumulated
+            // conversation items into a run whenever a standalone memory pass
+            // interrupts, so passes never merge into a conversational group.
+            const out: ReactNode[] = [];
+            let run: ActivityFeedItem[] = [];
+            let seg = 0;
+            const flush = () => {
+              if (run.length === 0) return;
+              out.push(
+                <Fragment key={`${day}:run:${seg}`}>
+                  {renderConvRun(run, `${day}:run:${seg}`)}
+                </Fragment>,
+              );
+              run = [];
+              seg += 1;
+            };
+            for (const entry of entries) {
+              if (entry.type === 'conv') {
+                run.push(entry.item);
+              } else {
+                flush();
+                out.push(
+                  <MemoryPassRow
+                    key={`${day}:${entry.pass.id}`}
+                    pass={entry.pass}
+                    expanded={expandedTurns.has(entry.pass.id)}
+                    onToggle={() => toggleTurn(entry.pass.id)}
+                  />,
                 );
-              })}
-            </div>
-          ))}
+              }
+            }
+            flush();
+            return (
+              <div key={day}>
+                <DayDivider iso={entries[0]!.timestamp} />
+                {out}
+              </div>
+            );
+          })}
         {/* Completed trailing steps with no concluding reply (rare: a tool-only
             turn). Not live, so keep them quiet behind a collapsed disclosure
             rather than lost. */}
