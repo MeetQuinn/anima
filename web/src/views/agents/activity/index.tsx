@@ -1200,6 +1200,14 @@ export default function Activity() {
             // Walk the day's chronological entries. Consecutive conversation
             // specials accumulate into a run (author-grouped); a fold or a
             // lifecycle line flushes the run and renders in its own time slot.
+            // A fold keeps steps subordinate to the conversation. On a day with
+            // no conversation rows to anchor them (a purely step-driven agent, or
+            // a quiet background day), a collapsed fold is the *only* thing in the
+            // slot and reads as an empty stub. There the steps ARE the content, so
+            // default the day's folds open; toggling still works (XOR below), and
+            // conversation days keep steps folded as designed.
+            const dayHasConv = entries.some((e) => e.type === 'conv');
+            const foldsDefaultOpen = !dayHasConv;
             const out: ReactNode[] = [];
             let run: ActivityFeedItem[] = [];
             let seg = 0;
@@ -1229,12 +1237,17 @@ export default function Activity() {
               } else {
                 // The live run's trailing fold is forced open while streaming;
                 // when the run completes the grid height animates it shut.
+                // foldsDefaultOpen flips the toggle baseline so a no-conversation
+                // day shows its steps by default (XOR: a present id means
+                // "opposite of default", so the toggle still opens/closes).
                 const live = entry.id === liveFoldId;
+                const expanded =
+                  live || expandedTurns.has(entry.id) !== foldsDefaultOpen;
                 out.push(
                   <StepFold
                     key={`${day}:${entry.id}`}
                     steps={entry.steps}
-                    expanded={live || expandedTurns.has(entry.id)}
+                    expanded={expanded}
                     onToggle={() => toggleTurn(entry.id)}
                   />,
                 );
