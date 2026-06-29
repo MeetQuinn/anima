@@ -94,10 +94,12 @@ function buildBlocks(items: ActivityFeedItem[]): DayBlock[] {
 // toggle. Each agent turn's curated steps attach to the agent message that
 // concludes the turn and tuck beneath it, collapsed by default behind a
 // `▸ N steps` disclosure. Click the disclosure OR the message to expand/collapse.
-// The live (running) turn's steps render under the WorkingIndicator and stay
-// auto-expanded while streaming; when the turn completes its steps fold into the
-// concluding message's (default-collapsed) disclosure — so completion reads as a
-// quiet collapse. Failure is shown only at the step level (existing red Row
+// The live (running) turn's steps render above the WorkingIndicator and stay
+// auto-expanded while streaming; the indicator sits at the bottom so "thinking
+// now" reads as the latest state, after the steps already streamed. When the
+// turn completes its steps fold into the concluding message's
+// (default-collapsed) disclosure, so completion reads as a quiet collapse.
+// Failure is shown only at the step level (existing red Row
 // styling), never as a message badge: routine non-zero exits stay quiet.
 // ---------------------------------------------------------------------------
 
@@ -1314,17 +1316,19 @@ export default function Activity() {
             {expandedTurns.has('__trailing__') && <StepList steps={trailingSteps} />}
           </StepGutter>
         )}
-        {/* Live turn: indicator + its streaming steps, auto-expanded. When the
+        {/* Live turn: its streaming steps then the indicator beneath them,
+            auto-expanded. The indicator sits at the bottom so "thinking now"
+            reads as the latest state, after the steps already streamed. When the
             turn completes its steps fold into the concluding message's
-            (collapsed) disclosure — completion reads as a quiet collapse. */}
+            (collapsed) disclosure, so completion reads as a quiet collapse. */}
         {currentItemId && !loadingActivities && !showFirstRunHero && (
           <>
-            <WorkingIndicator latestActivity={latestCurrentItemActivity} />
             {trailingSteps.length > 0 && (
               <StepGutter>
                 <StepList steps={trailingSteps} />
               </StepGutter>
             )}
+            <WorkingIndicator latestActivity={latestCurrentItemActivity} />
           </>
         )}
         <div ref={bottomRef} className="h-4" />
