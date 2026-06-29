@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, FolderTree, GripVertical, MoreHorizontal, Plus, Server } from 'lucide-react';
+import { ChevronLeft, FolderTree, MoreHorizontal, Plus, Server } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -77,11 +77,10 @@ function SortableItem({
         isDragging ? 'z-50 opacity-40' : '',
       ].join(' ')}
     >
-      {/* Drag affordance — visual hint only, pointer-events-none */}
-      <GripVertical
-        aria-hidden
-        className="pointer-events-none absolute left-0.5 top-1/2 h-3 w-3 -translate-y-1/2 text-text-on-spine-subtle opacity-0 transition-opacity group-hover/drag:opacity-50"
-      />
+      {/* No visible drag affordance on desktop: the whole row is draggable via
+          the wrapper's pointer listeners, so the grip icon was redundant chrome
+          next to the avatar. (Mobile keeps its always-on grip in
+          MobileNavScreen, where there's no hover to reveal an affordance.) */}
       {children}
     </div>
   );
