@@ -110,6 +110,31 @@ test('message service list scopes to a single channel when given a channel filte
   }
 });
 
+test('message service listAll returns the complete local ledger', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-message-list-all-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const records = Array.from({ length: 505 }, (_, index) =>
+        testMessage({
+          direction: index % 2 === 0 ? 'in' : 'out',
+          messageId: `m-${index}`,
+          timestamp: `2026-05-11T00:${String(Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}.000Z`,
+        }),
+      );
+      await new MessageStore('scout').appendManyIfAbsent(records);
+      await new MessageStore('scout').markLegacyBackfilled();
+
+      const page = await messageServiceForAgent('scout').list({ limit: 500 });
+      assert.equal(page.entries.length, 500);
+
+      const all = await messageServiceForAgent('scout').listAll();
+      assert.equal(all.length, 505);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('wake queue enqueue writes inbound messages without duplicate ledger rows', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-message-inbox-write-test-'));
   try {

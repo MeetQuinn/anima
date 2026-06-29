@@ -58,6 +58,11 @@ export class MessageService {
     return { entries: page, nextCursor };
   }
 
+  async listAll(): Promise<AgentMessageRecord[]> {
+    await this.backfillLegacyMessages();
+    return this.store.readAll();
+  }
+
   async search(input: MessageSearchInput): Promise<AgentMessageHistoryPage> {
     await this.backfillLegacyMessages();
     const keywords = normalizeSearchKeywords(input.keywords);

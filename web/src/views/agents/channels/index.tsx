@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { AlertTriangle, BellOff, ChevronLeft, Loader2 } from 'lucide-react';
+import { BellOff, ChevronLeft, Loader2 } from 'lucide-react';
 import { fetchAgentChannels, fetchAgentMessages, fetchAgents } from '@/api/agents';
 import { buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
@@ -283,10 +283,10 @@ export default function Channels() {
     queryKey: queryKeys.agentChannels(agentId ?? ''),
     queryFn: () => fetchAgentChannels(agentId!),
     enabled: !!agentId,
-    // The membership list is cheap to serve (cache-first on the backend) and
-    // changes rarely. Keep it warm so re-entering the tab paints instantly from
-    // cache and revalidates in the background, and keep showing the old list
-    // while a refetch is in flight rather than flashing the spinner.
+    // The channel list is derived from local message history and changes
+    // gradually. Keep it warm so re-entering the tab paints instantly from cache
+    // and keep showing the old list while a refetch is in flight rather than
+    // flashing the spinner.
     staleTime: 30_000,
     placeholderData: keepPreviousData,
   });
@@ -339,15 +339,6 @@ export default function Channels() {
             Channels &amp; DMs
           </span>
         </div>
-        {data?.membershipPartial && (
-          <div className="flex shrink-0 items-start gap-1.5 border-b border-border-soft bg-health-error/5 px-4 py-2">
-            <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0 text-health-error" aria-hidden />
-            <p className="font-sans text-[11px] leading-snug text-text-muted">
-              Couldn&apos;t reach Slack. Showing subscription history only, so this
-              list may be missing silent member channels.
-            </p>
-          </div>
-        )}
         {error ? (
           <p className="px-4 py-4 font-mono text-[11px] text-health-error">Could not load channels</p>
         ) : isLoading ? (
@@ -356,7 +347,7 @@ export default function Channels() {
           </div>
         ) : channels.length === 0 ? (
           <p className="px-4 py-6 font-serif italic text-[13px] text-text-subtle">
-            Not a member of any Slack channels yet.
+            No local Slack conversations yet.
           </p>
         ) : (
           channels.map((channel) => (

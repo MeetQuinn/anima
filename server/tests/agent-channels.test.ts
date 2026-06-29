@@ -16,37 +16,97 @@ function channelSub(over: Partial<SubscriptionRecord> & { channelId: string }): 
   } as SubscriptionRecord;
 }
 
-function dmMessage(over: Partial<AgentMessageRecord> & { channelId: string; timestamp: string }): AgentMessageRecord {
+function message(over: Partial<AgentMessageRecord> & {
+  channelId: string;
+  messageId: string;
+  timestamp: string;
+}): AgentMessageRecord {
   return {
     direction: 'in',
     kind: 'message',
-    messageId: `m-${over.channelId}-${over.timestamp}`,
-    source: { id: 's', kind: 'activity' },
-    text: 'hi',
-    channelKind: 'dm',
+    source: { id: over.messageId, kind: 'activity' },
+    text: 'hello',
     ...over,
   };
 }
 
-test('member channels appear as following even with no subscription or messages', () => {
-  const res = composeChannelList({
-    memberChannels: [{ id: 'C1', name: 'prod' }],
-    subscriptions: [],
-    messages: [],
+function channelMessage(over: Partial<AgentMessageRecord> & {
+  channelId: string;
+  messageId: string;
+  timestamp: string;
+}): AgentMessageRecord {
+  return message({
+    channelKind: 'channel',
+    channelName: 'product',
+    ...over,
   });
-  assert.equal(res.channels.length, 1);
-  assert.deepEqual(res.channels[0], {
+}
+
+function dmMessage(over: Partial<AgentMessageRecord> & {
+  channelId: string;
+  messageId: string;
+  timestamp: string;
+}): AgentMessageRecord {
+  return message({
+    channelKind: 'dm',
+    dmHandle: 'guoqiang',
+    ...over,
+  });
+}
+
+test('channels are derived from local Slack message history', () => {
+  const res = composeChannelList({
+    subscriptions: [],
+    messages: [
+      channelMessage({
+        channelId: 'C1',
+        channelName: 'prod',
+        messageId: 'm1',
+        timestamp: '2026-06-23T00:00:00.000Z',
+      }),
+    ],
+  });
+  assert.deepEqual(res.channels, [{
     id: 'C1',
     name: 'prod',
     platform: 'slack',
     kind: 'channel',
     status: 'following',
-  });
+    lastActivityAt: '2026-06-23T00:00:00.000Z',
+  }]);
 });
 
-test('muted subscription carries status + activity timestamps', () => {
+test('subscription-only channels do not appear without local message history', () => {
   const res = composeChannelList({
-    memberChannels: [{ id: 'C2', name: 'team' }],
+    subscriptions: [
+      channelSub({
+        channelId: 'C-silent',
+        mutedAt: '2026-06-21T00:00:00.000Z',
+        lastActivityAt: '2026-06-22T10:00:00.000Z',
+      }),
+    ],
+    messages: [],
+  });
+  assert.equal(res.channels.length, 0);
+});
+
+test('historical channels remain visible when local message history exists', () => {
+  const res = composeChannelList({
+    subscriptions: [],
+    messages: [
+      channelMessage({
+        channelId: 'C-left',
+        channelName: 'old-project',
+        messageId: 'm-left',
+        timestamp: '2026-06-10T00:00:00.000Z',
+      }),
+    ],
+  });
+  assert.deepEqual(res.channels.map((channel) => channel.id), ['C-left']);
+});
+
+test('muted subscriptions overlay status + timestamps on existing conversations', () => {
+  const res = composeChannelList({
     subscriptions: [
       channelSub({
         channelId: 'C2',
@@ -55,7 +115,14 @@ test('muted subscription carries status + activity timestamps', () => {
         lastPostedAt: '2026-06-22T09:00:00.000Z',
       }),
     ],
-    messages: [],
+    messages: [
+      channelMessage({
+        channelId: 'C2',
+        channelName: 'team',
+        messageId: 'm2',
+        timestamp: '2026-06-20T00:00:00.000Z',
+      }),
+    ],
   });
   assert.equal(res.channels.length, 1);
   const c = res.channels[0]!;
@@ -64,20 +131,24 @@ test('muted subscription carries status + activity timestamps', () => {
   assert.equal(c.lastPostedAt, '2026-06-22T09:00:00.000Z');
 });
 
-test('Feishu (oc_) subscriptions are excluded in Slack-only v1', () => {
+test('DMs are folded from message history with handle, avatar, and latest timestamp', () => {
   const res = composeChannelList({
-    memberChannels: [],
-    subscriptions: [channelSub({ channelId: 'oc_feishuchat' })],
-    messages: [],
-  });
-  assert.equal(res.channels.length, 0);
-});
-
-test('DMs are folded from message history with dmHandle as name', () => {
-  const res = composeChannelList({
-    memberChannels: [],
     subscriptions: [],
-    messages: [dmMessage({ channelId: 'D9', timestamp: '2026-06-23T00:00:00.000Z', dmHandle: 'guoqiang' })],
+    messages: [
+      dmMessage({
+        channelId: 'D9',
+        messageId: 'd1',
+        timestamp: '2026-06-23T00:00:00.000Z',
+        dmHandle: 'guoqiang',
+        actorAvatarUrl: 'https://avatars.example/u.png',
+      }),
+      dmMessage({
+        channelId: 'D9',
+        messageId: 'd2',
+        timestamp: '2026-06-24T12:00:00.000Z',
+        direction: 'out',
+      }),
+    ],
   });
   assert.equal(res.channels.length, 1);
   assert.deepEqual(res.channels[0], {
@@ -86,76 +157,76 @@ test('DMs are folded from message history with dmHandle as name', () => {
     platform: 'slack',
     kind: 'dm',
     status: 'following',
-    lastActivityAt: '2026-06-23T00:00:00.000Z',
+    lastActivityAt: '2026-06-24T12:00:00.000Z',
+    lastPostedAt: '2026-06-24T12:00:00.000Z',
+    avatarUrl: 'https://avatars.example/u.png',
   });
 });
 
-test('duplicate DM messages collapse to one row at the latest timestamp', () => {
+test('Slack rows with no explicit platform are still treated as Slack history', () => {
   const res = composeChannelList({
-    memberChannels: [],
     subscriptions: [],
     messages: [
-      dmMessage({ channelId: 'D9', timestamp: '2026-06-23T00:00:00.000Z', dmHandle: 'guoqiang' }),
-      dmMessage({ channelId: 'D9', timestamp: '2026-06-24T12:00:00.000Z', direction: 'out' }),
+      channelMessage({
+        channelId: 'C-legacy',
+        channelName: 'legacy',
+        messageId: 'legacy',
+        timestamp: '2026-06-23T00:00:00.000Z',
+      }),
     ],
   });
-  assert.equal(res.channels.length, 1);
-  assert.equal(res.channels[0]!.lastActivityAt, '2026-06-24T12:00:00.000Z');
-  assert.equal(res.channels[0]!.name, 'guoqiang');
+  assert.deepEqual(res.channels.map((channel) => channel.id), ['C-legacy']);
 });
 
-test('a DM muted as a subscription still renders with kind dm (D-prefix)', () => {
+test('Feishu and oc_ rows are excluded from the Slack-only Channels tab', () => {
   const res = composeChannelList({
-    memberChannels: [],
-    subscriptions: [channelSub({ channelId: 'D5', mutedAt: '2026-06-21T00:00:00.000Z' })],
-    messages: [],
-  });
-  assert.equal(res.channels.length, 1);
-  assert.equal(res.channels[0]!.kind, 'dm');
-  assert.equal(res.channels[0]!.status, 'muted');
-});
-
-test('channels are sorted by most recent activity, undated last', () => {
-  const res = composeChannelList({
-    memberChannels: [
-      { id: 'C1', name: 'aaa' },
-      { id: 'C2', name: 'bbb' },
+    subscriptions: [channelSub({ channelId: 'oc_feishuchat' })],
+    messages: [
+      channelMessage({
+        channelId: 'oc_feishuchat',
+        channelName: '产品群',
+        messageId: 'f1',
+        platform: 'feishu',
+        timestamp: '2026-06-23T00:00:00.000Z',
+      }),
+      channelMessage({
+        channelId: 'C1',
+        channelName: 'prod',
+        messageId: 's1',
+        platform: 'slack',
+        timestamp: '2026-06-24T00:00:00.000Z',
+      }),
     ],
-    subscriptions: [channelSub({ channelId: 'C2', lastActivityAt: '2026-06-22T00:00:00.000Z' })],
-    messages: [dmMessage({ channelId: 'D9', timestamp: '2026-06-24T00:00:00.000Z', dmHandle: 'z' })],
+  });
+  assert.deepEqual(res.channels.map((channel) => channel.id), ['C1']);
+});
+
+test('channels are sorted by most recent local/subscription activity', () => {
+  const res = composeChannelList({
+    subscriptions: [channelSub({ channelId: 'C2', lastActivityAt: '2026-06-25T00:00:00.000Z' })],
+    messages: [
+      channelMessage({
+        channelId: 'C1',
+        channelName: 'aaa',
+        messageId: 'c1',
+        timestamp: '2026-06-22T00:00:00.000Z',
+      }),
+      channelMessage({
+        channelId: 'C2',
+        channelName: 'bbb',
+        messageId: 'c2',
+        timestamp: '2026-06-21T00:00:00.000Z',
+      }),
+      dmMessage({
+        channelId: 'D9',
+        messageId: 'd9',
+        timestamp: '2026-06-24T00:00:00.000Z',
+      }),
+    ],
   });
   assert.deepEqual(
     res.channels.map((c) => c.id),
-    ['D9', 'C2', 'C1'],
-  );
-});
-
-test('on a successful member lookup, a subscription-only channel (not a member) is dropped', () => {
-  const res = composeChannelList({
-    memberChannels: [{ id: 'C1', name: 'prod' }],
-    subscriptions: [
-      // Stale follow/mute on a channel the agent was removed from.
-      channelSub({ channelId: 'C2', mutedAt: '2026-06-21T00:00:00.000Z' }),
-    ],
-    messages: [],
-    membershipComplete: true,
-  });
-  assert.deepEqual(
-    res.channels.map((c) => c.id),
-    ['C1'],
-  );
-});
-
-test('when membership degrades, subscription-derived channels survive as fallback', () => {
-  const res = composeChannelList({
-    memberChannels: [],
-    subscriptions: [channelSub({ channelId: 'C2', lastActivityAt: '2026-06-22T00:00:00.000Z' })],
-    messages: [],
-    membershipComplete: false,
-  });
-  assert.deepEqual(
-    res.channels.map((c) => c.id),
-    ['C2'],
+    ['C2', 'D9', 'C1'],
   );
 });
 
