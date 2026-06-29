@@ -1,10 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { composeChannelList } from '../web/agent-channels.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { buildAgentChannelList, composeChannelList } from '../web/agent-channels.js';
+import type { AvatarEnrichmentDeps } from '../web/message-profiles.js';
 import { memberChannelsResultForAgent } from '../inbox/member-channels.js';
+import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import type { SubscriptionRecord } from '../inbox/slack-subscription.service.js';
 import type { AgentMessageRecord } from '../../shared/messages.js';
+import { withAnimaHome } from './anima-home.js';
+import { makeSlackEvent } from './helpers/slack.js';
 
 function channelSub(over: Partial<SubscriptionRecord> & { channelId: string }): SubscriptionRecord {
   return {
@@ -233,4 +241,82 @@ test('channels are sorted by most recent local/subscription activity', () => {
 test('memberChannelsResultForAgent: no Slack token is legitimately empty, not degraded', async () => {
   const res = await memberChannelsResultForAgent({ id: 'a1' });
   assert.deepEqual(res, { channels: [], degraded: false });
+});
+
+test('buildAgentChannelList decorates DM rows with the inbound sender avatar', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-channels-dm-avatar-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      // Seed one inbound Slack DM (channel id starts with 'D'). The durable
+      // ledger never persists the sender avatar, so the row can only get a photo
+      // via read-time enrichment.
+      await new WakeQueueService('scout').enqueue(
+        makeSlackEvent({
+          channelId: 'D-bob',
+          teamId: 'T-demo',
+          text: 'ping',
+          userId: 'UBOB1',
+          eventId: 'evt-dm-avatar',
+          ts: '1770000200.000001',
+          timestamp: '2026-05-12T00:00:00.000Z',
+        }),
+      );
+
+      // Stub the avatar resolver so no real Slack IO happens; it stands in for
+      // the cache-first workspace-directory lookup the /messages feed shares.
+      const deps: AvatarEnrichmentDeps = {
+        loadAgent: async () => ({
+          id: 'scout',
+          slack: { botToken: 'xoxb-test', teamId: 'T-demo' },
+        }),
+        getWebClient: async () => ({}),
+        resolveAvatar: async ({ userId }) =>
+          userId === 'UBOB1' ? 'https://avatars.example/bob.png' : undefined,
+      };
+
+      const res = await buildAgentChannelList('scout', deps);
+      const dm = res.channels.find((c) => c.id === 'D-bob');
+      assert.ok(dm, 'DM channel should be present');
+      assert.equal(dm.kind, 'dm');
+      assert.equal(dm.avatarUrl, 'https://avatars.example/bob.png');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('buildAgentChannelList leaves DM avatar unset when resolution finds no photo', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-channels-dm-noavatar-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await new WakeQueueService('scout').enqueue(
+        makeSlackEvent({
+          channelId: 'D-bob',
+          teamId: 'T-demo',
+          text: 'ping',
+          userId: 'UBOB1',
+          eventId: 'evt-dm-noavatar',
+          ts: '1770000201.000001',
+          timestamp: '2026-05-12T00:00:00.000Z',
+        }),
+      );
+
+      const deps: AvatarEnrichmentDeps = {
+        loadAgent: async () => ({
+          id: 'scout',
+          slack: { botToken: 'xoxb-test', teamId: 'T-demo' },
+        }),
+        getWebClient: async () => ({}),
+        // No photo on file: row degrades to the initial-letter fallback.
+        resolveAvatar: async () => undefined,
+      };
+
+      const res = await buildAgentChannelList('scout', deps);
+      const dm = res.channels.find((c) => c.id === 'D-bob');
+      assert.ok(dm, 'DM channel should be present');
+      assert.equal(dm.avatarUrl, undefined);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });

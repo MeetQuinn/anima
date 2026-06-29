@@ -4,6 +4,7 @@ import {
   type SubscriptionRecord,
 } from '../inbox/slack-subscription.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
+import { enrichInboundAvatars, type AvatarEnrichmentDeps } from './message-profiles.js';
 import type {
   AgentChannelListResponse,
   AgentChannelSummary,
@@ -130,16 +131,28 @@ export function composeChannelList(input: {
   return { channels };
 }
 
-// IO wrapper: fetch local message history + subscription overlay only. This
-// intentionally does not call Slack; the Channels tab is a fast conversation
-// history view, not a current Slack membership inventory.
-export async function buildAgentChannelList(agentId: string): Promise<AgentChannelListResponse> {
+// IO wrapper: fetch local message history + subscription overlay. The durable
+// message ledger never persists sender avatars, so the DM counterpart avatar is
+// decorated read-time through the same cache-first resolver the /messages feed
+// uses (enrichInboundAvatars) before the list is folded. Without this the
+// master-list DM rows render from raw records with no actorAvatarUrl and fall
+// back to the initial letter, even though the detail-pane bylines (served by the
+// already-enriched /messages route) show the real photo. Resolution is
+// cache-first against the workspace-directory disk cache the /messages poll
+// keeps warm; a miss costs one users.info per unique sender and any failure
+// leaves the avatar unset, so this stays a fast history view, not a Slack
+// membership inventory. deps stay injectable so the enrichment is unit-testable.
+export async function buildAgentChannelList(
+  agentId: string,
+  deps?: AvatarEnrichmentDeps,
+): Promise<AgentChannelListResponse> {
   const [subscriptions, messages] = await Promise.all([
     listSubscriptionsForAgent(agentId),
     messageServiceForAgent(agentId).listAll(),
   ]);
+  const enriched = await enrichInboundAvatars(agentId, { entries: messages }, deps);
   return composeChannelList({
     subscriptions,
-    messages,
+    messages: enriched.entries,
   });
 }
