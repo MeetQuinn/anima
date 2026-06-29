@@ -289,19 +289,27 @@ function SubagentStreamSection({
 // item. ~100ms lag from the SSE debounce is fine (iris approval).
 export function WorkingIndicator({
   latestActivity,
+  time,
 }: {
   latestActivity: ActivityRecord | undefined;
+  time?: string;
 }) {
   const isWorking = latestActivity?.type === 'tool.call.started';
   const label = isWorking ? 'Working' : 'Thinking';
-  // Align the live pulse to the tool-step rows: the same Row grid (empty time
-  // column, pulse in the dot column, label in the content column). The caller
-  // wraps this in the step gutter + lane, so the pulse continues the step lane
-  // and "Thinking…" lines up directly under the step titles streaming above it,
-  // rather than floating out at the message rail.
+  // Align the live pulse to the tool-step rows: the same Row grid (time in the
+  // first column, pulse in the dot column, label in the content column). The
+  // timestamp anchors it to the time rail so it reads as a real timeline entry
+  // rather than a floating label. When the caller wraps this in the step gutter
+  // + lane (a step already exists this turn), the pulse continues the step lane
+  // and "Thinking…" lines up under the streaming step titles. Before any step
+  // exists the caller renders it unwrapped, so it sits at the top-level rail
+  // with its time aligned to the message/step time column instead of dangling
+  // in an empty lane.
   return (
     <div className="grid grid-cols-[2.5rem_0.75rem_minmax(0,1fr)] items-baseline gap-2 py-2 pr-2 md:grid-cols-[3.5rem_0.75rem_minmax(0,1fr)] md:gap-3 md:py-2.5 md:pr-3">
-      <span aria-hidden />
+      <span className="text-right font-mono text-[10px] leading-6 text-text-subtle md:text-[11px]">
+        {time}
+      </span>
       <span className="flex h-6 items-center self-start" aria-hidden>
         <span
           className="inline-block h-2 w-2 animate-pulse rounded-full"
