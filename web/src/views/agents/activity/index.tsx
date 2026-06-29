@@ -768,21 +768,28 @@ export default function Activity() {
     return itemActivities.reduce((latest, a) => (a.createdAt > latest.createdAt ? a : latest));
   }, [currentItemId, currentItemStartedAt, activitiesData]);
 
-  // Whether the current (live) turn has produced any row that actually renders
-  // as a step yet. Until it has, the live indicator should sit at the top-level
-  // time rail (not indented into the step lane), so it doesn't dangle in an
-  // empty lane with nothing above it. Once a step exists, the indicator nests
-  // into the lane and continues it (alignment confirmed correct by totoday).
+  // Whether the current (live) turn has produced a lane-rendered step yet. Until
+  // it has, the live indicator should sit at the top-level time rail (not
+  // indented into the step lane), so it doesn't dangle in an empty lane with
+  // nothing above it. Once a folded step exists, the indicator nests into the
+  // lane and continues it (alignment confirmed correct by totoday).
+  //
+  // Derive this from the SAME visible step layer the timeline renders
+  // (`stepItems` = buildActivityFeed(..., false) + isNarrativeStep), not raw
+  // `activityRow`. Hidden runtime plumbing (runtime.started/pending, provider
+  // stream internals) maps to non-`unknown` rows but is stripped by HIDDEN_TYPES
+  // before render, so checking raw activities would flip this true at turn start
+  // before any visible step exists — re-creating the very orphan this fixes.
+  // Special system steps are excluded too: they promote to top-level rows (not
+  // the lane), so the indicator should stay on the rail to align with them.
   const currentTurnHasStep = useMemo(() => {
-    if (!currentItemId || !activitiesData) return false;
-    const activities = activitiesData.events.flatMap((event) =>
-      event.kind === 'activity' ? [event.activity] : [],
+    if (!currentItemId || !currentItemStartedAt) return false;
+    return stepItems.some(
+      (item) =>
+        item.activity.createdAt >= currentItemStartedAt &&
+        !isSpecialSystemStep(item.activity),
     );
-    const itemActivities = currentItemStartedAt
-      ? activities.filter((a) => a.createdAt >= currentItemStartedAt)
-      : activities;
-    return itemActivities.some((a) => activityRow(a).kind !== 'unknown');
-  }, [currentItemId, currentItemStartedAt, activitiesData]);
+  }, [currentItemId, currentItemStartedAt, stepItems]);
 
   // The live indicator's timestamp: when the latest activity in this turn
   // happened, else when the turn started, else now. Anchors it to the time
