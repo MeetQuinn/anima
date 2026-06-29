@@ -92,6 +92,32 @@ interface RuntimeUpgradeCheckCache {
   releaseTrack: RuntimeReleaseTrack;
 }
 
+export interface RuntimeUpgradeWorkerSpawnPlanInput {
+  animactlScript: string;
+  animaHome: string;
+  dashboardHost: string;
+  dashboardPort: number;
+  env?: NodeJS.ProcessEnv;
+  logPath: string;
+  nodePath: string;
+  nowMs?: number;
+  platform?: NodeJS.Platform;
+  previousStartedAt?: string;
+  previousVersion: string;
+  releaseTrack: RuntimeReleaseTrack;
+  targetVersion: string;
+}
+
+export interface RuntimeUpgradeWorkerSpawnPlan {
+  args: string[];
+  command: string;
+  cwd: string;
+  detached: boolean;
+  env: NodeJS.ProcessEnv;
+  stdio: 'ignore' | 'log';
+  waitForExit: boolean;
+}
+
 export class RuntimeUpgradeConflictError extends Error {}
 
 export class RuntimeUpgradeUnavailableError extends Error {}
@@ -452,6 +478,118 @@ async function spawnRuntimeUpgradeWorker(input: {
   await mkdir(dirname(input.logPath), { recursive: true });
   const log = await open(input.logPath, 'a');
   await log.write(`\n[${new Date().toISOString()}] scheduling runtime upgrade target=${input.targetVersion}\n`);
+  const plan = runtimeUpgradeWorkerSpawnPlan({
+    ...input,
+    animaHome: resolveAnimaHome(),
+    logPath: input.logPath,
+    nodePath: process.execPath,
+  });
+  const child = spawn(plan.command, plan.args, {
+    cwd: plan.cwd,
+    detached: plan.detached,
+    env: plan.env,
+    stdio: plan.stdio === 'log' ? ['ignore', log.fd, log.fd] : 'ignore',
+  });
+  try {
+    await waitForWorkerLaunch(plan, child);
+    child.unref();
+  } catch (error) {
+    const message = `Failed to start runtime upgrade worker: ${errorMessage(error)}`;
+    await recordRuntimeUpgradeWorkerLaunchFailure({
+      currentVersion: input.previousVersion,
+      error: message,
+      logPath: input.logPath,
+      previousVersion: input.previousVersion,
+      targetVersion: input.targetVersion,
+    });
+    throw error;
+  } finally {
+    await log.close();
+  }
+}
+
+export function runtimeUpgradeWorkerSpawnPlan(input: RuntimeUpgradeWorkerSpawnPlanInput): RuntimeUpgradeWorkerSpawnPlan {
+  const workerArgs = runtimeUpgradeWorkerArgs(input);
+  const cwd = dirname(dirname(dirname(dirname(input.animactlScript))));
+  const env = { ...cleanServiceEnv(input.env), ANIMA_HOME: input.animaHome };
+  if ((input.platform ?? process.platform) === 'linux') {
+    return {
+      args: [
+        '--user',
+        '--quiet',
+        '--collect',
+        `--unit=${runtimeUpgradeWorkerUnitName(input)}`,
+        `--property=WorkingDirectory=${cwd}`,
+        `--property=StandardOutput=append:${input.logPath}`,
+        `--property=StandardError=append:${input.logPath}`,
+        ...Object.entries(env)
+          .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+          .map(([key, value]) => `--setenv=${key}=${value}`),
+        input.nodePath,
+        ...workerArgs,
+      ],
+      command: 'systemd-run',
+      cwd,
+      detached: true,
+      env,
+      stdio: 'ignore',
+      waitForExit: true,
+    };
+  }
+  return {
+    args: workerArgs,
+    command: input.nodePath,
+    cwd,
+    detached: true,
+    env,
+    stdio: 'log',
+    waitForExit: false,
+  };
+}
+
+async function waitForWorkerLaunch(plan: RuntimeUpgradeWorkerSpawnPlan, child: ReturnType<typeof spawn>): Promise<void> {
+  await new Promise<void>((resolveSpawn, rejectSpawn) => {
+    child.once('error', rejectSpawn);
+    child.once('spawn', resolveSpawn);
+  });
+  if (!plan.waitForExit) return;
+  const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) => {
+    child.once('exit', (code, signal) => resolveExit({ code, signal }));
+  });
+  if (result.signal) throw new Error(`${plan.command} exited from signal ${result.signal}`);
+  if (result.code !== 0) throw new Error(`${plan.command} exited with code ${result.code ?? 1}`);
+}
+
+async function recordRuntimeUpgradeWorkerLaunchFailure(input: {
+  currentVersion: string;
+  error: string;
+  logPath: string;
+  previousVersion: string;
+  targetVersion: string;
+}): Promise<void> {
+  await appendUpgradeLog(input.logPath, input.error);
+  await defaultRuntimeUpgradeOperationStore.write({
+    completedAt: new Date().toISOString(),
+    currentVersion: input.currentVersion,
+    error: input.error,
+    logPath: input.logPath,
+    previousVersion: input.previousVersion,
+    rollback: 'not_needed',
+    status: 'failed',
+    targetVersion: input.targetVersion,
+  });
+}
+
+function runtimeUpgradeWorkerArgs(input: {
+  animactlScript: string;
+  dashboardHost: string;
+  dashboardPort: number;
+  logPath: string;
+  previousStartedAt?: string;
+  previousVersion: string;
+  releaseTrack: RuntimeReleaseTrack;
+  targetVersion: string;
+}): string[] {
   const args = [
     input.animactlScript,
     'runtime',
@@ -470,18 +608,11 @@ async function spawnRuntimeUpgradeWorker(input: {
     input.logPath,
   ];
   if (input.previousStartedAt) args.push('--previous-started-at', input.previousStartedAt);
+  return args;
+}
 
-  const child = spawn(process.execPath, args, {
-    cwd: dirname(dirname(dirname(dirname(input.animactlScript)))),
-    detached: true,
-    env: { ...cleanServiceEnv(), ANIMA_HOME: resolveAnimaHome() },
-    stdio: ['ignore', log.fd, log.fd],
-  });
-  child.on('error', (error) => {
-    console.error(`Failed to start runtime upgrade worker: ${error.message}`);
-  });
-  child.unref();
-  await log.close();
+function runtimeUpgradeWorkerUnitName(input: Pick<RuntimeUpgradeWorkerSpawnPlanInput, 'nowMs'>): string {
+  return `anima-runtime-upgrade-${process.pid}-${input.nowMs ?? Date.now()}`;
 }
 
 async function runManagedServicesRestart(
