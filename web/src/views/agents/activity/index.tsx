@@ -1400,20 +1400,17 @@ export default function Activity() {
             flush();
             return (
               <div key={day}>
-                {/* Sticky day header (Slack-style): the divider pins to the top
-                    of the scroll viewport while its day is in view, then the
-                    next day's header pushes it up and takes over. Scoped per-day
-                    `<div>`, so it's pure CSS — no scroll listener. The opaque
-                    full-bleed band (negative margin cancels the scroll padding)
-                    keeps content from bleeding through as it slides under. */}
-                <div className="sticky top-0 z-10 -mx-4 bg-surface px-4 md:-mx-10 md:px-10">
-                  {/* Pill only (no flanking rules): pinned + floating over
-                      scrolling content, the rules read as a divider cutting
-                      across the content. A lone centered date pill (Slack-style)
-                      stays clean both pinned and at rest. */}
-                  <div className="my-3 flex justify-center">
-                    <DayLabelPill iso={entries[0]!.timestamp} />
-                  </div>
+                {/* Sticky day header (Slack-style): a lone centered date pill
+                    that pins to the top of the scroll viewport while its day is
+                    in view, then the next day's pill pushes it up and takes
+                    over. Scoped per-day `<div>`, so it's pure CSS — no scroll
+                    listener. The wrapper is transparent and pointer-events-none
+                    so content scrolls visibly *under* the floating pill rather
+                    than being hidden behind an opaque full-bleed band; the pill
+                    carries its own bg-surface + border, so its label stays
+                    legible over the moving content. */}
+                <div className="pointer-events-none sticky top-0 z-10 flex justify-center py-3">
+                  <DayLabelPill iso={entries[0]!.timestamp} />
                 </div>
                 {out}
               </div>
