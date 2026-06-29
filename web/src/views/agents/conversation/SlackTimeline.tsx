@@ -2,7 +2,7 @@ import { Bell, MessageSquareQuote, SmilePlus, UserPlus, type LucideIcon } from '
 import { Link } from 'react-router-dom';
 import { renderMrkdwn } from '@/lib/mrkdwn';
 import { emojiGlyph } from '@/lib/emoji';
-import { clockHM, dateLabel } from '@/lib/format';
+import { clockHM, dateLabel, dateTimeFull } from '@/lib/format';
 import { AttachedFiles, UploadedFile } from '../activity/Attachments';
 import type { ActivityFeedItem, SurfaceChip } from '@/lib/activity-feed';
 import type { InboxItem, SlackMessagePreview } from '@shared/inbox';
@@ -364,7 +364,10 @@ export function SystemEventRow({
         {item.meta && (
           <span className="shrink-0 font-sans text-[10px] text-text-subtle">· {item.meta}</span>
         )}
-        <span className="shrink-0 font-sans text-[10px] text-text-subtle">
+        <span
+          className="shrink-0 cursor-default font-sans text-[10px] text-text-subtle"
+          title={dateTimeFull(item.timestamp)}
+        >
           {clockHM(item.timestamp)}
         </span>
       </span>
@@ -382,14 +385,25 @@ export function MessageGroupRow({ group, agentId }: { group: MessageGroup; agent
           <span className="truncate font-sans text-[13px] font-semibold text-text">
             {group.author.name}
           </span>
-          <span className="shrink-0 font-sans text-[11px] text-text-subtle">
+          <span
+            className="shrink-0 cursor-default font-sans text-[11px] text-text-subtle"
+            title={dateTimeFull(group.startTs)}
+          >
             {clockHM(group.startTs)}
           </span>
           {group.surface && <GroupSurfaceChip chip={group.surface} agentId={agentId} />}
         </div>
         <div className="mt-0.5 flex flex-col gap-1">
           {group.items.map(({ item, key }) => (
-            <MessageBody key={key} item={item} agentId={agentId} />
+            // Wrap each message in a title-bearing div so hovering any row (not
+            // just the group's header time) surfaces its own full date + time.
+            // The inner flex-col gap-1 mirrors the prior layout exactly: before,
+            // MessageBody's fragment parts were direct gap-1 siblings of the
+            // column; now they're gap-1 siblings inside the wrapper, so spacing
+            // is unchanged.
+            <div key={key} title={dateTimeFull(item.timestamp)} className="flex flex-col gap-1">
+              <MessageBody item={item} agentId={agentId} />
+            </div>
           ))}
         </div>
       </div>

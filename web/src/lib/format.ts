@@ -30,6 +30,16 @@ export function dateKey(iso: string): string {
   return format(new Date(iso), 'yyyy-MM-dd');
 }
 
+/**
+ * "Tuesday, January 15, 2024 at 14:32" — full local date + time, for the
+ * hover tooltip on a message timestamp (the timeline only shows HH:mm inline).
+ */
+export function dateTimeFull(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return format(d, "EEEE, MMMM d, yyyy 'at' HH:mm");
+}
+
 /** "Today" / "Yesterday" / "Tuesday, January 15" */
 export function dateLabel(iso: string): string {
   const d = new Date(iso);
