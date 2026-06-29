@@ -4,6 +4,7 @@ import {
   useMemo,
   useReducer,
   useRef,
+  useState,
   type ReactNode,
 } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -503,6 +504,24 @@ export default function Activity() {
   // viewport above the true newest row.
   const bottomPinUntilSettleRef = useRef(false);
 
+  // Hold the timeline invisible until the feed has settled at its final scroll
+  // position, then fade it in. On mount (e.g. clicking an agent's avatar) the
+  // feed scrolls through several phases off the final state — initial pin to
+  // bottom, coverage prepends, default-open fold expansion — which read as a
+  // visible jump. Rendering at opacity-0 while it settles (it stays mounted, so
+  // it still lays out and scrolls) means the user only ever sees the resolved
+  // bottom state. Re-armed per feed identity (see the reveal effects below).
+  const [feedRevealed, setFeedRevealed] = useState(false);
+  // Reset the reveal gate the instant the feed identity changes, during render
+  // (React's documented "adjust state when a prop changes" pattern) rather than
+  // in an effect, so the previous agent's timeline never flashes before the new
+  // feed re-hides.
+  const [revealGateFeed, setRevealGateFeed] = useState(agentId);
+  if (agentId !== revealGateFeed) {
+    setRevealGateFeed(agentId);
+    setFeedRevealed(false);
+  }
+
   // Conversation layer — always loaded (complete history, Channels-identical).
   // Always both directions; the inbox/outbox sub-filter was retired.
   const messageQuery = useInfiniteQuery({
@@ -578,6 +597,21 @@ export default function Activity() {
       (item) => isMessageItem(item) || item.kind === 'system-event',
     );
   }, [messagesData]);
+
+  // Identity of the newest conversation row. Changes whenever a message/event
+  // arrives (count grows or a newer timestamp appears). The live-follow effect
+  // keys on this so a new inbound message scrolls the viewport to the true
+  // bottom: message data arrives on a different query than activity, so without
+  // this the follow only fired on activity changes and landed short of the
+  // freshly appended row.
+  const latestMessageKey = useMemo(() => {
+    if (conversationItems.length === 0) return null;
+    let maxTs = conversationItems[0]!.timestamp;
+    for (const item of conversationItems) {
+      if (item.timestamp > maxTs) maxTs = item.timestamp;
+    }
+    return `${conversationItems.length}|${maxTs}`;
+  }, [conversationItems]);
 
   // Step layer items — curated isNarrativeStep set only (never the firehose;
   // iris-locked `795d974`). Suppress a tool's started row when its failure row is
@@ -1192,6 +1226,59 @@ export default function Activity() {
     return () => cancelAnimationFrame(id);
   }, [latestCurrentItemActivity]);
 
+  // Sticky scroll for new messages: follow a freshly arrived conversation row
+  // to the bottom when already pinned there. Messages arrive on a separate
+  // query than activity and the new row only lays out a frame after the data
+  // commits, so a single scroll would measure a stale (short) scrollHeight and
+  // land above the new message. Defer past layout with a double rAF so the new
+  // row's height is included before we scroll.
+  useEffect(() => {
+    if (!latestMessageKey || !isAtBottomRef.current) return;
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, [latestMessageKey]);
+
+  // Reveal-settle is stricter than feedSettling: it also waits for the initial
+  // activity (step) layer. feedSettling only covers the message load, next-page
+  // fetches and coverage paging, so without this the container could fade in on
+  // the message-only layout and then visibly pop when the first activity page
+  // lands with its step folds / default-open height. Block the settle reveal
+  // until the first activity page has loaded (or errored, leaving activitiesData
+  // undefined with no fetch in flight); the 600ms fallback still bounds a stall.
+  const revealSettling =
+    feedSettling ||
+    activityQuery.isLoading ||
+    (!activitiesData && activityQuery.isFetching);
+
+  // Reveal once the feed has loaded and stopped settling, one frame later so the
+  // pin effect's final scroll-to-bottom lands before we fade in.
+  useEffect(() => {
+    if (feedRevealed) return;
+    const feedLoaded = messagesData ?? activitiesData;
+    if (feedLoaded && !revealSettling) {
+      const id = requestAnimationFrame(() => setFeedRevealed(true));
+      return () => cancelAnimationFrame(id);
+    }
+  }, [feedRevealed, revealSettling, messagesData, activitiesData]);
+
+  // Fallback: never stay hidden longer than ~600ms after a feed switch, even if
+  // settling never resolves (an agent with no data, or a stalled fetch).
+  useEffect(() => {
+    if (feedRevealed) return;
+    const t = setTimeout(() => setFeedRevealed(true), 600);
+    return () => clearTimeout(t);
+  }, [agentId, feedRevealed]);
+
   return (
     <div className="flex h-full flex-col overflow-hidden bg-surface">
       {showHelloBanner && <FeishuHelloBanner onDismiss={dismissHelloBanner} />}
@@ -1213,7 +1300,9 @@ export default function Activity() {
 
       <div
         ref={scrollContainerRef}
-        className="flex-1 overflow-x-hidden overflow-y-auto px-4 pt-3 pb-[calc(64px+env(safe-area-inset-bottom))] md:px-10 md:pt-5 md:pb-10"
+        className={`flex-1 overflow-x-hidden overflow-y-auto px-4 pt-3 pb-[calc(64px+env(safe-area-inset-bottom))] transition-opacity duration-200 ease-out motion-reduce:transition-none md:px-10 md:pt-5 md:pb-10 ${
+          feedRevealed ? 'opacity-100' : 'opacity-0'
+        }`}
       >
         {/* Load-more indicator: shown at the very top while fetching an older page */}
         {isFetchingOlder && (
