@@ -144,6 +144,17 @@ const SHORTCODE_TO_GLYPH: Record<string, string> = {
   medal: '🏅',
   art: '🎨',
   rainbow: '🌈',
+
+  // observed in team reactions but missing above — keep the curated set in step
+  // with what people actually react with so reactions render as glyphs.
+  handshake: '🤝',
+  saluting_face: '🫡',
+  dart: '🎯',
+  clapper: '🎬',
+  crescent_moon: '🌙',
+  microscope: '🔬',
+  heavy_plus_sign: '➕',
+  gem: '💎',
 };
 
 /**
@@ -157,4 +168,22 @@ export function emojiGlyph(shortcode: string): string | undefined {
   if (!shortcode) return undefined;
   const key = shortcode.replace(/^:|:$/g, '').toLowerCase();
   return SHORTCODE_TO_GLYPH[key];
+}
+
+// Same shortcode shape the mrkdwn tokenizer recognises (`:name:`). Lowercase
+// letters/digits plus `_ + -`, so `:white_check_mark:` and `:+1:` both match.
+const SHORTCODE_RE = /:([a-z0-9_+-]+):/g;
+
+/**
+ * Replace known emoji shortcodes inside a plain-text string with their Unicode
+ * glyphs, leaving unknown (workspace-custom) shortcodes as `:name:` text.
+ *
+ * For step / tool-output text, which renders as raw plain text rather than
+ * through the mrkdwn renderer. Keeps a string in / string out so callers can
+ * keep rendering inside a `<pre>` or a single-line preview without switching to
+ * React nodes. Mirrors what `renderMrkdwn` already does for message bodies.
+ */
+export function replaceEmojiShortcodes(text: string): string {
+  if (!text || !text.includes(':')) return text;
+  return text.replace(SHORTCODE_RE, (whole, name: string) => emojiGlyph(name) ?? whole);
 }
