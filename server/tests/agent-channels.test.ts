@@ -8,7 +8,9 @@ import { join } from 'node:path';
 import { buildAgentChannelList, composeChannelList } from '../web/agent-channels.js';
 import type { AvatarEnrichmentDeps } from '../web/message-profiles.js';
 import { memberChannelsResultForAgent } from '../inbox/member-channels.js';
+import { messageServiceForAgent } from '../messages/message.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import type { Activity } from '../../shared/activity.js';
 import type { SubscriptionRecord } from '../inbox/slack-subscription.service.js';
 import type { AgentMessageRecord } from '../../shared/messages.js';
 import { withAnimaHome } from './anima-home.js';
@@ -315,6 +317,98 @@ test('buildAgentChannelList leaves DM avatar unset when resolution finds no phot
       const dm = res.channels.find((c) => c.id === 'D-bob');
       assert.ok(dm, 'DM channel should be present');
       assert.equal(dm.avatarUrl, undefined);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('buildAgentChannelList decorates an outbound-only DM via its dmUserId counterpart', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-channels-dm-outbound-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      // The agent messaged first: the DM has only an outbound record, which
+      // carries the counterpart as `dmUserId` (never `actorUserId`). The shared
+      // /messages enrichment only resolves inbound senders, so this row used to
+      // stay on the initials fallback; the master list resolves it via the
+      // counterpart id instead.
+      const outboundDm: Activity = {
+        activityId: 'act-dm-carol',
+        createdAt: '2026-05-12T00:00:00.000Z',
+        type: 'external.effect.completed',
+        payload: {
+          effect: 'slack.message.send',
+          channel: 'D-carol',
+          dmUserId: 'UCAROL1',
+          dmHandle: 'carol',
+          platform: 'slack',
+          text: 'hi carol',
+          ts: '1770000300.000001',
+        },
+      };
+      await messageServiceForAgent('scout').recordOutboxActivity(outboundDm);
+
+      const deps: AvatarEnrichmentDeps = {
+        loadAgent: async () => ({
+          id: 'scout',
+          slack: { botToken: 'xoxb-test', teamId: 'T-demo' },
+        }),
+        getWebClient: async () => ({}),
+        resolveAvatar: async ({ userId }) =>
+          userId === 'UCAROL1' ? 'https://avatars.example/carol.png' : undefined,
+      };
+
+      const res = await buildAgentChannelList('scout', deps);
+      const dm = res.channels.find((c) => c.id === 'D-carol');
+      assert.ok(dm, 'outbound-only DM channel should be present');
+      assert.equal(dm.kind, 'dm');
+      assert.equal(dm.avatarUrl, 'https://avatars.example/carol.png');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('buildAgentChannelList resolves zero avatars for a channel-only history', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-channels-no-dm-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      // Three inbound public-channel messages from distinct senders, no DMs. The
+      // master list only ever shows DM avatars, so opening it must not fan out a
+      // users.info per channel sender — that was the regression Milo flagged.
+      for (const [i, userId] of ['UCH1', 'UCH2', 'UCH3'].entries()) {
+        await new WakeQueueService('scout').enqueue(
+          makeSlackEvent({
+            channelId: 'C-product',
+            teamId: 'T-demo',
+            text: `msg ${i}`,
+            userId,
+            eventId: `evt-channel-${i}`,
+            ts: `177000040${i}.000001`,
+            timestamp: '2026-05-12T00:00:00.000Z',
+          }),
+        );
+      }
+
+      let resolverCalls = 0;
+      const deps: AvatarEnrichmentDeps = {
+        loadAgent: async () => ({
+          id: 'scout',
+          slack: { botToken: 'xoxb-test', teamId: 'T-demo' },
+        }),
+        getWebClient: async () => ({}),
+        resolveAvatar: async () => {
+          resolverCalls += 1;
+          return 'https://avatars.example/should-not-be-called.png';
+        },
+      };
+
+      const res = await buildAgentChannelList('scout', deps);
+      assert.ok(
+        res.channels.some((c) => c.id === 'C-product'),
+        'channel should still be listed',
+      );
+      assert.equal(resolverCalls, 0, 'no avatar resolution for channel-only history');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

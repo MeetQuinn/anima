@@ -20,7 +20,7 @@ import type { AgentMessageHistoryPage } from '../../shared/messages.js';
 // to the initial — resolution is never a hard gate. Dedupes by user so the
 // resolver cache is hit once per unique sender per page.
 
-const SLACK_USER_ID = /^[UW][A-Z0-9]+$/;
+export const SLACK_USER_ID = /^[UW][A-Z0-9]+$/;
 
 // External touchpoints, injectable so the contract can be unit-tested without
 // real Slack IO. Production callers omit `deps` and get the live services.
@@ -49,56 +49,68 @@ const defaultDeps: AvatarEnrichmentDeps = {
   },
 };
 
+// Shared resolution + gating boundary for best-effort Slack avatar lookups.
+// Callers pass the exact user ids they need resolved (inbound senders for the
+// /messages feed, DM counterparts for the Channels master list), so resolution
+// is always scoped to what the surface will actually render. Requires the
+// agent's bot token + a non-empty team id: the workspace-directory disk cache
+// in SlackProfileResolver is keyed by team id, so an empty key bypasses it and
+// a connected-but-teamless/legacy Slack config would call users.info once per
+// unique id on every poll. Avatars are decorative, so any missing prerequisite
+// or failure yields an empty map and the UI falls back to initials. One
+// resolver call per unique valid id; never a hard gate.
+export async function resolveAvatarsForUsers(
+  agentId: string,
+  userIds: Iterable<string>,
+  deps: AvatarEnrichmentDeps = defaultDeps,
+): Promise<Map<string, string>> {
+  const avatarByUser = new Map<string, string>();
+  try {
+    const unique = new Set<string>();
+    for (const id of userIds) {
+      if (id && SLACK_USER_ID.test(id)) unique.add(id);
+    }
+    if (unique.size === 0) return avatarByUser;
+
+    const agent = await deps.loadAgent(agentId);
+    if (!agent.slack?.botToken) return avatarByUser;
+    const teamId = agent.slack.teamId;
+    if (!teamId) return avatarByUser;
+    const client = await deps.getWebClient(agent.id);
+
+    await Promise.all(
+      [...unique].map(async (userId) => {
+        const avatarUrl = await deps.resolveAvatar({ client, teamId, userId });
+        if (avatarUrl) avatarByUser.set(userId, avatarUrl);
+      }),
+    );
+  } catch {
+    // Decorative only: never let avatar resolution break the caller.
+  }
+  return avatarByUser;
+}
+
 export async function enrichInboundAvatars(
   agentId: string,
   page: AgentMessageHistoryPage,
   deps: AvatarEnrichmentDeps = defaultDeps,
 ): Promise<AgentMessageHistoryPage> {
-  try {
-    const userIds = new Set<string>();
-    for (const m of page.entries) {
-      if (
-        m.direction === 'in' &&
-        m.platform !== 'feishu' &&
-        m.actorUserId &&
-        SLACK_USER_ID.test(m.actorUserId)
-      ) {
-        userIds.add(m.actorUserId);
-      }
+  const userIds = new Set<string>();
+  for (const m of page.entries) {
+    if (m.direction === 'in' && m.platform !== 'feishu' && m.actorUserId) {
+      userIds.add(m.actorUserId);
     }
-    if (userIds.size === 0) return page;
-
-    const agent = await deps.loadAgent(agentId);
-    if (!agent.slack?.botToken) return page;
-    // Require a non-empty team id before resolving. The workspace directory
-    // disk cache in SlackProfileResolver is keyed by team id; an empty key
-    // bypasses it, so a connected-but-teamless/legacy Slack config would call
-    // users.info once per unique sender on every 3s /messages poll. Avatars are
-    // decorative, so a missing team id degrades to the initials fallback rather
-    // than hammering the Slack API uncached.
-    const teamId = agent.slack.teamId;
-    if (!teamId) return page;
-    const client = await deps.getWebClient(agent.id);
-
-    const avatarByUser = new Map<string, string>();
-    await Promise.all(
-      // One resolver call per unique sender (the Set already deduped).
-      [...userIds].map(async (userId) => {
-        const avatarUrl = await deps.resolveAvatar({ client, teamId, userId });
-        if (avatarUrl) avatarByUser.set(userId, avatarUrl);
-      }),
-    );
-    if (avatarByUser.size === 0) return page;
-
-    return {
-      ...page,
-      entries: page.entries.map((m) => {
-        const avatarUrl = m.actorUserId ? avatarByUser.get(m.actorUserId) : undefined;
-        return avatarUrl ? { ...m, actorAvatarUrl: avatarUrl } : m;
-      }),
-    };
-  } catch {
-    // Decorative only: never let avatar resolution break message history.
-    return page;
   }
+  if (userIds.size === 0) return page;
+
+  const avatarByUser = await resolveAvatarsForUsers(agentId, userIds, deps);
+  if (avatarByUser.size === 0) return page;
+
+  return {
+    ...page,
+    entries: page.entries.map((m) => {
+      const avatarUrl = m.actorUserId ? avatarByUser.get(m.actorUserId) : undefined;
+      return avatarUrl ? { ...m, actorAvatarUrl: avatarUrl } : m;
+    }),
+  };
 }

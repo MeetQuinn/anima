@@ -4,7 +4,11 @@ import {
   type SubscriptionRecord,
 } from '../inbox/slack-subscription.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
-import { enrichInboundAvatars, type AvatarEnrichmentDeps } from './message-profiles.js';
+import {
+  resolveAvatarsForUsers,
+  SLACK_USER_ID,
+  type AvatarEnrichmentDeps,
+} from './message-profiles.js';
 import type {
   AgentChannelListResponse,
   AgentChannelSummary,
@@ -131,17 +135,37 @@ export function composeChannelList(input: {
   return { channels };
 }
 
+// Map each local Slack DM surface to its counterpart's Slack user id, the only
+// id the master list needs an avatar for. Inbound DM messages carry the sender
+// as `actorUserId`; an outbound-only DM (the agent messaged first) carries the
+// counterpart as `dmUserId`. Channels are skipped entirely, so opening the
+// master list never resolves avatars for arbitrary channel senders — that would
+// recreate the cold-cache users.info fan-out this route was moved away from.
+// First valid counterpart per DM wins; messages lacking a counterpart id are
+// passed over so a later message for the same DM can still supply one.
+function dmCounterpartsByChannel(messages: AgentMessageRecord[]): Map<string, string> {
+  const byChannel = new Map<string, string>();
+  for (const message of messages) {
+    if (!isSlackSurfaceMessage(message)) continue;
+    const id = message.channelId!.trim();
+    if (kindForChannelId(id) !== 'dm') continue;
+    if (byChannel.has(id)) continue;
+    const counterpart = message.direction === 'in' ? message.actorUserId : message.dmUserId;
+    if (counterpart && SLACK_USER_ID.test(counterpart)) byChannel.set(id, counterpart);
+  }
+  return byChannel;
+}
+
 // IO wrapper: fetch local message history + subscription overlay. The durable
-// message ledger never persists sender avatars, so the DM counterpart avatar is
-// decorated read-time through the same cache-first resolver the /messages feed
-// uses (enrichInboundAvatars) before the list is folded. Without this the
-// master-list DM rows render from raw records with no actorAvatarUrl and fall
-// back to the initial letter, even though the detail-pane bylines (served by the
-// already-enriched /messages route) show the real photo. Resolution is
-// cache-first against the workspace-directory disk cache the /messages poll
-// keeps warm; a miss costs one users.info per unique sender and any failure
-// leaves the avatar unset, so this stays a fast history view, not a Slack
-// membership inventory. deps stay injectable so the enrichment is unit-testable.
+// message ledger never persists sender avatars, so DM rows would render from
+// raw records with no photo and fall back to the initial letter, even though
+// the detail-pane bylines (served by the already-enriched /messages route) show
+// the real photo. We close that gap read-time, but scoped to DM counterparts
+// only: resolving one avatar per unique DM counterpart through the same
+// cache-first resolver the /messages feed shares. A miss costs one users.info
+// per unique DM counterpart and any failure leaves the avatar unset, so this
+// stays a fast local-history view, not a Slack membership inventory. deps stay
+// injectable so the enrichment is unit-testable without real Slack IO.
 export async function buildAgentChannelList(
   agentId: string,
   deps?: AvatarEnrichmentDeps,
@@ -150,9 +174,18 @@ export async function buildAgentChannelList(
     listSubscriptionsForAgent(agentId),
     messageServiceForAgent(agentId).listAll(),
   ]);
-  const enriched = await enrichInboundAvatars(agentId, { entries: messages }, deps);
-  return composeChannelList({
-    subscriptions,
-    messages: enriched.entries,
-  });
+
+  const dmCounterparts = dmCounterpartsByChannel(messages);
+  const avatarByUser = await resolveAvatarsForUsers(agentId, dmCounterparts.values(), deps);
+
+  const list = composeChannelList({ subscriptions, messages });
+  if (avatarByUser.size > 0) {
+    for (const channel of list.channels) {
+      if (channel.kind !== 'dm' || channel.avatarUrl) continue;
+      const counterpart = dmCounterparts.get(channel.id);
+      const avatarUrl = counterpart ? avatarByUser.get(counterpart) : undefined;
+      if (avatarUrl) channel.avatarUrl = avatarUrl;
+    }
+  }
+  return list;
 }
