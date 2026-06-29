@@ -233,6 +233,30 @@ test('buildCodeAgentDeliveryPrompt emits <attached_files> metadata and omits blo
   assert.doesNotMatch(buildCodeAgentDeliveryPrompt(buildInput({}).event), /<attached_files>/);
 });
 
+test('buildCodeAgentDeliveryPrompt includes Slack message previews carried by unfurls', () => {
+  const event = makeSlackEvent({
+    channelId: 'D-user',
+    previews: [{
+      authorName: 'Iris',
+      channelId: 'D-private',
+      fromUrl: 'https://example.slack.com/archives/D-private/p1770000100000001',
+      isPrivate: true,
+      messageTs: '1770000100.000001',
+      text: 'Preview delivered by Slack',
+    }],
+    teamId: 'T-demo',
+    text: 'can you see this?',
+    ts: '1770000200.000001',
+    userId: 'U1',
+  });
+
+  const text = buildCodeAgentDeliveryPrompt(event);
+
+  assert.match(text, /<slack_message_previews>/);
+  assert.match(text, /source="slack_unfurl" private_preview="true" author="Iris" channel_id="D-private"/);
+  assert.match(text, /Preview delivered by Slack/);
+});
+
 test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack targets', () => {
   const text = buildAnimaRuntimeProfile({
     displayName: 'Iris',

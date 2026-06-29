@@ -632,6 +632,20 @@ function inboxItemForMessage(message: AgentMessageRecord): InboxItem {
     kind: 'slack',
     messageTs: message.messageTs ?? '',
     ...(message.permalink ? { permalink: message.permalink } : {}),
+    ...(message.previews?.length ? {
+      previews: message.previews
+        .filter((preview) => preview.platform === 'slack' && preview.type === 'message_unfurl')
+        .map((preview) => ({
+          text: preview.text,
+          ...(preview.authorId ? { authorId: preview.authorId } : {}),
+          ...(preview.authorName ? { authorName: preview.authorName } : {}),
+          ...(preview.authorSubname ? { authorSubname: preview.authorSubname } : {}),
+          ...(preview.channelId ? { channelId: preview.channelId } : {}),
+          ...(preview.fromUrl ? { fromUrl: preview.fromUrl } : {}),
+          ...(preview.isPrivate ? { isPrivate: true } : {}),
+          ...(preview.messageTs ? { messageTs: preview.messageTs } : {}),
+        })),
+    } : {}),
     teamId: '',
     text: message.text,
     ...(message.threadTs ? { threadTs: message.threadTs } : {}),

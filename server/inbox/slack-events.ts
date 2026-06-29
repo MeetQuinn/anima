@@ -1,5 +1,6 @@
 import { nowIso, slackMessageEventId, slackSurfaceId } from '../ids.js';
 import { slackFileFromRaw } from '../slack/slack.helper.js';
+import { slackMessagePreviewsFromAttachments } from '../slack/message-previews.js';
 import type { SlackFileMeta, SlackInboxItem } from '../../shared/inbox.js';
 import type { SlackUserProfile } from './slack-profiles.js';
 
@@ -22,6 +23,7 @@ export interface SlackMessageEnvelope {
 }
 
 export interface SlackRawMessageEvent {
+  attachments?: unknown[];
   bot_id?: string;
   channel?: string;
   channel_type?: string;
@@ -87,6 +89,7 @@ export function normalizeSlackMessage(input: {
   const threadTs = input.event.thread_ts || undefined;
   const eventId = slackMessageEventId(teamId, channelId, ts);
   const files = input.files ?? input.event.files?.map(slackFileFromRaw).filter(Boolean) as SlackFile[] | undefined;
+  const previews = slackMessagePreviewsFromAttachments(input.event.attachments);
 
   const handlingAt = nowIso();
   const result: SlackEvent = {
@@ -105,6 +108,7 @@ export function normalizeSlackMessage(input: {
   if (threadTs) result.threadTs = threadTs;
   if (input.permalink) result.permalink = input.permalink;
   if (files?.length) result.files = files;
+  if (previews.length) result.previews = previews;
   return result;
 }
 

@@ -15,6 +15,7 @@ import {
   replaceSlackChannelMentions,
   replaceSlackUserMentions,
 } from '../slack/slack.helper.js';
+import { slackMessagePreviewsFromAttachments } from '../slack/message-previews.js';
 
 export interface SlackTranscriptRequest {
   channel: string;
@@ -28,6 +29,7 @@ export interface SlackFileCacheContext {
 }
 
 export interface SlackConversationMessage {
+  attachments?: unknown[];
   bot_id?: string;
   files?: SlackFileInfo[];
   reply_count?: number;
@@ -204,7 +206,9 @@ function slackTranscriptLine(
     userLabels.channelMentions,
   );
   const fileAnnotations = slackTranscriptFileAnnotations(message.files, cacheContext);
-  const trailer = fileAnnotations ? `\n${fileAnnotations}` : '';
+  const previewAnnotations = slackTranscriptPreviewAnnotations(message.attachments);
+  const annotations = [fileAnnotations, previewAnnotations].filter(Boolean).join('\n');
+  const trailer = annotations ? `\n${annotations}` : '';
   return `[${fields.join(' ')}] ${slackTranscriptActor(message, userLabels.actors)}: ${text}${trailer}`;
 }
 
@@ -224,9 +228,36 @@ function slackTranscriptFileAnnotations(
     .join('\n');
 }
 
+function slackTranscriptPreviewAnnotations(attachments: unknown[] | undefined): string {
+  const previews = slackMessagePreviewsFromAttachments(attachments);
+  if (previews.length === 0) return '';
+  return previews
+    .map((preview) => {
+      const attrs = [
+        'slack_preview',
+        preview.isPrivate ? 'private=true' : '',
+        preview.authorName ? `author=${quoteValue(preview.authorName)}` : '',
+        preview.authorId ? `author_id=${preview.authorId}` : '',
+        preview.channelId ? `channel_id=${preview.channelId}` : '',
+        preview.messageTs ? `message_ts=${preview.messageTs}` : '',
+        preview.fromUrl ? `url=${preview.fromUrl}` : '',
+      ].filter(Boolean).join(' ');
+      const body = preview.text
+        .split(/\r?\n/)
+        .map((line) => `  > ${line}`)
+        .join('\n');
+      return `  preview: ${attrs}\n${body}`;
+    })
+    .join('\n');
+}
+
 function slackReadChannelRef(request: SlackTranscriptRequest): string {
   if (request.channelName) return `#${request.channelName}`;
   return request.channel;
+}
+
+function quoteValue(value: string): string {
+  return JSON.stringify(value);
 }
 
 function slackReadThreadRef(message: SlackConversationMessage, request: SlackTranscriptRequest): string {
