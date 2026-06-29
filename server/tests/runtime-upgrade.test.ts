@@ -15,6 +15,7 @@ import {
   RuntimeUpgradeConflictError,
   RuntimeUpgradeUnavailableError,
   RuntimeUpgradeService,
+  runtimeUpgradeWorkerSpawnPlan,
 } from '../runtime-management/runtime-upgrade.js';
 import { serverConfigStore } from '../storage/schema/server.store.js';
 
@@ -249,6 +250,81 @@ test('runtime upgrade worker rolls metadata back when target artifact is incompl
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(rootDir, { force: true, recursive: true });
   }
+});
+
+test('runtime upgrade worker uses a transient systemd user unit on Linux', () => {
+  const plan = runtimeUpgradeWorkerSpawnPlan({
+    animactlScript: '/opt/anima/current/node_modules/@meetquinn/animactl/dist/server/cli/animactl.js',
+    animaHome: '/home/ubuntu/.anima',
+    dashboardHost: '127.0.0.1',
+    dashboardPort: 4174,
+    env: {
+      ANIMA_AGENT_ID: 'milo',
+      ANIMA_HOME: '/tmp/wrong-home',
+      PATH: '/usr/bin:/bin',
+      USER: 'ubuntu',
+    },
+    logPath: '/home/ubuntu/.anima/logs/runtime-upgrade.log',
+    nodePath: '/usr/bin/node',
+    nowMs: 1782711779000,
+    platform: 'linux',
+    previousStartedAt: '2026-06-29T05:00:00.000Z',
+    previousVersion: '0.1.11-canary.308.1.57ab7e5',
+    releaseTrack: 'canary',
+    targetVersion: '0.1.11-canary.309.1.180614d',
+  });
+
+  assert.equal(plan.command, 'systemd-run');
+  assert.equal(plan.detached, true);
+  assert.equal(plan.stdio, 'ignore');
+  assert.equal(plan.waitForExit, true);
+  assert.equal(plan.cwd, '/opt/anima/current/node_modules/@meetquinn/animactl');
+  assert.ok(plan.args.includes('--user'));
+  assert.ok(plan.args.includes('--quiet'));
+  assert.ok(plan.args.includes('--collect'));
+  assert.ok(plan.args.some((arg) => /^--unit=anima-runtime-upgrade-\d+-1782711779000$/.test(arg)));
+  assert.ok(plan.args.includes('--property=WorkingDirectory=/opt/anima/current/node_modules/@meetquinn/animactl'));
+  assert.ok(plan.args.includes('--property=StandardOutput=append:/home/ubuntu/.anima/logs/runtime-upgrade.log'));
+  assert.ok(plan.args.includes('--property=StandardError=append:/home/ubuntu/.anima/logs/runtime-upgrade.log'));
+  assert.ok(plan.args.includes('--setenv=ANIMA_HOME=/home/ubuntu/.anima'));
+  assert.ok(plan.args.includes('--setenv=PATH=/usr/bin:/bin'));
+  assert.ok(!plan.args.some((arg) => arg.includes('ANIMA_AGENT_ID')));
+  assert.equal(plan.args.at(-2), '--previous-started-at');
+  assert.equal(plan.args.at(-1), '2026-06-29T05:00:00.000Z');
+});
+
+test('runtime upgrade worker keeps direct detached node spawn off Linux', () => {
+  const plan = runtimeUpgradeWorkerSpawnPlan({
+    animactlScript: '/opt/anima/current/node_modules/@meetquinn/animactl/dist/server/cli/animactl.js',
+    animaHome: '/Users/totoday/.anima',
+    dashboardHost: '127.0.0.1',
+    dashboardPort: 4174,
+    env: {
+      ANIMA_INBOX_ITEM_ID: 'item_1',
+      PATH: '/opt/homebrew/bin:/usr/bin:/bin',
+    },
+    logPath: '/Users/totoday/.anima/logs/runtime-upgrade.log',
+    nodePath: '/opt/homebrew/bin/node',
+    platform: 'darwin',
+    previousVersion: '0.1.10',
+    releaseTrack: 'stable',
+    targetVersion: '0.1.11',
+  });
+
+  assert.equal(plan.command, '/opt/homebrew/bin/node');
+  assert.equal(plan.detached, true);
+  assert.equal(plan.stdio, 'log');
+  assert.equal(plan.waitForExit, false);
+  assert.equal(plan.cwd, '/opt/anima/current/node_modules/@meetquinn/animactl');
+  assert.deepEqual(plan.args.slice(0, 5), [
+    '/opt/anima/current/node_modules/@meetquinn/animactl/dist/server/cli/animactl.js',
+    'runtime',
+    'upgrade-worker',
+    '--target-version',
+    '0.1.11',
+  ]);
+  assert.equal(plan.env.ANIMA_HOME, '/Users/totoday/.anima');
+  assert.equal(plan.env.ANIMA_INBOX_ITEM_ID, undefined);
 });
 
 async function writeFakeNpm(path: string): Promise<void> {
