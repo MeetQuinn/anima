@@ -63,6 +63,7 @@ function buildSlackMessageDeliveryPrompt(event: SlackEvent): string {
   const envelope = `${messageEnvelope(event)} ${actorLabel(event)}: ${event.text}`;
   return buildDeliveryEventPrompt({
     attentionSuggestion: event.attentionSuggestion,
+    body: formatSlackMessagePreviews(event.previews),
     envelope,
     files: event.files,
     title: 'New Slack message',
@@ -250,6 +251,23 @@ function formatAttachedFiles(files: InboxFileMeta[] | undefined): string {
   if (!files?.length) return '';
   const rendered = files.map(formatAttachedFile);
   return '<attached_files>\n' + rendered.join('\n') + '\n</attached_files>';
+}
+
+function formatSlackMessagePreviews(previews: SlackEvent['previews']): string {
+  if (!previews?.length) return '';
+  const rendered = previews.map((preview) => {
+    const attrs = [
+      'source="slack_unfurl"',
+      preview.isPrivate ? 'private_preview="true"' : '',
+      preview.authorName ? `author=${escapeAttr(preview.authorName)}` : '',
+      preview.authorId ? `author_id=${escapeAttr(preview.authorId)}` : '',
+      preview.channelId ? `channel_id=${escapeAttr(preview.channelId)}` : '',
+      preview.messageTs ? `message_ts=${escapeAttr(preview.messageTs)}` : '',
+      preview.fromUrl ? `url=${escapeAttr(preview.fromUrl)}` : '',
+    ].filter(Boolean).join(' ');
+    return `<preview ${attrs}>\n${preview.text}\n</preview>`;
+  });
+  return '<slack_message_previews>\n' + rendered.join('\n') + '\n</slack_message_previews>';
 }
 
 function formatAttachedFile(file: InboxFileMeta): string {

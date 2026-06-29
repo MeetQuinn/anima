@@ -1,6 +1,7 @@
 import type { Activity } from '../../shared/activity.js';
 import type {
   AgentMessageFile,
+  AgentMessagePreview,
   AgentMessageRecord,
 } from '../../shared/messages.js';
 import type {
@@ -113,6 +114,7 @@ function slackInboxMessage(item: SlackInboxItem): AgentMessageRecord {
     messageId: messageIdForInboxItem(item),
     messageTs: item.messageTs,
     ...(item.permalink ? { permalink: item.permalink } : {}),
+    ...(item.previews?.length ? { previews: item.previews.map(slackPreviewMessage) } : {}),
     source: { id: item.id, kind: 'inbox' },
     text: item.text,
     ...(item.threadTs ? { threadTs: item.threadTs } : {}),
@@ -231,6 +233,21 @@ function slackActorLabel(item: SlackInboxItem): string {
     return name && name !== handle ? `${name} (@${handle})` : `@${handle}`;
   }
   return actor?.displayName ?? actor?.realName ?? actor?.userId ?? 'Unknown user';
+}
+
+function slackPreviewMessage(preview: NonNullable<SlackInboxItem['previews']>[number]): AgentMessagePreview {
+  return {
+    platform: 'slack',
+    text: preview.text,
+    type: 'message_unfurl',
+    ...(preview.authorId ? { authorId: preview.authorId } : {}),
+    ...(preview.authorName ? { authorName: preview.authorName } : {}),
+    ...(preview.authorSubname ? { authorSubname: preview.authorSubname } : {}),
+    ...(preview.channelId ? { channelId: preview.channelId } : {}),
+    ...(preview.fromUrl ? { fromUrl: preview.fromUrl } : {}),
+    ...(preview.isPrivate ? { isPrivate: true } : {}),
+    ...(preview.messageTs ? { messageTs: preview.messageTs } : {}),
+  };
 }
 
 function feishuActorLabel(item: FeishuInboxItem): string {

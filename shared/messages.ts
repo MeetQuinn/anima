@@ -33,6 +33,19 @@ export interface AgentMessageSource {
   kind: 'activity' | 'inbox';
 }
 
+export interface AgentMessagePreview {
+  authorId?: string;
+  authorName?: string;
+  authorSubname?: string;
+  channelId?: string;
+  fromUrl?: string;
+  isPrivate?: boolean;
+  messageTs?: string;
+  platform: 'slack';
+  text: string;
+  type: 'message_unfurl';
+}
+
 export interface AgentMessageRecord {
   actor?: string;
   // Inbound sender's Slack avatar (image_72), resolved best-effort at read time
@@ -57,6 +70,7 @@ export interface AgentMessageRecord {
   optionLabel?: string;
   permalink?: string;
   platform?: string;
+  previews?: AgentMessagePreview[];
   question?: string;
   reaction?: AgentMessageReaction;
   reminderId?: string;

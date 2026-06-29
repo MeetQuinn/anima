@@ -1,11 +1,11 @@
-import { Bell, SmilePlus, UserPlus, type LucideIcon } from 'lucide-react';
+import { Bell, MessageSquareQuote, SmilePlus, UserPlus, type LucideIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { renderMrkdwn } from '@/lib/mrkdwn';
 import { emojiGlyph } from '@/lib/emoji';
 import { clockHM, dateLabel } from '@/lib/format';
 import { AttachedFiles, UploadedFile } from '../activity/Attachments';
 import type { ActivityFeedItem, SurfaceChip } from '@/lib/activity-feed';
-import type { InboxItem } from '@shared/inbox';
+import type { InboxItem, SlackMessagePreview } from '@shared/inbox';
 import type { SlackFile } from '@/types';
 
 // ---------------------------------------------------------------------------
@@ -87,6 +87,10 @@ export function inboundFiles(event: InboxItem): SlackFile[] {
   return [];
 }
 
+function inboundPreviews(event: InboxItem): SlackMessagePreview[] {
+  return event.kind === 'slack' ? event.previews ?? [] : [];
+}
+
 export function MsgAvatar({ author }: { author: Author }) {
   if (author.avatarUrl) {
     return (
@@ -116,6 +120,7 @@ export function MessageBody({ item, agentId }: { item: ActivityFeedItem; agentId
   if (item.kind === 'message-in') {
     const text = inboundText(item.event).trim();
     const files = inboundFiles(item.event);
+    const previews = inboundPreviews(item.event);
     return (
       <>
         {text && (
@@ -124,6 +129,7 @@ export function MessageBody({ item, agentId }: { item: ActivityFeedItem; agentId
           </div>
         )}
         {files.length > 0 && <AttachedFiles files={files} agentId={agentId} />}
+        {previews.length > 0 && <SlackPreviewCards previews={previews} />}
       </>
     );
   }
@@ -176,6 +182,47 @@ export function MessageBody({ item, agentId }: { item: ActivityFeedItem; agentId
           </code>
         ))}
     </span>
+  );
+}
+
+function SlackPreviewCards({ previews }: { previews: SlackMessagePreview[] }) {
+  return (
+    <div className="mt-2 flex flex-col gap-2">
+      {previews.map((preview, index) => (
+        <SlackPreviewCard key={`${preview.fromUrl ?? preview.channelId ?? 'preview'}:${preview.messageTs ?? index}`} preview={preview} />
+      ))}
+    </div>
+  );
+}
+
+function SlackPreviewCard({ preview }: { preview: SlackMessagePreview }) {
+  const author = preview.authorName || preview.authorSubname || preview.authorId || 'Slack message';
+  const meta = [
+    author,
+    preview.channelId,
+    preview.isPrivate ? 'private preview' : '',
+  ].filter(Boolean).join(' · ');
+  return (
+    <div className="max-w-full rounded-md border border-border-soft bg-surface-raised/65 px-3 py-2">
+      <div className="mb-1 flex min-w-0 items-center gap-1.5 font-sans text-[11px] text-text-subtle">
+        <MessageSquareQuote className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        <span className="shrink-0 font-semibold uppercase tracking-[0.08em]">Slack preview</span>
+        {meta && <span className="min-w-0 truncate">· {meta}</span>}
+        {preview.fromUrl && (
+          <a
+            className="ml-auto shrink-0 text-[10px] text-text-subtle underline-offset-2 hover:text-accent hover:underline"
+            href={preview.fromUrl}
+            rel="noreferrer"
+            target="_blank"
+          >
+            Open
+          </a>
+        )}
+      </div>
+      <div className="whitespace-pre-wrap break-words font-sans text-[13px] leading-relaxed text-text-muted">
+        {renderMrkdwn(preview.text)}
+      </div>
+    </div>
   );
 }
 

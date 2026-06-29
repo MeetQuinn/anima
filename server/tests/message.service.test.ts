@@ -162,6 +162,47 @@ test('wake queue enqueue writes inbound messages without duplicate ledger rows',
   }
 });
 
+test('wake queue enqueue preserves Slack message previews in the message ledger', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-message-preview-ledger-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const event = makeSlackEvent({
+        channelId: 'D-owner',
+        eventId: 'evt-message-preview-ledger',
+        previews: [{
+          authorName: 'Iris',
+          channelId: 'D-private',
+          fromUrl: 'https://example.slack.com/archives/D-private/p1770000100000001',
+          isPrivate: true,
+          messageTs: '1770000100.000001',
+          text: 'Preview delivered by Slack',
+        }],
+        teamId: 'T-demo',
+        text: 'can you see this link?',
+        timestamp: '2026-05-11T00:00:00.000Z',
+        ts: '1770000200.000001',
+        userId: 'U-owner',
+      });
+
+      await new WakeQueueService('scout').enqueue(event);
+
+      const messages = await new MessageStore('scout').readAll();
+      assert.deepEqual(messages[0]?.previews, [{
+        authorName: 'Iris',
+        channelId: 'D-private',
+        fromUrl: 'https://example.slack.com/archives/D-private/p1770000100000001',
+        isPrivate: true,
+        messageTs: '1770000100.000001',
+        platform: 'slack',
+        text: 'Preview delivered by Slack',
+        type: 'message_unfurl',
+      }]);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('tool activity does not fail successful effects when message ledger write fails', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-message-outbox-failure-test-'));
   try {

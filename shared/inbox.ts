@@ -52,6 +52,19 @@ export type InboxFileMeta = z.infer<typeof InboxFileMeta>;
 export const SlackFileMeta = InboxFileMeta;
 export type SlackFileMeta = InboxFileMeta;
 
+export const SlackMessagePreview = z.object({
+  authorId: z.string().optional(),
+  authorName: z.string().optional(),
+  authorSubname: z.string().optional(),
+  channelId: z.string().optional(),
+  fromUrl: z.string().optional(),
+  isPrivate: z.boolean().optional(),
+  messageTs: z.string().optional(),
+  text: z.string(),
+});
+
+export type SlackMessagePreview = z.infer<typeof SlackMessagePreview>;
+
 export const FeishuInboxActor = z.object({
   displayName: z.string().optional(),
   openId: z.string().optional(),
@@ -77,6 +90,7 @@ export const SlackInboxItem = InboxItemBase.extend({
   kind: z.literal('slack'),
   messageTs: z.string(),
   permalink: z.string().optional(),
+  previews: z.array(SlackMessagePreview).optional(),
   teamId: z.string(),
   text: z.string(),
   threadTs: z.string().optional(),
