@@ -1,10 +1,6 @@
-import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
-import { defaultAgentRegistryService } from '../agents/agent.service.js';
-import { memberChannelsResultForAgent, type MemberChannel } from '../inbox/member-channels.js';
-import { SlackProfileResolver } from '../inbox/slack-profiles.js';
 import {
-  attentionMapForSubscriptions,
   listSubscriptionsForAgent,
+  subscriptionStatus,
   type SubscriptionRecord,
 } from '../inbox/slack-subscription.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
@@ -13,11 +9,6 @@ import type {
   AgentChannelSummary,
   AgentMessageRecord,
 } from '../../shared/messages.js';
-
-// How many recent messages to scan when folding DMs out of the message feed.
-// 1:1 DMs have no Slack "membership", so they only surface here; the channel
-// list itself comes from authoritative `is_member` data.
-const DM_SCAN_LIMIT = 500;
 
 function isFeishuChatId(id: string): boolean {
   return id.startsWith('oc_');
@@ -36,148 +27,119 @@ function laterOf(a: string | undefined, b: string | undefined): string | undefin
   return a >= b ? a : b; // ISO-8601 strings compare lexicographically
 }
 
-// Pure composition: given the agent's real member channels, subscription
-// records, and a slice of message history, produce the Slack-only channel +
-// DM list sorted by most recent activity. No IO, so directly unit-testable.
+function subscriptionActivityAt(subscription: SubscriptionRecord): string {
+  return subscription.lastActivityAt ?? subscription.lastPostedAt ?? subscription.updatedAt;
+}
+
+function bestSubscriptionByChannel(subscriptions: SubscriptionRecord[]): Map<string, SubscriptionRecord> {
+  const byChannel = new Map<string, SubscriptionRecord>();
+  for (const subscription of subscriptions) {
+    if (subscription.kind !== 'channel') continue;
+    if (isFeishuChatId(subscription.channelId)) continue;
+    const existing = byChannel.get(subscription.channelId);
+    if (!existing || subscriptionActivityAt(subscription) > subscriptionActivityAt(existing)) {
+      byChannel.set(subscription.channelId, subscription);
+    }
+  }
+  return byChannel;
+}
+
+function isSlackSurfaceMessage(message: AgentMessageRecord): boolean {
+  if (message.platform && message.platform !== 'slack') return false;
+  const id = message.channelId?.trim();
+  return Boolean(id && !isFeishuChatId(id));
+}
+
+function cleanChannelName(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.startsWith('#')) return trimmed.slice(1);
+  if (trimmed.startsWith('DM with @')) return trimmed.slice('DM with @'.length);
+  if (trimmed.startsWith('DM with ')) return trimmed.slice('DM with '.length);
+  if (trimmed.startsWith('@')) return trimmed.slice(1);
+  return trimmed;
+}
+
+function displayNameForMessage(message: AgentMessageRecord, kind: 'channel' | 'dm'): string | undefined {
+  if (kind === 'dm') {
+    return cleanChannelName(message.dmHandle)
+      ?? cleanChannelName(message.channelDisplayName)
+      ?? cleanChannelName(message.actorHandle)
+      ?? cleanChannelName(message.actorDisplayName)
+      ?? cleanChannelName(message.actor);
+  }
+  return cleanChannelName(message.channelName) ?? cleanChannelName(message.channelDisplayName);
+}
+
+// Pure composition: local message-history conversations only. A channel or DM
+// appears if the agent has at least one local Slack message for that surface.
+// Subscriptions overlay muted/following status and activity timestamps, but they
+// never create rows by themselves. That intentionally means silent adds are not
+// listed, and historical channels remain visible if the local ledger has them.
 export function composeChannelList(input: {
-  memberChannels: MemberChannel[];
   subscriptions: SubscriptionRecord[];
   messages: AgentMessageRecord[];
-  // True when the authoritative `is_member` lookup succeeded (the happy path).
-  // Then a Slack *channel* row must be backed by real membership; a stale
-  // followed/muted subscription for a channel the agent was removed from must
-  // NOT appear. When false (membership lookup degraded), subscription-derived
-  // rows are kept as a best-effort fallback under `membershipPartial`. DMs are
-  // exempt either way (1:1 IMs have no `is_member` concept). Defaults to true.
-  membershipComplete?: boolean;
-  nowMs?: number;
 }): AgentChannelListResponse {
-  const membershipComplete = input.membershipComplete ?? true;
-  const memberIds = new Set(input.memberChannels.map((channel) => channel.id));
-  const map = attentionMapForSubscriptions({
-    memberChannels: input.memberChannels,
-    subscriptions: input.subscriptions,
-    ...(input.nowMs !== undefined ? { nowMs: input.nowMs } : {}),
-  });
-
   const byId = new Map<string, AgentChannelSummary>();
-  for (const channel of map.channels) {
-    if (isFeishuChatId(channel.channelId)) continue; // Slack only in v1
-    // Honesty bar: on a successful membership lookup, channel rows come from
-    // real `is_member` data only. attentionMapForSubscriptions unions in every
-    // kind:'channel' subscription (correct for the inbox feature, a leak here),
-    // so drop channel-kind rows with no member backing. DMs (D-prefix) pass
-    // through; they are folded from message history, not membership.
-    if (
-      membershipComplete &&
-      kindForChannelId(channel.channelId) === 'channel' &&
-      !memberIds.has(channel.channelId)
-    ) {
-      continue;
-    }
-    byId.set(channel.channelId, {
-      id: channel.channelId,
-      ...(channel.channelName ? { name: channel.channelName } : {}),
-      platform: 'slack',
-      kind: kindForChannelId(channel.channelId),
-      status: channel.status,
-      ...(channel.subscription?.lastActivityAt
-        ? { lastActivityAt: channel.subscription.lastActivityAt }
-        : {}),
-      ...(channel.subscription?.lastPostedAt
-        ? { lastPostedAt: channel.subscription.lastPostedAt }
-        : {}),
-    });
-  }
 
-  // Fold DMs from message history (inbound + outbound), deduped by channel id.
   for (const message of input.messages) {
-    if (message.channelKind !== 'dm') continue;
-    const id = message.channelId;
-    if (!id) continue;
-    const name = message.dmHandle?.trim();
+    if (!isSlackSurfaceMessage(message)) continue;
+    const id = message.channelId!.trim();
+    const kind = kindForChannelId(id);
+    const name = displayNameForMessage(message, kind);
     const existing = byId.get(id);
     if (existing) {
-      // A DM already seen via a subscription row, or an earlier message.
-      existing.kind = 'dm';
       if (name && !existing.name) existing.name = name;
       existing.lastActivityAt = laterOf(existing.lastActivityAt, message.timestamp);
+      if (message.direction === 'out') {
+        existing.lastPostedAt = laterOf(existing.lastPostedAt, message.timestamp);
+      }
+      if (kind === 'dm' && !existing.avatarUrl && message.direction === 'in' && message.actorAvatarUrl) {
+        existing.avatarUrl = message.actorAvatarUrl;
+      }
       continue;
     }
     byId.set(id, {
       id,
       ...(name ? { name } : {}),
       platform: 'slack',
-      kind: 'dm',
+      kind,
       status: 'following',
       ...(message.timestamp ? { lastActivityAt: message.timestamp } : {}),
+      ...(message.direction === 'out' ? { lastPostedAt: message.timestamp } : {}),
+      ...(kind === 'dm' && message.direction === 'in' && message.actorAvatarUrl
+        ? { avatarUrl: message.actorAvatarUrl }
+        : {}),
     });
   }
 
-  const channels = [...byId.values()].sort(
-    (a, b) => (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''),
-  );
+  const subscriptionByChannel = bestSubscriptionByChannel(input.subscriptions);
+  for (const [channelId, subscription] of subscriptionByChannel) {
+    const channel = byId.get(channelId);
+    if (!channel) continue;
+    channel.status = subscriptionStatus(subscription);
+    channel.lastActivityAt = laterOf(channel.lastActivityAt, subscription.lastActivityAt);
+    channel.lastPostedAt = laterOf(channel.lastPostedAt, subscription.lastPostedAt);
+  }
+
+  const channels = [...byId.values()].sort((a, b) => {
+    const byActivity = (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? '');
+    if (byActivity !== 0) return byActivity;
+    return (a.name ?? a.id).localeCompare(b.name ?? b.id);
+  });
   return { channels };
 }
 
-// IO wrapper: fetch the three inputs in parallel, then compose. Returns an empty
-// list (never throws) when the agent has no Slack access. When the authoritative
-// membership lookup FAILED (token present but Slack errored), flags
-// `membershipPartial` so the UI can signal the list may be missing silent member
-// channels rather than silently under-reporting.
+// IO wrapper: fetch local message history + subscription overlay only. This
+// intentionally does not call Slack; the Channels tab is a fast conversation
+// history view, not a current Slack membership inventory.
 export async function buildAgentChannelList(agentId: string): Promise<AgentChannelListResponse> {
-  const agent = await defaultAgentRegistryService.serviceFor(agentId).getConfig();
-  const [subscriptions, memberResult, page] = await Promise.all([
+  const [subscriptions, messages] = await Promise.all([
     listSubscriptionsForAgent(agentId),
-    memberChannelsResultForAgent(agent),
-    messageServiceForAgent(agentId).list({ limit: DM_SCAN_LIMIT }),
+    messageServiceForAgent(agentId).listAll(),
   ]);
-  const list = composeChannelList({
-    memberChannels: memberResult.channels,
+  return composeChannelList({
     subscriptions,
-    messages: page.entries,
-    membershipComplete: !memberResult.degraded,
+    messages,
   });
-
-  // Decorate DM rows with the counterpart's Slack avatar (best-effort).
-  const dmUserByChannel = new Map<string, string>();
-  for (const message of page.entries) {
-    if (message.channelKind === 'dm' && message.channelId && message.dmUserId) {
-      dmUserByChannel.set(message.channelId, message.dmUserId);
-    }
-  }
-  const avatars = await dmAvatarsForAgent(agent, dmUserByChannel);
-  for (const channel of list.channels) {
-    if (channel.kind === 'dm') {
-      const avatarUrl = avatars.get(channel.id);
-      if (avatarUrl) channel.avatarUrl = avatarUrl;
-    }
-  }
-
-  return memberResult.degraded ? { ...list, membershipPartial: true } : list;
-}
-
-// Resolve DM counterpart avatars via the cached Slack users.info path. Purely
-// decorative: any failure (no token, Slack error) yields an empty map so the
-// channel list still renders, just without DM avatars.
-async function dmAvatarsForAgent(
-  agent: { id: string; slack?: { botToken?: string; teamId?: string } },
-  dmUserByChannel: Map<string, string>,
-): Promise<Map<string, string>> {
-  const avatars = new Map<string, string>();
-  if (!agent.slack?.botToken || dmUserByChannel.size === 0) return avatars;
-  try {
-    const client = await agentSlackServiceForAgent(agent.id).getWebClient();
-    const teamId = agent.slack.teamId ?? '';
-    const resolver = new SlackProfileResolver();
-    await Promise.all(
-      [...dmUserByChannel].map(async ([channelId, userId]) => {
-        const profile = await resolver.user({ client, teamId, userId });
-        if (profile?.avatarUrl) avatars.set(channelId, profile.avatarUrl);
-      }),
-    );
-  } catch {
-    // Decorative only: never let an avatar lookup break the channel list.
-  }
-  return avatars;
 }

@@ -72,10 +72,10 @@ export interface AgentMessageHistoryPage {
   nextCursor?: string | null;
 }
 
-// Channels tab: the channels + DMs an agent is a member of. Channel membership
-// is real (`is_member` from Slack), not message-derived; DMs are folded from
-// message history since a 1:1 conversation has no Slack "membership" concept.
-// Slack only in v1.
+// Channels tab: Slack channels + DMs with local message history. This is a
+// conversation-history view, not a current Slack membership inventory: silent
+// adds with no messages are absent, and historical channels remain visible if
+// the local ledger contains them. Slack only in v1.
 export type AgentChannelKind = 'channel' | 'dm';
 
 export interface AgentChannelSummary {
@@ -93,9 +93,7 @@ export interface AgentChannelSummary {
 
 export interface AgentChannelListResponse {
   channels: AgentChannelSummary[];
-  // True when the authoritative Slack membership lookup failed, so `channels`
-  // is derived only from subscription + message history and may be missing
-  // silent member channels. The UI surfaces this as a "list may be incomplete"
-  // signal rather than silently under-reporting. Absent/false on the happy path.
+  // Deprecated: the Channels tab no longer performs a Slack membership lookup.
+  // Kept optional so older clients can tolerate responses from older runtimes.
   membershipPartial?: boolean;
 }

@@ -145,11 +145,10 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
       return enrichInboundAvatars(request.params.agentId, page);
     },
   );
-  // Channels tab: the Slack channels + DMs the agent is a member of. Channel
-  // membership is authoritative (`is_member`, includes muted + silent); DMs are
-  // folded from message history. See server/web/agent-channels.ts. Served from
-  // the cached workspace directory so the list returns instantly; Slack is
-  // refreshed in the background when the cache is stale.
+  // Channels tab: Slack channels + DMs with local message history. This is a
+  // fast conversation-history view (no Slack membership fetch): silent adds with
+  // no messages are absent, and historical channels remain visible if the local
+  // ledger contains them. See server/web/agent-channels.ts.
   //
   // `/channels` is the current name; `/subscriptions` is kept as a back-compat
   // alias for any client still on the old path.
