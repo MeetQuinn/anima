@@ -1248,16 +1248,28 @@ export default function Activity() {
     };
   }, [latestMessageKey]);
 
+  // Reveal-settle is stricter than feedSettling: it also waits for the initial
+  // activity (step) layer. feedSettling only covers the message load, next-page
+  // fetches and coverage paging, so without this the container could fade in on
+  // the message-only layout and then visibly pop when the first activity page
+  // lands with its step folds / default-open height. Block the settle reveal
+  // until the first activity page has loaded (or errored, leaving activitiesData
+  // undefined with no fetch in flight); the 600ms fallback still bounds a stall.
+  const revealSettling =
+    feedSettling ||
+    activityQuery.isLoading ||
+    (!activitiesData && activityQuery.isFetching);
+
   // Reveal once the feed has loaded and stopped settling, one frame later so the
   // pin effect's final scroll-to-bottom lands before we fade in.
   useEffect(() => {
     if (feedRevealed) return;
     const feedLoaded = messagesData ?? activitiesData;
-    if (feedLoaded && !feedSettling) {
+    if (feedLoaded && !revealSettling) {
       const id = requestAnimationFrame(() => setFeedRevealed(true));
       return () => cancelAnimationFrame(id);
     }
-  }, [feedRevealed, feedSettling, messagesData, activitiesData]);
+  }, [feedRevealed, revealSettling, messagesData, activitiesData]);
 
   // Fallback: never stay hidden longer than ~600ms after a feed switch, even if
   // settling never resolves (an agent with no data, or a stalled fetch).
