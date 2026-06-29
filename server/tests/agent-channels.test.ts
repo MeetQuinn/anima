@@ -1,10 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { composeChannelList } from '../web/agent-channels.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { buildAgentChannelList, composeChannelList } from '../web/agent-channels.js';
+import type { AvatarEnrichmentDeps } from '../web/message-profiles.js';
 import { memberChannelsResultForAgent } from '../inbox/member-channels.js';
+import { messageServiceForAgent } from '../messages/message.service.js';
+import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import type { Activity } from '../../shared/activity.js';
 import type { SubscriptionRecord } from '../inbox/slack-subscription.service.js';
 import type { AgentMessageRecord } from '../../shared/messages.js';
+import { withAnimaHome } from './anima-home.js';
+import { makeSlackEvent } from './helpers/slack.js';
 
 function channelSub(over: Partial<SubscriptionRecord> & { channelId: string }): SubscriptionRecord {
   return {
@@ -233,4 +243,174 @@ test('channels are sorted by most recent local/subscription activity', () => {
 test('memberChannelsResultForAgent: no Slack token is legitimately empty, not degraded', async () => {
   const res = await memberChannelsResultForAgent({ id: 'a1' });
   assert.deepEqual(res, { channels: [], degraded: false });
+});
+
+test('buildAgentChannelList decorates DM rows with the inbound sender avatar', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-channels-dm-avatar-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      // Seed one inbound Slack DM (channel id starts with 'D'). The durable
+      // ledger never persists the sender avatar, so the row can only get a photo
+      // via read-time enrichment.
+      await new WakeQueueService('scout').enqueue(
+        makeSlackEvent({
+          channelId: 'D-bob',
+          teamId: 'T-demo',
+          text: 'ping',
+          userId: 'UBOB1',
+          eventId: 'evt-dm-avatar',
+          ts: '1770000200.000001',
+          timestamp: '2026-05-12T00:00:00.000Z',
+        }),
+      );
+
+      // Stub the avatar resolver so no real Slack IO happens; it stands in for
+      // the cache-first workspace-directory lookup the /messages feed shares.
+      const deps: AvatarEnrichmentDeps = {
+        loadAgent: async () => ({
+          id: 'scout',
+          slack: { botToken: 'xoxb-test', teamId: 'T-demo' },
+        }),
+        getWebClient: async () => ({}),
+        resolveAvatar: async ({ userId }) =>
+          userId === 'UBOB1' ? 'https://avatars.example/bob.png' : undefined,
+      };
+
+      const res = await buildAgentChannelList('scout', deps);
+      const dm = res.channels.find((c) => c.id === 'D-bob');
+      assert.ok(dm, 'DM channel should be present');
+      assert.equal(dm.kind, 'dm');
+      assert.equal(dm.avatarUrl, 'https://avatars.example/bob.png');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('buildAgentChannelList leaves DM avatar unset when resolution finds no photo', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-channels-dm-noavatar-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await new WakeQueueService('scout').enqueue(
+        makeSlackEvent({
+          channelId: 'D-bob',
+          teamId: 'T-demo',
+          text: 'ping',
+          userId: 'UBOB1',
+          eventId: 'evt-dm-noavatar',
+          ts: '1770000201.000001',
+          timestamp: '2026-05-12T00:00:00.000Z',
+        }),
+      );
+
+      const deps: AvatarEnrichmentDeps = {
+        loadAgent: async () => ({
+          id: 'scout',
+          slack: { botToken: 'xoxb-test', teamId: 'T-demo' },
+        }),
+        getWebClient: async () => ({}),
+        // No photo on file: row degrades to the initial-letter fallback.
+        resolveAvatar: async () => undefined,
+      };
+
+      const res = await buildAgentChannelList('scout', deps);
+      const dm = res.channels.find((c) => c.id === 'D-bob');
+      assert.ok(dm, 'DM channel should be present');
+      assert.equal(dm.avatarUrl, undefined);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('buildAgentChannelList decorates an outbound-only DM via its dmUserId counterpart', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-channels-dm-outbound-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      // The agent messaged first: the DM has only an outbound record, which
+      // carries the counterpart as `dmUserId` (never `actorUserId`). The shared
+      // /messages enrichment only resolves inbound senders, so this row used to
+      // stay on the initials fallback; the master list resolves it via the
+      // counterpart id instead.
+      const outboundDm: Activity = {
+        activityId: 'act-dm-carol',
+        createdAt: '2026-05-12T00:00:00.000Z',
+        type: 'external.effect.completed',
+        payload: {
+          effect: 'slack.message.send',
+          channel: 'D-carol',
+          dmUserId: 'UCAROL1',
+          dmHandle: 'carol',
+          platform: 'slack',
+          text: 'hi carol',
+          ts: '1770000300.000001',
+        },
+      };
+      await messageServiceForAgent('scout').recordOutboxActivity(outboundDm);
+
+      const deps: AvatarEnrichmentDeps = {
+        loadAgent: async () => ({
+          id: 'scout',
+          slack: { botToken: 'xoxb-test', teamId: 'T-demo' },
+        }),
+        getWebClient: async () => ({}),
+        resolveAvatar: async ({ userId }) =>
+          userId === 'UCAROL1' ? 'https://avatars.example/carol.png' : undefined,
+      };
+
+      const res = await buildAgentChannelList('scout', deps);
+      const dm = res.channels.find((c) => c.id === 'D-carol');
+      assert.ok(dm, 'outbound-only DM channel should be present');
+      assert.equal(dm.kind, 'dm');
+      assert.equal(dm.avatarUrl, 'https://avatars.example/carol.png');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('buildAgentChannelList resolves zero avatars for a channel-only history', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-channels-no-dm-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      // Three inbound public-channel messages from distinct senders, no DMs. The
+      // master list only ever shows DM avatars, so opening it must not fan out a
+      // users.info per channel sender — that was the regression Milo flagged.
+      for (const [i, userId] of ['UCH1', 'UCH2', 'UCH3'].entries()) {
+        await new WakeQueueService('scout').enqueue(
+          makeSlackEvent({
+            channelId: 'C-product',
+            teamId: 'T-demo',
+            text: `msg ${i}`,
+            userId,
+            eventId: `evt-channel-${i}`,
+            ts: `177000040${i}.000001`,
+            timestamp: '2026-05-12T00:00:00.000Z',
+          }),
+        );
+      }
+
+      let resolverCalls = 0;
+      const deps: AvatarEnrichmentDeps = {
+        loadAgent: async () => ({
+          id: 'scout',
+          slack: { botToken: 'xoxb-test', teamId: 'T-demo' },
+        }),
+        getWebClient: async () => ({}),
+        resolveAvatar: async () => {
+          resolverCalls += 1;
+          return 'https://avatars.example/should-not-be-called.png';
+        },
+      };
+
+      const res = await buildAgentChannelList('scout', deps);
+      assert.ok(
+        res.channels.some((c) => c.id === 'C-product'),
+        'channel should still be listed',
+      );
+      assert.equal(resolverCalls, 0, 'no avatar resolution for channel-only history');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
