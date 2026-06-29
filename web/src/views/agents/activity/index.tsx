@@ -4,12 +4,11 @@ import {
   useMemo,
   useReducer,
   useRef,
-  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { AlertCircle, ChevronRight, ExternalLink, Loader2, X } from 'lucide-react';
+import { AlertCircle, ChevronRight, ExternalLink, Loader2, Power, X } from 'lucide-react';
 import {
   fetchAgentStatuses,
   fetchAgentActivities,
@@ -38,7 +37,6 @@ import {
   SystemEventRow,
   type Author,
   type AuthorResolver,
-  type MessageGroup,
   type SurfaceResolver,
 } from '../conversation/SlackTimeline';
 import { StepRow, WorkingIndicator } from './AuditRows';
@@ -63,17 +61,48 @@ function StepLane({ children }: { children: ReactNode }) {
   );
 }
 
-// Segment a day's items into maximal runs of conversation messages vs tool
-// steps, preserving chronology. Message runs render as Slack groups; step runs
-// render in an indented lane. A step between two message groups naturally
-// breaks the grouping, which is the interleave the spec asks for.
+// ---------------------------------------------------------------------------
+// Chronological stream model.
+//
+// The timeline is ONE ascending stream by real timestamp. Items split two ways:
+//   SPECIAL  — Slack chat in/out, file-out, reactions, and system events
+//              (reminders, onboarding, runtime restart/stop). These render as
+//              their own rows in their true time slot.
+//   NON-SPECIAL — thinking/OUTPUT, RAN tool steps, memory passes, IDLE/Working.
+//              A contiguous run of these between two specials FOLDS in place
+//              into one collapsible `▸ N steps` group sitting in its slot.
+// The live (current) run's trailing fold is auto-expanded while it streams and
+// collapses (animated) the moment the run completes.
+// ---------------------------------------------------------------------------
+type Step = Extract<ActivityFeedItem, { kind: 'step' }>;
+
+// Within a special-run, separate centred system lines from the Slack message
+// groups so a reminder/onboarding row doesn't get swept into an author group.
 type DayBlock = { type: 'msgs' | 'steps' | 'system'; items: ActivityFeedItem[] };
 
-// A day's timeline is a chronological mix of conversation items and standalone
-// memory-coherence passes (which are not part of any conversational turn).
-type DayEntry =
+// One entry in a day's chronological stream: a special conversation row, a
+// promoted lifecycle system line, or a folded run of non-special steps.
+type TimelineEntry =
   | { type: 'conv'; ts: number; timestamp: string; item: ActivityFeedItem }
-  | { type: 'mem'; ts: number; timestamp: string; pass: MemoryPass };
+  | { type: 'lifecycle'; ts: number; timestamp: string; step: Step }
+  | { type: 'fold'; ts: number; timestamp: string; id: string; steps: Step[] };
+
+// Steps promoted OUT of the fold into their own centred system line: important,
+// non-chat lifecycle signals. Kept deliberately narrow for v1 (runtime
+// restart / stop / idle-timeout); everything else folds.
+function isSpecialSystemStep(activity: ActivityRecord): boolean {
+  return activity.type === 'runtime.aborted';
+}
+
+// Tie-break for atoms sharing a timestamp: inbound first, then outbound/system
+// specials, then promoted lifecycle, then folded steps, with IDLE
+// (runtime.completed) last so it reads as closing the slot.
+function atomRank(kind: 'conv-in' | 'conv-out' | 'lifecycle' | 'fold', idle: boolean): number {
+  if (kind === 'conv-in') return 0;
+  if (kind === 'conv-out') return 1;
+  if (kind === 'lifecycle') return 2;
+  return idle ? 4 : 3;
+}
 
 function buildBlocks(items: ActivityFeedItem[]): DayBlock[] {
   const blocks: DayBlock[] = [];
@@ -88,26 +117,14 @@ function buildBlocks(items: ActivityFeedItem[]): DayBlock[] {
 }
 
 // ---------------------------------------------------------------------------
-// Per-turn steps — message-bound, collapsible (replaces the global toggle).
+// Folded step run — the non-special register.
 //
-// Tool steps no longer live as their own interleaved rows behind a header
-// toggle. Each agent turn's curated steps attach to the agent message that
-// concludes the turn and tuck beneath it, collapsed by default behind a
-// `▸ N steps` disclosure. Click the disclosure OR the message to expand/collapse.
-// The live (running) turn's steps render under the WorkingIndicator and stay
-// auto-expanded while streaming; when the turn completes its steps fold into the
-// concluding message's (default-collapsed) disclosure — so completion reads as a
-// quiet collapse. Failure is shown only at the step level (existing red Row
-// styling), never as a message badge: routine non-zero exits stay quiet.
+// A contiguous run of non-special steps collapses behind a `▸ N steps`
+// disclosure sitting in its own chronological slot. Expand state is keyed by
+// the run's first-step activityId (stable across refetches). The body uses the
+// grid 0fr/1fr trick so expand and collapse animate smoothly; the live run's
+// trailing fold is forced open while streaming and animates shut on completion.
 // ---------------------------------------------------------------------------
-
-// Stable identity for a message group's expand state. The first item's timestamp
-// + author + surface is stable across refetches for the same turn, so the
-// expanded/collapsed choice survives polling; a newly concluded turn gets a fresh
-// key and so defaults to collapsed (the auto-collapse-on-done behaviour).
-function groupKey(group: MessageGroup): string {
-  return `${group.author.key}|${group.startTs}|${group.surfaceKey}`;
-}
 
 // Avatar-width left gutter so step content lines up under the message body (not
 // under the avatar), mirroring MessageGroupRow's `flex gap-2.5 px-1` + `h-9 w-9`.
@@ -155,85 +172,55 @@ function StepList({ steps }: { steps: Extract<ActivityFeedItem, { kind: 'step' }
   );
 }
 
-// One agent turn: the message group plus its collapsible step trace. Clicking
-// anywhere on the message toggles the steps too (a convenience over the
-// disclosure button), except on links/buttons inside the message, which keep
-// their own behaviour.
-function AgentTurnRow({
-  group,
-  agentId,
+// A folded run of non-special steps in its chronological slot. The disclosure
+// sits at the message gutter; the body animates open/closed via the grid
+// 0fr/1fr height trick (overflow-hidden child). `motion-reduce` opts out.
+function StepFold({
   steps,
   expanded,
   onToggle,
 }: {
-  group: MessageGroup;
-  agentId: string;
-  steps: Extract<ActivityFeedItem, { kind: 'step' }>[];
+  steps: Step[];
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const hasSteps = steps.length > 0;
-  const handleMessageClick = (e: ReactMouseEvent) => {
-    if (!hasSteps) return;
-    if ((e.target as HTMLElement).closest('a,button')) return;
-    if (window.getSelection()?.toString()) return; // don't toggle on text selection
-    onToggle();
-  };
   return (
-    <div>
-      <div onClick={handleMessageClick} className={hasSteps ? 'cursor-pointer' : undefined}>
-        <MessageGroupRow group={group} agentId={agentId} />
+    <StepGutter>
+      <StepsDisclosure count={steps.length} expanded={expanded} onToggle={onToggle} />
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none"
+        style={{ gridTemplateRows: expanded ? '1fr' : '0fr' }}
+      >
+        <div className="overflow-hidden">
+          <StepList steps={steps} />
+        </div>
       </div>
-      {hasSteps && (
-        <StepGutter>
-          <StepsDisclosure count={steps.length} expanded={expanded} onToggle={onToggle} />
-          {expanded && <StepList steps={steps} />}
-        </StepGutter>
-      )}
-    </div>
+    </StepGutter>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Memory-coherence pass — a standalone, non-conversational entry.
-//
-// A scheduled memory-coherence pass is tool-only work with no outbound reply:
-// the agent reads its MEMORY.md + notes, maybe writes, and records a
-// `memory_coherence.outcome`. Its steps must NOT bind to the next chat reply
-// (that would be false attribution). Instead each pass renders standalone at
-// its own time: the outcome row (red when failed, via the existing
-// activityIsFailure path) plus a `▸ N steps` disclosure for the surrounding
-// reads/writes. The pass is keyed by its outcome activityId; the read/write
-// steps are gathered by the outcome's [startedAt, completedAt] window.
-// ---------------------------------------------------------------------------
-interface MemoryPass {
-  id: string;
-  timestamp: string; // outcome timestamp — placement in the timeline
-  ts: number; // completedAt epoch — sort key
-  steps: Extract<ActivityFeedItem, { kind: 'step' }>[]; // window steps incl. the outcome
-}
-
-function MemoryPassRow({
-  pass,
-  expanded,
-  onToggle,
-}: {
-  pass: MemoryPass;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
-  const outcome = pass.steps.find((s) => s.activity.type === 'memory_coherence.outcome');
-  const detail = pass.steps.filter((s) => s.activity.type !== 'memory_coherence.outcome');
+// A promoted lifecycle step (runtime restart / stop / idle-timeout) rendered as
+// a centred system line — same visual family as the reminder/onboarding
+// SystemEventRow, so non-chat lifecycle signals read as special, not as steps.
+function LifecycleLineRow({ step }: { step: Step }) {
+  const row = activityRow(step.activity);
   return (
-    <StepGutter>
-      {outcome && <StepRow item={outcome} time={clockHM(outcome.timestamp)} />}
-      {detail.length > 0 && (
-        <div>
-          <StepsDisclosure count={detail.length} expanded={expanded} onToggle={onToggle} />
-          {expanded && <StepList steps={detail} />}
-        </div>
-      )}
-    </StepGutter>
+    <div className="flex items-center justify-center gap-2.5 px-1 py-1.5">
+      <span aria-hidden className="hidden h-px w-8 shrink-0 bg-border-soft sm:block" />
+      <span className="inline-flex max-w-[85%] items-center gap-1.5 rounded-full border border-border-soft bg-surface-raised px-2.5 py-0.5">
+        <Power className="h-3 w-3 shrink-0 text-text-subtle" aria-hidden />
+        <span className="shrink-0 font-sans text-[9.5px] font-semibold uppercase tracking-[0.12em] text-text-subtle">
+          {row.title}
+        </span>
+        {row.target && (
+          <span className="truncate font-sans text-[12px] text-text-muted">{row.target}</span>
+        )}
+        <span className="shrink-0 font-sans text-[10px] text-text-subtle">
+          {clockHM(step.timestamp)}
+        </span>
+      </span>
+      <span aria-hidden className="hidden h-px w-8 shrink-0 bg-border-soft sm:block" />
+    </div>
   );
 }
 
@@ -510,11 +497,11 @@ export default function Activity() {
     refetchInterval: agentId ? refetchIntervals.agentActivities : false,
   });
 
-  // Step layer — always loaded now (steps are per-turn, always available behind
-  // a collapsed disclosure rather than a global toggle). The conversation is
+  // Step layer — always loaded now (steps fold in place in the chronological
+  // stream rather than hiding behind a global toggle). The conversation is
   // still primary: an activity error or slow load never blocks or blanks the
   // message timeline (feedError / loadingActivities track the conversation only);
-  // steps simply populate the disclosures as they arrive.
+  // steps simply populate the folds as they arrive.
   const activityQuery = useInfiniteQuery({
     queryKey: queryKeys.agentActivities(agentId ?? ''),
     queryFn: ({ pageParam }) => fetchAgentActivities(agentId!, 100, pageParam),
@@ -572,9 +559,10 @@ export default function Activity() {
 
   // Step layer items — curated isNarrativeStep set only (never the firehose;
   // iris-locked `795d974`). Suppress a tool's started row when its failure row is
-  // present so a failed tool shows once, as the failure. These no longer render
-  // as their own timeline rows; they attach to the agent turn that concluded them
-  // (see stepsByTurn).
+  // present so a failed tool shows once, as the failure. These feed the
+  // chronological stream: foldable steps collapse into `N steps` groups in their
+  // time slot, and `runtime.aborted` is promoted to a standalone lifecycle line
+  // (see timelineByDay).
   const stepItems = useMemo(() => {
     if (!activitiesData) return [] as Extract<ActivityFeedItem, { kind: 'step' }>[];
     const feed = buildActivityFeed(activitiesData, false);
@@ -596,101 +584,96 @@ export default function Activity() {
     });
   }, [activitiesData]);
 
-  // Pull scheduled memory-coherence passes out of the conversational stream. Each
-  // `memory_coherence.outcome` defines a [startedAt, completedAt] window; every
-  // narrative step in that window (the reads/writes + the outcome) belongs to the
-  // pass, not to any chat turn. These steps are CLAIMED so the turn sweep below
-  // never attaches them to a later outbound reply (the false-attribution bug). A
-  // memory pass runs as its own runtime item, so no conversational turn overlaps
-  // its window — claiming the whole window is safe.
-  const { memoryPasses, claimedSteps } = useMemo(() => {
-    const passes: MemoryPass[] = [];
-    const claimed = new Set<ActivityFeedItem>();
-    const outcomes = stepItems.filter((s) => s.activity.type === 'memory_coherence.outcome');
-    if (outcomes.length === 0) return { memoryPasses: passes, claimedSteps: claimed };
-    const sorted = [...stepItems].sort(
-      (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
-    );
-    for (const outcome of outcomes) {
-      const payload = outcome.activity.payload as
-        | { startedAt?: string; completedAt?: string }
-        | undefined;
-      const outcomeTs = Date.parse(outcome.timestamp);
-      const startMs = Date.parse(payload?.startedAt ?? outcome.timestamp);
-      const endMs = Date.parse(payload?.completedAt ?? outcome.timestamp);
-      const lo = Number.isFinite(startMs) ? startMs : outcomeTs;
-      const hi = Number.isFinite(endMs) ? endMs : outcomeTs;
-      const windowSteps: Extract<ActivityFeedItem, { kind: 'step' }>[] = [];
-      for (const s of sorted) {
-        if (s === outcome || claimed.has(s)) continue;
-        // Each outcome is its own pass; never fold one pass's outcome into another.
-        if (s.activity.type === 'memory_coherence.outcome') continue;
-        const ts = Date.parse(s.timestamp);
-        if (Number.isFinite(ts) && ts >= lo && ts <= hi) {
-          windowSteps.push(s);
-          claimed.add(s);
-        }
-      }
-      claimed.add(outcome);
-      passes.push({
-        id: `mem:${outcome.activity.activityId}`,
-        timestamp: outcome.timestamp,
-        ts: Number.isFinite(hi) ? hi : outcomeTs,
-        steps: [...windowSteps, outcome].sort(
-          (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
-        ),
-      });
-    }
-    return { memoryPasses: passes, claimedSteps: claimed };
-  }, [stepItems]);
-
-  // Bind each step to the agent turn it belongs to. Steps carry no turn id, so we
-  // attach each step to the first agent OUTBOUND item at or after the step's time
-  // (the reply that concluded that stretch of work) — the inbound→steps→reply
-  // shape the timeline reads as. Steps after the last outbound item are
-  // "trailing": the live running turn (no reply yet) or a completed tool-only
-  // turn. We key the per-turn map by the outbound item reference so a message
-  // group can gather the steps of all its outbound items.
-  const { stepsByItem, trailingSteps } = useMemo(() => {
-    const outbound = conversationItems
-      .filter(
-        (it) =>
-          it.kind === 'message-out' || it.kind === 'file-out' || it.kind === 'reaction-out',
-      )
-      .map((it) => ({ it, ts: Date.parse(it.timestamp) }))
-      .filter((x) => Number.isFinite(x.ts))
-      .sort((a, b) => a.ts - b.ts);
-    const map = new Map<ActivityFeedItem, Extract<ActivityFeedItem, { kind: 'step' }>[]>();
-    const trailing: Extract<ActivityFeedItem, { kind: 'step' }>[] = [];
-    // Skip steps claimed by a standalone memory-coherence pass — they render in
-    // their own entry, never under a chat reply.
-    const steps = stepItems
-      .filter((s) => !claimedSteps.has(s))
-      .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
-    let oi = 0;
-    for (const step of steps) {
-      const sts = Date.parse(step.timestamp);
-      if (!Number.isFinite(sts)) continue;
-      while (oi < outbound.length && outbound[oi]!.ts < sts) oi += 1;
-      if (oi < outbound.length) {
-        const target = outbound[oi]!.it;
-        const arr = map.get(target);
-        if (arr) arr.push(step);
-        else map.set(target, [step]);
-      } else {
-        trailing.push(step);
-      }
-    }
-    return { stepsByItem: map, trailingSteps: trailing };
-  }, [conversationItems, stepItems, claimedSteps]);
-
-  // The rendered timeline is the conversation, chronological. Steps live inside
-  // the agent turns (stepsByItem) and at the bottom (trailingSteps), not as rows.
+  // The conversation backbone — special chat rows, chronological. Used for the
+  // coverage/empty/hero gates below; the rendered stream is timelineByDay.
   const filteredItems = useMemo(() => {
     return [...conversationItems].sort(
       (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
     );
   }, [conversationItems]);
+
+  // Build the single chronological stream, bucketed by day. Every timeline atom
+  // (special conversation row, promoted lifecycle step, or foldable non-special
+  // step) is sorted into its true time slot; within each day, contiguous runs of
+  // foldable steps collapse into one `fold` entry sitting between the specials
+  // that bracket them. Folds never cross a day boundary (atoms bucket by day
+  // first), so the day dividers stay honest.
+  const timelineByDay = useMemo<[string, TimelineEntry[]][]>(() => {
+    type Atom =
+      | { ts: number; timestamp: string; kind: 'conv'; item: ActivityFeedItem }
+      | { ts: number; timestamp: string; kind: 'lifecycle'; step: Step }
+      | { ts: number; timestamp: string; kind: 'fold'; step: Step };
+    const atoms: Atom[] = [];
+    for (const item of conversationItems) {
+      const ts = Date.parse(item.timestamp);
+      if (Number.isFinite(ts)) atoms.push({ ts, timestamp: item.timestamp, kind: 'conv', item });
+    }
+    for (const step of stepItems) {
+      const ts = Date.parse(step.timestamp);
+      if (!Number.isFinite(ts)) continue;
+      if (isSpecialSystemStep(step.activity))
+        atoms.push({ ts, timestamp: step.timestamp, kind: 'lifecycle', step });
+      else atoms.push({ ts, timestamp: step.timestamp, kind: 'fold', step });
+    }
+
+    const rankOf = (a: Atom): number => {
+      if (a.kind === 'conv')
+        return atomRank(a.item.kind === 'message-in' ? 'conv-in' : 'conv-out', false);
+      if (a.kind === 'lifecycle') return atomRank('lifecycle', false);
+      return atomRank('fold', a.step.activity.type === 'runtime.completed');
+    };
+
+    const days = new Map<string, Atom[]>();
+    for (const a of atoms) {
+      const key = dateKey(a.timestamp);
+      const list = days.get(key);
+      if (list) list.push(a);
+      else days.set(key, [a]);
+    }
+
+    const result: [string, TimelineEntry[]][] = [];
+    for (const [day, list] of days) {
+      list.sort((a, b) => a.ts - b.ts || rankOf(a) - rankOf(b));
+      const entries: TimelineEntry[] = [];
+      let pending: Step[] = [];
+      const flush = () => {
+        if (pending.length === 0) return;
+        const first = pending[0]!;
+        entries.push({
+          type: 'fold',
+          ts: Date.parse(first.timestamp),
+          timestamp: first.timestamp,
+          id: `fold:${first.activity.activityId}`,
+          steps: pending,
+        });
+        pending = [];
+      };
+      for (const a of list) {
+        if (a.kind === 'fold') {
+          pending.push(a.step);
+          continue;
+        }
+        flush();
+        if (a.kind === 'conv')
+          entries.push({ type: 'conv', ts: a.ts, timestamp: a.timestamp, item: a.item });
+        else entries.push({ type: 'lifecycle', ts: a.ts, timestamp: a.timestamp, step: a.step });
+      }
+      flush();
+      result.push([day, entries]);
+    }
+    result.sort(([a], [b]) => a.localeCompare(b));
+    return result;
+  }, [conversationItems, stepItems]);
+
+  // The live run's trailing steps are the last fold in the latest day. While the
+  // run is current we force that fold open (auto-expand); when currentItemId
+  // clears it falls back to collapsed and the grid height animates it shut.
+  const liveFoldId = useMemo<string | null>(() => {
+    if (!currentItemId || timelineByDay.length === 0) return null;
+    const lastDay = timelineByDay[timelineByDay.length - 1]![1];
+    const last = lastDay[lastDay.length - 1];
+    return last && last.type === 'fold' ? last.id : null;
+  }, [currentItemId, timelineByDay]);
 
   // --- Coverage alignment (honesty contract) --------------------------------
   // The conversation feed (messages store) and the step feed (activity store)
@@ -698,7 +681,8 @@ export default function Activity() {
   // the newest 100 activity events may span only hours while the newest 100
   // messages span days. Left unaligned, older visible messages would render with
   // no adjacent steps and read as "nothing happened" when the steps simply were
-  // not paged in. Steps are always available now (per-turn disclosures), so we
+  // not paged in. Steps are always available now (folded in place in the
+  // chronological stream), so we
   // always keep fetching activity pages until the loaded activity window reaches
   // at least as far back as the oldest loaded message (or the feed is exhausted).
   // The residual case — the activity store exhausted before reaching the oldest
@@ -775,7 +759,7 @@ export default function Activity() {
     previewFirstRunHero !== undefined ||
     (!loadingActivities &&
       filteredItems.length === 0 &&
-      memoryPasses.length === 0 &&
+      stepItems.length === 0 &&
       connectedPlatform !== undefined);
 
   // --- Post-onboarding first landing -----------------------------------------
@@ -914,39 +898,6 @@ export default function Activity() {
   const error =
     feedError instanceof Error ? feedError.message : feedError ? String(feedError) : null;
 
-  // Day buckets carry a chronological mix of conversation items and standalone
-  // memory-coherence passes. Within a day, conversation entries flow through the
-  // message-group renderer; a memory pass breaks the run and renders on its own.
-  const byDay = useMemo(() => {
-    const m = new Map<string, DayEntry[]>();
-    const push = (k: string, e: DayEntry) => {
-      let list = m.get(k);
-      if (!list) {
-        list = [];
-        m.set(k, list);
-      }
-      list.push(e);
-    };
-    for (const item of filteredItems) {
-      push(dateKey(item.timestamp), {
-        type: 'conv',
-        ts: Date.parse(item.timestamp),
-        timestamp: item.timestamp,
-        item,
-      });
-    }
-    for (const pass of memoryPasses) {
-      push(dateKey(pass.timestamp), {
-        type: 'mem',
-        ts: pass.ts,
-        timestamp: pass.timestamp,
-        pass,
-      });
-    }
-    for (const list of m.values()) list.sort((a, b) => a.ts - b.ts);
-    return Array.from(m.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [filteredItems, memoryPasses]);
-
   // --- Author / surface resolvers for the shared Slack-style renderer --------
   // Cross-channel axis: the agent bylines its own outbound rows; inbound rows
   // byline their sender. Avatars fall back to initials cross-channel (no single
@@ -981,9 +932,11 @@ export default function Activity() {
     return { key: `${chip.kind}:${chip.label}`, chip };
   };
 
-  // Render a chronological run of conversation items (no memory passes) into
-  // system rows + author-grouped message/agent-turn rows. Factored out so a day
-  // can render multiple runs split by interleaved standalone memory passes.
+  // Render a chronological run of special conversation items into centred system
+  // lines + author-grouped message rows. Steps no longer bind to turns (they live
+  // in their own fold entries), so every author group renders as a plain
+  // MessageGroupRow. Factored out so a day can render multiple runs split by the
+  // folds / lifecycle lines that break them.
   const renderConvRun = (items: ActivityFeedItem[], keyPrefix: string): ReactNode =>
     buildBlocks(items).map((block, bi) => {
       if (block.type === 'system') {
@@ -998,33 +951,15 @@ export default function Activity() {
           </Fragment>
         );
       }
-      // Conversation messages. Agent turns gather their bound steps into a
-      // collapsible disclosure; inbound groups render plain.
       return (
         <Fragment key={`${keyPrefix}:b:${bi}`}>
-          {groupByAuthor(block.items, resolveAuthor, resolveSurface).map((group, gi) => {
-            if (!group.author.isAgent) {
-              return (
-                <MessageGroupRow
-                  key={`${keyPrefix}:b:${bi}:${gi}`}
-                  group={group}
-                  agentId={agentId ?? ''}
-                />
-              );
-            }
-            const turnSteps = group.items.flatMap(({ item }) => stepsByItem.get(item) ?? []);
-            const key = groupKey(group);
-            return (
-              <AgentTurnRow
-                key={`${keyPrefix}:b:${bi}:${gi}`}
-                group={group}
-                agentId={agentId ?? ''}
-                steps={turnSteps}
-                expanded={expandedTurns.has(key)}
-                onToggle={() => toggleTurn(key)}
-              />
-            );
-          })}
+          {groupByAuthor(block.items, resolveAuthor, resolveSurface).map((group, gi) => (
+            <MessageGroupRow
+              key={`${keyPrefix}:b:${bi}:${gi}`}
+              group={group}
+              agentId={agentId ?? ''}
+            />
+          ))}
         </Fragment>
       );
     });
@@ -1251,7 +1186,7 @@ export default function Activity() {
         {showFirstRunHero ? (
           <FirstRunHero agentName={agent?.profile?.displayName} platform={heroPlatform!} />
         ) : (
-          byDay.length === 0 && (
+          timelineByDay.length === 0 && (
             <div className="mt-20 text-center">
               <p className="font-serif italic text-[15px] text-text-subtle">
                 {loadingActivities ? 'Loading activity...' : 'No activity yet.'}
@@ -1259,12 +1194,12 @@ export default function Activity() {
             </div>
           )
         )}
-        {byDay.length > 0 &&
+        {timelineByDay.length > 0 &&
           !showFirstRunHero &&
-          byDay.map(([day, entries]) => {
-            // Walk the day's chronological entries, flushing accumulated
-            // conversation items into a run whenever a standalone memory pass
-            // interrupts, so passes never merge into a conversational group.
+          timelineByDay.map(([day, entries]) => {
+            // Walk the day's chronological entries. Consecutive conversation
+            // specials accumulate into a run (author-grouped); a fold or a
+            // lifecycle line flushes the run and renders in its own time slot.
             const out: ReactNode[] = [];
             let run: ActivityFeedItem[] = [];
             let seg = 0;
@@ -1281,14 +1216,26 @@ export default function Activity() {
             for (const entry of entries) {
               if (entry.type === 'conv') {
                 run.push(entry.item);
-              } else {
-                flush();
+                continue;
+              }
+              flush();
+              if (entry.type === 'lifecycle') {
                 out.push(
-                  <MemoryPassRow
-                    key={`${day}:${entry.pass.id}`}
-                    pass={entry.pass}
-                    expanded={expandedTurns.has(entry.pass.id)}
-                    onToggle={() => toggleTurn(entry.pass.id)}
+                  <LifecycleLineRow
+                    key={`${day}:life:${entry.step.activity.activityId}`}
+                    step={entry.step}
+                  />,
+                );
+              } else {
+                // The live run's trailing fold is forced open while streaming;
+                // when the run completes the grid height animates it shut.
+                const live = entry.id === liveFoldId;
+                out.push(
+                  <StepFold
+                    key={`${day}:${entry.id}`}
+                    steps={entry.steps}
+                    expanded={live || expandedTurns.has(entry.id)}
+                    onToggle={() => toggleTurn(entry.id)}
                   />,
                 );
               }
@@ -1301,31 +1248,11 @@ export default function Activity() {
               </div>
             );
           })}
-        {/* Completed trailing steps with no concluding reply (rare: a tool-only
-            turn). Not live, so keep them quiet behind a collapsed disclosure
-            rather than lost. */}
-        {!currentItemId && trailingSteps.length > 0 && !showFirstRunHero && (
-          <StepGutter>
-            <StepsDisclosure
-              count={trailingSteps.length}
-              expanded={expandedTurns.has('__trailing__')}
-              onToggle={() => toggleTurn('__trailing__')}
-            />
-            {expandedTurns.has('__trailing__') && <StepList steps={trailingSteps} />}
-          </StepGutter>
-        )}
-        {/* Live turn: indicator + its streaming steps, auto-expanded. When the
-            turn completes its steps fold into the concluding message's
-            (collapsed) disclosure — completion reads as a quiet collapse. */}
+        {/* Live run: the pulsing indicator sits at the very bottom, beneath the
+            auto-expanded trailing fold. It disappears the moment the run
+            completes, as that fold animates closed. */}
         {currentItemId && !loadingActivities && !showFirstRunHero && (
-          <>
-            <WorkingIndicator latestActivity={latestCurrentItemActivity} />
-            {trailingSteps.length > 0 && (
-              <StepGutter>
-                <StepList steps={trailingSteps} />
-              </StepGutter>
-            )}
-          </>
+          <WorkingIndicator latestActivity={latestCurrentItemActivity} />
         )}
         <div ref={bottomRef} className="h-4" />
       </div>
