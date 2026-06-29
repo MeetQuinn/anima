@@ -32,7 +32,7 @@ import {
   initialOf,
   inboundAuthorName,
   isMessageItem,
-  DayDivider,
+  DayLabelPill,
   MessageGroupRow,
   SystemEventRow,
   type Author,
@@ -768,6 +768,28 @@ export default function Activity() {
     return itemActivities.reduce((latest, a) => (a.createdAt > latest.createdAt ? a : latest));
   }, [currentItemId, currentItemStartedAt, activitiesData]);
 
+  // Whether the current (live) turn has produced any row that actually renders
+  // as a step yet. Until it has, the live indicator should sit at the top-level
+  // time rail (not indented into the step lane), so it doesn't dangle in an
+  // empty lane with nothing above it. Once a step exists, the indicator nests
+  // into the lane and continues it (alignment confirmed correct by totoday).
+  const currentTurnHasStep = useMemo(() => {
+    if (!currentItemId || !activitiesData) return false;
+    const activities = activitiesData.events.flatMap((event) =>
+      event.kind === 'activity' ? [event.activity] : [],
+    );
+    const itemActivities = currentItemStartedAt
+      ? activities.filter((a) => a.createdAt >= currentItemStartedAt)
+      : activities;
+    return itemActivities.some((a) => activityRow(a).kind !== 'unknown');
+  }, [currentItemId, currentItemStartedAt, activitiesData]);
+
+  // The live indicator's timestamp: when the latest activity in this turn
+  // happened, else when the turn started, else now. Anchors it to the time
+  // rail so it reads as a real timeline entry rather than a floating label.
+  const workingTimeIso =
+    latestCurrentItemActivity?.createdAt ?? currentItemStartedAt ?? now.toISOString();
+
   // First-run hero gating. Show the live-moment invite in place of the generic
   // empty text only when the feed is empty (a brand-new agent). Needs a known
   // connected platform to phrase the invite honestly.
@@ -1289,24 +1311,43 @@ export default function Activity() {
                     full-bleed band (negative margin cancels the scroll padding)
                     keeps content from bleeding through as it slides under. */}
                 <div className="sticky top-0 z-10 -mx-4 bg-surface px-4 md:-mx-10 md:px-10">
-                  <DayDivider iso={entries[0]!.timestamp} />
+                  {/* Pill only (no flanking rules): pinned + floating over
+                      scrolling content, the rules read as a divider cutting
+                      across the content. A lone centered date pill (Slack-style)
+                      stays clean both pinned and at rest. */}
+                  <div className="my-3 flex justify-center">
+                    <DayLabelPill iso={entries[0]!.timestamp} />
+                  </div>
                 </div>
                 {out}
               </div>
             );
           })}
-        {/* Live run: the pulsing indicator sits at the very bottom, beneath the
-            auto-expanded trailing fold. Wrapped in the same step gutter + lane
-            as the streaming steps so the pulse continues their lane and the
-            label aligns under the step titles. It disappears the moment the run
-            completes, as that fold animates closed. */}
-        {currentItemId && !loadingActivities && !showFirstRunHero && (
-          <StepGutter>
-            <StepLane>
-              <WorkingIndicator latestActivity={latestCurrentItemActivity} />
-            </StepLane>
-          </StepGutter>
-        )}
+        {/* Live run: the pulsing indicator sits at the very bottom. Once the
+            turn has produced a step it nests into the same step gutter + lane as
+            the streaming steps, so the pulse continues their lane and the label
+            aligns under the step titles. Before any step exists it sits at the
+            top-level time rail instead, so it doesn't dangle in an empty lane.
+            Either way it carries a timestamp so it reads as a real timeline
+            entry. It disappears the moment the run completes. */}
+        {currentItemId &&
+          !loadingActivities &&
+          !showFirstRunHero &&
+          (currentTurnHasStep ? (
+            <StepGutter>
+              <StepLane>
+                <WorkingIndicator
+                  latestActivity={latestCurrentItemActivity}
+                  time={clockHM(workingTimeIso)}
+                />
+              </StepLane>
+            </StepGutter>
+          ) : (
+            <WorkingIndicator
+              latestActivity={latestCurrentItemActivity}
+              time={clockHM(workingTimeIso)}
+            />
+          ))}
         <div ref={bottomRef} className="h-4" />
       </div>
     </div>

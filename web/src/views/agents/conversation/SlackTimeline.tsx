@@ -235,13 +235,24 @@ export function groupByAuthor(
   return groups;
 }
 
+// The date chip on its own. Shared so the Activity tab's sticky/floating day
+// header can render just the pill (no flanking rules): when the header is
+// pinned and floating over scrolling content, the two hairline rules read as a
+// divider cutting across the content. A lone centered pill (Slack-style) stays
+// clean both pinned and at rest.
+export function DayLabelPill({ iso }: { iso: string }) {
+  return (
+    <span className="chrome rounded-full border border-border-soft bg-surface px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.1em] text-text-subtle">
+      {dateLabel(iso)}
+    </span>
+  );
+}
+
 export function DayDivider({ iso }: { iso: string }) {
   return (
     <div className="my-3 flex items-center gap-3">
       <span className="h-px flex-1 bg-border-soft" />
-      <span className="chrome rounded-full border border-border-soft bg-surface px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.1em] text-text-subtle">
-        {dateLabel(iso)}
-      </span>
+      <DayLabelPill iso={iso} />
       <span className="h-px flex-1 bg-border-soft" />
     </div>
   );
