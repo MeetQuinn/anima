@@ -294,21 +294,25 @@ export function WorkingIndicator({
 }) {
   const isWorking = latestActivity?.type === 'tool.call.started';
   const label = isWorking ? 'Working' : 'Thinking';
-  // Anchor the live pulse to the same left rail as message avatars (h-9 w-9 at
-  // px-1 + gap-2.5) instead of the tool-step gutter, so it reads as part of the
-  // conversation flow and sits at the same left edge whether or not tool steps
-  // are shown.
+  // Align the live pulse to the tool-step rows: the same Row grid (empty time
+  // column, pulse in the dot column, label in the content column). The caller
+  // wraps this in the step gutter + lane, so the pulse continues the step lane
+  // and "Thinking…" lines up directly under the step titles streaming above it,
+  // rather than floating out at the message rail.
   return (
-    <div className="flex items-center gap-2.5 px-1 py-2">
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center" aria-hidden>
+    <div className="grid grid-cols-[2.5rem_0.75rem_minmax(0,1fr)] items-baseline gap-2 py-2 pr-2 md:grid-cols-[3.5rem_0.75rem_minmax(0,1fr)] md:gap-3 md:py-2.5 md:pr-3">
+      <span aria-hidden />
+      <span className="flex h-6 items-center self-start" aria-hidden>
         <span
           className="inline-block h-2 w-2 animate-pulse rounded-full"
           style={{ background: 'var(--color-health-warn)' }}
         />
       </span>
-      <span className="chrome text-[11px] font-medium uppercase tracking-[0.12em] text-text-muted">
-        {label}…
-      </span>
+      <div className="leading-6">
+        <span className="chrome text-[11px] font-medium uppercase tracking-[0.12em] text-text-muted">
+          {label}…
+        </span>
+      </div>
     </div>
   );
 }

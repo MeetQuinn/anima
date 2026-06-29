@@ -8,7 +8,7 @@ import {
 } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { AlertCircle, ChevronRight, ExternalLink, Loader2, Power, X } from 'lucide-react';
+import { AlertCircle, BrainCircuit, ChevronRight, ExternalLink, Loader2, Power, X } from 'lucide-react';
 import {
   fetchAgentStatuses,
   fetchAgentActivities,
@@ -88,10 +88,16 @@ type TimelineEntry =
   | { type: 'fold'; ts: number; timestamp: string; id: string; steps: Step[] };
 
 // Steps promoted OUT of the fold into their own centred system line: important,
-// non-chat lifecycle signals. Kept deliberately narrow for v1 (runtime
-// restart / stop / idle-timeout); everything else folds.
+// non-chat lifecycle signals that should always show, not hide behind a fold.
+// Two members: runtime restart/stop/idle-timeout (`runtime.aborted`), and the
+// daily memory-coherence pass (`memory_coherence.outcome`) — its result is a
+// first-class signal the owner wants to see at a glance, while the steps that
+// ran inside the pass still fold beneath it. Everything else folds.
 function isSpecialSystemStep(activity: ActivityRecord): boolean {
-  return activity.type === 'runtime.aborted';
+  return (
+    activity.type === 'runtime.aborted' ||
+    activity.type === 'memory_coherence.outcome'
+  );
 }
 
 // Tie-break for atoms sharing a timestamp: inbound first, then outbound/system
@@ -199,17 +205,33 @@ function StepFold({
   );
 }
 
-// A promoted lifecycle step (runtime restart / stop / idle-timeout) rendered as
-// a centred system line — same visual family as the reminder/onboarding
-// SystemEventRow, so non-chat lifecycle signals read as special, not as steps.
+// A promoted lifecycle step rendered as a centred system line — same visual
+// family as the reminder/onboarding SystemEventRow, so non-chat lifecycle
+// signals read as special, not as steps. The icon keys off the step type
+// (runtime restart/stop → Power; memory-coherence pass → BrainCircuit), and a
+// failure outcome (e.g. "Memory coherence failed") tints the pill health-red.
 function LifecycleLineRow({ step }: { step: Step }) {
   const row = activityRow(step.activity);
+  const isMemory = step.activity.type === 'memory_coherence.outcome';
+  const isFailure = row.kind === 'failure';
+  const Icon = isMemory ? BrainCircuit : Power;
+  const accentClass = isFailure ? 'text-health-error' : 'text-text-subtle';
   return (
     <div className="flex items-center justify-center gap-2.5 px-1 py-1.5">
       <span aria-hidden className="hidden h-px w-8 shrink-0 bg-border-soft sm:block" />
-      <span className="inline-flex max-w-[85%] items-center gap-1.5 rounded-full border border-border-soft bg-surface-raised px-2.5 py-0.5">
-        <Power className="h-3 w-3 shrink-0 text-text-subtle" aria-hidden />
-        <span className="shrink-0 font-sans text-[9.5px] font-semibold uppercase tracking-[0.12em] text-text-subtle">
+      <span
+        className={[
+          'inline-flex max-w-[85%] items-center gap-1.5 rounded-full border bg-surface-raised px-2.5 py-0.5',
+          isFailure ? 'border-health-error/40' : 'border-border-soft',
+        ].join(' ')}
+      >
+        <Icon className={['h-3 w-3 shrink-0', accentClass].join(' ')} aria-hidden />
+        <span
+          className={[
+            'shrink-0 font-sans text-[9.5px] font-semibold uppercase tracking-[0.12em]',
+            accentClass,
+          ].join(' ')}
+        >
           {row.title}
         </span>
         {row.target && (
@@ -1200,14 +1222,18 @@ export default function Activity() {
             // Walk the day's chronological entries. Consecutive conversation
             // specials accumulate into a run (author-grouped); a fold or a
             // lifecycle line flushes the run and renders in its own time slot.
-            // A fold keeps steps subordinate to the conversation. On a day with
-            // no conversation rows to anchor them (a purely step-driven agent, or
-            // a quiet background day), a collapsed fold is the *only* thing in the
-            // slot and reads as an empty stub. There the steps ARE the content, so
-            // default the day's folds open; toggling still works (XOR below), and
-            // conversation days keep steps folded as designed.
-            const dayHasConv = entries.some((e) => e.type === 'conv');
-            const foldsDefaultOpen = !dayHasConv;
+            // A fold keeps steps subordinate to an anchor (a conversation row or
+            // a promoted lifecycle line). On a day with no anchor at all — a
+            // collapsed fold is the *only* thing in the slot — it reads as an
+            // empty stub, so there the steps ARE the content and we default the
+            // day's folds open. A quiet memory-coherence day now anchors on its
+            // own lifecycle line (the pass is promoted to special), so it keeps
+            // the line visible with the wrapped steps folded beneath. Toggling
+            // still works (XOR below); conversation days keep steps folded.
+            const dayHasAnchor = entries.some(
+              (e) => e.type === 'conv' || e.type === 'lifecycle',
+            );
+            const foldsDefaultOpen = !dayHasAnchor;
             const out: ReactNode[] = [];
             let run: ActivityFeedItem[] = [];
             let seg = 0;
@@ -1256,16 +1282,30 @@ export default function Activity() {
             flush();
             return (
               <div key={day}>
-                <DayDivider iso={entries[0]!.timestamp} />
+                {/* Sticky day header (Slack-style): the divider pins to the top
+                    of the scroll viewport while its day is in view, then the
+                    next day's header pushes it up and takes over. Scoped per-day
+                    `<div>`, so it's pure CSS — no scroll listener. The opaque
+                    full-bleed band (negative margin cancels the scroll padding)
+                    keeps content from bleeding through as it slides under. */}
+                <div className="sticky top-0 z-10 -mx-4 bg-surface px-4 md:-mx-10 md:px-10">
+                  <DayDivider iso={entries[0]!.timestamp} />
+                </div>
                 {out}
               </div>
             );
           })}
         {/* Live run: the pulsing indicator sits at the very bottom, beneath the
-            auto-expanded trailing fold. It disappears the moment the run
+            auto-expanded trailing fold. Wrapped in the same step gutter + lane
+            as the streaming steps so the pulse continues their lane and the
+            label aligns under the step titles. It disappears the moment the run
             completes, as that fold animates closed. */}
         {currentItemId && !loadingActivities && !showFirstRunHero && (
-          <WorkingIndicator latestActivity={latestCurrentItemActivity} />
+          <StepGutter>
+            <StepLane>
+              <WorkingIndicator latestActivity={latestCurrentItemActivity} />
+            </StepLane>
+          </StepGutter>
         )}
         <div ref={bottomRef} className="h-4" />
       </div>
