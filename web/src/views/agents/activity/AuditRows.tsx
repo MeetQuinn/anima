@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { activityRow, activityIsFailure } from '@/lib/activities';
-import { emojiGlyph } from '@/lib/emoji';
+import { emojiGlyph, replaceEmojiShortcodes } from '@/lib/emoji';
 import { dateLabel, clockHM } from '@/lib/format';
 import { Row, SurfaceText, COLOR_OUTBOUND } from './Row';
 import type { ActivityFeedItem, SubagentStream } from '@/lib/activity-feed';
@@ -127,7 +127,7 @@ export function StepRow({
     <span className="inline-flex min-w-0 items-center gap-2 overflow-hidden">
       {secondaryText ? (
         <span className="chrome min-w-0 truncate text-[11px] tracking-normal text-text-subtle normal-case">
-          {secondaryText}
+          {replaceEmojiShortcodes(secondaryText)}
         </span>
       ) : null}
       {hasSubagents && (
@@ -160,7 +160,7 @@ export function StepRow({
     ? {
         full: (
           <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-[1.55] text-text-muted">
-            {full}
+            {replaceEmojiShortcodes(full)}
           </pre>
         ),
         upstreamTruncated: isOutput ? outputNeedsExpand : !!row.targetFull,
@@ -243,7 +243,7 @@ function SubagentStreamSection({
           const failed = activityIsFailure(child.activity);
           const secondary = row.target ? (
             <span className="chrome min-w-0 truncate text-[11px] tracking-normal text-text-subtle normal-case">
-              {row.target}
+              {replaceEmojiShortcodes(row.target)}
             </span>
           ) : undefined;
           const full = row.targetFull ?? row.target;
@@ -251,7 +251,7 @@ function SubagentStreamSection({
             ? {
                 full: (
                   <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-[1.55] text-text-muted">
-                    {full}
+                    {replaceEmojiShortcodes(full)}
                   </pre>
                 ),
                 upstreamTruncated: !!row.targetFull,

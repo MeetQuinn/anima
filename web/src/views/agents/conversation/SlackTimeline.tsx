@@ -1,6 +1,7 @@
 import { Bell, SmilePlus, UserPlus, type LucideIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { renderMrkdwn } from '@/lib/mrkdwn';
+import { emojiGlyph } from '@/lib/emoji';
 import { clockHM, dateLabel } from '@/lib/format';
 import { AttachedFiles, UploadedFile } from '../activity/Attachments';
 import type { ActivityFeedItem, SurfaceChip } from '@/lib/activity-feed';
@@ -156,15 +157,24 @@ export function MessageBody({ item, agentId }: { item: ActivityFeedItem; agentId
   if (item.kind !== 'reaction-out') return null;
   // reaction-out: a lightweight signal, not a full message.
   const verb = item.action === 'removed' ? 'removed reaction' : 'reacted';
+  // Render the actual Unicode glyph (what Slack shows) when we have a mapping;
+  // workspace-custom emoji have no Unicode equivalent → keep the `:name:` mono
+  // chip so the reaction still reads. Mirrors ReactOutRow.
+  const glyph = item.emoji ? emojiGlyph(item.emoji) : undefined;
   return (
     <span className="inline-flex items-center gap-1.5 font-sans text-[13px] text-text-muted">
       <SmilePlus className="h-3.5 w-3.5 text-text-subtle" aria-hidden />
       {verb}
-      {item.emoji && (
-        <code className="rounded-sm bg-surface-raised px-1 py-0.5 text-[12px] text-text-muted">
-          :{item.emoji}:
-        </code>
-      )}
+      {item.emoji &&
+        (glyph ? (
+          <span className="text-[15px] leading-none" title={`:${item.emoji}:`} aria-label={item.emoji}>
+            {glyph}
+          </span>
+        ) : (
+          <code className="rounded-sm bg-surface-raised px-1 py-0.5 text-[12px] text-text-muted">
+            :{item.emoji}:
+          </code>
+        ))}
     </span>
   );
 }
