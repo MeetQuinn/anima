@@ -27,6 +27,7 @@ const groups = {
     'runtime-upgrade.test.js',
     'slack-adapter.test.js',
     'slack-files.test.js',
+    'slack-preview-refresh.test.js',
     'slack-shortcuts.test.js',
     'slack.test.js',
     'state-cache.test.js',
