@@ -13,7 +13,7 @@ export type {
   KimiCliAgentProviderConfig,
 };
 
-export const CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW = 200000;
+export const CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW = 272000;
 export const CLAUDE_DISALLOWED_TOOLS = [
   'AskUserQuestion',
   'CronCreate',

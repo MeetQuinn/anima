@@ -201,7 +201,7 @@ Current process model:
 - It uses stream-json input/output over stdio.
 - It intentionally does not use `claude -p`.
 - If Anima has a stored Claude session id, startup includes `--resume <session_id>`.
-- The adapter sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000` by default; agent config `provider.env` can override it.
+- The adapter sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW=272000` by default to match Codex's current `gpt-5.5` context-window budget; agent config `provider.env` can override it.
 - The process stays alive across Anima items until abort or worker shutdown.
 
 Command shape:
