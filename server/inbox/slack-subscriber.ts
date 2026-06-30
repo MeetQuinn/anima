@@ -30,6 +30,11 @@ import {
   type SlackMessageEnvelope,
   type SlackRawMessageEvent,
 } from './slack-events.js';
+import {
+  attachmentsHaveSlackMessagePreviews,
+  slackMessageAttachments,
+  waitForSlackMessagePreviewAttachments,
+} from './slack-preview-refresh.js';
 import { SlackProfileResolver } from './slack-profiles.js';
 import { slackShortcutHandoffServiceForAgent } from './slack-shortcut-handoff.service.js';
 import { slackRuntimeDecision, type SlackRuntimeDecision } from './slack-subscription.service.js';
@@ -252,9 +257,25 @@ export class SlackInboxSubscriber {
       text: rawEvent.text,
     });
     const permalink = await this.slackPermalink(rawEvent, webClient);
-    const attachments = rawEvent.attachments?.length
+    let attachments = rawEvent.attachments?.length
       ? rawEvent.attachments
-      : await this.slackMessageAttachments(rawEvent, webClient);
+      : await slackMessageAttachments({
+        channelId: rawEvent.channel,
+        client: webClient,
+        messageTs: rawEvent.ts,
+        text: rawEvent.text,
+        warn: (message) => console.warn(message),
+      });
+    if (!attachmentsHaveSlackMessagePreviews(attachments)) {
+      const delayedAttachments = await waitForSlackMessagePreviewAttachments({
+        channelId: rawEvent.channel,
+        client: webClient,
+        messageTs: rawEvent.ts,
+        text: rawEvent.text,
+        warn: (message) => console.warn(message),
+      });
+      if (delayedAttachments?.length) attachments = delayedAttachments;
+    }
     const downloadedFiles = normalizeSlackEventFiles(rawEvent.files);
     const normalizedEvent = normalizeSlackMessage({
       ...(runtimeDecision.attentionSuggestion ? { attentionSuggestion: runtimeDecision.attentionSuggestion } : {}),
@@ -311,31 +332,6 @@ export class SlackInboxSubscriber {
     }
   }
 
-  private async slackMessageAttachments(
-    event: SlackRawMessageEvent,
-    client: WebClient,
-  ): Promise<unknown[] | undefined> {
-    if (!event.channel || !event.ts || !slackPermalinkMentioned(event.text)) return undefined;
-    try {
-      const response = await client.conversations.history({
-        channel: event.channel,
-        inclusive: true,
-        latest: event.ts,
-        limit: 1,
-      });
-      const message = response.messages?.find((entry) => entry.ts === event.ts) as
-        | { attachments?: unknown[] }
-        | undefined;
-      return Array.isArray(message?.attachments) ? message.attachments : undefined;
-    } catch (error) {
-      console.warn(`Slack message preview lookup failed for ${event.channel}/${event.ts}: ${errorMessage(error)}`);
-      return undefined;
-    }
-  }
-}
-
-function slackPermalinkMentioned(text: string | undefined): boolean {
-  return Boolean(text && /https:\/\/[^\s|>]+\.slack\.com\/archives\/[A-Z0-9]+\/p\d{10,}/.test(text));
 }
 
 // Refresh the bot's own Slack display info at most once every 6h while handling
