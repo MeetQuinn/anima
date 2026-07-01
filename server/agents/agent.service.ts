@@ -1,9 +1,12 @@
 import {
+  agentIdFromName,
   type AgentConfig,
   type AgentCreateRequest,
   type AgentUpdateProfileRequest,
   type AgentUpdateProviderRequest,
 } from '../../shared/agent-config.js';
+import { DEFAULT_TEAM_ID } from '../../shared/server-settings.js';
+import { defaultTeamService, type TeamService } from '../teams/team.service.js';
 import type { AgentSkills } from '../../shared/skills.js';
 import {
   AgentConfigError,
@@ -183,6 +186,7 @@ export class AgentRegistryService {
   constructor(
     private readonly registry: AgentRegistryStore = new AgentRegistryStore(),
     private readonly kbRegistryService: KbRegistryService = defaultKbRegistryService,
+    private readonly teamService: TeamService = defaultTeamService,
   ) {}
 
   async listAgentConfigs(): Promise<AgentConfig[]> {
@@ -195,7 +199,17 @@ export class AgentRegistryService {
   }
 
   async createAgent(input: AgentCreateRequest): Promise<AgentConfig> {
-    const agent = agentConfigFromCreateInput(input);
+    const agentId = agentIdFromName(input.name);
+    // An explicit teamId must name a real team (400). No teamId => the default team.
+    const team = input.teamId
+      ? await this.teamService.requireTeam(input.teamId)
+      : await this.teamService.requireTeam(DEFAULT_TEAM_ID);
+    // Explicit homePath is honored as-is (back-compat). When omitted, derive the deterministic
+    // in-team home: $TEAM_HOME/agents/$agentId (matches today's layout for the default team).
+    const homePath = input.homePath?.trim()
+      ? input.homePath.trim()
+      : this.teamService.deriveAgentHomePath(team, agentId);
+    const agent = agentConfigFromCreateInput(input, { teamId: team.id, homePath });
     const service = this.serviceFor(agent.id);
     if (service.exists()) {
       throw new AgentConfigError(409, `Agent already exists in config: ${agent.id}`);
@@ -206,6 +220,15 @@ export class AgentRegistryService {
     await writeSeedMemory(created);
     await mkdir(join(created.homePath, 'notes'), { recursive: true });
     return created;
+  }
+
+  // Label-only team reassignment: validates the target team exists, then rewrites the agent's
+  // teamId. The existing home is never moved (team = a label; see cut-1 contract).
+  async assignTeam(agentId: string, teamId: string): Promise<AgentConfig> {
+    const team = await this.teamService.requireTeam(teamId);
+    const service = this.serviceFor(agentId);
+    const current = await service.getConfig();
+    return service.saveConfig({ ...current, teamId: team.id });
   }
 
   serviceFor(agentId: string): AgentService {

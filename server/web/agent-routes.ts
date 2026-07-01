@@ -11,6 +11,7 @@ import { buildAgentChannelList } from './agent-channels.js';
 import { enrichInboundAvatars } from './message-profiles.js';
 import { reminderServiceForAgent } from '../reminders/reminder.service.js';
 import {
+  AgentAssignTeamRequest,
   AgentCreateRequest,
   AgentUpdateHomeRequest,
   AgentUpdateProfileRequest,
@@ -64,6 +65,13 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
         .updateProvider(AgentUpdateProviderRequest.parse(request.body)),
     ),
   );
+  // Team reassignment (label-only; existing home is never moved).
+  fastify.post<{ Params: { agentId: string } }>('/api/agents/:agentId/team', async (request) => {
+    const { teamId } = AgentAssignTeamRequest.parse(request.body);
+    return redactAgentConfig(
+      await defaultAgentRegistryService.assignTeam(request.params.agentId, teamId),
+    );
+  });
   fastify.post<{ Params: { agentId: string } }>('/api/agents/:agentId/enable', async (request) =>
     redactAgentConfig(await defaultAgentRegistryService.serviceFor(request.params.agentId).setEnabled(true)),
   );

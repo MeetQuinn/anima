@@ -1212,6 +1212,7 @@ function runtimeHostAgent(
     enabled: options.enabled ?? true,
     homePath: options.homePath ?? `/tmp/${id}`,
     id,
+    teamId: 'default',
     profile: {
       displayName: id,
       role: options.role ?? 'general purpose',

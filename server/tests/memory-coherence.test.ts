@@ -200,6 +200,7 @@ function agent(id: string, options: { connected?: boolean; enabled?: boolean } =
   return {
     createdAt: '2026-01-01T00:00:00.000Z',
     enabled: options.enabled ?? true,
+    teamId: 'default',
     feishu: {
       appId: '',
       appSecret: '',

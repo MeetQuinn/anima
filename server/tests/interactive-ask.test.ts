@@ -317,6 +317,7 @@ async function writeAgentConfig(
     enabled: true,
     homePath,
     id: agentId,
+    teamId: 'default',
     ...(overrides.operator ? { operator: overrides.operator } : {}),
     profile: { displayName: 'Scout', role: 'Engineering agent' },
     provider: { kind: 'codex-cli', model: 'gpt-5.3-codex' },

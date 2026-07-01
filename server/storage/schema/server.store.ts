@@ -13,6 +13,7 @@ import {
   ReleaseTrack,
   ServerTrack,
   SidebarOrder,
+  TeamConfig,
   WorkspacePlatform,
 } from '../../../shared/server-settings.js';
 
@@ -23,6 +24,9 @@ export const ServerConfig = z.object({
   memoryCoherence: MemoryCoherenceConfig.optional(),
   releaseTrack: ReleaseTrack.optional(),
   sidebarOrder: SidebarOrder.optional(),
+  // Team registry. Optional + never schema-defaulted, so a legacy/empty config still loads
+  // as `{}` (zero-touch upgrade). The default team is synthesized in TeamService, not here.
+  teams: z.array(TeamConfig).optional(),
   track: ServerTrack.optional(),
   workspacePlatform: WorkspacePlatform.optional(),
 }).strict();
