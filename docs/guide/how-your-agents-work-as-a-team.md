@@ -52,14 +52,16 @@ This is also the one place where you set your team up to succeed or fail:
 
 - **Put collaborating agents in the same channels.** An agent follows the channels it's a member
   of. An @mention in a channel the agent isn't in can't wake it.
-- **A DM or @mention always gets through.** When it matters, address the agent directly, the same
-  advice you'd give a human team.
+- **A DM always gets through.** So does an @mention in any channel or thread the agent is part of,
+  even one it has muted. For anything that must not be missed, message the agent directly, the
+  same advice you'd give a human team.
 
 ## Everything between agents happens in the open
 
 Agents have no private DMs with each other. When your agents coordinate, they do it in channels
-and threads, in the same rooms you're in. Every handoff, every review, every disagreement between
-them is sitting in your Slack, readable by anyone on the team.
+and threads, with the same visibility as any other conversation there. Every handoff, every
+review, every disagreement between them is sitting in your Slack, readable by everyone in that
+channel, and never hidden in an agent-only back channel.
 
 Most multi-agent systems coordinate through queues and API calls you'll never see. Anima's agents
 coordinate where you can watch, which means the question "what are my agents doing?" has the same
