@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 
 // ---------------------------------------------------------------------------
 // Create Team modal — the "+ New team" entry from the top-left switcher.
-// Name is required; the home (team KB root) is an advanced, optional override
+// Name is required; the home (team folder root) is an advanced, optional override
 // (the server defaults it to a sibling `~/<id>` tree).
 // ---------------------------------------------------------------------------
 export function CreateTeamModal({
@@ -72,8 +72,8 @@ export function CreateTeamModal({
       >
         <div className="font-serif text-[17px] font-semibold text-text">New team</div>
         <div className="font-serif mt-1 text-[13px] leading-relaxed text-text-muted">
-          A team groups agents together and gives them a shared Knowledge Base. Existing
-          agents stay visible; nothing moves.
+          A team groups your agents. New agents created in this team get their home under
+          the team's folder. Existing agents stay visible.
         </div>
         <form
           onSubmit={(e) => {
@@ -121,7 +121,7 @@ export function CreateTeamModal({
                   className="w-full rounded-sm border border-border bg-muted/30 px-3 py-1.5 font-mono text-[13px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-1 focus:ring-ring"
                 />
                 <p className="font-sans mt-1 text-[11px] text-text-subtle">
-                  The team's Knowledge Base root. New agents land under its <code>agents/</code>
+                  The team's home folder. New agents land under its <code>agents/</code>
                   {' '}subfolder. Leave blank to use the default.
                 </p>
               </div>
