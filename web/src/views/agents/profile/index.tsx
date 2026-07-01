@@ -43,7 +43,6 @@ import {
   agentFeishuConnected,
   agentHasConnectedTransport,
   agentSlackConnected,
-  agentTransportLabel,
 } from '@shared/agent-transports';
 import type { AgentConfig, AgentUpdateProviderRequest } from '@shared/agent-config';
 
@@ -155,7 +154,6 @@ export default function Profile() {
   const slackConnected = agentSlackConnected(agent);
   const feishuConnected = agentFeishuConnected(agent);
   const transportConnected = agentHasConnectedTransport(agent);
-  const platformLabel = agentTransportLabel(agent);
   const showFeishuSetup =
     feishuConnected || (!transportConnected && workspacePlatform === 'feishu');
   const showSlackSetup =
@@ -302,9 +300,6 @@ export default function Profile() {
             onRequestSave={(kind, model, effort) => setPendingRestart({ kind, model, effort })}
           />
           <ProviderEnvRow env={agent.provider.env} onCommit={commitProviderEnv} />
-          <Field label="Platform">
-            <ReadonlyValue value={platformLabel} />
-          </Field>
 
           {/* Lifetime facts */}
           <Field label="Created">
