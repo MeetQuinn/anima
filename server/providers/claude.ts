@@ -1,153 +1,123 @@
-import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
-
 import { isRecord, stringField } from '../json.js';
-import { runtimeErrorPayload } from '../activities/format.js';
-import { classifyProviderFailureReason } from '../runtime/provider-failure.js';
-import { ActiveRuntimeRun } from './active-runtime.js';
-import { startChildProcess, type RunningChildProcess } from './child-process.js';
+import { classifyProviderFailureReason } from './provider-failure.js';
+import { type RunningChildProcess } from './child-process.js';
+import {
+  CLAUDE_COMMAND,
+  claudeCommonArgs,
+  claudeProviderEnv,
+  writeSystemPromptFile,
+} from './claude-launch.js';
 import { createClaudeJsonlActivityMapper, parseClaudeRuntimeOutput } from './claude-events.js';
-import { ProviderControllerSlot } from './controller-slot.js';
 import { LineBuffer } from './line-buffer.js';
+import { ControllerAgentRuntime } from './provider-runtime.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
 import {
-  CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW,
-  CLAUDE_DISALLOWED_TOOLS,
-  type AgentRuntimeCloseOptions,
   providerSessionPayload,
   type ProviderSessionRecord,
-  AgentRuntime,
-  AgentRuntimeDrainInput,
   AgentRuntimeFollowupInput,
   AgentRuntimeFollowupResult,
-  AgentRuntimeHealth,
   AgentRuntimeInput,
   AgentRuntimeResult,
   ClaudeCodeAgentProviderConfig,
 } from './contract.js';
 
-const CLAUDE_COMMAND = 'claude';
-const CLAUDE_DEFAULT_ENV = {
-  CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW),
-};
 const CLAUDE_TRANSIENT_CONTINUE_PROMPT =
   'The previous provider turn ended with a transient API or transport error after partial progress. Continue from the current conversation state. Do not repeat completed tool calls, chat messages, file sends, or file edits; inspect state first if needed, then finish the requested task.';
 
-export class ClaudeCodeAgentRuntime implements AgentRuntime {
-  readonly env: Record<string, string> | undefined;
+export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJsonController> {
+  readonly env: Record<string, string>;
   readonly kind = 'claude-code';
   private readonly config: ClaudeCodeAgentProviderConfig;
-  private readonly slot = new ProviderControllerSlot<ClaudeStreamJsonController>();
-  private readonly activeRun = new ActiveRuntimeRun();
 
   constructor(config: ClaudeCodeAgentProviderConfig) {
+    super();
     this.config = config;
-    this.env = {
-      ...CLAUDE_DEFAULT_ENV,
-      ...(config.env ?? {}),
-    };
-  }
-
-  async close(options: AgentRuntimeCloseOptions = {}): Promise<void> {
-    await this.slot.reset(options.signal, options);
-  }
-
-  health(): AgentRuntimeHealth {
-    const controller = this.slot.get();
-    return {
-      ...(controller ? { child: controller.snapshot() } : {}),
-      childExpected: this.activeRun.isActive(),
-    };
+    this.env = claudeProviderEnv(config);
   }
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
-    await input.effects.recordRuntime('runtime.started', {
-      command: CLAUDE_COMMAND,
-      inputFormat: 'stream-json',
-      providerSession: providerSessionPayload(input.providerSession, this.kind),
-    });
     const jsonlMapper = createClaudeJsonlActivityMapper(input.effects, this.kind);
-    const finishRun = this.activeRun.start(input, 'Claude Code', (signal) => void this.slot.reset(signal));
-    try {
-      if (!input.providerSession && this.slot.get()?.hasStartedSession()) {
-        await this.slot.reset();
-      }
-      let result: string;
-      let retriedProviderError = false;
-      let continuedAfterProviderError = false;
-      try {
-        for (;;) {
-          try {
-            result = await this.runTurn(input, jsonlMapper);
-            break;
-          } catch (error) {
-            if (
-              error instanceof ClaudeProviderError &&
-              error.retryable &&
-              error.sideEffectFree &&
-              !retriedProviderError &&
-              !input.signal?.aborted
-            ) {
-              retriedProviderError = true;
-              await input.effects.recordEvent({
-                error: error.message,
-                eventType: 'claude.provider.retry',
-                reason: error.reason,
-                runtimeKind: this.kind,
-              });
-              continue;
-            }
-            if (
-              error instanceof ClaudeProviderError &&
-              error.retryable &&
-              !error.sideEffectFree &&
-              !continuedAfterProviderError &&
-              !input.signal?.aborted &&
-              this.slot.get()?.hasStartedSession()
-            ) {
-              continuedAfterProviderError = true;
-              await input.effects.recordEvent({
-                error: error.message,
-                eventType: 'claude.provider.resume_retry',
-                reason: error.reason,
-                runtimeKind: this.kind,
-              });
-              result = await this.runTurn(input, jsonlMapper, CLAUDE_TRANSIENT_CONTINUE_PROMPT);
-              break;
-            }
-            throw error;
-          }
-        }
-      } catch (error) {
-        if (!(error instanceof ClaudeSessionNotFoundError) || !input.providerSession) throw error;
-        await input.effects.recordEvent({
-          eventType: 'claude.session.resume_missing',
-          providerSession: providerSessionPayload(input.providerSession, this.kind),
-          runtimeKind: this.kind,
-        });
-        await this.slot.reset();
-        result = await this.runTurn({ ...input, providerSession: undefined }, jsonlMapper);
-      }
-      await jsonlMapper.flush();
-      await input.effects.recordRuntime('runtime.completed');
-      return result ? { text: result } : {};
-    } catch (error) {
-      const flushError = await flushClaudeMapper(jsonlMapper);
-      if (!input.suppressFailureRecord) {
-        await input.effects.recordRuntime('runtime.failed', {
-          ...runtimeErrorPayload(error),
+    return this.runTurnLifecycle(input, {
+      failurePayload: async (error) => {
+        const flushError = await flushClaudeMapper(jsonlMapper);
+        return {
           ...(error instanceof ClaudeProviderError ? {
             failureSource: 'provider',
             providerReason: error.reason,
             retryable: error.retryable,
           } : {}),
           ...(flushError ? { flushError } : {}),
-        });
-      }
-      throw error;
-    } finally {
-      finishRun();
-    }
+        };
+      },
+      label: 'Claude Code',
+      startedPayload: {
+        command: CLAUDE_COMMAND,
+        inputFormat: 'stream-json',
+      },
+      turn: async () => {
+        if (!input.providerSession && this.slot.get()?.hasStartedSession()) {
+          await this.slot.reset();
+        }
+        let result: string;
+        let retriedProviderError = false;
+        let continuedAfterProviderError = false;
+        try {
+          for (;;) {
+            try {
+              result = await this.runTurn(input, jsonlMapper);
+              break;
+            } catch (error) {
+              if (
+                error instanceof ClaudeProviderError &&
+                error.retryable &&
+                error.sideEffectFree &&
+                !retriedProviderError &&
+                !input.signal?.aborted
+              ) {
+                retriedProviderError = true;
+                await input.effects.recordEvent({
+                  error: error.message,
+                  eventType: 'claude.provider.retry',
+                  reason: error.reason,
+                  runtimeKind: this.kind,
+                });
+                continue;
+              }
+              if (
+                error instanceof ClaudeProviderError &&
+                error.retryable &&
+                !error.sideEffectFree &&
+                !continuedAfterProviderError &&
+                !input.signal?.aborted &&
+                this.slot.get()?.hasStartedSession()
+              ) {
+                continuedAfterProviderError = true;
+                await input.effects.recordEvent({
+                  error: error.message,
+                  eventType: 'claude.provider.resume_retry',
+                  reason: error.reason,
+                  runtimeKind: this.kind,
+                });
+                result = await this.runTurn(input, jsonlMapper, CLAUDE_TRANSIENT_CONTINUE_PROMPT);
+                break;
+              }
+              throw error;
+            }
+          }
+        } catch (error) {
+          if (!(error instanceof ClaudeSessionNotFoundError) || !input.providerSession) throw error;
+          await input.effects.recordEvent({
+            eventType: 'claude.session.resume_missing',
+            providerSession: providerSessionPayload(input.providerSession, this.kind),
+            runtimeKind: this.kind,
+          });
+          await this.slot.reset();
+          result = await this.runTurn({ ...input, providerSession: undefined }, jsonlMapper);
+        }
+        await jsonlMapper.flush();
+        return result ? { text: result } : {};
+      },
+    });
   }
 
   async appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<AgentRuntimeFollowupResult> {
@@ -158,33 +128,19 @@ export class ClaudeCodeAgentRuntime implements AgentRuntime {
     return { accepted: true, text: 'appended to Claude stream-json stdin' };
   }
 
-  async requestDrain(input: AgentRuntimeDrainInput): Promise<void> {
-    const controller = this.slot.get();
-    if (!this.activeRun.accepts(input)) return;
-    if (!controller) return;
-    await controller.waitForQuiescent(input.signal);
-  }
-
   private async ensureController(input: AgentRuntimeInput): Promise<ClaudeStreamJsonController> {
     const existing = this.slot.get();
     if (existing) return existing;
     const systemPromptFilePath = await writeSystemPromptFile(input);
-    let controller!: ClaudeStreamJsonController;
-    controller = new ClaudeStreamJsonController(startChildProcess({
-      args: this.claudeArgs(input.providerSession, systemPromptFilePath),
-      bufferOutput: false,
-      command: CLAUDE_COMMAND,
-      cwd: input.cwd,
-      env: input.env,
-      label: 'Claude Code runtime',
-      onStderrChunk: (chunk) => {
-        return controller.acceptStderrChunk(chunk);
+    return this.spawnController(
+      {
+        args: this.claudeArgs(input.providerSession, systemPromptFilePath),
+        command: CLAUDE_COMMAND,
+        label: 'Claude Code runtime',
       },
-      onStdoutChunk: async (chunk) => {
-        await controller.acceptStdoutChunk(chunk);
-      },
-    }));
-    return this.slot.install(controller);
+      input,
+      (child) => new ClaudeStreamJsonController(child),
+    );
   }
 
   private async runTurn(
@@ -210,13 +166,9 @@ export class ClaudeCodeAgentRuntime implements AgentRuntime {
       '--include-partial-messages',
       '--include-hook-events',
       '--input-format', 'stream-json',
-      '--permission-mode', 'bypassPermissions',
-      '--disallowedTools', CLAUDE_DISALLOWED_TOOLS.join(','),
     ];
     if (providerSession) args.push('--resume', providerSession.id);
-    if (this.config.model) args.push('--model', this.config.model);
-    if (this.config.reasoningEffort) args.push('--effort', this.config.reasoningEffort);
-    if (systemPromptFilePath) args.push('--system-prompt-file', systemPromptFilePath);
+    args.push(...claudeCommonArgs(this.config, systemPromptFilePath));
     return args;
   }
 }
@@ -253,13 +205,6 @@ class ClaudeProviderError extends Error {
 
 function claudeSessionNotFound(stderr: string): boolean {
   return /No conversation found with session ID:/.test(stderr);
-}
-
-async function writeSystemPromptFile(input: AgentRuntimeInput): Promise<string | undefined> {
-  if (!input.systemPrompt || !input.systemPromptFilePath) return undefined;
-  await mkdir(dirname(input.systemPromptFilePath), { recursive: true });
-  await writeFile(input.systemPromptFilePath, input.systemPrompt, 'utf8');
-  return input.systemPromptFilePath;
 }
 
 class ClaudeStreamJsonController {

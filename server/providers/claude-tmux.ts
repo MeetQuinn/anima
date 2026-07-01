@@ -9,8 +9,12 @@ import { nowIso } from "../ids.js";
 import { resolveAnimaHome } from "../anima-home.js";
 import { ActiveRuntimeRun } from "./active-runtime.js";
 import {
-  CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW,
-  CLAUDE_DISALLOWED_TOOLS,
+  CLAUDE_COMMAND,
+  claudeCommonArgs,
+  claudeProviderEnv,
+  writeSystemPromptFile,
+} from "./claude-launch.js";
+import {
   type AgentRuntime,
   type AgentRuntimeCloseOptions,
   type AgentRuntimeDrainInput,
@@ -23,10 +27,6 @@ import {
   providerSessionPayload,
 } from "./contract.js";
 
-const CLAUDE_COMMAND = "claude";
-const CLAUDE_TMUX_DEFAULT_ENV = {
-  CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW),
-};
 const TMUX_COMPLETION_POLL_INTERVAL_MS = 250;
 const TMUX_READY_POLL_INTERVAL_MS = 500;
 const TMUX_READY_TIMEOUT_MS = 30_000;
@@ -56,10 +56,7 @@ export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
 
   constructor(config: ClaudeCodeAgentProviderConfig) {
     this.config = config;
-    this.env = {
-      ...CLAUDE_TMUX_DEFAULT_ENV,
-      ...(config.env ?? {}),
-    };
+    this.env = claudeProviderEnv(config);
   }
 
   async close(_options: AgentRuntimeCloseOptions = {}): Promise<void> {
@@ -229,20 +226,12 @@ export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
     mcpConfigFile: string,
     systemPromptFilePath: string | undefined,
   ): string[] {
-    const args = [
+    return [
       "--mcp-config",
       mcpConfigFile,
       "--strict-mcp-config",
-      "--permission-mode",
-      "bypassPermissions",
-      `--disallowedTools=${CLAUDE_DISALLOWED_TOOLS.join(",")}`,
+      ...claudeCommonArgs(this.config, systemPromptFilePath),
     ];
-    if (this.config.model) args.push("--model", this.config.model);
-    if (this.config.reasoningEffort)
-      args.push("--effort", this.config.reasoningEffort);
-    if (systemPromptFilePath)
-      args.push("--system-prompt-file", systemPromptFilePath);
-    return args;
   }
 }
 
@@ -326,15 +315,6 @@ async function clearTargetFile(path: string): Promise<void> {
     )}\n`,
     "utf8",
   );
-}
-
-async function writeSystemPromptFile(
-  input: AgentRuntimeInput,
-): Promise<string | undefined> {
-  if (!input.systemPrompt || !input.systemPromptFilePath) return undefined;
-  await mkdir(dirname(input.systemPromptFilePath), { recursive: true });
-  await writeFile(input.systemPromptFilePath, input.systemPrompt, "utf8");
-  return input.systemPromptFilePath;
 }
 
 function tmuxPrompt(

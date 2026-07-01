@@ -11,7 +11,8 @@ import {
   type Session,
 } from '../storage/schema/session.store.js';
 import { activitiesForInboxItemWindow } from './item-activities.js';
-import { CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW, type ProviderSessionRecord } from '../providers/contract.js';
+import { claudeAutoCompactWindowFor } from '../providers/claude-launch.js';
+import type { ProviderSessionRecord } from '../providers/contract.js';
 
 export type { ProviderSession, Session };
 
@@ -237,7 +238,7 @@ function mergeContextStats(
   return providerStatsSummary({
     ...(current ?? {}),
     activityId: keepProviderStatsStamp ? current?.activityId : activity.activityId,
-    autoCompactWindow: autoCompactWindowFor(runtimeKind, runtimeEnv),
+    autoCompactWindow: claudeAutoCompactWindowFor(runtimeKind, runtimeEnv),
     createdAt: keepProviderStatsStamp ? current?.createdAt : activity.createdAt,
     runtimeKind: stringField(payload, 'runtimeKind') ?? current?.runtimeKind ?? runtimeKind,
     contextWindow: numberField(payload, 'contextWindow') ?? current?.contextWindow,
@@ -255,7 +256,7 @@ function mergeCompactionStats(
   return providerStatsSummary({
     ...(current ?? {}),
     activityId: keepProviderStatsStamp ? current?.activityId : activity.activityId,
-    autoCompactWindow: autoCompactWindowFor(runtimeKind, runtimeEnv),
+    autoCompactWindow: claudeAutoCompactWindowFor(runtimeKind, runtimeEnv),
     createdAt: keepProviderStatsStamp ? current?.createdAt : activity.createdAt,
     runtimeKind: stringField(activity.payload, 'runtimeKind') ?? current?.runtimeKind ?? runtimeKind,
     sessionCompactionCount: (current?.sessionCompactionCount ?? 0) + 1,
@@ -270,7 +271,7 @@ function providerSessionStatsSummary(
 ): ProviderSessionStatsSummary {
   const summary = providerStatsSummary({
     activityId: activity.activityId,
-    autoCompactWindow: autoCompactWindowFor(runtimeKind, runtimeEnv),
+    autoCompactWindow: claudeAutoCompactWindowFor(runtimeKind, runtimeEnv),
     cacheCreationInputTokens: numberField(payload, 'cacheCreationInputTokens'),
     cacheReadInputTokens: numberField(payload, 'cacheReadInputTokens'),
     contextWindow: numberField(payload, 'contextWindow'),
@@ -304,19 +305,6 @@ function providerContextStatsPayload(payload: Record<string, unknown> | undefine
 
 function isCompletedCompactEvent(payload: Record<string, unknown> | undefined): boolean {
   return stringField(payload, 'eventType')?.endsWith('.compact.completed') === true;
-}
-
-function autoCompactWindowFor(
-  runtimeKind: string,
-  runtimeEnv: Record<string, string> | undefined,
-): number | undefined {
-  if (runtimeKind !== 'claude-code') return undefined;
-  const configured = runtimeEnv?.['CLAUDE_CODE_AUTO_COMPACT_WINDOW'];
-  if (configured !== undefined) {
-    const value = Number(configured);
-    return Number.isFinite(value) && value > 0 ? value : undefined;
-  }
-  return CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW;
 }
 
 function providerUsedTokens(stats: ProviderSessionStatsSummary): number | undefined {

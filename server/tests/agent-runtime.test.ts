@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createAgentRuntime } from '../providers/factory.js';
-import { CLAUDE_DISALLOWED_TOOLS } from '../providers/contract.js';
+import { CLAUDE_DISALLOWED_TOOLS } from '../providers/claude-launch.js';
 import { codexAppServerArgs, codexToolEnvIncludeList } from '../providers/codex.js';
 import { AgentRuntimeBridge } from '../runtime/runtime-bridge.js';
 import type { AgentRuntime } from '../providers/contract.js';

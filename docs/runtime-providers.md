@@ -330,4 +330,6 @@ A new provider should:
 6. implement `appendToActiveRun` using the provider's real in-flight input protocol;
 7. implement `close` if it keeps a process or connection alive beyond a single item.
 
+Adapters that keep one long-lived child-process controller per runtime (the Claude stream-json, Codex, and Kimi shape) should extend `ControllerAgentRuntime` in `server/providers/provider-runtime.ts`. It owns the controller slot, active-run tracking, `close`/`health`/`requestDrain`, child spawning, and the `runtime.started`/`runtime.completed`/`runtime.failed` activity envelope; the adapter supplies only the provider protocol.
+
 The worker should not need provider-specific changes for a new adapter.

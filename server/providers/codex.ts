@@ -1,17 +1,9 @@
 import { nowIso } from '../ids.js';
-import { runtimeErrorPayload } from '../activities/format.js';
-import { ActiveRuntimeRun } from './active-runtime.js';
-import { startChildProcess } from './child-process.js';
 import { CodexAppServerController } from './codex-app-server.js';
-import { ProviderControllerSlot } from './controller-slot.js';
+import { ControllerAgentRuntime } from './provider-runtime.js';
 import {
-  providerSessionPayload,
-  type AgentRuntimeCloseOptions,
-  type AgentRuntime,
-  type AgentRuntimeDrainInput,
   type AgentRuntimeFollowupInput,
   type AgentRuntimeFollowupResult,
-  type AgentRuntimeHealth,
   type AgentRuntimeInput,
   type AgentRuntimeResult,
   type CodexCliAgentProviderConfig,
@@ -35,65 +27,44 @@ const CODEX_TOOL_ENV_BASE_INCLUDE = [
   'USER',
 ];
 
-export class CodexCliAgentRuntime implements AgentRuntime {
+export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerController> {
   readonly env: Record<string, string> | undefined;
   readonly kind = 'codex-cli';
   private readonly config: CodexCliAgentProviderConfig;
-  private readonly slot = new ProviderControllerSlot<CodexAppServerController>();
-  private readonly activeRun = new ActiveRuntimeRun();
 
   constructor(config: CodexCliAgentProviderConfig) {
+    super();
     this.config = config;
     this.env = config.env;
   }
 
-  async close(options: AgentRuntimeCloseOptions = {}): Promise<void> {
-    await this.slot.reset(options.signal, options);
-  }
-
-  health(): AgentRuntimeHealth {
-    const controller = this.slot.get();
-    return {
-      ...(controller ? { child: controller.snapshot() } : {}),
-      childExpected: this.activeRun.isActive(),
-    };
-  }
-
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
-    await input.effects.recordRuntime('runtime.started', {
-      command: CODEX_COMMAND,
-      providerSession: providerSessionPayload(input.providerSession, this.kind),
-      transport: 'app-server',
+    return this.runTurnLifecycle(input, {
+      beforeFinishRun: () => this.slot.get()?.detachRun(input),
+      label: 'Codex',
+      startedPayload: {
+        command: CODEX_COMMAND,
+        transport: 'app-server',
+      },
+      turn: async () => {
+        if (!input.providerSession && this.slot.get()?.threadId) {
+          await this.slot.reset();
+        }
+        const controller = this.ensureController(input);
+        controller.attachRun(input);
+        const thread = await controller.ensureThread(input, this.threadParams(input));
+        await input.effects.persistProviderSession({
+          id: thread.id,
+          updatedAt: nowIso(),
+        });
+
+        const result = await controller.startTurn({
+          input: [codexTextInput(input.prompt)],
+          threadId: thread.id,
+        }, input, (text) => input.effects.recordAgentText(text));
+        return { text: result.trim() };
+      },
     });
-
-    const finishRun = this.activeRun.start(input, 'Codex', (signal) => void this.slot.reset(signal));
-    try {
-      if (!input.providerSession && this.slot.get()?.threadId) {
-        await this.slot.reset();
-      }
-      const controller = this.ensureController(input);
-      controller.attachRun(input);
-      const thread = await controller.ensureThread(input, this.threadParams(input));
-      await input.effects.persistProviderSession({
-        id: thread.id,
-        updatedAt: nowIso(),
-      });
-
-      const result = await controller.startTurn({
-        input: [codexTextInput(input.prompt)],
-        threadId: thread.id,
-      }, input, (text) => input.effects.recordAgentText(text));
-      await input.effects.recordRuntime('runtime.completed');
-      return { text: result.trim() };
-    } catch (error) {
-      if (!input.suppressFailureRecord) {
-        await input.effects.recordRuntime('runtime.failed', runtimeErrorPayload(error));
-      }
-      throw error;
-    } finally {
-      this.slot.get()?.detachRun(input);
-      finishRun();
-    }
   }
 
   async appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<AgentRuntimeFollowupResult> {
@@ -114,31 +85,18 @@ export class CodexCliAgentRuntime implements AgentRuntime {
     return { accepted: true, text: `appended to ${turnId}` };
   }
 
-  async requestDrain(input: AgentRuntimeDrainInput): Promise<void> {
-    if (!this.activeRun.accepts(input)) return;
-    const controller = this.slot.get();
-    if (!controller) return;
-    await controller.waitForQuiescent(input.signal);
-  }
-
   private ensureController(input: AgentRuntimeInput): CodexAppServerController {
     const existing = this.slot.get();
     if (existing) return existing;
-    let controller!: CodexAppServerController;
-    controller = new CodexAppServerController(
-      startChildProcess({
+    return this.spawnController(
+      {
         args: codexAppServerArgs(this.env),
-        bufferOutput: false,
         command: CODEX_COMMAND,
-        cwd: input.cwd,
-        env: input.env,
         label: 'Codex app-server runtime',
-        onStderrChunk: (chunk) => controller.acceptStderrChunk(chunk),
-        onStdoutChunk: (chunk) => controller.acceptStdoutChunk(chunk),
-      }),
-      this.kind,
+      },
+      input,
+      (child) => new CodexAppServerController(child, this.kind),
     );
-    return this.slot.install(controller);
   }
 
   private threadParams(input: AgentRuntimeInput): Record<string, unknown> {

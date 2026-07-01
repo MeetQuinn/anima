@@ -5,7 +5,7 @@ import {
   classifyProviderFailureReason,
   providerFailureHealthReason,
   providerFailureReasonFromError,
-} from '../runtime/provider-failure.js';
+} from '../providers/provider-failure.js';
 
 test('provider failure classifier maps auth quota and rate limit errors', () => {
   assert.equal(
