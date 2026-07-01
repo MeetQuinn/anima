@@ -60,6 +60,12 @@ interface RunningAgentRecord {
   handle: RunningAgentHandle;
 }
 
+interface ManagedAgent {
+  config: AgentConfig;
+  lastLoggedStatus?: string;
+  running?: RunningAgentRecord;
+}
+
 export interface StartAgentOptions {
   forceStopAfterMs: number;
   startTimeoutMs: number;
@@ -95,7 +101,7 @@ export async function startRuntimeHost(opts: RuntimeHostOptions = {}): Promise<v
 }
 
 export class RuntimeHost {
-  private readonly agentHandles = new Map<string, RunningAgentRecord>();
+  private readonly agents = new Map<string, ManagedAgent>();
   private readonly animaHome: string;
   private readonly loadAgents: (opts: RuntimeHostOptions) => Promise<AgentConfig[]>;
   private readonly ensureDefaultSkills: () => Promise<void>;
@@ -107,13 +113,11 @@ export class RuntimeHost {
   private readonly forceRestartTimeoutMs: number;
   private readonly startAgentTimeoutMs: number;
   private readonly startAgent: (agent: AgentConfig, animaHome: string, options: StartAgentOptions) => Promise<RunningAgentHandle>;
-  private readonly statusByAgent = new Map<string, string>();
   private readonly validateAgent: (agent: AgentConfig) => Promise<void> | void;
   private pollTimer?: NodeJS.Timeout;
   private healthTimer?: NodeJS.Timeout;
   private reconcile?: Promise<void>;
   private healthPublish?: Promise<void>;
-  private knownAgents = new Map<string, AgentConfig>();
   private readonly configWatchers = new Map<string, FSWatcher>();
   private restartCommandWatcher?: FSWatcher;
   private configWatchDebounce?: NodeJS.Timeout;
@@ -182,8 +186,8 @@ export class RuntimeHost {
     await this.healthPublish?.catch((error: unknown) => {
       this.logger.error(`Runtime host health publish failed while stopping: ${errorMessage(error)}`);
     });
-    const handles = [...this.agentHandles.values()].map((record) => record.handle);
-    this.agentHandles.clear();
+    const handles = [...this.agents.values()].flatMap((record) => record.running ? [record.running.handle] : []);
+    this.agents.clear();
     const stopOptions = await this.shutdownStopOptions();
     await Promise.allSettled(handles.map((handle) => handle.stop(stopOptions)));
   }
@@ -200,19 +204,22 @@ export class RuntimeHost {
   }
 
   runningAgentIds(): string[] {
-    return [...this.agentHandles.keys()].sort();
+    return [...this.agents.entries()]
+      .filter(([, record]) => record.running)
+      .map(([agentId]) => agentId)
+      .sort();
   }
 
   private async reconcileAgents(): Promise<void> {
     const agents = await this.loadAgents(this.opts);
-    this.knownAgents = new Map(agents.map((agent) => [agent.id, agent]));
     await this.initializeBootHealth(agents);
     this.syncConfigWatchers(agents.map((agent) => agent.id));
     const pendingRestartAgentIds = new Set(await this.restartCommands.pendingAgentIds());
     const seenAgentIds = new Set<string>();
     for (const agent of agents) {
       seenAgentIds.add(agent.id);
-      const running = this.agentHandles.get(agent.id);
+      const record = this.managedAgent(agent);
+      const running = record.running;
       try {
         await this.validateAgent(agent);
         const skipStatus = agentSkipStatus(agent);
@@ -220,16 +227,16 @@ export class RuntimeHost {
           ? await this.restartCommands.take(agent.id)
           : undefined;
         if (restartCommand) {
-          await this.forceRestartAgent(agent, running, skipStatus, restartCommand);
+          await this.forceRestartAgent(record, skipStatus, restartCommand);
           continue;
         }
         if (running) {
-          await this.reconcileRunningAgent(agent, running, skipStatus);
+          await this.reconcileRunningAgent(record, running, skipStatus);
           continue;
         }
         if (skipStatus) {
           await this.writeUnknownHealth(agent.id);
-          this.logAgentStatus(agent.id, `skip:${skipStatus}`, () => {
+          this.logAgentStatus(record, `skip:${skipStatus}`, () => {
             this.logger.log(`Agent ${agent.id}: ${skipStatus}.`);
           });
           continue;
@@ -238,7 +245,7 @@ export class RuntimeHost {
       } catch (error) {
         const action = running ? 'failed to reconcile' : 'failed to start';
         const message = `Agent ${agent.id} ${action}: ${errorMessage(error)}`;
-        this.logAgentStatus(agent.id, `error:${message}`, () => {
+        this.logAgentStatus(record, `error:${message}`, () => {
           this.logger.error(message);
         });
         await this.writeFailedHealth(agent.id, running ? 'stale_running_item' : 'start_failed');
@@ -248,6 +255,17 @@ export class RuntimeHost {
     if (!this.opts.agent) await this.stopMissingAgents(seenAgentIds);
     await this.reconcileMemoryCoherence(agents);
     await this.publishKnownHealthSnapshots();
+  }
+
+  private managedAgent(agent: AgentConfig): ManagedAgent {
+    const existing = this.agents.get(agent.id);
+    if (existing) {
+      existing.config = agent;
+      return existing;
+    }
+    const record: ManagedAgent = { config: agent };
+    this.agents.set(agent.id, record);
+    return record;
   }
 
   private async reconcileMemoryCoherence(agents: AgentConfig[]): Promise<void> {
@@ -277,17 +295,18 @@ export class RuntimeHost {
   }
 
   private async forceRestartAgent(
-    agent: AgentConfig,
-    running: RunningAgentRecord | undefined,
+    record: ManagedAgent,
     skipStatus: string | undefined,
     command: AgentRestartCommand,
   ): Promise<void> {
+    const agent = record.config;
+    const running = record.running;
     if (skipStatus) {
-      this.logAgentStatus(agent.id, `restart-skip:${skipStatus}`, () => {
+      this.logAgentStatus(record, `restart-skip:${skipStatus}`, () => {
         this.logger.log(`Agent ${agent.id}: restart ${command.requestId} skipped; ${skipStatus}.`);
       });
       await this.writeRestartFailed(agent.id, command, 'start_failed');
-      if (running) await this.reconcileRunningAgent(agent, running, skipStatus);
+      if (running) await this.reconcileRunningAgent(record, running, skipStatus);
       return;
     }
     this.logger.log(`Agent ${agent.id}: restart requested by operator (${command.requestId}).`);
@@ -299,7 +318,7 @@ export class RuntimeHost {
           abortReason: command.reason,
           forceAfterMs: this.forceRestartTimeoutMs,
         });
-        this.agentHandles.delete(agent.id);
+        record.running = undefined;
       }
       await this.startAndStore(agent, runtimeFingerprint(agent), command);
     } catch (error) {
@@ -309,21 +328,22 @@ export class RuntimeHost {
   }
 
   private async reconcileRunningAgent(
-    agent: AgentConfig,
+    record: ManagedAgent,
     running: RunningAgentRecord,
     skipStatus: string | undefined,
   ): Promise<void> {
+    const agent = record.config;
     if (skipStatus) {
       if (isHandleActive(running.handle)) {
-        this.logAgentStatus(agent.id, `pending-stop:${skipStatus}`, () => {
+        this.logAgentStatus(record, `pending-stop:${skipStatus}`, () => {
           this.logger.log(`Agent ${agent.id}: ${skipStatus}; will stop after the active item finishes.`);
         });
         return;
       }
       await running.handle.stop({ drainActive: true });
-      this.agentHandles.delete(agent.id);
+      record.running = undefined;
       await this.writeUnknownHealth(agent.id);
-      this.logAgentStatus(agent.id, `skip:${skipStatus}`, () => {
+      this.logAgentStatus(record, `skip:${skipStatus}`, () => {
         this.logger.log(`Agent ${agent.id}: ${skipStatus}.`);
       });
       return;
@@ -332,7 +352,7 @@ export class RuntimeHost {
     const nextFingerprint = runtimeFingerprint(agent);
     if (running.fingerprint === nextFingerprint) return;
     if (isHandleActive(running.handle)) {
-      this.logAgentStatus(agent.id, 'pending-restart', () => {
+      this.logAgentStatus(record, 'pending-restart', () => {
         this.logger.log(`Agent ${agent.id}: config changed; will reload after the active item finishes.`);
       });
       return;
@@ -343,7 +363,7 @@ export class RuntimeHost {
       drainActive: true,
       forceAfterMs: this.forceRestartTimeoutMs,
     });
-    this.agentHandles.delete(agent.id);
+    record.running = undefined;
     await this.startAndStore(agent, nextFingerprint);
   }
 
@@ -362,9 +382,10 @@ export class RuntimeHost {
       updatedAt: nowIso(),
     });
     const handle = await this.startAgentWithTimeout(agent);
-    this.agentHandles.set(agent.id, { fingerprint, handle });
-    this.statusByAgent.delete(agent.id);
-    await this.publishHealthForAgent(agent, restartCommand);
+    const record = this.managedAgent(agent);
+    record.running = { fingerprint, handle };
+    record.lastLoggedStatus = undefined;
+    await this.publishHealthForAgent(record, restartCommand);
   }
 
   private async startAgentWithTimeout(agent: AgentConfig): Promise<RunningAgentHandle> {
@@ -408,17 +429,21 @@ export class RuntimeHost {
   }
 
   private async stopMissingAgents(seenAgentIds: Set<string>): Promise<void> {
-    for (const [agentId, running] of this.agentHandles) {
+    for (const [agentId, record] of this.agents) {
       if (seenAgentIds.has(agentId)) continue;
+      const running = record.running;
+      if (!running) {
+        this.agents.delete(agentId);
+        continue;
+      }
       if (isHandleActive(running.handle)) {
-        this.logAgentStatus(agentId, 'pending-remove', () => {
+        this.logAgentStatus(record, 'pending-remove', () => {
           this.logger.log(`Agent ${agentId}: removed from config; will stop after the active item finishes.`);
         });
         continue;
       }
       await running.handle.stop({ drainActive: true });
-      this.agentHandles.delete(agentId);
-      this.statusByAgent.delete(agentId);
+      this.agents.delete(agentId);
       await this.health.clear(agentId);
       this.logger.log(`Agent ${agentId}: removed from config; stopped.`);
     }
@@ -439,7 +464,7 @@ export class RuntimeHost {
   private async publishKnownHealthSnapshots(): Promise<void> {
     if (this.healthPublish) return this.healthPublish;
     const publish = Promise.allSettled(
-      [...this.knownAgents.values()].map((agent) => this.publishHealthForAgent(agent)),
+      [...this.agents.values()].map((record) => this.publishHealthForAgent(record)),
     ).then((results) => {
       for (const result of results) {
         if (result.status === 'rejected') {
@@ -456,11 +481,12 @@ export class RuntimeHost {
   }
 
   private async publishHealthForAgent(
-    agent: AgentConfig,
+    record: ManagedAgent,
     recoveredCommand?: AgentRestartCommand,
   ): Promise<void> {
+    const agent = record.config;
     const skipStatus = agentSkipStatus(agent);
-    const running = this.agentHandles.get(agent.id);
+    const running = record.running;
     if (skipStatus) {
       if (!running) await this.writeUnknownHealth(agent.id);
       return;
@@ -573,9 +599,9 @@ export class RuntimeHost {
     this.logger.log(`Agent ${agentId}: stale running item ${stale.id} failed before restart.`);
   }
 
-  private logAgentStatus(agentId: string, status: string, write: () => void): void {
-    if (this.statusByAgent.get(agentId) === status) return;
-    this.statusByAgent.set(agentId, status);
+  private logAgentStatus(record: ManagedAgent, status: string, write: () => void): void {
+    if (record.lastLoggedStatus === status) return;
+    record.lastLoggedStatus = status;
     write();
   }
 
