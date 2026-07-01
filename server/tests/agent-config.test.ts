@@ -291,10 +291,12 @@ test('collectAgentTeamWarnings surfaces exactly the dangling teamIds (the repair
         { id: 'evan' }, // absent -> no warn
       ]);
       assert.equal(warnings.length, 1);
-      assert.equal(warnings[0].agentId, 'alice');
-      assert.equal(warnings[0].teamId, 'ghost');
-      assert.equal(warnings[0].effectiveTeamId, 'default');
-      assert.ok(warnings[0].message.includes('ghost'));
+      const [warning] = warnings;
+      if (!warning) throw new Error('expected exactly one warning');
+      assert.equal(warning.agentId, 'alice');
+      assert.equal(warning.teamId, 'ghost');
+      assert.equal(warning.effectiveTeamId, 'default');
+      assert.ok(warning.message.includes('ghost'));
     });
   } finally {
     await rm(configDir, { force: true, recursive: true });
