@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronLeft, ChevronRight, FolderTree, MoreHorizontal, Plus, Server } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, FolderTree, MoreHorizontal, Plus, Server } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -20,7 +20,8 @@ import { removeKb, renameKb } from '@/api/kb';
 import { queryClient } from '@/query-client';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
-import { useCollapsedTeams, useCurrentTeam } from '@/hooks/useTeams';
+import { useCollapsedTeams, useCurrentTeam, useTeamWarnings } from '@/hooks/useTeams';
+import type { AgentTeamWarning } from '@/api/teams';
 import { TeamSwitcher } from './sidebar/TeamSwitcher';
 import { CreateTeamModal } from './sidebar/TeamModals';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
@@ -135,6 +136,10 @@ export default function Sidebar({
   } = useSidebarOrder();
   const collapsedTeams = useCollapsedTeams();
   const { currentTeamId, setCurrentTeamId } = useCurrentTeam(teams);
+  // Repairable team-reference warnings (agent teamId names a team that no longer exists).
+  // The agent still degrades into the default group; this only adds a repair cue.
+  const teamWarnings = useTeamWarnings();
+  const agentNameById = new Map(orderedAgents.map((a) => [a.id, agentDisplayName(a)]));
   // Arrow-key nav follows what is actually visible: in grouped mode that is the
   // agents of expanded teams in group order; collapsed teams' agents are not
   // focusable (their rows are not rendered). At N=1 this is just the flat order.
@@ -301,6 +306,33 @@ export default function Sidebar({
           focused={agentKeyboardNav.isOptionFocused(agent.id)}
         />
       </SortableItem>
+    );
+  };
+
+  // A small, repairable warning cue for agents whose teamId no longer resolves. Not a global
+  // banner: it renders inline where the agent was folded (its effective team group, or the
+  // flat list at N=1), names the dangling id, and points at the fix.
+  const renderTeamWarnings = (scoped: AgentTeamWarning[]) => {
+    if (scoped.length === 0) return null;
+    return (
+      <div className="mt-1 space-y-1">
+        {scoped.map((w) => (
+          <div
+            key={w.agentId}
+            className="flex items-start gap-1.5 rounded-sm bg-health-warn/10 px-2 py-1"
+            role="status"
+          >
+            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-health-warn" />
+            <span className="font-serif text-[11px] leading-snug text-text-on-spine-muted">
+              <span className="font-semibold text-text-on-spine">
+                {agentNameById.get(w.agentId) ?? w.agentId}
+              </span>{' '}
+              references team <span className="font-mono">"{w.teamId}"</span>, which no longer
+              exists. Reassign it to repair.
+            </span>
+          </div>
+        ))}
+      </div>
     );
   };
 
@@ -585,6 +617,9 @@ export default function Sidebar({
                                   No agents in this team
                                 </div>
                               )}
+                              {renderTeamWarnings(
+                                teamWarnings.filter((w) => w.effectiveTeamId === team.id),
+                              )}
                             </div>
                           )}
                         </div>
@@ -605,6 +640,7 @@ export default function Sidebar({
                         No agents configured
                       </div>
                     )}
+                    {renderTeamWarnings(teamWarnings)}
                   </div>
                 )}
               </DndContext>

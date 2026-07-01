@@ -15,6 +15,7 @@ import {
 import { ProviderUsageKind } from '../../shared/provider-usage.js';
 import { SidebarOrder, WorkspacePlatform } from '../../shared/server-settings.js';
 import { defaultTeamService, TeamServiceError } from '../teams/team.service.js';
+import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { HttpError } from './http.js';
 import { z } from 'zod';
 
@@ -82,7 +83,17 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
   // Teams — the effective registry (default team always present + first). Absent config
   // yields exactly [default], so N=1 installs need no migration write.
   fastify.get('/api/teams', async () => {
-    return { teams: await defaultTeamService.listTeams() };
+    const [teams, agents] = await Promise.all([
+      defaultTeamService.listTeams(),
+      defaultAgentRegistryService.listAgentConfigs(),
+    ]);
+    // Surface the "repairable warning" half of the degrade contract: any agent whose teamId
+    // no longer resolves. The dashboard renders these as a repair cue; the list still degrades
+    // that agent into the default team so nothing is ever hidden.
+    const warnings = await defaultTeamService.collectAgentTeamWarnings(
+      agents.map((agent) => ({ id: agent.id, teamId: agent.teamId })),
+    );
+    return { teams, warnings };
   });
 
   fastify.post('/api/teams', async (request, reply) => {

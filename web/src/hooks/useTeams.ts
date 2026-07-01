@@ -3,17 +3,26 @@ import { useQuery } from '@tanstack/react-query';
 import { fetchTeams } from '@/api/teams';
 import { queryKeys } from '@/lib/query-keys';
 import { DEFAULT_TEAM_ID } from '@shared/server-settings';
-import type { TeamConfig } from '@shared/server-settings';
+import type { AgentTeamWarning, TeamConfig } from '@shared/server-settings';
+
+const TEAMS_QUERY = {
+  queryKey: queryKeys.teams(),
+  queryFn: fetchTeams,
+  staleTime: 30_000,
+} as const;
 
 // The effective team registry. Always resolves to at least the default team, so
 // consumers can treat `teams[0]` as a safe fallback working context.
 export function useTeams(): TeamConfig[] {
-  const { data: teams = [] } = useQuery({
-    queryKey: queryKeys.teams(),
-    queryFn: fetchTeams,
-    staleTime: 30_000,
-  });
-  return teams;
+  const { data } = useQuery({ ...TEAMS_QUERY, select: (r) => r.teams });
+  return data ?? [];
+}
+
+// Repairable team-reference warnings (agents whose teamId no longer resolves). Shares the same
+// query as useTeams, so no extra fetch. Empty in a healthy install.
+export function useTeamWarnings(): AgentTeamWarning[] {
+  const { data } = useQuery({ ...TEAMS_QUERY, select: (r) => r.warnings });
+  return data ?? [];
 }
 
 const CURRENT_TEAM_KEY = 'anima.currentTeamId';

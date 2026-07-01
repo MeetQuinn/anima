@@ -15,6 +15,7 @@ import { agentIdFromName } from '../../shared/agent-config.js';
 import {
   DEFAULT_TEAM_ID,
   DEFAULT_TEAM_NAME,
+  type AgentTeamWarning,
   type TeamConfig,
 } from '../../shared/server-settings.js';
 import {
@@ -35,6 +36,15 @@ export class TeamServiceError extends Error {
 // agents keep their exact homes ($TEAM_HOME/agents/$id === ~/anima-team/agents/$id today).
 export function defaultTeam(): TeamConfig {
   return { id: DEFAULT_TEAM_ID, name: DEFAULT_TEAM_NAME, home: DEFAULT_TEAM_KB_ROOT };
+}
+
+// Single source of the repairable-warning copy, shared by the per-id resolve path and the
+// batch diagnostics collector so they never drift.
+function danglingTeamMessage(wanted: string): string {
+  return (
+    `team "${wanted}" does not exist; showing this agent under the default team. `
+    + 'Reassign it or recreate the team to repair.'
+  );
 }
 
 function normalizeHome(rawHome: string): string {
@@ -79,11 +89,29 @@ export class TeamService {
     if (!wanted || wanted === DEFAULT_TEAM_ID) return { teamId: DEFAULT_TEAM_ID };
     const team = await this.getTeam(wanted);
     if (team) return { teamId: wanted };
-    return {
-      teamId: DEFAULT_TEAM_ID,
-      warning: `team "${wanted}" does not exist; showing this agent under the default team. `
-        + 'Reassign it or recreate the team to repair.',
-    };
+    return { teamId: DEFAULT_TEAM_ID, warning: danglingTeamMessage(wanted) };
+  }
+
+  // Batch diagnostics for the read path: every agent whose non-empty `teamId` names no known
+  // team. Reads the registry once (not per agent) and reuses the same warning copy as the
+  // per-id resolve. A blank/absent or already-default teamId is normal legacy state, not a
+  // warning. This is what lets the dashboard surface the "repairable" half of the contract.
+  async collectAgentTeamWarnings(
+    agents: ReadonlyArray<{ id: string; teamId?: string }>,
+  ): Promise<AgentTeamWarning[]> {
+    const known = new Set((await this.listTeams()).map((team) => team.id));
+    const warnings: AgentTeamWarning[] = [];
+    for (const agent of agents) {
+      const wanted = agent.teamId?.trim();
+      if (!wanted || wanted === DEFAULT_TEAM_ID || known.has(wanted)) continue;
+      warnings.push({
+        agentId: agent.id,
+        teamId: wanted,
+        effectiveTeamId: DEFAULT_TEAM_ID,
+        message: danglingTeamMessage(wanted),
+      });
+    }
+    return warnings;
   }
 
   // Deterministic new-agent home inside a team: $TEAM_HOME/agents/$agentId (tilde/relative

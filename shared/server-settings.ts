@@ -26,6 +26,19 @@ export const TeamConfig = z.object({
 }).strict();
 export type TeamConfig = z.infer<typeof TeamConfig>;
 
+// A repairable config diagnostic: an agent whose `teamId` names a team that no longer exists.
+// The read path folds it into the default team (never crashes) and emits this so the dashboard
+// can surface a repair cue, per the locked runtime contract (degrade AND warn).
+export interface AgentTeamWarning {
+  agentId: string;
+  // The dangling team id exactly as configured.
+  teamId: string;
+  // Where the agent was folded (the default team, in cut-1).
+  effectiveTeamId: string;
+  // Operator-facing repair message.
+  message: string;
+}
+
 export const ReleaseTrack = z.enum(['stable', 'canary']);
 export type ReleaseTrack = z.infer<typeof ReleaseTrack>;
 

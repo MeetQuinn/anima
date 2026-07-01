@@ -278,6 +278,29 @@ test('a dangling teamId is preserved on read but degrades to default via the ser
   }
 });
 
+test('collectAgentTeamWarnings surfaces exactly the dangling teamIds (the repairable-warning half of the contract)', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-team-warn-'));
+  try {
+    await withAnimaHome(configDir, async () => {
+      const content = await defaultTeamService.createTeam({ name: 'Content' });
+      const warnings = await defaultTeamService.collectAgentTeamWarnings([
+        { id: 'alice', teamId: 'ghost' }, // dangling -> warn
+        { id: 'bob', teamId: content.id }, // valid non-default -> no warn
+        { id: 'cara', teamId: 'default' }, // default -> no warn
+        { id: 'dan', teamId: '' }, // blank legacy -> no warn
+        { id: 'evan' }, // absent -> no warn
+      ]);
+      assert.equal(warnings.length, 1);
+      assert.equal(warnings[0].agentId, 'alice');
+      assert.equal(warnings[0].teamId, 'ghost');
+      assert.equal(warnings[0].effectiveTeamId, 'default');
+      assert.ok(warnings[0].message.includes('ghost'));
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+  }
+});
+
 test('createTeam slugs the name, materializes the default alongside it, and rejects collisions', async () => {
   const configDir = await mkdtemp(join(tmpdir(), 'anima-team-create-'));
   try {
