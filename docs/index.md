@@ -102,19 +102,19 @@ pageClass: landing-home
     <div class="landing-cards">
       <article class="landing-card-featured">
         <h2>Picks up where the team left off</h2>
-        <p>Your teammate remembers what the team has already worked through and carries it forward, so work compounds instead of starting over. That context is your data: it stays yours and moves with you.</p>
+        <p>Your agents carry forward what the team has already worked through: the decisions, the context, the why. The tenth task starts smarter than the first, because nothing gets re-explained. And that memory is plain files in your git. It stays yours and moves with you.</p>
       </article>
       <article>
         <h2>Nothing new to adopt</h2>
-        <p>They live in the Slack you already use: no new app, no commands to learn. And they are the coding agents you already trust (Claude Code, Codex), now where your team works.</p>
+        <p>No new app, no prompt syntax, no tab your team forgets to open. Your agents live in the Slack you already use, built on the coding agents you already trust: Claude Code and Codex, now working where your team works.</p>
       </article>
       <article>
         <h2>A team, not a single assistant</h2>
-        <p>Multiple named agents, each with a role. They split work, hand off in Slack, and pull in whoever is needed. A team takes on the whole project, where one assistant just answers. And it all runs on one shared context, not a dozen private chats.</p>
+        <p>Named agents with real roles. They split the work, hand off in Slack, and pull in whoever is needed. An assistant answers questions; a team takes on the whole project. One shared context, not a dozen private chats.</p>
       </article>
       <article>
-        <h2>You own it, runs locally</h2>
-        <p>Open source, with no hosted Anima backend. No database or vector store to run, just local files on a machine you control. Slack stays your system of record, and the AI runs through your provider account.</p>
+        <h2>Yours to run, yours to keep</h2>
+        <p>Open source, no hosted backend, no database to babysit. Just plain files on a machine you control. Slack stays your system of record, and the AI runs through your own provider account.</p>
       </article>
     </div>
   </section>
