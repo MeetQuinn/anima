@@ -38,7 +38,7 @@ import {
 import { OwnerPickerForm } from '@/views/agents/profile/OwnerPickerForm';
 import { queryKeys } from '@/lib/query-keys';
 import type { AgentFeishuRegisterAppStatus } from '@shared/agent-config';
-import type { WorkspacePlatform } from '@shared/server-settings';
+import { DEFAULT_TEAM_ID, type TeamConfig, type WorkspacePlatform } from '@shared/server-settings';
 
 const WORKSPACE_PLATFORM_LABELS: Record<WorkspacePlatform, string> = {
   feishu: 'Feishu',
@@ -56,6 +56,11 @@ const FEISHU_REGISTRATION_ACTIVE_STATES = ['starting', 'waiting', 'slow_down', '
 interface AgentCreateFlowProps {
   firstRun: boolean;
   onClose: (createdAgentId?: string) => void;
+  // The team registry + the working-context team a new agent should land in. When
+  // there is only the default team, no team chrome appears and behavior is
+  // identical to the pre-teams flow.
+  teams?: TeamConfig[];
+  defaultTeamId?: string;
   onComplete?: (
     agentId: string,
     justConnected?: 'feishu',
@@ -70,7 +75,7 @@ interface AgentCreateFlowProps {
 
 type FlowStep = 'agent' | 'connect' | 'permissions' | 'owner' | 'platform';
 
-export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFlowProps) {
+export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultTeamId }: AgentCreateFlowProps) {
   const queryClient = useQueryClient();
   // Optional preview params for dev/screenshot use
   const previewSearch = typeof window !== 'undefined'
@@ -113,6 +118,17 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
   const [homeExpanded, setHomeExpanded] = useState(false);
   const [customParent, setCustomParent] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
+
+  // Team a new agent lands in. Defaults to the working-context team; the picker
+  // only appears once a second team exists (progressive disclosure).
+  const teamsList = teams ?? [];
+  const [teamId, setTeamId] = useState(defaultTeamId ?? DEFAULT_TEAM_ID);
+  const selectedTeam = teamsList.find((t) => t.id === teamId);
+  // The team's agents live under $TEAM_HOME/agents/. For the default team this is
+  // exactly DEFAULT_AGENT_HOMES_ROOT, so N=1 create is byte-identical to today.
+  const teamAgentsRoot = selectedTeam
+    ? `${selectedTeam.home.replace(/\/+$/, '')}/agents`
+    : DEFAULT_AGENT_HOMES_ROOT;
 
   // Create state
   const [createdAgentId, setCreatedAgentId] = useState<string | null>(
@@ -177,8 +193,8 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
   const effectiveFeishuCreateSlow = previewCreateSlow || feishuCreateSlow;
 
   const homePath = derivedId
-    ? defaultAgentHomePath(derivedId, customParent ?? DEFAULT_AGENT_HOMES_ROOT)
-    : `${customParent ?? DEFAULT_AGENT_HOMES_ROOT}/<name>`;
+    ? defaultAgentHomePath(derivedId, customParent ?? teamAgentsRoot)
+    : `${customParent ?? teamAgentsRoot}/<name>`;
 
   // Auto-select a ready provider when availability resolves.
   useEffect(() => {
@@ -356,6 +372,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
           role: role.trim(),
           homePath,
           provider,
+          teamId,
         });
         nextAgentId = agent.id;
         setCreatedAgentId(agent.id);
@@ -658,6 +675,31 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete }: AgentCreateFl
               )}
             </div>
 
+            {/* Team — only surfaces once a second team exists (progressive
+                disclosure). Defaults to the current working-context team. */}
+            {!createdAgentId && teamsList.length > 1 && (
+              <div>
+                <label className="font-sans mb-1.5 block text-[12px] font-medium text-text-muted">
+                  Team
+                </label>
+                <Select value={teamId} onValueChange={(v) => { if (v) setTeamId(v); }}>
+                  <SelectTrigger className="!h-auto w-full py-2 font-serif text-[15px]">
+                    <SelectValue>
+                      {(v: string) => teamsList.find((t) => t.id === v)?.name ?? v}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {teamsList.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="font-sans mt-1 text-[11px] text-text-subtle">
+                  The new agent joins this team; its home lives in the team's Knowledge Base.
+                </p>
+              </div>
+            )}
+
             {/* Home — collapsed secondary field; hidden when agent already created (dir exists) */}
             {!createdAgentId && <div>
               <button
@@ -860,12 +902,22 @@ export function OnboardingPage() {
 // AgentCreateModal — sidebar "Add agent" entry point
 // ---------------------------------------------------------------------------
 
-export function AgentCreateModal({ onClose }: { onClose: () => void }) {
+export function AgentCreateModal({
+  onClose,
+  teams,
+  defaultTeamId,
+}: {
+  onClose: () => void;
+  teams?: TeamConfig[];
+  defaultTeamId?: string;
+}) {
   const navigate = useNavigate();
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-page/70 backdrop-blur-sm">
       <AgentCreateFlow
         firstRun={false}
+        teams={teams}
+        defaultTeamId={defaultTeamId}
         onClose={(createdAgentId) => {
           onClose();
           if (createdAgentId) navigate(`/agents/${createdAgentId}/profile`);

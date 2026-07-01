@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, FolderTree, MoreHorizontal, Plus, Server } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, FolderTree, MoreHorizontal, Plus, Server } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -20,6 +20,9 @@ import { removeKb, renameKb } from '@/api/kb';
 import { queryClient } from '@/query-client';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
+import { useCollapsedTeams, useCurrentTeam } from '@/hooks/useTeams';
+import { TeamSwitcher } from './sidebar/TeamSwitcher';
+import { CreateTeamModal } from './sidebar/TeamModals';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import { agentColor, initialOf } from '@/lib/avatars';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
@@ -34,6 +37,7 @@ import {
   RenameKbModal,
 } from './sidebar/KbModals';
 import type { KbView } from '@shared/kb';
+import type { AgentConfig } from '@shared/agent-config';
 
 // Re-exports for MobileNavScreen — no import-path changes needed in consumers.
 export { AgentCreateModal } from '@/views/onboarding';
@@ -117,11 +121,32 @@ export default function Sidebar({
     statuses.filter((s) => s.currentItemId || s.queueDepth > 0).map((s) => s.agentId),
   );
 
-  const { orderedAgents, orderedKbs, agentIndexMap, kbIndexMap, sensors, reorderAgents, reorderKbs } = useSidebarOrder();
+  const {
+    orderedAgents,
+    orderedKbs,
+    groupedAgents,
+    grouped,
+    teams,
+    agentIndexMap,
+    kbIndexMap,
+    sensors,
+    reorderAgents,
+    reorderKbs,
+  } = useSidebarOrder();
+  const collapsedTeams = useCollapsedTeams();
+  const { currentTeamId, setCurrentTeamId } = useCurrentTeam(teams);
+  // Arrow-key nav follows what is actually visible: in grouped mode that is the
+  // agents of expanded teams in group order; collapsed teams' agents are not
+  // focusable (their rows are not rendered). At N=1 this is just the flat order.
+  const visibleAgentIds = grouped
+    ? groupedAgents
+        .filter((g) => !collapsedTeams.isCollapsed(g.team.id))
+        .flatMap((g) => g.agents.map((a) => a.id))
+    : orderedAgents.map((a) => a.id);
   // Arrow up/down to move through agents (selection follows focus, debounced
   // commit). Expanded list only; the collapsed icon rail stays click-only.
   const agentKeyboardNav = useSidebarAgentKeyboardNav({
-    agentIds: orderedAgents.map((a) => a.id),
+    agentIds: visibleAgentIds,
     activeAgentId: agentId,
     onCommit: setAgentId,
   });
@@ -130,6 +155,9 @@ export default function Sidebar({
 
   // Agent CRUD state
   const [showAddAgentModal, setShowAddAgentModal] = useState(false);
+
+  // New-team modal (opened from the TeamSwitcher)
+  const [showCreateTeamModal, setShowCreateTeamModal] = useState(false);
 
   // Kebab menu
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -192,6 +220,89 @@ export default function Sidebar({
       setRenameBusy(false);
     }
   }
+
+  // One collapsed-rail avatar. Shared by the flat (N=1) and grouped (N>=2) rail
+  // renderings so the avatar + status dot stay identical in both.
+  const renderCollapsedAgent = (agent: AgentConfig) => {
+    const active = agentId === agent.id;
+    const isRunning = runningIds.has(agent.id);
+    const enabled = agent.enabled !== false;
+    const notConnected = enabled && !agentHasConnectedTransport(agent);
+    const color = agentColor(agentIndexMap.get(agent.id) ?? 0);
+    const displayName = agentDisplayName(agent);
+    const avatarUrl = agentAvatarUrl(agent);
+    const initial = initialOf(displayName);
+    const collapsedStatus = statusByAgentId.get(agent.id);
+    const showCollapsedDot = enabled && !notConnected;
+    return (
+      <div key={agent.id} className="relative w-full flex justify-center">
+        {active && (
+          <span aria-hidden className="absolute left-0 top-2 bottom-2 w-0.5 bg-accent" />
+        )}
+        <button
+          onClick={() => setAgentId(agent.id)}
+          title={displayName}
+          className={[
+            'flex h-11 w-11 items-center justify-center rounded-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
+            active ? 'bg-spine-elevated' : 'hover:bg-spine-elevated/30',
+          ].join(' ')}
+        >
+          {avatarUrl ? (
+            <img
+              src={avatarUrl}
+              alt=""
+              className={[
+                'h-9 w-9 rounded-lg object-cover ring-1 ring-avatar-ring-spine',
+                !enabled || notConnected ? 'opacity-40 grayscale' : '',
+              ].join(' ')}
+            />
+          ) : (
+            <span
+              className={[
+                'font-sans flex h-9 w-9 items-center justify-center rounded-lg text-[13px] font-bold text-white ring-1 ring-avatar-ring-spine',
+                !enabled || notConnected ? 'opacity-40' : '',
+              ].join(' ')}
+              style={{ background: color }}
+            >
+              {initial}
+            </span>
+          )}
+          {/* Status dot — color encodes all health states, same mapping as the
+              expanded AgentRow dot. Always shown for enabled + connected agents so
+              a red unhealthy/provider-failure agent is never invisible. */}
+          {showCollapsedDot && (
+            <span
+              aria-hidden
+              className="absolute right-0.5 bottom-0.5 h-2 w-2 shrink-0 rounded-full border border-page"
+              title={sidebarDotTitle(collapsedStatus?.health, isRunning)}
+              style={{ background: sidebarDotColor(collapsedStatus?.health, isRunning) }}
+            />
+          )}
+        </button>
+      </div>
+    );
+  };
+
+  // One expanded-sidebar agent row. Shared by the flat (N=1) and grouped (N>=2)
+  // renderings so the row markup stays identical in both.
+  const renderAgentRow = (agent: AgentConfig) => {
+    const status = statusByAgentId.get(agent.id);
+    return (
+      <SortableItem key={agent.id} id={agent.id} presentation>
+        <AgentRow
+          agent={agent}
+          index={agentIndexMap.get(agent.id) ?? 0}
+          active={agentId === agent.id}
+          isRunning={runningIds.has(agent.id)}
+          enabled={agent.enabled !== false}
+          {...(status ? { status } : {})}
+          onClick={() => setAgentId(agent.id)}
+          optionId={agentOptionId(agent.id)}
+          focused={agentKeyboardNav.isOptionFocused(agent.id)}
+        />
+      </SortableItem>
+    );
+  };
 
   return (
     <>
@@ -256,67 +367,23 @@ export default function Sidebar({
               <div className="w-full shrink-0 border-t border-spine-border my-1" />
             )}
 
-            {/* Agent avatars with status dots (ordered) */}
-            {orderedAgents.map((agent) => {
-              const active = agentId === agent.id;
-              const isRunning = runningIds.has(agent.id);
-              const enabled = agent.enabled !== false;
-              const notConnected = enabled && !agentHasConnectedTransport(agent);
-              const color = agentColor(agentIndexMap.get(agent.id) ?? 0);
-              const displayName = agentDisplayName(agent);
-              const avatarUrl = agentAvatarUrl(agent);
-              const initial = initialOf(displayName);
-              const collapsedStatus = statusByAgentId.get(agent.id);
-              const showCollapsedDot = enabled && !notConnected;
-              return (
-                <div key={agent.id} className="relative w-full flex justify-center">
-                  {active && (
-                    <span aria-hidden className="absolute left-0 top-2 bottom-2 w-0.5 bg-accent" />
-                  )}
-                  <button
-                    onClick={() => setAgentId(agent.id)}
-                    title={displayName}
-                    className={[
-                      'flex h-11 w-11 items-center justify-center rounded-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
-                      active ? 'bg-spine-elevated' : 'hover:bg-spine-elevated/30',
-                    ].join(' ')}
-                  >
-                    {avatarUrl ? (
-                      <img
-                        src={avatarUrl}
-                        alt=""
-                        className={[
-                          'h-9 w-9 rounded-lg object-cover ring-1 ring-avatar-ring-spine',
-                          !enabled || notConnected ? 'opacity-40 grayscale' : '',
-                        ].join(' ')}
-                      />
-                    ) : (
-                      <span
-                        className={[
-                          'font-sans flex h-9 w-9 items-center justify-center rounded-lg text-[13px] font-bold text-white ring-1 ring-avatar-ring-spine',
-                          !enabled || notConnected ? 'opacity-40' : '',
-                        ].join(' ')}
-                        style={{ background: color }}
-                      >
-                        {initial}
-                      </span>
-                    )}
-                    {/* Status dot — color encodes all health states, same
-                        mapping as the expanded AgentRow dot. Always shown for
-                        enabled + connected agents so a red unhealthy/provider-
-                        failure agent is never invisible in the collapsed rail. */}
-                    {showCollapsedDot && (
-                      <span
-                        aria-hidden
-                        className="absolute right-0.5 bottom-0.5 h-2 w-2 shrink-0 rounded-full border border-page"
-                        title={sidebarDotTitle(collapsedStatus?.health, isRunning)}
-                        style={{ background: sidebarDotColor(collapsedStatus?.health, isRunning) }}
-                      />
-                    )}
-                  </button>
-                </div>
-              );
-            })}
+            {/* Agent avatars with status dots. At N>=2 the rail clusters by team
+                (a thin divider between clusters); at N=1 it is the flat order. */}
+            {grouped
+              ? groupedAgents
+                  .filter((g) => g.agents.length > 0)
+                  .map(({ team, agents }, gi) => (
+                    <div
+                      key={team.id}
+                      className={[
+                        'flex w-full flex-col items-center gap-2',
+                        gi > 0 ? 'border-t border-spine-border/60 pt-2' : '',
+                      ].join(' ')}
+                    >
+                      {agents.map(renderCollapsedAgent)}
+                    </div>
+                  ))
+              : orderedAgents.map(renderCollapsedAgent)}
           </div>
 
           {/* Footer — server only */}
@@ -357,13 +424,12 @@ export default function Sidebar({
             collapsed ? 'pointer-events-none opacity-0' : 'opacity-100',
           ].join(' ')}
         >
-          <div className="flex h-14 items-center gap-2.5 border-b border-spine-border px-5">
-            <AnimaIcon className="h-4 w-4 text-accent" />
-            <span className="display text-[18px] font-semibold tracking-tight text-text-on-spine">
-              Anima
-            </span>
-            <span className="ml-auto h-6 w-6" aria-hidden />
-          </div>
+          <TeamSwitcher
+            teams={teams}
+            currentTeamId={currentTeamId}
+            onSelectTeam={setCurrentTeamId}
+            onNewTeam={() => setShowCreateTeamModal(true)}
+          />
 
           <div className="flex-1 overflow-y-auto p-3">
             {/* Knowledge Base section */}
@@ -470,7 +536,7 @@ export default function Sidebar({
               </button>
             </div>
             <div
-              className="space-y-0.5 rounded-sm focus-visible:outline-none"
+              className="rounded-sm focus-visible:outline-none"
               aria-label="Agents"
               {...agentKeyboardNav.listboxProps}
             >
@@ -479,35 +545,69 @@ export default function Sidebar({
                 collisionDetection={closestCenter}
                 onDragEnd={reorderAgents}
               >
-                <SortableContext
-                  items={orderedAgents.map((a) => a.id)}
-                  strategy={verticalListSortingStrategy}
-                >
-                  {orderedAgents.map((agent) => {
-                    const status = statusByAgentId.get(agent.id);
-                    return (
-                      <SortableItem key={agent.id} id={agent.id} presentation>
-                        <AgentRow
-                          agent={agent}
-                          index={agentIndexMap.get(agent.id) ?? 0}
-                          active={agentId === agent.id}
-                          isRunning={runningIds.has(agent.id)}
-                          enabled={agent.enabled !== false}
-                          {...(status ? { status } : {})}
-                          onClick={() => setAgentId(agent.id)}
-                          optionId={agentOptionId(agent.id)}
-                          focused={agentKeyboardNav.isOptionFocused(agent.id)}
-                        />
-                      </SortableItem>
-                    );
-                  })}
-                </SortableContext>
+                {grouped ? (
+                  // N>=2: collapsible groups, one per team, all teams visible.
+                  // Switching teams changes working context elsewhere; it never
+                  // filters this list.
+                  <div className="space-y-1.5">
+                    {groupedAgents.map(({ team, agents }) => {
+                      const isCollapsed = collapsedTeams.isCollapsed(team.id);
+                      return (
+                        <div key={team.id}>
+                          <button
+                            onClick={() => collapsedTeams.toggle(team.id)}
+                            className="group/team flex w-full items-center gap-1.5 rounded-sm py-1 pl-2 pr-2 text-left transition-colors hover:bg-spine-elevated/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                            aria-expanded={!isCollapsed}
+                            title={isCollapsed ? `Expand ${team.name}` : `Collapse ${team.name}`}
+                          >
+                            {isCollapsed ? (
+                              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-on-spine-subtle" />
+                            ) : (
+                              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-on-spine-subtle" />
+                            )}
+                            <span className="caps truncate text-text-on-spine-subtle">
+                              {team.name}
+                            </span>
+                            <span className="ml-1 font-mono text-[10px] text-text-on-spine-subtle">
+                              {agents.length}
+                            </span>
+                          </button>
+                          {!isCollapsed && (
+                            <div className="mt-0.5 space-y-0.5 pl-1">
+                              <SortableContext
+                                items={agents.map((a) => a.id)}
+                                strategy={verticalListSortingStrategy}
+                              >
+                                {agents.map(renderAgentRow)}
+                              </SortableContext>
+                              {agents.length === 0 && (
+                                <div className="px-2 py-2 text-center font-serif italic text-[11px] text-text-on-spine-subtle">
+                                  No agents in this team
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  // N=1: flat list, visually identical to the pre-teams sidebar.
+                  <div className="space-y-0.5">
+                    <SortableContext
+                      items={orderedAgents.map((a) => a.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      {orderedAgents.map(renderAgentRow)}
+                    </SortableContext>
+                    {orderedAgents.length === 0 && (
+                      <div className="px-2 py-4 text-center font-serif italic text-[12px] text-text-on-spine-subtle">
+                        No agents configured
+                      </div>
+                    )}
+                  </div>
+                )}
               </DndContext>
-              {orderedAgents.length === 0 && (
-                <div className="px-2 py-4 text-center font-serif italic text-[12px] text-text-on-spine-subtle">
-                  No agents configured
-                </div>
-              )}
             </div>
           </div>
 
@@ -584,7 +684,18 @@ export default function Sidebar({
       )}
 
       {showAddAgentModal && (
-        <AgentCreateModal onClose={() => setShowAddAgentModal(false)} />
+        <AgentCreateModal
+          onClose={() => setShowAddAgentModal(false)}
+          teams={teams}
+          defaultTeamId={currentTeamId}
+        />
+      )}
+
+      {showCreateTeamModal && (
+        <CreateTeamModal
+          onClose={() => setShowCreateTeamModal(false)}
+          onCreated={(team) => setCurrentTeamId(team.id)}
+        />
       )}
 
       {serverPanelOpen && <ServerPanel onClose={() => setServerPanelOpen(false)} />}
