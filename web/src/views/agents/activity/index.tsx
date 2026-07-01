@@ -489,6 +489,11 @@ export default function Activity() {
     () => new Set<string>(),
   );
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  // Wraps the scrolling content so a ResizeObserver can watch its height. Used
+  // to hold the bottom while the settle-pin is active as late layout (avatar
+  // images resolving, a default-open fold animating, the live indicator
+  // appearing) grows the content at the bottom.
+  const contentRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   // True when the user is near (or at) the bottom of the scroll container.
   const isAtBottomRef = useRef(true);
@@ -1195,18 +1200,59 @@ export default function Activity() {
     if (el) {
       requestAnimationFrame(() => {
         const node = scrollContainerRef.current;
-        if (node && (bottomPinUntilSettleRef.current || settledNow)) {
+        if (node && bottomPinUntilSettleRef.current) {
           node.scrollTop = node.scrollHeight;
         }
       });
     }
-    if (settledNow) bottomPinUntilSettleRef.current = false;
+    // Don't drop the pin the instant the DATA settles: late LAYOUT still grows
+    // the bottom for a few hundred ms after (avatar images resolving, a
+    // default-open fold's open animation, the live indicator mounting). Those
+    // grow below the browser's scroll anchor, so scroll anchoring cannot hold
+    // the bottom and the viewport strands a little short of the newest row.
+    // Keep the pin (and thus the ResizeObserver re-pin below) alive briefly past
+    // settle so that growth is followed, then release. The reveal is gated on
+    // the same settle, so this grace window is never visible as motion — it only
+    // ever nudges DOWN to the newest row. A wheel/touch gesture still releases
+    // the pin immediately (see the mount effect).
+    if (settledNow) {
+      const t = setTimeout(() => {
+        bottomPinUntilSettleRef.current = false;
+      }, 500);
+      return () => clearTimeout(t);
+    }
   }, [activitiesData, messagesData, pageCount, feedSettling]);
 
-  // Always scroll to bottom when new work starts.
+  // Hold the bottom while the settle-pin owns the scroll position. Content grows
+  // at the bottom after data settles (late avatar images, a fold's open
+  // animation, the live indicator) below the browser's scroll anchor, which only
+  // preserves ABOVE-viewport growth — so without this the viewport strands short
+  // of the newest row ("didn't quite reach the bottom"). The observer re-pins on
+  // every such growth for exactly as long as the pin is active, then goes inert
+  // (the callback early-returns once the pin releases on settle-grace or gesture).
   useEffect(() => {
-    if (!currentItemId) return;
-    isAtBottomRef.current = true;
+    const content = contentRef.current;
+    if (!content || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      if (!bottomPinUntilSettleRef.current) return;
+      const node = scrollContainerRef.current;
+      if (node) node.scrollTop = node.scrollHeight;
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, []);
+
+  // Follow new work to the bottom only when the user is already there. New work
+  // starts on a background poll (currentItemId flips as the agent picks up each
+  // queued item), so unconditionally scrolling here would yank a user who has
+  // scrolled up to read history down to the newest row with no action on their
+  // part. Respect their position instead, mirroring the sticky-follow effects
+  // below which only follow when isAtBottomRef is set. On a fresh load/switch the
+  // ref defaults to true (and the initial pin re-asserts it), so a new feed still
+  // lands and stays at the bottom; only a deliberately scrolled-up reader is left
+  // in place.
+  useEffect(() => {
+    if (!currentItemId || !isAtBottomRef.current) return;
     const el = scrollContainerRef.current;
     if (!el) return;
     const id = requestAnimationFrame(() => {
@@ -1304,6 +1350,11 @@ export default function Activity() {
           feedRevealed ? 'opacity-100' : 'opacity-0'
         }`}
       >
+        {/* contentRef wraps the scrolling content so the ResizeObserver above can
+            watch its height and hold the bottom while the settle-pin is active. A
+            plain static wrapper — it does not become a scroll/containing block, so
+            the sticky day headers still resolve to the scroll container. */}
+        <div ref={contentRef}>
         {/* Load-more indicator: shown at the very top while fetching an older page */}
         {isFetchingOlder && (
           <div className="flex justify-center py-3">
@@ -1442,6 +1493,7 @@ export default function Activity() {
             />
           ))}
         <div ref={bottomRef} className="h-4" />
+        </div>
       </div>
     </div>
   );
