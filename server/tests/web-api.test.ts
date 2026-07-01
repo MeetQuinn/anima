@@ -18,6 +18,7 @@ import { ingestEvent } from './helpers/inbox.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { recordRuntimeEvent } from '../runtime/activity.js';
 import { AgentHealthStore } from '../runtime/agent-health.store.js';
+import { AgentHealthService } from '../runtime/agent-health.service.js';
 import { AgentRestartCommandStore } from '../runtime/agent-restart-command.store.js';
 import { persistProviderSession } from '../runtime/runtime-bridge.js';
 import { setActiveRuntimeItem } from '../runtime/active-item.js';
@@ -496,7 +497,7 @@ test('web snapshot includes unfiltered agent queue statuses', async () => {
         itemId: running.item.id,
         workerId: 'worker-1',
       });
-      await new AgentHealthStore({ animaHome: stateDir }).writeHealth({
+      await new AgentHealthService(new AgentHealthStore({ animaHome: stateDir })).writeHealth({
         agentId: 'milo',
         runtime: {
           activeItemId: running.item.id,
@@ -598,7 +599,7 @@ test('web status marks a running item unhealthy when no live worker identity mat
         itemId: running.item.id,
         workerId: 'worker-dead',
       });
-      await new AgentHealthStore({ animaHome: stateDir }).writeHealth({
+      await new AgentHealthService(new AgentHealthStore({ animaHome: stateDir })).writeHealth({
         agentId: 'milo',
         runtime: {
           activeItemId: running.item.id,
@@ -661,7 +662,7 @@ test('web status does not flash stale health for a freshly claimed running item 
         itemId: running.item.id,
         workerId: 'worker-1',
       });
-      await new AgentHealthStore({ animaHome: stateDir }).writeHealth({
+      await new AgentHealthService(new AgentHealthStore({ animaHome: stateDir })).writeHealth({
         agentId: 'milo',
         runtime: {
           processId: process.pid,
@@ -707,7 +708,7 @@ test('web status does not carry stale failed restart onto healthy agents', async
       defaultAgentConfig('milo'),
     ]);
     await withAnimaHome(stateDir, async () => {
-      const healthStore = new AgentHealthStore({ animaHome: stateDir });
+      const healthStore = new AgentHealthService(new AgentHealthStore({ animaHome: stateDir }));
       await healthStore.writeHealth({
         agentId: 'milo',
         reason: 'restart_failed',
@@ -765,7 +766,7 @@ test('web status surfaces provider failure health reasons', async () => {
       defaultAgentConfig('milo'),
     ]);
     await withAnimaHome(stateDir, async () => {
-      await new AgentHealthStore({ animaHome: stateDir }).writeHealth({
+      await new AgentHealthService(new AgentHealthStore({ animaHome: stateDir })).writeHealth({
         agentId: 'milo',
         reason: 'provider_quota_exhausted',
         state: 'unhealthy',
@@ -844,7 +845,7 @@ test('agent diagnostics endpoint returns allowlisted support state without secre
         },
         type: 'runtime.failed',
       });
-      await new AgentHealthStore({ animaHome: stateDir }).writeHealth({
+      await new AgentHealthService(new AgentHealthStore({ animaHome: stateDir })).writeHealth({
         agentId: 'anima',
         runtime: {
           processId: process.pid,

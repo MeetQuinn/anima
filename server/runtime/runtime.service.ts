@@ -12,7 +12,7 @@ import type {
 } from '../../shared/snapshot.js';
 import { agentHasConnectedTransport } from '../../shared/agent-transports.js';
 import { nowIso } from '../ids.js';
-import { AgentHealthStore, defaultAgentHealthStore } from './agent-health.store.js';
+import { AgentHealthService, defaultAgentHealthService, restartStatus } from './agent-health.service.js';
 import { defaultAgentRestartCommandStore } from './agent-restart-command.store.js';
 import { findActiveRuntimeItem } from './active-item.js';
 import { latestPrimaryRunningItem, processAlive, providerChildIssueReason } from './item-state.js';
@@ -27,7 +27,7 @@ export class RuntimeServiceError extends Error {
 }
 
 export class RuntimeService {
-  constructor(private readonly healthStore: AgentHealthStore = defaultAgentHealthStore) {}
+  constructor(private readonly health: AgentHealthService = defaultAgentHealthService) {}
 
   async listStatuses(): Promise<AgentStatusSummary[]> {
     const agents = await defaultAgentRegistryService.listAgentConfigs();
@@ -51,14 +51,10 @@ export class RuntimeService {
     if (!agent) throw new RuntimeServiceError(404, 'Agent not found');
     if (!agent.enabled) throw new RuntimeServiceError(409, 'Agent is disabled. Enable it to run.');
     const command = await defaultAgentRestartCommandStore.request(agentId);
-    await this.healthStore.writeHealth({
+    await this.health.writeHealth({
       agentId,
       reason: 'restart_pending',
-      restart: {
-        outcome: 'pending',
-        requestId: command.requestId,
-        requestedAt: command.requestedAt,
-      },
+      restart: restartStatus(command, 'pending', nowIso()),
       state: 'starting',
       updatedAt: nowIso(),
     });
@@ -94,7 +90,7 @@ export class RuntimeService {
   ): Promise<AgentRuntimeHealthSummary | undefined> {
     if (!expectsRuntimeHealth(agent)) return undefined;
 
-    const snapshot = await this.healthStore.get(agent.id);
+    const snapshot = await this.health.get(agent.id);
     if (!snapshot) {
       return queue.runningItemId
         ? syntheticHealth('unhealthy', 'stale_running_item')

@@ -27,7 +27,7 @@ import {
 import { startActiveRunControl, type ActiveRunHandle } from './active-run-control.js';
 import { appendQueuedFollowupsUntilFinished } from './followup-appender.js';
 import { recordFinalRuntimeFailure, runProviderWithCrashRetries } from './provider-runner.js';
-import { defaultAgentHealthStore } from './agent-health.store.js';
+import { defaultAgentHealthService } from './agent-health.service.js';
 import type { AgentRuntimeHandleSnapshot } from '../../shared/snapshot.js';
 
 // Executor for one agent: claims queued inbox items, runs the provider runtime,
@@ -251,7 +251,7 @@ export class AgentRuntimeWorker {
         text: result.text,
         workerId: this.workerId,
       }, null, 2));
-      await defaultAgentHealthStore.writeHealth({
+      await defaultAgentHealthService.writeHealth({
         agentId: this.options.agentId,
         clearProviderFailure: true,
         runtime: this.health(),

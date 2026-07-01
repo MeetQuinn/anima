@@ -1,6 +1,6 @@
 import { errorMessage, nowIso } from '../ids.js';
 import { recordRuntimeActivity, recordRuntimeEvent } from './activity.js';
-import { defaultAgentHealthStore } from './agent-health.store.js';
+import { defaultAgentHealthService } from './agent-health.service.js';
 import { runtimeErrorPayload } from '../activities/format.js';
 import { buildProviderCrashRetryDeliveryPrompt } from './delivery-prompt.js';
 import { providerFailureHealthReason, providerFailureReasonFromError } from './provider-failure.js';
@@ -87,7 +87,7 @@ export async function recordFinalRuntimeFailure(input: {
   if (providerReason) {
     const healthReason = providerFailureHealthReason(providerReason);
     if (healthReason) {
-      await defaultAgentHealthStore.writeProviderFailure({
+      await defaultAgentHealthService.writeProviderFailure({
         agentId: input.agentId,
         reason: healthReason,
         updatedAt: nowIso(),

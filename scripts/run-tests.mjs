@@ -9,6 +9,7 @@ const groups = {
   unit: [
     'agent-channels.test.js',
     'agent-config.test.js',
+    'agent-health.test.js',
     'agent-seed-memory.test.js',
     'channel-match.test.js',
     'config.test.js',

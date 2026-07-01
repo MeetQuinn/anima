@@ -15,6 +15,7 @@ import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
 import { startChildProcess, terminateChildProcess } from '../providers/child-process.js';
 import { clearRestartDrain, requestRestartDrain } from '../services/restart-drain.js';
 import { AgentHealthStore } from '../runtime/agent-health.store.js';
+import { AgentHealthService } from '../runtime/agent-health.service.js';
 import { AgentRestartCommandStore } from '../runtime/agent-restart-command.store.js';
 import { managedProviderEnvForAgent, RuntimeHost, type RunningAgentHandle } from '../runtime/host.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
@@ -483,13 +484,14 @@ test('runtime host marks runnable agents starting before serial boot completes w
       runtimeHostAgent('bravo', { connected: true }),
       runtimeHostAgent('quota', { connected: true }),
     ];
-    await healthStore.writeHealth({
+    const healthService = new AgentHealthService(healthStore);
+    await healthService.writeHealth({
       agentId: 'bravo',
       reason: 'stale_running_item',
       state: 'unhealthy',
       updatedAt: '2026-06-06T00:00:00.000Z',
     });
-    await healthStore.writeHealth({
+    await healthService.writeHealth({
       agentId: 'quota',
       reason: 'provider_quota_exhausted',
       state: 'unhealthy',
@@ -631,7 +633,7 @@ test('runtime host debounces missing provider children before marking unhealthy'
       assert.equal(firstSnapshot?.state, 'degraded');
       assert.equal(firstSnapshot?.reason, 'provider_child_missing');
 
-      await healthStore.writeHealth({
+      await new AgentHealthService(healthStore).writeHealth({
         agentId: 'alpha',
         reason: 'provider_child_missing',
         runtime: firstSnapshot?.runtime,
@@ -647,212 +649,6 @@ test('runtime host debounces missing provider children before marking unhealthy'
       await host.stop();
       assert.deepEqual(stopped, ['alpha']);
     });
-  } finally {
-    await rm(stateDir, { force: true, recursive: true });
-  }
-});
-
-test('agent health store clears stale failed restart on later healthy writes', async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-health-store-restart-test-'));
-  try {
-    const healthStore = new AgentHealthStore({ animaHome: stateDir });
-    await healthStore.writeHealth({
-      agentId: 'alpha',
-      reason: 'restart_failed',
-      restart: {
-        completedAt: '2026-06-03T19:30:00.000Z',
-        outcome: 'failed',
-        reason: 'restart_failed',
-        requestId: 'restart-1',
-        requestedAt: '2026-06-03T19:29:00.000Z',
-      },
-      state: 'unhealthy',
-      updatedAt: '2026-06-03T19:30:00.000Z',
-    });
-
-    await healthStore.writeHealth({
-      agentId: 'alpha',
-      runtime: {
-        processId: process.pid,
-        providerChildExpected: false,
-        workerId: `alpha:${process.pid}:healthy`,
-      },
-      state: 'healthy',
-      updatedAt: '2026-06-03T19:31:00.000Z',
-    });
-
-    const snapshot = await healthStore.get('alpha');
-    assert.equal(snapshot?.state, 'healthy');
-    assert.equal(snapshot?.restart, undefined);
-  } finally {
-    await rm(stateDir, { force: true, recursive: true });
-  }
-});
-
-test('agent health store keeps provider failures until a successful provider turn clears them', async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-health-store-provider-failure-test-'));
-  try {
-    const healthStore = new AgentHealthStore({ animaHome: stateDir });
-    await healthStore.writeHealth({
-      agentId: 'alpha',
-      reason: 'provider_quota_exhausted',
-      state: 'unhealthy',
-      updatedAt: '2026-06-04T01:00:00.000Z',
-    });
-
-    await healthStore.writeHealth({
-      agentId: 'alpha',
-      runtime: {
-        processId: process.pid,
-        providerChildExpected: false,
-        workerId: `alpha:${process.pid}:healthy`,
-      },
-      state: 'healthy',
-      updatedAt: '2026-06-04T01:01:00.000Z',
-    });
-
-    const stillBlocked = await healthStore.get('alpha');
-    assert.equal(stillBlocked?.state, 'unhealthy');
-    assert.equal(stillBlocked?.reason, 'provider_quota_exhausted');
-    assert.equal(stillBlocked?.runtime?.workerId, `alpha:${process.pid}:healthy`);
-
-    await healthStore.writeHealth({
-      agentId: 'alpha',
-      clearProviderFailure: true,
-      runtime: {
-        processId: process.pid,
-        providerChildExpected: false,
-        workerId: `alpha:${process.pid}:cleared`,
-      },
-      state: 'healthy',
-      updatedAt: '2026-06-04T01:02:00.000Z',
-    });
-
-    const cleared = await healthStore.get('alpha');
-    assert.equal(cleared?.state, 'healthy');
-    assert.equal(cleared?.reason, undefined);
-    assert.equal(cleared?.runtime?.workerId, `alpha:${process.pid}:cleared`);
-  } finally {
-    await rm(stateDir, { force: true, recursive: true });
-  }
-});
-
-test('agent health store degrades rate limits before escalating to red', async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-health-store-rate-limit-test-'));
-  try {
-    const healthStore = new AgentHealthStore({ animaHome: stateDir });
-    await healthStore.writeProviderFailure({
-      agentId: 'alpha',
-      reason: 'provider_rate_limited',
-      updatedAt: '2026-06-04T01:00:00.000Z',
-    });
-
-    const degraded = await healthStore.get('alpha');
-    assert.equal(degraded?.state, 'degraded');
-    assert.equal(degraded?.reason, 'provider_rate_limited');
-
-    await healthStore.writeProviderFailure({
-      agentId: 'alpha',
-      reason: 'provider_rate_limited',
-      updatedAt: '2026-06-04T01:00:30.000Z',
-    });
-    const stillDegraded = await healthStore.get('alpha');
-    assert.equal(stillDegraded?.state, 'degraded');
-    assert.equal(stillDegraded?.updatedAt, '2026-06-04T01:00:00.000Z');
-
-    await healthStore.writeProviderFailure({
-      agentId: 'alpha',
-      reason: 'provider_rate_limited',
-      updatedAt: '2026-06-04T01:01:00.000Z',
-    });
-    const escalated = await healthStore.get('alpha');
-    assert.equal(escalated?.state, 'unhealthy');
-    assert.equal(escalated?.reason, 'provider_rate_limited');
-    assert.equal(escalated?.updatedAt, '2026-06-04T01:01:00.000Z');
-  } finally {
-    await rm(stateDir, { force: true, recursive: true });
-  }
-});
-
-test('agent health store downgrades stale rate-limit evidence to unknown', async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-health-store-rate-limit-stale-test-'));
-  try {
-    const healthStore = new AgentHealthStore({ animaHome: stateDir });
-    await healthStore.writeProviderFailure({
-      agentId: 'alpha',
-      reason: 'provider_rate_limited',
-      updatedAt: '2026-06-04T01:00:00.000Z',
-    });
-    await healthStore.writeHealth({
-      agentId: 'alpha',
-      runtime: {
-        processId: process.pid,
-        providerChildExpected: false,
-        workerId: `alpha:${process.pid}:grace`,
-      },
-      state: 'healthy',
-      updatedAt: '2026-06-04T01:00:30.000Z',
-    });
-
-    const carriedGrace = await healthStore.get('alpha');
-    assert.equal(carriedGrace?.state, 'degraded');
-    assert.equal(carriedGrace?.reason, 'provider_rate_limited');
-    assert.equal(carriedGrace?.runtime?.workerId, `alpha:${process.pid}:grace`);
-
-    await healthStore.writeHealth({
-      agentId: 'alpha',
-      runtime: {
-        processId: process.pid,
-        providerChildExpected: false,
-        workerId: `alpha:${process.pid}:expired-grace`,
-      },
-      state: 'healthy',
-      updatedAt: '2026-06-04T01:01:00.000Z',
-    });
-    const expiredGrace = await healthStore.get('alpha');
-    assert.equal(expiredGrace?.state, 'unknown');
-    assert.equal(expiredGrace?.reason, undefined);
-    assert.equal(expiredGrace?.runtime?.workerId, `alpha:${process.pid}:expired-grace`);
-
-    await healthStore.writeProviderFailure({
-      agentId: 'alpha',
-      reason: 'provider_rate_limited',
-      updatedAt: '2026-06-04T02:00:00.000Z',
-    });
-    await healthStore.writeProviderFailure({
-      agentId: 'alpha',
-      reason: 'provider_rate_limited',
-      updatedAt: '2026-06-04T02:01:00.000Z',
-    });
-    await healthStore.writeHealth({
-      agentId: 'alpha',
-      runtime: {
-        processId: process.pid,
-        providerChildExpected: false,
-        workerId: `alpha:${process.pid}:red-carried`,
-      },
-      state: 'healthy',
-      updatedAt: '2026-06-04T02:04:00.000Z',
-    });
-    const carriedRed = await healthStore.get('alpha');
-    assert.equal(carriedRed?.state, 'unhealthy');
-    assert.equal(carriedRed?.reason, 'provider_rate_limited');
-    assert.equal(carriedRed?.updatedAt, '2026-06-04T02:01:00.000Z');
-
-    await healthStore.writeHealth({
-      agentId: 'alpha',
-      runtime: {
-        processId: process.pid,
-        providerChildExpected: false,
-        workerId: `alpha:${process.pid}:red-expired`,
-      },
-      state: 'healthy',
-      updatedAt: '2026-06-04T02:06:00.000Z',
-    });
-    const expiredRed = await healthStore.get('alpha');
-    assert.equal(expiredRed?.state, 'unknown');
-    assert.equal(expiredRed?.reason, undefined);
-    assert.equal(expiredRed?.runtime?.workerId, `alpha:${process.pid}:red-expired`);
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }

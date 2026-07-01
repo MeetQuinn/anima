@@ -31,6 +31,7 @@ import {
   type AgentRestartCommand,
 } from './agent-restart-command.store.js';
 import { AgentHealthStore } from './agent-health.store.js';
+import { AgentHealthService } from './agent-health.service.js';
 import { startRunningAgent, type RunningAgentHandle } from './agent-runner.js';
 import { findActiveRuntimeItem } from './active-item.js';
 import { latestPrimaryRunningItem, processAlive, providerChildIssueReason } from './item-state.js';
@@ -97,7 +98,7 @@ export class RuntimeHost {
   private readonly logger: Pick<Console, 'error' | 'log'>;
   private readonly memoryCoherenceScheduler: Pick<MemoryCoherenceScheduler, 'reconcile'>;
   private readonly restartCommands: AgentRestartCommandStore;
-  private readonly healthStore: AgentHealthStore;
+  private readonly health: AgentHealthService;
   private readonly healthIntervalMs: number;
   private readonly forceRestartTimeoutMs: number;
   private readonly startAgentTimeoutMs: number;
@@ -128,7 +129,7 @@ export class RuntimeHost {
       readServerConfig: () => new ServerConfigStore(this.animaHome).read(),
     });
     this.restartCommands = deps.restartCommands ?? new AgentRestartCommandStore({ animaHome: this.animaHome });
-    this.healthStore = deps.healthStore ?? new AgentHealthStore({ animaHome: this.animaHome });
+    this.health = new AgentHealthService(deps.healthStore ?? new AgentHealthStore({ animaHome: this.animaHome }));
     this.healthIntervalMs = deps.healthIntervalMs ?? DEFAULT_HEALTH_INTERVAL_MS;
     this.forceRestartTimeoutMs = deps.forceRestartTimeoutMs ?? AGENT_RESTART_FORCE_KILL_AFTER_MS;
     this.startAgentTimeoutMs = deps.startAgentTimeoutMs ?? DEFAULT_AGENT_START_TIMEOUT_MS;
@@ -138,7 +139,7 @@ export class RuntimeHost {
 
   async start(): Promise<void> {
     await this.restartCommands.ensureDirectory();
-    await this.healthStore.ensureDirectory();
+    await this.health.ensureDirectory();
     this.syncRestartCommandWatcher();
     await this.ensureDefaultSkills().catch((error: unknown) => {
       this.logger.error(`Default skill setup failed: ${errorMessage(error)}`);
@@ -260,9 +261,9 @@ export class RuntimeHost {
       agents
         .filter((agent) => agent.enabled !== false && agentHasConnectedTransport(agent) && isAgentRunnable(agent))
         .map(async (agent) => {
-          const previous = await this.healthStore.get(agent.id);
+          const previous = await this.health.get(agent.id);
           if (previous?.state === 'unhealthy' && isProviderFailureReason(previous.reason)) return;
-          await this.healthStore.writeHealth({
+          await this.health.writeHealth({
             agentId: agent.id,
             state: 'starting',
             updatedAt: nowIso(),
@@ -347,7 +348,7 @@ export class RuntimeHost {
     fingerprint = runtimeFingerprint(agent),
     restartCommand?: AgentRestartCommand,
   ): Promise<void> {
-    await this.healthStore.writeHealth({
+    await this.health.writeHealth({
       agentId: agent.id,
       ...(restartCommand ? {
         reason: 'restart_pending',
@@ -414,7 +415,7 @@ export class RuntimeHost {
       await running.handle.stop({ drainActive: true });
       this.agentHandles.delete(agentId);
       this.statusByAgent.delete(agentId);
-      await this.healthStore.clear(agentId);
+      await this.health.clear(agentId);
       this.logger.log(`Agent ${agentId}: removed from config; stopped.`);
     }
   }
@@ -472,7 +473,7 @@ export class RuntimeHost {
         ? restartStatus(recoveredCommand, 'recovered', runtime)
         : restartStatus(recoveredCommand, 'failed', runtime, health.reason ?? 'restart_failed')
       : undefined;
-    await this.healthStore.writeHealth({
+    await this.health.writeHealth({
       agentId: agent.id,
       ...(health.reason ? { reason: health.reason } : {}),
       ...(restart ? { restart } : {}),
@@ -489,7 +490,7 @@ export class RuntimeHost {
     const health = healthForRuntime(runtime);
     if (!isTransientRuntimeChildReason(health.reason)) return health;
 
-    const previous = await this.healthStore.get(agentId);
+    const previous = await this.health.get(agentId);
     if (previous?.reason === health.reason && previous.state === 'unhealthy') return health;
     if (previous?.reason === health.reason && previous.state === 'degraded') {
       const observedAt = Date.parse(previous.updatedAt);
@@ -512,7 +513,7 @@ export class RuntimeHost {
   }
 
   private async resolveMissingHandleHealth(agentId: string): Promise<void> {
-    const snapshot = await this.healthStore.get(agentId);
+    const snapshot = await this.health.get(agentId);
     if (!snapshot) {
       await this.writeUnknownHealth(agentId);
       return;
@@ -522,7 +523,7 @@ export class RuntimeHost {
       Date.now() - Date.parse(snapshot.updatedAt) >= STARTING_TIMEOUT_MS
     ) {
       if (snapshot.restart?.outcome === 'pending') {
-        await this.healthStore.writeHealth({
+        await this.health.writeHealth({
           agentId,
           reason: 'restart_failed',
           restart: {
@@ -549,7 +550,7 @@ export class RuntimeHost {
   }
 
   private async writeUnknownHealth(agentId: string): Promise<void> {
-    await this.healthStore.writeHealth({
+    await this.health.writeHealth({
       agentId,
       state: 'unknown',
       updatedAt: nowIso(),
@@ -557,7 +558,7 @@ export class RuntimeHost {
   }
 
   private async writeFailedHealth(agentId: string, reason: AgentHealthReason): Promise<void> {
-    await this.healthStore.writeHealth({
+    await this.health.writeHealth({
       agentId,
       reason,
       state: 'unhealthy',
@@ -570,7 +571,7 @@ export class RuntimeHost {
     command: AgentRestartCommand,
     runtime?: AgentRuntimeHandleSnapshot,
   ): Promise<void> {
-    await this.healthStore.writeHealth({
+    await this.health.writeHealth({
       agentId,
       reason: 'restart_pending',
       restart: restartStatus(command, 'pending', runtime),
@@ -585,7 +586,7 @@ export class RuntimeHost {
     command: AgentRestartCommand,
     reason: AgentHealthReason,
   ): Promise<void> {
-    await this.healthStore.writeHealth({
+    await this.health.writeHealth({
       agentId,
       reason,
       restart: restartStatus(command, 'failed', undefined, reason),
@@ -603,8 +604,8 @@ export class RuntimeHost {
     if (!stale) return;
     await queue.fail(stale.id);
     await queue.requeueAppendedTo(stale.id);
-    const current = await this.healthStore.get(agentId);
-    await this.healthStore.writeHealth({
+    const current = await this.health.get(agentId);
+    await this.health.writeHealth({
       agentId,
       reason: 'restart_pending',
       ...(current?.restart ? { restart: current.restart } : {}),
