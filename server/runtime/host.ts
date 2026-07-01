@@ -31,14 +31,20 @@ import {
   type AgentRestartCommand,
 } from './agent-restart-command.store.js';
 import { AgentHealthStore } from './agent-health.store.js';
-import { AgentHealthService } from './agent-health.service.js';
+import {
+  AgentHealthService,
+  isProviderFailureReason,
+  isStaleRunningItem,
+  restartStatus,
+  runtimeHandleHealth,
+  startingTimeoutHealth,
+} from './agent-health.service.js';
 import { startRunningAgent, type RunningAgentHandle } from './agent-runner.js';
 import { findActiveRuntimeItem } from './active-item.js';
-import { latestPrimaryRunningItem, processAlive, providerChildIssueReason } from './item-state.js';
+import { latestPrimaryRunningItem } from './item-state.js';
 import type { RuntimeWorkerConfig } from './types.js';
 import type {
   AgentHealthReason,
-  AgentRestartStatusSummary,
   AgentRuntimeHandleSnapshot,
 } from '../../shared/snapshot.js';
 
@@ -76,9 +82,7 @@ export interface RuntimeHostDependencies {
 
 const DEFAULT_RECONCILE_INTERVAL_MS = 30_000;
 const DEFAULT_HEALTH_INTERVAL_MS = 5_000;
-const STARTING_TIMEOUT_MS = 30_000;
 const DEFAULT_AGENT_START_TIMEOUT_MS = 30_000;
-const RUNTIME_CHILD_HEALTH_DEBOUNCE_MS = 10_000;
 const CONFIG_WATCH_DEBOUNCE_MS = 150;
 const AGENT_RESTART_FORCE_KILL_AFTER_MS = 5_000;
 
@@ -352,7 +356,7 @@ export class RuntimeHost {
       agentId: agent.id,
       ...(restartCommand ? {
         reason: 'restart_pending',
-        restart: restartStatus(restartCommand, 'pending'),
+        restart: restartStatus(restartCommand, 'pending', nowIso()),
       } : {}),
       state: 'starting',
       updatedAt: nowIso(),
@@ -467,11 +471,11 @@ export class RuntimeHost {
     }
 
     const runtime = running.handle.health?.();
-    const health = await this.healthForRuntimeWithSensitivity(agent.id, runtime);
+    const health = runtimeHandleHealth(runtime, await this.health.get(agent.id), nowIso());
     const restart = recoveredCommand
       ? health.state === 'healthy'
-        ? restartStatus(recoveredCommand, 'recovered', runtime)
-        : restartStatus(recoveredCommand, 'failed', runtime, health.reason ?? 'restart_failed')
+        ? restartStatus(recoveredCommand, 'recovered', nowIso(), runtime)
+        : restartStatus(recoveredCommand, 'failed', nowIso(), runtime, health.reason ?? 'restart_failed')
       : undefined;
     await this.health.writeHealth({
       agentId: agent.id,
@@ -479,37 +483,8 @@ export class RuntimeHost {
       ...(restart ? { restart } : {}),
       ...(runtime ? { runtime } : {}),
       state: health.state,
-      updatedAt: health.updatedAt ?? nowIso(),
+      updatedAt: health.updatedAt,
     });
-  }
-
-  private async healthForRuntimeWithSensitivity(
-    agentId: string,
-    runtime: AgentRuntimeHandleSnapshot | undefined,
-  ): Promise<RuntimeHealthSnapshot> {
-    const health = healthForRuntime(runtime);
-    if (!isTransientRuntimeChildReason(health.reason)) return health;
-
-    const previous = await this.health.get(agentId);
-    if (previous?.reason === health.reason && previous.state === 'unhealthy') return health;
-    if (previous?.reason === health.reason && previous.state === 'degraded') {
-      const observedAt = Date.parse(previous.updatedAt);
-      const ageMs = Date.now() - observedAt;
-      if (Number.isFinite(ageMs) && ageMs < RUNTIME_CHILD_HEALTH_DEBOUNCE_MS) {
-        return {
-          reason: health.reason,
-          state: 'degraded',
-          updatedAt: previous.updatedAt,
-        };
-      }
-      return health;
-    }
-
-    return {
-      reason: health.reason,
-      state: 'degraded',
-      updatedAt: nowIso(),
-    };
   }
 
   private async resolveMissingHandleHealth(agentId: string): Promise<void> {
@@ -518,26 +493,9 @@ export class RuntimeHost {
       await this.writeUnknownHealth(agentId);
       return;
     }
-    if (
-      snapshot.state === 'starting' &&
-      Date.now() - Date.parse(snapshot.updatedAt) >= STARTING_TIMEOUT_MS
-    ) {
-      if (snapshot.restart?.outcome === 'pending') {
-        await this.health.writeHealth({
-          agentId,
-          reason: 'restart_failed',
-          restart: {
-            ...snapshot.restart,
-            completedAt: nowIso(),
-            outcome: 'failed',
-            reason: 'restart_failed',
-          },
-          state: 'unhealthy',
-          updatedAt: nowIso(),
-        });
-        return;
-      }
-      await this.writeFailedHealth(agentId, 'start_failed');
+    const timedOut = startingTimeoutHealth(snapshot, nowIso());
+    if (timedOut) {
+      await this.health.writeHealth({ agentId, ...timedOut });
       return;
     }
     if (
@@ -574,7 +532,7 @@ export class RuntimeHost {
     await this.health.writeHealth({
       agentId,
       reason: 'restart_pending',
-      restart: restartStatus(command, 'pending', runtime),
+      restart: restartStatus(command, 'pending', nowIso(), runtime),
       ...(runtime ? { runtime } : {}),
       state: 'starting',
       updatedAt: nowIso(),
@@ -589,7 +547,7 @@ export class RuntimeHost {
     await this.health.writeHealth({
       agentId,
       reason,
-      restart: restartStatus(command, 'failed', undefined, reason),
+      restart: restartStatus(command, 'failed', nowIso(), undefined, reason),
       state: 'unhealthy',
       updatedAt: nowIso(),
     });
@@ -890,30 +848,6 @@ function runtimeWithEnv(config: AgentProviderConfig, env: Record<string, string>
   };
 }
 
-interface RuntimeHealthSnapshot {
-  reason?: AgentHealthReason;
-  state: 'degraded' | 'healthy' | 'unhealthy';
-  updatedAt?: string;
-}
-
-function healthForRuntime(runtime: AgentRuntimeHandleSnapshot | undefined): RuntimeHealthSnapshot {
-  if (!runtime) return { reason: 'start_failed', state: 'unhealthy' };
-  const childReason = providerChildIssueReason(runtime);
-  if (childReason) return { reason: childReason, state: 'unhealthy' };
-  return { state: 'healthy' };
-}
-
-function isTransientRuntimeChildReason(reason: AgentHealthReason | undefined): reason is 'provider_child_missing' | 'provider_child_exited' {
-  return reason === 'provider_child_missing' || reason === 'provider_child_exited';
-}
-
-function isProviderFailureReason(reason: AgentHealthReason | undefined): boolean {
-  return reason === 'provider_auth_failed'
-    || reason === 'provider_quota_exhausted'
-    || reason === 'provider_error'
-    || reason === 'provider_rate_limited';
-}
-
 async function staleRunningItemForAgent(
   agentId: string,
   runtime: AgentRuntimeHandleSnapshot | undefined,
@@ -922,34 +856,17 @@ async function staleRunningItemForAgent(
   const running = latestPrimaryRunningItem(await queue.listRunnable());
   if (!running) return undefined;
   const active = await findActiveRuntimeItem(agentId, queue);
-  if (!active) return running;
-  if (!runtime) return running;
-  if (!runtime.workerId || runtime.workerId !== active.workerId) return running;
-  if (!runtime.activeItemId || runtime.activeItemId !== running.id) return running;
-  if (runtime.processId && !processAlive(runtime.processId)) return running;
-  if (runtime.providerChildExpected && providerChildUnhealthy(runtime)) return running;
-  return undefined;
-}
-
-function providerChildUnhealthy(runtime: AgentRuntimeHandleSnapshot): boolean {
-  return Boolean(providerChildIssueReason(runtime, { checkPid: true }));
-}
-
-function restartStatus(
-  command: AgentRestartCommand,
-  outcome: AgentRestartStatusSummary['outcome'],
-  runtime?: AgentRuntimeHandleSnapshot,
-  reason?: AgentHealthReason,
-): AgentRestartStatusSummary {
-  return {
-    ...(outcome !== 'pending' ? { completedAt: nowIso() } : {}),
-    outcome,
-    ...(runtime?.providerChild?.pid ? { providerChildPid: runtime.providerChild.pid } : {}),
-    ...(reason ? { reason } : {}),
-    requestId: command.requestId,
-    requestedAt: command.requestedAt,
-    ...(runtime?.processId ? { workerPid: runtime.processId } : {}),
-  };
+  // Zero grace and the provider-child check: the host is about to fail this
+  // item before a restart, so every wedged shape must count as stale.
+  const stale = isStaleRunningItem({
+    ...(active ? { active } : {}),
+    activeItemMismatchGraceMs: 0,
+    includeProviderChildCheck: true,
+    nowMs: Date.now(),
+    runningItemId: running.id,
+    runtime,
+  });
+  return stale ? running : undefined;
 }
 
 async function awaitShutdown(stop: () => Promise<void>): Promise<void> {
