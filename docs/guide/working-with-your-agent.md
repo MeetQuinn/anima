@@ -79,5 +79,5 @@ forward.
 ## Where to go next
 
 - **[How an agent works](./how-an-agent-works.md)** explains what is going on inside a single agent.
-- Once you are running more than one agent and want them coordinating, see **How your agents work as a team**
-  (coming soon).
+- Once you are running more than one agent and want them coordinating, see
+  **[How your agents work as a team](./how-your-agents-work-as-a-team.md)**.

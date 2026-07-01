@@ -53,6 +53,10 @@ export default defineConfig({
           },
           { text: "Updating Anima", link: "/guide/updating-anima" },
           { text: "How an agent works", link: "/guide/how-an-agent-works" },
+          {
+            text: "How your agents work as a team",
+            link: "/guide/how-your-agents-work-as-a-team",
+          },
           { text: "Skills", link: "/guide/skills" },
         ],
       },
