@@ -695,7 +695,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                   </SelectContent>
                 </Select>
                 <p className="font-sans mt-1 text-[11px] text-text-subtle">
-                  The new agent joins this team; its home lives in the team's Knowledge Base.
+                  The new agent joins this team; its home lives under the team's folder.
                 </p>
               </div>
             )}
@@ -723,7 +723,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                         Will be created automatically
                       </div>
                       <p className="font-sans mt-2 text-[12px] text-text-muted">
-                        Your agent's memory lives here, inside your team's <strong className="font-semibold text-text">Knowledge Base</strong>.
+                        Your agent's memory lives here, in its own <strong className="font-semibold text-text">home folder</strong> under the team's folder.
                       </p>
                     </div>
                     <button
