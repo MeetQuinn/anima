@@ -14,7 +14,15 @@ import {
 } from '../runtime-management/runtime-upgrade.js';
 import { ProviderUsageKind } from '../../shared/provider-usage.js';
 import { SidebarOrder, WorkspacePlatform } from '../../shared/server-settings.js';
+import { defaultTeamService, TeamServiceError } from '../teams/team.service.js';
+import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { HttpError } from './http.js';
+import { z } from 'zod';
+
+const TeamCreateRequest = z.object({
+  name: z.string().trim().min(1),
+  home: z.string().trim().min(1).optional(),
+}).strict();
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const ANIMACTL_SCRIPT = join(PROJECT_ROOT, 'dist/server/cli/animactl.js');
@@ -70,6 +78,38 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
       return reply.status(400).send({ error: 'Invalid sidebar order payload' });
     }
     return { sidebarOrder: await defaultServerSettingsService.setSidebarOrder(parsed.data) };
+  });
+
+  // Teams — the effective registry (default team always present + first). Absent config
+  // yields exactly [default], so N=1 installs need no migration write.
+  fastify.get('/api/teams', async () => {
+    const [teams, agents] = await Promise.all([
+      defaultTeamService.listTeams(),
+      defaultAgentRegistryService.listAgentConfigs(),
+    ]);
+    // Surface the "repairable warning" half of the degrade contract: any agent whose teamId
+    // no longer resolves. The dashboard renders these as a repair cue; the list still degrades
+    // that agent into the default team so nothing is ever hidden.
+    const warnings = await defaultTeamService.collectAgentTeamWarnings(
+      agents.map((agent) => ({ id: agent.id, teamId: agent.teamId })),
+    );
+    return { teams, warnings };
+  });
+
+  fastify.post('/api/teams', async (request, reply) => {
+    const parsed = TeamCreateRequest.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid team payload' });
+    }
+    try {
+      const team = await defaultTeamService.createTeam(parsed.data);
+      return reply.status(201).send({ team });
+    } catch (error) {
+      if (error instanceof TeamServiceError) {
+        return reply.status(error.statusCode).send({ error: error.message });
+      }
+      throw error;
+    }
   });
 
   // Workspace platform — global default inherited by newly-created agents.

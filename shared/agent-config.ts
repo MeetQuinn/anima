@@ -3,6 +3,7 @@
 import { z } from 'zod';
 
 import { defaultAgentHomePath } from './agent-home.js';
+import { DEFAULT_TEAM_ID } from './server-settings.js';
 import {
   FEISHU_PROFILE_NAME_SCOPE,
   type FeishuRecommendedScopeCapability,
@@ -119,9 +120,16 @@ export const AgentCreateRequest = z.object({
   name: z.string().trim().min(1).refine((name) => Boolean(agentIdFromName(name)), {
     message: 'name must include at least one URL-safe letter or number',
   }),
-  homePath: z.string().trim().min(1),
+  // Optional. When omitted, the server derives the deterministic team-aware default
+  // `$TEAM_HOME/agents/$AGENT_NAME` from `teamId`. When provided (back-compat), the explicit
+  // path is honored as before.
+  homePath: z.string().trim().min(1).optional(),
   role: z.string().trim().min(1),
   provider: AgentProviderCreateRequest,
+  // Optional. Defaults to the default team server-side. A non-default value must name an
+  // existing team, else create is rejected (400) — the read-path degrade-to-default is for
+  // already-persisted agents, not for new writes.
+  teamId: z.string().trim().min(1).optional(),
 }).strict();
 
 export type AgentCreateRequest = z.infer<typeof AgentCreateRequest>;
@@ -131,6 +139,13 @@ export const AgentUpdateHomeRequest = z.object({
 }).strict();
 
 export type AgentUpdateHomeRequest = z.infer<typeof AgentUpdateHomeRequest>;
+
+// Label-only team reassignment. The existing home is never moved (team = a label).
+export const AgentAssignTeamRequest = z.object({
+  teamId: z.string().trim().min(1),
+}).strict();
+
+export type AgentAssignTeamRequest = z.infer<typeof AgentAssignTeamRequest>;
 
 export const AgentUpdateProfileRequest = z.object({
   displayName: z.string().trim().min(1).optional(),
@@ -469,6 +484,7 @@ export function agentConfigSchema(fallbackId: string) {
       feishu: FeishuConfig.optional(),
       slack: SlackConfig.optional(),
       homePath: z.string().optional(),
+      teamId: z.string().optional(),
     }).transform((raw) => {
       const id = raw.id ?? fallbackId;
       return {
@@ -484,6 +500,12 @@ export function agentConfigSchema(fallbackId: string) {
         feishu: raw.feishu ?? FeishuConfig.parse({}),
         slack: raw.slack ?? SlackConfig.parse({}),
         homePath: raw.homePath ?? defaultAgentHomePath(id),
+        // Backfill: a legacy agent (no team field) or a blank teamId reads as the default
+        // team. This is the zero-touch one-default-team migration — a label only, applied on
+        // read, persisted on the next write. Referential integrity (a non-empty teamId that
+        // names no known team) is repaired at the service layer, which degrades to default
+        // and surfaces a warning rather than crashing.
+        teamId: raw.teamId && raw.teamId.trim() ? raw.teamId : DEFAULT_TEAM_ID,
       };
     }),
   );

@@ -37,6 +37,7 @@ export const queryKeys = {
   health: () => ['health'] as const,
   serverInfo: () => ['server-info'] as const,
   sidebarOrder: () => ['sidebar-order'] as const,
+  teams: () => ['teams'] as const,
   workspacePlatform: () => ['workspace-platform'] as const,
   runtimeUpgrade: () => ['runtime-upgrade'] as const,
 };

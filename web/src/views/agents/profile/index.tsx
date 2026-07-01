@@ -24,10 +24,14 @@ import { Field, ReadonlyValue, Section, extractError } from './Primitives';
 import {
   InlineTextRow,
   HomeRow,
+  TeamRow,
   ProviderInlineRow,
   ProviderEnvRow,
   ConfirmRestartModal,
 } from './AgentFields';
+import { useTeams } from '@/hooks/useTeams';
+import { assignAgentTeam } from '@/api/teams';
+import { DEFAULT_TEAM_ID } from '@shared/server-settings';
 import { SessionSection } from './SessionStats';
 import { SlackConnectStepper } from './SlackConnectStepper';
 import { FeishuConnectStepper } from './FeishuConnectStepper';
@@ -80,6 +84,7 @@ export default function Profile() {
     queryKey: queryKeys.workspacePlatform(),
     queryFn: fetchWorkspacePlatform,
   });
+  const teams = useTeams();
   const { data: providerAvailability = null } = useQuery({
     queryKey: queryKeys.providerAvailability(),
     queryFn: fetchProviderAvailability,
@@ -219,6 +224,13 @@ export default function Profile() {
     refreshAgentData(agentId);
   }
 
+  async function commitTeam(nextTeamId: string) {
+    if (!agentId) return;
+    // Label-only: home is untouched, so no idle-apply notice is needed.
+    await assignAgentTeam(agentId, nextTeamId);
+    refreshAgentData(agentId);
+  }
+
   async function commitProviderEnv(env: Record<string, string | null>) {
     if (!agentId) return;
     await updateAgentProvider(agentId, { env });
@@ -273,6 +285,11 @@ export default function Profile() {
             onCommit={(next) => commitProfile({ role: next })}
           />
           <HomeRow value={agent.homePath ?? ''} onCommit={commitHomePath} />
+          <TeamRow
+            teams={teams}
+            value={agent.teamId ?? DEFAULT_TEAM_ID}
+            onCommit={commitTeam}
+          />
           <ProviderInlineRow
             kind={agent.provider.kind}
             model={agent.provider.model ?? ''}

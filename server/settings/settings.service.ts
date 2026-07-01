@@ -3,6 +3,7 @@ import type {
   ReleaseTrack,
   ServerTrack,
   SidebarOrder,
+  TeamConfig,
   WorkspacePlatform,
 } from '../../shared/server-settings.js';
 import {
@@ -39,6 +40,13 @@ export class ServerSettingsService {
     return config.sidebarOrder ?? {};
   }
 
+  // Raw team registry as persisted. Absent/empty is normal (zero-touch upgrade); the
+  // default-team synthesis + degrade logic lives in TeamService, not here.
+  async getTeams(): Promise<TeamConfig[]> {
+    const config = await this.store.read();
+    return config.teams ?? [];
+  }
+
   async getDashboardAuth(): Promise<DashboardAuth | undefined> {
     const config = await this.store.read();
     return config.dashboardAuth;
@@ -71,6 +79,12 @@ export class ServerSettingsService {
     const config = await this.store.read();
     await this.store.write({ ...config, sidebarOrder });
     return sidebarOrder;
+  }
+
+  async setTeams(teams: TeamConfig[]): Promise<TeamConfig[]> {
+    const config = await this.store.read();
+    await this.store.write({ ...config, teams });
+    return teams;
   }
 
   async setDashboardAuth(dashboardAuth: DashboardAuth): Promise<DashboardAuth> {

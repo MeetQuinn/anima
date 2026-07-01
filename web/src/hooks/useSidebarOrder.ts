@@ -6,6 +6,8 @@ import { fetchKbs } from '@/api/kb';
 import { fetchSidebarOrder, saveSidebarOrder, type SidebarOrder } from '@/api/system';
 import { queryClient } from '@/query-client';
 import { queryKeys } from '@/lib/query-keys';
+import { useTeams } from './useTeams';
+import { effectiveTeamId, groupAgentsByTeam, isGrouped, type TeamGroup } from '@/lib/teams';
 
 // ---------------------------------------------------------------------------
 // applyOrder — reconcile a live list with a stored ordering.
@@ -53,8 +55,16 @@ export function useSidebarOrder() {
     },
   });
 
+  const teams = useTeams();
+
   const orderedAgents = applyOrder(agents, sidebarOrder?.agents, (a) => a.id);
   const orderedKbs = applyOrder(kbs, sidebarOrder?.kbs, (kb) => kb.id);
+
+  // Team grouping is a display concern layered over the flat order. At N=1 the
+  // list stays flat (identical to today); at N>=2 it groups by team.
+  const grouped = isGrouped(teams);
+  const teamIds = new Set(teams.map((t) => t.id));
+  const groupedAgents: TeamGroup[] = groupAgentsByTeam(orderedAgents, teams);
 
   // Stable color index maps — color derives from original (unordered) position
   // so agent avatar color doesn't change when the user reorders.
@@ -73,6 +83,16 @@ export function useSidebarOrder() {
     const oldIdx = orderedAgents.findIndex((a) => a.id === String(active.id));
     const newIdx = orderedAgents.findIndex((a) => a.id === String(over.id));
     if (oldIdx === -1 || newIdx === -1) return;
+    // In grouped mode, drag only reorders within a team. Moving an agent to a
+    // different team is an explicit action (the row's team menu), never a drag,
+    // so a cross-group drop is a no-op that snaps back.
+    if (
+      grouped &&
+      effectiveTeamId(orderedAgents[oldIdx], teamIds) !==
+        effectiveTeamId(orderedAgents[newIdx], teamIds)
+    ) {
+      return;
+    }
     const reordered = arrayMove(orderedAgents, oldIdx, newIdx);
     void orderMutation.mutate({ ...sidebarOrder, agents: reordered.map((a) => a.id) });
   }
@@ -90,6 +110,9 @@ export function useSidebarOrder() {
   return {
     orderedAgents,
     orderedKbs,
+    groupedAgents,
+    grouped,
+    teams,
     agentIndexMap,
     kbIndexMap,
     sensors,

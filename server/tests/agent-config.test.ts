@@ -6,6 +6,8 @@ import assert from 'node:assert/strict';
 
 import { redactAgentConfig } from '../agents/agent-config-ops.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
+import { defaultServerSettingsService } from '../settings/settings.service.js';
+import { defaultTeamService } from '../teams/team.service.js';
 import { KbRegistryStore, KbStore } from '../storage/schema/kb.store.js';
 import type { ServerConfig } from '../storage/schema/server.store.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
@@ -179,6 +181,220 @@ test('team kb registration avoids id collisions without clobbering existing root
     await rm(configDir, { force: true, recursive: true });
     await rm(homeDir, { force: true, recursive: true });
     await rm(otherRoot, { force: true, recursive: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Team as a first-class attribute (cut-1)
+// ---------------------------------------------------------------------------
+
+test('empty config loads as {} and the registry synthesizes exactly the default team', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-team-empty-'));
+  try {
+    await withAnimaHome(configDir, async () => {
+      assert.deepEqual(await defaultServerSettingsService.readConfig(), {});
+      assert.deepEqual(await defaultServerSettingsService.getTeams(), []);
+      assert.deepEqual(await defaultTeamService.listTeams(), [
+        { id: 'default', name: 'Default', home: '~/anima-team' },
+      ]);
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+  }
+});
+
+test('a legacy agent config with no team field backfills to the default team on read', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-team-backfill-'));
+  try {
+    await writeConfig(configDir, {
+      agents: [
+        {
+          id: 'legacy',
+          homePath: 'agents/legacy',
+          profile: { displayName: 'Legacy' },
+          provider: { kind: 'claude-code', model: 'opus' },
+        },
+      ],
+    });
+    await withAnimaHome(configDir, async () => {
+      const agent = await agentService('legacy').getConfig();
+      assert.equal(agent.teamId, 'default');
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+  }
+});
+
+test('a blank teamId also backfills to the default team', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-team-blank-'));
+  try {
+    await writeConfig(configDir, {
+      agents: [
+        {
+          id: 'blank',
+          homePath: 'agents/blank',
+          teamId: '   ',
+          profile: { displayName: 'Blank' },
+          provider: { kind: 'claude-code', model: 'opus' },
+        },
+      ],
+    });
+    await withAnimaHome(configDir, async () => {
+      const agent = await agentService('blank').getConfig();
+      assert.equal(agent.teamId, 'default');
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+  }
+});
+
+test('a dangling teamId is preserved on read but degrades to default via the service (no crash)', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-team-dangling-'));
+  try {
+    await writeConfig(configDir, {
+      agents: [
+        {
+          id: 'orphan',
+          homePath: 'agents/orphan',
+          teamId: 'ghost',
+          profile: { displayName: 'Orphan' },
+          provider: { kind: 'claude-code', model: 'opus' },
+        },
+      ],
+    });
+    await withAnimaHome(configDir, async () => {
+      // The shared schema cannot see the registry, so it preserves the raw value.
+      const agent = await agentService('orphan').getConfig();
+      assert.equal(agent.teamId, 'ghost');
+      // The service is the degrade authority: unknown team -> default + repairable warning.
+      const resolved = await defaultTeamService.resolveEffectiveTeamId(agent.teamId);
+      assert.equal(resolved.teamId, 'default');
+      assert.ok(resolved.warning && resolved.warning.includes('ghost'));
+      // The phantom team never appears in the registry.
+      assert.deepEqual((await defaultTeamService.listTeams()).map((t) => t.id), ['default']);
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+  }
+});
+
+test('collectAgentTeamWarnings surfaces exactly the dangling teamIds (the repairable-warning half of the contract)', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-team-warn-'));
+  try {
+    await withAnimaHome(configDir, async () => {
+      const content = await defaultTeamService.createTeam({ name: 'Content' });
+      const warnings = await defaultTeamService.collectAgentTeamWarnings([
+        { id: 'alice', teamId: 'ghost' }, // dangling -> warn
+        { id: 'bob', teamId: content.id }, // valid non-default -> no warn
+        { id: 'cara', teamId: 'default' }, // default -> no warn
+        { id: 'dan', teamId: '' }, // blank legacy -> no warn
+        { id: 'evan' }, // absent -> no warn
+      ]);
+      assert.equal(warnings.length, 1);
+      const [warning] = warnings;
+      if (!warning) throw new Error('expected exactly one warning');
+      assert.equal(warning.agentId, 'alice');
+      assert.equal(warning.teamId, 'ghost');
+      assert.equal(warning.effectiveTeamId, 'default');
+      assert.ok(warning.message.includes('ghost'));
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+  }
+});
+
+test('createTeam slugs the name, materializes the default alongside it, and rejects collisions', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-team-create-'));
+  try {
+    await withAnimaHome(configDir, async () => {
+      const team = await defaultTeamService.createTeam({ name: 'Content Squad' });
+      assert.deepEqual(team, { id: 'content-squad', name: 'Content Squad', home: '~/content-squad' });
+
+      assert.deepEqual(
+        (await defaultTeamService.listTeams()).map((t) => t.id),
+        ['default', 'content-squad'],
+      );
+      // Persisted registry is now explicit (default graduated in on the first extra team).
+      assert.deepEqual(
+        (await defaultServerSettingsService.getTeams()).map((t) => t.id),
+        ['default', 'content-squad'],
+      );
+
+      await assert.rejects(defaultTeamService.createTeam({ name: 'Content Squad' }), /already exists/);
+      await assert.rejects(defaultTeamService.createTeam({ name: 'Default' }), /reserved/);
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+  }
+});
+
+test('creating an agent in a team derives $TEAM_HOME/agents/$id and records the teamId', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-team-agent-config-'));
+  const teamHome = await mkdtemp(join(tmpdir(), 'anima-team-agent-home-'));
+  try {
+    await withAnimaHome(configDir, async () => {
+      const team = await defaultTeamService.createTeam({ name: 'Content', home: teamHome });
+      const agent = await defaultAgentRegistryService.createAgent({
+        name: 'Bee',
+        role: 'Writer.',
+        provider: { kind: 'claude-code', model: 'opus' },
+        teamId: team.id,
+      });
+      assert.equal(agent.teamId, 'content');
+      assert.equal(agent.homePath, join(teamHome, 'agents', 'bee'));
+      assert.equal((await stat(join(teamHome, 'agents', 'bee'))).isDirectory(), true);
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+    await rm(teamHome, { force: true, recursive: true });
+  }
+});
+
+test('creating an agent with an unknown teamId is rejected (400, not a silent degrade)', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-team-agent-unknown-'));
+  try {
+    await withAnimaHome(configDir, async () => {
+      await assert.rejects(
+        defaultAgentRegistryService.createAgent({
+          name: 'Ghost',
+          role: 'x.',
+          provider: { kind: 'claude-code', model: 'opus' },
+          teamId: 'nope',
+        }),
+        /unknown team: nope/,
+      );
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+  }
+});
+
+test('assignTeam relabels an agent without moving its existing home', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-team-assign-config-'));
+  const agentHome = await mkdtemp(join(tmpdir(), 'anima-team-assign-home-'));
+  const teamHome = await mkdtemp(join(tmpdir(), 'anima-team-assign-teamhome-'));
+  try {
+    await withAnimaHome(configDir, async () => {
+      const created = await defaultAgentRegistryService.createAgent({
+        name: 'Ann',
+        homePath: agentHome,
+        role: 'x.',
+        provider: { kind: 'claude-code', model: 'opus' },
+      });
+      assert.equal(created.teamId, 'default');
+
+      await defaultTeamService.createTeam({ name: 'Ops', home: teamHome });
+      const moved = await defaultAgentRegistryService.assignTeam('ann', 'ops');
+      assert.equal(moved.teamId, 'ops');
+      // Home is a migration-time label change only: the path never moves.
+      assert.equal(moved.homePath, created.homePath);
+
+      await assert.rejects(defaultAgentRegistryService.assignTeam('ann', 'nope'), /unknown team: nope/);
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+    await rm(agentHome, { force: true, recursive: true });
+    await rm(teamHome, { force: true, recursive: true });
   }
 });
 

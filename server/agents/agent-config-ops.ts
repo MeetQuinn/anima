@@ -46,7 +46,12 @@ export function isAgentRunnable(agent: AgentConfig): boolean {
 // Construction
 // ---------------------------------------------------------------------------
 
-export function agentConfigFromCreateInput(input: AgentCreateRequest): AgentConfig {
+// The team + home are resolved by the service layer (TeamService owns team lookup and the
+// deterministic $TEAM_HOME/agents/$id derivation); this stays a pure config builder.
+export function agentConfigFromCreateInput(
+  input: AgentCreateRequest,
+  resolved: { teamId: string; homePath: string },
+): AgentConfig {
   return {
     createdAt: new Date().toISOString(),
     enabled: true,
@@ -66,7 +71,8 @@ export function agentConfigFromCreateInput(input: AgentCreateRequest): AgentConf
       workspaceIconUrl: '',
       workspaceName: '',
     },
-    homePath: resolveServerPath(input.homePath),
+    homePath: resolveServerPath(resolved.homePath),
+    teamId: resolved.teamId,
   };
 }
 

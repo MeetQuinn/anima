@@ -12,6 +12,7 @@ import ConfirmModal from '@/components/ConfirmModal';
 import DirectoryPicker from '@/components/DirectoryPicker';
 import { EditAffordance, ErrorHint, Field, SavedHint } from './Primitives';
 import { ANIMA_MANAGED_PROVIDER_ENV_KEYS, type AgentProviderConfig } from '@shared/agent-config';
+import type { TeamConfig } from '@shared/server-settings';
 import {
   providerReady,
   providerUnavailableHint,
@@ -283,6 +284,65 @@ export function HomeRow({
         />
       )}
     </>
+  );
+}
+
+// ── TeamRow ───────────────────────────────────────────────────────────────
+
+// Team row — reassign an existing agent to another team (add-existing-agent-to-
+// team). Label-only: the agent's home is never moved. Hidden until a second team
+// exists (progressive disclosure), so a single-team install shows no team chrome.
+export function TeamRow({
+  teams,
+  value,
+  onCommit,
+}: {
+  teams: TeamConfig[];
+  value: string;
+  onCommit: (teamId: string) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const [saved, setSaved] = useState(false);
+
+  if (teams.length <= 1) return null;
+
+  async function change(next: string) {
+    if (!next || next === value || busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await onCommit(next);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 4000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const currentName = teams.find((t) => t.id === value)?.name ?? value;
+
+  return (
+    <Field label="Team">
+      <div className="flex flex-wrap items-center gap-2">
+        <Select value={value} onValueChange={(v) => v && void change(v)}>
+          <SelectTrigger className="h-8 w-52 font-serif text-[14px]" disabled={busy}>
+            {currentName}
+          </SelectTrigger>
+          <SelectContent>
+            {teams.map((t) => (
+              <SelectItem key={t.id} value={t.id} className="font-serif text-[14px]">
+                {t.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {saved && <SavedHint />}
+        {error && <ErrorHint message={error} />}
+      </div>
+    </Field>
   );
 }
 
