@@ -3,7 +3,7 @@ import { recordRuntimeActivity, recordRuntimeEvent } from './activity.js';
 import { defaultAgentHealthStore } from './agent-health.store.js';
 import { runtimeErrorPayload } from '../activities/format.js';
 import { buildProviderCrashRetryDeliveryPrompt } from './delivery-prompt.js';
-import { providerFailureHealthReason, providerFailureReasonFromError } from './provider-failure.js';
+import { providerFailureHealthReason, providerFailureReasonFromError } from '../providers/provider-failure.js';
 import type { AgentRuntime, AgentRuntimeInput, AgentRuntimeResult } from '../providers/contract.js';
 
 const PROVIDER_CRASH_MAX_RETRIES = 3;

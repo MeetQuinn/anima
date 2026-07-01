@@ -22,6 +22,8 @@ const groups = {
     'message-transport.test.js',
     'workspace-directory.test.js',
     'prompt-attachments.test.js',
+    'provider-failure.test.js',
+    'provider-launch.test.js',
     'reminders.test.js',
     'runtime.test.js',
     'runtime-upgrade.test.js',
