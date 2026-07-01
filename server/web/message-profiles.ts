@@ -1,6 +1,6 @@
 import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
-import { SlackProfileResolver } from '../inbox/slack-profiles.js';
+import { SlackProfileResolver } from '../slack/profiles.js';
 import type { WebClient } from '@slack/web-api';
 import type { AgentMessageHistoryPage } from '../../shared/messages.js';
 

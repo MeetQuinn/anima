@@ -14,6 +14,9 @@ import {
   extractSlackUserMentionIds,
   replaceSlackChannelMentions,
   replaceSlackUserMentions,
+  slackDisplayLabel,
+  slackMentionLabel,
+  slackTsToIso,
 } from '../slack/slack.helper.js';
 import { slackMessagePreviewsFromAttachments } from '../slack/message-previews.js';
 
@@ -92,8 +95,13 @@ export async function slackTranscriptUserLabels(
     userIds.map(async (userId) => {
       try {
         const user = await directory.getUser(userId);
-        actors.set(userId, slackUserLabel(user, userId));
-        userMentions.set(userId, slackMentionLabel(user, userId));
+        const parts = {
+          displayName: slackUserDisplayName(user),
+          handle: user?.name,
+          userId,
+        };
+        actors.set(userId, slackDisplayLabel(parts));
+        userMentions.set(userId, slackMentionLabel(parts));
         if (user?.tz && typeof user.tz_offset === 'number') {
           timezones.set(userId, { name: user.tz, offsetSeconds: user.tz_offset });
         }
@@ -158,28 +166,12 @@ function cachedFilePath(
   return undefined;
 }
 
-function slackUserLabel(user: SlackUserInfo, fallbackUserId: string): string {
-  const handle = user?.name ? atLabel(user.name) : '';
-  const displayName = user?.profile?.display_name?.trim() || user?.profile?.real_name?.trim() || user?.real_name?.trim();
-  if (handle && (!displayName || normalizeActorName(displayName) === normalizeActorName(handle))) return handle;
-  if (displayName && handle) return `${displayName} (${handle})`;
-  if (displayName) return displayName;
-  return handle || atLabel(fallbackUserId);
-}
-
-function slackMentionLabel(user: SlackUserInfo, fallbackUserId: string): string {
-  if (user?.name) return atLabel(user.name);
-  const displayName = user?.profile?.display_name?.trim() || user?.profile?.real_name?.trim() || user?.real_name?.trim();
-  if (displayName) return atLabel(displayName);
-  return atLabel(fallbackUserId);
+function slackUserDisplayName(user: SlackUserInfo): string | undefined {
+  return user?.profile?.display_name?.trim() || user?.profile?.real_name?.trim() || user?.real_name?.trim() || undefined;
 }
 
 function slackChannelLabel(channel: SlackConversationInfo | undefined, fallbackChannelId: string): string {
   return channelLabel(channel?.name_normalized?.trim() || channel?.name?.trim() || fallbackChannelId);
-}
-
-function normalizeActorName(value: string): string {
-  return value.trim().replace(/^@/, '').toLowerCase();
 }
 
 function slackTranscriptLine(
@@ -190,7 +182,7 @@ function slackTranscriptLine(
 ): string {
   const displayRef = slackReadChannelRef(request);
   const timezone = message.user ? userLabels.timezones.get(message.user) : undefined;
-  const isoTs = slackTsToIso(message.ts);
+  const isoTs = slackTsToIso(message.ts) ?? message.ts;
   const threadRef = slackReadThreadRef(message, request);
   const fields = [
     `channel=${displayRef}`,
@@ -271,12 +263,6 @@ function slackTranscriptActor(message: SlackConversationMessage, userLabels: Map
   if (message.user) return atLabel(message.user);
   if (message.bot_id) return `bot:${message.bot_id}`;
   return '@unknown';
-}
-
-function slackTsToIso(ts: string): string {
-  const seconds = Number(ts.split('.')[0]);
-  if (!Number.isFinite(seconds)) return ts;
-  return new Date(seconds * 1000).toISOString();
 }
 
 function formatUserLocalTime(isoTimestamp: string, timezone: UserTimezone): string {

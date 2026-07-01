@@ -4,7 +4,8 @@ import { dirname, join } from 'node:path';
 import { errorMessage } from '../ids.js';
 import { getSlackFileCacheMetaStore, slackFileCacheDir, type SlackFileCacheMeta } from '../storage/schema/cache.js';
 import { safeFilename } from '../storage/safe-filename.js';
-import type { DownloadableSlackFile, SlackFile } from './slack.helper.js';
+import type { InboxFileMeta } from '../../shared/inbox.js';
+import type { DownloadableSlackFile } from './slack.helper.js';
 
 // Received Slack files are metadata-only at ingest. Agents fetch bytes on demand
 // via `anima file fetch <fileId>`, which stores them in the shared cache.
@@ -40,7 +41,7 @@ export async function downloadSlackFile(input: DownloadSlackFileInput): Promise<
   return { sizeBytes: buffer.length };
 }
 
-export type CachedSlackFile = SlackFile & { localPath: string };
+export type CachedSlackFile = InboxFileMeta & { localPath: string };
 
 export interface SlackCachedFileRead {
   bytes: Buffer;
@@ -89,7 +90,7 @@ export class SlackFileService {
     file: DownloadableSlackFile;
     teamId: string;
     token: string;
-  }): Promise<CachedSlackFile | (SlackFile & { downloadError: string })> {
+  }): Promise<CachedSlackFile | (InboxFileMeta & { downloadError: string })> {
     const { file } = input;
     if (!file.urlPrivate) {
       return { ...file, downloadError: 'missing url_private' };

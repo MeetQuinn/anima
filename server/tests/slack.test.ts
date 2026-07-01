@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { WebClient } from '@slack/web-api';
 
-import { SlackProfileResolver } from '../inbox/slack-profiles.js';
+import { SlackProfileResolver } from '../slack/profiles.js';
 import { SlackWorkspaceDirectoryService } from '../slack/workspace-directory.service.js';
 import { resolveSlackChannelArgument } from '../tools/slack-channel-resolver.js';
 import { mentionWarningsForTarget, slackTextForPostMessage } from '../tools/slack-message-mentions.js';

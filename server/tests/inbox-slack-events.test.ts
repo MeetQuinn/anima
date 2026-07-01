@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { isRoutableSlackMessage, isUserAuthoredSlackMessage, normalizeSlackMessage } from '../inbox/slack-events.js';
+import { isRoutableSlackMessage, normalizeSlackMessage } from '../inbox/slack-events.js';
 import { slackSurfaceForEvent } from '../inbox/slack-events.js';
 
 test('normalizes Slack DM messages into private primary-session events', () => {
   const event = normalizeSlackMessage({
-    envelope: { event_id: 'Ev123', team_id: 'T123' },
+    envelope: { team_id: 'T123' },
     event: {
       channel: 'D123',
       channel_type: 'im',
@@ -29,7 +29,7 @@ test('normalizes Slack DM messages into private primary-session events', () => {
 
 test('normalizes Slack thread messages with reply routing metadata', () => {
   const event = normalizeSlackMessage({
-    envelope: { event_id: 'Ev456', team_id: 'T123' },
+    envelope: { team_id: 'T123' },
     channelName: 'product',
     event: {
       channel: 'C123',
@@ -51,7 +51,7 @@ test('normalizes Slack thread messages with reply routing metadata', () => {
 
 test('normalizes Slack app mention events as addressed channel messages', () => {
   const event = normalizeSlackMessage({
-    envelope: { event_id: 'Ev789', team_id: 'T123' },
+    envelope: { team_id: 'T123' },
     event: {
       channel: 'C123',
       text: '<@U999> can you help here?',
@@ -70,7 +70,7 @@ test('normalizes Slack app mention events as addressed channel messages', () => 
 
 test('normalizes resolved Slack mention text', () => {
   const event = normalizeSlackMessage({
-    envelope: { event_id: 'EvMentionText', team_id: 'T123' },
+    envelope: { team_id: 'T123' },
     event: {
       channel: 'C123',
       text: '<@U999> please ask <@U123> in <#C456|product>',
@@ -86,7 +86,7 @@ test('normalizes resolved Slack mention text', () => {
 
 test('uses Slack message ts as the stable event id across message and app_mention deliveries', () => {
   const message = normalizeSlackMessage({
-    envelope: { event_id: 'EvMessage', team_id: 'T123' },
+    envelope: { team_id: 'T123' },
     event: {
       channel: 'C123',
       channel_type: 'channel',
@@ -97,7 +97,7 @@ test('uses Slack message ts as the stable event id across message and app_mentio
     },
   });
   const mention = normalizeSlackMessage({
-    envelope: { event_id: 'EvMention', team_id: 'T123' },
+    envelope: { team_id: 'T123' },
     event: {
       channel: 'C123',
       text: '<@U999> can you help here?',
@@ -113,7 +113,7 @@ test('uses Slack message ts as the stable event id across message and app_mentio
 
 test('normalizes optional Slack user profile metadata into actor context', () => {
   const event = normalizeSlackMessage({
-    envelope: { event_id: 'EvProfile', team_id: 'T123' },
+    envelope: { team_id: 'T123' },
     event: {
       channel: 'D123',
       channel_type: 'im',
@@ -123,6 +123,7 @@ test('normalizes optional Slack user profile metadata into actor context', () =>
       user: 'U123',
     },
     userProfile: {
+      avatarUrl: 'https://avatars.slack-edge.com/alice_72.png',
       displayName: 'Alice',
       handle: 'alice',
       realName: 'Alice Lee',
@@ -133,21 +134,11 @@ test('normalizes optional Slack user profile metadata into actor context', () =>
   assert.equal(event.actor?.displayName, 'Alice');
   assert.equal(event.actor?.handle, 'alice');
   assert.equal(event.actor?.realName, 'Alice Lee');
+  // Read-time chrome such as avatars never lands on the durable inbox item.
+  assert.equal(Object.hasOwn(event.actor ?? {}, 'avatarUrl'), false);
 });
 
 test('routes non-self bot-authored channel messages for subscription-window checks', () => {
-  assert.equal(
-    isUserAuthoredSlackMessage({
-      bot_id: 'B123',
-      channel: 'C123',
-      channel_type: 'channel',
-      text: 'bot text',
-      ts: '1770000020.000001',
-      type: 'message',
-      user: 'U123',
-    }),
-    false,
-  );
   assert.equal(
     isRoutableSlackMessage(
       {
@@ -179,18 +170,6 @@ test('routes non-self bot-authored channel messages for subscription-window chec
 });
 
 test('filters unsupported subtype messages before runtime ingestion', () => {
-  assert.equal(
-    isUserAuthoredSlackMessage({
-      channel: 'C123',
-      channel_type: 'channel',
-      subtype: 'message_changed',
-      text: 'edited text',
-      ts: '1770000020.000001',
-      type: 'message',
-      user: 'U123',
-    }),
-    false,
-  );
   assert.equal(
     isRoutableSlackMessage(
       {
@@ -257,14 +236,13 @@ test('routes file-only messages (empty text, files present) and normalizes file 
     subtype: 'file_share',
     text: '',
     ts: '1770000050.000001',
-    type: 'message',
+    type: 'message' as const,
     user: 'U123',
   };
-  assert.equal(isUserAuthoredSlackMessage(rawEvent), true);
   assert.equal(isRoutableSlackMessage(rawEvent), true);
 
   const event = normalizeSlackMessage({
-    envelope: { event_id: 'EvFile', team_id: 'T123' },
+    envelope: { team_id: 'T123' },
     event: rawEvent,
   });
   assert.equal(slackSurfaceForEvent(event).kind, 'dm');
@@ -272,30 +250,8 @@ test('routes file-only messages (empty text, files present) and normalizes file 
   assert.equal(event.files?.[0]?.id, 'F-screenshot');
   assert.equal(event.files?.[0]?.mimetype, 'image/png');
   assert.equal(event.files?.[0]?.sizeBytes, 2048);
-});
-
-test('normalizeSlackMessage prefers explicitly enriched files over raw event files', () => {
-  const event = normalizeSlackMessage({
-    envelope: { event_id: 'EvFileEnriched', team_id: 'T123' },
-    event: {
-      channel: 'C123',
-      channel_type: 'channel',
-      files: [{ id: 'F-raw', mimetype: 'image/png', name: 'raw.png', size: 1 }],
-      text: 'see attached',
-      ts: '1770000060.000001',
-      type: 'message',
-      user: 'U123',
-    },
-    files: [{
-      id: 'F-enriched',
-      mimetype: 'image/png',
-      name: 'enriched.png',
-      sizeBytes: 4096,
-    }],
-  });
-  assert.equal(event.files?.length, 1);
-  assert.equal(event.files?.[0]?.id, 'F-enriched');
-  assert.equal(Object.hasOwn(event.files?.[0] ?? {}, 'localPath'), false);
+  // Private download URLs never land on the durable inbox item.
+  assert.equal(Object.hasOwn(event.files?.[0] ?? {}, 'urlPrivate'), false);
 });
 
 test('routes non-self bot-authored thread messages for subscription-window checks', () => {

@@ -16,13 +16,13 @@ import { resolveAnimaReferencePathsFromRoots } from '../runtime/anima-reference.
 import { runtimeEnv } from '../runtime/runtime-bridge.js';
 import { buildAnimaRuntimeProfile } from '../runtime/standing-prompt.js';
 import { makeSlackEvent } from './helpers/slack.js';
-import type { SlackFile } from '../inbox/slack-events.js';
+import type { InboxFileMeta } from '../../shared/inbox.js';
 import type { Session } from '../storage/schema/session.store.js';
 
 function buildInput(opts: {
   channelId?: string;
   channelName?: string;
-  files?: SlackFile[];
+  files?: InboxFileMeta[];
   threadTs?: string;
 }) {
   const event = makeSlackEvent({

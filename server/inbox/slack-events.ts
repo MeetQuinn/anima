@@ -1,11 +1,8 @@
 import { nowIso, slackMessageEventId, slackSurfaceId } from '../ids.js';
-import { slackFileFromRaw } from '../slack/slack.helper.js';
+import { normalizeSlackEventFiles, slackTsToIso, type SlackRawFile } from '../slack/slack.helper.js';
 import { slackMessagePreviewsFromAttachments } from '../slack/message-previews.js';
-import type { SlackFileMeta, SlackInboxItem } from '../../shared/inbox.js';
-import type { SlackUserProfile } from './slack-profiles.js';
-
-export type SlackEvent = SlackInboxItem;
-export type SlackFile = SlackFileMeta;
+import type { SlackInboxActor, SlackInboxItem } from '../../shared/inbox.js';
+import type { SlackUserProfile } from '../slack/profiles.js';
 
 export interface SlackSurface {
   id: string;
@@ -18,7 +15,6 @@ export interface SlackSurface {
 }
 
 export interface SlackMessageEnvelope {
-  event_id?: string;
   team_id?: string;
 }
 
@@ -27,15 +23,7 @@ export interface SlackRawMessageEvent {
   bot_id?: string;
   channel?: string;
   channel_type?: string;
-  files?: Array<{
-    id?: string;
-    mimetype?: string;
-    name?: string;
-    size?: number;
-    title?: string;
-    url_private?: string;
-    url_private_download?: string;
-  }>;
+  files?: SlackRawFile[];
   subtype?: string;
   team?: string;
   text?: string;
@@ -45,7 +33,7 @@ export interface SlackRawMessageEvent {
   user?: string;
 }
 
-interface SlackUserMessageEvent extends SlackRawMessageEvent {
+export interface RoutableSlackMessage extends SlackRawMessageEvent {
   channel: string;
   text: string;
   ts: string;
@@ -53,15 +41,7 @@ interface SlackUserMessageEvent extends SlackRawMessageEvent {
   user: string;
 }
 
-export function isUserAuthoredSlackMessage(event: SlackRawMessageEvent): event is SlackUserMessageEvent {
-  return (
-    isRoutableSlackMessage(event) &&
-    event.bot_id === undefined &&
-    event.subtype !== 'bot_message'
-  );
-}
-
-export function isRoutableSlackMessage(event: SlackRawMessageEvent): event is SlackUserMessageEvent {
+export function isRoutableSlackMessage(event: SlackRawMessageEvent): event is RoutableSlackMessage {
   return (
     (event.type === 'message' || event.type === 'app_mention') &&
     typeof event.channel === 'string' &&
@@ -73,35 +53,41 @@ export function isRoutableSlackMessage(event: SlackRawMessageEvent): event is Sl
   );
 }
 
+export function slackEventTeamId(
+  envelope: SlackMessageEnvelope | undefined,
+  event: SlackRawMessageEvent,
+): string {
+  return envelope?.team_id ?? event.team ?? 'unknown-team';
+}
+
 export function normalizeSlackMessage(input: {
+  attachments?: unknown[];
   attentionSuggestion?: string;
   envelope?: SlackMessageEnvelope;
   channelName?: string;
-  event: SlackRawMessageEvent;
-  files?: SlackFile[];
+  event: RoutableSlackMessage;
   permalink?: string;
   text?: string;
   userProfile?: SlackUserProfile;
-}): SlackEvent {
-  const teamId = input.envelope?.team_id ?? input.event.team ?? 'unknown-team';
-  const channelId = input.event.channel!;
-  const ts = input.event.ts!;
+}): SlackInboxItem {
+  const teamId = slackEventTeamId(input.envelope, input.event);
+  const channelId = input.event.channel;
+  const ts = input.event.ts;
   const threadTs = input.event.thread_ts || undefined;
-  const eventId = slackMessageEventId(teamId, channelId, ts);
-  const files = input.files ?? input.event.files?.map(slackFileFromRaw).filter(Boolean) as SlackFile[] | undefined;
-  const previews = slackMessagePreviewsFromAttachments(input.event.attachments);
+  const files = normalizeSlackEventFiles(input.event.files);
+  const previews = slackMessagePreviewsFromAttachments(input.attachments ?? input.event.attachments);
 
   const handlingAt = nowIso();
-  const result: SlackEvent = {
-    id: eventId,
+  const result: SlackInboxItem = {
+    id: slackMessageEventId(teamId, channelId, ts),
     kind: 'slack',
-    receivedAt: slackTsToIsoOrNow(ts),
+    receivedAt: slackTsToIso(ts) ?? nowIso(),
     handling: { createdAt: handlingAt, queuedAt: handlingAt, status: 'queued', updatedAt: handlingAt },
     teamId,
     channelId,
     messageTs: ts,
-    actor: { userId: input.event.user!, ...input.userProfile },
-    text: input.text ?? input.event.text!,
+    actor: slackInboxActor(input.event.user, input.userProfile),
+    text: input.text ?? input.event.text,
   };
   if (input.attentionSuggestion) result.attentionSuggestion = input.attentionSuggestion;
   if (input.channelName) result.channelName = input.channelName;
@@ -112,7 +98,7 @@ export function normalizeSlackMessage(input: {
   return result;
 }
 
-export function isSlackEvent(event: unknown): event is SlackEvent {
+export function isSlackEvent(event: unknown): event is SlackInboxItem {
   return Boolean(event && typeof event === 'object' && (event as { kind?: unknown }).kind === 'slack');
 }
 
@@ -120,7 +106,7 @@ export function slackSurfaceDisplayRef(surface: SlackSurface): string {
   return surface.channelName && surface.kind !== 'dm' ? `#${surface.channelName}` : surface.channelId;
 }
 
-export function slackSurfaceForEvent(event: SlackEvent): SlackSurface {
+export function slackSurfaceForEvent(event: SlackInboxItem): SlackSurface {
   return {
     channelId: event.channelId,
     ...(event.channelName ? { channelName: event.channelName } : {}),
@@ -136,18 +122,23 @@ export function slackSurfaceForEvent(event: SlackEvent): SlackSurface {
   };
 }
 
-function slackTsToIsoOrNow(ts: string): string {
-  const seconds = Number(ts.split('.')[0]);
-  if (!Number.isFinite(seconds)) return nowIso();
-  return new Date(seconds * 1000).toISOString();
+// The inbox item keeps only the actor fields the prompt and ledger read;
+// resolver extras such as avatarUrl stay read-time-only.
+function slackInboxActor(userId: string, profile: SlackUserProfile | undefined): SlackInboxActor {
+  const actor: SlackInboxActor = { userId };
+  if (profile?.displayName) actor.displayName = profile.displayName;
+  if (profile?.handle) actor.handle = profile.handle;
+  if (profile?.realName) actor.realName = profile.realName;
+  if (profile?.timezone) actor.timezone = profile.timezone;
+  return actor;
 }
 
-function slackSurfaceKind(event: SlackEvent): SlackSurface['kind'] {
+function slackSurfaceKind(event: SlackInboxItem): SlackSurface['kind'] {
   if (event.channelId.startsWith('D')) return 'dm';
   if (event.threadTs) return 'thread';
   return 'channel';
 }
 
-function slackVisibility(event: SlackEvent): SlackSurface['visibility'] {
+function slackVisibility(event: SlackInboxItem): SlackSurface['visibility'] {
   return event.channelId.startsWith('C') ? 'public' : 'private';
 }
