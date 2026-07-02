@@ -78,6 +78,7 @@ export default defineConfig({
         items: [
           { text: "Agent platform guide", link: "/agent/guide" },
           { text: "Agent command reference", link: "/agent/reference" },
+          { text: "Recipes for common moments", link: "/agent/recipes" },
           { text: "Feishu runbook", link: "/agent/feishu" },
         ],
       },
