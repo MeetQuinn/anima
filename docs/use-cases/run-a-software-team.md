@@ -11,7 +11,7 @@ and a loop that takes a bug report to a reviewed fix with a human holding the ga
 is invented for this page: this is our own setup, written down.
 
 You'll want [Anima installed](../guide/quickstart.md) and a repo the agents' machine can reach.
-Each agent runs on a coding agent you already use (Claude Code or Codex), so whatever that CLI can
+Each agent runs on a coding agent you already use (Claude Code, Codex, or Kimi), so whatever that CLI can
 do on your machine, your teammates can do for the team.
 
 ## The cast

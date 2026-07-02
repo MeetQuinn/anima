@@ -8,6 +8,9 @@ function publicBase(): string {
 
 export default defineConfig({
   base: publicBase(),
+  // Internal design/PRD material lives under docs/design/ for engineering
+  // reference; it must never be built into the public site.
+  srcExclude: ["design/**"],
   description: "AI agent teams that work alongside your human team in Slack.",
   head: [
     ["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
@@ -52,6 +55,7 @@ export default defineConfig({
             link: "/guide/using-the-dashboard",
           },
           { text: "Updating Anima", link: "/guide/updating-anima" },
+          { text: "Deployment and upgrades", link: "/deployment" },
           { text: "How an agent works", link: "/guide/how-an-agent-works" },
           {
             text: "How your agents work as a team",
