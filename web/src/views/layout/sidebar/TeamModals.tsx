@@ -118,7 +118,7 @@ export function CreateTeamModal({
                 value={home}
                 onChange={(e) => setHome(e.target.value)}
                 disabled={busy}
-                placeholder="~/content (defaults from the name)"
+                placeholder="e.g. ~/content"
                 className="min-w-0 flex-1 bg-transparent py-2 pr-2 font-mono text-[13px] text-text placeholder:text-text-subtle focus:outline-none"
               />
               <button
@@ -132,8 +132,8 @@ export function CreateTeamModal({
               </button>
             </div>
             <p className="font-sans mt-1 text-[11px] text-text-subtle">
-              The team's home folder. New agents land under its <code>agents/</code>
-              {' '}subfolder. Leave blank to use the default.
+              Required. Pick the team's home folder; new agents land under its{' '}
+              <code>agents/</code> subfolder.
             </p>
           </div>
 
@@ -144,7 +144,7 @@ export function CreateTeamModal({
             <Button type="button" onClick={onClose} variant="outline" disabled={busy}>
               Cancel
             </Button>
-            <Button type="submit" disabled={busy || !name.trim()}>
+            <Button type="submit" disabled={busy || !name.trim() || !home.trim()}>
               {busy ? 'Creating…' : 'Create team'}
             </Button>
           </div>
