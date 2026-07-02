@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, Plus } from 'lucide-react';
+import { Check, ChevronDown, Pencil, Plus } from 'lucide-react';
 import AnimaIcon from '@/components/AnimaIcon';
 import type { TeamConfig } from '@/api/teams';
 
@@ -18,11 +18,13 @@ export function TeamSwitcher({
   currentTeamId,
   onSelectTeam,
   onNewTeam,
+  onEditTeam,
 }: {
   teams: TeamConfig[];
   currentTeamId: string;
   onSelectTeam: (teamId: string) => void;
   onNewTeam: () => void;
+  onEditTeam: (team: TeamConfig) => void;
 }) {
   const grouped = teams.length > 1;
   const current = teams.find((t) => t.id === currentTeamId) ?? teams[0];
@@ -86,24 +88,43 @@ export function TeamSwitcher({
               {teams.map((team) => {
                 const active = team.id === current?.id;
                 return (
-                  <button
+                  <div
                     key={team.id}
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      onSelectTeam(team.id);
-                      setOpen(false);
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left font-sans text-[13px] text-text-on-spine hover:bg-white/5"
+                    className="group/team flex items-center hover:bg-white/5"
                   >
-                    <Check
-                      className={[
-                        'h-3.5 w-3.5 shrink-0',
-                        active ? 'text-accent' : 'text-transparent',
-                      ].join(' ')}
-                    />
-                    <span className="truncate">{team.name}</span>
-                  </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        onSelectTeam(team.id);
+                        setOpen(false);
+                      }}
+                      className="flex min-w-0 flex-1 items-center gap-2 py-2 pl-3 text-left font-sans text-[13px] text-text-on-spine"
+                    >
+                      <Check
+                        className={[
+                          'h-3.5 w-3.5 shrink-0',
+                          active ? 'text-accent' : 'text-transparent',
+                        ].join(' ')}
+                      />
+                      <span className="truncate">{team.name}</span>
+                    </button>
+                    {/* Edit (rename / change home). Reveals on row hover; keyboard users
+                        reach it by tab. Stops propagation so it never also selects the team. */}
+                    <button
+                      type="button"
+                      aria-label={`Edit ${team.name}`}
+                      title={`Edit ${team.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEditTeam(team);
+                        setOpen(false);
+                      }}
+                      className="mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-on-spine-muted opacity-0 transition-opacity hover:bg-white/10 hover:text-text-on-spine focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent group-hover/team:opacity-100"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  </div>
                 );
               })}
             </>

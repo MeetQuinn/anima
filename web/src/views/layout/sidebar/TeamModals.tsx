@@ -1,26 +1,33 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Folder, FolderOpen, X } from 'lucide-react';
-import { createTeam, type TeamConfig } from '@/api/teams';
+import { createTeam, updateTeam, type TeamConfig } from '@/api/teams';
 import { queryClient } from '@/query-client';
 import { queryKeys } from '@/lib/query-keys';
 import { Button } from '@/components/ui/button';
 import DirectoryPicker from '@/components/DirectoryPicker';
 
 // ---------------------------------------------------------------------------
-// Create Team modal — the "+ New team" entry from the top-left switcher.
-// Name is required; the home (team folder root) is an advanced, optional override
-// (the server defaults it to a sibling `~/<id>` tree).
+// Team modal — create ("+ New team") and edit (rename / change home) share one
+// form. Name and home are both required. On create the server materializes the
+// team folder; on edit the id is stable, so a rename never touches member
+// agents, and changing the home only redirects where FUTURE agents land —
+// existing agents keep their current folder (called out in the copy below).
 // ---------------------------------------------------------------------------
-export function CreateTeamModal({
+function TeamModal({
+  mode,
+  team,
   onClose,
-  onCreated,
+  onSaved,
 }: {
+  mode: 'create' | 'edit';
+  team?: TeamConfig;
   onClose: () => void;
-  onCreated: (team: TeamConfig) => void;
+  onSaved: (team: TeamConfig) => void;
 }) {
-  const [name, setName] = useState('');
-  const [home, setHome] = useState('');
+  const isEdit = mode === 'edit';
+  const [name, setName] = useState(team?.name ?? '');
+  const [home, setHome] = useState(team?.home ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
@@ -46,23 +53,29 @@ export function CreateTeamModal({
   }, [onClose, busy, showPicker]);
 
   async function submit() {
-    const trimmed = name.trim();
-    if (!trimmed || busy) return;
+    const trimmedName = name.trim();
+    const trimmedHome = home.trim();
+    if (!trimmedName || !trimmedHome || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const team = await createTeam({
-        name: trimmed,
-        ...(home.trim() ? { home: home.trim() } : {}),
-      });
+      const saved =
+        isEdit && team
+          ? await updateTeam(team.id, { name: trimmedName, home: trimmedHome })
+          : await createTeam({ name: trimmedName, home: trimmedHome });
       await queryClient.invalidateQueries({ queryKey: queryKeys.teams() });
-      onCreated(team);
+      onSaved(saved);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create team');
+      setError(
+        err instanceof Error ? err.message : isEdit ? 'Could not save team' : 'Could not create team',
+      );
       setBusy(false);
     }
   }
+
+  const dirty = !isEdit || name.trim() !== team?.name || home.trim() !== team?.home;
+  const canSubmit = !busy && !!name.trim() && !!home.trim() && dirty;
 
   return (
     <>
@@ -80,10 +93,13 @@ export function CreateTeamModal({
         className="relative w-full max-w-md rounded-sm border border-border-soft bg-surface p-6 shadow-deep"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="font-serif text-[17px] font-semibold text-text">New team</div>
+        <div className="font-serif text-[17px] font-semibold text-text">
+          {isEdit ? 'Edit team' : 'New team'}
+        </div>
         <div className="font-serif mt-1 text-[13px] leading-relaxed text-text-muted">
-          A team groups your agents. New agents created in this team get their home under
-          the team's folder. Existing agents stay visible.
+          {isEdit
+            ? "Rename the team or change where new agents land. Renaming won't affect existing agents."
+            : "A team groups your agents. New agents created in this team get their home under the team's folder. Existing agents stay visible."}
         </div>
         <form
           onSubmit={(e) => {
@@ -132,8 +148,17 @@ export function CreateTeamModal({
               </button>
             </div>
             <p className="font-sans mt-1 text-[11px] text-text-subtle">
-              Required. Pick the team's home folder; new agents land under its{' '}
-              <code>agents/</code> subfolder.
+              {isEdit ? (
+                <>
+                  Only affects agents created after this. Existing agents keep their current
+                  folder and are not moved.
+                </>
+              ) : (
+                <>
+                  Required. Pick the team's home folder; new agents land under its{' '}
+                  <code>agents/</code> subfolder.
+                </>
+              )}
             </p>
           </div>
 
@@ -144,8 +169,8 @@ export function CreateTeamModal({
             <Button type="button" onClick={onClose} variant="outline" disabled={busy}>
               Cancel
             </Button>
-            <Button type="submit" disabled={busy || !name.trim() || !home.trim()}>
-              {busy ? 'Creating…' : 'Create team'}
+            <Button type="submit" disabled={!canSubmit}>
+              {isEdit ? (busy ? 'Saving…' : 'Save changes') : busy ? 'Creating…' : 'Create team'}
             </Button>
           </div>
         </form>
@@ -195,4 +220,28 @@ export function CreateTeamModal({
         )}
     </>
   );
+}
+
+// "+ New team" entry from the top-left switcher.
+export function CreateTeamModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (team: TeamConfig) => void;
+}) {
+  return <TeamModal mode="create" onClose={onClose} onSaved={onCreated} />;
+}
+
+// Edit an existing team (rename / change home), opened from a team row in the switcher.
+export function EditTeamModal({
+  team,
+  onClose,
+  onSaved,
+}: {
+  team: TeamConfig;
+  onClose: () => void;
+  onSaved: (team: TeamConfig) => void;
+}) {
+  return <TeamModal mode="edit" team={team} onClose={onClose} onSaved={onSaved} />;
 }

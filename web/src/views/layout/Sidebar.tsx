@@ -21,9 +21,10 @@ import { queryClient } from '@/query-client';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
 import { useCurrentTeam, useTeams, useTeamWarnings, TEAM_PARAM } from '@/hooks/useTeams';
+import type { TeamConfig } from '@/api/teams';
 import type { AgentTeamWarning } from '@/api/teams';
 import { TeamSwitcher } from './sidebar/TeamSwitcher';
-import { CreateTeamModal } from './sidebar/TeamModals';
+import { CreateTeamModal, EditTeamModal } from './sidebar/TeamModals';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import { agentColor, initialOf } from '@/lib/avatars';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
@@ -154,6 +155,8 @@ export default function Sidebar({
 
   // New-team modal (opened from the TeamSwitcher)
   const [showCreateTeamModal, setShowCreateTeamModal] = useState(false);
+  // Edit-team modal (opened from a team row's pencil in the TeamSwitcher)
+  const [editTeam, setEditTeam] = useState<TeamConfig | null>(null);
 
   // Kebab menu
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -447,6 +450,7 @@ export default function Sidebar({
               navigate(`/?${TEAM_PARAM}=${encodeURIComponent(id)}`);
             }}
             onNewTeam={() => setShowCreateTeamModal(true)}
+            onEditTeam={(team) => setEditTeam(team)}
           />
 
           <div className="flex-1 overflow-y-auto p-3">
@@ -674,6 +678,17 @@ export default function Sidebar({
         <CreateTeamModal
           onClose={() => setShowCreateTeamModal(false)}
           onCreated={(team) => setCurrentTeamId(team.id)}
+        />
+      )}
+
+      {editTeam && (
+        <EditTeamModal
+          team={editTeam}
+          onClose={() => setEditTeam(null)}
+          // Editing is navigation-neutral: it never switches the working team (renaming the
+          // team you're on refreshes its label via query invalidation; editing another team
+          // does not yank you into it). Just close.
+          onSaved={() => setEditTeam(null)}
         />
       )}
 

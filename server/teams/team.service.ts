@@ -143,6 +143,39 @@ export class TeamService {
     await this.settings.setTeams([...teams, created]);
     return created;
   }
+
+  // Edit a team's mutable fields (name and/or home). The `id` is STABLE and never regenerated,
+  // so a rename does not touch any agent's `teamId` — that is the whole point of keeping name/home
+  // here in the registry. Changing `home` only redirects where FUTURE agents in this team land
+  // ($TEAM_HOME/agents/$id); existing agents keep their already-materialized homePath, so their
+  // files are never moved. (Relocating existing agents is a heavier, separate operation.)
+  async updateTeam(
+    teamId: string,
+    patch: { name?: string; home?: string },
+  ): Promise<TeamConfig> {
+    const teams = await this.listTeams();
+    const existing = teams.find((team) => team.id === teamId);
+    if (!existing) throw new TeamServiceError(404, `unknown team: ${teamId}`);
+
+    const nextName = patch.name !== undefined ? patch.name.trim() : existing.name;
+    if (!nextName) throw new TeamServiceError(400, 'team name must not be empty');
+
+    // Guard against two teams sharing a display name (confusing in the switcher). The id is not
+    // affected by a rename, so this is a UX guard, not a correctness one.
+    const nameClash = teams.some(
+      (team) => team.id !== teamId && team.name.trim().toLowerCase() === nextName.toLowerCase(),
+    );
+    if (nameClash) throw new TeamServiceError(409, `a team named "${nextName}" already exists`);
+
+    const nextHome = patch.home !== undefined ? normalizeHome(patch.home) : existing.home;
+
+    const updated: TeamConfig = { id: existing.id, name: nextName, home: nextHome };
+
+    // Persist the FULL effective list with this team replaced. If the default team was still
+    // synthesized, mapping over the effective list materializes it (same as createTeam).
+    await this.settings.setTeams(teams.map((team) => (team.id === teamId ? updated : team)));
+    return updated;
+  }
 }
 
 export const defaultTeamService = new TeamService();

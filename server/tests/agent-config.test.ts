@@ -328,6 +328,72 @@ test('createTeam slugs the name, materializes the default alongside it, and reje
   }
 });
 
+test('updateTeam renames + changes home with a stable id, and guards empty/unknown/clashing names', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-team-update-'));
+  try {
+    await withAnimaHome(configDir, async () => {
+      const created = await defaultTeamService.createTeam({ name: 'Content Squad', home: '~/content' });
+      assert.equal(created.id, 'content-squad');
+
+      // Rename + new home: id stays stable (never regenerated from the new name).
+      const renamed = await defaultTeamService.updateTeam('content-squad', {
+        name: 'Editorial',
+        home: '~/editorial',
+      });
+      assert.deepEqual(renamed, { id: 'content-squad', name: 'Editorial', home: '~/editorial' });
+      assert.deepEqual(
+        (await defaultServerSettingsService.getTeams()).find((t) => t.id === 'content-squad'),
+        { id: 'content-squad', name: 'Editorial', home: '~/editorial' },
+      );
+
+      // Partial patch: name only leaves home untouched, and vice versa.
+      const nameOnly = await defaultTeamService.updateTeam('content-squad', { name: 'Docs' });
+      assert.deepEqual(nameOnly, { id: 'content-squad', name: 'Docs', home: '~/editorial' });
+      const homeOnly = await defaultTeamService.updateTeam('content-squad', { home: '~/docs' });
+      assert.deepEqual(homeOnly, { id: 'content-squad', name: 'Docs', home: '~/docs' });
+
+      // Guards.
+      await assert.rejects(defaultTeamService.updateTeam('nope', { name: 'X' }), /unknown team: nope/);
+      await assert.rejects(defaultTeamService.updateTeam('content-squad', { name: '   ' }), /must not be empty/);
+      await assert.rejects(defaultTeamService.updateTeam('content-squad', { name: 'Default' }), /already exists/);
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+  }
+});
+
+test('updateTeam can rename the default team (materializing it) without touching member agents', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-team-update-default-'));
+  const agentHome = await mkdtemp(join(tmpdir(), 'anima-team-update-default-home-'));
+  try {
+    await withAnimaHome(configDir, async () => {
+      const agent = await defaultAgentRegistryService.createAgent({
+        name: 'Deb',
+        homePath: agentHome,
+        role: 'x.',
+        provider: { kind: 'claude-code', model: 'opus' },
+      });
+      assert.equal(agent.teamId, 'default');
+
+      const renamed = await defaultTeamService.updateTeam('default', { name: 'HQ' });
+      assert.deepEqual({ id: renamed.id, name: renamed.name }, { id: 'default', name: 'HQ' });
+      // Default graduated into the persisted registry, id unchanged.
+      assert.deepEqual(
+        (await defaultServerSettingsService.getTeams()).map((t) => ({ id: t.id, name: t.name })),
+        [{ id: 'default', name: 'HQ' }],
+      );
+
+      // The member agent is untouched: same teamId, same home.
+      const reread = (await defaultAgentRegistryService.listAgentConfigs()).find((a) => a.id === 'deb');
+      assert.equal(reread?.teamId, 'default');
+      assert.equal(reread?.homePath, agent.homePath);
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+    await rm(agentHome, { force: true, recursive: true });
+  }
+});
+
 test('creating an agent in a team derives $TEAM_HOME/agents/$id and records the teamId', async () => {
   const configDir = await mkdtemp(join(tmpdir(), 'anima-team-agent-config-'));
   const teamHome = await mkdtemp(join(tmpdir(), 'anima-team-agent-home-'));

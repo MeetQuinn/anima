@@ -80,13 +80,23 @@ export function useCurrentTeam(teams: TeamConfig[]): {
     [setSearchParams],
   );
 
-  // Keep the URL canonical once teams have loaded: reflect the resolved team into
-  // `?team=` when it is missing or stale (e.g. after a navigate() that dropped
-  // the query). No-op when it already matches, so this does not loop.
+  // Keep the URL canonical once teams have loaded, and keep localStorage tracking the
+  // RESOLVED team. Two jobs:
+  //  1. Reflect the resolved team into `?team=` when missing/stale (e.g. after a
+  //     navigate() that dropped the query). No-op when it already matches.
+  //  2. Persist currentTeamId to localStorage so `stored` always equals the resolved
+  //     team. Without this, an internal navigation that transiently drops the param
+  //     would fall back to a STALE localStorage value (`paramTeam ?? stored`), flipping
+  //     away from the intended team — which would break shared links (?team=X opened in
+  //     a browser whose last team was Y).
   useEffect(() => {
     if (teams.length === 0) return;
-    if (paramTeam === currentTeamId) return;
-    writeParam(currentTeamId);
+    try {
+      localStorage.setItem(CURRENT_TEAM_KEY, currentTeamId);
+    } catch {
+      // Storage unavailable (private mode / quota) — the URL param still carries the team.
+    }
+    if (paramTeam !== currentTeamId) writeParam(currentTeamId);
   }, [teams.length, paramTeam, currentTeamId, writeParam]);
 
   const setCurrentTeamId = useCallback(
