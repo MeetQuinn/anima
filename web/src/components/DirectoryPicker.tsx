@@ -111,7 +111,7 @@ function DirTreeNode({
             <ChevronRight className="h-3 w-3 opacity-50" />
           )}
         </button>
-        {/* Folder name — click = select only (no expand side-effect) */}
+        {/* Folder name — click = select + toggle expansion (see selectAndToggle) */}
         <button
           ref={selectBtnRef}
           type="button"
@@ -241,6 +241,14 @@ export default function DirectoryPicker({
     });
   }
 
+  // Clicking a folder name both selects it and toggles its expansion — the
+  // familiar file-tree interaction (VS Code / Finder), where a click drills in.
+  // The chevron still toggles expansion on its own without moving selection.
+  function selectAndToggle(path: string) {
+    setSelectedPath(path);
+    toggleExpanded(path);
+  }
+
   // New folder is created under the selected directory (or the home root when
   // nothing deeper is selected). Label the target for the input placeholder.
   const createTargetLabel =
@@ -286,10 +294,6 @@ export default function DirectoryPicker({
       path: rootAbsPath + '/' + arr.slice(0, i + 1).join('/'),
     }));
 
-  // Human-readable form of the directory that Choose will return, shown in the
-  // footer so the selection is confirmable at a glance. Root reads as '~'.
-  const selectedDisplay = !relPath ? '~' : `~${relPath}`;
-
   // Keyboard navigation: Up/Down through visible rows (queried via DOM),
   // Right/Left to expand/collapse, Enter to select.
   const handleKeyDown = useCallback(
@@ -323,7 +327,7 @@ export default function DirectoryPicker({
           setExpandedPaths((prev) => { const n = new Set(prev); n.delete(p); return n; });
         }
       } else if (e.key === 'Enter' && focused) {
-        // Select only — consistent with name click, does not expand
+        // Select only — keyboard keeps expand on Arrow keys; Enter just selects.
         e.preventDefault();
         const p = focused.dataset.path;
         if (p) setSelectedPath(p);
@@ -437,25 +441,24 @@ export default function DirectoryPicker({
             expandedPaths={expandedPaths}
             selectedPath={selectedPath}
             onToggle={toggleExpanded}
-            onSelect={setSelectedPath}
+            onSelect={selectAndToggle}
           />
         ))}
       </div>
 
-      {/* Footer — selected-path readout, then Cancel / Choose */}
-      <div className="mt-3 flex items-center gap-3 border-t border-border-soft pt-3">
-        <p className="min-w-0 flex-1 truncate text-[11px] text-text-subtle" title={selectedDisplay}>
-          Selected <span className="font-mono text-text-muted">{selectedDisplay}</span>
-        </p>
-        <Button type="button" variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
+      {/* Footer — action row only. The selected path is already shown by the
+          location bar at the top, so no separate readout here. Button order
+          matches the app convention: primary first, then Cancel (outline). */}
+      <div className="mt-3 flex gap-2 border-t border-border-soft pt-3">
         <Button
           type="button"
           onClick={() => onChoose(selectedPath)}
           disabled={!selectedPath || confirmDisabled}
         >
           {confirmLabel}
+        </Button>
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancel
         </Button>
       </div>
     </div>
