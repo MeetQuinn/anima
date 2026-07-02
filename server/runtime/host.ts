@@ -31,13 +31,20 @@ import {
   type AgentRestartCommand,
 } from './agent-restart-command.store.js';
 import { AgentHealthStore } from './agent-health.store.js';
+import {
+  AgentHealthService,
+  isProviderFailureReason,
+  isStaleRunningItem,
+  restartStatus,
+  runtimeHandleHealth,
+  startingTimeoutHealth,
+} from './agent-health.service.js';
 import { startRunningAgent, type RunningAgentHandle } from './agent-runner.js';
 import { findActiveRuntimeItem } from './active-item.js';
-import { latestPrimaryRunningItem, processAlive, providerChildIssueReason } from './item-state.js';
+import { latestPrimaryRunningItem } from './item-state.js';
 import type { RuntimeWorkerConfig } from './types.js';
 import type {
   AgentHealthReason,
-  AgentRestartStatusSummary,
   AgentRuntimeHandleSnapshot,
 } from '../../shared/snapshot.js';
 
@@ -51,6 +58,12 @@ export type { RunningAgentHandle } from './agent-runner.js';
 interface RunningAgentRecord {
   fingerprint: string;
   handle: RunningAgentHandle;
+}
+
+interface ManagedAgent {
+  config: AgentConfig;
+  lastLoggedStatus?: string;
+  running?: RunningAgentRecord;
 }
 
 export interface StartAgentOptions {
@@ -75,9 +88,7 @@ export interface RuntimeHostDependencies {
 
 const DEFAULT_RECONCILE_INTERVAL_MS = 30_000;
 const DEFAULT_HEALTH_INTERVAL_MS = 5_000;
-const STARTING_TIMEOUT_MS = 30_000;
 const DEFAULT_AGENT_START_TIMEOUT_MS = 30_000;
-const RUNTIME_CHILD_HEALTH_DEBOUNCE_MS = 10_000;
 const CONFIG_WATCH_DEBOUNCE_MS = 150;
 const AGENT_RESTART_FORCE_KILL_AFTER_MS = 5_000;
 
@@ -90,25 +101,23 @@ export async function startRuntimeHost(opts: RuntimeHostOptions = {}): Promise<v
 }
 
 export class RuntimeHost {
-  private readonly agentHandles = new Map<string, RunningAgentRecord>();
+  private readonly agents = new Map<string, ManagedAgent>();
   private readonly animaHome: string;
   private readonly loadAgents: (opts: RuntimeHostOptions) => Promise<AgentConfig[]>;
   private readonly ensureDefaultSkills: () => Promise<void>;
   private readonly logger: Pick<Console, 'error' | 'log'>;
   private readonly memoryCoherenceScheduler: Pick<MemoryCoherenceScheduler, 'reconcile'>;
   private readonly restartCommands: AgentRestartCommandStore;
-  private readonly healthStore: AgentHealthStore;
+  private readonly health: AgentHealthService;
   private readonly healthIntervalMs: number;
   private readonly forceRestartTimeoutMs: number;
   private readonly startAgentTimeoutMs: number;
   private readonly startAgent: (agent: AgentConfig, animaHome: string, options: StartAgentOptions) => Promise<RunningAgentHandle>;
-  private readonly statusByAgent = new Map<string, string>();
   private readonly validateAgent: (agent: AgentConfig) => Promise<void> | void;
   private pollTimer?: NodeJS.Timeout;
   private healthTimer?: NodeJS.Timeout;
   private reconcile?: Promise<void>;
   private healthPublish?: Promise<void>;
-  private knownAgents = new Map<string, AgentConfig>();
   private readonly configWatchers = new Map<string, FSWatcher>();
   private restartCommandWatcher?: FSWatcher;
   private configWatchDebounce?: NodeJS.Timeout;
@@ -128,7 +137,7 @@ export class RuntimeHost {
       readServerConfig: () => new ServerConfigStore(this.animaHome).read(),
     });
     this.restartCommands = deps.restartCommands ?? new AgentRestartCommandStore({ animaHome: this.animaHome });
-    this.healthStore = deps.healthStore ?? new AgentHealthStore({ animaHome: this.animaHome });
+    this.health = new AgentHealthService(deps.healthStore ?? new AgentHealthStore({ animaHome: this.animaHome }));
     this.healthIntervalMs = deps.healthIntervalMs ?? DEFAULT_HEALTH_INTERVAL_MS;
     this.forceRestartTimeoutMs = deps.forceRestartTimeoutMs ?? AGENT_RESTART_FORCE_KILL_AFTER_MS;
     this.startAgentTimeoutMs = deps.startAgentTimeoutMs ?? DEFAULT_AGENT_START_TIMEOUT_MS;
@@ -138,7 +147,7 @@ export class RuntimeHost {
 
   async start(): Promise<void> {
     await this.restartCommands.ensureDirectory();
-    await this.healthStore.ensureDirectory();
+    await this.health.ensureDirectory();
     this.syncRestartCommandWatcher();
     await this.ensureDefaultSkills().catch((error: unknown) => {
       this.logger.error(`Default skill setup failed: ${errorMessage(error)}`);
@@ -177,8 +186,8 @@ export class RuntimeHost {
     await this.healthPublish?.catch((error: unknown) => {
       this.logger.error(`Runtime host health publish failed while stopping: ${errorMessage(error)}`);
     });
-    const handles = [...this.agentHandles.values()].map((record) => record.handle);
-    this.agentHandles.clear();
+    const handles = [...this.agents.values()].flatMap((record) => record.running ? [record.running.handle] : []);
+    this.agents.clear();
     const stopOptions = await this.shutdownStopOptions();
     await Promise.allSettled(handles.map((handle) => handle.stop(stopOptions)));
   }
@@ -195,19 +204,22 @@ export class RuntimeHost {
   }
 
   runningAgentIds(): string[] {
-    return [...this.agentHandles.keys()].sort();
+    return [...this.agents.entries()]
+      .filter(([, record]) => record.running)
+      .map(([agentId]) => agentId)
+      .sort();
   }
 
   private async reconcileAgents(): Promise<void> {
     const agents = await this.loadAgents(this.opts);
-    this.knownAgents = new Map(agents.map((agent) => [agent.id, agent]));
     await this.initializeBootHealth(agents);
     this.syncConfigWatchers(agents.map((agent) => agent.id));
     const pendingRestartAgentIds = new Set(await this.restartCommands.pendingAgentIds());
     const seenAgentIds = new Set<string>();
     for (const agent of agents) {
       seenAgentIds.add(agent.id);
-      const running = this.agentHandles.get(agent.id);
+      const record = this.managedAgent(agent);
+      const running = record.running;
       try {
         await this.validateAgent(agent);
         const skipStatus = agentSkipStatus(agent);
@@ -215,16 +227,16 @@ export class RuntimeHost {
           ? await this.restartCommands.take(agent.id)
           : undefined;
         if (restartCommand) {
-          await this.forceRestartAgent(agent, running, skipStatus, restartCommand);
+          await this.forceRestartAgent(record, skipStatus, restartCommand);
           continue;
         }
         if (running) {
-          await this.reconcileRunningAgent(agent, running, skipStatus);
+          await this.reconcileRunningAgent(record, running, skipStatus);
           continue;
         }
         if (skipStatus) {
           await this.writeUnknownHealth(agent.id);
-          this.logAgentStatus(agent.id, `skip:${skipStatus}`, () => {
+          this.logAgentStatus(record, `skip:${skipStatus}`, () => {
             this.logger.log(`Agent ${agent.id}: ${skipStatus}.`);
           });
           continue;
@@ -233,7 +245,7 @@ export class RuntimeHost {
       } catch (error) {
         const action = running ? 'failed to reconcile' : 'failed to start';
         const message = `Agent ${agent.id} ${action}: ${errorMessage(error)}`;
-        this.logAgentStatus(agent.id, `error:${message}`, () => {
+        this.logAgentStatus(record, `error:${message}`, () => {
           this.logger.error(message);
         });
         await this.writeFailedHealth(agent.id, running ? 'stale_running_item' : 'start_failed');
@@ -243,6 +255,17 @@ export class RuntimeHost {
     if (!this.opts.agent) await this.stopMissingAgents(seenAgentIds);
     await this.reconcileMemoryCoherence(agents);
     await this.publishKnownHealthSnapshots();
+  }
+
+  private managedAgent(agent: AgentConfig): ManagedAgent {
+    const existing = this.agents.get(agent.id);
+    if (existing) {
+      existing.config = agent;
+      return existing;
+    }
+    const record: ManagedAgent = { config: agent };
+    this.agents.set(agent.id, record);
+    return record;
   }
 
   private async reconcileMemoryCoherence(agents: AgentConfig[]): Promise<void> {
@@ -260,9 +283,9 @@ export class RuntimeHost {
       agents
         .filter((agent) => agent.enabled !== false && agentHasConnectedTransport(agent) && isAgentRunnable(agent))
         .map(async (agent) => {
-          const previous = await this.healthStore.get(agent.id);
+          const previous = await this.health.get(agent.id);
           if (previous?.state === 'unhealthy' && isProviderFailureReason(previous.reason)) return;
-          await this.healthStore.writeHealth({
+          await this.health.writeHealth({
             agentId: agent.id,
             state: 'starting',
             updatedAt: nowIso(),
@@ -272,17 +295,18 @@ export class RuntimeHost {
   }
 
   private async forceRestartAgent(
-    agent: AgentConfig,
-    running: RunningAgentRecord | undefined,
+    record: ManagedAgent,
     skipStatus: string | undefined,
     command: AgentRestartCommand,
   ): Promise<void> {
+    const agent = record.config;
+    const running = record.running;
     if (skipStatus) {
-      this.logAgentStatus(agent.id, `restart-skip:${skipStatus}`, () => {
+      this.logAgentStatus(record, `restart-skip:${skipStatus}`, () => {
         this.logger.log(`Agent ${agent.id}: restart ${command.requestId} skipped; ${skipStatus}.`);
       });
       await this.writeRestartFailed(agent.id, command, 'start_failed');
-      if (running) await this.reconcileRunningAgent(agent, running, skipStatus);
+      if (running) await this.reconcileRunningAgent(record, running, skipStatus);
       return;
     }
     this.logger.log(`Agent ${agent.id}: restart requested by operator (${command.requestId}).`);
@@ -294,7 +318,7 @@ export class RuntimeHost {
           abortReason: command.reason,
           forceAfterMs: this.forceRestartTimeoutMs,
         });
-        this.agentHandles.delete(agent.id);
+        record.running = undefined;
       }
       await this.startAndStore(agent, runtimeFingerprint(agent), command);
     } catch (error) {
@@ -304,21 +328,22 @@ export class RuntimeHost {
   }
 
   private async reconcileRunningAgent(
-    agent: AgentConfig,
+    record: ManagedAgent,
     running: RunningAgentRecord,
     skipStatus: string | undefined,
   ): Promise<void> {
+    const agent = record.config;
     if (skipStatus) {
       if (isHandleActive(running.handle)) {
-        this.logAgentStatus(agent.id, `pending-stop:${skipStatus}`, () => {
+        this.logAgentStatus(record, `pending-stop:${skipStatus}`, () => {
           this.logger.log(`Agent ${agent.id}: ${skipStatus}; will stop after the active item finishes.`);
         });
         return;
       }
       await running.handle.stop({ drainActive: true });
-      this.agentHandles.delete(agent.id);
+      record.running = undefined;
       await this.writeUnknownHealth(agent.id);
-      this.logAgentStatus(agent.id, `skip:${skipStatus}`, () => {
+      this.logAgentStatus(record, `skip:${skipStatus}`, () => {
         this.logger.log(`Agent ${agent.id}: ${skipStatus}.`);
       });
       return;
@@ -327,7 +352,7 @@ export class RuntimeHost {
     const nextFingerprint = runtimeFingerprint(agent);
     if (running.fingerprint === nextFingerprint) return;
     if (isHandleActive(running.handle)) {
-      this.logAgentStatus(agent.id, 'pending-restart', () => {
+      this.logAgentStatus(record, 'pending-restart', () => {
         this.logger.log(`Agent ${agent.id}: config changed; will reload after the active item finishes.`);
       });
       return;
@@ -338,7 +363,7 @@ export class RuntimeHost {
       drainActive: true,
       forceAfterMs: this.forceRestartTimeoutMs,
     });
-    this.agentHandles.delete(agent.id);
+    record.running = undefined;
     await this.startAndStore(agent, nextFingerprint);
   }
 
@@ -347,19 +372,20 @@ export class RuntimeHost {
     fingerprint = runtimeFingerprint(agent),
     restartCommand?: AgentRestartCommand,
   ): Promise<void> {
-    await this.healthStore.writeHealth({
+    await this.health.writeHealth({
       agentId: agent.id,
       ...(restartCommand ? {
         reason: 'restart_pending',
-        restart: restartStatus(restartCommand, 'pending'),
+        restart: restartStatus(restartCommand, 'pending', nowIso()),
       } : {}),
       state: 'starting',
       updatedAt: nowIso(),
     });
     const handle = await this.startAgentWithTimeout(agent);
-    this.agentHandles.set(agent.id, { fingerprint, handle });
-    this.statusByAgent.delete(agent.id);
-    await this.publishHealthForAgent(agent, restartCommand);
+    const record = this.managedAgent(agent);
+    record.running = { fingerprint, handle };
+    record.lastLoggedStatus = undefined;
+    await this.publishHealthForAgent(record, restartCommand);
   }
 
   private async startAgentWithTimeout(agent: AgentConfig): Promise<RunningAgentHandle> {
@@ -403,18 +429,22 @@ export class RuntimeHost {
   }
 
   private async stopMissingAgents(seenAgentIds: Set<string>): Promise<void> {
-    for (const [agentId, running] of this.agentHandles) {
+    for (const [agentId, record] of this.agents) {
       if (seenAgentIds.has(agentId)) continue;
+      const running = record.running;
+      if (!running) {
+        this.agents.delete(agentId);
+        continue;
+      }
       if (isHandleActive(running.handle)) {
-        this.logAgentStatus(agentId, 'pending-remove', () => {
+        this.logAgentStatus(record, 'pending-remove', () => {
           this.logger.log(`Agent ${agentId}: removed from config; will stop after the active item finishes.`);
         });
         continue;
       }
       await running.handle.stop({ drainActive: true });
-      this.agentHandles.delete(agentId);
-      this.statusByAgent.delete(agentId);
-      await this.healthStore.clear(agentId);
+      this.agents.delete(agentId);
+      await this.health.clear(agentId);
       this.logger.log(`Agent ${agentId}: removed from config; stopped.`);
     }
   }
@@ -434,7 +464,7 @@ export class RuntimeHost {
   private async publishKnownHealthSnapshots(): Promise<void> {
     if (this.healthPublish) return this.healthPublish;
     const publish = Promise.allSettled(
-      [...this.knownAgents.values()].map((agent) => this.publishHealthForAgent(agent)),
+      [...this.agents.values()].map((record) => this.publishHealthForAgent(record)),
     ).then((results) => {
       for (const result of results) {
         if (result.status === 'rejected') {
@@ -451,11 +481,12 @@ export class RuntimeHost {
   }
 
   private async publishHealthForAgent(
-    agent: AgentConfig,
+    record: ManagedAgent,
     recoveredCommand?: AgentRestartCommand,
   ): Promise<void> {
+    const agent = record.config;
     const skipStatus = agentSkipStatus(agent);
-    const running = this.agentHandles.get(agent.id);
+    const running = record.running;
     if (skipStatus) {
       if (!running) await this.writeUnknownHealth(agent.id);
       return;
@@ -466,77 +497,31 @@ export class RuntimeHost {
     }
 
     const runtime = running.handle.health?.();
-    const health = await this.healthForRuntimeWithSensitivity(agent.id, runtime);
+    const health = runtimeHandleHealth(runtime, await this.health.get(agent.id), nowIso());
     const restart = recoveredCommand
       ? health.state === 'healthy'
-        ? restartStatus(recoveredCommand, 'recovered', runtime)
-        : restartStatus(recoveredCommand, 'failed', runtime, health.reason ?? 'restart_failed')
+        ? restartStatus(recoveredCommand, 'recovered', nowIso(), runtime)
+        : restartStatus(recoveredCommand, 'failed', nowIso(), runtime, health.reason ?? 'restart_failed')
       : undefined;
-    await this.healthStore.writeHealth({
+    await this.health.writeHealth({
       agentId: agent.id,
       ...(health.reason ? { reason: health.reason } : {}),
       ...(restart ? { restart } : {}),
       ...(runtime ? { runtime } : {}),
       state: health.state,
-      updatedAt: health.updatedAt ?? nowIso(),
+      updatedAt: health.updatedAt,
     });
   }
 
-  private async healthForRuntimeWithSensitivity(
-    agentId: string,
-    runtime: AgentRuntimeHandleSnapshot | undefined,
-  ): Promise<RuntimeHealthSnapshot> {
-    const health = healthForRuntime(runtime);
-    if (!isTransientRuntimeChildReason(health.reason)) return health;
-
-    const previous = await this.healthStore.get(agentId);
-    if (previous?.reason === health.reason && previous.state === 'unhealthy') return health;
-    if (previous?.reason === health.reason && previous.state === 'degraded') {
-      const observedAt = Date.parse(previous.updatedAt);
-      const ageMs = Date.now() - observedAt;
-      if (Number.isFinite(ageMs) && ageMs < RUNTIME_CHILD_HEALTH_DEBOUNCE_MS) {
-        return {
-          reason: health.reason,
-          state: 'degraded',
-          updatedAt: previous.updatedAt,
-        };
-      }
-      return health;
-    }
-
-    return {
-      reason: health.reason,
-      state: 'degraded',
-      updatedAt: nowIso(),
-    };
-  }
-
   private async resolveMissingHandleHealth(agentId: string): Promise<void> {
-    const snapshot = await this.healthStore.get(agentId);
+    const snapshot = await this.health.get(agentId);
     if (!snapshot) {
       await this.writeUnknownHealth(agentId);
       return;
     }
-    if (
-      snapshot.state === 'starting' &&
-      Date.now() - Date.parse(snapshot.updatedAt) >= STARTING_TIMEOUT_MS
-    ) {
-      if (snapshot.restart?.outcome === 'pending') {
-        await this.healthStore.writeHealth({
-          agentId,
-          reason: 'restart_failed',
-          restart: {
-            ...snapshot.restart,
-            completedAt: nowIso(),
-            outcome: 'failed',
-            reason: 'restart_failed',
-          },
-          state: 'unhealthy',
-          updatedAt: nowIso(),
-        });
-        return;
-      }
-      await this.writeFailedHealth(agentId, 'start_failed');
+    const timedOut = startingTimeoutHealth(snapshot, nowIso());
+    if (timedOut) {
+      await this.health.writeHealth({ agentId, ...timedOut });
       return;
     }
     if (
@@ -549,7 +534,7 @@ export class RuntimeHost {
   }
 
   private async writeUnknownHealth(agentId: string): Promise<void> {
-    await this.healthStore.writeHealth({
+    await this.health.writeHealth({
       agentId,
       state: 'unknown',
       updatedAt: nowIso(),
@@ -557,7 +542,7 @@ export class RuntimeHost {
   }
 
   private async writeFailedHealth(agentId: string, reason: AgentHealthReason): Promise<void> {
-    await this.healthStore.writeHealth({
+    await this.health.writeHealth({
       agentId,
       reason,
       state: 'unhealthy',
@@ -570,10 +555,10 @@ export class RuntimeHost {
     command: AgentRestartCommand,
     runtime?: AgentRuntimeHandleSnapshot,
   ): Promise<void> {
-    await this.healthStore.writeHealth({
+    await this.health.writeHealth({
       agentId,
       reason: 'restart_pending',
-      restart: restartStatus(command, 'pending', runtime),
+      restart: restartStatus(command, 'pending', nowIso(), runtime),
       ...(runtime ? { runtime } : {}),
       state: 'starting',
       updatedAt: nowIso(),
@@ -585,10 +570,10 @@ export class RuntimeHost {
     command: AgentRestartCommand,
     reason: AgentHealthReason,
   ): Promise<void> {
-    await this.healthStore.writeHealth({
+    await this.health.writeHealth({
       agentId,
       reason,
-      restart: restartStatus(command, 'failed', undefined, reason),
+      restart: restartStatus(command, 'failed', nowIso(), undefined, reason),
       state: 'unhealthy',
       updatedAt: nowIso(),
     });
@@ -603,8 +588,8 @@ export class RuntimeHost {
     if (!stale) return;
     await queue.fail(stale.id);
     await queue.requeueAppendedTo(stale.id);
-    const current = await this.healthStore.get(agentId);
-    await this.healthStore.writeHealth({
+    const current = await this.health.get(agentId);
+    await this.health.writeHealth({
       agentId,
       reason: 'restart_pending',
       ...(current?.restart ? { restart: current.restart } : {}),
@@ -614,9 +599,9 @@ export class RuntimeHost {
     this.logger.log(`Agent ${agentId}: stale running item ${stale.id} failed before restart.`);
   }
 
-  private logAgentStatus(agentId: string, status: string, write: () => void): void {
-    if (this.statusByAgent.get(agentId) === status) return;
-    this.statusByAgent.set(agentId, status);
+  private logAgentStatus(record: ManagedAgent, status: string, write: () => void): void {
+    if (record.lastLoggedStatus === status) return;
+    record.lastLoggedStatus = status;
     write();
   }
 
@@ -889,30 +874,6 @@ function runtimeWithEnv(config: AgentProviderConfig, env: Record<string, string>
   };
 }
 
-interface RuntimeHealthSnapshot {
-  reason?: AgentHealthReason;
-  state: 'degraded' | 'healthy' | 'unhealthy';
-  updatedAt?: string;
-}
-
-function healthForRuntime(runtime: AgentRuntimeHandleSnapshot | undefined): RuntimeHealthSnapshot {
-  if (!runtime) return { reason: 'start_failed', state: 'unhealthy' };
-  const childReason = providerChildIssueReason(runtime);
-  if (childReason) return { reason: childReason, state: 'unhealthy' };
-  return { state: 'healthy' };
-}
-
-function isTransientRuntimeChildReason(reason: AgentHealthReason | undefined): reason is 'provider_child_missing' | 'provider_child_exited' {
-  return reason === 'provider_child_missing' || reason === 'provider_child_exited';
-}
-
-function isProviderFailureReason(reason: AgentHealthReason | undefined): boolean {
-  return reason === 'provider_auth_failed'
-    || reason === 'provider_quota_exhausted'
-    || reason === 'provider_error'
-    || reason === 'provider_rate_limited';
-}
-
 async function staleRunningItemForAgent(
   agentId: string,
   runtime: AgentRuntimeHandleSnapshot | undefined,
@@ -921,34 +882,17 @@ async function staleRunningItemForAgent(
   const running = latestPrimaryRunningItem(await queue.listRunnable());
   if (!running) return undefined;
   const active = await findActiveRuntimeItem(agentId, queue);
-  if (!active) return running;
-  if (!runtime) return running;
-  if (!runtime.workerId || runtime.workerId !== active.workerId) return running;
-  if (!runtime.activeItemId || runtime.activeItemId !== running.id) return running;
-  if (runtime.processId && !processAlive(runtime.processId)) return running;
-  if (runtime.providerChildExpected && providerChildUnhealthy(runtime)) return running;
-  return undefined;
-}
-
-function providerChildUnhealthy(runtime: AgentRuntimeHandleSnapshot): boolean {
-  return Boolean(providerChildIssueReason(runtime, { checkPid: true }));
-}
-
-function restartStatus(
-  command: AgentRestartCommand,
-  outcome: AgentRestartStatusSummary['outcome'],
-  runtime?: AgentRuntimeHandleSnapshot,
-  reason?: AgentHealthReason,
-): AgentRestartStatusSummary {
-  return {
-    ...(outcome !== 'pending' ? { completedAt: nowIso() } : {}),
-    outcome,
-    ...(runtime?.providerChild?.pid ? { providerChildPid: runtime.providerChild.pid } : {}),
-    ...(reason ? { reason } : {}),
-    requestId: command.requestId,
-    requestedAt: command.requestedAt,
-    ...(runtime?.processId ? { workerPid: runtime.processId } : {}),
-  };
+  // Zero grace and the provider-child check: the host is about to fail this
+  // item before a restart, so every wedged shape must count as stale.
+  const stale = isStaleRunningItem({
+    ...(active ? { active } : {}),
+    activeItemMismatchGraceMs: 0,
+    includeProviderChildCheck: true,
+    nowMs: Date.now(),
+    runningItemId: running.id,
+    runtime,
+  });
+  return stale ? running : undefined;
 }
 
 async function awaitShutdown(stop: () => Promise<void>): Promise<void> {

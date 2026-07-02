@@ -5,17 +5,15 @@ import type {
   AgentConfig,
 } from '../../shared/agent-config.js';
 import type {
-  AgentHealthReason,
-  AgentRuntimeHandleSnapshot,
   AgentRuntimeHealthSummary,
   AgentStatusSummary,
 } from '../../shared/snapshot.js';
 import { agentHasConnectedTransport } from '../../shared/agent-transports.js';
 import { nowIso } from '../ids.js';
-import { AgentHealthStore, defaultAgentHealthStore } from './agent-health.store.js';
+import { AgentHealthService, defaultAgentHealthService, deriveApiHealth, restartStatus } from './agent-health.service.js';
 import { defaultAgentRestartCommandStore } from './agent-restart-command.store.js';
 import { findActiveRuntimeItem } from './active-item.js';
-import { latestPrimaryRunningItem, processAlive, providerChildIssueReason } from './item-state.js';
+import { latestPrimaryRunningItem } from './item-state.js';
 
 export class RuntimeServiceError extends Error {
   readonly statusCode: number;
@@ -27,7 +25,7 @@ export class RuntimeServiceError extends Error {
 }
 
 export class RuntimeService {
-  constructor(private readonly healthStore: AgentHealthStore = defaultAgentHealthStore) {}
+  constructor(private readonly health: AgentHealthService = defaultAgentHealthService) {}
 
   async listStatuses(): Promise<AgentStatusSummary[]> {
     const agents = await defaultAgentRegistryService.listAgentConfigs();
@@ -51,14 +49,10 @@ export class RuntimeService {
     if (!agent) throw new RuntimeServiceError(404, 'Agent not found');
     if (!agent.enabled) throw new RuntimeServiceError(409, 'Agent is disabled. Enable it to run.');
     const command = await defaultAgentRestartCommandStore.request(agentId);
-    await this.healthStore.writeHealth({
+    await this.health.writeHealth({
       agentId,
       reason: 'restart_pending',
-      restart: {
-        outcome: 'pending',
-        requestId: command.requestId,
-        requestedAt: command.requestedAt,
-      },
+      restart: restartStatus(command, 'pending', nowIso()),
       state: 'starting',
       updatedAt: nowIso(),
     });
@@ -88,105 +82,19 @@ export class RuntimeService {
   private async healthForAgent(
     agent: AgentConfig,
     queue: {
-      active?: { itemId: string; startedAt?: string; workerId: string };
+      active?: { startedAt?: string; workerId: string };
       runningItemId?: string;
     },
   ): Promise<AgentRuntimeHealthSummary | undefined> {
     if (!expectsRuntimeHealth(agent)) return undefined;
-
-    const snapshot = await this.healthStore.get(agent.id);
-    if (!snapshot) {
-      return queue.runningItemId
-        ? syntheticHealth('unhealthy', 'stale_running_item')
-        : syntheticHealth('unknown');
-    }
-
-    const timedOut = startingTimedOut(snapshot);
-    if (timedOut) return timedOut;
-
-    const staleReason = staleRuntimeReason(queue, snapshot.runtime);
-    if (staleReason) return syntheticHealth('unhealthy', staleReason, snapshot);
-
-    const runtimeReason = runtimeProcessReason(snapshot.runtime);
-    if (runtimeReason) return syntheticHealth('unhealthy', runtimeReason, snapshot);
-
-    return snapshot;
+    return deriveApiHealth(await this.health.get(agent.id), queue, nowIso());
   }
 }
 
 export const defaultRuntimeService = new RuntimeService();
 
-const STARTING_TIMEOUT_MS = 30_000;
-const FRESH_RUNNING_STALE_GRACE_MS = 10_000;
-
 function expectsRuntimeHealth(agent: AgentConfig): boolean {
   if (agent.enabled === false) return false;
   if (!agentHasConnectedTransport(agent)) return false;
   return isAgentRunnable(agent);
-}
-
-function startingTimedOut(snapshot: AgentRuntimeHealthSummary): AgentRuntimeHealthSummary | undefined {
-  if (snapshot.state !== 'starting') return undefined;
-  const updatedAt = Date.parse(snapshot.updatedAt);
-  if (!Number.isFinite(updatedAt) || Date.now() - updatedAt < STARTING_TIMEOUT_MS) return undefined;
-  const reason: AgentHealthReason = snapshot.restart?.outcome === 'pending'
-    ? 'restart_failed'
-    : 'start_failed';
-  return syntheticHealth('unhealthy', reason, {
-    ...snapshot,
-    restart: snapshot.restart?.outcome === 'pending'
-      ? {
-          ...snapshot.restart,
-          completedAt: nowIso(),
-          outcome: 'failed',
-          reason,
-        }
-      : snapshot.restart,
-  });
-}
-
-function staleRuntimeReason(
-  queue: {
-    active?: { itemId: string; startedAt?: string; workerId: string };
-    runningItemId?: string;
-  },
-  runtime: AgentRuntimeHandleSnapshot | undefined,
-): AgentHealthReason | undefined {
-  if (!queue.runningItemId) return undefined;
-  if (!queue.active) return 'stale_running_item';
-  if (!runtime) return 'stale_running_item';
-  if (!runtime.workerId || runtime.workerId !== queue.active.workerId) return 'stale_running_item';
-  if (!runtime.activeItemId || runtime.activeItemId !== queue.runningItemId) {
-    return freshRunningItem(queue.active.startedAt) ? undefined : 'stale_running_item';
-  }
-  if (runtime.processId && !processAlive(runtime.processId)) return 'stale_running_item';
-  return undefined;
-}
-
-function runtimeProcessReason(
-  runtime: AgentRuntimeHandleSnapshot | undefined,
-): AgentHealthReason | undefined {
-  if (!runtime) return undefined;
-  if (runtime.processId && !processAlive(runtime.processId)) return 'start_failed';
-  return providerChildIssueReason(runtime, { checkPid: true });
-}
-
-function syntheticHealth(
-  state: AgentRuntimeHealthSummary['state'],
-  reason?: AgentHealthReason,
-  base?: AgentRuntimeHealthSummary,
-): AgentRuntimeHealthSummary {
-  return {
-    ...(reason ? { reason } : {}),
-    ...(base?.restart ? { restart: base.restart } : {}),
-    ...(base?.runtime ? { runtime: base.runtime } : {}),
-    state,
-    updatedAt: nowIso(),
-  };
-}
-
-function freshRunningItem(startedAt: string | undefined): boolean {
-  if (!startedAt) return false;
-  const startedAtMs = Date.parse(startedAt);
-  return Number.isFinite(startedAtMs) && Date.now() - startedAtMs < FRESH_RUNNING_STALE_GRACE_MS;
 }
