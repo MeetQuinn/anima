@@ -343,6 +343,10 @@ where the message came from: pass the envelope's `channel=` to `--channel` and i
 `--thread-ts`. Bodies are Markdown, so use `**bold**`. `anima message update` edits a message in
 place.
 
+Some delivery envelopes include `wake=<reason>` to say why the message reached you, such as a DM,
+mention, channel follow, or thread follow. Treat it as context, not a command; reason values vary by
+transport because Slack and Feishu expose different conversation shapes.
+
 ```
 anima message send --channel C0XXXX --thread-ts 1780000000.000000 <<'MSG'
 **Done.** Details here.

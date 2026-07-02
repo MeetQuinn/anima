@@ -731,6 +731,36 @@ test('Feishu delivery prompt is platform-aware', () => {
   );
 });
 
+test('Feishu transport stamps accepted wake reason before queueing', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-wake-reason-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir, { botProfileSyncedAt: '2099-01-01T00:00:00.000Z' });
+      const queue = new WakeQueueService('scout');
+      const transport = new FeishuMessageTransport(
+        {
+          agentRuntimeKind: 'kimi-cli',
+          config: feishuTransportConfig({ appId: '' }),
+          queue,
+        },
+        { createMessageClient: () => testFeishuMessageClient() },
+      );
+
+      await handleFeishuReceiveForTest(transport, makeFeishuEvent());
+
+      const item = (await queue.list()).find((queued) => queued.kind === 'feishu');
+      assert.equal(item?.kind, 'feishu');
+      assert.equal(item?.kind === 'feishu' ? item.wakeReason : undefined, 'dm');
+      assert.match(
+        item?.kind === 'feishu' ? buildCodeAgentDeliveryPrompt(item) : '',
+        /message_id=om_test_message wake=dm time=/,
+      );
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('Feishu delivery prompt includes resolved quoted message content', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-quoted-message-test-'));
   try {
@@ -793,7 +823,7 @@ test('Feishu delivery prompt includes resolved quoted message content', async ()
       });
       assert.equal(
         item?.kind === 'feishu' ? buildCodeAgentDeliveryPrompt(item) : '',
-        'New Feishu message:\n\n[platform=feishu chat=p2p chat_id=oc_test_chat message_id=om_reply_message time=2026-06-02T14:20:00Z user_id=ou_alice] Alice:\n> (quoted) Bob: quoted first line\n> (quoted) Bob: quoted second line\ncurrent reply',
+        'New Feishu message:\n\n[platform=feishu chat=p2p chat_id=oc_test_chat message_id=om_reply_message wake=dm time=2026-06-02T14:20:00Z user_id=ou_alice] Alice:\n> (quoted) Bob: quoted first line\n> (quoted) Bob: quoted second line\ncurrent reply',
       );
     });
   } finally {

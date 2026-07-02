@@ -206,6 +206,9 @@ export class AgentRuntimeWorker {
         followupError = error;
       });
       const agentConfig = await defaultAgentRegistryService.serviceFor(this.options.agentId).getConfig();
+      const slackIdentity = agentConfig.slack.botUserId
+        ? { handle: agentConfig.slack.botHandle, userId: agentConfig.slack.botUserId }
+        : undefined;
       await setActiveRuntimeItem({
         agentId: this.options.agentId,
         startedAt: isoFromMs(handle.startedAt),
@@ -226,6 +229,7 @@ export class AgentRuntimeWorker {
           profile: {
             displayName: agentConfig.profile?.displayName ?? this.options.agentId,
             ...(agentConfig.profile?.role ? { role: agentConfig.profile.role } : {}),
+            ...(slackIdentity ? { slackIdentity } : {}),
             transports: {
               feishu: agentConfig.feishu.connected,
               slack: agentConfig.slack.connected,

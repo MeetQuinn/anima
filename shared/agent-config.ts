@@ -192,6 +192,7 @@ export type SlackTokenValidationReason =
 export interface SlackTokenValidation {
   appId?: string;
   botAvatarUrl?: string;
+  botHandle?: string;
   botName?: string;
   botUserId?: string;
   detected?: SlackTokenKind;
@@ -206,6 +207,7 @@ export interface SlackTokenValidation {
 export interface SlackConnectionValidation {
   appId?: string;
   botAvatarUrl?: string;
+  botHandle?: string;
   botName?: string;
   botUserId?: string;
   reason?: 'incomplete' | 'app_mismatch';
@@ -303,10 +305,13 @@ export const SlackConfig = z.object({
   appId: z.string().optional(),
   appToken: z.string().default(''),
   avatarUrl: z.string().optional(),
+  botHandle: z.string().optional(),
+  botName: z.string().optional(),
   // ISO timestamp of the last bot display-info (avatar/name/icon) sync, used to
   // throttle the automatic refresh that runs while the agent handles messages.
   botProfileSyncedAt: z.string().optional(),
   botToken: z.string().default(''),
+  botUserId: z.string().optional(),
   connected: z.boolean().optional(),
   manifestVersion: z.number().int().nonnegative().default(0),
   teamId: z.string().default(''),

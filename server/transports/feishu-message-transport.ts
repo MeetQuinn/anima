@@ -16,7 +16,7 @@ import { agentFeishuServiceForAgent } from '../agents/agent-feishu.service.js';
 import { feishuRuntimeDecision, type FeishuRuntimeDecision } from '../inbox/slack-subscription.service.js';
 import { WakeQueueService, type WakeQueueEnqueueResult } from '../inbox/wake-queue.service.js';
 import type { FeishuConfig } from '../../shared/agent-config.js';
-import type { FeishuInboxItem, FeishuQuotedMessage } from '../../shared/inbox.js';
+import { WakeReason, type FeishuInboxItem, type FeishuQuotedMessage } from '../../shared/inbox.js';
 import type { MessageTransport } from './message-transport.js';
 import type { FeishuConversationMessage, FeishuMessageClient } from '../feishu/client.js';
 
@@ -99,7 +99,7 @@ export class FeishuMessageTransport implements MessageTransport {
     const queuedEvent: FeishuInboxItem = runtimeDecision.attentionSuggestion
       ? { ...event, attentionSuggestion: runtimeDecision.attentionSuggestion }
       : event;
-    const decision = await this.options.queue.enqueue(queuedEvent);
+    const decision = await this.options.queue.enqueue(withFeishuWakeReason(queuedEvent, runtimeDecision.reason));
     console.log(JSON.stringify(feishuDecisionLog(decision, this.options.agentRuntimeKind, runtimeDecision), null, 2));
   }
 
@@ -193,6 +193,14 @@ export class FeishuMessageTransport implements MessageTransport {
       return event;
     }
   }
+}
+
+function withFeishuWakeReason(
+  item: FeishuInboxItem,
+  reason: FeishuRuntimeDecision['reason'],
+): FeishuInboxItem {
+  const parsed = WakeReason.safeParse(reason);
+  return parsed.success ? { ...item, wakeReason: parsed.data } : item;
 }
 
 const FEISHU_DISPLAY_INFO_SYNC_TTL_MS = 6 * 60 * 60 * 1000;
