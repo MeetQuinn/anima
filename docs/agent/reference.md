@@ -2,8 +2,10 @@
 
 Quick how-tos for the `anima` commands you use as an agent. When you are about to use a command
 you are not sure about, read the relevant entry here first. For the mental model behind these
-commands (how Anima works around you), see the agent guide. For Feishu-specific identifiers,
-permissions, visibility, group creation, and invite troubleshooting, see the Feishu runbook.
+commands (how Anima works around you), see the [agent guide](/agent/guide). For situations where
+the right move is not obvious from any single command, see the
+[recipes for common moments](/agent/recipes). For Feishu-specific identifiers, permissions,
+visibility, group creation, and invite troubleshooting, see the [Feishu runbook](/agent/feishu).
 
 ## Per-agent environment values and secrets (`anima env`)
 
@@ -45,6 +47,10 @@ runtime and provider credentials are not forwarded automatically.
 anima env list
 ```
 
+There is also `anima env source`, which prints shell export lines for non-secret values. It
+excludes secrets by default; keep it that way. Secrets belong inside `anima env run`, never
+exported into your shell.
+
 **Do not:**
 
 - Never print or echo a secret value, in any message, file, or log. `anima env list` masks values
@@ -62,8 +68,8 @@ Slack bot token available in your environment as `$SLACK_BOT_TOKEN`. Use it to c
 API directly; this is a supported, encouraged way to reach Slack actions the CLI has not wrapped.
 
 ```
-curl -sS -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
-  "https://slack.com/api/conversations.create?name=new-channel"
+curl -sS -X POST -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+  -d "name=new-channel" https://slack.com/api/conversations.create
 ```
 
 Read the JSON response before retrying: `"ok": true` means it worked, and `"ok": false` carries an
@@ -241,17 +247,23 @@ a daily routine, or anything you need to do later. A reminder wakes you with its
 the scheduled time. This is the most basic form of acting on your own initiative. Reminders
 persist across restarts and are recorded in the audit log.
 
-Schedule a one-shot with a delay or a fixed time, or a recurring one with a repeat rule and a
-timezone:
+Schedule a one-shot with a delay (`--in`) or a fixed time (`--fire-at`; that is the flag name,
+not `--at`), or a recurring one with a repeat rule and a timezone:
 
 ```
 anima reminder schedule --in 2h --title "check deploy" --instructions "verify prod is healthy"
+anima reminder schedule --fire-at 2026-07-03T01:30:00Z --title "morning check" --instructions "review overnight PRs"
 anima reminder schedule --repeat daily@09:00 --timezone Asia/Shanghai --title "standup" --instructions "post the async standup"
 ```
 
+To make a reminder wake you back into a specific Slack conversation (so your follow-up lands in
+the thread it belongs to), anchor it with `--anchor-channel <id> --anchor-message-ts <ts>` (add
+`--anchor-thread-ts <ts>` inside a thread).
+
 Manage them with `anima reminder list`, `anima reminder cancel <id>`, and
-`anima reminder snooze <id>`. Repeat formats: `every:<n>m|h|d`, `daily@HH:MM`, and
-`weekly:<day,day>@HH:MM`. The timezone is an IANA name, for example `Asia/Shanghai`.
+`anima reminder snooze <id> --by <duration>` (delays the next firing without changing the repeat
+schedule). Repeat formats: `every:<n>m|h|d`, `daily@HH:MM`, and `weekly:<day,day>@HH:MM`. The
+timezone is an IANA name, for example `Asia/Shanghai`.
 
 **Do not:**
 
@@ -315,9 +327,12 @@ Use this to upload a local file to the chat, or to open a file a teammate sent y
 before upload if a path does not exist.
 
 ```
-anima file send /tmp/chart.png
+anima file send /tmp/chart.png --caption "Q3 signups by week"
 anima file fetch <fileId> /tmp/incoming.png
 ```
+
+`send` accepts multiple paths in one call, and `--caption` puts the explanation on the file
+itself instead of in a separate message.
 
 The `fileId` comes from the `attached: id=<id>` line in message-read output. To actually look at
 an image a teammate sent, fetch it to a path and then read that path.
@@ -330,6 +345,7 @@ that is finished with you (`mute`).
 ```
 anima subscription list
 anima subscription mute --channel <id>
+anima subscription mute --channel <id> --thread-ts <ts>   # mute one thread, keep the channel
 ```
 
 Mute only when a thread or channel is clearly done with you and still noisy. An @mention always

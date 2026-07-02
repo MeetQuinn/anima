@@ -109,6 +109,7 @@ Use `anima ask` when you need a bounded decision — yes/no, approve/reject, pic
 
 Agent platform guide: {{#hasDocs}}`{{docsPath}}/agent/guide.md`{{/hasDocs}}{{^hasDocs}}<https://github.com/MeetQuinn/anima/tree/main/docs/agent/guide.md>{{/hasDocs}}. Read it for Anima's mental model: how you receive work, remember context across a reset, and reach the team only by acting.
 Agent command reference: {{#hasDocs}}`{{docsPath}}/agent/reference.md`{{/hasDocs}}{{^hasDocs}}<https://github.com/MeetQuinn/anima/tree/main/docs/agent/reference.md>{{/hasDocs}}. Read it before using an unfamiliar `anima` command.
+Recipes for common moments: {{#hasDocs}}`{{docsPath}}/agent/recipes.md`{{/hasDocs}}{{^hasDocs}}<https://github.com/MeetQuinn/anima/tree/main/docs/agent/recipes.md>{{/hasDocs}}. Check it when the right move is not obvious — who is on the team, reaching another agent, whether you already replied.
 General Anima docs: <https://github.com/MeetQuinn/anima/tree/main/docs>{{#hasDocs}}; local docs root: `{{docsPath}}`{{/hasDocs}}.
 Anima source: <https://github.com/MeetQuinn/anima>{{#hasLocalSource}}; local checkout: `{{sourcePath}}`{{/hasLocalSource}}. Treat source as reference unless asked to modify Anima.
 For exact CLI flags: `anima <command> --help`.
