@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X } from 'lucide-react';
+import { Folder, FolderOpen, X } from 'lucide-react';
 import { createTeam, type TeamConfig } from '@/api/teams';
 import { queryClient } from '@/query-client';
 import { queryKeys } from '@/lib/query-keys';
@@ -90,7 +90,7 @@ export function CreateTeamModal({
             e.preventDefault();
             void submit();
           }}
-          className="mt-4 space-y-3"
+          className="mt-5 space-y-4"
         >
           <div>
             <label className="font-sans mb-1 block text-[12px] font-medium text-text-muted">
@@ -103,7 +103,7 @@ export function CreateTeamModal({
               onChange={(e) => setName(e.target.value)}
               disabled={busy}
               placeholder="e.g. Content"
-              className="w-full rounded-sm border border-border bg-muted/30 px-3 py-1.5 font-sans text-[14px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded-sm border border-border bg-muted/30 px-3 py-2 font-sans text-[14px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
 
@@ -111,22 +111,24 @@ export function CreateTeamModal({
             <label className="font-sans mb-1 block text-[12px] font-medium text-text-muted">
               Home folder
             </label>
-            <div className="flex gap-2">
+            <div className="flex items-stretch overflow-hidden rounded-sm border border-border bg-muted/30 transition-shadow focus-within:ring-1 focus-within:ring-ring">
+              <Folder className="ml-3 mr-1 h-4 w-4 shrink-0 self-center text-text-subtle" />
               <input
                 type="text"
                 value={home}
                 onChange={(e) => setHome(e.target.value)}
                 disabled={busy}
                 placeholder="~/content (defaults from the name)"
-                className="min-w-0 flex-1 rounded-sm border border-border bg-muted/30 px-3 py-1.5 font-mono text-[13px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-1 focus:ring-ring"
+                className="min-w-0 flex-1 bg-transparent py-2 pr-2 font-mono text-[13px] text-text placeholder:text-text-subtle focus:outline-none"
               />
               <button
                 type="button"
                 onClick={() => setShowPicker(true)}
                 disabled={busy}
-                className="font-sans shrink-0 rounded-sm border border-border px-3 py-1.5 text-[12px] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-50"
+                className="font-sans flex shrink-0 items-center gap-1.5 self-stretch border-l border-border px-3 text-[12px] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-50"
               >
-                Browse…
+                <FolderOpen className="h-3.5 w-3.5" />
+                Browse
               </button>
             </div>
             <p className="font-sans mt-1 text-[11px] text-text-subtle">

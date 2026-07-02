@@ -14,6 +14,7 @@ import {
   FolderClosed,
   FolderOpen,
   FolderPlus,
+  Home,
   Loader2,
 } from 'lucide-react';
 import { createDirectory, fetchKbBrowse } from '@/api/kb';
@@ -86,11 +87,14 @@ function DirTreeNode({
       {/* Row — outer div owns the bg so both the chevron and name areas highlight together */}
       <div
         className={[
-          'flex w-full items-center',
+          'relative flex w-full items-center',
           isSelected ? 'bg-accent/10' : 'hover:bg-surface-elevated/60',
         ].join(' ')}
         style={{ paddingLeft: pl }}
       >
+        {isSelected && (
+          <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-accent" />
+        )}
         {/* Expand/collapse chevron — click = toggle only. tabIndex={-1}: keyboard nav lands on the
             select button; ArrowRight/Left handles expand from there. */}
         <button
@@ -99,7 +103,7 @@ function DirTreeNode({
           onClick={() => onToggle(path)}
           aria-expanded={isExpanded}
           aria-label={isExpanded ? 'Collapse' : 'Expand'}
-          className="flex w-6 shrink-0 items-center justify-center py-1.5 text-text-subtle hover:text-text focus-visible:outline-none"
+          className="flex w-6 shrink-0 items-center justify-center py-2 text-text-subtle hover:text-text focus-visible:outline-none"
         >
           {isExpanded ? (
             <ChevronDown className="h-3 w-3 opacity-60" />
@@ -115,7 +119,7 @@ function DirTreeNode({
           data-path={path}
           onClick={() => onSelect(path)}
           className={[
-            'flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pr-3 text-left font-sans text-[13px] transition-colors',
+            'flex min-w-0 flex-1 items-center gap-1.5 py-2 pr-3 text-left font-sans text-[13px] transition-colors',
             'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent/50',
             isSelected ? 'text-accent' : 'text-text',
           ].join(' ')}
@@ -282,6 +286,10 @@ export default function DirectoryPicker({
       path: rootAbsPath + '/' + arr.slice(0, i + 1).join('/'),
     }));
 
+  // Human-readable form of the directory that Choose will return, shown in the
+  // footer so the selection is confirmable at a glance. Root reads as '~'.
+  const selectedDisplay = !relPath ? '~' : `~${relPath}`;
+
   // Keyboard navigation: Up/Down through visible rows (queried via DOM),
   // Right/Left to expand/collapse, Enter to select.
   const handleKeyDown = useCallback(
@@ -326,37 +334,8 @@ export default function DirectoryPicker({
 
   return (
     <div className="flex flex-col">
-      {/* Breadcrumb */}
-      <div className="mb-2 flex min-h-[24px] items-center gap-0.5 overflow-x-auto pb-0.5">
-        <button
-          type="button"
-          onClick={() => {
-            setExpandedPaths(new Set());
-            setSelectedPath(rootPath);
-          }}
-          className="shrink-0 font-mono text-[11px] text-text-muted hover:text-text"
-          title="Home"
-        >
-          ~
-        </button>
-        {breadcrumbs.map((crumb, i) => (
-          <span key={crumb.path} className="flex shrink-0 items-center gap-0.5">
-            <ChevronRight className="h-2.5 w-2.5 text-text-subtle" />
-            <button
-              type="button"
-              onClick={() => setSelectedPath(crumb.path)}
-              className={[
-                'font-mono text-[11px] hover:text-text',
-                i === breadcrumbs.length - 1 ? 'font-semibold text-text' : 'text-text-muted',
-              ].join(' ')}
-            >
-              {crumb.label}
-            </button>
-          </span>
-        ))}
-      </div>
-
-      {/* New-folder toolbar */}
+      {/* Toolbar — breadcrumb location bar on the left, New folder on the right.
+          While creating, the row is replaced by the inline new-folder form. */}
       {creating ? (
         <form onSubmit={submitCreate} className="mb-2 flex items-center gap-1.5">
           <input
@@ -366,7 +345,7 @@ export default function DirectoryPicker({
             onChange={(e) => setNewName(e.target.value)}
             disabled={mkdirBusy}
             placeholder={`New folder in ${createTargetLabel}`}
-            className="min-w-0 flex-1 rounded-sm border border-border bg-muted/30 px-2.5 py-1 font-sans text-[12px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-1 focus:ring-ring"
+            className="min-w-0 flex-1 rounded-sm border border-border bg-muted/30 px-2.5 py-1.5 font-sans text-[12px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-1 focus:ring-ring"
           />
           <Button type="submit" size="sm" disabled={!newName.trim() || mkdirBusy}>
             {mkdirBusy ? 'Creating…' : 'Create'}
@@ -382,14 +361,42 @@ export default function DirectoryPicker({
           </Button>
         </form>
       ) : (
-        <div className="mb-2 flex justify-end">
+        <div className="mb-2 flex items-center gap-2">
+          <div className="flex min-h-[30px] min-w-0 flex-1 items-center gap-0.5 overflow-x-auto rounded-sm bg-muted/30 px-2.5 py-1">
+            <button
+              type="button"
+              onClick={() => {
+                setExpandedPaths(new Set());
+                setSelectedPath(rootPath);
+              }}
+              className="flex shrink-0 items-center gap-1 font-mono text-[11px] text-text-muted hover:text-text"
+              title="Home"
+            >
+              <Home className="h-3 w-3" />~
+            </button>
+            {breadcrumbs.map((crumb, i) => (
+              <span key={crumb.path} className="flex shrink-0 items-center gap-0.5">
+                <ChevronRight className="h-2.5 w-2.5 text-text-subtle" />
+                <button
+                  type="button"
+                  onClick={() => setSelectedPath(crumb.path)}
+                  className={[
+                    'font-mono text-[11px] hover:text-text',
+                    i === breadcrumbs.length - 1 ? 'font-semibold text-text' : 'text-text-muted',
+                  ].join(' ')}
+                >
+                  {crumb.label}
+                </button>
+              </span>
+            ))}
+          </div>
           <button
             type="button"
             onClick={() => {
               setMkdirError(null);
               setCreating(true);
             }}
-            className="font-sans flex items-center gap-1 rounded-sm px-2 py-1 text-[12px] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+            className="font-sans flex shrink-0 items-center gap-1 rounded-sm border border-border px-2.5 py-1.5 text-[12px] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
           >
             <FolderPlus className="h-3.5 w-3.5" />
             New folder
@@ -435,8 +442,11 @@ export default function DirectoryPicker({
         ))}
       </div>
 
-      {/* Footer — Cancel / Choose */}
-      <div className="mt-3 flex items-center justify-end gap-2 border-t border-border-soft pt-3">
+      {/* Footer — selected-path readout, then Cancel / Choose */}
+      <div className="mt-3 flex items-center gap-3 border-t border-border-soft pt-3">
+        <p className="min-w-0 flex-1 truncate text-[11px] text-text-subtle" title={selectedDisplay}>
+          Selected <span className="font-mono text-text-muted">{selectedDisplay}</span>
+        </p>
         <Button type="button" variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
