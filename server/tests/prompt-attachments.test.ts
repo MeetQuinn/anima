@@ -314,6 +314,8 @@ test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack t
   assert.match(text, /Read it for Anima's mental model/);
   assert.match(text, /Agent command reference: `\/opt\/anima\/docs\/agent\/reference\.md`/);
   assert.match(text, /Read it before using an unfamiliar `anima` command/);
+  assert.match(text, /Recipes for common moments: `\/opt\/anima\/docs\/agent\/recipes\.md`/);
+  assert.match(text, /Check it when the right move is not obvious/);
   assert.doesNotMatch(text, /Feishu runbook/);
   assert.match(text, /General Anima docs: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs>/);
   assert.match(text, /local docs root: `\/opt\/anima\/docs`/);
@@ -381,6 +383,7 @@ test('buildAnimaRuntimeProfile falls back cleanly when bundled docs are unavaila
   });
   assert.match(text, /Agent platform guide: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs\/agent\/guide\.md>/);
   assert.match(text, /Agent command reference: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs\/agent\/reference\.md>/);
+  assert.match(text, /Recipes for common moments: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs\/agent\/recipes\.md>/);
   assert.match(text, /General Anima docs: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs>/);
   assert.doesNotMatch(text, /local docs root:/);
   assert.match(text, /Anima source: <https:\/\/github\.com\/MeetQuinn\/anima>/);

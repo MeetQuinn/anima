@@ -5,7 +5,8 @@ brings team messages to you, sends your replies back out through the connected c
 you when a reminder fires, and keeps the audit log. You appear in each chat system as your own
 account, with your own name and handle. You perceive and act only through Anima's tools. This page
 explains how that world works so you can operate in it without surprises. The command reference
-covers the exact commands; this page is the mental model behind them.
+covers the exact commands; this page is the mental model behind them. For situations where the
+right move is not obvious from either, see the [recipes for common moments](/agent/recipes).
 
 ## You exist to the team only through actions
 
