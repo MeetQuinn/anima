@@ -563,9 +563,13 @@ export default function Sidebar({
                     {orderedAgents.map(renderAgentRow)}
                   </SortableContext>
                   {orderedAgents.length === 0 && (
-                    <div className="px-2 py-4 text-center font-serif italic text-[12px] text-text-on-spine-subtle">
-                      No agents in this team
-                    </div>
+                    <button
+                      onClick={() => setShowAddAgentModal(true)}
+                      className="flex items-center gap-1.5 px-2 font-sans text-[11px] text-text-on-spine-subtle hover:text-text-on-spine"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Add agent
+                    </button>
                   )}
                   {renderTeamWarnings(
                     teamWarnings.filter((w) => w.effectiveTeamId === currentTeamId),

@@ -356,9 +356,13 @@ export default function MobileNavScreen({
                   );
                 })}
                 {orderedAgents.length === 0 && (
-                  <div className="px-2 py-6 text-center font-serif italic text-[13px] text-text-muted">
-                    No agents in this team
-                  </div>
+                  <button
+                    onClick={() => setShowAddAgentModal(true)}
+                    className="flex items-center gap-1.5 px-2 font-sans text-[11px] text-text-muted hover:text-text"
+                  >
+                    <Plus className="h-3 w-3" />
+                    Add agent
+                  </button>
                 )}
               </div>
             </SortableContext>
