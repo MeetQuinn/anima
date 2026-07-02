@@ -34,11 +34,13 @@ The contract lives in `server/providers/contract.ts`.
 export interface AgentRuntime {
   readonly env?: Record<string, string>;
   readonly kind: string;
-  close?(): Promise<void>;
+  close?(options?: AgentRuntimeCloseOptions): Promise<void>;
+  health?(): AgentRuntimeHealth;
   run(input: AgentRuntimeInput): Promise<AgentRuntimeResult>;
   appendToActiveRun(
     input: AgentRuntimeFollowupInput,
   ): Promise<AgentRuntimeFollowupResult>;
+  requestDrain?(input: AgentRuntimeDrainInput): Promise<void>;
 }
 ```
 
@@ -48,7 +50,11 @@ export interface AgentRuntime {
 
 `appendToActiveRun` is required. It lets the worker send a newly queued same-session item into the active provider context instead of waiting for the active item to finish.
 
-`close` is optional. It is for provider adapters that keep resources alive across items, such as a persistent child process.
+`close` is optional. It is for provider adapters that keep resources alive across items, such as a persistent child process. `AgentRuntimeCloseOptions` lets the caller choose the kill signal and a force-kill deadline.
+
+`health` is optional. It returns a snapshot of the adapter's child-process state (whether a child is expected, and how the live one looks) for the runtime health service.
+
+`requestDrain` is optional. It asks the adapter to bring the active item to a clean stop; the graceful service restart path uses it so in-flight work finishes or saves its place instead of being dropped.
 
 ### Runtime Input
 
@@ -59,10 +65,15 @@ export interface AgentRuntime {
 - `env`: the complete child environment, already built by Anima;
 - `prompt`: the text to send into the provider for this item;
 - `systemPrompt`: optional runtime-profile text for providers that accept a separate system prompt;
+- `systemPromptFilePath`: where the bridge materializes `systemPrompt` on disk for providers that
+  take a file instead of inline text (Claude's `--system-prompt-file`);
 - `providerSession`: the provider-native session id, if one exists;
 - `signal`: an abort signal controlled by the worker for stop, idle timeout, and shutdown;
 - `onActivity`: a heartbeat callback the provider calls when stdout/stderr activity arrives;
-- `effects`: a sink for recording activities and persisting provider session ids.
+- `effects`: a sink for recording activities and persisting provider session ids;
+- `suppressFailureRecord`: when true, the adapter skips writing its own `runtime.failed` record;
+  the worker sets this because it owns failure recording for the item and wants exactly one final
+  record.
 
 The important boundary: `AgentRuntimeInput` does not contain inbox items, Slack channel/thread/DM objects, or agent state beyond the provider-facing prompt, environment, and effect sink.
 
@@ -149,7 +160,8 @@ Provider session ids are stored on Anima's primary session record by provider ki
 They are used to resume the underlying tool's native context:
 
 - Codex: the stored id is the Codex thread id;
-- Claude: the stored id is the Claude Code session id.
+- Claude: the stored id is the Claude Code session id;
+- Kimi: the stored id is the Kimi ACP session id.
 
 When a provider emits a new session id, the adapter calls `effects.persistProviderSession`. The sink updates Anima's primary session record.
 
@@ -195,7 +207,16 @@ Activity mapping:
 
 Implementation: `server/providers/claude.ts`.
 
-Current process model:
+Claude Code has two transports. The default is stream-json over stdio, described below. Setting
+`transport: "tmux"` on the agent's provider config selects `ClaudeCodeTmuxAgentRuntime`
+(`server/providers/claude-tmux.ts`) instead, which drives an interactive `claude` session inside a
+tmux pane and polls it for turn completion. The tmux transport is mainly for operators who want an
+inspectable terminal that can survive an Anima runtime restart; use stream-json unless you need
+that terminal-shaped behavior. Both transports share the launch pieces in
+`server/providers/claude-launch.ts`: the common CLI flags, the provider env defaults, and the
+system-prompt file written from `systemPromptFilePath`.
+
+Current process model (stream-json):
 
 - Anima starts one persistent `claude` process for the runtime worker.
 - It uses stream-json input/output over stdio.
@@ -223,17 +244,17 @@ claude
 
 Anima uses provider tools for observability only; Slack side effects, reminders, subscriptions, inbox routing, and scheduling must stay Anima-owned. Claude Code currently receives a small strategic denylist through `--disallowedTools`:
 
-| Tool                                                       | Current CLI presence      | Stream-json behavior                                                                 | Side effect                                                                                     | Decision      |
-| ---------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- | ------------- |
-| `AskUserQuestion`                                          | Claude Code built-in      | Fails in the non-interactive runtime.                                                | Attempts to ask the operator outside Anima.                                                     | Deny          |
-| `CronCreate` / `CronDelete` / `CronList`                   | Claude Code built-ins     | Works as Claude-native session cron management.                                      | Creates or manages recurring scheduled prompts outside Anima inbox/reminder/activity ownership. | Deny          |
-| `ScheduleWakeup`                                           | Claude Code built-in      | Works as Claude-native one-off delayed wake.                                         | Creates future wakeups outside Anima reminders and audit.                                       | Deny          |
-| `RemoteTrigger`                                            | Claude Code built-in      | Not needed by Anima runtime.                                                         | Establishes provider-native remote triggers outside Anima routing.                              | Deny          |
-| `PushNotification`                                         | Claude Code built-in      | Not needed by Anima runtime.                                                         | Sends provider-native notifications outside Anima-visible messaging.                            | Deny          |
-| `SlashCommand`                                             | Claude Code built-in      | Observe. Some commands are internal and may be valid in stream-json.                 | Can affect Claude session state, but not proven broken in Anima.                                | Allow/observe |
-| File, shell, search, task, todo, notebook, and skill tools | Claude Code built-ins     | Required for normal agent work.                                                      | Provider work, surfaced through Anima activity mapping.                                         | Allow         |
-| Codex CLI tools                                            | Codex app-server protocol | No equivalent user-question/scheduler controls found in the current adapter surface. | Tool activity is mapped by Anima.                                                               | Allow/observe |
-| Kimi CLI tools                                             | Kimi wire protocol        | Anima initializes with `supports_question: false` and `supports_plan_mode: false`.   | Tool activity is mapped by Anima.                                                               | Allow/observe |
+| Tool                                                       | Current CLI presence      | Stream-json behavior                                                                                       | Side effect                                                                                     | Decision      |
+| ---------------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------- |
+| `AskUserQuestion`                                          | Claude Code built-in      | Fails in the non-interactive runtime.                                                                      | Attempts to ask the operator outside Anima.                                                     | Deny          |
+| `CronCreate` / `CronDelete` / `CronList`                   | Claude Code built-ins     | Works as Claude-native session cron management.                                                            | Creates or manages recurring scheduled prompts outside Anima inbox/reminder/activity ownership. | Deny          |
+| `ScheduleWakeup`                                           | Claude Code built-in      | Works as Claude-native one-off delayed wake.                                                               | Creates future wakeups outside Anima reminders and audit.                                       | Deny          |
+| `RemoteTrigger`                                            | Claude Code built-in      | Not needed by Anima runtime.                                                                               | Establishes provider-native remote triggers outside Anima routing.                              | Deny          |
+| `PushNotification`                                         | Claude Code built-in      | Not needed by Anima runtime.                                                                               | Sends provider-native notifications outside Anima-visible messaging.                            | Deny          |
+| `SlashCommand`                                             | Claude Code built-in      | Observe. Some commands are internal and may be valid in stream-json.                                       | Can affect Claude session state, but not proven broken in Anima.                                | Allow/observe |
+| File, shell, search, task, todo, notebook, and skill tools | Claude Code built-ins     | Required for normal agent work.                                                                            | Provider work, surfaced through Anima activity mapping.                                         | Allow         |
+| Codex CLI tools                                            | Codex app-server protocol | No equivalent user-question/scheduler controls found in the current adapter surface.                       | Tool activity is mapped by Anima.                                                               | Allow/observe |
+| Kimi CLI tools                                             | Kimi wire protocol        | Anima initializes with empty client capabilities; interactive prompts are not exposed through the adapter. | Tool activity is mapped by Anima.                                                               | Allow/observe |
 
 The denylist is global for now. Per-agent tool policy should be added only when there is a concrete operator need; the default policy should keep provider-native scheduling and notifications out of the runtime.
 
@@ -285,6 +306,41 @@ Why stdout is not buffered:
 - Persistent Claude sessions can run for a long time and produce large JSONL streams.
 - `child-process.ts` supports `bufferOutput: false` so stream callbacks still run but stdout/stderr are not accumulated in memory.
 
+## Kimi Adapter
+
+Implementation: `server/providers/kimi.ts`.
+
+Current process model:
+
+- Anima starts one persistent `kimi --yolo acp` process for the runtime worker and speaks ACP
+  (Agent Client Protocol) with it over stdio.
+- Like the Codex and Claude adapters, it extends `ControllerAgentRuntime`, so the controller slot,
+  health, drain, close, and the runtime activity envelope are shared machinery.
+- The process stays alive across Anima items until abort or worker shutdown.
+
+Session handling:
+
+1. initialization sends empty client capabilities, so interactive prompts are not exposed through
+   the non-interactive runtime;
+2. with a stored provider session id, the adapter sends `session/resume`; if the resume fails, it
+   records `kimi.session.resume_missing` and falls back to `session/new`;
+3. a configured model is applied with `session/set_model`;
+4. the ACP session id is persisted as the `kimi-cli` provider session.
+
+Provider `run` protocol:
+
+- each item sends one `session/prompt` with the bridge-built delivery prompt;
+- ACP updates stream through the activity mapper: thinking deltas, tool-call notifications, plan
+  display, hooks, and usage/context telemetry become `kimi.*` runtime events, and assistant text
+  accumulates as internal `AgentRuntimeResult.text`.
+
+Active-run follow-up:
+
+- `appendToActiveRun` is accepted only when the requested active item matches the adapter's
+  current active item;
+- accepted input is queued into the live ACP session, and `kimi.steer.consumed` records when the
+  session actually takes it.
+
 ## Agent Activities
 
 Provider adapters write activities so the user can inspect what happened without reading raw provider logs.
@@ -311,7 +367,7 @@ Slack tool activities are separate. When the spawned code agent calls `anima mes
 
 ## Current Boundaries and Tradeoffs
 
-- Codex and Claude both keep provider continuity through a persisted provider session id and a persistent child process for the lifetime of the worker.
+- Codex, Claude, and Kimi all keep provider continuity through a persisted provider session id and a persistent child process for the lifetime of the worker.
 - Auto-compact is provider-owned. Anima observes compact events and records them; it does not perform compaction itself.
 - Active-run follow-up append is best-effort. If a provider rejects a follow-up, the item is requeued and processed after the active item.
 - An accepted follow-up item is considered absorbed by the active item. It will not have a separate provider result.
