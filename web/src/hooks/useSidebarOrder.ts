@@ -7,7 +7,7 @@ import { fetchSidebarOrder, saveSidebarOrder, type SidebarOrder } from '@/api/sy
 import { queryClient } from '@/query-client';
 import { queryKeys } from '@/lib/query-keys';
 import { useTeams } from './useTeams';
-import { effectiveTeamId, groupAgentsByTeam, isGrouped, type TeamGroup } from '@/lib/teams';
+import { effectiveTeamId } from '@/lib/teams';
 
 // ---------------------------------------------------------------------------
 // applyOrder — reconcile a live list with a stored ordering.
@@ -27,14 +27,23 @@ export function applyOrder<T>(
   });
 }
 
+// Splice a reordered subset back into the full ordered list, leaving every
+// non-subset item exactly where it was. Used so reordering the current team's
+// items never disturbs other teams' persisted order.
+function spliceSubset<T>(full: T[], reorderedSubset: T[], inSubset: (item: T) => boolean): T[] {
+  const queue = [...reorderedSubset];
+  return full.map((item) => (inSubset(item) ? (queue.shift() as T) : item));
+}
+
 // ---------------------------------------------------------------------------
 // useSidebarOrder — shared hook for both Sidebar (desktop) and MobileNavScreen.
 //
-// Returns ordered agents + KBs, stable color index maps, drag sensors, and
-// reorder handlers. Ordering is persisted to ANIMA_HOME/config.json with
-// optimistic updates + rollback.
+// Scopes the sidebar to a single team: only agents + KBs owned by
+// `currentTeamId` are returned. Ordering is still persisted globally (one flat
+// order per config.json) with optimistic updates + rollback; reorders happen
+// against the full list so other teams' order is preserved.
 // ---------------------------------------------------------------------------
-export function useSidebarOrder() {
+export function useSidebarOrder(currentTeamId: string) {
   const { data: agents = [] } = useQuery({ queryKey: queryKeys.agents(), queryFn: fetchAgents });
   const { data: kbs = [] } = useQuery({ queryKey: queryKeys.kbs(), queryFn: fetchKbs });
 
@@ -56,15 +65,19 @@ export function useSidebarOrder() {
   });
 
   const teams = useTeams();
-
-  const orderedAgents = applyOrder(agents, sidebarOrder?.agents, (a) => a.id);
-  const orderedKbs = applyOrder(kbs, sidebarOrder?.kbs, (kb) => kb.id);
-
-  // Team grouping is a display concern layered over the flat order. At N=1 the
-  // list stays flat (identical to today); at N>=2 it groups by team.
-  const grouped = isGrouped(teams);
   const teamIds = new Set(teams.map((t) => t.id));
-  const groupedAgents: TeamGroup[] = groupAgentsByTeam(orderedAgents, teams);
+
+  // Full ordered lists (all teams) — the persisted order lives here.
+  const orderedAgentsAll = applyOrder(agents, sidebarOrder?.agents, (a) => a.id);
+  const orderedKbsAll = applyOrder(kbs, sidebarOrder?.kbs, (kb) => kb.id);
+
+  // The sidebar only ever shows the current team's agents + KBs.
+  const agentInTeam = (a: (typeof orderedAgentsAll)[number]) =>
+    effectiveTeamId(a, teamIds) === currentTeamId;
+  const kbInTeam = (kb: (typeof orderedKbsAll)[number]) => kb.teamId === currentTeamId;
+
+  const orderedAgents = orderedAgentsAll.filter(agentInTeam);
+  const orderedKbs = orderedKbsAll.filter(kbInTeam);
 
   // Stable color index maps — color derives from original (unordered) position
   // so agent avatar color doesn't change when the user reorders.
@@ -83,18 +96,9 @@ export function useSidebarOrder() {
     const oldIdx = orderedAgents.findIndex((a) => a.id === String(active.id));
     const newIdx = orderedAgents.findIndex((a) => a.id === String(over.id));
     if (oldIdx === -1 || newIdx === -1) return;
-    // In grouped mode, drag only reorders within a team. Moving an agent to a
-    // different team is an explicit action (the row's team menu), never a drag,
-    // so a cross-group drop is a no-op that snaps back.
-    if (
-      grouped &&
-      effectiveTeamId(orderedAgents[oldIdx], teamIds) !==
-        effectiveTeamId(orderedAgents[newIdx], teamIds)
-    ) {
-      return;
-    }
-    const reordered = arrayMove(orderedAgents, oldIdx, newIdx);
-    void orderMutation.mutate({ ...sidebarOrder, agents: reordered.map((a) => a.id) });
+    const reorderedSubset = arrayMove(orderedAgents, oldIdx, newIdx);
+    const nextFull = spliceSubset(orderedAgentsAll, reorderedSubset, agentInTeam);
+    void orderMutation.mutate({ ...sidebarOrder, agents: nextFull.map((a) => a.id) });
   }
 
   function reorderKbs(event: DragEndEvent) {
@@ -103,16 +107,14 @@ export function useSidebarOrder() {
     const oldIdx = orderedKbs.findIndex((kb) => kb.id === String(active.id));
     const newIdx = orderedKbs.findIndex((kb) => kb.id === String(over.id));
     if (oldIdx === -1 || newIdx === -1) return;
-    const reordered = arrayMove(orderedKbs, oldIdx, newIdx);
-    void orderMutation.mutate({ ...sidebarOrder, kbs: reordered.map((kb) => kb.id) });
+    const reorderedSubset = arrayMove(orderedKbs, oldIdx, newIdx);
+    const nextFull = spliceSubset(orderedKbsAll, reorderedSubset, kbInTeam);
+    void orderMutation.mutate({ ...sidebarOrder, kbs: nextFull.map((kb) => kb.id) });
   }
 
   return {
     orderedAgents,
     orderedKbs,
-    groupedAgents,
-    grouped,
-    teams,
     agentIndexMap,
     kbIndexMap,
     sensors,

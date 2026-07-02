@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { FolderTree, GripVertical, Plus, Server } from 'lucide-react';
+import { Check, ChevronDown, FolderTree, GripVertical, Plus, Server } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DndContext, closestCenter } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -10,6 +10,7 @@ import { fetchAgentStatuses } from '@/api/agents';
 import { queryClient } from '@/query-client';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
+import { useCurrentTeam, useTeams } from '@/hooks/useTeams';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import ServerPanel from '@/components/ServerPanel';
 import type { AgentRuntimeHealthSummary } from '@shared/snapshot';
@@ -76,13 +77,19 @@ export default function MobileNavScreen({
   onSelectAgent: (id: string) => void;
   lastSelectedId?: string | null;
 }) {
-  const { orderedAgents, orderedKbs, agentIndexMap, sensors, reorderAgents, reorderKbs } = useSidebarOrder();
+  const teams = useTeams();
+  const { currentTeamId, setCurrentTeamId } = useCurrentTeam(teams);
+  const { orderedAgents, orderedKbs, agentIndexMap, sensors, reorderAgents, reorderKbs } =
+    useSidebarOrder(currentTeamId);
   const location = useLocation();
   const navigate = useNavigate();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showAddAgentModal, setShowAddAgentModal] = useState(false);
   const [showAddKbModal, setShowAddKbModal] = useState(false);
+  const [showTeamMenu, setShowTeamMenu] = useState(false);
   const [serverPanelOpen, setServerPanelOpen] = useState(false);
+  const multiTeam = teams.length > 1;
+  const currentTeam = teams.find((t) => t.id === currentTeamId) ?? teams[0];
   // Resting indicator — accent dot on the Server footer when a system update is
   // available, matching the desktop sidebar. This is the only mobile entry to the
   // Server panel (MobileTopBar routes here), so without it a mobile user gets no
@@ -123,13 +130,77 @@ export default function MobileNavScreen({
 
   return (
     <div className="flex h-dvh flex-col bg-surface md:hidden">
-      {/* Sticky header */}
+      {/* Sticky header — at N>=2 it becomes a team switcher (switch-only; team
+          creation stays a desktop action). At N=1 it is just the wordmark. */}
       <div
-        className="flex h-14 shrink-0 items-center gap-2.5 border-b border-border-soft bg-surface px-5"
+        className="relative flex h-14 shrink-0 items-center border-b border-border-soft bg-surface"
         style={{ position: 'sticky', top: 0, zIndex: 10 }}
       >
-        <AnimaIcon className="h-4 w-4 text-accent" />
-        <span className="display text-[18px] font-semibold tracking-tight text-text">Anima</span>
+        {multiTeam ? (
+          <button
+            type="button"
+            onClick={() => setShowTeamMenu((v) => !v)}
+            className="flex h-full w-full items-center gap-2.5 px-5 text-left transition-colors hover:bg-surface-elevated/60"
+            aria-haspopup="menu"
+            aria-expanded={showTeamMenu}
+            title={`Team: ${currentTeam?.name ?? 'Anima'}`}
+          >
+            <AnimaIcon className="h-4 w-4 shrink-0 text-accent" />
+            <span className="display min-w-0 truncate text-[18px] font-semibold tracking-tight text-text">
+              {currentTeam?.name ?? 'Anima'}
+            </span>
+            <ChevronDown
+              className={[
+                'h-4 w-4 shrink-0 text-text-muted transition-transform duration-150',
+                showTeamMenu ? 'rotate-180' : '',
+              ].join(' ')}
+            />
+          </button>
+        ) : (
+          <div className="flex h-full w-full items-center gap-2.5 px-5">
+            <AnimaIcon className="h-4 w-4 text-accent" />
+            <span className="display text-[18px] font-semibold tracking-tight text-text">Anima</span>
+          </div>
+        )}
+
+        {multiTeam && showTeamMenu && (
+          <>
+            {/* Backdrop closes the menu on any outside tap. */}
+            <div
+              className="fixed inset-0 z-20"
+              onClick={() => setShowTeamMenu(false)}
+              role="presentation"
+            />
+            <div
+              role="menu"
+              className="absolute left-3 right-3 top-[52px] z-30 overflow-hidden rounded-sm border border-border bg-surface-elevated py-1 shadow-deep"
+            >
+              {teams.map((team) => {
+                const active = team.id === currentTeam?.id;
+                return (
+                  <button
+                    key={team.id}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setCurrentTeamId(team.id);
+                      setShowTeamMenu(false);
+                    }}
+                    className="flex min-h-[44px] w-full items-center gap-2 px-3 text-left font-sans text-[14px] text-text hover:bg-surface-elevated"
+                  >
+                    <Check
+                      className={[
+                        'h-3.5 w-3.5 shrink-0',
+                        active ? 'text-accent' : 'text-transparent',
+                      ].join(' ')}
+                    />
+                    <span className="truncate">{team.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Scrollable nav list */}
@@ -286,7 +357,7 @@ export default function MobileNavScreen({
                 })}
                 {orderedAgents.length === 0 && (
                   <div className="px-2 py-6 text-center font-serif italic text-[13px] text-text-muted">
-                    No agents configured
+                    No agents in this team
                   </div>
                 )}
               </div>
@@ -320,10 +391,15 @@ export default function MobileNavScreen({
       </div>
 
       {showAddAgentModal && (
-        <AgentCreateModal onClose={() => setShowAddAgentModal(false)} />
+        <AgentCreateModal
+          onClose={() => setShowAddAgentModal(false)}
+          teams={teams}
+          defaultTeamId={currentTeamId}
+        />
       )}
       {showAddKbModal && (
         <AddKbModal
+          teamId={currentTeamId}
           onClose={() => setShowAddKbModal(false)}
           onAdded={() => {
             setShowAddKbModal(false);

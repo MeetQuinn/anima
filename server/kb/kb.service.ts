@@ -5,6 +5,7 @@ import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 import ignore, { type Ignore } from 'ignore';
 
 import { DEFAULT_TEAM_KB_ROOT } from '../../shared/agent-home.js';
+import { DEFAULT_TEAM_ID } from '../../shared/server-settings.js';
 import { kbCodeLanguage, kbFileKind } from '../../shared/kb-file-types.js';
 import type { KbCreateRequest, KbFile, KbRenameRequest, KbTree, KbView } from '../../shared/kb.js';
 import { KbRegistryStore, KbStore } from '../storage/schema/kb.store.js';
@@ -118,7 +119,7 @@ export class KbRegistryService {
     if (store.exists()) {
       throw new KbError(409, `kb already exists: ${id}`);
     }
-    await store.write({ id, label, path: absolutePath });
+    await store.write({ id, label, path: absolutePath, teamId: input.teamId });
     this.clearCaches();
     return this.listKbs();
   }
@@ -135,6 +136,7 @@ export class KbRegistryService {
       id: nextKbId(configured.map((kb) => kb.id), 'team'),
       label: 'Team',
       path: teamRoot,
+      teamId: DEFAULT_TEAM_ID,
     });
   }
 
@@ -160,7 +162,7 @@ export class KbRegistryService {
       const path = resolve(entry.path);
       const kbStat = await stat(path).catch(() => undefined);
       if (kbStat?.isDirectory()) {
-        kbs.push({ id: entry.id, label: entry.label, path });
+        kbs.push({ id: entry.id, label: entry.label, path, teamId: entry.teamId });
       } else {
         console.error(`kb "${entry.id}" path is not an existing directory, skipping: ${path}`);
       }
@@ -250,7 +252,7 @@ export class KbService {
       console.error(`kb "${entry.id}" path is not an existing directory, skipping: ${path}`);
       throw new KbError(404, 'kb_not_found');
     }
-    return { id: entry.id, label: entry.label, path };
+    return { id: entry.id, label: entry.label, path, teamId: entry.teamId };
   }
 
   private async resolveTrackedPath(rawPath: string): Promise<{ kb: ResolvedKbRoot; relPath: string; absPath: string }> {

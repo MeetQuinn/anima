@@ -99,8 +99,11 @@ test('kb roots endpoint lists configured roots without paths', async () => {
     await withServer(homeDir, async (base) => {
       const res = await fetch(`${base}/api/kbs`);
       assert.equal(res.status, 200);
-      const body = (await res.json()) as { kbs: Array<{ id: string; label: string; path?: string }> };
-      assert.deepEqual(body.kbs, [{ id: 'test', label: 'Test' }]);
+      const body = (await res.json()) as {
+        kbs: Array<{ id: string; label: string; teamId: string; path?: string }>;
+      };
+      // Legacy config on disk has no teamId, so it reads back as the default team.
+      assert.deepEqual(body.kbs, [{ id: 'test', label: 'Test', teamId: 'default' }]);
       assert.equal(body.kbs[0] && 'path' in body.kbs[0], false, 'absolute path must not leak');
     });
   } finally {
@@ -119,15 +122,16 @@ test('kb roots can be added and removed without restarting the web app', async (
 
     await withServer(homeDir, async (base) => {
       const add = await fetch(`${base}/api/kbs`, {
-        body: JSON.stringify({ id: 'second', label: 'Second', path: secondRepo }),
+        body: JSON.stringify({ id: 'second', label: 'Second', path: secondRepo, teamId: 'content' }),
         headers: { 'content-type': 'application/json' },
         method: 'POST',
       });
       assert.equal(add.status, 200);
+      // The new KB round-trips its assigned team; the legacy one degrades to default.
       assert.deepEqual(await add.json(), {
         kbs: [
-          { id: 'second', label: 'Second' },
-          { id: 'test', label: 'Test' },
+          { id: 'second', label: 'Second', teamId: 'content' },
+          { id: 'test', label: 'Test', teamId: 'default' },
         ],
       });
 
@@ -139,7 +143,7 @@ test('kb roots can be added and removed without restarting the web app', async (
       assert.deepEqual(treeBody.nodes.map((node) => node.name), ['SECOND.md']);
 
       const duplicate = await fetch(`${base}/api/kbs`, {
-        body: JSON.stringify({ id: 'second', label: 'Duplicate', path: secondRepo }),
+        body: JSON.stringify({ id: 'second', label: 'Duplicate', path: secondRepo, teamId: 'content' }),
         headers: { 'content-type': 'application/json' },
         method: 'POST',
       });
@@ -151,10 +155,11 @@ test('kb roots can be added and removed without restarting the web app', async (
         method: 'POST',
       });
       assert.equal(rename.status, 200);
+      // Rename preserves the KB's team.
       assert.deepEqual(await rename.json(), {
         kbs: [
-          { id: 'second', label: 'Second Renamed' },
-          { id: 'test', label: 'Test' },
+          { id: 'second', label: 'Second Renamed', teamId: 'content' },
+          { id: 'test', label: 'Test', teamId: 'default' },
         ],
       });
 
@@ -166,7 +171,7 @@ test('kb roots can be added and removed without restarting the web app', async (
       assert.equal(badRename.status, 400);
 
       const missing = await fetch(`${base}/api/kbs`, {
-        body: JSON.stringify({ id: 'missing', label: 'Missing', path: join(secondRepo, 'missing') }),
+        body: JSON.stringify({ id: 'missing', label: 'Missing', path: join(secondRepo, 'missing'), teamId: 'content' }),
         headers: { 'content-type': 'application/json' },
         method: 'POST',
       });
@@ -174,7 +179,7 @@ test('kb roots can be added and removed without restarting the web app', async (
 
       const remove = await fetch(`${base}/api/kbs/second`, { method: 'DELETE' });
       assert.equal(remove.status, 200);
-      assert.deepEqual(await remove.json(), { kbs: [{ id: 'test', label: 'Test' }] });
+      assert.deepEqual(await remove.json(), { kbs: [{ id: 'test', label: 'Test', teamId: 'default' }] });
 
       const removedTree = await fetch(`${base}/api/kbs/second/tree`);
       assert.equal(removedTree.status, 404);

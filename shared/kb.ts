@@ -5,12 +5,16 @@ import type { KbFileKind } from './kb-file-types.js';
 export interface KbView {
   id: string;
   label: string;
+  // Owning team. Persisted per KB; a legacy KB with no stored team reads as the
+  // default team. The sidebar filters KBs to the current working team by this.
+  teamId: string;
 }
 
 export const KbCreateRequest = z.object({
   id: z.string().trim().min(1),
   label: z.string().trim().min(1),
   path: z.string().trim().min(1),
+  teamId: z.string().trim().min(1),
 });
 
 export type KbCreateRequest = z.infer<typeof KbCreateRequest>;

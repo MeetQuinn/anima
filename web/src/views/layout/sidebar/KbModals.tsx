@@ -10,9 +10,12 @@ import type { KbView } from '@shared/kb';
 // Add Knowledge Base modal
 // ---------------------------------------------------------------------------
 export function AddKbModal({
+  teamId,
   onClose,
   onAdded,
 }: {
+  // The team this KB is created under — the current working team in the sidebar.
+  teamId: string;
   onClose: () => void;
   onAdded: (newId: string) => void;
 }) {
@@ -33,7 +36,7 @@ export function AddKbModal({
     setBusy(true);
     setError(null);
     try {
-      await addKb({ id, label, path });
+      await addKb({ id, label, path, teamId });
       onAdded(id);
       onClose();
     } catch (err) {

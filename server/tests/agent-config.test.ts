@@ -128,7 +128,7 @@ test('creating default-home agents registers the team kb once', async () => {
         });
 
         assert.equal((await stat(join(teamRoot, 'agents', 'first-agent'))).isDirectory(), true);
-        assert.deepEqual(await kbRegistry().list(), [{ id: 'team', label: 'Team', path: teamRoot }]);
+        assert.deepEqual(await kbRegistry().list(), [{ id: 'team', label: 'Team', path: teamRoot, teamId: 'default' }]);
 
         await defaultAgentRegistryService.createAgent({
           name: 'Second Agent',
@@ -136,7 +136,7 @@ test('creating default-home agents registers the team kb once', async () => {
           role: 'Second default-home agent.',
           provider: { kind: 'claude-code', model: 'opus' },
         });
-        assert.deepEqual(await kbRegistry().list(), [{ id: 'team', label: 'Team', path: teamRoot }]);
+        assert.deepEqual(await kbRegistry().list(), [{ id: 'team', label: 'Team', path: teamRoot, teamId: 'default' }]);
 
         await defaultAgentRegistryService.createAgent({
           name: 'Custom Agent',
@@ -144,7 +144,7 @@ test('creating default-home agents registers the team kb once', async () => {
           role: 'Custom-home agent.',
           provider: { kind: 'claude-code', model: 'opus' },
         });
-        assert.deepEqual(await kbRegistry().list(), [{ id: 'team', label: 'Team', path: teamRoot }]);
+        assert.deepEqual(await kbRegistry().list(), [{ id: 'team', label: 'Team', path: teamRoot, teamId: 'default' }]);
       });
     });
   } finally {
@@ -162,7 +162,7 @@ test('team kb registration avoids id collisions without clobbering existing root
     await withProcessHome(homeDir, async () => {
       await withAnimaHome(configDir, async () => {
         const teamRoot = join(homeDir, 'anima-team');
-        await kbStore('team').write({ id: 'team', label: 'Other Team', path: otherRoot });
+        await kbStore('team').write({ id: 'team', label: 'Other Team', path: otherRoot, teamId: 'default' });
 
         await defaultAgentRegistryService.createAgent({
           name: 'Default Agent',
@@ -172,8 +172,8 @@ test('team kb registration avoids id collisions without clobbering existing root
         });
 
         assert.deepEqual(await kbRegistry().list(), [
-          { id: 'team', label: 'Other Team', path: otherRoot },
-          { id: 'team-2', label: 'Team', path: teamRoot },
+          { id: 'team', label: 'Other Team', path: otherRoot, teamId: 'default' },
+          { id: 'team-2', label: 'Team', path: teamRoot, teamId: 'default' },
         ]);
       });
     });
