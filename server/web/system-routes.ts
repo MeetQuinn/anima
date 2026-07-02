@@ -24,6 +24,17 @@ const TeamCreateRequest = z.object({
   home: z.string().trim().min(1).optional(),
 }).strict();
 
+// Edit an existing team. Both fields optional, but at least one must be present.
+const TeamUpdateRequest = z
+  .object({
+    name: z.string().trim().min(1).optional(),
+    home: z.string().trim().min(1).optional(),
+  })
+  .strict()
+  .refine((v) => v.name !== undefined || v.home !== undefined, {
+    message: 'at least one of name or home must be provided',
+  });
+
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const ANIMACTL_SCRIPT = join(PROJECT_ROOT, 'dist/server/cli/animactl.js');
 
@@ -104,6 +115,24 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
     try {
       const team = await defaultTeamService.createTeam(parsed.data);
       return reply.status(201).send({ team });
+    } catch (error) {
+      if (error instanceof TeamServiceError) {
+        return reply.status(error.statusCode).send({ error: error.message });
+      }
+      throw error;
+    }
+  });
+
+  fastify.patch('/api/teams/:teamId', async (request, reply) => {
+    const teamId = (request.params as { teamId?: string }).teamId;
+    if (!teamId) return reply.status(400).send({ error: 'Missing team id' });
+    const parsed = TeamUpdateRequest.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid team update payload' });
+    }
+    try {
+      const team = await defaultTeamService.updateTeam(teamId, parsed.data);
+      return reply.send({ team });
     } catch (error) {
       if (error instanceof TeamServiceError) {
         return reply.status(error.statusCode).send({ error: error.message });

@@ -119,10 +119,11 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
   const [customParent, setCustomParent] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
 
-  // Team a new agent lands in. Defaults to the working-context team; the picker
-  // only appears once a second team exists (progressive disclosure).
+  // Team a new agent lands in. Fixed to the team the create action launched from
+  // (defaultTeamId) — there is no in-modal team picker, so the agent joins
+  // whichever team's sidebar it was started from.
   const teamsList = teams ?? [];
-  const [teamId, setTeamId] = useState(defaultTeamId ?? DEFAULT_TEAM_ID);
+  const [teamId] = useState(defaultTeamId ?? DEFAULT_TEAM_ID);
   const selectedTeam = teamsList.find((t) => t.id === teamId);
   // The team's agents live under $TEAM_HOME/agents/. For the default team this is
   // exactly DEFAULT_AGENT_HOMES_ROOT, so N=1 create is byte-identical to today.
@@ -675,30 +676,9 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
               )}
             </div>
 
-            {/* Team — only surfaces once a second team exists (progressive
-                disclosure). Defaults to the current working-context team. */}
-            {!createdAgentId && teamsList.length > 1 && (
-              <div>
-                <label className="font-sans mb-1.5 block text-[12px] font-medium text-text-muted">
-                  Team
-                </label>
-                <Select value={teamId} onValueChange={(v) => { if (v) setTeamId(v); }}>
-                  <SelectTrigger className="!h-auto w-full py-2 font-serif text-[15px]">
-                    <SelectValue>
-                      {(v: string) => teamsList.find((t) => t.id === v)?.name ?? v}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {teamsList.map((t) => (
-                      <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="font-sans mt-1 text-[11px] text-text-subtle">
-                  The new agent joins this team; its home lives under the team's folder.
-                </p>
-              </div>
-            )}
+            {/* No team picker here: the agent joins whichever team's sidebar the
+                "+ add agent" action was launched from (passed in as defaultTeamId).
+                Its home lands under that team's folder. */}
 
             {/* Home — collapsed secondary field; hidden when agent already created (dir exists) */}
             {!createdAgentId && <div>

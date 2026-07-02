@@ -18,6 +18,18 @@ export async function fetchKbBrowse(path?: string): Promise<KbBrowseResult> {
   return apiRequest(url);
 }
 
+// Create a new subdirectory under `parent` (omit to target the home root).
+// Returns the refreshed browse of the parent (its absolute path + entries).
+export async function createDirectory(
+  name: string,
+  parent?: string,
+): Promise<KbBrowseResult> {
+  return apiRequest(
+    '/api/filesystem/mkdir',
+    jsonInit('POST', parent ? { parent, name } : { name }),
+  );
+}
+
 export async function addKb(kb: KbCreateRequest): Promise<KbView[]> {
   const body = await apiRequest<{ kbs: KbView[] }>('/api/kbs', jsonInit('POST', kb));
   return body.kbs;

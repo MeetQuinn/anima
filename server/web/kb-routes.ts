@@ -7,7 +7,7 @@ import { errorMessage } from '../ids.js';
 import { KbError } from '../kb/kb.helper.js';
 import { defaultKbRegistryService, type KbRegistryService, type KbService } from '../kb/kb.service.js';
 import { HttpError, queryParam, routePath, sendJsonRaw } from './http.js';
-import { KbCreateRequest, KbRenameRequest } from '../../shared/kb.js';
+import { KbCreateRequest, KbMkdirRequest, KbRenameRequest } from '../../shared/kb.js';
 
 const KB_RAW_PREFIX = '/kb/raw/';
 const KB_CSP =
@@ -26,6 +26,10 @@ export function registerKbRoutes(
   fastify.get('/api/filesystem/browse', async (request) =>
     kbRegistryService.browseKbDirectories(queryParam(request.url, 'path')),
   );
+  fastify.post('/api/filesystem/mkdir', async (request) => {
+    const { parent, name } = KbMkdirRequest.parse(request.body);
+    return kbRegistryService.createKbDirectory(parent, name);
+  });
   fastify.get<{ Params: { id: string } }>('/api/kbs/:id/tree', async (request) =>
     kbRegistryService.serviceFor(request.params.id).buildTree(),
   );

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, FolderTree, MoreHorizontal, Plus, Server } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, FolderTree, MoreHorizontal, Plus, Server } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -20,10 +20,11 @@ import { removeKb, renameKb } from '@/api/kb';
 import { queryClient } from '@/query-client';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
-import { useCollapsedTeams, useCurrentTeam, useTeamWarnings } from '@/hooks/useTeams';
+import { useCurrentTeam, useTeams, useTeamWarnings, TEAM_PARAM } from '@/hooks/useTeams';
+import type { TeamConfig } from '@/api/teams';
 import type { AgentTeamWarning } from '@/api/teams';
 import { TeamSwitcher } from './sidebar/TeamSwitcher';
-import { CreateTeamModal } from './sidebar/TeamModals';
+import { CreateTeamModal, EditTeamModal } from './sidebar/TeamModals';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import { agentColor, initialOf } from '@/lib/avatars';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
@@ -122,32 +123,23 @@ export default function Sidebar({
     statuses.filter((s) => s.currentItemId || s.queueDepth > 0).map((s) => s.agentId),
   );
 
+  const teams = useTeams();
+  const { currentTeamId, setCurrentTeamId } = useCurrentTeam(teams);
   const {
     orderedAgents,
     orderedKbs,
-    groupedAgents,
-    grouped,
-    teams,
     agentIndexMap,
     kbIndexMap,
     sensors,
     reorderAgents,
     reorderKbs,
-  } = useSidebarOrder();
-  const collapsedTeams = useCollapsedTeams();
-  const { currentTeamId, setCurrentTeamId } = useCurrentTeam(teams);
+  } = useSidebarOrder(currentTeamId);
   // Repairable team-reference warnings (agent teamId names a team that no longer exists).
-  // The agent still degrades into the default group; this only adds a repair cue.
+  // The agent still degrades into the default team; this only adds a repair cue.
   const teamWarnings = useTeamWarnings();
   const agentNameById = new Map(orderedAgents.map((a) => [a.id, agentDisplayName(a)]));
-  // Arrow-key nav follows what is actually visible: in grouped mode that is the
-  // agents of expanded teams in group order; collapsed teams' agents are not
-  // focusable (their rows are not rendered). At N=1 this is just the flat order.
-  const visibleAgentIds = grouped
-    ? groupedAgents
-        .filter((g) => !collapsedTeams.isCollapsed(g.team.id))
-        .flatMap((g) => g.agents.map((a) => a.id))
-    : orderedAgents.map((a) => a.id);
+  // The sidebar shows only the current team, so arrow-key nav follows that flat list.
+  const visibleAgentIds = orderedAgents.map((a) => a.id);
   // Arrow up/down to move through agents (selection follows focus, debounced
   // commit). Expanded list only; the collapsed icon rail stays click-only.
   const agentKeyboardNav = useSidebarAgentKeyboardNav({
@@ -163,6 +155,8 @@ export default function Sidebar({
 
   // New-team modal (opened from the TeamSwitcher)
   const [showCreateTeamModal, setShowCreateTeamModal] = useState(false);
+  // Edit-team modal (opened from a team row's pencil in the TeamSwitcher)
+  const [editTeam, setEditTeam] = useState<TeamConfig | null>(null);
 
   // Kebab menu
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -399,23 +393,8 @@ export default function Sidebar({
               <div className="w-full shrink-0 border-t border-spine-border my-1" />
             )}
 
-            {/* Agent avatars with status dots. At N>=2 the rail clusters by team
-                (a thin divider between clusters); at N=1 it is the flat order. */}
-            {grouped
-              ? groupedAgents
-                  .filter((g) => g.agents.length > 0)
-                  .map(({ team, agents }, gi) => (
-                    <div
-                      key={team.id}
-                      className={[
-                        'flex w-full flex-col items-center gap-2',
-                        gi > 0 ? 'border-t border-spine-border/60 pt-2' : '',
-                      ].join(' ')}
-                    >
-                      {agents.map(renderCollapsedAgent)}
-                    </div>
-                  ))
-              : orderedAgents.map(renderCollapsedAgent)}
+            {/* Agent avatars with status dots — the current team's agents, flat. */}
+            {orderedAgents.map(renderCollapsedAgent)}
           </div>
 
           {/* Footer — server only */}
@@ -459,8 +438,19 @@ export default function Sidebar({
           <TeamSwitcher
             teams={teams}
             currentTeamId={currentTeamId}
-            onSelectTeam={setCurrentTeamId}
+            onSelectTeam={(id) => {
+              if (id === currentTeamId) return;
+              setCurrentTeamId(id);
+              // Clear the main panel so it follows the new team: drop the open
+              // agent (or KB) back to `/` while KEEPING ?team= in the same hop
+              // (matching the fresh-load shape). AgentReconciler then lands on the
+              // new team's first agent, or stays blank if the team is empty.
+              // Preserving the param here avoids a drop + re-sync race with the
+              // reconciler that would otherwise strand the URL at `/`.
+              navigate(`/?${TEAM_PARAM}=${encodeURIComponent(id)}`);
+            }}
             onNewTeam={() => setShowCreateTeamModal(true)}
+            onEditTeam={(team) => setEditTeam(team)}
           />
 
           <div className="flex-1 overflow-y-auto p-3">
@@ -577,72 +567,28 @@ export default function Sidebar({
                 collisionDetection={closestCenter}
                 onDragEnd={reorderAgents}
               >
-                {grouped ? (
-                  // N>=2: collapsible groups, one per team, all teams visible.
-                  // Switching teams changes working context elsewhere; it never
-                  // filters this list.
-                  <div className="space-y-1.5">
-                    {groupedAgents.map(({ team, agents }) => {
-                      const isCollapsed = collapsedTeams.isCollapsed(team.id);
-                      return (
-                        <div key={team.id}>
-                          <button
-                            onClick={() => collapsedTeams.toggle(team.id)}
-                            className="group/team flex w-full items-center gap-1.5 rounded-sm py-1 pl-2 pr-2 text-left transition-colors hover:bg-spine-elevated/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-                            aria-expanded={!isCollapsed}
-                            title={isCollapsed ? `Expand ${team.name}` : `Collapse ${team.name}`}
-                          >
-                            {isCollapsed ? (
-                              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-on-spine-subtle" />
-                            ) : (
-                              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-on-spine-subtle" />
-                            )}
-                            <span className="caps truncate text-text-on-spine-subtle">
-                              {team.name}
-                            </span>
-                            <span className="ml-1 font-mono text-[10px] text-text-on-spine-subtle">
-                              {agents.length}
-                            </span>
-                          </button>
-                          {!isCollapsed && (
-                            <div className="mt-0.5 space-y-0.5 pl-1">
-                              <SortableContext
-                                items={agents.map((a) => a.id)}
-                                strategy={verticalListSortingStrategy}
-                              >
-                                {agents.map(renderAgentRow)}
-                              </SortableContext>
-                              {agents.length === 0 && (
-                                <div className="px-2 py-2 text-center font-serif italic text-[11px] text-text-on-spine-subtle">
-                                  No agents in this team
-                                </div>
-                              )}
-                              {renderTeamWarnings(
-                                teamWarnings.filter((w) => w.effectiveTeamId === team.id),
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  // N=1: flat list, visually identical to the pre-teams sidebar.
-                  <div className="space-y-0.5">
-                    <SortableContext
-                      items={orderedAgents.map((a) => a.id)}
-                      strategy={verticalListSortingStrategy}
+                {/* Flat list of the current team's agents. Switching teams in the
+                    TeamSwitcher swaps which team's agents (and KBs) are shown. */}
+                <div className="space-y-0.5">
+                  <SortableContext
+                    items={orderedAgents.map((a) => a.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {orderedAgents.map(renderAgentRow)}
+                  </SortableContext>
+                  {orderedAgents.length === 0 && (
+                    <button
+                      onClick={() => setShowAddAgentModal(true)}
+                      className="flex items-center gap-1.5 px-2 font-sans text-[11px] text-text-on-spine-subtle hover:text-text-on-spine"
                     >
-                      {orderedAgents.map(renderAgentRow)}
-                    </SortableContext>
-                    {orderedAgents.length === 0 && (
-                      <div className="px-2 py-4 text-center font-serif italic text-[12px] text-text-on-spine-subtle">
-                        No agents configured
-                      </div>
-                    )}
-                    {renderTeamWarnings(teamWarnings)}
-                  </div>
-                )}
+                      <Plus className="h-3 w-3" />
+                      Add agent
+                    </button>
+                  )}
+                  {renderTeamWarnings(
+                    teamWarnings.filter((w) => w.effectiveTeamId === currentTeamId),
+                  )}
+                </div>
               </DndContext>
             </div>
           </div>
@@ -672,6 +618,7 @@ export default function Sidebar({
 
       {showAddModal && (
         <AddKbModal
+          teamId={currentTeamId}
           onClose={() => setShowAddModal(false)}
           onAdded={(newId) => {
             queryClient.invalidateQueries({ queryKey: queryKeys.kbs() });
@@ -731,6 +678,17 @@ export default function Sidebar({
         <CreateTeamModal
           onClose={() => setShowCreateTeamModal(false)}
           onCreated={(team) => setCurrentTeamId(team.id)}
+        />
+      )}
+
+      {editTeam && (
+        <EditTeamModal
+          team={editTeam}
+          onClose={() => setEditTeam(null)}
+          // Editing is navigation-neutral: it never switches the working team (renaming the
+          // team you're on refreshes its label via query invalidation; editing another team
+          // does not yank you into it). Just close.
+          onSaved={() => setEditTeam(null)}
         />
       )}
 

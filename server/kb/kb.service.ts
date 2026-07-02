@@ -1,10 +1,11 @@
-import { lstat, readFile, readdir, realpath, stat } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 
 import ignore, { type Ignore } from 'ignore';
 
 import { DEFAULT_TEAM_KB_ROOT } from '../../shared/agent-home.js';
+import { DEFAULT_TEAM_ID } from '../../shared/server-settings.js';
 import { kbCodeLanguage, kbFileKind } from '../../shared/kb-file-types.js';
 import type { KbCreateRequest, KbFile, KbRenameRequest, KbTree, KbView } from '../../shared/kb.js';
 import { KbRegistryStore, KbStore } from '../storage/schema/kb.store.js';
@@ -60,6 +61,52 @@ export class KbRegistryService {
     };
   }
 
+  // Create a new subdirectory under an existing directory inside the browse
+  // root (home). Mirrors browseKbDirectories' sandboxing: parent must resolve
+  // to an existing directory within home, and the name is validated to a single
+  // path segment (no separators / traversal / dotfiles). Returns the refreshed
+  // browse of the parent so the caller can locate the new directory by name.
+  async createKbDirectory(
+    rawParent: string | undefined,
+    rawName: string,
+  ): Promise<KbDirectoryBrowse> {
+    const home = await realpath(homedir());
+    const requested = rawParent?.trim() ? expandHome(rawParent.trim()) : home;
+    const parentRealpath = await realpath(resolve(requested)).catch(() => undefined);
+    if (!parentRealpath) throw new KbError(404, 'path_not_found');
+    if (parentRealpath !== home && !parentRealpath.startsWith(home + sep)) {
+      throw new KbError(400, 'path outside browse root');
+    }
+    const parentStat = await stat(parentRealpath).catch(() => undefined);
+    if (!parentStat?.isDirectory()) throw new KbError(400, 'path must be an existing directory');
+
+    const name = rawName.trim();
+    if (!name) throw new KbError(400, 'folder name is required');
+    if (
+      name === '.' ||
+      name === '..' ||
+      name.startsWith('.') ||
+      name.includes('/') ||
+      name.includes('\\') ||
+      name.includes('\0') ||
+      name.length > 255
+    ) {
+      throw new KbError(400, 'invalid folder name');
+    }
+
+    const target = join(parentRealpath, name);
+    // Defense in depth: the joined target must stay directly under the parent.
+    if (!target.startsWith(parentRealpath + sep)) {
+      throw new KbError(400, 'invalid folder name');
+    }
+    if (await stat(target).catch(() => undefined)) {
+      throw new KbError(409, 'a folder with that name already exists');
+    }
+
+    await mkdir(target);
+    return this.browseKbDirectories(parentRealpath);
+  }
+
   async addKb(input: KbCreateRequest): Promise<KbView[]> {
     const id = input.id;
     const label = input.label;
@@ -72,7 +119,7 @@ export class KbRegistryService {
     if (store.exists()) {
       throw new KbError(409, `kb already exists: ${id}`);
     }
-    await store.write({ id, label, path: absolutePath });
+    await store.write({ id, label, path: absolutePath, teamId: input.teamId });
     this.clearCaches();
     return this.listKbs();
   }
@@ -89,6 +136,7 @@ export class KbRegistryService {
       id: nextKbId(configured.map((kb) => kb.id), 'team'),
       label: 'Team',
       path: teamRoot,
+      teamId: DEFAULT_TEAM_ID,
     });
   }
 
@@ -114,7 +162,7 @@ export class KbRegistryService {
       const path = resolve(entry.path);
       const kbStat = await stat(path).catch(() => undefined);
       if (kbStat?.isDirectory()) {
-        kbs.push({ id: entry.id, label: entry.label, path });
+        kbs.push({ id: entry.id, label: entry.label, path, teamId: entry.teamId });
       } else {
         console.error(`kb "${entry.id}" path is not an existing directory, skipping: ${path}`);
       }
@@ -204,7 +252,7 @@ export class KbService {
       console.error(`kb "${entry.id}" path is not an existing directory, skipping: ${path}`);
       throw new KbError(404, 'kb_not_found');
     }
-    return { id: entry.id, label: entry.label, path };
+    return { id: entry.id, label: entry.label, path, teamId: entry.teamId };
   }
 
   private async resolveTrackedPath(rawPath: string): Promise<{ kb: ResolvedKbRoot; relPath: string; absPath: string }> {

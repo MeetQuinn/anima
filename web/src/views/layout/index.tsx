@@ -9,7 +9,12 @@ import {
   parseKbPath,
   reconcileLocation,
   buildPath,
+  DEFAULT_TAB,
 } from '@/lib/url-state';
+import type { UrlLocation } from '@/lib/url-state';
+import { agentHasConnectedTransport } from '@shared/agent-transports';
+import { effectiveTeamId } from '@/lib/teams';
+import { useTeams, useCurrentTeam } from '@/hooks/useTeams';
 import Sidebar from './Sidebar';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { RestartEchoToast } from '@/components/restart-shared';
@@ -39,21 +44,56 @@ function AgentReconciler({ disabled }: { disabled?: boolean }) {
   const { data: agentStatuses } = useQuery({ queryKey: queryKeys.agentStatuses(), queryFn: fetchAgentStatuses });
   const location = useLocation();
   const navigate = useNavigate();
+  const teams = useTeams();
+  const { currentTeamId } = useCurrentTeam(teams);
 
   useEffect(() => {
     if (disabled) return;
     if (!agents || !agentStatuses) return;
+    // Wait for the team registry before ANY reconcile navigation. Until it loads,
+    // `useCurrentTeam` cannot validate a `?team=X` deep link — it degrades X to the
+    // default — so navigating now would resolve against the wrong team AND drop the
+    // param before it ever sticks (useTeams always yields >= 1 team once loaded, so
+    // length 0 reliably means "not loaded yet"). The invariant: `/?team=X` must not
+    // drive a navigation before X has been validated or explicitly degraded.
+    if (teams.length === 0) return;
     // Skip reconciliation on kb paths — they don't use the agent grammar.
     if (parseKbPath(location.pathname)) return;
     const parsed = parseLocation(location.pathname);
-    const snapshot = {
-      agents,
-      agentStatuses,
-      selectedAgentId: agents[0]?.id,
-    };
-    const target = reconcileLocation(snapshot, parsed);
-    if (target) navigate(buildPath(target), { replace: true });
-  }, [disabled, agents, agentStatuses, location.pathname, navigate]);
+
+    // Preserve the current query (notably `?team=`) across every reconcile
+    // navigation, so a team-scoped auto-pick or tab-fill never strips the param.
+    const navTo = (loc: UrlLocation) =>
+      navigate({ pathname: buildPath(loc), search: location.search }, { replace: true });
+
+    // No agent in the URL: auto-pick, but scoped to the current team so the main
+    // panel follows the sidebar. When the current team has no agents we leave the
+    // URL at `/` (blank main panel) instead of bouncing to another team's agent —
+    // this is what makes a team switch "clear" the panel for an empty team.
+    if (!parsed.agentId) {
+      const teamIds = new Set(teams.map((t) => t.id));
+      const teamAgents = agents.filter((a) => effectiveTeamId(a, teamIds) === currentTeamId);
+      if (teamAgents.length === 0) return; // nothing to select — stay blank
+      const teamAgentIds = new Set(teamAgents.map((a) => a.id));
+      const active = agentStatuses.find(
+        (s) => teamAgentIds.has(s.agentId) && (s.currentItemId || s.queueDepth > 0),
+      );
+      const pickId = active?.agentId ?? teamAgents[0].id;
+      const picked = teamAgents.find((a) => a.id === pickId);
+      const tab = picked && agentHasConnectedTransport(picked) ? DEFAULT_TAB : 'profile';
+      navTo({ agentId: pickId, tab });
+      return;
+    }
+
+    // A specific agent is in the URL: keep the standard validity + default-tab
+    // path against the full agent list, so a valid agent still renders (and gets
+    // its tab filled) even when reached via a cross-team deep link.
+    const target = reconcileLocation(
+      { agents, agentStatuses, selectedAgentId: agents[0]?.id },
+      parsed,
+    );
+    if (target) navTo(target);
+  }, [disabled, agents, agentStatuses, location.pathname, location.search, navigate, teams, currentTeamId]);
 
   return null;
 }

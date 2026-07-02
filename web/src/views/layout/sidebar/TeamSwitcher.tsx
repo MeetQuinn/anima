@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, Plus } from 'lucide-react';
+import { Check, ChevronDown, Pencil, Plus } from 'lucide-react';
 import AnimaIcon from '@/components/AnimaIcon';
 import type { TeamConfig } from '@/api/teams';
 
@@ -18,11 +18,13 @@ export function TeamSwitcher({
   currentTeamId,
   onSelectTeam,
   onNewTeam,
+  onEditTeam,
 }: {
   teams: TeamConfig[];
   currentTeamId: string;
   onSelectTeam: (teamId: string) => void;
   onNewTeam: () => void;
+  onEditTeam: (team: TeamConfig) => void;
 }) {
   const grouped = teams.length > 1;
   const current = teams.find((t) => t.id === currentTeamId) ?? teams[0];
@@ -52,59 +54,79 @@ export function TeamSwitcher({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex h-14 w-full items-center gap-2.5 border-b border-spine-border px-5 text-left transition-colors hover:bg-spine-elevated/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
+        className="group flex h-14 w-full items-center gap-2 border-b border-spine-border pl-5 pr-12 text-left transition-colors hover:bg-spine-elevated/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
         aria-haspopup="menu"
         aria-expanded={open}
         title={grouped ? `Team: ${label}` : 'Anima'}
       >
         <AnimaIcon className="h-4 w-4 shrink-0 text-accent" />
-        <span className="display truncate text-[18px] font-semibold tracking-tight text-text-on-spine">
+        <span className="display min-w-0 truncate text-[18px] font-semibold tracking-tight text-text-on-spine">
           {label}
         </span>
-        {grouped ? (
-          <ChevronDown
-            className={[
-              'ml-auto h-4 w-4 shrink-0 text-text-on-spine-muted transition-transform',
-              open ? 'rotate-180' : '',
-            ].join(' ')}
-          />
-        ) : (
-          <span className="ml-auto h-6 w-6 shrink-0" aria-hidden />
-        )}
+        {/* Caret sits right next to the name (not at the far edge, where the
+            sidebar-collapse control lives). Rests faint in single-team mode,
+            brightens on hover, and rotates when the menu is open. */}
+        <ChevronDown
+          className={[
+            'h-4 w-4 shrink-0 text-text-on-spine-muted transition-all duration-150',
+            open
+              ? 'rotate-180 opacity-100'
+              : grouped
+                ? 'opacity-70'
+                : 'opacity-30 group-hover:opacity-70',
+          ].join(' ')}
+        />
       </button>
 
       {open && (
         <div
           role="menu"
-          className="absolute left-3 right-3 top-[52px] z-30 overflow-hidden rounded-sm border border-border-soft bg-surface py-1 shadow-deep"
+          className="absolute left-3 right-3 top-[52px] z-30 overflow-hidden rounded-sm border border-white/20 bg-spine-elevated py-1 shadow-deep ring-1 ring-black/20"
         >
           {grouped && (
             <>
-              <div className="px-3 py-1.5 caps text-text-subtle">Teams</div>
               {teams.map((team) => {
                 const active = team.id === current?.id;
                 return (
-                  <button
+                  <div
                     key={team.id}
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      onSelectTeam(team.id);
-                      setOpen(false);
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left font-sans text-[13px] text-text hover:bg-muted/50"
+                    className="group/team flex items-center hover:bg-white/5"
                   >
-                    <Check
-                      className={[
-                        'h-3.5 w-3.5 shrink-0',
-                        active ? 'text-accent' : 'text-transparent',
-                      ].join(' ')}
-                    />
-                    <span className="truncate">{team.name}</span>
-                  </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        onSelectTeam(team.id);
+                        setOpen(false);
+                      }}
+                      className="flex min-w-0 flex-1 items-center gap-2 py-2 pl-3 text-left font-sans text-[13px] text-text-on-spine"
+                    >
+                      <Check
+                        className={[
+                          'h-3.5 w-3.5 shrink-0',
+                          active ? 'text-accent' : 'text-transparent',
+                        ].join(' ')}
+                      />
+                      <span className="truncate">{team.name}</span>
+                    </button>
+                    {/* Edit (rename / change home). Reveals on row hover; keyboard users
+                        reach it by tab. Stops propagation so it never also selects the team. */}
+                    <button
+                      type="button"
+                      aria-label={`Edit ${team.name}`}
+                      title={`Edit ${team.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEditTeam(team);
+                        setOpen(false);
+                      }}
+                      className="mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-on-spine-muted opacity-0 transition-opacity hover:bg-white/10 hover:text-text-on-spine focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent group-hover/team:opacity-100"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  </div>
                 );
               })}
-              <div className="my-1 h-px bg-border-soft" />
             </>
           )}
           <button
@@ -114,9 +136,9 @@ export function TeamSwitcher({
               onNewTeam();
               setOpen(false);
             }}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left font-sans text-[13px] text-text hover:bg-muted/50"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left font-sans text-[13px] font-medium text-text-on-spine hover:bg-white/5"
           >
-            <Plus className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+            <Plus className="h-3.5 w-3.5 shrink-0 text-accent" />
             <span>New team</span>
           </button>
         </div>

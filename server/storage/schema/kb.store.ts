@@ -7,6 +7,7 @@ import { join } from 'node:path';
 
 import { z } from 'zod';
 
+import { DEFAULT_TEAM_ID } from '../../../shared/server-settings.js';
 import { resolveAnimaHome } from '../../anima-home.js';
 import { JsonStore } from '../json-store.js';
 
@@ -17,21 +18,37 @@ export const KbRecord = z.object({
   id: z.string().regex(KB_ID),
   label: z.string().min(1),
   path: z.string().min(1),
+  // Owning team. Always resolved on read (legacy configs without it degrade to
+  // the default team) so downstream code never has to backfill again.
+  teamId: z.string().min(1),
 }).strict();
 
 export type KbRecord = z.infer<typeof KbRecord>;
 
+// On-disk shape. teamId is optional here so pre-team KB configs still parse; it
+// is backfilled to the default team when read into a KbRecord (see read/update).
 const KbFileConfig = z.object({
   label: z.string().min(1),
   path: z.string().min(1),
+  teamId: z.string().min(1).optional(),
 }).strict();
 
 type KbFileConfig = z.infer<typeof KbFileConfig>;
 
+// Resolve a stored (possibly team-less legacy) config into a full KbRecord.
+function toRecord(id: string, cfg: KbFileConfig): KbRecord {
+  return {
+    id,
+    label: cfg.label,
+    path: cfg.path,
+    teamId: cfg.teamId?.trim() ? cfg.teamId : DEFAULT_TEAM_ID,
+  };
+}
+
 function getKbConfigFileStore(id: string): JsonStore<KbFileConfig> {
   assertKbId(id);
   return new JsonStore<KbFileConfig>({
-    empty: () => ({ label: '', path: '' }),
+    empty: () => ({ label: '', path: '', teamId: DEFAULT_TEAM_ID }),
     parse: KbFileConfig.parse,
     path: () => kbConfigPath(id),
   });
@@ -66,23 +83,23 @@ export class KbStore {
   }
 
   async read(): Promise<KbRecord> {
-    return { id: this.id, ...(await this.file.read()) };
+    return toRecord(this.id, await this.file.read());
   }
 
   async write(kb: KbRecord): Promise<KbRecord> {
     if (kb.id !== this.id) throw new Error('kb id is immutable');
     const next = KbRecord.parse(kb);
-    await this.file.write({ label: next.label, path: next.path });
+    await this.file.write({ label: next.label, path: next.path, teamId: next.teamId });
     return next;
   }
 
   async update(op: (current: KbRecord) => KbRecord): Promise<KbRecord> {
     const next = await this.file.update((current) => {
-      const updated = KbRecord.parse(op({ id: this.id, ...current }));
+      const updated = KbRecord.parse(op(toRecord(this.id, current)));
       if (updated.id !== this.id) throw new Error('kb id is immutable');
-      return { label: updated.label, path: updated.path };
+      return { label: updated.label, path: updated.path, teamId: updated.teamId };
     });
-    return { id: this.id, ...next };
+    return toRecord(this.id, next);
   }
 
   async remove(): Promise<void> {

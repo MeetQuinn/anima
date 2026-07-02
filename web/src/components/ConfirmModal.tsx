@@ -100,16 +100,7 @@ export default function ConfirmModal({
             {error}
           </div>
         )}
-        <div className="mt-4 flex gap-2">
-          <Button
-            disabled={busy}
-            onClick={onConfirm}
-            variant={confirmVariant}
-            className={isLarge ? undefined : 'min-h-[44px]'}
-            size={isLarge ? undefined : 'sm'}
-          >
-            {busy ? busyLabel : confirmLabel}
-          </Button>
+        <div className="mt-4 flex justify-end gap-2">
           <Button
             disabled={busy}
             onClick={onCancel}
@@ -118,6 +109,15 @@ export default function ConfirmModal({
             size={isLarge ? undefined : 'sm'}
           >
             Cancel
+          </Button>
+          <Button
+            disabled={busy}
+            onClick={onConfirm}
+            variant={confirmVariant}
+            className={isLarge ? undefined : 'min-h-[44px]'}
+            size={isLarge ? undefined : 'sm'}
+          >
+            {busy ? busyLabel : confirmLabel}
           </Button>
         </div>
       </div>

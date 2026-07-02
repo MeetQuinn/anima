@@ -29,6 +29,7 @@ export interface ResolvedKbRoot {
   id: string;
   label: string;
   path: string; // absolute, validated directory
+  teamId: string; // owning team (resolved; legacy KBs read as the default team)
 }
 
 // Text content larger than this is not inlined in the file API; the client
@@ -57,7 +58,7 @@ export function normalizeRelPath(raw: string): string {
 }
 
 export function kbView(kb: ResolvedKbRoot): KbView {
-  return { id: kb.id, label: kb.label };
+  return { id: kb.id, label: kb.label, teamId: kb.teamId };
 }
 
 export function requiredString(value: unknown, field: string): string {

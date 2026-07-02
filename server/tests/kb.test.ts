@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -99,8 +99,11 @@ test('kb roots endpoint lists configured roots without paths', async () => {
     await withServer(homeDir, async (base) => {
       const res = await fetch(`${base}/api/kbs`);
       assert.equal(res.status, 200);
-      const body = (await res.json()) as { kbs: Array<{ id: string; label: string; path?: string }> };
-      assert.deepEqual(body.kbs, [{ id: 'test', label: 'Test' }]);
+      const body = (await res.json()) as {
+        kbs: Array<{ id: string; label: string; teamId: string; path?: string }>;
+      };
+      // Legacy config on disk has no teamId, so it reads back as the default team.
+      assert.deepEqual(body.kbs, [{ id: 'test', label: 'Test', teamId: 'default' }]);
       assert.equal(body.kbs[0] && 'path' in body.kbs[0], false, 'absolute path must not leak');
     });
   } finally {
@@ -119,15 +122,16 @@ test('kb roots can be added and removed without restarting the web app', async (
 
     await withServer(homeDir, async (base) => {
       const add = await fetch(`${base}/api/kbs`, {
-        body: JSON.stringify({ id: 'second', label: 'Second', path: secondRepo }),
+        body: JSON.stringify({ id: 'second', label: 'Second', path: secondRepo, teamId: 'content' }),
         headers: { 'content-type': 'application/json' },
         method: 'POST',
       });
       assert.equal(add.status, 200);
+      // The new KB round-trips its assigned team; the legacy one degrades to default.
       assert.deepEqual(await add.json(), {
         kbs: [
-          { id: 'second', label: 'Second' },
-          { id: 'test', label: 'Test' },
+          { id: 'second', label: 'Second', teamId: 'content' },
+          { id: 'test', label: 'Test', teamId: 'default' },
         ],
       });
 
@@ -139,7 +143,7 @@ test('kb roots can be added and removed without restarting the web app', async (
       assert.deepEqual(treeBody.nodes.map((node) => node.name), ['SECOND.md']);
 
       const duplicate = await fetch(`${base}/api/kbs`, {
-        body: JSON.stringify({ id: 'second', label: 'Duplicate', path: secondRepo }),
+        body: JSON.stringify({ id: 'second', label: 'Duplicate', path: secondRepo, teamId: 'content' }),
         headers: { 'content-type': 'application/json' },
         method: 'POST',
       });
@@ -151,10 +155,11 @@ test('kb roots can be added and removed without restarting the web app', async (
         method: 'POST',
       });
       assert.equal(rename.status, 200);
+      // Rename preserves the KB's team.
       assert.deepEqual(await rename.json(), {
         kbs: [
-          { id: 'second', label: 'Second Renamed' },
-          { id: 'test', label: 'Test' },
+          { id: 'second', label: 'Second Renamed', teamId: 'content' },
+          { id: 'test', label: 'Test', teamId: 'default' },
         ],
       });
 
@@ -166,7 +171,7 @@ test('kb roots can be added and removed without restarting the web app', async (
       assert.equal(badRename.status, 400);
 
       const missing = await fetch(`${base}/api/kbs`, {
-        body: JSON.stringify({ id: 'missing', label: 'Missing', path: join(secondRepo, 'missing') }),
+        body: JSON.stringify({ id: 'missing', label: 'Missing', path: join(secondRepo, 'missing'), teamId: 'content' }),
         headers: { 'content-type': 'application/json' },
         method: 'POST',
       });
@@ -174,7 +179,7 @@ test('kb roots can be added and removed without restarting the web app', async (
 
       const remove = await fetch(`${base}/api/kbs/second`, { method: 'DELETE' });
       assert.equal(remove.status, 200);
-      assert.deepEqual(await remove.json(), { kbs: [{ id: 'test', label: 'Test' }] });
+      assert.deepEqual(await remove.json(), { kbs: [{ id: 'test', label: 'Test', teamId: 'default' }] });
 
       const removedTree = await fetch(`${base}/api/kbs/second/tree`);
       assert.equal(removedTree.status, 404);
@@ -209,6 +214,56 @@ test('kb directory browser is home-bound and returns directories only', async ()
 
       const outside = await fetch(`${base}/api/filesystem/browse?path=${encodeURIComponent(tmpdir())}`);
       assert.equal(outside.status, 400, 'directory browser cannot escape $HOME');
+    });
+  } finally {
+    await rm(homeDir, { force: true, recursive: true });
+    await rm(repoDir, { force: true, recursive: true });
+    await rm(browseRoot, { force: true, recursive: true });
+  }
+});
+
+test('kb directory mkdir creates a subfolder and enforces the home boundary', async () => {
+  const { homeDir, repoDir } = await setupKb('anima-kb-mkdir');
+  const browseRoot = await mkdtemp(join(homedir(), 'anima-kb-mkdir-'));
+  try {
+    await withServer(homeDir, async (base) => {
+      const mk = (payload: unknown) =>
+        fetch(`${base}/api/filesystem/mkdir`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+      // Happy path: creates the folder and returns the refreshed parent browse.
+      const ok = await mk({ parent: browseRoot, name: 'new-folder' });
+      assert.equal(ok.status, 200);
+      const body = (await ok.json()) as {
+        path: string;
+        entries: Array<{ name: string; path: string }>;
+      };
+      assert.equal(body.path, browseRoot);
+      assert.ok(
+        body.entries.some(
+          (e) => e.name === 'new-folder' && e.path === join(browseRoot, 'new-folder'),
+        ),
+        'new folder appears in the returned parent listing',
+      );
+      assert.ok((await stat(join(browseRoot, 'new-folder'))).isDirectory());
+
+      // Duplicate name -> 409, no clobber.
+      assert.equal((await mk({ parent: browseRoot, name: 'new-folder' })).status, 409);
+
+      // Traversal / separators / dotfiles in the name -> 400, nothing created.
+      assert.equal((await mk({ parent: browseRoot, name: '../escape' })).status, 400);
+      assert.equal((await mk({ parent: browseRoot, name: 'a/b' })).status, 400);
+      assert.equal((await mk({ parent: browseRoot, name: '..' })).status, 400);
+      assert.equal((await mk({ parent: browseRoot, name: '.hidden' })).status, 400);
+
+      // Parent outside the home browse root -> 400.
+      assert.equal((await mk({ parent: tmpdir(), name: 'nope' })).status, 400);
+
+      // Missing name -> 400 (schema rejects).
+      assert.equal((await mk({ parent: browseRoot })).status, 400);
     });
   } finally {
     await rm(homeDir, { force: true, recursive: true });

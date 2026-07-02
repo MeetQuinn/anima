@@ -23,6 +23,19 @@ export async function createTeam(input: { name: string; home?: string }): Promis
   return body.team;
 }
 
+// Edit a team's name and/or home. The id is stable, so a rename never touches member agents.
+// Changing home only redirects where future agents land; existing agent folders are not moved.
+export async function updateTeam(
+  teamId: string,
+  patch: { name?: string; home?: string },
+): Promise<TeamConfig> {
+  const body = await apiRequest<{ team: TeamConfig }>(
+    `/api/teams/${encodeURIComponent(teamId)}`,
+    jsonInit('PATCH', patch),
+  );
+  return body.team;
+}
+
 // Label-only reassignment; the agent's home is never moved.
 export async function assignAgentTeam(agentId: string, teamId: string): Promise<AgentConfig> {
   return apiRequest(`/api/agents/${encodeURIComponent(agentId)}/team`, jsonInit('POST', { teamId }));

@@ -392,7 +392,10 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
                 </div>
               )}
 
-              <div className="flex gap-2 pt-1">
+              <div className="flex justify-end gap-2 pt-1">
+                <Button type="button" onClick={onClose} variant="outline" disabled={busy}>
+                  Cancel
+                </Button>
                 <Button
                   type="submit"
                   disabled={
@@ -405,9 +408,6 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
                   }
                 >
                   {busy ? 'Adding…' : 'Add agent'}
-                </Button>
-                <Button type="button" onClick={onClose} variant="outline" disabled={busy}>
-                  Cancel
                 </Button>
               </div>
             </form>
