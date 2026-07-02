@@ -25,13 +25,15 @@ the curated audit; the tab is a readable projection of it.
 
 **1. Three tiers decide whether an event shows, and where.**
 
-| Tier             | Where it shows             | What lives here                                                                                                                                                                                                                          |
-| ---------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Conversation** | Default view               | What a human reads to follow what the agent _did_: its output, the files/commands/searches it touched, the messages it sent, reminders, subscriptions, failures.                                                                         |
-| **Audit**        | "Show all steps" toggle on | Diagnostics worth having when inspecting but noise in the default narrative: session/usage stats, rate limits, retries, model reroutes, provider warnings, low-level lifecycle.                                                          |
-| **Hidden**       | Never rendered             | Raw streaming/protocol frames, per-token deltas, `*.system.init`, `*.context.stats`, sanitized reasoning, legacy duplicate event names. Most of these are dropped before storage by design; if an old row exists, the UI never draws it. |
+| Tier             | Where it shows                                   | What lives here                                                                                                                                                                                                                                                                                             |
+| ---------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Conversation** | The timeline (messages + per-message step folds) | What a human reads to follow what the agent _did_: its output, the files/commands/searches it touched, the messages it sent, reminders, subscriptions, failures.                                                                                                                                            |
+| **Audit**        | Persisted only (no UI surface today)             | Diagnostics worth having when inspecting but noise in the narrative: session/usage stats, rate limits, retries, model reroutes, provider warnings, low-level lifecycle. Kept in `activity.jsonl`; the feed builder can expose them (`showHidden`), but since the single-timeline rework no UI control does. |
+| **Hidden**       | Never rendered                                   | Raw streaming/protocol frames, per-token deltas, `*.system.init`, `*.context.stats`, sanitized reasoning, legacy duplicate event names. Most of these are dropped before storage by design; if an old row exists, the UI never draws it.                                                                    |
 
-A second filter, **"Failed only"**, cross-cuts all tiers to show just failure rows.
+The former "Show all steps" and "Failed only" controls were retired with the single-timeline
+rework: Conversation steps now fold behind a per-message `▸ N steps` disclosure, and failure rows
+render in place with failure styling instead of behind a filter.
 
 **2. Each row is headline + the params that make it specific + the rest on expand.**
 
