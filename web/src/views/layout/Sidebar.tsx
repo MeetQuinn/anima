@@ -20,7 +20,7 @@ import { removeKb, renameKb } from '@/api/kb';
 import { queryClient } from '@/query-client';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
-import { useCurrentTeam, useTeams, useTeamWarnings } from '@/hooks/useTeams';
+import { useCurrentTeam, useTeams, useTeamWarnings, TEAM_PARAM } from '@/hooks/useTeams';
 import type { AgentTeamWarning } from '@/api/teams';
 import { TeamSwitcher } from './sidebar/TeamSwitcher';
 import { CreateTeamModal } from './sidebar/TeamModals';
@@ -435,7 +435,17 @@ export default function Sidebar({
           <TeamSwitcher
             teams={teams}
             currentTeamId={currentTeamId}
-            onSelectTeam={setCurrentTeamId}
+            onSelectTeam={(id) => {
+              if (id === currentTeamId) return;
+              setCurrentTeamId(id);
+              // Clear the main panel so it follows the new team: drop the open
+              // agent (or KB) back to `/` while KEEPING ?team= in the same hop
+              // (matching the fresh-load shape). AgentReconciler then lands on the
+              // new team's first agent, or stays blank if the team is empty.
+              // Preserving the param here avoids a drop + re-sync race with the
+              // reconciler that would otherwise strand the URL at `/`.
+              navigate(`/?${TEAM_PARAM}=${encodeURIComponent(id)}`);
+            }}
             onNewTeam={() => setShowCreateTeamModal(true)}
           />
 

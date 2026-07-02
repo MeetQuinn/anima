@@ -9,7 +9,11 @@ import {
   parseKbPath,
   reconcileLocation,
   buildPath,
+  DEFAULT_TAB,
 } from '@/lib/url-state';
+import { agentHasConnectedTransport } from '@shared/agent-transports';
+import { effectiveTeamId } from '@/lib/teams';
+import { useTeams, useCurrentTeam } from '@/hooks/useTeams';
 import Sidebar from './Sidebar';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { RestartEchoToast } from '@/components/restart-shared';
@@ -39,6 +43,8 @@ function AgentReconciler({ disabled }: { disabled?: boolean }) {
   const { data: agentStatuses } = useQuery({ queryKey: queryKeys.agentStatuses(), queryFn: fetchAgentStatuses });
   const location = useLocation();
   const navigate = useNavigate();
+  const teams = useTeams();
+  const { currentTeamId } = useCurrentTeam(teams);
 
   useEffect(() => {
     if (disabled) return;
@@ -46,14 +52,35 @@ function AgentReconciler({ disabled }: { disabled?: boolean }) {
     // Skip reconciliation on kb paths — they don't use the agent grammar.
     if (parseKbPath(location.pathname)) return;
     const parsed = parseLocation(location.pathname);
-    const snapshot = {
-      agents,
-      agentStatuses,
-      selectedAgentId: agents[0]?.id,
-    };
-    const target = reconcileLocation(snapshot, parsed);
+
+    // No agent in the URL: auto-pick, but scoped to the current team so the main
+    // panel follows the sidebar. When the current team has no agents we leave the
+    // URL at `/` (blank main panel) instead of bouncing to another team's agent —
+    // this is what makes a team switch "clear" the panel for an empty team.
+    if (!parsed.agentId) {
+      const teamIds = new Set(teams.map((t) => t.id));
+      const teamAgents = agents.filter((a) => effectiveTeamId(a, teamIds) === currentTeamId);
+      if (teamAgents.length === 0) return; // nothing to select — stay blank
+      const teamAgentIds = new Set(teamAgents.map((a) => a.id));
+      const active = agentStatuses.find(
+        (s) => teamAgentIds.has(s.agentId) && (s.currentItemId || s.queueDepth > 0),
+      );
+      const pickId = active?.agentId ?? teamAgents[0].id;
+      const picked = teamAgents.find((a) => a.id === pickId);
+      const tab = picked && agentHasConnectedTransport(picked) ? DEFAULT_TAB : 'profile';
+      navigate(buildPath({ agentId: pickId, tab }), { replace: true });
+      return;
+    }
+
+    // A specific agent is in the URL: keep the standard validity + default-tab
+    // path against the full agent list, so a valid agent still renders (and gets
+    // its tab filled) even when reached via a cross-team deep link.
+    const target = reconcileLocation(
+      { agents, agentStatuses, selectedAgentId: agents[0]?.id },
+      parsed,
+    );
     if (target) navigate(buildPath(target), { replace: true });
-  }, [disabled, agents, agentStatuses, location.pathname, navigate]);
+  }, [disabled, agents, agentStatuses, location.pathname, navigate, teams, currentTeamId]);
 
   return null;
 }

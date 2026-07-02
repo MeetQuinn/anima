@@ -27,7 +27,10 @@ export function useTeamWarnings(): AgentTeamWarning[] {
 }
 
 const CURRENT_TEAM_KEY = 'anima.currentTeamId';
-const TEAM_PARAM = 'team';
+// URL query key that carries the working-context team. Exported so navigations
+// that clear the main panel (e.g. a team switch) can preserve it in the same
+// hop, avoiding a param-drop + re-sync race with AgentReconciler.
+export const TEAM_PARAM = 'team';
 
 function readStoredTeam(): string | null {
   try {
