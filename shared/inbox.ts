@@ -81,6 +81,10 @@ const InboxItemBase = z.object({
   receivedAt: z.string(),
 });
 
+/** Why this wake reached the agent; rendered as `wake=<reason>` in the delivery envelope. */
+export const WakeReason = z.enum(['channel_follow', 'dm', 'mention', 'thread_follow']);
+export type WakeReason = z.infer<typeof WakeReason>;
+
 export const SlackInboxItem = InboxItemBase.extend({
   actor: SlackInboxActor.optional(),
   attentionSuggestion: z.string().optional(),
@@ -94,6 +98,7 @@ export const SlackInboxItem = InboxItemBase.extend({
   teamId: z.string(),
   text: z.string(),
   threadTs: z.string().optional(),
+  wakeReason: WakeReason.optional(),
 });
 
 export type SlackInboxItem = z.infer<typeof SlackInboxItem>;
@@ -121,6 +126,7 @@ export const FeishuInboxItem = InboxItemBase.extend({
   tenantKey: z.string().optional(),
   text: z.string(),
   threadId: z.string().optional(),
+  wakeReason: WakeReason.optional(),
 });
 
 export type FeishuInboxItem = z.infer<typeof FeishuInboxItem>;

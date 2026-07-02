@@ -14,6 +14,11 @@ export interface AnimaRuntimeProfile {
   displayName: string;
   referencePaths?: AnimaReferencePaths;
   role?: string;
+  /** The agent's own Slack identity; when present, the standing prompt tells the agent who it is on Slack. */
+  slackIdentity?: {
+    handle?: string;
+    userId: string;
+  };
   transports: {
     feishu: boolean;
     slack: boolean;
@@ -29,11 +34,19 @@ export function buildAnimaRuntimeProfile(profile: AnimaRuntimeProfile): string {
     feishu: profile.transports.feishu,
     hasDocs: Boolean(referencePaths.docsPath),
     hasLocalSource: Boolean(referencePaths.sourcePath),
+    hasSlackIdentity: Boolean(profile.slackIdentity?.userId),
     name,
     role,
     slack: profile.transports.slack,
+    slackHandle: normalizeSlackHandle(profile.slackIdentity?.handle) ?? name,
+    slackUserId: profile.slackIdentity?.userId ?? '',
     sourcePath: referencePaths.sourcePath ?? '',
   });
+}
+
+function normalizeSlackHandle(handle: string | undefined): string | undefined {
+  if (!handle) return undefined;
+  return handle.startsWith('@') ? handle.slice(1) : handle;
 }
 
 function readBundledTemplate(): string {

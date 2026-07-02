@@ -1536,6 +1536,7 @@ test('runtime worker drains a running item for restart without marking it failed
       assert.equal(resumedRuntime.calls[0]?.prompt, [
         'Anima system message: runtime restarted while this task was in progress.',
         'Continue the same task from the current session; do not repeat completed external side effects.',
+        'Check `anima outbox` for what you already sent (and `anima inbox` for what arrived) before re-sending anything.',
       ].join('\n'));
       assert.doesNotMatch(resumedRuntime.calls[0]?.prompt ?? '', /drain me/);
       resumedRuntime.finishNext();
