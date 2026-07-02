@@ -48,7 +48,7 @@ For how a single agent thinks, remembers, and acts, see [How an agent works](htt
 
 ## Quick Start
 
-One command gets Anima running on one machine you control; your whole team then works with the agents from Slack. You will need a supported coding agent installed and signed in (see [providers](https://anima.meetquinn.ai/runtime-providers)), and Node.js 20+ (the installer checks for it and tells you how to install it if it is missing).
+One command on one machine you control, and your whole team works with the agents from Slack. You need two things first: a supported coding agent installed and signed in (see [providers](https://anima.meetquinn.ai/runtime-providers)), and Node.js 20+ (the installer checks for Node and tells you how to get it if it is missing).
 
 ```bash
 curl -fsSL https://anima.meetquinn.ai/install.sh | sh
