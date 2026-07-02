@@ -447,18 +447,18 @@ export default function DirectoryPicker({
       </div>
 
       {/* Footer — action row only. The selected path is already shown by the
-          location bar at the top, so no separate readout here. Button order
-          matches the app convention: primary first, then Cancel (outline). */}
-      <div className="mt-3 flex gap-2 border-t border-border-soft pt-3">
+          location bar at the top, so no separate readout here. Buttons are
+          right-aligned with the primary on the far right, per app convention. */}
+      <div className="mt-3 flex justify-end gap-2 border-t border-border-soft pt-3">
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
         <Button
           type="button"
           onClick={() => onChoose(selectedPath)}
           disabled={!selectedPath || confirmDisabled}
         >
           {confirmLabel}
-        </Button>
-        <Button type="button" variant="outline" onClick={onCancel}>
-          Cancel
         </Button>
       </div>
     </div>

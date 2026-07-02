@@ -136,12 +136,12 @@ export function RenameKbModal({
           {error && (
             <div className="font-sans text-[12px] leading-snug text-health-error">{error}</div>
           )}
-          <div className="flex gap-2">
-            <Button type="submit" disabled={busy || !label.trim() || label.trim() === kb.label}>
-              {busy ? 'Saving…' : 'Save'}
-            </Button>
+          <div className="flex justify-end gap-2">
             <Button type="button" onClick={onCancel} variant="outline" disabled={busy}>
               Cancel
+            </Button>
+            <Button type="submit" disabled={busy || !label.trim() || label.trim() === kb.label}>
+              {busy ? 'Saving…' : 'Save'}
             </Button>
           </div>
         </form>
@@ -193,12 +193,12 @@ export function ConfirmDeleteModal({
           <span className="font-semibold text-text">{kb.label}</span> will be removed from
           the sidebar. Files on disk are not affected.
         </div>
-        <div className="mt-5 flex gap-2">
-          <Button onClick={onConfirm} variant="destructive" disabled={busy}>
-            {busy ? 'Removing…' : 'Remove'}
-          </Button>
+        <div className="mt-5 flex justify-end gap-2">
           <Button onClick={onCancel} variant="outline" disabled={busy}>
             Cancel
+          </Button>
+          <Button onClick={onConfirm} variant="destructive" disabled={busy}>
+            {busy ? 'Removing…' : 'Remove'}
           </Button>
         </div>
       </div>

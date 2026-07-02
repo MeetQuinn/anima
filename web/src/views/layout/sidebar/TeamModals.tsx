@@ -140,12 +140,12 @@ export function CreateTeamModal({
           {error && (
             <div className="font-sans text-[12px] leading-snug text-health-error">{error}</div>
           )}
-          <div className="flex gap-2">
-            <Button type="submit" disabled={busy || !name.trim()}>
-              {busy ? 'Creating…' : 'Create team'}
-            </Button>
+          <div className="flex justify-end gap-2">
             <Button type="button" onClick={onClose} variant="outline" disabled={busy}>
               Cancel
+            </Button>
+            <Button type="submit" disabled={busy || !name.trim()}>
+              {busy ? 'Creating…' : 'Create team'}
             </Button>
           </div>
         </form>

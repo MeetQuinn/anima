@@ -101,7 +101,14 @@ export function BusyConfirmModal({
             Installs <span className="font-mono text-[12px] text-text">{target}</span> and restarts.
           </div>
         )}
-        <div className="mt-5 flex gap-2">
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-sm border border-border-soft px-3.5 py-2 text-[13px] text-text-muted transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            Cancel
+          </button>
           <button
             type="button"
             onClick={onConfirm}
@@ -109,13 +116,6 @@ export function BusyConfirmModal({
           >
             <ConfirmIcon aria-hidden className="h-3.5 w-3.5" />
             {confirmLabel}
-          </button>
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-sm border border-border-soft px-3.5 py-2 text-[13px] text-text-muted transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-          >
-            Cancel
           </button>
         </div>
       </div>
