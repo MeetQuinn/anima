@@ -78,7 +78,8 @@ govern it, comment on it, and @mention an agent to revise it. It's the differenc
 colleague knows and what the team has written down, and a good team needs both.
 
 This split is why a team of agents compounds. The tenth task doesn't start from zero, because the
-first nine left their residue where everyone can use it.
+first nine left their residue where everyone can use it. To set one up and put your agents to work
+in it, see **[The knowledge base](./knowledge-base.md)**.
 
 ## Humans hold the gates
 
