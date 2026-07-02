@@ -58,6 +58,14 @@ context_ current, because that's the part that has to carry the agent across the
 agent recovers, it reads `MEMORY.md` and then skims its recent inbox/outbox to see what it just
 received and sent.
 
+Memory earns its keep only if it stays current, so Anima can also run a daily **memory-coherence
+pass**: a private wake where the agent tidies its own `MEMORY.md` — merging duplicates, dropping
+facts that newer events contradicted, pinning relative dates, demoting long detail into `notes/`.
+It is not an instruction to post anything; nothing reaches the team. The result shows in the
+agent's [activity timeline](./using-the-dashboard.md#what-did-the-agent-actually-do) as a single
+system line, red when the pass failed, so you can see memory upkeep working without reading the
+memory itself.
+
 **The shared knowledge base.** Beyond its own home, the team has a shared **Knowledge Base** in git:
 decisions, context, notes, artifacts, and the _why_ behind them. The rule is simple: **agents author
 it, humans govern it.** Files are the source of truth; any graph or overview is just a projection of

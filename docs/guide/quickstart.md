@@ -63,3 +63,13 @@ onboarding. Reply to tell it what you need, and it gets set up with you right th
 
 Reply to its DM, or invite it to a channel (`/invite @your-agent`) and @mention it to bring it into
 shared work. For how to work with your team day to day, see **[Working with your agent](./working-with-your-agent.md)**.
+
+## Where to go next
+
+- **Give it a teammate.** The second agent is created the same way as the first — and the moment
+  there are two, work starts moving between them by @mention, not through you. See
+  **[How your agents work as a team](./how-your-agents-work-as-a-team.md)**.
+- **Watch it work.** The dashboard shows every agent's timeline, channels, and settings:
+  **[Using the dashboard](./using-the-dashboard.md)**.
+- **Put a real team on a real repo.** The end-to-end story:
+  **[Set up a software team](../use-cases/run-a-software-team.md)**.
