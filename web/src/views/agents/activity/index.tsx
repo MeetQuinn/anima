@@ -1,12 +1,4 @@
-import {
-  Fragment,
-  useEffect,
-  useMemo,
-  useReducer,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
+import { Fragment, useEffect, useMemo, useReducer, useRef, type ReactNode } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { AlertCircle, BrainCircuit, ChevronRight, ExternalLink, Loader2, Power, X } from 'lucide-react';
@@ -41,6 +33,7 @@ import {
   type SurfaceResolver,
 } from '../conversation/SlackTimeline';
 import { StepRow, WorkingIndicator } from './AuditRows';
+import { useStickToBottom } from './useStickToBottom';
 import type { Activity as ActivityRecord, AgentActivityFeedEvent } from '@shared/activity';
 import type { AgentFeishuScopeAuthUrl } from '@shared/agent-config';
 import type { AgentMessageRecord } from '@shared/messages';
@@ -489,43 +482,11 @@ export default function Activity() {
     () => new Set<string>(),
   );
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  // Wraps the scrolling content so a ResizeObserver can watch its height. Used
-  // to hold the bottom while the settle-pin is active as late layout (avatar
-  // images resolving, a default-open fold animating, the live indicator
-  // appearing) grows the content at the bottom.
+  // Wraps the scrolling content so the scroll controller's ResizeObserver can
+  // watch its height (follow the bottom, preserve position on prepend). A plain
+  // static wrapper — it does not become a scroll/containing block, so the sticky
+  // day headers still resolve to the scroll container.
   const contentRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  // True when the user is near (or at) the bottom of the scroll container.
-  const isAtBottomRef = useRef(true);
-  // Scroll height snapshot taken just before a previous-page fetch so we can
-  // restore the user's viewport position after the prepend.
-  const prevScrollHeightRef = useRef(0);
-  // While true, keep the viewport pinned to the newest row as the feed settles
-  // after a filter/toggle change (activity steps page in, coverage aligns). Set
-  // when a new feed is first shown; released once the feed settles or the user
-  // scrolls away from the bottom. Without it, toggling Show tool steps would
-  // scroll to the conversation's bottom before the newest steps (activity
-  // page[0], some newer than the last message) finish loading, stranding the
-  // viewport above the true newest row.
-  const bottomPinUntilSettleRef = useRef(false);
-
-  // Hold the timeline invisible until the feed has settled at its final scroll
-  // position, then fade it in. On mount (e.g. clicking an agent's avatar) the
-  // feed scrolls through several phases off the final state — initial pin to
-  // bottom, coverage prepends, default-open fold expansion — which read as a
-  // visible jump. Rendering at opacity-0 while it settles (it stays mounted, so
-  // it still lays out and scrolls) means the user only ever sees the resolved
-  // bottom state. Re-armed per feed identity (see the reveal effects below).
-  const [feedRevealed, setFeedRevealed] = useState(false);
-  // Reset the reveal gate the instant the feed identity changes, during render
-  // (React's documented "adjust state when a prop changes" pattern) rather than
-  // in an effect, so the previous agent's timeline never flashes before the new
-  // feed re-hides.
-  const [revealGateFeed, setRevealGateFeed] = useState(agentId);
-  if (agentId !== revealGateFeed) {
-    setRevealGateFeed(agentId);
-    setFeedRevealed(false);
-  }
 
   // Conversation layer — always loaded (complete history, Channels-identical).
   // Always both directions; the inbox/outbox sub-filter was retired.
@@ -1054,53 +1015,31 @@ export default function Activity() {
       );
     });
 
-  // Track which feed we've already scrolled to the bottom for, so we only do
-  // the initial-load scroll once per agent/filter navigation.
-  const initialScrollFeedRef = useRef<string | null>(null);
-
-  // --- Infinite scroll: keep pagination drivers in a ref so the scroll listener
-  // stays mounted once and always reads the latest message/step page state.
-  // Snapshot scroll height just before ANY older-page fetch (message OR
-  // activity) so the post-prepend restore keeps the viewport pinned. Guarded so
-  // a message + activity fetch that fire together don't clobber the baseline.
-  const snapshotScrollHeight = () => {
-    if (prevScrollHeightRef.current === 0) {
-      prevScrollHeightRef.current = scrollContainerRef.current?.scrollHeight ?? 0;
-    }
-  };
+  // --- Infinite scroll pagination -------------------------------------------
+  // Fire an older-page fetch (messages and/or activity). Position preservation
+  // on the resulting prepend is owned by the scroll controller (useStickToBottom)
+  // via `isFetchingOlder` — nothing here touches scrollTop.
   const fetchOlder = () => {
     if (messageQuery.hasNextPage && !messageQuery.isFetchingNextPage) {
-      snapshotScrollHeight();
       void messageQuery.fetchNextPage();
     }
     if (activityQuery.hasNextPage && !activityQuery.isFetchingNextPage) {
-      snapshotScrollHeight();
       void activityQuery.fetchNextPage();
     }
   };
-  const hasOlder = messageQuery.hasNextPage || !!activityQuery.hasNextPage;
   const isFetchingOlder = messageQuery.isFetchingNextPage || activityQuery.isFetchingNextPage;
-  const paginationRef = useRef({ fetchOlder, hasOlder, isFetchingOlder });
-  // Keep the ref current after each render (refs must not be written during
-  // render — React Compiler lint). The scroll listener reads the latest drivers
-  // through this ref, so it can stay mounted once.
-  useEffect(() => {
-    paginationRef.current = { fetchOlder, hasOlder, isFetchingOlder };
-  });
 
   // Coverage alignment: while steps are interleaved with the conversation, keep
   // paging the activity feed (older) until it spans the loaded conversation
   // window or is exhausted. One page per settle — react-query re-renders after
   // each page and this re-evaluates, so the chain self-terminates once the
-  // oldest loaded activity reaches the oldest loaded message. Snapshot first so
-  // the prepended older steps don't shift the viewport.
+  // oldest loaded activity reaches the oldest loaded message. The prepended older
+  // steps are position-preserved by the scroll controller (this counts as an
+  // older-page fetch through `isFetchingOlder`).
   const autoFetchActivity = activityQuery.fetchNextPage;
   useEffect(() => {
     if (!interleaving || activityCoversMessages) return;
     if (!activityQuery.hasNextPage || activityQuery.isFetchingNextPage) return;
-    if (prevScrollHeightRef.current === 0) {
-      prevScrollHeightRef.current = scrollContainerRef.current?.scrollHeight ?? 0;
-    }
     void autoFetchActivity();
   }, [
     interleaving,
@@ -1110,220 +1049,54 @@ export default function Activity() {
     autoFetchActivity,
   ]);
 
-  // Keep isAtBottomRef in sync as the user scrolls; trigger an older-page fetch
-  // when the user reaches the top. Mounted once — reads latest via the ref.
-  useEffect(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const BOTTOM_THRESHOLD = 80;
-    const TOP_THRESHOLD = 100;
-    function handleScroll() {
-      isAtBottomRef.current = el!.scrollHeight - el!.scrollTop - el!.clientHeight < BOTTOM_THRESHOLD;
-      const { hasOlder: more, isFetchingOlder: busy, fetchOlder: load } = paginationRef.current;
-      if (el!.scrollTop < TOP_THRESHOLD && more && !busy) load();
-    }
-    // A deliberate wheel/touch gesture means the user is taking over scrolling,
-    // so drop the post-toggle bottom-pin (stop forcing them to the newest row).
-    // We use the gesture, not a derived "not at bottom" check, because coverage
-    // prepends fire scroll events that would momentarily read as not-at-bottom
-    // and release the pin before the feed has settled.
-    function releasePin() {
-      bottomPinUntilSettleRef.current = false;
-    }
-    el.addEventListener('scroll', handleScroll, { passive: true });
-    el.addEventListener('wheel', releasePin, { passive: true });
-    el.addEventListener('touchstart', releasePin, { passive: true });
-    return () => {
-      el.removeEventListener('scroll', handleScroll);
-      el.removeEventListener('wheel', releasePin);
-      el.removeEventListener('touchstart', releasePin);
-    };
-  }, []);
-
-  // After an older page loads, restore the scroll position so the viewport
-  // doesn't jump. The delta between old and new scrollHeight equals the height
-  // of newly prepended content.
   const pageCount =
     (messageQuery.data?.pages.length ?? 0) + (activityQuery.data?.pages.length ?? 0);
 
   // The feed is still "settling" after a (re)load while its newest rows or
   // coverage are still arriving: an initial layer is loading, an activity page
-  // is in flight, or coverage alignment still has older activity pages to
-  // fetch. Drives how long the post-toggle bottom-pin stays active.
+  // is in flight, or coverage alignment still has older activity pages to fetch.
   const feedSettling =
     loadingActivities ||
     activityQuery.isFetchingNextPage ||
     (interleaving && !activityCoversMessages && !!activityQuery.hasNextPage);
 
-  useEffect(() => {
-    // While the post-toggle bottom-pin is active it owns the scroll position
-    // (it forces the newest row into view), so skip the prepend anchor to avoid
-    // a tug-of-war, and clear any height snapshot a coverage fetch left behind
-    // so a later (post-pin) prepend doesn't restore against a stale baseline.
-    if (bottomPinUntilSettleRef.current) {
-      prevScrollHeightRef.current = 0;
-      return;
-    }
-    if (prevScrollHeightRef.current === 0) return;
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    requestAnimationFrame(() => {
-      const delta = el.scrollHeight - prevScrollHeightRef.current;
-      if (delta > 0) el.scrollTop += delta;
-      prevScrollHeightRef.current = 0;
-    });
-  }, [pageCount]);
-
-  // When a new feed (agent) is first shown, pin to the newest row and keep it
-  // pinned while the feed settles (see the pin effect below). Fires once per
-  // feed identity.
-  useEffect(() => {
-    const feedKey = agentId ?? null;
-    const feedLoaded = messagesData ?? activitiesData;
-    if (!feedLoaded || !feedKey || initialScrollFeedRef.current === feedKey) return;
-    initialScrollFeedRef.current = feedKey;
-    isAtBottomRef.current = true;
-    bottomPinUntilSettleRef.current = true;
-  }, [agentId, activitiesData, messagesData]);
-
-  // Bottom-pin: while active, the pin owns the scroll position. Force the newest
-  // row into view on every content or settle change so late-arriving newest
-  // steps (activity page[0]) and coverage prepends never strand the viewport
-  // above the true bottom. Release only when the feed settles (one final scroll
-  // included) or the user takes over via a wheel/touch gesture (see the mount
-  // effect). We deliberately do NOT release on isAtBottomRef: coverage prepends
-  // briefly read as "not at bottom" and would drop the pin mid-settle.
-  useEffect(() => {
-    if (!bottomPinUntilSettleRef.current) return;
-    const settledNow = !feedSettling;
-    const el = scrollContainerRef.current;
-    if (el) {
-      requestAnimationFrame(() => {
-        const node = scrollContainerRef.current;
-        if (node && bottomPinUntilSettleRef.current) {
-          node.scrollTop = node.scrollHeight;
-        }
-      });
-    }
-    // Don't drop the pin the instant the DATA settles: late LAYOUT still grows
-    // the bottom for a few hundred ms after (avatar images resolving, a
-    // default-open fold's open animation, the live indicator mounting). Those
-    // grow below the browser's scroll anchor, so scroll anchoring cannot hold
-    // the bottom and the viewport strands a little short of the newest row.
-    // Keep the pin (and thus the ResizeObserver re-pin below) alive briefly past
-    // settle so that growth is followed, then release. The reveal is gated on
-    // the same settle, so this grace window is never visible as motion — it only
-    // ever nudges DOWN to the newest row. A wheel/touch gesture still releases
-    // the pin immediately (see the mount effect).
-    if (settledNow) {
-      const t = setTimeout(() => {
-        bottomPinUntilSettleRef.current = false;
-      }, 500);
-      return () => clearTimeout(t);
-    }
-  }, [activitiesData, messagesData, pageCount, feedSettling]);
-
-  // Hold the bottom while the settle-pin owns the scroll position. Content grows
-  // at the bottom after data settles (late avatar images, a fold's open
-  // animation, the live indicator) below the browser's scroll anchor, which only
-  // preserves ABOVE-viewport growth — so without this the viewport strands short
-  // of the newest row ("didn't quite reach the bottom"). The observer re-pins on
-  // every such growth for exactly as long as the pin is active, then goes inert
-  // (the callback early-returns once the pin releases on settle-grace or gesture).
-  useEffect(() => {
-    const content = contentRef.current;
-    if (!content || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => {
-      if (!bottomPinUntilSettleRef.current) return;
-      const node = scrollContainerRef.current;
-      if (node) node.scrollTop = node.scrollHeight;
-    });
-    ro.observe(content);
-    return () => ro.disconnect();
-  }, []);
-
-  // Follow new work to the bottom only when the user is already there. New work
-  // starts on a background poll (currentItemId flips as the agent picks up each
-  // queued item), so unconditionally scrolling here would yank a user who has
-  // scrolled up to read history down to the newest row with no action on their
-  // part. Respect their position instead, mirroring the sticky-follow effects
-  // below which only follow when isAtBottomRef is set. On a fresh load/switch the
-  // ref defaults to true (and the initial pin re-asserts it), so a new feed still
-  // lands and stays at the bottom; only a deliberately scrolled-up reader is left
-  // in place.
-  useEffect(() => {
-    if (!currentItemId || !isAtBottomRef.current) return;
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const id = requestAnimationFrame(() => {
-      el.scrollTop = el.scrollHeight;
-    });
-    return () => cancelAnimationFrame(id);
-  }, [currentItemId]);
-
-  // Sticky scroll: follow live activity only when already at the bottom.
-  useEffect(() => {
-    if (!latestCurrentItemActivity || !isAtBottomRef.current) return;
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const id = requestAnimationFrame(() => {
-      el.scrollTop = el.scrollHeight;
-    });
-    return () => cancelAnimationFrame(id);
-  }, [latestCurrentItemActivity]);
-
-  // Sticky scroll for new messages: follow a freshly arrived conversation row
-  // to the bottom when already pinned there. Messages arrive on a separate
-  // query than activity and the new row only lays out a frame after the data
-  // commits, so a single scroll would measure a stale (short) scrollHeight and
-  // land above the new message. Defer past layout with a double rAF so the new
-  // row's height is included before we scroll.
-  useEffect(() => {
-    if (!latestMessageKey || !isAtBottomRef.current) return;
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    let raf2 = 0;
-    const raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => {
-        el.scrollTop = el.scrollHeight;
-      });
-    });
-    return () => {
-      cancelAnimationFrame(raf1);
-      cancelAnimationFrame(raf2);
-    };
-  }, [latestMessageKey]);
-
   // Reveal-settle is stricter than feedSettling: it also waits for the initial
-  // activity (step) layer. feedSettling only covers the message load, next-page
-  // fetches and coverage paging, so without this the container could fade in on
-  // the message-only layout and then visibly pop when the first activity page
-  // lands with its step folds / default-open height. Block the settle reveal
-  // until the first activity page has loaded (or errored, leaving activitiesData
-  // undefined with no fetch in flight); the 600ms fallback still bounds a stall.
+  // activity (step) layer, so the timeline doesn't fade in on the message-only
+  // layout and then visibly pop when the first activity page lands with its step
+  // folds / default-open height. The scroll controller holds the timeline hidden
+  // and pinned to the bottom until this clears (bounded by its own safety valve).
   const revealSettling =
     feedSettling ||
     activityQuery.isLoading ||
     (!activitiesData && activityQuery.isFetching);
 
-  // Reveal once the feed has loaded and stopped settling, one frame later so the
-  // pin effect's final scroll-to-bottom lands before we fade in.
-  useEffect(() => {
-    if (feedRevealed) return;
-    const feedLoaded = messagesData ?? activitiesData;
-    if (feedLoaded && !revealSettling) {
-      const id = requestAnimationFrame(() => setFeedRevealed(true));
-      return () => cancelAnimationFrame(id);
-    }
-  }, [feedRevealed, revealSettling, messagesData, activitiesData]);
+  // A signal that changes whenever loaded content grows. The scroll controller's
+  // no-ResizeObserver fallback keys its bottom-follow on this; with RO present
+  // (the norm) the observer drives growth and this is inert.
+  const contentGrowthKey = [
+    pageCount,
+    latestMessageKey ?? '',
+    currentItemId ?? '',
+    latestCurrentItemActivity?.createdAt ?? '',
+    feedSettling ? 1 : 0,
+  ].join('|');
 
-  // Fallback: never stay hidden longer than ~600ms after a feed switch, even if
-  // settling never resolves (an agent with no data, or a stalled fetch).
-  useEffect(() => {
-    if (feedRevealed) return;
-    const t = setTimeout(() => setFeedRevealed(true), 600);
-    return () => clearTimeout(t);
-  }, [agentId, feedRevealed]);
+  // --- Scroll controller: the single owner of the timeline scroll position. --
+  // Replaces the earlier tangle of independent scroll effects. It follows the
+  // bottom when the user is there, never yanks a scrolled-up reader, preserves
+  // the viewport on older-page prepends, and holds the timeline hidden until the
+  // initial settle reaches a stable bottom. See useStickToBottom for the mode
+  // model; the container carries `overflow-anchor: none` so every scroll write
+  // is hook-owned.
+  const { revealed: feedRevealed } = useStickToBottom({
+    containerRef: scrollContainerRef,
+    contentRef,
+    feedKey: agentId ?? null,
+    settling: revealSettling,
+    isFetchingOlder,
+    contentKey: contentGrowthKey,
+    onReachTop: fetchOlder,
+  });
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-surface">
@@ -1346,7 +1119,7 @@ export default function Activity() {
 
       <div
         ref={scrollContainerRef}
-        className={`flex-1 overflow-x-hidden overflow-y-auto px-4 pt-3 pb-[calc(64px+env(safe-area-inset-bottom))] transition-opacity duration-200 ease-out motion-reduce:transition-none md:px-10 md:pt-5 md:pb-10 ${
+        className={`flex-1 overflow-x-hidden overflow-y-auto [overflow-anchor:none] px-4 pt-3 pb-[calc(64px+env(safe-area-inset-bottom))] transition-opacity duration-200 ease-out motion-reduce:transition-none md:px-10 md:pt-5 md:pb-10 ${
           feedRevealed ? 'opacity-100' : 'opacity-0'
         }`}
       >
@@ -1492,7 +1265,7 @@ export default function Activity() {
               time={clockHM(workingTimeIso)}
             />
           ))}
-        <div ref={bottomRef} className="h-4" />
+        <div className="h-4" aria-hidden />
         </div>
       </div>
     </div>
