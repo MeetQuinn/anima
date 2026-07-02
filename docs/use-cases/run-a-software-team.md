@@ -1,14 +1,14 @@
 ---
 title: Set up a software team
-description: Cast a small team of agents around your codebase, wire two channels and a few working agreements, and run the loop that takes a bug report to a reviewed, human-approved fix.
+description: Cast a small team of agents around your codebase, wire a channel and a few working agreements, and run the loop that takes a bug report to a reviewed, human-approved fix.
 ---
 
 # Set up a software team
 
 This is the team shape we know best, because it's the one that builds Anima. A small cast of
-agents around a codebase, two channels, a few working agreements, and a loop that takes a bug
-report to a reviewed fix with a human holding the gate. Nothing here is invented for this page:
-this is our own setup, written down.
+agents around a codebase, a channel where the work runs in the open, a few working agreements,
+and a loop that takes a bug report to a reviewed fix with a human holding the gate. Nothing here
+is invented for this page: this is our own setup, written down.
 
 You'll want [Anima installed](../guide/quickstart.md) and a repo the agents' machine can reach.
 Each agent runs on a coding agent you already use (Claude Code or Codex), so whatever that CLI can
@@ -28,6 +28,10 @@ where you begin.
 The reviewer is the hire people skip, and it's the one that changes the feel of the whole thing:
 work starts arriving at your desk already checked.
 
+Run the two on different runtimes if you can: the builder on Claude Code and the reviewer on
+Codex, or the other way around. The reviewer already isn't the author; make it a different model
+too, and it stops sharing the author's blind spots.
+
 **Grow when the seams show:**
 
 - **A QA.** When "it works" claims start needing verification, add an agent whose whole role is
@@ -38,20 +42,20 @@ work starts arriving at your desk already checked.
 Write each role in one or two sentences in the agent's profile. The role is the biggest lever you
 have: it decides what the agent takes ownership of and what it leaves for others.
 
-## The channels
+## The channel
 
-Two channels carry the whole loop:
+One channel carries the work: **`#build`**, where handoffs, review verdicts, and build chatter
+run in the open. Add every agent to it. An agent can only be woken by @mentions in channels it's
+a member of, so membership is what makes handoffs between them possible.
 
-- **`#product`**: where problems arrive and results return. Bug reports, feature requests,
-  acceptance. Anyone on the team can post here.
-- **`#build`**: where the work happens. Handoffs, review verdicts, build chatter.
+Asks can start anywhere. Ours usually start as a DM to one agent; you'll have a favorite within a
+week. The rule that matters isn't where the problem arrives, it's what happens next: **the work
+and the handoffs run in `#build`, where everyone can see them, and the result returns to wherever
+the ask came from.** Nobody should have to follow the build chatter to learn their bug is fixed.
 
-The rule that keeps them useful: **problems land in `#product`, work happens in `#build`, results
-return to `#product`.** People who reported a bug shouldn't have to follow the build chatter to
-learn it's fixed.
-
-Add every agent to both channels. An agent can only be woken by @mentions in channels it's a
-member of, so membership is what makes handoffs between them possible.
+When more people than you start reporting problems, add a **`#product`** channel as the shared
+front door: bug reports, feature requests, acceptance. Until then, a DM is the front door, and
+that's fine.
 
 ## The working agreements
 
@@ -70,8 +74,8 @@ are agreements, not settings):
 
 Here's the arc, the same one on our landing page, because it's the one that actually runs:
 
-1. **Someone reports a problem in `#product`.** In plain words: "The nav feels cramped on phones.
-   Can we clean it up?"
+1. **You hand the team a problem.** A DM to the builder, or a message in `#build`, in plain
+   words: "The nav feels cramped on phones. Can we clean it up?"
 2. **The builder picks it up.** It reproduces the problem, finds the cause, makes the change,
    checks its own work, and opens a PR.
 3. **The builder hands off by name.** "@Reviewer, can you take a look?" The review happens in the
@@ -79,7 +83,8 @@ Here's the arc, the same one on our landing page, because it's the one that actu
 4. **The reviewer gives a verdict.** Ready, or a list of what needs fixing, and back to the
    builder until it's clean.
 5. **You approve.** The work is waiting in the thread with the PR and the review attached. You
-   read, you decide, it merges. The result gets reported back in `#product`.
+   read, you decide, it merges. The result comes back to you where you asked, not buried in the
+   build chatter.
 
 Steps 2 through 4 don't need you. That's the point: the work runs ahead of you, and the decision
 waits for you. A bug reported after midnight can be a reviewed PR by morning, because none of the
