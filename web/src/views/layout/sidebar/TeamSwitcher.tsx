@@ -52,20 +52,21 @@ export function TeamSwitcher({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="group flex h-14 w-full items-center gap-2.5 border-b border-spine-border px-5 text-left transition-colors hover:bg-spine-elevated/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
+        className="group flex h-14 w-full items-center gap-2 border-b border-spine-border pl-5 pr-12 text-left transition-colors hover:bg-spine-elevated/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
         aria-haspopup="menu"
         aria-expanded={open}
         title={grouped ? `Team: ${label}` : 'Anima'}
       >
         <AnimaIcon className="h-4 w-4 shrink-0 text-accent" />
-        <span className="display truncate text-[18px] font-semibold tracking-tight text-text-on-spine">
+        <span className="display min-w-0 truncate text-[18px] font-semibold tracking-tight text-text-on-spine">
           {label}
         </span>
-        {/* Caret is always present so the menu stays discoverable; it rests faint
-            in single-team mode and brightens on hover, and is steadier in grouped. */}
+        {/* Caret sits right next to the name (not at the far edge, where the
+            sidebar-collapse control lives). Rests faint in single-team mode,
+            brightens on hover, and rotates when the menu is open. */}
         <ChevronDown
           className={[
-            'ml-auto h-4 w-4 shrink-0 text-text-on-spine-muted transition-all duration-150',
+            'h-4 w-4 shrink-0 text-text-on-spine-muted transition-all duration-150',
             open
               ? 'rotate-180 opacity-100'
               : grouped
@@ -82,7 +83,6 @@ export function TeamSwitcher({
         >
           {grouped && (
             <>
-              <div className="px-3 py-1.5 caps text-text-on-spine-subtle">Teams</div>
               {teams.map((team) => {
                 const active = team.id === current?.id;
                 return (
@@ -106,7 +106,6 @@ export function TeamSwitcher({
                   </button>
                 );
               })}
-              <div className="my-1 h-px bg-spine-border" />
             </>
           )}
           <button
