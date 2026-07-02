@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronRight, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { createTeam, type TeamConfig } from '@/api/teams';
 import { queryClient } from '@/query-client';
 import { queryKeys } from '@/lib/query-keys';
@@ -21,7 +21,6 @@ export function CreateTeamModal({
 }) {
   const [name, setName] = useState('');
   const [home, setHome] = useState('');
-  const [advanced, setAdvanced] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
@@ -35,6 +34,7 @@ export function CreateTeamModal({
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || busy) return;
       // Escape closes the directory picker first if it is open, then the modal.
+      // (Inside the picker, the new-folder input has its own Cancel button.)
       if (showPicker) {
         setShowPicker(false);
         return;
@@ -53,7 +53,7 @@ export function CreateTeamModal({
     try {
       const team = await createTeam({
         name: trimmed,
-        ...(advanced && home.trim() ? { home: home.trim() } : {}),
+        ...(home.trim() ? { home: home.trim() } : {}),
       });
       await queryClient.invalidateQueries({ queryKey: queryKeys.teams() });
       onCreated(team);
@@ -108,44 +108,31 @@ export function CreateTeamModal({
           </div>
 
           <div>
-            <button
-              type="button"
-              onClick={() => setAdvanced((v) => !v)}
-              className="font-sans flex items-center gap-1 text-[12px] text-text-muted hover:text-text transition-colors"
-            >
-              {advanced ? (
-                <ChevronDown className="h-3.5 w-3.5" />
-              ) : (
-                <ChevronRight className="h-3.5 w-3.5" />
-              )}
+            <label className="font-sans mb-1 block text-[12px] font-medium text-text-muted">
               Home folder
-            </button>
-            {advanced && (
-              <div className="mt-2">
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={home}
-                    onChange={(e) => setHome(e.target.value)}
-                    disabled={busy}
-                    placeholder="~/content (defaults from the name)"
-                    className="min-w-0 flex-1 rounded-sm border border-border bg-muted/30 px-3 py-1.5 font-mono text-[13px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-1 focus:ring-ring"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPicker(true)}
-                    disabled={busy}
-                    className="font-sans shrink-0 rounded-sm border border-border px-3 py-1.5 text-[12px] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-50"
-                  >
-                    Browse…
-                  </button>
-                </div>
-                <p className="font-sans mt-1 text-[11px] text-text-subtle">
-                  The team's home folder. New agents land under its <code>agents/</code>
-                  {' '}subfolder. Leave blank to use the default.
-                </p>
-              </div>
-            )}
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={home}
+                onChange={(e) => setHome(e.target.value)}
+                disabled={busy}
+                placeholder="~/content (defaults from the name)"
+                className="min-w-0 flex-1 rounded-sm border border-border bg-muted/30 px-3 py-1.5 font-mono text-[13px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPicker(true)}
+                disabled={busy}
+                className="font-sans shrink-0 rounded-sm border border-border px-3 py-1.5 text-[12px] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-50"
+              >
+                Browse…
+              </button>
+            </div>
+            <p className="font-sans mt-1 text-[11px] text-text-subtle">
+              The team's home folder. New agents land under its <code>agents/</code>
+              {' '}subfolder. Leave blank to use the default.
+            </p>
           </div>
 
           {error && (

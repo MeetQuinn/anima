@@ -1,4 +1,4 @@
-import { lstat, readFile, readdir, realpath, stat } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 
@@ -58,6 +58,52 @@ export class KbRegistryService {
         .map((entry) => ({ name: entry.name, path: join(requestedRealpath, entry.name) }))
         .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
     };
+  }
+
+  // Create a new subdirectory under an existing directory inside the browse
+  // root (home). Mirrors browseKbDirectories' sandboxing: parent must resolve
+  // to an existing directory within home, and the name is validated to a single
+  // path segment (no separators / traversal / dotfiles). Returns the refreshed
+  // browse of the parent so the caller can locate the new directory by name.
+  async createKbDirectory(
+    rawParent: string | undefined,
+    rawName: string,
+  ): Promise<KbDirectoryBrowse> {
+    const home = await realpath(homedir());
+    const requested = rawParent?.trim() ? expandHome(rawParent.trim()) : home;
+    const parentRealpath = await realpath(resolve(requested)).catch(() => undefined);
+    if (!parentRealpath) throw new KbError(404, 'path_not_found');
+    if (parentRealpath !== home && !parentRealpath.startsWith(home + sep)) {
+      throw new KbError(400, 'path outside browse root');
+    }
+    const parentStat = await stat(parentRealpath).catch(() => undefined);
+    if (!parentStat?.isDirectory()) throw new KbError(400, 'path must be an existing directory');
+
+    const name = rawName.trim();
+    if (!name) throw new KbError(400, 'folder name is required');
+    if (
+      name === '.' ||
+      name === '..' ||
+      name.startsWith('.') ||
+      name.includes('/') ||
+      name.includes('\\') ||
+      name.includes('\0') ||
+      name.length > 255
+    ) {
+      throw new KbError(400, 'invalid folder name');
+    }
+
+    const target = join(parentRealpath, name);
+    // Defense in depth: the joined target must stay directly under the parent.
+    if (!target.startsWith(parentRealpath + sep)) {
+      throw new KbError(400, 'invalid folder name');
+    }
+    if (await stat(target).catch(() => undefined)) {
+      throw new KbError(409, 'a folder with that name already exists');
+    }
+
+    await mkdir(target);
+    return this.browseKbDirectories(parentRealpath);
   }
 
   async addKb(input: KbCreateRequest): Promise<KbView[]> {

@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -209,6 +209,56 @@ test('kb directory browser is home-bound and returns directories only', async ()
 
       const outside = await fetch(`${base}/api/filesystem/browse?path=${encodeURIComponent(tmpdir())}`);
       assert.equal(outside.status, 400, 'directory browser cannot escape $HOME');
+    });
+  } finally {
+    await rm(homeDir, { force: true, recursive: true });
+    await rm(repoDir, { force: true, recursive: true });
+    await rm(browseRoot, { force: true, recursive: true });
+  }
+});
+
+test('kb directory mkdir creates a subfolder and enforces the home boundary', async () => {
+  const { homeDir, repoDir } = await setupKb('anima-kb-mkdir');
+  const browseRoot = await mkdtemp(join(homedir(), 'anima-kb-mkdir-'));
+  try {
+    await withServer(homeDir, async (base) => {
+      const mk = (payload: unknown) =>
+        fetch(`${base}/api/filesystem/mkdir`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+      // Happy path: creates the folder and returns the refreshed parent browse.
+      const ok = await mk({ parent: browseRoot, name: 'new-folder' });
+      assert.equal(ok.status, 200);
+      const body = (await ok.json()) as {
+        path: string;
+        entries: Array<{ name: string; path: string }>;
+      };
+      assert.equal(body.path, browseRoot);
+      assert.ok(
+        body.entries.some(
+          (e) => e.name === 'new-folder' && e.path === join(browseRoot, 'new-folder'),
+        ),
+        'new folder appears in the returned parent listing',
+      );
+      assert.ok((await stat(join(browseRoot, 'new-folder'))).isDirectory());
+
+      // Duplicate name -> 409, no clobber.
+      assert.equal((await mk({ parent: browseRoot, name: 'new-folder' })).status, 409);
+
+      // Traversal / separators / dotfiles in the name -> 400, nothing created.
+      assert.equal((await mk({ parent: browseRoot, name: '../escape' })).status, 400);
+      assert.equal((await mk({ parent: browseRoot, name: 'a/b' })).status, 400);
+      assert.equal((await mk({ parent: browseRoot, name: '..' })).status, 400);
+      assert.equal((await mk({ parent: browseRoot, name: '.hidden' })).status, 400);
+
+      // Parent outside the home browse root -> 400.
+      assert.equal((await mk({ parent: tmpdir(), name: 'nope' })).status, 400);
+
+      // Missing name -> 400 (schema rejects).
+      assert.equal((await mk({ parent: browseRoot })).status, 400);
     });
   } finally {
     await rm(homeDir, { force: true, recursive: true });

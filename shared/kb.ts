@@ -21,6 +21,15 @@ export const KbRenameRequest = z.object({
 
 export type KbRenameRequest = z.infer<typeof KbRenameRequest>;
 
+// Create a new subdirectory under `parent` (an absolute path inside the browse
+// root; omit to target the home root). `name` is a single path segment.
+export const KbMkdirRequest = z.object({
+  parent: z.string().trim().min(1).optional(),
+  name: z.string().trim().min(1),
+});
+
+export type KbMkdirRequest = z.infer<typeof KbMkdirRequest>;
+
 export interface KbTreeNode {
   name: string;
   path: string; // repo-relative POSIX

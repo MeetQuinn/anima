@@ -7,9 +7,16 @@
  *   <DirectoryPicker onChoose={path => …} onCancel={…} />
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, FolderClosed, FolderOpen, Loader2 } from 'lucide-react';
-import { fetchKbBrowse } from '@/api/kb';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  ChevronDown,
+  ChevronRight,
+  FolderClosed,
+  FolderOpen,
+  FolderPlus,
+  Loader2,
+} from 'lucide-react';
+import { createDirectory, fetchKbBrowse } from '@/api/kb';
 import { queryKeys } from '@/lib/query-keys';
 import { Button } from './ui/button';
 
@@ -171,6 +178,20 @@ export default function DirectoryPicker({
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [selectedPath, setSelectedPath] = useState<string>(startPath ?? '');
   const treeRef = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
+
+  // New-folder creation state.
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [mkdirBusy, setMkdirBusy] = useState(false);
+  const [mkdirError, setMkdirError] = useState<string | null>(null);
+
+  function cancelCreate() {
+    setCreating(false);
+    setNewName('');
+    setMkdirError(null);
+  }
+
 
   // Root query — gives us the absolute home path for breadcrumb stripping,
   // and pre-fetches the top-level entries. Same query key as the first
@@ -214,6 +235,38 @@ export default function DirectoryPicker({
       else next.add(path);
       return next;
     });
+  }
+
+  // New folder is created under the selected directory (or the home root when
+  // nothing deeper is selected). Label the target for the input placeholder.
+  const createTargetLabel =
+    selectedPath && selectedPath !== rootPath
+      ? (selectedPath.split('/').filter(Boolean).pop() ?? selectedPath)
+      : 'Home';
+
+  async function submitCreate(e: React.FormEvent) {
+    e.preventDefault();
+    const name = newName.trim();
+    if (!name || mkdirBusy) return;
+    setMkdirBusy(true);
+    setMkdirError(null);
+    try {
+      const parent = selectedPath && selectedPath !== rootPath ? selectedPath : undefined;
+      const result = await createDirectory(name, parent);
+      // Seed the parent's browse cache so the new folder appears without a
+      // refetch. The parent query key is the parent's abs path, or '' for root.
+      queryClient.setQueryData(queryKeys.kbBrowse(parent ?? rootPath), result);
+      const created = result.entries.find((entry) => entry.name === name);
+      const newPath = created?.path ?? `${result.path}/${name}`;
+      if (parent) setExpandedPaths((prev) => new Set(prev).add(parent));
+      setSelectedPath(newPath);
+      setCreating(false);
+      setNewName('');
+    } catch (err) {
+      setMkdirError(err instanceof Error ? err.message : 'Could not create folder');
+    } finally {
+      setMkdirBusy(false);
+    }
   }
 
   // Breadcrumb: strip rootAbsPath prefix, split into clickable segments.
@@ -302,6 +355,50 @@ export default function DirectoryPicker({
           </span>
         ))}
       </div>
+
+      {/* New-folder toolbar */}
+      {creating ? (
+        <form onSubmit={submitCreate} className="mb-2 flex items-center gap-1.5">
+          <input
+            autoFocus
+            type="text"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            disabled={mkdirBusy}
+            placeholder={`New folder in ${createTargetLabel}`}
+            className="min-w-0 flex-1 rounded-sm border border-border bg-muted/30 px-2.5 py-1 font-sans text-[12px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+          <Button type="submit" size="sm" disabled={!newName.trim() || mkdirBusy}>
+            {mkdirBusy ? 'Creating…' : 'Create'}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={cancelCreate}
+            disabled={mkdirBusy}
+          >
+            Cancel
+          </Button>
+        </form>
+      ) : (
+        <div className="mb-2 flex justify-end">
+          <button
+            type="button"
+            onClick={() => {
+              setMkdirError(null);
+              setCreating(true);
+            }}
+            className="font-sans flex items-center gap-1 rounded-sm px-2 py-1 text-[12px] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+          >
+            <FolderPlus className="h-3.5 w-3.5" />
+            New folder
+          </button>
+        </div>
+      )}
+      {mkdirError && (
+        <div className="mb-2 font-sans text-[12px] text-health-error">{mkdirError}</div>
+      )}
 
       {/* Tree panel */}
       <div
