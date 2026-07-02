@@ -108,7 +108,7 @@ test('delivery prompt module exposes named provider-facing Anima builders', () =
     'This is retry 2/3.',
     'Previous error: boom',
     'Continue the original task from the current files, conversation, and connected chat state.',
-    'Do not repeat completed external side effects such as chat messages, file sends, or file edits; inspect state first if needed.',
+    'Do not repeat completed external side effects such as chat messages, file sends, or file edits; check `anima outbox` for what already went out, and inspect files/state, before redoing anything.',
   ].join('\n'));
 });
 
@@ -159,9 +159,42 @@ test('buildCodeAgentDeliveryPrompt renders scheduled reminders as the current ev
     },
   });
 
-  assert.match(text, /^Scheduled reminder:\n\n\[reminder_id=reminder-test time=2026-05-18T17:00:00\.000Z\] Scheduled wake: Follow up on deploy/);
+  assert.match(text, /^Scheduled reminder:\n\n\[reminder_id=reminder-test time=2026-05-18T17:00:00Z\] Follow up on deploy/);
   assert.match(text, /Instructions:\nCheck whether the deploy finished\./);
   assert.doesNotMatch(text, /Reply command|Recovery context/);
+});
+
+test('buildCodeAgentDeliveryPrompt renders reminder provenance as an origin envelope, not JSON', () => {
+  const event = makeReminderInboxItem({
+      reminderId: 'reminder-test',
+      timestamp: '2026-05-18T17:00:00.000Z',
+  });
+  const text = buildCodeAgentDeliveryPrompt(event, {
+    reminder: {
+      createdAt: '2026-05-18T16:00:00.000Z',
+      firedCount: 0,
+      instructions: 'Check whether the deploy finished.',
+      provenance: {
+        channelId: 'C-team',
+        messageTs: '1770000010.000001',
+        threadTs: '1770000020.000001',
+      },
+      reminderId: 'reminder-test',
+      schedule: { kind: 'once' },
+      status: 'scheduled',
+      title: 'Follow up on deploy',
+      updatedAt: '2026-05-18T16:00:00.000Z',
+    },
+  });
+
+  assert.match(text, /Scheduled from: \[channel_id=C-team thread_ts=1770000020\.000001 message_ts=1770000010\.000001\]/);
+  assert.doesNotMatch(text, /Provenance:|"channelId"/);
+});
+
+test('buildCodeAgentDeliveryPrompt renders wake reason in the envelope when present', () => {
+  const { event } = buildInput({ channelId: 'D-user' });
+  const text = buildCodeAgentDeliveryPrompt({ ...event, wakeReason: 'dm' });
+  assert.match(text, /message_ts=1770000010\.000001 wake=dm time=/);
 });
 
 test('buildCodeAgentDeliveryPrompt rejects reminders without reminder context', () => {
@@ -193,7 +226,7 @@ test('buildCodeAgentDeliveryPrompt renders onboarding as an onboarding wake, not
   });
 
   assert.match(text, /^Agent onboarding:/);
-  assert.match(text, /\[owner=Iris \(@iris, <@U-owner>\) channel=D-owner time=2026-01-01T00:00:00\.000Z\]/);
+  assert.match(text, /\[owner=Iris \(@iris, <@U-owner>\) channel=D-owner time=2026-01-01T00:00:00Z\]/);
   assert.doesNotMatch(text, /Reply target:|Use `anima message send/);
   assert.doesNotMatch(text, /^New Slack message:/);
 });
@@ -271,8 +304,10 @@ test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack t
   assert.match(text, /Reply target comes from the delivery envelope/);
   assert.match(text, /pass the envelope's `channel=` as `--channel` and `thread_ts=` as `--thread-ts`/);
   assert.match(text, /Slack messages can arrive from DMs, threads, channel messages, and group conversations/);
-  assert.match(text, /You always receive DMs and messages that @mention you/);
-  assert.match(text, /Only `mute` a thread\/channel when it's clearly done with you AND still noisy/);
+  assert.match(text, /A DM or an @mention always reaches you/);
+  assert.match(text, /Only mute \(`anima subscription mute`\) a thread\/channel when it's clearly done with you AND still noisy/);
+  assert.match(text, /Slack blocks bot-to-bot DMs/);
+  assert.doesNotMatch(text, /In Slack you are/);
   assert.match(text, /anima reminder/);
   assert.match(text, /anima message send <target flags> \[--thread-ts <thread_or_topic_id>\]/);
   assert.match(text, /Agent platform guide: `\/opt\/anima\/docs\/agent\/guide\.md`/);
@@ -291,6 +326,18 @@ test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack t
   assert.doesNotMatch(text, /ANIMA_FEATURES/);
   assert.doesNotMatch(text, /guide\/agent-features\.md/);
   assert.doesNotMatch(text, /\$ANIMA_CHANNEL|\$ANIMA_THREAD/);
+});
+
+test('buildAnimaRuntimeProfile tells the agent its own Slack identity when provided', () => {
+  const text = buildAnimaRuntimeProfile({
+    displayName: 'Iris',
+    referencePaths: { docsPath: '/opt/anima/docs' },
+    role: 'Product PM.',
+    slackIdentity: { handle: '@iris', userId: 'U-iris' },
+    transports: { feishu: false, slack: true },
+  });
+  assert.match(text, /In Slack you are \*\*@iris\*\* \(user id `U-iris`\)/);
+  assert.match(text, /`<@U-iris>` means someone is addressing you/);
 });
 
 test('buildAnimaRuntimeProfile separates Feishu-only transport instructions', () => {

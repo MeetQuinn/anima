@@ -16,6 +16,7 @@ import { parseOauthScopesHeader } from '../slack/shortcuts.js';
 export interface SlackDisplayInfo {
   appId?: string;
   avatarUrl?: string;
+  botHandle?: string;
   botName?: string;
   botUserId?: string;
   teamId?: string;
@@ -50,11 +51,13 @@ export async function getSlackDisplayInfo(client: WebClient): Promise<SlackDispl
   const userInfo = await client.users.info({ user: auth.user_id });
   const user = userInfo.user as SlackUserInfo | undefined;
   const directory = new SlackWorkspaceDirectoryService({ client, teamId: auth.team_id });
+  const botHandle = user?.name?.trim() || (typeof auth.user === 'string' ? auth.user.trim() : '') || undefined;
   const botName = directory.getUserDisplayName(user, (typeof auth.user === 'string' ? auth.user.trim() : '') || auth.user_id);
   const workspaceIconUrl = await directory.getWorkspaceIconUrl().catch(() => '');
   return {
     appId: auth.app_id,
     avatarUrl: user?.profile?.image_72 ?? '',
+    botHandle,
     botName,
     botUserId: auth.user_id,
     teamId: auth.team_id ?? '',
@@ -117,6 +120,7 @@ async function validateBotToken(token: string): Promise<SlackTokenValidation> {
     return {
       appId: info.appId,
       botAvatarUrl: info.avatarUrl,
+      botHandle: info.botHandle,
       botName: info.botName,
       botUserId: info.botUserId,
       detected: 'bot',
@@ -158,6 +162,7 @@ function slackConnectionValidation(
   const base = {
     appId: bot.appId ?? app.appId,
     botAvatarUrl: bot.botAvatarUrl,
+    botHandle: bot.botHandle,
     botName: bot.botName,
     botUserId: bot.botUserId,
     teamId: bot.teamId,

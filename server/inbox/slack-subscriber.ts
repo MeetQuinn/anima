@@ -1,6 +1,7 @@
 import { App, LogLevel } from '@slack/bolt';
 import type { WebClient } from '@slack/web-api';
 
+import { WakeReason, type SlackInboxItem } from '../../shared/inbox.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import { interactiveAskServiceForAgent } from '../asks/interactive-ask.service.js';
@@ -234,7 +235,7 @@ export class SlackInboxSubscriber {
       event: rawEvent,
       profiles: this.slackProfiles,
     });
-    const decision = await this.options.queue.enqueue(item);
+    const decision = await this.options.queue.enqueue(withSlackWakeReason(item, runtimeDecision.reason));
     if (runtimeDecision.reason === 'mention' && runtimeDecision.subscription && !decision.duplicate) {
       activityServiceForAgent(this.options.queue.agentId).record({
         type: 'anima.subscription.add',
@@ -264,6 +265,14 @@ export class SlackInboxSubscriber {
         this.botDisplayInfoSyncInFlight = false;
       });
   }
+}
+
+function withSlackWakeReason(
+  item: SlackInboxItem,
+  reason: SlackRuntimeDecision['reason'],
+): SlackInboxItem {
+  const parsed = WakeReason.safeParse(reason);
+  return parsed.success ? { ...item, wakeReason: parsed.data } : item;
 }
 
 // Refresh the bot's own Slack display info at most once every 6h while handling

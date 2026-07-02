@@ -35,16 +35,12 @@ export interface CodeAgentPromptContext {
  * Scheduled reminder (with provenance):
  *   Scheduled reminder:
  *
- *   [reminder_id=reminder-test time=2026-05-18T17:00:00.000Z] Scheduled wake: Follow up on deploy
+ *   [reminder_id=reminder-test time=2026-05-18T17:00:00Z] Follow up on deploy
  *
  *   Instructions:
  *   Check whether the deploy finished.
  *
- *   Provenance:
- *   {
- *     "threadTs": "1770000020.000001",
- *     "channelId": "C-team"
- *   }
+ *   Scheduled from: [channel_id=C-team thread_ts=1770000020.000001 message_ts=1770000010.000001]
  */
 export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgentPromptContext = {}): string {
   if (event.handling.resumeReason === 'runtime_restart') {
@@ -92,14 +88,14 @@ function formatFeishuQuotedMessage(message: FeishuQuotedMessage): string {
 
 function buildSlackOnboardingDeliveryPrompt(event: OnboardingInboxItem): string {
   return buildOnboardingDeliveryPrompt({
-    envelope: `[owner=${readableSlackActor(event.operator)} channel=${event.channelId} time=${event.receivedAt}]`,
+    envelope: `[owner=${readableSlackActor(event.operator)} channel=${event.channelId} time=${envelopeTime(event.receivedAt)}]`,
     text: event.text,
   });
 }
 
 function buildFeishuOnboardingDeliveryPrompt(event: FeishuOnboardingInboxItem): string {
   return buildOnboardingDeliveryPrompt({
-    envelope: `[platform=feishu owner=feishu-owner channel=${event.target.receiveId} receive_id_type=${event.target.receiveIdType} time=${event.receivedAt}]`,
+    envelope: `[platform=feishu owner=feishu-owner channel=${event.target.receiveId} receive_id_type=${event.target.receiveIdType} time=${envelopeTime(event.receivedAt)}]`,
     text: event.text,
   });
 }
@@ -134,7 +130,7 @@ function buildChoiceResponseDeliveryPrompt(event: ChoiceResponseInboxItem): stri
   const actor = readableSlackActor(event.answeredBy);
   return `Choice response:
 
-[ask_id=${event.askId} channel=${event.channelId} thread_ts=${event.threadTs} message_ts=${event.messageTs} time=${event.receivedAt} user_id=${event.answeredBy.slackUserId}]
+[ask_id=${event.askId} channel=${event.channelId} thread_ts=${event.threadTs} message_ts=${event.messageTs} time=${envelopeTime(event.receivedAt)} user_id=${event.answeredBy.slackUserId}]
 ${actor} selected: ${event.optionLabel}
 
 Question:
@@ -148,21 +144,26 @@ function buildReminderDeliveryPrompt(
   const reminder = context.reminder?.reminderId === event.reminderId ? context.reminder : undefined;
   if (!reminder) throw new Error(`Reminder context not found: ${event.reminderId}`);
   const provenance = reminder.provenance
-    ? `\n\nProvenance:\n${JSON.stringify(reminder.provenance, null, 2)}`
+    ? `\n\nScheduled from: ${reminderOriginEnvelope(reminder.provenance)}`
     : '';
 
   return `Scheduled reminder:
 
-[reminder_id=${reminder.reminderId} time=${event.receivedAt}] Scheduled wake: ${reminder.title}
+[reminder_id=${reminder.reminderId} time=${envelopeTime(event.receivedAt)}] ${reminder.title}
 
 Instructions:
 ${reminder.instructions}${provenance}`;
 }
 
+function reminderOriginEnvelope(provenance: NonNullable<Reminder['provenance']>): string {
+  const threadPart = provenance.threadTs ? ` thread_ts=${provenance.threadTs}` : '';
+  return `[channel_id=${provenance.channelId}${threadPart} message_ts=${provenance.messageTs}]`;
+}
+
 function buildMemoryCoherenceDeliveryPrompt(event: MemoryCoherenceInboxItem): string {
   return `Memory coherence system wake:
 
-[time=${event.receivedAt} scheduled_slot_at=${event.scheduledSlotAt} scheduled_slot=${event.scheduledSlotLabel}]
+[time=${envelopeTime(event.receivedAt)} scheduled_slot_at=${envelopeTime(event.scheduledSlotAt)} scheduled_slot=${event.scheduledSlotLabel}]
 
 You are running your daily memory pass.
 
@@ -175,6 +176,7 @@ export function buildRuntimeRestartContinuationDeliveryPrompt(): string {
   return [
     'Anima system message: runtime restarted while this task was in progress.',
     'Continue the same task from the current session; do not repeat completed external side effects.',
+    'Check `anima outbox` for what you already sent (and `anima inbox` for what arrived) before re-sending anything.',
   ].join('\n');
 }
 
@@ -188,7 +190,7 @@ export function buildProviderCrashRetryDeliveryPrompt(input: {
     `This is retry ${input.attempt}/${input.maxRetries}.`,
     `Previous error: ${input.previousError}`,
     'Continue the original task from the current files, conversation, and connected chat state.',
-    'Do not repeat completed external side effects such as chat messages, file sends, or file edits; inspect state first if needed.',
+    'Do not repeat completed external side effects such as chat messages, file sends, or file edits; check `anima outbox` for what already went out, and inspect files/state, before redoing anything.',
   ].join('\n');
 }
 
@@ -198,18 +200,20 @@ function messageEnvelope(event: SlackInboxItem): string {
   const displayRef = slackSurfaceDisplayRef(surface);
   const channelIdPart = displayRef === surface.channelId ? '' : ` channel_id=${surface.channelId}`;
   const threadPart = surface.threadTs ? ` thread_ts=${surface.threadTs}` : '';
+  const wakePart = event.wakeReason ? ` wake=${event.wakeReason}` : '';
   const userPart = actor?.userId ? ` user_id=${actor.userId}` : '';
   const userTimePart = actor?.timezone ? ` user_local_time=${formatUserLocalTime(event.receivedAt, actor.timezone)} user_tz=${actor.timezone.name}` : '';
 
-  return `[channel=${displayRef}${channelIdPart}${threadPart} message_ts=${event.messageTs} time=${event.receivedAt}${userPart}${userTimePart}]`;
+  return `[channel=${displayRef}${channelIdPart}${threadPart} message_ts=${event.messageTs}${wakePart} time=${envelopeTime(event.receivedAt)}${userPart}${userTimePart}]`;
 }
 
 function feishuMessageEnvelope(event: FeishuInboxItem): string {
   const threadPart = event.threadId ? ` thread_id=${event.threadId}` : '';
   const actorUserId = event.actor?.openId ?? event.actor?.userId;
   const userPart = actorUserId ? ` user_id=${actorUserId}` : '';
+  const wakePart = event.wakeReason ? ` wake=${event.wakeReason}` : '';
   const chatNamePart = event.chatName ? ` chat_name=${quoteEnvelopeValue(event.chatName)}` : '';
-  return `[platform=feishu chat=${event.chatType} chat_id=${event.chatId}${chatNamePart}${threadPart} message_id=${event.messageId} time=${event.receivedAt}${userPart}]`;
+  return `[platform=feishu chat=${event.chatType} chat_id=${event.chatId}${chatNamePart}${threadPart} message_id=${event.messageId}${wakePart} time=${envelopeTime(event.receivedAt)}${userPart}]`;
 }
 
 function actorLabel(event: SlackInboxItem): string {
@@ -282,6 +286,11 @@ function escapeAttr(value: string): string {
 
 function quoteEnvelopeValue(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/** Envelope timestamps render at second granularity; sub-second precision is noise for reading context (message_ts carries exact identity). */
+function envelopeTime(timestamp: string): string {
+  return timestamp.replace(/\.\d{3}(?=Z$|[+-]\d{2}:\d{2}$)/, '');
 }
 
 function formatUserLocalTime(

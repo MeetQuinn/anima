@@ -121,6 +121,58 @@ test('queued Slack listener persists work for a separate runtime worker', async 
   }
 });
 
+test('runtime worker passes cached Slack identity into the standing prompt', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-slack-identity-test-'));
+  const runtime = new ControlledRuntime();
+  const coordinator = { agentId: 'scout', stateDir };
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        queue: queueFor('scout'),
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+      await enqueueInbox(
+        makeSlackEvent({
+          channelId: 'D-user',
+          eventId: 'evt-slack-identity',
+          teamId: 'T-demo',
+          text: 'who am I',
+          ts: '1770000010.000001',
+          userId: 'U1',
+        }),
+        coordinator,
+      );
+      await writeFile(join(stateDir, 'agents', 'scout', 'config.json'), `${JSON.stringify({
+        id: 'scout',
+        profile: { displayName: 'Scout' },
+        slack: {
+          appToken: 'xapp-test',
+          botHandle: 'scout-bot',
+          botName: 'scout-bot',
+          botToken: 'xoxb-test',
+          botUserId: 'U-SCOUT',
+        },
+      }, null, 2)}\n`, 'utf8');
+
+      const drain = worker.drainOnce();
+      await waitFor(() => runtime.calls.length === 1);
+      assert.match(
+        runtime.calls[0]?.systemPrompt ?? '',
+        /In Slack you are \*\*@scout-bot\*\* \(user id `U-SCOUT`\)/,
+      );
+      runtime.finishNext();
+      assert.equal(await drain, 1);
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('runtime worker drain close lets active item finish before clearing audit pointer', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-drain-close-test-'));
   const runtime = new ControlledRuntime();
@@ -1536,6 +1588,7 @@ test('runtime worker drains a running item for restart without marking it failed
       assert.equal(resumedRuntime.calls[0]?.prompt, [
         'Anima system message: runtime restarted while this task was in progress.',
         'Continue the same task from the current session; do not repeat completed external side effects.',
+        'Check `anima outbox` for what you already sent (and `anima inbox` for what arrived) before re-sending anything.',
       ].join('\n'));
       assert.doesNotMatch(resumedRuntime.calls[0]?.prompt ?? '', /drain me/);
       resumedRuntime.finishNext();

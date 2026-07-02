@@ -727,8 +727,38 @@ test('Feishu delivery prompt is platform-aware', () => {
 
   assert.equal(
     buildCodeAgentDeliveryPrompt(item),
-    'New Feishu message:\n\n[platform=feishu chat=p2p chat_id=oc_test_chat message_id=om_test_message time=2026-06-02T14:20:00.000Z user_id=ou_alice] ou_alice: hello from Feishu',
+    'New Feishu message:\n\n[platform=feishu chat=p2p chat_id=oc_test_chat message_id=om_test_message time=2026-06-02T14:20:00Z user_id=ou_alice] ou_alice: hello from Feishu',
   );
+});
+
+test('Feishu transport stamps accepted wake reason before queueing', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-wake-reason-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir, { botProfileSyncedAt: '2099-01-01T00:00:00.000Z' });
+      const queue = new WakeQueueService('scout');
+      const transport = new FeishuMessageTransport(
+        {
+          agentRuntimeKind: 'kimi-cli',
+          config: feishuTransportConfig({ appId: '' }),
+          queue,
+        },
+        { createMessageClient: () => testFeishuMessageClient() },
+      );
+
+      await handleFeishuReceiveForTest(transport, makeFeishuEvent());
+
+      const item = (await queue.list()).find((queued) => queued.kind === 'feishu');
+      assert.equal(item?.kind, 'feishu');
+      assert.equal(item?.kind === 'feishu' ? item.wakeReason : undefined, 'dm');
+      assert.match(
+        item?.kind === 'feishu' ? buildCodeAgentDeliveryPrompt(item) : '',
+        /message_id=om_test_message wake=dm time=/,
+      );
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 test('Feishu delivery prompt includes resolved quoted message content', async () => {
@@ -793,7 +823,7 @@ test('Feishu delivery prompt includes resolved quoted message content', async ()
       });
       assert.equal(
         item?.kind === 'feishu' ? buildCodeAgentDeliveryPrompt(item) : '',
-        'New Feishu message:\n\n[platform=feishu chat=p2p chat_id=oc_test_chat message_id=om_reply_message time=2026-06-02T14:20:00.000Z user_id=ou_alice] Alice:\n> (quoted) Bob: quoted first line\n> (quoted) Bob: quoted second line\ncurrent reply',
+        'New Feishu message:\n\n[platform=feishu chat=p2p chat_id=oc_test_chat message_id=om_reply_message wake=dm time=2026-06-02T14:20:00Z user_id=ou_alice] Alice:\n> (quoted) Bob: quoted first line\n> (quoted) Bob: quoted second line\ncurrent reply',
       );
     });
   } finally {
@@ -898,7 +928,7 @@ test('Feishu directory enriches live delivery prompt with actor and chat names',
       assert.equal((await service.getCachedChat('oc_test_chat'))?.chatName, '产品群');
       assert.equal(
         buildCodeAgentDeliveryPrompt(enriched),
-        'New Feishu message:\n\n[platform=feishu chat=group chat_id=oc_test_chat chat_name="产品群" message_id=om_test_message time=2026-06-02T14:20:00.000Z user_id=ou_alice] Alice: hello from Feishu',
+        'New Feishu message:\n\n[platform=feishu chat=group chat_id=oc_test_chat chat_name="产品群" message_id=om_test_message time=2026-06-02T14:20:00Z user_id=ou_alice] Alice: hello from Feishu',
       );
     });
   } finally {
@@ -1327,7 +1357,7 @@ test('Feishu onboarding prompt targets the owner open_id without requiring an ow
   });
 
   assert.match(text, /^Agent onboarding:/);
-  assert.match(text, /\[platform=feishu owner=feishu-owner channel=ou_owner receive_id_type=open_id time=2026-01-01T00:00:00\.000Z\]/);
+  assert.match(text, /\[platform=feishu owner=feishu-owner channel=ou_owner receive_id_type=open_id time=2026-01-01T00:00:00Z\]/);
   assert.match(text, /Your owner is the person who connected you to Feishu/);
   assert.doesNotMatch(text, /Reply target:|Use `anima message send/);
   assert.doesNotMatch(text, /Slack|Lark|<@|ou_owner.*owner is/);
