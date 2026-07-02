@@ -52,7 +52,7 @@ export function TeamSwitcher({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex h-14 w-full items-center gap-2.5 border-b border-spine-border px-5 text-left transition-colors hover:bg-spine-elevated/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
+        className="group flex h-14 w-full items-center gap-2.5 border-b border-spine-border px-5 text-left transition-colors hover:bg-spine-elevated/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
         aria-haspopup="menu"
         aria-expanded={open}
         title={grouped ? `Team: ${label}` : 'Anima'}
@@ -61,26 +61,28 @@ export function TeamSwitcher({
         <span className="display truncate text-[18px] font-semibold tracking-tight text-text-on-spine">
           {label}
         </span>
-        {grouped ? (
-          <ChevronDown
-            className={[
-              'ml-auto h-4 w-4 shrink-0 text-text-on-spine-muted transition-transform',
-              open ? 'rotate-180' : '',
-            ].join(' ')}
-          />
-        ) : (
-          <span className="ml-auto h-6 w-6 shrink-0" aria-hidden />
-        )}
+        {/* Caret is always present so the menu stays discoverable; it rests faint
+            in single-team mode and brightens on hover, and is steadier in grouped. */}
+        <ChevronDown
+          className={[
+            'ml-auto h-4 w-4 shrink-0 text-text-on-spine-muted transition-all duration-150',
+            open
+              ? 'rotate-180 opacity-100'
+              : grouped
+                ? 'opacity-70'
+                : 'opacity-30 group-hover:opacity-70',
+          ].join(' ')}
+        />
       </button>
 
       {open && (
         <div
           role="menu"
-          className="absolute left-3 right-3 top-[52px] z-30 overflow-hidden rounded-sm border border-border-soft bg-surface py-1 shadow-deep"
+          className="absolute left-3 right-3 top-[52px] z-30 overflow-hidden rounded-sm border border-spine-border bg-spine-elevated py-1 shadow-deep"
         >
           {grouped && (
             <>
-              <div className="px-3 py-1.5 caps text-text-subtle">Teams</div>
+              <div className="px-3 py-1.5 caps text-text-on-spine-subtle">Teams</div>
               {teams.map((team) => {
                 const active = team.id === current?.id;
                 return (
@@ -92,7 +94,7 @@ export function TeamSwitcher({
                       onSelectTeam(team.id);
                       setOpen(false);
                     }}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left font-sans text-[13px] text-text hover:bg-muted/50"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left font-sans text-[13px] text-text-on-spine hover:bg-white/5"
                   >
                     <Check
                       className={[
@@ -104,7 +106,7 @@ export function TeamSwitcher({
                   </button>
                 );
               })}
-              <div className="my-1 h-px bg-border-soft" />
+              <div className="my-1 h-px bg-spine-border" />
             </>
           )}
           <button
@@ -114,9 +116,9 @@ export function TeamSwitcher({
               onNewTeam();
               setOpen(false);
             }}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left font-sans text-[13px] text-text hover:bg-muted/50"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left font-sans text-[13px] font-medium text-text-on-spine hover:bg-white/5"
           >
-            <Plus className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+            <Plus className="h-3.5 w-3.5 shrink-0 text-accent" />
             <span>New team</span>
           </button>
         </div>
