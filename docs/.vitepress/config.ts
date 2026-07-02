@@ -64,6 +64,10 @@ export default defineConfig({
         text: "Use Cases",
         items: [
           {
+            text: "Set up a software team",
+            link: "/use-cases/run-a-software-team",
+          },
+          {
             text: "Connect external events through Slack",
             link: "/use-cases/external-events-via-slack",
           },
