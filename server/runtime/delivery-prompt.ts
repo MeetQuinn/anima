@@ -8,12 +8,13 @@ import type {
   MemoryCoherenceInboxItem,
   OnboardingInboxItem,
   ReminderInboxItem,
+  SlackInboxItem,
 } from '../../shared/inbox.js';
 import {
   slackSurfaceDisplayRef,
   slackSurfaceForEvent,
-  type SlackEvent,
 } from '../inbox/slack-events.js';
+import { slackDisplayLabel } from '../slack/slack.helper.js';
 import type { Reminder } from '../../shared/reminder.js';
 
 export interface CodeAgentPromptContext {
@@ -59,7 +60,7 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
   return buildSlackMessageDeliveryPrompt(event);
 }
 
-function buildSlackMessageDeliveryPrompt(event: SlackEvent): string {
+function buildSlackMessageDeliveryPrompt(event: SlackInboxItem): string {
   const envelope = `${messageEnvelope(event)} ${actorLabel(event)}: ${event.text}`;
   return buildDeliveryEventPrompt({
     attentionSuggestion: event.attentionSuggestion,
@@ -91,7 +92,7 @@ function formatFeishuQuotedMessage(message: FeishuQuotedMessage): string {
 
 function buildSlackOnboardingDeliveryPrompt(event: OnboardingInboxItem): string {
   return buildOnboardingDeliveryPrompt({
-    envelope: `[owner=${readableOwnerLabel(event.operator)} channel=${event.channelId} time=${event.receivedAt}]`,
+    envelope: `[owner=${readableSlackActor(event.operator)} channel=${event.channelId} time=${event.receivedAt}]`,
     text: event.text,
   });
 }
@@ -130,7 +131,7 @@ function buildDeliveryEventPrompt(input: {
 }
 
 function buildChoiceResponseDeliveryPrompt(event: ChoiceResponseInboxItem): string {
-  const actor = readableChoiceActor(event.answeredBy);
+  const actor = readableSlackActor(event.answeredBy);
   return `Choice response:
 
 [ask_id=${event.askId} channel=${event.channelId} thread_ts=${event.threadTs} message_ts=${event.messageTs} time=${event.receivedAt} user_id=${event.answeredBy.slackUserId}]
@@ -191,7 +192,7 @@ export function buildProviderCrashRetryDeliveryPrompt(input: {
   ].join('\n');
 }
 
-function messageEnvelope(event: SlackEvent): string {
+function messageEnvelope(event: SlackInboxItem): string {
   const surface = slackSurfaceForEvent(event);
   const { actor } = event;
   const displayRef = slackSurfaceDisplayRef(surface);
@@ -211,16 +212,13 @@ function feishuMessageEnvelope(event: FeishuInboxItem): string {
   return `[platform=feishu chat=${event.chatType} chat_id=${event.chatId}${chatNamePart}${threadPart} message_id=${event.messageId} time=${event.receivedAt}${userPart}]`;
 }
 
-function actorLabel(event: SlackEvent): string {
+function actorLabel(event: SlackInboxItem): string {
   const { actor } = event;
-  const displayName = actor?.displayName ?? actor?.realName;
-  const handle = normalizeHandle(actor?.handle);
-
-  if (displayName && handle) {
-    if (sameName(displayName, handle)) return handle;
-    return `${displayName} (${handle})`;
-  }
-  return displayName ?? handle ?? (actor?.userId ? `@${actor.userId}` : '@unknown');
+  return slackDisplayLabel({
+    displayName: actor?.displayName ?? actor?.realName,
+    handle: actor?.handle,
+    userId: actor?.userId,
+  });
 }
 
 function feishuActorLabel(event: FeishuInboxItem): string {
@@ -231,15 +229,7 @@ function feishuActorLabel(event: FeishuInboxItem): string {
     ?? '@unknown';
 }
 
-function readableOwnerLabel(owner: OnboardingInboxItem['operator']): string {
-  const handle = normalizeHandle(owner.handle);
-  const mention = `<@${owner.slackUserId}>`;
-  if (owner.displayName && handle) return `${owner.displayName} (${handle}, ${mention})`;
-  if (owner.displayName) return `${owner.displayName} (${mention})`;
-  return handle ? `${handle} (${mention})` : mention;
-}
-
-function readableChoiceActor(actor: ChoiceResponseInboxItem['answeredBy']): string {
+function readableSlackActor(actor: { displayName?: string; handle?: string; slackUserId: string }): string {
   const handle = normalizeHandle(actor.handle);
   const mention = `<@${actor.slackUserId}>`;
   if (actor.displayName && handle) return `${actor.displayName} (${handle}, ${mention})`;
@@ -253,7 +243,7 @@ function formatAttachedFiles(files: InboxFileMeta[] | undefined): string {
   return '<attached_files>\n' + rendered.join('\n') + '\n</attached_files>';
 }
 
-function formatSlackMessagePreviews(previews: SlackEvent['previews']): string {
+function formatSlackMessagePreviews(previews: SlackInboxItem['previews']): string {
   if (!previews?.length) return '';
   const rendered = previews.map((preview) => {
     const attrs = [
@@ -281,10 +271,6 @@ function normalizeHandle(handle: string | undefined): string | undefined {
   return handle.startsWith('@') ? handle : `@${handle}`;
 }
 
-function sameName(a: string, b: string): boolean {
-  return a.trim().replace(/^@/, '').toLowerCase() === b.trim().replace(/^@/, '').toLowerCase();
-}
-
 function escapeAttr(value: string): string {
   const escaped = value
     .replace(/&/g, '&amp;')
@@ -300,7 +286,7 @@ function quoteEnvelopeValue(value: string): string {
 
 function formatUserLocalTime(
   timestamp: string,
-  timezone: NonNullable<NonNullable<SlackEvent['actor']>['timezone']>,
+  timezone: NonNullable<NonNullable<SlackInboxItem['actor']>['timezone']>,
 ): string {
   const date = new Date(timestamp);
   if (!Number.isFinite(date.getTime())) return timestamp;

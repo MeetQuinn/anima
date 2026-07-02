@@ -1,15 +1,9 @@
 import type { ConversationsInfoResponse, UsersInfoResponse } from '@slack/web-api';
 
+import type { InboxFileMeta } from '../../shared/inbox.js';
+
 export type SlackConversationInfo = NonNullable<ConversationsInfoResponse['channel']>;
 export type SlackUserInfo = NonNullable<UsersInfoResponse['user']>;
-
-export interface SlackFile {
-  downloadError?: string;
-  id: string;
-  mimetype: string;
-  name: string;
-  sizeBytes: number;
-}
 
 export interface SlackRawFile {
   id?: string;
@@ -22,7 +16,7 @@ export interface SlackRawFile {
   url_private_download?: string;
 }
 
-export type DownloadableSlackFile = SlackFile & { urlPrivate?: string };
+export type DownloadableSlackFile = InboxFileMeta & { urlPrivate?: string };
 
 const SLACK_USER_MENTION_PATTERN = /<@([A-Z0-9]+)(?:\|([^>]+))?>/g;
 const SLACK_CHANNEL_MENTION_PATTERN = /<#([A-Z0-9]+)(?:\|([^>]+))?>/g;
@@ -115,6 +109,40 @@ export function channelLabel(value: string): string {
   return value.startsWith('#') ? value : `#${value}`;
 }
 
+export interface SlackActorNameParts {
+  displayName?: string;
+  handle?: string;
+  userId?: string;
+}
+
+// "Display Name (@handle)" byline shared by the delivery prompt and transcript
+// output. Collapses to the handle alone when the two names match.
+export function slackDisplayLabel(parts: SlackActorNameParts): string {
+  const handle = parts.handle ? atLabel(parts.handle) : undefined;
+  if (parts.displayName && handle) {
+    return sameActorName(parts.displayName, handle) ? handle : `${parts.displayName} (${handle})`;
+  }
+  return parts.displayName ?? handle ?? (parts.userId ? atLabel(parts.userId) : '@unknown');
+}
+
+// Inline "@name" replacement for a <@U…> mention: handle first, then display
+// name, then the raw user id.
+export function slackMentionLabel(parts: SlackActorNameParts): string {
+  if (parts.handle) return atLabel(parts.handle);
+  if (parts.displayName) return atLabel(parts.displayName);
+  return atLabel(parts.userId ?? 'unknown');
+}
+
+function sameActorName(a: string, b: string): boolean {
+  return a.trim().replace(/^@/, '').toLowerCase() === b.trim().replace(/^@/, '').toLowerCase();
+}
+
+export function slackTsToIso(ts: string): string | undefined {
+  const seconds = Number(ts.split('.')[0]);
+  if (!Number.isFinite(seconds)) return undefined;
+  return new Date(seconds * 1000).toISOString();
+}
+
 export function findSlackConversationByName(
   channels: SlackConversationInfo[],
   name: string,
@@ -140,9 +168,9 @@ export function normalizeSlackConversationName(value: string): string {
   return value.trim().replace(/^#/, '').toLowerCase();
 }
 
-export function normalizeSlackEventFiles(rawFiles: SlackRawFile[] | undefined): SlackFile[] | undefined {
+export function normalizeSlackEventFiles(rawFiles: SlackRawFile[] | undefined): InboxFileMeta[] | undefined {
   if (!rawFiles?.length) return undefined;
-  const files: SlackFile[] = [];
+  const files: InboxFileMeta[] = [];
   for (const raw of rawFiles) {
     const file = slackFileFromRaw(raw);
     if (file) {

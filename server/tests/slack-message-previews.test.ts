@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { WebClient } from '@slack/web-api';
 
-import { waitForSlackMessagePreviewAttachments } from '../inbox/slack-preview-refresh.js';
+import { waitForSlackMessagePreviewAttachments } from '../slack/message-previews.js';
 import { normalizeSlackMessage } from '../inbox/slack-events.js';
 
 test('delayed Slack preview wait returns containing-message unfurl attachments before enqueue', async () => {

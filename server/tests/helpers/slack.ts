@@ -1,5 +1,5 @@
 import { makeId } from '../../ids.js';
-import type { SlackEvent } from '../../inbox/slack-events.js';
+import type { SlackInboxItem } from '../../../shared/inbox.js';
 
 export function makeSlackEvent(
   input: {
@@ -10,8 +10,8 @@ export function makeSlackEvent(
     eventId?: string;
     ts?: string;
     timestamp?: string;
-  } & Partial<SlackEvent>,
-): SlackEvent {
+  } & Partial<SlackInboxItem>,
+): SlackInboxItem {
   const ts = input.ts ?? `${Date.now() / 1000}`;
   const now = input.timestamp ?? new Date().toISOString();
   return {
@@ -29,5 +29,5 @@ export function makeSlackEvent(
         !['id', 'eventId', 'kind', 'receivedAt', 'handling', 'teamId', 'channelId', 'messageTs', 'actor', 'text', 'userId', 'ts', 'timestamp'].includes(key),
       ),
     ),
-  } as SlackEvent;
+  } as SlackInboxItem;
 }

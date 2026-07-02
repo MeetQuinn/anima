@@ -5,13 +5,15 @@ import {
   SlackWorkspaceDirectoryService,
   type SlackConversationInfo,
   type SlackUserInfo,
-} from '../slack/workspace-directory.service.js';
+} from './workspace-directory.service.js';
 import {
-  atLabel,
   channelLabel,
   extractSlackChannelMentionIds,
   extractSlackUserMentionIds,
-} from '../slack/slack.helper.js';
+  replaceSlackChannelMentions,
+  replaceSlackUserMentions,
+  slackMentionLabel,
+} from './slack.helper.js';
 
 export interface SlackConversationProfile {
   name?: string;
@@ -29,18 +31,9 @@ export interface SlackUserProfile {
   };
 }
 
-interface SlackChannelMention {
-  channelId: string;
-  channelName?: string;
-}
-
-interface SlackUserMention {
-  displayName?: string;
-  handle?: string;
-  realName?: string;
-  userId: string;
-}
-
+// Per-process cache over the workspace directory, normalizing Slack user and
+// conversation records into the profile shape ingest and read surfaces consume.
+// Lookup failures cache as `undefined` so one bad id never retries per message.
 export class SlackProfileResolver {
   private readonly conversations = new Map<string, SlackConversationProfile | undefined>();
   private readonly users = new Map<string, SlackUserProfile | undefined>();
@@ -57,7 +50,7 @@ export class SlackProfileResolver {
         client: input.client,
         teamId: input.teamId,
       }).getUser(input.userId);
-      const profile = normalizeSlackUserProfile(input.teamId, input.userId, user);
+      const profile = normalizeSlackUserProfile(input.userId, user);
       this.users.set(cacheKey, profile);
       return profile;
     } catch (error) {
@@ -89,81 +82,29 @@ export class SlackProfileResolver {
     }
   }
 
-  async userMentionLabels(input: {
+  // Resolves <@U…> and <#C…> markup in an inbound message into readable
+  // @name / #channel labels. Unresolvable ids keep their Slack-provided
+  // fallback name or the raw id.
+  async displayText(input: {
     client: WebClient;
     teamId: string;
     text: string;
-  }): Promise<Map<string, string>> {
-    const mentions = await this.userMentions(input);
-    return new Map(mentions.map((mention) => [mention.userId, slackMentionLabel(mention)]));
-  }
-
-  async channelMentionLabels(input: {
-    client: WebClient;
-    teamId: string;
-    text: string;
-  }): Promise<Map<string, string>> {
-    const mentions = await this.channelMentions(input);
-    return new Map(mentions.map((mention) => [mention.channelId, slackChannelMentionLabel(mention)]));
-  }
-
-  private async userMentions(input: {
-    client: WebClient;
-    teamId: string;
-    text: string;
-  }): Promise<SlackUserMention[]> {
-    const userIds = extractSlackUserMentionIds(input.text);
-    const profiles = await Promise.all(
-      userIds.map(async (userId) => ({
-        profile: await this.user({
-          client: input.client,
-          teamId: input.teamId,
-          userId,
-        }),
-        userId,
-      })),
-    );
-    return profiles.map(({ profile, userId }) => ({
-      ...(profile ?? {}),
-      userId,
+  }): Promise<string> {
+    const userLabels = new Map<string, string>();
+    await Promise.all(extractSlackUserMentionIds(input.text).map(async (userId) => {
+      const profile = await this.user({ client: input.client, teamId: input.teamId, userId });
+      userLabels.set(userId, slackMentionLabel({ ...profile, userId }));
     }));
-  }
-
-  private async channelMentions(input: {
-    client: WebClient;
-    teamId: string;
-    text: string;
-  }): Promise<SlackChannelMention[]> {
-    const channelIds = extractSlackChannelMentionIds(input.text);
-    const profiles = await Promise.all(
-      channelIds.map(async (channelId) => ({
-        profile: await this.conversation({
-          channelId,
-          client: input.client,
-          teamId: input.teamId,
-        }),
-        channelId,
-      })),
-    );
-    return profiles.map(({ profile, channelId }) => ({
-      channelId,
-      ...(profile?.name ? { channelName: profile.name } : {}),
+    const channelLabels = new Map<string, string>();
+    await Promise.all(extractSlackChannelMentionIds(input.text).map(async (channelId) => {
+      const profile = await this.conversation({ channelId, client: input.client, teamId: input.teamId });
+      channelLabels.set(channelId, channelLabel(profile?.name ?? channelId));
     }));
+    return replaceSlackChannelMentions(replaceSlackUserMentions(input.text, userLabels), channelLabels);
   }
-}
-
-function slackMentionLabel(mention: SlackUserMention): string {
-  if (mention.handle) return atLabel(mention.handle);
-  if (mention.displayName) return atLabel(mention.displayName);
-  return atLabel(mention.userId);
-}
-
-function slackChannelMentionLabel(mention: SlackChannelMention): string {
-  return channelLabel(mention.channelName ?? mention.channelId);
 }
 
 function normalizeSlackUserProfile(
-  _teamId: string,
   userId: string,
   user: SlackUserInfo | undefined,
 ): SlackUserProfile {

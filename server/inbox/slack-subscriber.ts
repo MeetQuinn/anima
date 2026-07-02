@@ -17,25 +17,16 @@ import {
   SLACK_VIEW_REMINDERS_ACTION_ID,
 } from '../slack-interactions/shortcut-ids.js';
 import { SlackWorkspaceDirectoryService, type SlackWorkspaceDirectoryEvent } from '../slack/workspace-directory.service.js';
-import {
-  replaceSlackChannelMentions,
-  replaceSlackUserMentions,
-  normalizeSlackEventFiles,
-} from '../slack/slack.helper.js';
+import { SlackProfileResolver } from '../slack/profiles.js';
 import {
   isSlackEvent,
   isRoutableSlackMessage,
-  normalizeSlackMessage,
+  slackEventTeamId,
   slackSurfaceForEvent,
   type SlackMessageEnvelope,
   type SlackRawMessageEvent,
 } from './slack-events.js';
-import {
-  attachmentsHaveSlackMessagePreviews,
-  slackMessageAttachments,
-  waitForSlackMessagePreviewAttachments,
-} from './slack-preview-refresh.js';
-import { SlackProfileResolver } from './slack-profiles.js';
+import { buildSlackInboxItem } from './slack-ingest.js';
 import { slackShortcutHandoffServiceForAgent } from './slack-shortcut-handoff.service.js';
 import { slackRuntimeDecision, type SlackRuntimeDecision } from './slack-subscription.service.js';
 import { WakeQueueService, type WakeQueueEnqueueResult } from './wake-queue.service.js';
@@ -224,8 +215,8 @@ export class SlackInboxSubscriber {
     if (!isRoutableSlackMessage(rawEvent)) return;
 
     const envelope = body as SlackMessageEnvelope;
-    const teamId = envelope.team_id ?? rawEvent.team ?? 'unknown-team';
-    const duplicate = Boolean(rawEvent.channel && rawEvent.ts && await this.options.queue.find(
+    const teamId = slackEventTeamId(envelope, rawEvent);
+    const duplicate = Boolean(await this.options.queue.find(
       slackMessageEventId(teamId, rawEvent.channel, rawEvent.ts),
     ));
     const runtimeDecision = await slackRuntimeDecision(rawEvent, { agentId: this.options.queue.agentId, duplicate });
@@ -236,63 +227,22 @@ export class SlackInboxSubscriber {
 
     const webClient = client ?? createSlackWebClient(this.options.botToken);
     this.maybeSyncBotDisplayInfo(webClient);
-    const userProfile = await this.slackProfiles.user({
-      client: webClient,
-      teamId,
-      userId: rawEvent.user,
-    });
-    const conversationProfile = await this.slackProfiles.conversation({
-      channelId: rawEvent.channel,
-      client: webClient,
-      teamId,
-    });
-    const mentionLabels = await this.slackProfiles.userMentionLabels({
-      client: webClient,
-      teamId,
-      text: rawEvent.text,
-    });
-    const channelMentionLabels = await this.slackProfiles.channelMentionLabels({
-      client: webClient,
-      teamId,
-      text: rawEvent.text,
-    });
-    const permalink = await this.slackPermalink(rawEvent, webClient);
-    let attachments = rawEvent.attachments?.length
-      ? rawEvent.attachments
-      : await slackMessageAttachments({
-        channelId: rawEvent.channel,
-        client: webClient,
-        messageTs: rawEvent.ts,
-        text: rawEvent.text,
-        warn: (message) => console.warn(message),
-      });
-    if (!attachmentsHaveSlackMessagePreviews(attachments)) {
-      const delayedAttachments = await waitForSlackMessagePreviewAttachments({
-        channelId: rawEvent.channel,
-        client: webClient,
-        messageTs: rawEvent.ts,
-        text: rawEvent.text,
-        warn: (message) => console.warn(message),
-      });
-      if (delayedAttachments?.length) attachments = delayedAttachments;
-    }
-    const downloadedFiles = normalizeSlackEventFiles(rawEvent.files);
-    const normalizedEvent = normalizeSlackMessage({
+    const item = await buildSlackInboxItem({
       ...(runtimeDecision.attentionSuggestion ? { attentionSuggestion: runtimeDecision.attentionSuggestion } : {}),
+      client: webClient,
       envelope,
-      channelName: conversationProfile?.name,
-      event: attachments?.length ? { ...rawEvent, attachments } : rawEvent,
-      ...(downloadedFiles ? { files: downloadedFiles } : {}),
-      permalink,
-      text: replaceSlackChannelMentions(replaceSlackUserMentions(rawEvent.text, mentionLabels), channelMentionLabels),
-      userProfile,
+      event: rawEvent,
+      profiles: this.slackProfiles,
     });
-    const decision = await this.options.queue.enqueue(normalizedEvent);
+    const decision = await this.options.queue.enqueue(item);
     if (runtimeDecision.reason === 'mention' && runtimeDecision.subscription && !decision.duplicate) {
-      const { channelId, channelName } = slackSurfaceForEvent(normalizedEvent);
       activityServiceForAgent(this.options.queue.agentId).record({
         type: 'anima.subscription.add',
-        payload: { channelId, ...(channelName ? { channelName } : {}), kind: runtimeDecision.subscription.kind },
+        payload: {
+          channelId: item.channelId,
+          ...(item.channelName ? { channelName: item.channelName } : {}),
+          kind: runtimeDecision.subscription.kind,
+        },
       }).catch((err: unknown) => console.warn(`subscription.add activity: ${errorMessage(err)}`));
     }
     console.log(JSON.stringify(slackDecisionLog(decision, this.options.agentRuntimeKind, runtimeDecision), null, 2));
@@ -314,24 +264,6 @@ export class SlackInboxSubscriber {
         this.botDisplayInfoSyncInFlight = false;
       });
   }
-
-  private async slackPermalink(
-    event: SlackRawMessageEvent,
-    client: WebClient,
-  ): Promise<string | undefined> {
-    if (!event.channel || !event.ts) return undefined;
-    try {
-      const response = await client.chat.getPermalink({
-        channel: event.channel,
-        message_ts: event.ts,
-      });
-      return response.permalink;
-    } catch (error) {
-      console.warn(`Slack permalink lookup failed for ${event.channel}/${event.ts}: ${errorMessage(error)}`);
-      return undefined;
-    }
-  }
-
 }
 
 // Refresh the bot's own Slack display info at most once every 6h while handling

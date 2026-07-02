@@ -5,6 +5,7 @@ import {
 } from '../storage/schema/subscription.store.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import type { FeishuInboxItem } from '../../shared/inbox.js';
+import type { SlackRawMessageEvent } from './slack-events.js';
 
 export { subscriptionStatus };
 export type { SubscriptionRecord };
@@ -14,18 +15,6 @@ export const THREAD_ACTIVE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const ATTENTION_NUDGE_WINDOW_MS = 60 * 60 * 1000;
 const ATTENTION_NUDGE_WAKE_THRESHOLD = 6;
 const ATTENTION_NUDGE_BACKOFF_MS = 24 * 60 * 60 * 1000;
-
-interface SlackRuntimeMessageEvent {
-  bot_id?: string;
-  channel?: string;
-  channel_type?: string;
-  subtype?: string;
-  text?: string;
-  thread_ts?: string;
-  ts?: string;
-  type?: string;
-  user?: string;
-}
 
 export interface SlackRuntimeDecision {
   attentionSuggestion?: string;
@@ -64,7 +53,7 @@ export interface AttentionMap {
 }
 
 export function shouldReply(
-  event: SlackRuntimeMessageEvent,
+  event: SlackRawMessageEvent,
 ): boolean {
   return immediateSlackRuntimeReason(event) !== undefined;
 }
@@ -174,7 +163,7 @@ export async function muteSubscriptionForAgent(input: {
 }
 
 export async function slackRuntimeDecision(
-  event: SlackRuntimeMessageEvent,
+  event: SlackRawMessageEvent,
   options: { agentId?: string; duplicate?: boolean; nowMs?: number },
 ): Promise<SlackRuntimeDecision> {
   const immediateReason = immediateSlackRuntimeReason(event);
@@ -201,7 +190,7 @@ export async function feishuRuntimeDecision(
 }
 
 function immediateSlackRuntimeReason(
-  event: SlackRuntimeMessageEvent,
+  event: SlackRawMessageEvent,
 ): SlackRuntimeDecision['reason'] | undefined {
   if (event.channel_type === 'im') return 'dm';
   if (event.type === 'app_mention') return 'mention';
@@ -209,7 +198,7 @@ function immediateSlackRuntimeReason(
 }
 
 async function activateMentionFollow(
-  event: SlackRuntimeMessageEvent,
+  event: SlackRawMessageEvent,
   options: { agentId?: string; duplicate?: boolean; nowMs?: number },
 ): Promise<SlackRuntimeDecision> {
   const agentId = options.agentId ?? 'anima';
@@ -238,7 +227,7 @@ async function activateMentionFollow(
 }
 
 async function consumeThreadFollow(
-  event: SlackRuntimeMessageEvent,
+  event: SlackRawMessageEvent,
   options: { agentId?: string; duplicate?: boolean; nowMs?: number },
 ): Promise<SlackRuntimeDecision> {
   const agentId = options.agentId ?? 'anima';
@@ -267,7 +256,7 @@ async function consumeThreadFollow(
 }
 
 async function consumeChannelFollow(
-  event: SlackRuntimeMessageEvent,
+  event: SlackRawMessageEvent,
   options: { agentId?: string; duplicate?: boolean; nowMs?: number },
 ): Promise<SlackRuntimeDecision> {
   const agentId = options.agentId ?? 'anima';
@@ -559,11 +548,11 @@ function subscriptionDecisionSummary(subscription: SubscriptionRecord): NonNulla
   };
 }
 
-function isThreadReply(event: SlackRuntimeMessageEvent): boolean {
+function isThreadReply(event: SlackRawMessageEvent): boolean {
   return Boolean(event.thread_ts && event.thread_ts !== event.ts);
 }
 
-function threadTsForMention(event: SlackRuntimeMessageEvent): string | undefined {
+function threadTsForMention(event: SlackRawMessageEvent): string | undefined {
   return event.thread_ts || event.ts;
 }
 
