@@ -210,7 +210,9 @@ Implementation: `server/providers/claude.ts`.
 Claude Code has two transports. The default is stream-json over stdio, described below. Setting
 `transport: "tmux"` on the agent's provider config selects `ClaudeCodeTmuxAgentRuntime`
 (`server/providers/claude-tmux.ts`) instead, which drives an interactive `claude` session inside a
-tmux pane and polls it for turn completion. Both transports share the launch pieces in
+tmux pane and polls it for turn completion. The tmux transport is mainly for operators who want an
+inspectable terminal that can survive an Anima runtime restart; use stream-json unless you need
+that terminal-shaped behavior. Both transports share the launch pieces in
 `server/providers/claude-launch.ts`: the common CLI flags, the provider env defaults, and the
 system-prompt file written from `systemPromptFilePath`.
 
@@ -242,17 +244,17 @@ claude
 
 Anima uses provider tools for observability only; Slack side effects, reminders, subscriptions, inbox routing, and scheduling must stay Anima-owned. Claude Code currently receives a small strategic denylist through `--disallowedTools`:
 
-| Tool                                                       | Current CLI presence      | Stream-json behavior                                                                 | Side effect                                                                                     | Decision      |
-| ---------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- | ------------- |
-| `AskUserQuestion`                                          | Claude Code built-in      | Fails in the non-interactive runtime.                                                | Attempts to ask the operator outside Anima.                                                     | Deny          |
-| `CronCreate` / `CronDelete` / `CronList`                   | Claude Code built-ins     | Works as Claude-native session cron management.                                      | Creates or manages recurring scheduled prompts outside Anima inbox/reminder/activity ownership. | Deny          |
-| `ScheduleWakeup`                                           | Claude Code built-in      | Works as Claude-native one-off delayed wake.                                         | Creates future wakeups outside Anima reminders and audit.                                       | Deny          |
-| `RemoteTrigger`                                            | Claude Code built-in      | Not needed by Anima runtime.                                                         | Establishes provider-native remote triggers outside Anima routing.                              | Deny          |
-| `PushNotification`                                         | Claude Code built-in      | Not needed by Anima runtime.                                                         | Sends provider-native notifications outside Anima-visible messaging.                            | Deny          |
-| `SlashCommand`                                             | Claude Code built-in      | Observe. Some commands are internal and may be valid in stream-json.                 | Can affect Claude session state, but not proven broken in Anima.                                | Allow/observe |
-| File, shell, search, task, todo, notebook, and skill tools | Claude Code built-ins     | Required for normal agent work.                                                      | Provider work, surfaced through Anima activity mapping.                                         | Allow         |
-| Codex CLI tools                                            | Codex app-server protocol | No equivalent user-question/scheduler controls found in the current adapter surface. | Tool activity is mapped by Anima.                                                               | Allow/observe |
-| Kimi CLI tools                                             | Kimi wire protocol        | Anima initializes with `supports_question: false` and `supports_plan_mode: false`.   | Tool activity is mapped by Anima.                                                               | Allow/observe |
+| Tool                                                       | Current CLI presence      | Stream-json behavior                                                                                       | Side effect                                                                                     | Decision      |
+| ---------------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------- |
+| `AskUserQuestion`                                          | Claude Code built-in      | Fails in the non-interactive runtime.                                                                      | Attempts to ask the operator outside Anima.                                                     | Deny          |
+| `CronCreate` / `CronDelete` / `CronList`                   | Claude Code built-ins     | Works as Claude-native session cron management.                                                            | Creates or manages recurring scheduled prompts outside Anima inbox/reminder/activity ownership. | Deny          |
+| `ScheduleWakeup`                                           | Claude Code built-in      | Works as Claude-native one-off delayed wake.                                                               | Creates future wakeups outside Anima reminders and audit.                                       | Deny          |
+| `RemoteTrigger`                                            | Claude Code built-in      | Not needed by Anima runtime.                                                                               | Establishes provider-native remote triggers outside Anima routing.                              | Deny          |
+| `PushNotification`                                         | Claude Code built-in      | Not needed by Anima runtime.                                                                               | Sends provider-native notifications outside Anima-visible messaging.                            | Deny          |
+| `SlashCommand`                                             | Claude Code built-in      | Observe. Some commands are internal and may be valid in stream-json.                                       | Can affect Claude session state, but not proven broken in Anima.                                | Allow/observe |
+| File, shell, search, task, todo, notebook, and skill tools | Claude Code built-ins     | Required for normal agent work.                                                                            | Provider work, surfaced through Anima activity mapping.                                         | Allow         |
+| Codex CLI tools                                            | Codex app-server protocol | No equivalent user-question/scheduler controls found in the current adapter surface.                       | Tool activity is mapped by Anima.                                                               | Allow/observe |
+| Kimi CLI tools                                             | Kimi wire protocol        | Anima initializes with empty client capabilities; interactive prompts are not exposed through the adapter. | Tool activity is mapped by Anima.                                                               | Allow/observe |
 
 The denylist is global for now. Per-agent tool policy should be added only when there is a concrete operator need; the default policy should keep provider-native scheduling and notifications out of the runtime.
 
@@ -318,8 +320,8 @@ Current process model:
 
 Session handling:
 
-1. initialization declares `supports_question: false` and `supports_plan_mode: false`, keeping
-   interactive prompts out of the non-interactive runtime;
+1. initialization sends empty client capabilities, so interactive prompts are not exposed through
+   the non-interactive runtime;
 2. with a stored provider session id, the adapter sends `session/resume`; if the resume fails, it
    records `kimi.session.resume_missing` and falls back to `session/new`;
 3. a configured model is applied with `session/set_model`;
