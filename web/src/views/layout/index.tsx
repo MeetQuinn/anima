@@ -11,6 +11,7 @@ import {
   buildPath,
   DEFAULT_TAB,
 } from '@/lib/url-state';
+import type { UrlLocation } from '@/lib/url-state';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
 import { effectiveTeamId } from '@/lib/teams';
 import { useTeams, useCurrentTeam } from '@/hooks/useTeams';
@@ -49,9 +50,21 @@ function AgentReconciler({ disabled }: { disabled?: boolean }) {
   useEffect(() => {
     if (disabled) return;
     if (!agents || !agentStatuses) return;
+    // Wait for the team registry before ANY reconcile navigation. Until it loads,
+    // `useCurrentTeam` cannot validate a `?team=X` deep link — it degrades X to the
+    // default — so navigating now would resolve against the wrong team AND drop the
+    // param before it ever sticks (useTeams always yields >= 1 team once loaded, so
+    // length 0 reliably means "not loaded yet"). The invariant: `/?team=X` must not
+    // drive a navigation before X has been validated or explicitly degraded.
+    if (teams.length === 0) return;
     // Skip reconciliation on kb paths — they don't use the agent grammar.
     if (parseKbPath(location.pathname)) return;
     const parsed = parseLocation(location.pathname);
+
+    // Preserve the current query (notably `?team=`) across every reconcile
+    // navigation, so a team-scoped auto-pick or tab-fill never strips the param.
+    const navTo = (loc: UrlLocation) =>
+      navigate({ pathname: buildPath(loc), search: location.search }, { replace: true });
 
     // No agent in the URL: auto-pick, but scoped to the current team so the main
     // panel follows the sidebar. When the current team has no agents we leave the
@@ -68,7 +81,7 @@ function AgentReconciler({ disabled }: { disabled?: boolean }) {
       const pickId = active?.agentId ?? teamAgents[0].id;
       const picked = teamAgents.find((a) => a.id === pickId);
       const tab = picked && agentHasConnectedTransport(picked) ? DEFAULT_TAB : 'profile';
-      navigate(buildPath({ agentId: pickId, tab }), { replace: true });
+      navTo({ agentId: pickId, tab });
       return;
     }
 
@@ -79,8 +92,8 @@ function AgentReconciler({ disabled }: { disabled?: boolean }) {
       { agents, agentStatuses, selectedAgentId: agents[0]?.id },
       parsed,
     );
-    if (target) navigate(buildPath(target), { replace: true });
-  }, [disabled, agents, agentStatuses, location.pathname, navigate, teams, currentTeamId]);
+    if (target) navTo(target);
+  }, [disabled, agents, agentStatuses, location.pathname, location.search, navigate, teams, currentTeamId]);
 
   return null;
 }
