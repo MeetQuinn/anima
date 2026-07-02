@@ -35,7 +35,7 @@ export interface CodeAgentPromptContext {
  * Scheduled reminder (with provenance):
  *   Scheduled reminder:
  *
- *   [reminder_id=reminder-test time=2026-05-18T17:00:00.000Z] Follow up on deploy
+ *   [reminder_id=reminder-test time=2026-05-18T17:00:00Z] Follow up on deploy
  *
  *   Instructions:
  *   Check whether the deploy finished.
@@ -88,14 +88,14 @@ function formatFeishuQuotedMessage(message: FeishuQuotedMessage): string {
 
 function buildSlackOnboardingDeliveryPrompt(event: OnboardingInboxItem): string {
   return buildOnboardingDeliveryPrompt({
-    envelope: `[owner=${readableSlackActor(event.operator)} channel=${event.channelId} time=${event.receivedAt}]`,
+    envelope: `[owner=${readableSlackActor(event.operator)} channel=${event.channelId} time=${envelopeTime(event.receivedAt)}]`,
     text: event.text,
   });
 }
 
 function buildFeishuOnboardingDeliveryPrompt(event: FeishuOnboardingInboxItem): string {
   return buildOnboardingDeliveryPrompt({
-    envelope: `[platform=feishu owner=feishu-owner channel=${event.target.receiveId} receive_id_type=${event.target.receiveIdType} time=${event.receivedAt}]`,
+    envelope: `[platform=feishu owner=feishu-owner channel=${event.target.receiveId} receive_id_type=${event.target.receiveIdType} time=${envelopeTime(event.receivedAt)}]`,
     text: event.text,
   });
 }
@@ -130,7 +130,7 @@ function buildChoiceResponseDeliveryPrompt(event: ChoiceResponseInboxItem): stri
   const actor = readableSlackActor(event.answeredBy);
   return `Choice response:
 
-[ask_id=${event.askId} channel=${event.channelId} thread_ts=${event.threadTs} message_ts=${event.messageTs} time=${event.receivedAt} user_id=${event.answeredBy.slackUserId}]
+[ask_id=${event.askId} channel=${event.channelId} thread_ts=${event.threadTs} message_ts=${event.messageTs} time=${envelopeTime(event.receivedAt)} user_id=${event.answeredBy.slackUserId}]
 ${actor} selected: ${event.optionLabel}
 
 Question:
@@ -149,7 +149,7 @@ function buildReminderDeliveryPrompt(
 
   return `Scheduled reminder:
 
-[reminder_id=${reminder.reminderId} time=${event.receivedAt}] ${reminder.title}
+[reminder_id=${reminder.reminderId} time=${envelopeTime(event.receivedAt)}] ${reminder.title}
 
 Instructions:
 ${reminder.instructions}${provenance}`;
@@ -163,7 +163,7 @@ function reminderOriginEnvelope(provenance: NonNullable<Reminder['provenance']>)
 function buildMemoryCoherenceDeliveryPrompt(event: MemoryCoherenceInboxItem): string {
   return `Memory coherence system wake:
 
-[time=${event.receivedAt} scheduled_slot_at=${event.scheduledSlotAt} scheduled_slot=${event.scheduledSlotLabel}]
+[time=${envelopeTime(event.receivedAt)} scheduled_slot_at=${envelopeTime(event.scheduledSlotAt)} scheduled_slot=${event.scheduledSlotLabel}]
 
 You are running your daily memory pass.
 
@@ -204,7 +204,7 @@ function messageEnvelope(event: SlackInboxItem): string {
   const userPart = actor?.userId ? ` user_id=${actor.userId}` : '';
   const userTimePart = actor?.timezone ? ` user_local_time=${formatUserLocalTime(event.receivedAt, actor.timezone)} user_tz=${actor.timezone.name}` : '';
 
-  return `[channel=${displayRef}${channelIdPart}${threadPart} message_ts=${event.messageTs}${wakePart} time=${event.receivedAt}${userPart}${userTimePart}]`;
+  return `[channel=${displayRef}${channelIdPart}${threadPart} message_ts=${event.messageTs}${wakePart} time=${envelopeTime(event.receivedAt)}${userPart}${userTimePart}]`;
 }
 
 function feishuMessageEnvelope(event: FeishuInboxItem): string {
@@ -213,7 +213,7 @@ function feishuMessageEnvelope(event: FeishuInboxItem): string {
   const userPart = actorUserId ? ` user_id=${actorUserId}` : '';
   const wakePart = event.wakeReason ? ` wake=${event.wakeReason}` : '';
   const chatNamePart = event.chatName ? ` chat_name=${quoteEnvelopeValue(event.chatName)}` : '';
-  return `[platform=feishu chat=${event.chatType} chat_id=${event.chatId}${chatNamePart}${threadPart} message_id=${event.messageId}${wakePart} time=${event.receivedAt}${userPart}]`;
+  return `[platform=feishu chat=${event.chatType} chat_id=${event.chatId}${chatNamePart}${threadPart} message_id=${event.messageId}${wakePart} time=${envelopeTime(event.receivedAt)}${userPart}]`;
 }
 
 function actorLabel(event: SlackInboxItem): string {
@@ -286,6 +286,11 @@ function escapeAttr(value: string): string {
 
 function quoteEnvelopeValue(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/** Envelope timestamps render at second granularity; sub-second precision is noise for reading context (message_ts carries exact identity). */
+function envelopeTime(timestamp: string): string {
+  return timestamp.replace(/\.\d{3}(?=Z$|[+-]\d{2}:\d{2}$)/, '');
 }
 
 function formatUserLocalTime(

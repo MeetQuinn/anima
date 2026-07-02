@@ -159,7 +159,7 @@ test('buildCodeAgentDeliveryPrompt renders scheduled reminders as the current ev
     },
   });
 
-  assert.match(text, /^Scheduled reminder:\n\n\[reminder_id=reminder-test time=2026-05-18T17:00:00\.000Z\] Follow up on deploy/);
+  assert.match(text, /^Scheduled reminder:\n\n\[reminder_id=reminder-test time=2026-05-18T17:00:00Z\] Follow up on deploy/);
   assert.match(text, /Instructions:\nCheck whether the deploy finished\./);
   assert.doesNotMatch(text, /Reply command|Recovery context/);
 });
@@ -226,7 +226,7 @@ test('buildCodeAgentDeliveryPrompt renders onboarding as an onboarding wake, not
   });
 
   assert.match(text, /^Agent onboarding:/);
-  assert.match(text, /\[owner=Iris \(@iris, <@U-owner>\) channel=D-owner time=2026-01-01T00:00:00\.000Z\]/);
+  assert.match(text, /\[owner=Iris \(@iris, <@U-owner>\) channel=D-owner time=2026-01-01T00:00:00Z\]/);
   assert.doesNotMatch(text, /Reply target:|Use `anima message send/);
   assert.doesNotMatch(text, /^New Slack message:/);
 });
