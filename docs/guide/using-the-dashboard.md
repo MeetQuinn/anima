@@ -18,20 +18,35 @@ whole flow, including connecting Slack.
 
 ## Finding your way around
 
-The sidebar lists your agents. Each one carries a small status dot so you can read the room at a
-glance:
+The sidebar shows one team at a time: its agents, and its shared **Knowledge Base** folders above
+them. Each agent carries a small status dot so you can read the room at a glance:
 
 - **Green**: idle, waiting for something to do.
 - **Amber**: working on an item right now.
 - **Off**: the agent is disabled. It stays in the list with its config and memory intact, it just
   is not responding.
 
-Open an agent and you get three views: its **activity**, its **reminders**, and its **profile**. The
-address bar follows wherever you are, so you can bookmark or share a link and land back on the same
-agent and the same view. (To browse the team's shared files, see
-[Your knowledge base](./working-with-your-agent.md). The knowledge base is its own surface.)
+Open an agent and you get four views: its **activity**, its **channels**, its **profile**, and its
+**reminders**. The address bar follows wherever you are, so you can bookmark or share a link and
+land back on the same agent and the same view.
 
 ![The sidebar listing four agents. Each row shows an avatar and name with a status dot: idle agents are green, one agent working on an item is amber, and a disabled agent shows an Off pill.](/guide/dashboard/sidebar.png)
+
+## Teams
+
+With a single team you will never notice teams at all: the sidebar header just shows the Anima
+wordmark, and everything you create lands in the default team. The moment you have a second team,
+that header becomes a **team switcher**: it names the team you are working in, and clicking it
+lists every team plus **+ New team**.
+
+Switching teams changes your working context, not what exists. The sidebar swaps to that team's
+agents and Knowledge Bases, and a new agent you create lands in the team you are standing in.
+Nothing is hidden from you as the operator; the other teams are one click away.
+
+A team has a **name** and a **home folder**. New agents created in the team get their home under
+the team's folder. Renaming a team, or pointing it at a different home folder, never moves
+existing agents; their files stay exactly where they are, and only future agents land in the new
+place.
 
 ## Is the agent healthy?
 
@@ -44,17 +59,28 @@ did, so you can tell a long-running task from a stuck one without digging.
 The activity view is where you verify an agent's work. This is its single most useful job: a record
 you read **after** the fact to see what happened, not a gate that approves actions before they run.
 
-It has two lenses:
+It reads like a Slack conversation: one timeline, in time order, holding both sides at once. The
+messages that woke the agent and the replies it sent back appear as messages; the work between them
+folds into a small **`▸ N steps`** line under the message that caused it. Expand it and you see the
+step-by-step trail: the tools the agent called, the files it wrote, the reactions it added, and any
+errors, each with its own detail. Collapse it and the timeline is just the conversation again.
 
-- **Conversation**: the Slack back-and-forth. The messages that woke the agent and what it sent back,
-  with an Inbox / Outbox filter when you want one side only.
-- **Activity**: the step-by-step trail. The tools the agent called, the files it wrote, the messages
-  and reactions it sent, and any errors. Turn on **Failed only** to jump straight to what went wrong,
-  or **Show all steps** to see the full, unfiltered sequence.
+A few things surface on their own, without expanding anything:
 
-Entries are grouped by day, and while an agent is working the feed follows along live.
+- A floating **day pill** keeps you oriented while you scroll through history.
+- While the agent is working, the feed follows along live, and the run it is on stays expanded so
+  you can watch steps land as they happen.
+- System moments show as centred lines in the stream: runtime restarts and stops, and the result of
+  the daily **memory-coherence pass** — the private wake where the agent tidies its own `MEMORY.md`.
+  A healthy pass reads as one quiet line; a failed one shows red, so memory upkeep problems are
+  visible at a glance instead of buried.
 
-![The activity view on the Activity lens, showing a step-by-step trail: an incoming Slack message, a sequence of steps labelled Read, Searched, Ran, and Wrote, and an outgoing Slack message the agent sent back.](/guide/dashboard/activity.png)
+## What does the agent see in Slack?
+
+The **channels** view lists every Slack channel and DM the agent is part of, and opening one shows
+that conversation's recent messages in place. It answers two questions you will actually have: "which
+rooms does this agent sit in?" and "what did that thread look like from the agent's side?" — without
+switching to Slack and reading as yourself.
 
 ## Stepping in
 

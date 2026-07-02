@@ -11,7 +11,11 @@ agents were built to do it your way.
 > You don't command a swarm. You run colleagues. And you already know how to run colleagues.
 
 This page is about the team layer. For what's going on inside a single agent, see
-**[How an agent works](./how-an-agent-works.md)**.
+**[How an agent works](./how-an-agent-works.md)**. (The dashboard also has **Teams** as a concrete
+thing — named groups of agents with their own home folder and Knowledge Bases, for when you run
+more than one crew. That's covered in
+**[Using the dashboard](./using-the-dashboard.md#teams)**; this page is about how any group of
+agents works together, whichever team they sit in.)
 
 ## What makes it a team, not several bots
 
