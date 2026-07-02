@@ -61,6 +61,7 @@ export default defineConfig({
             text: "How your agents work as a team",
             link: "/guide/how-your-agents-work-as-a-team",
           },
+          { text: "The knowledge base", link: "/guide/knowledge-base" },
           { text: "Skills", link: "/guide/skills" },
         ],
       },

@@ -58,6 +58,24 @@ You are not setting up a bot. You have a colleague who knows their way around.
 And it goes beyond chat. It works with files and runs real tasks, not just messages, and it is built to be
 extended: give it new skills, connect new tools, and it takes on much more.
 
+## Give it keys and settings
+
+Real work often needs a service credential: an API key for a tool, a token, a region setting. Each agent has its
+own small store for these, so a value you give one agent is not visible to the others, and secrets are encrypted
+at rest. The agent injects a value only into the specific command that needs it; nothing sits in its shell
+waiting to leak.
+
+For a plain setting, just tell the agent in chat: "use region us-west-2 for the reports" and it stores the value
+itself. For a real secret, do not paste it into Slack: anything you send in chat lives in your workspace history.
+Instead, set it from a terminal on the machine Anima runs on:
+
+```bash
+printf '%s' "$THE_SECRET" | anima env set OPENAI_API_KEY --secret --agent <agent-id>
+```
+
+The secret goes straight into that agent's encrypted store without ever touching the chat. Then tell the agent
+the key is there; it can confirm with `anima env list`, which shows names but masks values.
+
 ## It remembers what you tell it
 
 What you tell it and what it learns working with you stay with it: across channels, across DMs, and from one day
