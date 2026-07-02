@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, X } from 'lucide-react';
 import { createTeam, type TeamConfig } from '@/api/teams';
 import { queryClient } from '@/query-client';
 import { queryKeys } from '@/lib/query-keys';
 import { Button } from '@/components/ui/button';
+import DirectoryPicker from '@/components/DirectoryPicker';
 
 // ---------------------------------------------------------------------------
 // Create Team modal — the "+ New team" entry from the top-left switcher.
@@ -23,6 +24,7 @@ export function CreateTeamModal({
   const [advanced, setAdvanced] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -31,11 +33,17 @@ export function CreateTeamModal({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !busy) onClose();
+      if (e.key !== 'Escape' || busy) return;
+      // Escape closes the directory picker first if it is open, then the modal.
+      if (showPicker) {
+        setShowPicker(false);
+        return;
+      }
+      onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, busy]);
+  }, [onClose, busy, showPicker]);
 
   async function submit() {
     const trimmed = name.trim();
@@ -56,7 +64,9 @@ export function CreateTeamModal({
     }
   }
 
-  return createPortal(
+  return (
+    <>
+      {createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-page/70 backdrop-blur-sm"
       onClick={() => {
@@ -67,7 +77,7 @@ export function CreateTeamModal({
       <div
         role="dialog"
         aria-modal="true"
-        className="relative w-full max-w-sm rounded-sm border border-border-soft bg-surface p-6 shadow-deep"
+        className="relative w-full max-w-md rounded-sm border border-border-soft bg-surface p-6 shadow-deep"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="font-serif text-[17px] font-semibold text-text">New team</div>
@@ -112,14 +122,24 @@ export function CreateTeamModal({
             </button>
             {advanced && (
               <div className="mt-2">
-                <input
-                  type="text"
-                  value={home}
-                  onChange={(e) => setHome(e.target.value)}
-                  disabled={busy}
-                  placeholder="~/content (defaults from the name)"
-                  className="w-full rounded-sm border border-border bg-muted/30 px-3 py-1.5 font-mono text-[13px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-1 focus:ring-ring"
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={home}
+                    onChange={(e) => setHome(e.target.value)}
+                    disabled={busy}
+                    placeholder="~/content (defaults from the name)"
+                    className="min-w-0 flex-1 rounded-sm border border-border bg-muted/30 px-3 py-1.5 font-mono text-[13px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPicker(true)}
+                    disabled={busy}
+                    className="font-sans shrink-0 rounded-sm border border-border px-3 py-1.5 text-[12px] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-50"
+                  >
+                    Browse…
+                  </button>
+                </div>
                 <p className="font-sans mt-1 text-[11px] text-text-subtle">
                   The team's home folder. New agents land under its <code>agents/</code>
                   {' '}subfolder. Leave blank to use the default.
@@ -142,6 +162,48 @@ export function CreateTeamModal({
         </form>
       </div>
     </div>,
-    document.body,
+        document.body,
+      )}
+      {showPicker &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-page/70 backdrop-blur-sm"
+            onClick={() => setShowPicker(false)}
+            role="presentation"
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              className="relative w-full max-w-2xl rounded-sm border border-border-soft bg-surface shadow-deep"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-border-soft px-5 py-4">
+                <span className="font-serif text-[15px] font-semibold text-text">
+                  Choose home folder
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowPicker(false)}
+                  className="flex h-8 w-8 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="p-5">
+                <DirectoryPicker
+                  startPath={home.trim() || undefined}
+                  onChoose={(dir) => {
+                    setHome(dir);
+                    setShowPicker(false);
+                  }}
+                  onCancel={() => setShowPicker(false)}
+                />
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
