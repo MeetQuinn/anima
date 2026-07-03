@@ -415,7 +415,7 @@ export default function DirectoryPicker({
       <div
         ref={treeRef}
         onKeyDown={handleKeyDown}
-        className="h-[360px] overflow-y-auto rounded-sm border border-border bg-surface py-1"
+        className="h-[360px] max-h-[48dvh] overflow-y-auto rounded-sm border border-border bg-surface py-1"
       >
         {rootLoading && (
           <div className="flex items-center justify-center py-8">
