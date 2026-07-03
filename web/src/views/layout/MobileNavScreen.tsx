@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Check, ChevronDown, FolderTree, GripVertical, Plus, Server } from 'lucide-react';
+import { Check, ChevronDown, FolderTree, GripVertical, Pencil, Plus, Server } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DndContext, closestCenter } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -15,6 +15,8 @@ import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import ServerPanel from '@/components/ServerPanel';
 import type { AgentRuntimeHealthSummary } from '@shared/snapshot';
 import { AgentCreateModal, AddKbModal } from './Sidebar';
+import { CreateTeamModal, EditTeamModal } from './sidebar/TeamModals';
+import type { TeamConfig } from '@/api/teams';
 import { agentColor, initialOf } from '@/lib/avatars';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import {
@@ -87,6 +89,8 @@ export default function MobileNavScreen({
   const [showAddAgentModal, setShowAddAgentModal] = useState(false);
   const [showAddKbModal, setShowAddKbModal] = useState(false);
   const [showTeamMenu, setShowTeamMenu] = useState(false);
+  const [showCreateTeamModal, setShowCreateTeamModal] = useState(false);
+  const [editTeam, setEditTeam] = useState<TeamConfig | null>(null);
   const [serverPanelOpen, setServerPanelOpen] = useState(false);
   const multiTeam = teams.length > 1;
   const currentTeam = teams.find((t) => t.id === currentTeamId) ?? teams[0];
@@ -130,40 +134,35 @@ export default function MobileNavScreen({
 
   return (
     <div className="flex h-dvh flex-col bg-surface md:hidden">
-      {/* Sticky header — at N>=2 it becomes a team switcher (switch-only; team
-          creation stays a desktop action). At N=1 it is just the wordmark. */}
+      {/* Sticky header — tap to switch teams or create one. At N=1 it shows the
+          Anima wordmark with a faint caret (still tappable, so "New team" is
+          reachable on mobile); at N>=2 it shows the current team name and the
+          menu lists teams to switch/edit. */}
       <div
         className="relative flex h-14 shrink-0 items-center border-b border-border-soft bg-surface"
         style={{ position: 'sticky', top: 0, zIndex: 10 }}
       >
-        {multiTeam ? (
-          <button
-            type="button"
-            onClick={() => setShowTeamMenu((v) => !v)}
-            className="flex h-full w-full items-center gap-2.5 px-5 text-left transition-colors hover:bg-surface-elevated/60"
-            aria-haspopup="menu"
-            aria-expanded={showTeamMenu}
-            title={`Team: ${currentTeam?.name ?? 'Anima'}`}
-          >
-            <AnimaIcon className="h-4 w-4 shrink-0 text-accent" />
-            <span className="display min-w-0 truncate text-[18px] font-semibold tracking-tight text-text">
-              {currentTeam?.name ?? 'Anima'}
-            </span>
-            <ChevronDown
-              className={[
-                'h-4 w-4 shrink-0 text-text-muted transition-transform duration-150',
-                showTeamMenu ? 'rotate-180' : '',
-              ].join(' ')}
-            />
-          </button>
-        ) : (
-          <div className="flex h-full w-full items-center gap-2.5 px-5">
-            <AnimaIcon className="h-4 w-4 text-accent" />
-            <span className="display text-[18px] font-semibold tracking-tight text-text">Anima</span>
-          </div>
-        )}
+        <button
+          type="button"
+          onClick={() => setShowTeamMenu((v) => !v)}
+          className="flex h-full w-full items-center gap-2.5 px-5 text-left transition-colors hover:bg-surface-elevated/60"
+          aria-haspopup="menu"
+          aria-expanded={showTeamMenu}
+          title={multiTeam ? `Team: ${currentTeam?.name ?? 'Anima'}` : 'Anima'}
+        >
+          <AnimaIcon className="h-4 w-4 shrink-0 text-accent" />
+          <span className="display min-w-0 truncate text-[18px] font-semibold tracking-tight text-text">
+            {multiTeam ? currentTeam?.name ?? 'Anima' : 'Anima'}
+          </span>
+          <ChevronDown
+            className={[
+              'h-4 w-4 shrink-0 text-text-muted transition-all duration-150',
+              showTeamMenu ? 'rotate-180 opacity-100' : multiTeam ? 'opacity-70' : 'opacity-30',
+            ].join(' ')}
+          />
+        </button>
 
-        {multiTeam && showTeamMenu && (
+        {showTeamMenu && (
           <>
             {/* Backdrop closes the menu on any outside tap. */}
             <div
@@ -175,29 +174,59 @@ export default function MobileNavScreen({
               role="menu"
               className="absolute left-3 right-3 top-[52px] z-30 overflow-hidden rounded-sm border border-border bg-surface-elevated py-1 shadow-deep"
             >
-              {teams.map((team) => {
-                const active = team.id === currentTeam?.id;
-                return (
-                  <button
-                    key={team.id}
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setCurrentTeamId(team.id);
-                      setShowTeamMenu(false);
-                    }}
-                    className="flex min-h-[44px] w-full items-center gap-2 px-3 text-left font-sans text-[14px] text-text hover:bg-surface-elevated"
-                  >
-                    <Check
-                      className={[
-                        'h-3.5 w-3.5 shrink-0',
-                        active ? 'text-accent' : 'text-transparent',
-                      ].join(' ')}
-                    />
-                    <span className="truncate">{team.name}</span>
-                  </button>
-                );
-              })}
+              {/* Team list (only when there is more than one team to switch between). */}
+              {multiTeam &&
+                teams.map((team) => {
+                  const active = team.id === currentTeam?.id;
+                  return (
+                    <div key={team.id} className="flex items-center">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setCurrentTeamId(team.id);
+                          setShowTeamMenu(false);
+                        }}
+                        className="flex min-h-[44px] min-w-0 flex-1 items-center gap-2 px-3 text-left font-sans text-[14px] text-text hover:bg-surface"
+                      >
+                        <Check
+                          className={[
+                            'h-3.5 w-3.5 shrink-0',
+                            active ? 'text-accent' : 'text-transparent',
+                          ].join(' ')}
+                        />
+                        <span className="truncate">{team.name}</span>
+                      </button>
+                      {/* Edit (rename / change home). Always visible on touch (no hover);
+                          stops propagation so it never also switches the team. */}
+                      <button
+                        type="button"
+                        aria-label={`Edit ${team.name}`}
+                        title={`Edit ${team.name}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditTeam(team);
+                          setShowTeamMenu(false);
+                        }}
+                        className="mr-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-sm text-text-muted hover:bg-surface hover:text-text"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setShowCreateTeamModal(true);
+                  setShowTeamMenu(false);
+                }}
+                className="flex min-h-[44px] w-full items-center gap-2 px-3 text-left font-sans text-[14px] font-medium text-text hover:bg-surface"
+              >
+                <Plus className="h-3.5 w-3.5 shrink-0 text-accent" />
+                <span>New team</span>
+              </button>
             </div>
           </>
         )}
@@ -412,6 +441,23 @@ export default function MobileNavScreen({
         />
       )}
       {serverPanelOpen && <ServerPanel onClose={() => setServerPanelOpen(false)} />}
+
+      {showCreateTeamModal && (
+        <CreateTeamModal
+          onClose={() => setShowCreateTeamModal(false)}
+          // Switch the mobile list to the freshly created team (mirrors desktop).
+          onCreated={(team) => setCurrentTeamId(team.id)}
+        />
+      )}
+      {editTeam && (
+        <EditTeamModal
+          team={editTeam}
+          onClose={() => setEditTeam(null)}
+          // Editing is navigation-neutral: renaming refreshes the label via query
+          // invalidation; it never yanks you into another team. Just close.
+          onSaved={() => setEditTeam(null)}
+        />
+      )}
     </div>
   );
 }

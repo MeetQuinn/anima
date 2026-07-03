@@ -81,7 +81,7 @@ function TeamModal({
     <>
       {createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-page/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-page/70 p-4 backdrop-blur-sm"
       onClick={() => {
         if (!busy) onClose();
       }}
@@ -90,7 +90,7 @@ function TeamModal({
       <div
         role="dialog"
         aria-modal="true"
-        className="relative w-full max-w-md rounded-sm border border-border-soft bg-surface p-6 shadow-deep"
+        className="relative max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-sm border border-border-soft bg-surface p-6 shadow-deep"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="font-serif text-[17px] font-semibold text-text">
@@ -181,17 +181,17 @@ function TeamModal({
       {showPicker &&
         createPortal(
           <div
-            className="fixed inset-0 z-[60] flex items-center justify-center bg-page/70 backdrop-blur-sm"
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-page/70 p-4 backdrop-blur-sm"
             onClick={() => setShowPicker(false)}
             role="presentation"
           >
             <div
               role="dialog"
               aria-modal="true"
-              className="relative w-full max-w-2xl rounded-sm border border-border-soft bg-surface shadow-deep"
+              className="relative flex max-h-[92dvh] w-full max-w-2xl flex-col rounded-sm border border-border-soft bg-surface shadow-deep"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex items-center justify-between border-b border-border-soft px-5 py-4">
+              <div className="flex shrink-0 items-center justify-between border-b border-border-soft px-5 py-4">
                 <span className="font-serif text-[15px] font-semibold text-text">
                   Choose home folder
                 </span>
@@ -204,7 +204,7 @@ function TeamModal({
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <div className="p-5">
+              <div className="min-h-0 flex-1 overflow-y-auto p-5">
                 <DirectoryPicker
                   startPath={home.trim() || undefined}
                   onChoose={(dir) => {
