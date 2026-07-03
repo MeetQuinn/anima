@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { fetchTeams } from '@/api/teams';
@@ -113,45 +113,4 @@ export function useCurrentTeam(teams: TeamConfig[]): {
   );
 
   return { currentTeamId, currentTeam, setCurrentTeamId };
-}
-
-const COLLAPSED_TEAMS_KEY = 'anima.collapsedTeamIds';
-
-function readCollapsedTeams(): Set<string> {
-  try {
-    const raw = localStorage.getItem(COLLAPSED_TEAMS_KEY);
-    if (!raw) return new Set();
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? new Set(parsed.filter((x): x is string => typeof x === 'string')) : new Set();
-  } catch {
-    return new Set();
-  }
-}
-
-// Which team groups are folded, persisted client-side. Default is expanded (an
-// empty set): fold-default is deliberately left open to tune after it is
-// clickable, per the cut-1 acceptance.
-export function useCollapsedTeams(): {
-  isCollapsed: (teamId: string) => boolean;
-  toggle: (teamId: string) => void;
-} {
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => readCollapsedTeams());
-
-  const isCollapsed = useCallback((teamId: string) => collapsed.has(teamId), [collapsed]);
-
-  const toggle = useCallback((teamId: string) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(teamId)) next.delete(teamId);
-      else next.add(teamId);
-      try {
-        localStorage.setItem(COLLAPSED_TEAMS_KEY, JSON.stringify([...next]));
-      } catch {
-        // best-effort persistence
-      }
-      return next;
-    });
-  }, []);
-
-  return { isCollapsed, toggle };
 }
