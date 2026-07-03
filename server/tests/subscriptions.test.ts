@@ -10,6 +10,7 @@ import {
   feishuRuntimeDecision,
   muteSubscriptionForAgent,
   recordChannelPost,
+  recordOutboundEngagement,
   shouldReply,
   slackRuntimeDecision,
 } from '../inbox/slack-subscription.service.js';
@@ -313,6 +314,95 @@ test('attention nudge suggests muting after repeated wakes without posting', asy
         { agentId: 'scout', nowMs: 2_001 },
       );
       assert.equal(afterPost.attentionSuggestion, undefined);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('chronic attention nudge requires twelve wakes across a real silent span', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-chronic-attention-nudge-test-'));
+  const sixHours = 6 * 60 * 60 * 1000;
+  const seventyTwoHours = 72 * 60 * 60 * 1000;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      let last;
+      for (let i = 0; i < 12; i += 1) {
+        last = await slackRuntimeDecision(
+          {
+            channel: 'C123',
+            channel_type: 'channel',
+            text: `sparse wake ${i}`,
+            ts: `17700001${10 + i}.000001`,
+            type: 'message',
+            user: 'U123',
+          },
+          { agentId: 'scout', nowMs: i * sixHours },
+        );
+      }
+      assert.equal(last?.attentionSuggestion, undefined);
+
+      last = await slackRuntimeDecision(
+        {
+          channel: 'C123',
+          channel_type: 'channel',
+          text: 'after a real silent span',
+          ts: '1770000200.000001',
+          type: 'message',
+          user: 'U123',
+        },
+        { agentId: 'scout', nowMs: seventyTwoHours + 1 },
+      );
+      assert.match(last?.attentionSuggestion ?? '', /anima subscription mute --channel C123/);
+
+      const state = await loadState();
+      const channel = state.subscriptions['slack-subscription:scout:C123:channel'];
+      assert.equal(channel?.wakesSinceLastPost, 0);
+      assert.equal(channel?.silentWakeStartedAt, undefined);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('outbound engagement resets chronic and burst attention windows', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-attention-engagement-reset-test-'));
+  const eightHours = 8 * 60 * 60 * 1000;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      for (let i = 0; i < 11; i += 1) {
+        await slackRuntimeDecision(
+          {
+            channel: 'C123',
+            channel_type: 'channel',
+            text: `wake ${i}`,
+            ts: `17700002${10 + i}.000001`,
+            type: 'message',
+            user: 'U123',
+          },
+          { agentId: 'scout', nowMs: i * eightHours },
+        );
+      }
+
+      await recordOutboundEngagement({ agentId: 'scout', channelId: 'C123', nowMs: 12 * eightHours });
+      const state = await loadState();
+      const channel = state.subscriptions['slack-subscription:scout:C123:channel'];
+      assert.equal(channel?.wakeCount, 0);
+      assert.equal(channel?.wakesSinceLastPost, 0);
+      assert.equal(channel?.silentWakeStartedAt, undefined);
+
+      const afterEngagement = await slackRuntimeDecision(
+        {
+          channel: 'C123',
+          channel_type: 'channel',
+          text: 'after reaction or post',
+          ts: '1770000300.000001',
+          type: 'message',
+          user: 'U123',
+        },
+        { agentId: 'scout', nowMs: 12 * eightHours + 1 },
+      );
+      assert.equal(afterEngagement.attentionSuggestion, undefined);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

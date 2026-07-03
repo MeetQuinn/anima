@@ -1143,6 +1143,17 @@ test('reaction add records an audited reaction add', async () => {
     await withAnimaHome(stateDir, async () => {
       await writeSlackConfig(stateDir);
       const itemId = await ingestSlackThread(stateDir);
+      await slackRuntimeDecision(
+        {
+          channel: 'C-product',
+          channel_type: 'channel',
+          text: 'quiet channel wake',
+          ts: '1770000199.000001',
+          type: 'message',
+          user: 'U123',
+        },
+        { agentId: 'scout', nowMs: 1_000 },
+      );
 
       const react = await runNode(
         [cliPath, 'reaction', 'add', '--channel', 'C-product', '--message-ts', '1770000200.000123', '--name', ':white_check_mark:'],
@@ -1168,6 +1179,13 @@ test('reaction add records an audited reaction add', async () => {
       assert.equal(completed?.payload?.['targetTs'], '1770000200.000123');
       assert.equal(completed?.payload?.['status'], 'added');
       assert.equal(completed?.payload?.['channelDisplayName'], '#product');
+
+      const renewedState = await loadState();
+      const channelSubscription = renewedState.subscriptions['slack-subscription:scout:C-product:channel'];
+      assert.equal(channelSubscription?.wakeCount, 0);
+      assert.equal(channelSubscription?.wakesSinceLastPost, 0);
+      assert.equal(channelSubscription?.silentWakeStartedAt, undefined);
+      assert.ok(channelSubscription?.lastPostedAt);
     });
   } finally {
     await slackApi.close();

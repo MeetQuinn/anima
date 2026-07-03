@@ -7,7 +7,7 @@ import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { nowIso } from '../ids.js';
 import {
   ensureThreadSubscriptionForSentMessage,
-  recordChannelPost,
+  recordOutboundEngagement,
 } from '../inbox/slack-subscription.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
@@ -133,7 +133,7 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
       const channelId = response.channel ?? channel.id;
       const permalink = slackMessageRedirectLink({ channelId, messageTs: response.ts });
       if (!channel.dmUserId && !threadTs) {
-        await recordChannelPost({ agentId, channelId });
+        await recordOutboundEngagement({ agentId, channelId });
       }
       const threadSubscription = channel.dmUserId || !response.ts
         ? undefined

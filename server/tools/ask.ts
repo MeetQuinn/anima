@@ -13,7 +13,7 @@ import { makeId, nowIso } from '../ids.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import {
   ensureThreadSubscriptionForSentMessage,
-  recordChannelPost,
+  recordOutboundEngagement,
 } from '../inbox/slack-subscription.service.js';
 import { SlackWorkspaceDirectoryService } from '../slack/workspace-directory.service.js';
 import type { InteractiveAskOption, InteractiveAskRecord } from '../storage/schema/interactive-ask.store.js';
@@ -149,7 +149,7 @@ export async function runAsk(opts: z.infer<typeof AskCommandSchema>): Promise<vo
       };
       await askService.saveAsk(record);
       if (!target.channel.dmUserId && !target.threadTs) {
-        await recordChannelPost({ agentId, channelId });
+        await recordOutboundEngagement({ agentId, channelId });
       }
       const threadSubscription = target.channel.dmUserId
         ? undefined
