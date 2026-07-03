@@ -14,8 +14,9 @@ import {
   slackWebClientForOpts,
   withToolActivity,
 } from './tool-context.js';
+import { recordOutboundEngagement } from '../inbox/slack-subscription.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
-import type { FeishuInboxItem } from '../../shared/inbox.js';
+import type { FeishuInboxItem, SlackInboxItem } from '../../shared/inbox.js';
 
 type FeishuMessageClientFactory = typeof createDefaultFeishuMessageClient;
 
@@ -98,6 +99,11 @@ export async function runMessageReact(opts: MessageReactInput, deps: MessageReac
           throw error;
         }
       }
+      await recordOutboundEngagement({
+        agentId,
+        channelId: channel.id,
+        threadTs: await currentSlackThreadTs(agentId, channel.id, opts),
+      });
       console.log(slackReactionOutputLine({ action, name, messageTs: targetTs, noop, target }));
       return {
         result: undefined,
@@ -163,6 +169,7 @@ async function runFeishuMessageReact(input: {
         const response = await client.addReaction({ emojiType: name, messageId: input.messageId });
         completedReactionId = response.reactionId;
       }
+      await recordOutboundEngagement({ agentId: input.agentId, channelId: input.channel });
       console.log(feishuReactionOutputLine({
         action: input.action,
         channel: input.channel,
@@ -181,6 +188,23 @@ async function runFeishuMessageReact(input: {
       };
     },
   });
+}
+
+async function currentSlackThreadTs(
+  agentId: string,
+  channelId: string,
+  opts: MessageReactInput,
+): Promise<string | undefined> {
+  const item = await currentSlackItem(agentId, opts);
+  if (item?.channelId !== channelId) return undefined;
+  return item.threadTs;
+}
+
+async function currentSlackItem(agentId: string, opts: MessageReactInput): Promise<SlackInboxItem | undefined> {
+  const itemId = await resolveToolItemId(opts);
+  if (!itemId) return undefined;
+  const item = await new WakeQueueService(agentId).find(itemId);
+  return item?.kind === 'slack' ? item : undefined;
 }
 
 async function currentFeishuItem(agentId: string, opts: MessageReactInput): Promise<FeishuInboxItem | undefined> {

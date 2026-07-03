@@ -15,6 +15,8 @@ export const THREAD_ACTIVE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const ATTENTION_NUDGE_WINDOW_MS = 60 * 60 * 1000;
 const ATTENTION_NUDGE_WAKE_THRESHOLD = 6;
 const ATTENTION_NUDGE_BACKOFF_MS = 24 * 60 * 60 * 1000;
+const CHRONIC_NUDGE_WAKE_THRESHOLD = 12;
+const CHRONIC_NUDGE_WINDOW_MS = 72 * 60 * 60 * 1000;
 
 export interface SlackRuntimeDecision {
   attentionSuggestion?: string;
@@ -142,10 +144,12 @@ export async function muteSubscriptionForAgent(input: {
     ...(existing?.lastNudgeAt ? { lastNudgeAt: existing.lastNudgeAt } : {}),
     ...(existing?.lastPostedAt ? { lastPostedAt: existing.lastPostedAt } : {}),
     mutedAt: existing?.mutedAt ?? now,
+    ...(existing?.silentWakeStartedAt ? { silentWakeStartedAt: existing.silentWakeStartedAt } : {}),
     subscriptionId,
     updatedAt: now,
     ...(existing?.wakeCount !== undefined ? { wakeCount: existing.wakeCount } : {}),
     ...(existing?.wakeWindowStartedAt ? { wakeWindowStartedAt: existing.wakeWindowStartedAt } : {}),
+    ...(existing?.wakesSinceLastPost !== undefined ? { wakesSinceLastPost: existing.wakesSinceLastPost } : {}),
   };
   const muted = await store.replace(input.threadTs
     ? { ...base, kind: 'thread', threadTs: input.threadTs }
@@ -337,21 +341,36 @@ async function consumeFeishuChannelFollow(
   };
 }
 
+export async function recordOutboundEngagement(input: {
+  agentId: string;
+  channelId: string;
+  nowMs?: number;
+  threadTs?: string;
+}): Promise<SubscriptionRecord[]> {
+  const nowMs = input.nowMs ?? Date.now();
+  const now = new Date(nowMs).toISOString();
+  const store = new SubscriptionStore(input.agentId);
+  const updated: SubscriptionRecord[] = [];
+  const channel = await store.find(channelSubscriptionId(input.agentId, input.channelId));
+  if (channel?.kind === 'channel') {
+    updated.push(await store.replace(noteOutboundEngagement(channel, now)));
+  }
+  if (input.threadTs) {
+    const thread = await store.find(threadSubscriptionId(input.agentId, input.channelId, input.threadTs));
+    if (thread?.kind === 'thread') {
+      updated.push(await store.replace(noteOutboundEngagement(thread, now)));
+    }
+  }
+  return updated;
+}
+
 export async function recordChannelPost(input: {
   agentId: string;
   channelId: string;
   nowMs?: number;
 }): Promise<SubscriptionRecord | undefined> {
-  const nowMs = input.nowMs ?? Date.now();
-  const now = new Date(nowMs).toISOString();
-  const store = new SubscriptionStore(input.agentId);
-  const existing = await store.find(channelSubscriptionId(input.agentId, input.channelId));
-  if (existing?.kind !== 'channel') return undefined;
-  const next = {
-    ...noteOutboundPost(existing, now),
-    ...(existing.mutedAt ? { mutedAt: existing.mutedAt } : {}),
-  };
-  return store.replace(next);
+  const [channel] = await recordOutboundEngagement(input);
+  return channel;
 }
 
 export async function ensureThreadSubscriptionForSentMessage(input: {
@@ -405,7 +424,13 @@ function followThread(input: {
       return input.store.replace({
         ...base,
         lastActivityAt: input.now,
-        ...(input.posted ? { lastPostedAt: input.now, wakeCount: 0, wakeWindowStartedAt: input.now } : {}),
+        ...(input.posted ? {
+          lastPostedAt: input.now,
+          silentWakeStartedAt: undefined,
+          wakeCount: 0,
+          wakeWindowStartedAt: input.now,
+          wakesSinceLastPost: 0,
+        } : {}),
         ...(input.unmute ? { mutedAt: undefined } : {}),
         updatedAt: input.now,
       });
@@ -464,50 +489,93 @@ function noteInboundWake(
   nowMs: number,
 ): { next: SubscriptionRecord; suggestion?: string } {
   const now = new Date(nowMs).toISOString();
-  const windowStartMs = wakeWindowStartMs(subscription, nowMs);
+  const { continued: wakeWindowContinued, startMs: windowStartMs } = wakeWindowState(subscription, nowMs);
   const windowStart = new Date(windowStartMs).toISOString();
   const postedAtMs = parseTime(subscription.lastPostedAt);
   const postedInWindow = postedAtMs !== undefined && postedAtMs >= windowStartMs;
-  const wakeCount = postedInWindow ? 1 : (subscription.wakeCount ?? 0) + 1;
-  const canSuggest =
+  const wakeCount = postedInWindow
+    ? 1
+    : (wakeWindowContinued ? (subscription.wakeCount ?? 0) : 0) + 1;
+  const canSuggestBurst =
     wakeCount >= ATTENTION_NUDGE_WAKE_THRESHOLD &&
     !postedInWindow &&
     lastNudgeAllowsSuggestion(subscription, nowMs);
+  const chronic = chronicWakeState(subscription, nowMs);
+  const canSuggestChronic =
+    chronic.wakesSinceLastPost >= CHRONIC_NUDGE_WAKE_THRESHOLD &&
+    nowMs - chronic.baselineMs >= CHRONIC_NUDGE_WINDOW_MS &&
+    lastNudgeAllowsSuggestion(subscription, nowMs);
+  const suggestion = composeAttentionSuggestion({
+    burst: canSuggestBurst,
+    chronic: canSuggestChronic,
+    subscription,
+  });
   const next: SubscriptionRecord = {
     ...subscription,
     lastActivityAt: now,
     updatedAt: now,
-    wakeCount: canSuggest ? 0 : wakeCount,
-    wakeWindowStartedAt: canSuggest ? now : windowStart,
-    ...(canSuggest ? { lastNudgeAt: now } : {}),
+    silentWakeStartedAt: canSuggestChronic ? undefined : chronic.silentWakeStartedAt,
+    wakeCount: suggestion ? 0 : wakeCount,
+    wakeWindowStartedAt: suggestion ? now : windowStart,
+    wakesSinceLastPost: canSuggestChronic ? 0 : chronic.wakesSinceLastPost,
+    ...(suggestion ? { lastNudgeAt: now } : {}),
   };
   return {
     next,
-    ...(canSuggest ? { suggestion: attentionSuggestionFor(subscription) } : {}),
+    ...(suggestion ? { suggestion } : {}),
   };
 }
 
-function noteOutboundPost(subscription: SubscriptionRecord, now: string): SubscriptionRecord {
+function noteOutboundEngagement(subscription: SubscriptionRecord, now: string): SubscriptionRecord {
   return {
     ...subscription,
     lastActivityAt: now,
     lastPostedAt: now,
-    mutedAt: undefined,
+    silentWakeStartedAt: undefined,
     updatedAt: now,
     wakeCount: 0,
     wakeWindowStartedAt: now,
+    wakesSinceLastPost: 0,
   };
 }
 
-function wakeWindowStartMs(subscription: SubscriptionRecord, nowMs: number): number {
+function wakeWindowState(subscription: SubscriptionRecord, nowMs: number): { continued: boolean; startMs: number } {
   const existing = parseTime(subscription.wakeWindowStartedAt);
-  if (existing !== undefined && nowMs - existing <= ATTENTION_NUDGE_WINDOW_MS) return existing;
-  return nowMs;
+  if (existing !== undefined && nowMs - existing <= ATTENTION_NUDGE_WINDOW_MS) {
+    return { continued: true, startMs: existing };
+  }
+  return { continued: false, startMs: nowMs };
 }
 
 function lastNudgeAllowsSuggestion(subscription: SubscriptionRecord, nowMs: number): boolean {
   const nudgedAt = parseTime(subscription.lastNudgeAt);
   return nudgedAt === undefined || nowMs - nudgedAt >= ATTENTION_NUDGE_BACKOFF_MS;
+}
+
+function chronicWakeState(
+  subscription: SubscriptionRecord,
+  nowMs: number,
+): { baselineMs: number; silentWakeStartedAt?: string; wakesSinceLastPost: number } {
+  const lastPostedAtMs = parseTime(subscription.lastPostedAt);
+  const existingStartMs = parseTime(subscription.silentWakeStartedAt);
+  const existingStartIsValid =
+    existingStartMs !== undefined && (lastPostedAtMs === undefined || existingStartMs > lastPostedAtMs);
+  const silentWakeStartedAtMs = existingStartIsValid ? existingStartMs : nowMs;
+  const silentWakeStartedAt = new Date(silentWakeStartedAtMs).toISOString();
+  return {
+    baselineMs: lastPostedAtMs ?? silentWakeStartedAtMs,
+    silentWakeStartedAt,
+    wakesSinceLastPost: existingStartIsValid ? (subscription.wakesSinceLastPost ?? 0) + 1 : 1,
+  };
+}
+
+function composeAttentionSuggestion(input: {
+  burst: boolean;
+  chronic: boolean;
+  subscription: SubscriptionRecord;
+}): string | undefined {
+  if (!input.burst && !input.chronic) return undefined;
+  return attentionSuggestionFor(input.subscription);
 }
 
 function attentionSuggestionFor(subscription: SubscriptionRecord): string {

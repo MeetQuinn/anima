@@ -22,9 +22,11 @@ const SubscriptionBase = z.object({
   lastNudgeAt: z.string().optional(),
   lastPostedAt: z.string().optional(),
   mutedAt: z.string().optional(),
+  silentWakeStartedAt: z.string().optional(),
   updatedAt: z.string(),
   wakeCount: z.number().int().nonnegative().optional(),
   wakeWindowStartedAt: z.string().optional(),
+  wakesSinceLastPost: z.number().int().nonnegative().optional(),
 });
 
 export const ThreadSubscription = SubscriptionBase.extend({
