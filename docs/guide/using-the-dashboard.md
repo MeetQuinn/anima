@@ -39,6 +39,8 @@ wordmark, and everything you create lands in the default team. The moment you ha
 that header becomes a **team switcher**: it names the team you are working in, and clicking it
 lists every team plus **+ New team**.
 
+![The sidebar team switcher open, showing two teams, Anima with a check mark and Quinn, plus a New team entry, above the team's agent list.](/guide/dashboard/team-switcher.png)
+
 Switching teams changes your working context, not what exists. The sidebar swaps to that team's
 agents and Knowledge Bases, and a new agent you create lands in the team you are standing in.
 Nothing is hidden from you as the operator; the other teams are one click away.
@@ -74,6 +76,8 @@ A few things surface on their own, without expanding anything:
   the daily **memory-coherence pass** — the private wake where the agent tidies its own `MEMORY.md`.
   A healthy pass reads as one quiet line; a failed one shows red, so memory upkeep problems are
   visible at a glance instead of buried.
+
+![An agent's activity timeline: messages in a release channel, each with a collapsed steps fold under it, floating day pills between days, and centred memory-coherence lines reporting each daily pass.](/guide/dashboard/activity-timeline.png)
 
 ## What does the agent see in Slack?
 

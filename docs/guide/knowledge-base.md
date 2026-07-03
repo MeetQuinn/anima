@@ -40,6 +40,8 @@ content on the right.
 - Any file can be downloaded, and links to files and headings are deep links — paste one in Slack
   and a teammate lands on the exact section.
 
+![A Knowledge Base opened in the dashboard: the file tree on the left, and the folder's README rendered on the right as the landing page.](/guide/dashboard/kb-browse.png)
+
 ## Let the agents at it
 
 Agents reach the knowledge base the way they reach anything: it is a folder on the machine they
