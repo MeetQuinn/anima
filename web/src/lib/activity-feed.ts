@@ -169,7 +169,7 @@ export type ActivityFeedItem =
       // memory-coherence pass is NOT here: it is a `memory_coherence.outcome`
       // activity rendered in the tool-steps lane, never the conversation layer.
       kind: 'system-event';
-      eventKind: 'reminder' | 'onboarding';
+      eventKind: 'reminder' | 'onboarding' | 'attention';
       label: string; // small-caps register label ('Reminder' | 'Onboarding')
       body: string; // muted descriptive line (reminder title / onboarding note)
       meta?: string; // optional trailing tag, e.g. recurring 'fire #3'
@@ -311,6 +311,11 @@ export function buildActivityFeed(
 
     if (activity.type === 'runtime.steer_failed') continue;
 
+    if (activity.type === 'anima.attention.suggestion') {
+      items.push(systemEventForAttentionSuggestion(activity));
+      continue;
+    }
+
     // External message/file/reaction effects → outbound feed items.
     if (activity.type === 'tool.call.completed' || activity.type === 'external.effect.completed') {
       const tool = activity.payload?.['tool'];
@@ -448,6 +453,56 @@ export function buildActivityFeed(
     return activityFeedSortRank(a) - activityFeedSortRank(b);
   });
   return items;
+}
+
+function systemEventForAttentionSuggestion(
+  activity: ActivityRecord,
+): Extract<ActivityFeedItem, { kind: 'system-event' }> {
+  const suggestion =
+    typeof activity.payload?.['suggestion'] === 'string'
+      ? activity.payload['suggestion']
+      : 'Attention suggestion attached';
+  const platform =
+    typeof activity.payload?.['platform'] === 'string'
+      ? activity.payload['platform']
+      : '';
+  const channelName =
+    typeof activity.payload?.['channelName'] === 'string'
+      ? activity.payload['channelName']
+      : '';
+  const channelId =
+    typeof activity.payload?.['channelId'] === 'string'
+      ? activity.payload['channelId']
+      : '';
+  const threadTs =
+    typeof activity.payload?.['threadTs'] === 'string'
+      ? activity.payload['threadTs']
+      : '';
+  const surface = surfaceLabelForAttentionSuggestion({ channelId, channelName, platform });
+  return {
+    kind: 'system-event',
+    eventKind: 'attention',
+    label: 'Attention',
+    body: threadTs ? `${surface} · thread suggestion attached` : `${surface} suggestion attached`,
+    meta: suggestion,
+    timestamp: activity.createdAt,
+  };
+}
+
+function surfaceLabelForAttentionSuggestion(input: {
+  channelId: string;
+  channelName: string;
+  platform: string;
+}): string {
+  if (input.channelName) {
+    return input.platform === 'slack'
+      ? `#${input.channelName.replace(/^#/, '')}`
+      : input.channelName;
+  }
+  if (input.channelId) {
+    return input.platform === 'feishu' ? `Feishu ${input.channelId}` : input.channelId;
+  }
+  return input.platform === 'feishu' ? 'Feishu chat' : 'conversation';
 }
 
 export function buildMessageFeed(messagePage: AgentMessageHistoryPage): ActivityFeedItem[] {

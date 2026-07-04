@@ -1,4 +1,4 @@
-import { Bell, MessageSquareQuote, SmilePlus, UserPlus, type LucideIcon } from 'lucide-react';
+import { Bell, Lightbulb, MessageSquareQuote, SmilePlus, UserPlus, type LucideIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { renderMrkdwn } from '@/lib/mrkdwn';
 import { emojiGlyph } from '@/lib/emoji';
@@ -341,7 +341,8 @@ function GroupSurfaceChip({ chip, agentId }: { chip: SurfaceChip; agentId: strin
 // detail (reminder title / onboarding note). Short hairlines flank the pill on
 // wider viewports to echo the Slack centered-system-notice convention; they
 // drop on narrow widths so the pill never gets crushed.
-const SYSTEM_EVENT_ICON: Record<'reminder' | 'onboarding', LucideIcon> = {
+const SYSTEM_EVENT_ICON: Record<'reminder' | 'onboarding' | 'attention', LucideIcon> = {
+  attention: Lightbulb,
   reminder: Bell,
   onboarding: UserPlus,
 };
@@ -362,7 +363,7 @@ export function SystemEventRow({
         </span>
         <span className="truncate font-sans text-[12px] text-text-muted">{item.body}</span>
         {item.meta && (
-          <span className="shrink-0 font-sans text-[10px] text-text-subtle">· {item.meta}</span>
+          <span className="min-w-0 truncate font-sans text-[10px] text-text-subtle">· {item.meta}</span>
         )}
         <span
           className="shrink-0 cursor-default font-sans text-[10px] text-text-subtle"
