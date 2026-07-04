@@ -388,3 +388,32 @@ anima reaction add --channel C0XXXX --message-ts 1780000000.000000 --name white_
   `white_check_mark`.
 - Editing a message to add an @mention does not notify the mentioned person. Delete and re-post
   with the mention instead.
+
+## When a command fails (the error contract)
+
+Every `anima` command failure renders one structured line, so you can pick the right recovery
+without guessing:
+
+```
+error <layer.code> (retryable | not retryable): <hint>
+detail: <raw underlying message, only when it adds information>
+```
+
+- **`layer.code`** tells you whose problem it is. Layers: `input` (your arguments, rejected before
+  any network call), `anima` (this runtime or its config), `slack` and `feishu` (the platform
+  rejected the call; the code after the dot is the vendor's own, verbatim, so you can look it up
+  in their docs), `network` (transport trouble, usually transient).
+- **`retryable`** is the one bit that matters most: `retryable` means retry with backoff and say
+  so in-channel if it persists; `not retryable` means retrying is waste, change something instead.
+- **`hint`** names the next move. Follow it before improvising.
+
+Examples of what to expect:
+
+```
+error slack.channel_not_found (not retryable): You cannot see a channel with that id. Verify it from a recent envelope or anima history, not from memory.
+error network.dns_failure (retryable): Name resolution failed; retry with backoff, and say so in-channel if it persists.
+error anima.no_agent_context (not retryable): Pass --agent <id> or set ANIMA_AGENT_ID.
+```
+
+`anima.unexpected` means the failure did not match any known shape; stop and show the operator the
+detail line rather than retrying blind.
