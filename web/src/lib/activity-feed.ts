@@ -101,15 +101,6 @@ export interface OutboundFile {
   thumb720?: string;
 }
 
-// Metadata attached to a reminder-triggered message-in. Populated only when
-// the item carries an `anima.reminder.fire` activity (Milo `ccbcc82`).
-// Lets MessageInRow render `Reminder · fire #3` for recurring reminders
-// without re-walking activities at render time.
-export interface ReminderWakeMeta {
-  firedCount: number;
-  scheduleKind: string; // 'once' | recurring kind ('every'/'cron'/etc.)
-}
-
 export interface SubagentStream {
   subRunId: string;
   name?: string;
@@ -126,7 +117,6 @@ export type ActivityFeedItem =
       timestamp: string;
       surface: SurfaceChip;
       followupAppended: boolean;
-      wakeMeta?: ReminderWakeMeta;
       // Inbound sender's Slack avatar (image_72), resolved best-effort by the
       // /messages route. Absent → the author resolver falls back to an initial.
       avatarUrl?: string;
@@ -184,7 +174,6 @@ export type ActivityFeedItem =
 function systemEventForInbox(
   event: InboxItem,
   timestamp: string,
-  wakeMeta?: ReminderWakeMeta,
 ): Extract<ActivityFeedItem, { kind: 'system-event' }> | null {
   if (isOnboardingWake(event)) {
     const text = ('text' in event && typeof event.text === 'string' ? event.text : '').trim();
@@ -197,13 +186,11 @@ function systemEventForInbox(
     };
   }
   if (event.kind === 'reminder') {
-    const recurring = wakeMeta && wakeMeta.scheduleKind !== 'once';
     return {
       kind: 'system-event',
       eventKind: 'reminder',
       label: 'Reminder',
       body: event.title?.trim() || 'Reminder fired',
-      ...(recurring ? { meta: `fire #${wakeMeta!.firedCount}` } : {}),
       timestamp,
     };
   }
@@ -214,12 +201,7 @@ export function buildActivityFeed(
   activityFeed: AgentActivityFeedPage,
   showHidden = false,
 ): ActivityFeedItem[] {
-  const activities = activityFeed.events.flatMap((event) =>
-    event.kind === 'activity' ? [event.activity] : [],
-  );
-  const inboxItems = activityFeed.events.flatMap((event) =>
-    event.kind === 'inbox' ? [event.item] : [],
-  );
+  const activities = activityFeed.events.map((event) => event.activity);
 
   // Pre-scan: group child activities (those with parentToolCallId) by parentId → subRunId.
   // These are skipped from the flat feed and attached to their parent step row instead.
@@ -255,45 +237,8 @@ export function buildActivityFeed(
     if (id) detailedWebSearchProviderToolIds.add(id);
   }
 
-  // Pre-scan `anima.reminder.fire` activities so recurring reminder inbound
-  // rows can show `fire #N`. Activities are agent-owned, so join on the
-  // reminder id carried in both records rather than on a hidden item id.
-  const wakeMetaByReminder = new Map<string, ReminderWakeMeta>();
-  for (const activity of activities) {
-    if (activity.type !== 'tool.call.completed') continue;
-    if (activity.payload?.['tool'] !== 'anima.reminder.fire') continue;
-    const reminderId =
-      typeof activity.payload['reminderId'] === 'string' ? activity.payload['reminderId'] : '';
-    if (!reminderId) continue;
-    const firedCount =
-      typeof activity.payload['firedCount'] === 'number' ? activity.payload['firedCount'] : 1;
-    const scheduleKind =
-      typeof activity.payload['scheduleKind'] === 'string'
-        ? activity.payload['scheduleKind']
-        : 'once';
-    wakeMetaByReminder.set(reminderId, { firedCount, scheduleKind });
-  }
-
   const items: ActivityFeedItem[] = [];
   const recentOutboundTexts: RecentOutboundText[] = [];
-
-  for (const event of inboxItems) {
-    const reminderId = event.kind === 'reminder' ? reminderIdForEvent(event) : undefined;
-    const wakeMeta = reminderId ? wakeMetaByReminder.get(reminderId) : undefined;
-    const systemEvent = systemEventForInbox(event, eventTimestamp(event), wakeMeta);
-    if (systemEvent) {
-      items.push(systemEvent);
-      continue;
-    }
-    items.push({
-      kind: 'message-in',
-      event,
-      timestamp: eventTimestamp(event),
-      surface: surfaceChipForEvent(event, wakeMeta),
-      followupAppended: false,
-      ...(wakeMeta ? { wakeMeta } : {}),
-    });
-  }
 
   // Activities
   for (const activity of activities) {
@@ -785,16 +730,10 @@ function outboundFilesFromPayload(uploads: unknown): OutboundFile[] {
 
 // --- surface chip derivation ---------------------------------------------
 
-function surfaceChipForEvent(event: InboxItem, wakeMeta?: ReminderWakeMeta): SurfaceChip {
+function surfaceChipForEvent(event: InboxItem): SurfaceChip {
   if (isOnboardingWake(event)) return { kind: 'onboarding', label: 'Onboarding' };
   if (event.kind === 'reminder') {
-    // Recurring reminders surface their occurrence count so a user can
-    // tell "this is the 3rd time this daily reminder fired today" from the
-    // chip alone. One-shot wakes without fire metadata
-    // keep the plain `Reminder` label.
-    const recurring = wakeMeta && wakeMeta.scheduleKind !== 'once';
-    const label = recurring ? `Reminder · fire #${wakeMeta.firedCount}` : 'Reminder';
-    return { kind: 'reminder', label };
+    return { kind: 'reminder', label: 'Reminder' };
   }
   if (event.kind === 'memory_coherence') return { kind: 'reminder', label: 'Memory coherence' };
   if (event.kind === 'choice_response') return surfaceChipForChoice(event);
@@ -934,15 +873,6 @@ function surfaceChipForOutbound(activity: ActivityRecord): SurfaceChip {
   }
   // Fallback for outbound from a reminder item with no payload channel info
   return { kind: 'reminder', label: 'Reminder' };
-}
-
-function eventTimestamp(event: InboxItem): string {
-  return event.receivedAt ?? new Date(0).toISOString();
-}
-
-function reminderIdForEvent(event: InboxItem): string | undefined {
-  if (event.kind !== 'reminder') return undefined;
-  return event.reminderId;
 }
 
 // --- subagent stream helpers --------------------------------------------------

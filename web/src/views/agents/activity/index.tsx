@@ -529,10 +529,7 @@ export default function Activity() {
     const eventMap = new Map<string, AgentActivityFeedEvent>();
     for (const page of activityQuery.data.pages) {
       for (const event of page.events ?? []) {
-        const key =
-          event.kind === 'activity'
-            ? `activity:${event.activity.activityId}`
-            : `inbox:${event.item.id}`;
+        const key = `activity:${event.activity.activityId}`;
         eventMap.set(key, event);
       }
     }

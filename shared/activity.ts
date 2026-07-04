@@ -1,7 +1,5 @@
 // API contract types for agent activity records. Consumed by server and web.
 
-import type { InboxItem } from './inbox.js';
-
 export type ActivityStatus = 'started' | 'completed' | 'failed';
 
 export type ActivityPayload = Record<string, unknown>;
@@ -169,17 +167,11 @@ export type Activity =
 
 export type ActivityType = Activity['type'];
 
-export type AgentActivityFeedEvent =
-  | {
-      activity: Activity;
-      kind: 'activity';
-      timestamp: string;
-    }
-  | {
-      item: InboxItem;
-      kind: 'inbox';
-      timestamp: string;
-    };
+export interface AgentActivityFeedEvent {
+  activity: Activity;
+  kind: 'activity';
+  timestamp: string;
+}
 
 export interface AgentActivityFeedPage {
   events: AgentActivityFeedEvent[];

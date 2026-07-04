@@ -1,5 +1,4 @@
 import type { Activity, AgentActivityFeedEvent, AgentActivityFeedPage } from '../../shared/activity.js';
-import { WakeQueueService, type InboxItem } from '../inbox/wake-queue.service.js';
 import { ActivityStore, type ActivityRecordInput } from '../storage/schema/activity.store.js';
 
 export interface ActivityListInput {
@@ -15,7 +14,6 @@ export class ActivityService {
   constructor(
     agentId: string,
     private readonly store: ActivityStore = new ActivityStore(agentId),
-    private readonly wakeQueue: WakeQueueService = new WakeQueueService(agentId),
   ) {}
 
   record(input: ActivityRecordInput): Promise<Activity> {
@@ -36,11 +34,10 @@ export class ActivityService {
 
   async listActivityFeed(input: ActivityListInput = {}): Promise<AgentActivityFeedPage> {
     const limit = normalizeActivityLimit(input.limit);
-    const [activities, items] = await Promise.all([
-      input.before ? this.store.readBefore(input.before, limit) : this.store.readLastN(limit),
-      this.wakeQueue.list(),
-    ]);
-    const events = [...activities.map(activityFeedEvent), ...items.map(inboxFeedEvent)]
+    const activities = input.before
+      ? await this.store.readBefore(input.before, limit)
+      : await this.store.readLastN(limit);
+    const events = activities.map(activityFeedEvent)
       .filter((event) => !input.before || event.timestamp < input.before)
       .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
       .slice(-limit);
@@ -65,8 +62,4 @@ function normalizeActivityLimit(limit: number | undefined): number {
 
 function activityFeedEvent(activity: Activity): AgentActivityFeedEvent {
   return { activity, kind: 'activity', timestamp: activity.createdAt };
-}
-
-function inboxFeedEvent(item: InboxItem): AgentActivityFeedEvent {
-  return { item, kind: 'inbox', timestamp: item.receivedAt };
 }
