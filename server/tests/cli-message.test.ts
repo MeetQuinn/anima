@@ -1323,15 +1323,15 @@ test('reaction commands require --channel, --message-ts, and --name', async () =
 
     const noChannel = await runNode([cliPath, 'reaction', 'add', '--message-ts', '1770000200.000123', '--name', 'eyes'], { env: baseEnv });
     assert.notEqual(noChannel.status, 0);
-    assert.match(noChannel.stderr, /requires --channel or --chat-id/);
+    assert.match(noChannel.stderr, /^error input\.missing_channel \(not retryable\): /);
 
     const noTs = await runNode([cliPath, 'reaction', 'add', '--channel', 'C-product', '--name', 'eyes'], { env: baseEnv });
     assert.notEqual(noTs.status, 0);
-    assert.match(noTs.stderr, /requires --message-ts/);
+    assert.match(noTs.stderr, /^error input\.invalid_options \(not retryable\): /);
 
     const noName = await runNode([cliPath, 'reaction', 'add', '--channel', 'C-product', '--message-ts', '1770000200.000123'], { env: baseEnv });
     assert.notEqual(noName.status, 0);
-    assert.match(noName.stderr, /requires --name/);
+    assert.match(noName.stderr, /^error input\.invalid_options \(not retryable\): /);
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }
@@ -1340,7 +1340,11 @@ test('reaction commands require --channel, --message-ts, and --name', async () =
 test('server preflights Socket Mode token before constructing the Slack app', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-server-slack-preflight-test-'));
   const slackApi = await startSlackApiMock((method) => {
-    if (method === 'auth.test') return { ok: true, user_id: 'U-scout' };
+    if (method === 'auth.test') return { ok: true, team: 'Demo', team_id: 'T-demo', user: 'scout', user_id: 'U-scout' };
+    if (method === 'users.info') {
+      return { ok: true, user: { id: 'U-scout', name: 'scout', profile: { display_name: 'Scout' } } };
+    }
+    if (method === 'team.info') return { ok: true, team: { id: 'T-demo', name: 'Demo' } };
     if (method === 'apps.connections.open') return { error: 'invalid_auth', ok: false };
     throw new Error(`unexpected method ${method}`);
   });
@@ -1355,7 +1359,7 @@ test('server preflights Socket Mode token before constructing the Slack app', as
       `${JSON.stringify({
         id: 'scout',
         provider: { kind: 'codex-cli', model: 'gpt-5.5' },
-        slack: { appToken: 'xapp-valid-format', botToken: 'xoxb-valid-format' },
+        slack: { appToken: 'xapp-valid-format', botToken: 'xoxb-valid-format', connected: true },
         homePath,
       }, null, 2)}\n`,
       'utf8',
@@ -1379,25 +1383,25 @@ test('message commands reject non-ts timestamp flags', async () => {
     input: 'legacy thread flag.',
   });
   assert.notEqual(send.status, 0);
-  assert.match(send.stderr, /unknown option '--thread'/);
+  assert.match(send.stderr, /^error input\.invalid_options \(not retryable\): /);
 
   const update = await runNode([cliPath, 'message', 'update', '--channel', 'C-product', '--ts', '1770000200.000123'], {
     input: 'legacy ts flag.',
   });
   assert.notEqual(update.status, 0);
-  assert.match(update.stderr, /unknown option '--ts'/);
+  assert.match(update.stderr, /^error input\.invalid_options \(not retryable\): /);
 });
 
 test('message commands reject agent and item flags', async () => {
   const agent = await runNode([cliPath, 'message', '--agent', 'scout', 'read', '--channel', 'C-product']);
   assert.notEqual(agent.status, 0);
-  assert.match(agent.stderr, /unknown option '--agent'/);
+  assert.match(agent.stderr, /^error input\.invalid_options \(not retryable\): /);
 
   const item = await runNode([cliPath, 'message', '--item', 'turn_123', 'send', '--channel', 'C-product'], {
     input: 'legacy item flag.',
   });
   assert.notEqual(item.status, 0);
-  assert.match(item.stderr, /unknown option '--item'/);
+  assert.match(item.stderr, /^error input\.invalid_options \(not retryable\): /);
 });
 
 async function writeSlackConfig(

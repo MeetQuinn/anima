@@ -505,11 +505,11 @@ test('file fetch supports --file-id/--output and positional output aliases', asy
 test('file commands reject agent and item flags', async () => {
   const fetch = await runNode([cliPath, 'file', '--agent', 'scout', 'fetch', 'F-test']);
   assert.notEqual(fetch.status, 0);
-  assert.match(fetch.stderr, /unknown option '--agent'/);
+  assert.match(fetch.stderr, /^error input\.invalid_options \(not retryable\): /);
 
   const send = await runNode([cliPath, 'file', '--item', 'turn_123', 'send', '--channel', 'C-product', 'missing.png']);
   assert.notEqual(send.status, 0);
-  assert.match(send.stderr, /unknown option '--item'/);
+  assert.match(send.stderr, /^error input\.invalid_options \(not retryable\): /);
 });
 
 test('file send rejects missing local path before any Slack call', async () => {

@@ -433,6 +433,20 @@ interface FeishuMessageClientDeps extends FeishuOpenApiDeps {
   createClient?(config: FeishuConfig): FeishuSdkClient;
 }
 
+export class FeishuApiError extends Error {
+  readonly code: string;
+  readonly vendorMessage?: string;
+
+  constructor(input: { code: number | string; operation: string; vendorMessage?: string }) {
+    const code = String(input.code);
+    const suffix = input.vendorMessage ?? `code ${code}`;
+    super(`${input.operation}: ${suffix}`);
+    this.name = 'FeishuApiError';
+    this.code = code;
+    if (input.vendorMessage) this.vendorMessage = input.vendorMessage;
+  }
+}
+
 export async function fetchFeishuTenantAccessToken(
   config: FeishuConfig,
   deps: FeishuTenantAccessTokenDeps = {},
@@ -462,7 +476,7 @@ export async function fetchFeishuTenantAccessToken(
   const data = asRecord(payload?.data);
   const code = numberField(payload, 'code');
   if (code !== undefined && code !== 0) {
-    throw new Error(`Feishu tenant_access_token request failed: ${stringField(payload, 'msg') ?? `code ${code}`}`);
+    throw feishuApiError('Feishu tenant_access_token request failed', code, payload);
   }
   const tenantAccessToken = stringField(payload, 'tenant_access_token')
     ?? stringField(data, 'tenant_access_token');
@@ -509,7 +523,7 @@ export async function fetchFeishuBotInfo(
   }));
   const code = numberField(response, 'code');
   if (code !== undefined && code !== 0) {
-    throw new Error(`Feishu bot info request failed: ${stringField(response, 'msg') ?? `code ${code}`}`);
+    throw feishuApiError('Feishu bot info request failed', code, response);
   }
   const bot = asRecord(response?.bot) ?? asRecord(asRecord(response?.data)?.bot);
   if (!bot) {
@@ -535,7 +549,7 @@ export async function fetchFeishuAppScopes(
   }));
   const code = numberField(response, 'code');
   if (code !== undefined && code !== 0) {
-    throw new Error(`Feishu scope status request failed: ${stringField(response, 'msg') ?? `code ${code}`}`);
+    throw feishuApiError('Feishu scope status request failed', code, response);
   }
   const data = asRecord(response?.data);
   const scopes = Array.isArray(data?.scopes) ? data.scopes : [];
@@ -631,7 +645,7 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
       }));
       const code = numberField(response, 'code');
       if (code !== undefined && code !== 0) {
-        throw new Error(`Feishu chat info request failed: ${stringField(response, 'msg') ?? `code ${code}`}`);
+        throw feishuApiError('Feishu chat info request failed', code, response);
       }
       const data = asRecord(response?.data);
       const chat = asRecord(data?.chat) ?? data;
@@ -656,7 +670,7 @@ export function createFeishuMessageClient(config: FeishuConfig, deps: FeishuMess
       }));
       const code = numberField(response, 'code');
       if (code !== undefined && code !== 0) {
-        throw new Error(`Feishu user basic request failed: ${stringField(response, 'msg') ?? `code ${code}`}`);
+        throw feishuApiError('Feishu user basic request failed', code, response);
       }
       const data = asRecord(response?.data);
       const users = Array.isArray(data?.users) ? data.users : [];
@@ -881,6 +895,15 @@ function feishuOpenApiRequester(
     }
     return payload;
   };
+}
+
+function feishuApiError(operation: string, code: number, payload: Record<string, unknown> | undefined): FeishuApiError {
+  const vendorMessage = stringField(payload, 'msg');
+  return new FeishuApiError({
+    code,
+    operation,
+    ...(vendorMessage ? { vendorMessage } : {}),
+  });
 }
 
 function feishuSdkClient(config: FeishuConfig, deps: FeishuMessageClientDeps): FeishuSdkClient {
