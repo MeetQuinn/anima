@@ -4,10 +4,13 @@ import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { AgentMessageRecord } from '../../shared/messages.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
 import type { InboxItem, MemoryCoherenceInboxItem } from '../../shared/inbox.js';
+import { activityServiceForAgent } from '../activities/activity.service.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import {
+  hasMeaningfulActivitySinceLastMemoryPass,
   MemoryCoherenceScheduler,
   stableAgentOffsetMinutes,
 } from '../memory/memory-coherence-scheduler.js';
@@ -16,6 +19,8 @@ import {
   memoryCoherenceDigest,
   memoryCoherenceSummary,
 } from '../memory/memory-coherence-outcome.js';
+import { MessageStore } from '../storage/schema/message.store.js';
+import { withAnimaHome } from './anima-home.js';
 
 test('memory coherence scheduler is off by default', async () => {
   const queues = new TestMemoryQueues();
@@ -34,6 +39,7 @@ test('memory coherence scheduler is off by default', async () => {
 test('memory coherence scheduler treats empty scopeAgentIds as all enabled runnable agents', async () => {
   const queues = new TestMemoryQueues();
   const scheduler = new MemoryCoherenceScheduler({
+    hasMeaningfulActivitySinceLastPass: async () => true,
     now: () => new Date('2026-06-22T08:00:00.000Z'),
     queueForAgent: (agentId) => queues.queueForAgent(agentId),
     readServerConfig: async () => ({
@@ -62,6 +68,30 @@ test('memory coherence scheduler treats empty scopeAgentIds as all enabled runna
     assert.equal(entry.item.scheduledSlotLabel.endsWith(' agent-local'), true);
     assert.match(entry.item.id, /^memory-coherence:/);
   }
+});
+
+test('memory coherence scheduler skips due slots with no meaningful activity since last pass', async () => {
+  const queues = new TestMemoryQueues();
+  const scheduler = new MemoryCoherenceScheduler({
+    hasMeaningfulActivitySinceLastPass: async () => false,
+    now: () => new Date('2026-06-22T08:00:00.000Z'),
+    queueForAgent: (agentId) => queues.queueForAgent(agentId),
+    readServerConfig: async () => ({
+      memoryCoherence: {
+        enabled: true,
+        maxConcurrent: 10,
+        scopeAgentIds: [],
+        timezone: 'UTC',
+        windowDurationMinutes: 60,
+        windowStart: '05:00',
+      },
+    }),
+    timezoneForAgent: () => 'UTC',
+  });
+
+  await scheduler.reconcile([agent('aria')]);
+
+  assert.deepEqual(queues.enqueuedIds(), []);
 });
 
 test('memory coherence scheduler scopes agents and respects active memory cap', async () => {
@@ -99,12 +129,12 @@ test('memory coherence scheduler uses a stable per-agent offset', () => {
   assert.equal(first >= 0 && first < 120, true);
 });
 
-test('memory coherence prompt uses the self-contained daily memory pass copy', () => {
+test('memory coherence prompt uses the self-contained scheduled memory pass copy', () => {
   const prompt = buildCodeAgentDeliveryPrompt(memoryItem('iris', '2026-06-22T05:47:00.000Z'));
 
   assert.match(prompt, /^Memory coherence system wake:/);
   assert.match(prompt, /scheduled_slot_at=2026-06-22T05:47:00\.000Z/);
-  assert.match(prompt, /You are running your daily memory pass\./);
+  assert.match(prompt, /You are running your scheduled memory pass\./);
   assert.match(prompt, /Do not churn to look busy\./);
   assert.doesNotMatch(prompt, /design\/memory-coherence-procedure\.md/);
   assert.doesNotMatch(prompt, /Memory coherence outcome:/);
@@ -144,6 +174,42 @@ test('memory coherence summary preserves provider prose without parsing outcome 
     'No changes needed.\nMemory coherence outcome: quiet_skipped',
   );
   assert.equal(memoryCoherenceSummary(''), undefined);
+});
+
+test('memory coherence activity gate requires a message after the latest memory outcome', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-memory-coherence-gate-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      assert.equal(await hasMeaningfulActivitySinceLastMemoryPass('aria'), false);
+
+      await activityServiceForAgent('aria').record({
+        createdAt: '2026-06-22T05:05:00.000Z',
+        payload: {
+          completedAt: '2026-06-22T05:05:00.000Z',
+          outcome: 'quiet_skipped',
+          scheduledSlotAt: '2026-06-22T05:00:00.000Z',
+          scheduledSlotLabel: '05:00 agent-local',
+          startedAt: '2026-06-22T05:04:00.000Z',
+        },
+        type: 'memory_coherence.outcome',
+      });
+      assert.equal(await hasMeaningfulActivitySinceLastMemoryPass('aria'), false);
+
+      const store = new MessageStore('aria');
+      await store.appendManyIfAbsent([
+        messageRecord('older', '2026-06-22T04:00:00.000Z'),
+      ]);
+      await store.markLegacyBackfilled();
+      assert.equal(await hasMeaningfulActivitySinceLastMemoryPass('aria'), false);
+
+      await store.appendManyIfAbsent([
+        messageRecord('newer', '2026-06-22T06:00:00.000Z'),
+      ]);
+      assert.equal(await hasMeaningfulActivitySinceLastMemoryPass('aria'), true);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 class TestMemoryQueues {
@@ -192,6 +258,17 @@ function memoryItem(agentId: string, scheduledSlotAt: string): MemoryCoherenceIn
     receivedAt: scheduledSlotAt,
     scheduledSlotAt,
     scheduledSlotLabel: '05:47 agent-local',
+  };
+}
+
+function messageRecord(messageId: string, timestamp: string): AgentMessageRecord {
+  return {
+    direction: 'in',
+    kind: 'message',
+    messageId,
+    source: { id: messageId, kind: 'inbox' },
+    text: messageId,
+    timestamp,
   };
 }
 
