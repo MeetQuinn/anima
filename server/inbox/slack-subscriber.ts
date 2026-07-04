@@ -221,7 +221,7 @@ export class SlackInboxSubscriber {
 
     const envelope = body as SlackMessageEnvelope;
     const teamId = slackEventTeamId(envelope, rawEvent);
-    const duplicate = Boolean(await this.options.queue.find(
+    const duplicate = Boolean(await this.options.queue.hasSeen(
       slackMessageEventId(teamId, rawEvent.channel, rawEvent.ts),
     ));
     const runtimeDecision = await slackRuntimeDecision(rawEvent, { agentId: this.options.queue.agentId, duplicate });

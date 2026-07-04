@@ -90,7 +90,7 @@ export class FeishuMessageTransport implements MessageTransport {
     event = await this.enrichDirectory(event, receiveEvent);
     event = await this.enrichWithQuotedMessage(event);
     this.maybeSyncDisplayInfo();
-    const duplicate = Boolean(await this.options.queue.find(event.id));
+    const duplicate = Boolean(await this.options.queue.hasSeen(event.id));
     const runtimeDecision = await feishuRuntimeDecision(event, {
       agentId: this.options.queue.agentId,
       duplicate,
@@ -142,7 +142,7 @@ export class FeishuMessageTransport implements MessageTransport {
       ...(tenantKey ? { tenantKey } : {}),
     });
 
-    const duplicate = Boolean(await this.options.queue.find(event.id));
+    const duplicate = Boolean(await this.options.queue.hasSeen(event.id));
     if (duplicate) {
       console.log(JSON.stringify(feishuIgnoredLog(this.options.agentRuntimeKind, 'duplicate_reaction'), null, 2));
       return;

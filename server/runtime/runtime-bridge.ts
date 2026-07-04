@@ -84,6 +84,7 @@ export class AgentRuntimeBridge {
   private effects(context: RuntimeItemContext, onActivity?: () => void): AgentRuntimeEffects {
     const target: RuntimeActivityTarget = {
       agentId: context.agentId,
+      itemId: context.item.id,
     };
     const noteActivity = () => onActivity?.();
     return {

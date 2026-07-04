@@ -129,8 +129,6 @@ async function seedRunningAndSettledFeishuItems(input: {
   const runningCreatedAt = new Date(now - 10_000).toISOString();
   const runningStartedAt = new Date(now - 9_000).toISOString();
   const settledCreatedAt = new Date(now - 8_000).toISOString();
-  const settledStartedAt = new Date(now - 7_000).toISOString();
-  const settledAt = new Date(now + 1_000).toISOString();
   const running = makeFeishuItem({
     chatId: input.runningChatId,
     chatType: input.runningChatType,
@@ -146,7 +144,6 @@ async function seedRunningAndSettledFeishuItems(input: {
 
   await mkdir(join(process.env.ANIMA_HOME ?? '', 'agents', input.agentId), { recursive: true });
   await queue.enqueue(running);
-  await queue.enqueue(settled);
   await queue.replaceItem({
     ...running,
     handling: {
@@ -155,18 +152,6 @@ async function seedRunningAndSettledFeishuItems(input: {
       status: 'running',
       updatedAt: runningStartedAt,
       workerId: 'worker-running',
-    },
-  });
-  await queue.replaceItem({
-    ...settled,
-    handling: {
-      ...settled.handling,
-      completedAt: settledAt,
-      settledAt,
-      startedAt: settledStartedAt,
-      status: 'completed',
-      updatedAt: settledAt,
-      workerId: 'worker-settled',
     },
   });
   return { itemId: running.id, settledItemId: settled.id };

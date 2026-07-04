@@ -187,8 +187,8 @@ test('message send resolves the active runtime item without ANIMA_INBOX_ITEM_ID 
       const itemId = await ingestSlackThread(stateDir);
       const workerId = 'worker-active-item-test';
       const queue = new WakeQueueService('scout');
-      const claimed = await queue.claimNext(workerId);
-      assert.equal(claimed?.id, itemId);
+      const taken = await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId });
+      assert.equal(taken?.id, itemId);
       await setActiveRuntimeItem({ agentId: 'scout', itemId, workerId });
 
       const send = await runNode([cliPath, 'message', 'send', '--channel', 'C-product'], {
@@ -308,8 +308,8 @@ test('message send resolves a just-settled runtime item for audit', async () => 
       const itemId = await ingestSlackThread(stateDir);
       const workerId = 'worker-settled-item-test';
       const queue = new WakeQueueService('scout');
-      const claimed = await queue.claimNext(workerId);
-      assert.equal(claimed?.id, itemId);
+      const taken = await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId });
+      assert.equal(taken?.id, itemId);
       await setActiveRuntimeItem({ agentId: 'scout', itemId, workerId });
       await queue.complete(itemId);
       await clearActiveRuntimeItem({ agentId: 'scout', itemId, workerId });

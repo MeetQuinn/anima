@@ -8,6 +8,7 @@ import type { ItemStopReason } from './types.js';
 
 export interface RuntimeActivityTarget {
   agentId: string;
+  itemId?: string;
 }
 
 export async function recordRuntimeActivity(
@@ -18,6 +19,7 @@ export async function recordRuntimeActivity(
 ): Promise<void> {
   await activityServiceForAgent(target.agentId).record({
     payload: {
+      ...(target.itemId ? { itemId: target.itemId } : {}),
       runtimeKind,
       ...(payload ?? {}),
     },
@@ -35,6 +37,7 @@ export async function recordRuntimeEvent(
   const activityInput = {
     ...(createdAt ? { createdAt } : {}),
     payload: {
+      ...(target.itemId ? { itemId: target.itemId } : {}),
       runtimeKind,
       ...payload,
     },
@@ -90,6 +93,7 @@ export async function recordRuntimeOutputChunk(
   if (!text.trim()) return;
   await activityServiceForAgent(target.agentId).record({
     payload: {
+      ...(target.itemId ? { itemId: target.itemId } : {}),
       runtimeKind,
       stream,
       text: truncateForActivity(text),
@@ -107,6 +111,7 @@ export async function recordAgentText(
   if (!text?.trim()) return;
   await activityServiceForAgent(target.agentId).record({
     payload: {
+      ...(target.itemId ? { itemId: target.itemId } : {}),
       ...(payload ?? {}),
       runtimeKind,
       text: truncateForActivity(text),
@@ -121,7 +126,7 @@ export async function recordRuntimeAborted(
   payload?: Record<string, unknown>,
 ): Promise<void> {
   await activityServiceForAgent(target.agentId).record({
-    payload: { ...(payload ?? {}), reason },
+    payload: { ...(target.itemId ? { itemId: target.itemId } : {}), ...(payload ?? {}), reason },
     type: 'runtime.aborted',
   });
 }
@@ -131,7 +136,7 @@ export async function recordRuntimeToolStarted(
   payload: Record<string, unknown>,
 ): Promise<void> {
   await activityServiceForAgent(target.agentId).record({
-    payload,
+    payload: { ...(target.itemId ? { itemId: target.itemId } : {}), ...payload },
     type: 'tool.call.started',
   });
 }
@@ -141,7 +146,7 @@ export async function recordRuntimeToolFailed(
   payload: Record<string, unknown>,
 ): Promise<void> {
   await activityServiceForAgent(target.agentId).record({
-    payload,
+    payload: { ...(target.itemId ? { itemId: target.itemId } : {}), ...payload },
     type: 'tool.call.failed',
   });
 }

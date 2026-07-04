@@ -88,15 +88,15 @@ test('wake queue store can use an injected file persistence', async () => {
   const decision = await queue.enqueue(event);
   assert.equal(decision.queued, true);
 
-  const claimed = await queue.claimNext('worker-1');
+  const claimed = await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-1' });
   assert.equal(claimed?.id, event.id);
   assert.equal(claimed?.handling.status, 'running');
 
   await queue.complete(event.id);
 
   const completed = await queue.find(event.id);
-  assert.equal(completed?.handling.status, 'completed');
-  assert.deepEqual((await queue.list()).map((item) => item.id), [event.id]);
+  assert.equal(completed, undefined);
+  assert.deepEqual((await queue.list()).map((item) => item.id), []);
 });
 
 test('wake queue enqueue does not fail when message ledger write fails', async () => {
@@ -146,14 +146,15 @@ test('wake queue recovery leaves fresh live-worker running items alone', async (
     { recordInboxItem: async () => undefined },
   );
 
-  const recovered = await queue.recoverInterrupted({
+  const claimed = await queue.takeNextRunnable({
     currentWorkerId: 'scout:current:12345',
     isWorkerAlive: () => true,
     now: new Date('2026-06-05T12:10:00.000Z'),
     staleRunningMs: 30 * 60 * 1000,
+    workerId: 'scout:current:12345',
   });
 
-  assert.deepEqual(recovered, []);
+  assert.equal(claimed, undefined);
   assert.equal((await queue.find(event.id))?.handling.status, 'running');
 });
 
@@ -180,16 +181,17 @@ test('wake queue recovery requeues live items from a previous worker generation 
     { recordInboxItem: async () => undefined },
   );
 
-  const recovered = await queue.recoverInterrupted({
+  const claimed = await queue.takeNextRunnable({
     currentWorkerId: 'scout:new-worker:12345',
     isWorkerAlive: () => true,
     now: new Date('2026-06-05T12:10:00.000Z'),
     staleRunningMs: 30 * 60 * 1000,
+    workerId: 'scout:new-worker:12345',
   });
 
-  assert.equal(recovered.length, 1);
-  assert.equal(recovered[0]?.id, event.id);
-  assert.equal(recovered[0]?.handling.status, 'queued');
+  assert.equal(claimed?.id, event.id);
+  assert.equal(claimed?.handling.status, 'running');
+  assert.equal(claimed?.handling.workerId, 'scout:new-worker:12345');
 });
 
 test('wake queue recovery leaves fresh live-worker items from another process alone', async () => {
@@ -215,14 +217,15 @@ test('wake queue recovery leaves fresh live-worker items from another process al
     { recordInboxItem: async () => undefined },
   );
 
-  const recovered = await queue.recoverInterrupted({
+  const claimed = await queue.takeNextRunnable({
     currentWorkerId: 'scout:new-worker:67890',
     isWorkerAlive: () => true,
     now: new Date('2026-06-05T12:10:00.000Z'),
     staleRunningMs: 30 * 60 * 1000,
+    workerId: 'scout:new-worker:67890',
   });
 
-  assert.deepEqual(recovered, []);
+  assert.equal(claimed, undefined);
   assert.equal((await queue.find(event.id))?.handling.status, 'running');
 });
 
@@ -249,19 +252,13 @@ test('wake queue recovery requeues stale live-worker running items', async () =>
     { recordInboxItem: async () => undefined },
   );
 
-  const recovered = await queue.recoverInterrupted({
+  const claimed = await queue.takeNextRunnable({
     isWorkerAlive: () => true,
     now: new Date('2026-06-05T10:40:00.000Z'),
     staleRunningMs: 30 * 60 * 1000,
+    workerId: 'scout:new-worker',
   });
 
-  assert.equal(recovered.length, 1);
-  assert.equal(recovered[0]?.id, event.id);
-  assert.equal(recovered[0]?.handling.status, 'queued');
-  assert.equal(recovered[0]?.handling.workerId, undefined);
-  assert.equal(recovered[0]?.handling.startedAt, undefined);
-
-  const claimed = await queue.claimNext('scout:new-worker');
   assert.equal(claimed?.id, event.id);
   assert.equal(claimed?.handling.status, 'running');
   assert.equal(claimed?.handling.workerId, 'scout:new-worker');
@@ -303,20 +300,16 @@ test('wake queue completion racing with enqueue does not resurrect running state
     queue.enqueue(second),
   ]);
 
-  const completed = await queue.find(first.id);
-  assert.equal(completed?.handling.status, 'completed');
-  assert.ok(completed?.handling.completedAt);
-  assert.equal(completed?.handling.workerId, 'pedro:62674');
+  assert.equal(await queue.find(first.id), undefined);
 
   const queued = await queue.find(second.id);
   assert.equal(queued?.handling.status, 'queued');
-  const next = await queue.claimNext('pedro:next');
+  const next = await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'pedro:next' });
   assert.equal(next?.id, second.id);
   assert.equal(next?.handling.status, 'running');
 });
 
-test('wake queue retention waits for legacy message backfill before pruning settled items', async () => {
-  let legacyBackfilled = false;
+test('wake queue only exposes active items from injected persistence', async () => {
   const oldSettled = makeSlackEvent({
     channelId: 'D-user',
     eventId: 'evt-old-settled',
@@ -352,10 +345,7 @@ test('wake queue retention waits for legacy message backfill before pruning sett
       [oldSettled.id]: oldSettled,
       [oldQueued.id]: oldQueued,
     })),
-    {
-      legacyBackfilled: async () => legacyBackfilled,
-      recordInboxItem: async () => undefined,
-    },
+    { recordInboxItem: async () => undefined },
   );
   const event = makeSlackEvent({
     channelId: 'D-user',
@@ -367,10 +357,5 @@ test('wake queue retention waits for legacy message backfill before pruning sett
   });
 
   await queue.enqueue(event);
-  assert.deepEqual((await queue.list()).map((item) => item.id), [oldSettled.id, oldQueued.id, event.id]);
-
-  legacyBackfilled = true;
-  await queue.complete(event.id);
-
   assert.deepEqual((await queue.list()).map((item) => item.id), [oldQueued.id, event.id]);
 });

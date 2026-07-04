@@ -23,10 +23,6 @@ export interface ActiveRuntimeItemQueue {
   }): Promise<InboxItem | undefined>;
 }
 
-// Tool processes can outlive the provider call by a few moments; keep a short
-// settled pointer so Slack output can still resolve recent channel context.
-const TOOL_AUDIT_SETTLED_ITEM_GRACE_MS = 2 * 60 * 1000;
-
 export async function setActiveRuntimeItem(input: {
   agentId: string;
   itemId: string;
@@ -65,16 +61,6 @@ export async function findToolAuditRuntimeItem(
     .filter((event) => isPrimaryRunningInboxItem(event) && !event.handling.settledAt)
     .sort((a, b) => (b.handling.startedAt ?? b.handling.updatedAt).localeCompare(a.handling.startedAt ?? a.handling.updatedAt))[0];
   if (running) return runtimeRecordFromEvent(agentId, running);
-
-  const settledCandidates = candidates
-    .filter((event) => event.handling.status === 'completed' || event.handling.status === 'failed')
-    .sort((a, b) => b.handling.updatedAt.localeCompare(a.handling.updatedAt));
-  for (const event of settledCandidates) {
-    const record = runtimeRecordFromEvent(agentId, event);
-    if (!record.settledAt) continue;
-    if (Date.now() - Date.parse(record.settledAt) > TOOL_AUDIT_SETTLED_ITEM_GRACE_MS) continue;
-    return record;
-  }
   return undefined;
 }
 

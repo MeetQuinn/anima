@@ -88,7 +88,6 @@ export class AgentRuntimeWorker {
 
   private async drainLoop(): Promise<number> {
     let processed = 0;
-    await this.recoverInterruptedItems();
     while (!this.closing && await this.runOne()) processed += 1;
     return processed;
   }
@@ -151,27 +150,22 @@ export class AgentRuntimeWorker {
     }
   }
 
-  private async recoverInterruptedItems(): Promise<void> {
-    const recovered = await this.queue.recoverInterrupted({
-      currentWorkerId: this.workerId,
-      isWorkerAlive: this.workerIsAlive,
-      staleRunningMs: STALE_RUNNING_RECOVERY_MS,
-    });
-    if (recovered.length === 0) return;
-    this.logger.log(JSON.stringify({
-      agentId: this.options.agentId,
-      event: 'runtime.recovered',
-      recoveredItemIds: recovered.map((item) => item.id),
-      workerId: this.workerId,
-    }, null, 2));
-  }
-
   private async runOne(): Promise<boolean> {
     if (await isRestartDrainActive()) return false;
-    const item = await this.queue.claimNext(this.workerId);
+    const item = await this.takeNextRunnable();
     if (!item) return false;
     await this.processClaimedItem(item);
     return true;
+  }
+
+  private async takeNextRunnable(): Promise<InboxItem | undefined> {
+    const result = await this.queue.takeNextRunnable({
+      currentWorkerId: this.workerId,
+      isWorkerAlive: this.workerIsAlive,
+      staleRunningMs: STALE_RUNNING_RECOVERY_MS,
+      workerId: this.workerId,
+    });
+    return result;
   }
 
   private async processClaimedItem(item: InboxItem): Promise<void> {
@@ -428,7 +422,7 @@ export class AgentRuntimeWorker {
 
   private async settleAbortedItem(context: RuntimeItemContext, abortReason: ItemStopReason): Promise<boolean> {
     await recordRuntimeAborted(
-      { agentId: this.options.agentId },
+      { agentId: this.options.agentId, itemId: context.item.id },
       abortReason,
       abortReason === 'idle_timeout' ? { timeoutMs: this.idleTimeoutMs } : undefined,
     );
