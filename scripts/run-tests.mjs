@@ -46,6 +46,7 @@ const groups = {
   ],
   runtime: [
     'agent-runtime.test.js',
+    'cli-errors.test.js',
     'cli-file.test.js',
     'cli-message.test.js',
     'runtime-worker.test.js',

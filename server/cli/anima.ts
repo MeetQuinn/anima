@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 
-import { errorMessage } from '../ids.js';
 import { registerAskCommands } from '../tools/ask.js';
 import { registerEnvCommands } from '../tools/env-cli.js';
 import { registerReminderCommands } from '../reminders/cli.js';
@@ -10,6 +9,7 @@ import { registerMessageHistoryCommands } from '../tools/message-history-cli.js'
 import { registerMessageCommands } from '../tools/messages-cli.js';
 import { registerReactionCommands } from '../tools/reactions-cli.js';
 import { registerSubscriptionCommands } from '../tools/subscriptions-cli.js';
+import { renderCliError } from './cli-errors.js';
 
 async function main(): Promise<void> {
   await createCliProgram().parseAsync(process.argv);
@@ -20,8 +20,10 @@ export function createCliProgram(): Command {
   program
     .name('anima')
     .description('Agent-facing Anima tools')
+    .exitOverride()
     .showHelpAfterError()
-    .configureHelp({ sortSubcommands: true });
+    .configureHelp({ sortSubcommands: true })
+    .configureOutput({ writeErr: () => undefined });
 
   registerMessageCommands(program);
   registerMessageHistoryCommands(program);
@@ -36,6 +38,11 @@ export function createCliProgram(): Command {
 }
 
 main().catch((error) => {
-  console.error(errorMessage(error));
-  process.exitCode = 1;
+  const rendered = renderCliError(error);
+  if (rendered) {
+    console.error(rendered);
+    process.exitCode = 1;
+    return;
+  }
+  process.exitCode = 0;
 });
