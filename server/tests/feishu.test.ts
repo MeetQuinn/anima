@@ -761,6 +761,55 @@ test('Feishu transport stamps accepted wake reason before queueing', async () =>
   }
 });
 
+test('Feishu transport records an activity trace when an attention suggestion attaches', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-attention-trace-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir, { botProfileSyncedAt: '2099-01-01T00:00:00.000Z' });
+      const queue = new WakeQueueService('scout');
+      const transport = new FeishuMessageTransport(
+        {
+          agentRuntimeKind: 'kimi-cli',
+          config: feishuTransportConfig({ appId: '' }),
+          queue,
+        },
+        { createMessageClient: () => testFeishuMessageClient() },
+      );
+
+      for (let i = 0; i < 6; i += 1) {
+        await handleFeishuReceiveForTest(transport, makeFeishuEvent({
+          event_id: `evt-feishu-nudge-${i}`,
+          message: {
+            chat_id: 'oc_group',
+            chat_type: 'group',
+            content: JSON.stringify({ text: `wake ${i}` }),
+            message_id: `om_nudge_${i}`,
+          },
+        }));
+      }
+
+      const queued = await queue.list();
+      const last = queued.at(-1);
+      assert.equal(last?.kind, 'feishu');
+      const suggestion = last?.kind === 'feishu' ? last.attentionSuggestion : undefined;
+      assert.match(suggestion ?? '', /anima subscription mute --chat-id oc_group/);
+
+      const traces = allActivities(await loadState()).filter((activity) => activity.type === 'anima.attention.suggestion');
+      assert.equal(traces.length, 1);
+      const trace = traces[0];
+      assert.ok(trace);
+      assert.deepEqual(trace.payload, {
+        channelId: 'oc_group',
+        channelKind: 'group',
+        platform: 'feishu',
+        suggestion,
+      });
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('Feishu delivery prompt includes resolved quoted message content', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-quoted-message-test-'));
   try {

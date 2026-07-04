@@ -11,6 +11,7 @@ const groups = {
     'agent-config.test.js',
     'agent-health.test.js',
     'agent-seed-memory.test.js',
+    'attention-suggestion-activity.test.js',
     'channel-match.test.js',
     'config.test.js',
     'default-skills.test.js',

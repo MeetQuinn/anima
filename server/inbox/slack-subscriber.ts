@@ -27,6 +27,10 @@ import {
   type SlackMessageEnvelope,
   type SlackRawMessageEvent,
 } from './slack-events.js';
+import {
+  recordAttentionSuggestionActivity,
+  slackAttentionSuggestionPayload,
+} from './attention-suggestion-activity.js';
 import { buildSlackInboxItem } from './slack-ingest.js';
 import { slackShortcutHandoffServiceForAgent } from './slack-shortcut-handoff.service.js';
 import { slackRuntimeDecision, type SlackRuntimeDecision } from './slack-subscription.service.js';
@@ -236,6 +240,12 @@ export class SlackInboxSubscriber {
       profiles: this.slackProfiles,
     });
     const decision = await this.options.queue.enqueue(withSlackWakeReason(item, runtimeDecision.reason));
+    if (runtimeDecision.attentionSuggestion && !decision.duplicate) {
+      await recordAttentionSuggestionActivity(
+        this.options.queue.agentId,
+        slackAttentionSuggestionPayload(item, runtimeDecision.attentionSuggestion),
+      );
+    }
     if (runtimeDecision.reason === 'mention' && runtimeDecision.subscription && !decision.duplicate) {
       activityServiceForAgent(this.options.queue.agentId).record({
         type: 'anima.subscription.add',

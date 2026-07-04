@@ -13,6 +13,10 @@ import {
   parseFeishuContent,
 } from '../feishu/message-content.js';
 import { agentFeishuServiceForAgent } from '../agents/agent-feishu.service.js';
+import {
+  feishuAttentionSuggestionPayload,
+  recordAttentionSuggestionActivity,
+} from '../inbox/attention-suggestion-activity.js';
 import { feishuRuntimeDecision, type FeishuRuntimeDecision } from '../inbox/slack-subscription.service.js';
 import { WakeQueueService, type WakeQueueEnqueueResult } from '../inbox/wake-queue.service.js';
 import type { FeishuConfig } from '../../shared/agent-config.js';
@@ -100,6 +104,12 @@ export class FeishuMessageTransport implements MessageTransport {
       ? { ...event, attentionSuggestion: runtimeDecision.attentionSuggestion }
       : event;
     const decision = await this.options.queue.enqueue(withFeishuWakeReason(queuedEvent, runtimeDecision.reason));
+    if (runtimeDecision.attentionSuggestion && !decision.duplicate) {
+      await recordAttentionSuggestionActivity(
+        this.options.queue.agentId,
+        feishuAttentionSuggestionPayload(event, runtimeDecision.attentionSuggestion),
+      );
+    }
     console.log(JSON.stringify(feishuDecisionLog(decision, this.options.agentRuntimeKind, runtimeDecision), null, 2));
   }
 

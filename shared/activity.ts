@@ -116,6 +116,15 @@ export interface SubscriptionEffectPayload {
   threadTs?: string;
 }
 
+export interface AttentionSuggestionPayload {
+  channelId: string;
+  channelName?: string;
+  channelKind?: string;
+  platform: 'slack' | 'feishu' | (string & {});
+  suggestion: string;
+  threadTs?: string;
+}
+
 export type AgentMessageActivity = ActivityBase<'agent.text', AgentTextPayload>;
 
 export type RuntimeLifecycleActivity =
@@ -145,7 +154,8 @@ export type ExternalEffectActivity =
   | ActivityBase<'anima.session.rotate', SessionRotatePayload>
   | ActivityBase<'anima.subscription.add', SubscriptionEffectPayload>
   | ActivityBase<'anima.subscription.mute', SubscriptionEffectPayload>
-  | ActivityBase<'anima.subscription.remove', SubscriptionEffectPayload>;
+  | ActivityBase<'anima.subscription.remove', SubscriptionEffectPayload>
+  | ActivityBase<'anima.attention.suggestion', AttentionSuggestionPayload>;
 
 export type Activity =
   | AgentMessageActivity
