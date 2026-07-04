@@ -29,6 +29,10 @@ import type {
   ProviderSessionRecord,
 } from '../providers/contract.js';
 
+const FOLLOWUP_NOTE = 'Anima note: this message arrived while you were mid-task. '
+  + 'Finish or pause your current work as you judge best, but address it before the turn ends: '
+  + 'an unanswered mid-turn message is a dropped one.';
+
 export class AgentRuntimeBridge {
   constructor(private readonly runtime: AgentRuntime) {}
 
@@ -65,7 +69,7 @@ export class AgentRuntimeBridge {
     const promptContext = await this.promptContext(input.context.item, input.context.agentId);
     return {
       activeItemId: input.activeContext.item.id,
-      prompt: buildCodeAgentDeliveryPrompt(input.context.item, promptContext),
+      prompt: followupPrompt(buildCodeAgentDeliveryPrompt(input.context.item, promptContext)),
       itemId: input.context.item.id,
     };
   }
@@ -110,6 +114,11 @@ export class AgentRuntimeBridge {
       },
     };
   }
+}
+
+function followupPrompt(prompt: string): string {
+  if (prompt.startsWith(FOLLOWUP_NOTE)) return prompt;
+  return `${FOLLOWUP_NOTE}\n\n${prompt}`;
 }
 
 export function runtimeEnv(context: RuntimeItemContext, env?: Record<string, string>): NodeJS.ProcessEnv {

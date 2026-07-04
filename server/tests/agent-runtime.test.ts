@@ -51,6 +51,19 @@ async function seedReminder(agentId: string, input: { instructions: string; remi
   });
 }
 
+const FOLLOWUP_NOTE_PREFIX = 'Anima note: this message arrived while you were mid-task.';
+
+function assertFollowupPrompt(prompt: string, expectedBody: string): void {
+  assert.equal(countOccurrences(prompt, FOLLOWUP_NOTE_PREFIX), 1);
+  assert.match(prompt, /address it before the turn ends/);
+  assert.ok(prompt.includes(expectedBody));
+  assert.ok(prompt.indexOf(FOLLOWUP_NOTE_PREFIX) < prompt.indexOf(expectedBody));
+}
+
+function countOccurrences(text: string, needle: string): number {
+  return text.split(needle).length - 1;
+}
+
 test('codex-cli app-server launch allows managed provider env into tool shells', () => {
   const include = codexToolEnvIncludeList({
     ANIMA_HOME: '/tmp/anima-home',
@@ -233,8 +246,13 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
         .some((activity) => activity.type === 'agent.text' && activity.payload?.['subRunId'] === 'codex-child-raw'),
     );
 
-    const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string });
-    assert.ok(calls.some((call) => call.method === 'turn/steer'));
+    const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as {
+      method?: string;
+      params?: { input?: Array<{ text?: string }> };
+    });
+    const steerPrompt = calls.find((call) => call.method === 'turn/steer')?.params?.input?.[0]?.text;
+    assert.ok(steerPrompt);
+    assertFollowupPrompt(steerPrompt, 'second message');
     const stateAfterRun = await loadState();
     assert.equal(stateAfterRun.sessions.anima?.current?.id, 'codex-thread-1');
     const activities = await activitiesForInboxItemWindow('anima', firstCtx.item.id);
@@ -1054,7 +1072,10 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
     assert.equal(state.target.itemId, ctx.item.id);
     assert.ok(state.target.completionFile?.endsWith('.json'));
     assert.equal(state.prompts.some((prompt) => prompt.includes('What did I ask over tmux?')), true);
-    assert.equal(state.prompts.some((prompt) => prompt.includes('Steering update from Anima')), true);
+    const steeringPrompt = state.prompts.find((prompt) =>
+      prompt.includes('Steering update from Anima') && prompt.includes('Steer the tmux turn.'));
+    assert.ok(steeringPrompt);
+    assertFollowupPrompt(steeringPrompt, 'Steer the tmux turn.');
     assert.equal(state.prompts.some((prompt) => prompt.includes('mcp__anima__reply')), false);
     assert.equal(state.prompts.some((prompt) => prompt.includes('mcp__anima__complete')), true);
 
@@ -1161,6 +1182,7 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
     assert.doesNotMatch(reminderPrompt, /mcp__anima__reply/);
     const reminderSteeringPrompt = finalState.prompts.find((prompt) => prompt.includes('Steering update from Anima') && prompt.includes('Scheduled reminder:'));
     assert.ok(reminderSteeringPrompt);
+    assertFollowupPrompt(reminderSteeringPrompt, 'Post a daily stand-up to #team.');
     assert.match(reminderSteeringPrompt, /mcp__anima__complete/);
     assert.doesNotMatch(reminderSteeringPrompt, /mcp__anima__reply/);
 
@@ -1524,7 +1546,7 @@ test('claude-code stream-json input keeps stdin open for active-run follow-up', 
 
     const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { message: { content: Array<{ text: string }> } });
     assert.equal(calls.length, 2);
-    assert.match(calls[1]?.message.content[0]?.text ?? '', /second message/);
+    assertFollowupPrompt(calls[1]?.message.content[0]?.text ?? '', 'second message');
     await runtime.close?.();
     });
   } finally {
@@ -1851,8 +1873,12 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
       const args = JSON.parse((await readFile(callsPath, 'utf8')).split('\n')[0] ?? '{}') as { argv: string[] };
       assert.deepEqual(args.argv, ['--yolo', 'acp']);
       const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string; params?: { prompt?: Array<{ text?: string }> } });
-      assert.equal(calls.filter((call) => call.method === 'session/prompt').length, 2);
-      assert.ok(calls.find((call) => call.method === 'session/prompt')?.params?.prompt?.[0]?.text?.includes('You are Anima'));
+      const sessionPrompts = calls.filter((call) => call.method === 'session/prompt');
+      assert.equal(sessionPrompts.length, 2);
+      const firstPrompt = sessionPrompts[0]?.params?.prompt?.[0]?.text ?? '';
+      assert.ok(firstPrompt.includes('You are Anima'));
+      assert.equal(countOccurrences(firstPrompt, FOLLOWUP_NOTE_PREFIX), 0);
+      assertFollowupPrompt(sessionPrompts[1]?.params?.prompt?.[0]?.text ?? '', 'Steer Kimi.');
       assert.deepEqual(await providerSessionStartedPayload(firstCtx.item.id), { kind: 'kimi-cli', resumed: false });
       const kimiTool = allActivities(state).find((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'kimi-tool-1');
       assert.equal(kimiTool?.payload?.['tool'], 'kimi.Shell');
