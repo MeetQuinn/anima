@@ -18,6 +18,7 @@ import type { AgentProviderConfig } from '../providers/contract.js';
 import { isRestartDrainActive } from '../services/restart-drain.js';
 import { cacheDelete } from '../storage/json-file.js';
 import { ServerConfigStore } from '../storage/schema/server.store.js';
+import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import {
   FEISHU_OPEN_API_BASE_URL,
   fetchFeishuTenantAccessToken,
@@ -83,6 +84,7 @@ export interface RuntimeHostDependencies {
   restartCommands?: AgentRestartCommandStore;
   startAgent?: (agent: AgentConfig, animaHome: string, options: StartAgentOptions) => Promise<RunningAgentHandle>;
   startAgentTimeoutMs?: number;
+  syncSlackDisplayInfo?: (agent: AgentConfig) => Promise<AgentConfig>;
   validateAgent?: (agent: AgentConfig) => Promise<void> | void;
 }
 
@@ -113,6 +115,7 @@ export class RuntimeHost {
   private readonly forceRestartTimeoutMs: number;
   private readonly startAgentTimeoutMs: number;
   private readonly startAgent: (agent: AgentConfig, animaHome: string, options: StartAgentOptions) => Promise<RunningAgentHandle>;
+  private readonly syncSlackDisplayInfo: (agent: AgentConfig) => Promise<AgentConfig>;
   private readonly validateAgent: (agent: AgentConfig) => Promise<void> | void;
   private pollTimer?: NodeJS.Timeout;
   private healthTimer?: NodeJS.Timeout;
@@ -142,6 +145,10 @@ export class RuntimeHost {
     this.forceRestartTimeoutMs = deps.forceRestartTimeoutMs ?? AGENT_RESTART_FORCE_KILL_AFTER_MS;
     this.startAgentTimeoutMs = deps.startAgentTimeoutMs ?? DEFAULT_AGENT_START_TIMEOUT_MS;
     this.startAgent = deps.startAgent ?? startAgentFromConfig;
+    this.syncSlackDisplayInfo = deps.syncSlackDisplayInfo
+      ?? (deps.startAgent
+        ? ((agent) => Promise.resolve(agent))
+        : syncSlackDisplayInfoForRuntimeStart);
     this.validateAgent = deps.validateAgent ?? validateAgentConfig;
   }
 
@@ -320,7 +327,7 @@ export class RuntimeHost {
         });
         record.running = undefined;
       }
-      await this.startAndStore(agent, runtimeFingerprint(agent), command);
+      await this.startAndStore(agent, command);
     } catch (error) {
       await this.writeRestartFailed(agent.id, command, 'restart_failed');
       throw error;
@@ -364,12 +371,11 @@ export class RuntimeHost {
       forceAfterMs: this.forceRestartTimeoutMs,
     });
     record.running = undefined;
-    await this.startAndStore(agent, nextFingerprint);
+    await this.startAndStore(agent);
   }
 
   private async startAndStore(
     agent: AgentConfig,
-    fingerprint = runtimeFingerprint(agent),
     restartCommand?: AgentRestartCommand,
   ): Promise<void> {
     await this.health.writeHealth({
@@ -381,20 +387,24 @@ export class RuntimeHost {
       state: 'starting',
       updatedAt: nowIso(),
     });
-    const handle = await this.startAgentWithTimeout(agent);
-    const record = this.managedAgent(agent);
-    record.running = { fingerprint, handle };
+    const started = await this.startAgentWithTimeout(agent);
+    const record = this.managedAgent(started.agent);
+    record.running = { fingerprint: runtimeFingerprint(started.agent), handle: started.handle };
     record.lastLoggedStatus = undefined;
     await this.publishHealthForAgent(record, restartCommand);
   }
 
-  private async startAgentWithTimeout(agent: AgentConfig): Promise<RunningAgentHandle> {
+  private async startAgentWithTimeout(agent: AgentConfig): Promise<{ agent: AgentConfig; handle: RunningAgentHandle }> {
     let timeout: NodeJS.Timeout | undefined;
     let timedOut = false;
-    const startPromise = this.startAgent(agent, this.animaHome, {
-      forceStopAfterMs: this.forceRestartTimeoutMs,
-      startTimeoutMs: this.startAgentTimeoutMs,
-    });
+    const startPromise = (async () => {
+      const startAgent = await this.agentAfterSlackDisplayInfoSync(agent);
+      const handle = await this.startAgent(startAgent, this.animaHome, {
+        forceStopAfterMs: this.forceRestartTimeoutMs,
+        startTimeoutMs: this.startAgentTimeoutMs,
+      });
+      return { agent: startAgent, handle };
+    })();
     const timeoutPromise = new Promise<never>((_resolve, reject) => {
       timeout = setTimeout(() => {
         timedOut = true;
@@ -406,9 +416,9 @@ export class RuntimeHost {
     } catch (error) {
       if (timedOut) {
         void startPromise.then(
-          async (lateHandle) => {
+          async (lateStart) => {
             try {
-              await lateHandle.stop({
+              await lateStart.handle.stop({
                 abortReason: 'operator_restart',
                 forceAfterMs: this.forceRestartTimeoutMs,
               });
@@ -425,6 +435,15 @@ export class RuntimeHost {
       throw error;
     } finally {
       if (timeout) clearTimeout(timeout);
+    }
+  }
+
+  private async agentAfterSlackDisplayInfoSync(agent: AgentConfig): Promise<AgentConfig> {
+    try {
+      return await this.syncSlackDisplayInfo(agent);
+    } catch (error) {
+      this.logger.error(`Agent ${agent.id}: Slack display-info sync failed before runtime start: ${errorMessage(error)}`);
+      return agent;
     }
   }
 
@@ -690,6 +709,13 @@ export class RuntimeHost {
 export async function loadRuntimeAgents(opts: RuntimeHostOptions = {}): Promise<AgentConfig[]> {
   if (opts.agent) return [await defaultAgentRegistryService.serviceFor(opts.agent).getConfig()];
   return defaultAgentRegistryService.listAgentConfigs();
+}
+
+async function syncSlackDisplayInfoForRuntimeStart(
+  agent: AgentConfig,
+): Promise<AgentConfig> {
+  if (!agent.slack.connected || !agent.slack.botToken) return agent;
+  return agentSlackServiceForAgent(agent.id).syncDisplayInfo();
 }
 
 async function startAgentFromConfig(

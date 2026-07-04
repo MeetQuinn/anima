@@ -201,6 +201,74 @@ test('runtime host starts after Slack connection and reloads idle agents after c
   await host.stop();
 });
 
+test('runtime host refreshes Slack display info before starting an agent', async () => {
+  const scout = runtimeHostAgent('scout', { connected: true });
+  const started: string[] = [];
+  const synced: string[] = [];
+  const stopped: string[] = [];
+  const host = new RuntimeHost({}, {
+    animaHome: '/tmp/anima-home',
+    loadAgents: async () => [scout],
+    logger: silentLogger,
+    startAgent: async (agent) => {
+      started.push(`${agent.id}:${agent.slack.botHandle ?? ''}:${agent.slack.botUserId ?? ''}`);
+      return stopHandle(agent.id, stopped);
+    },
+    syncSlackDisplayInfo: async (agent) => {
+      synced.push(agent.id);
+      return {
+        ...agent,
+        slack: {
+          ...agent.slack,
+          avatarUrl: 'https://example.test/fresh-bot.png',
+          botHandle: 'fresh-scout',
+          botName: 'Fresh Scout',
+          botProfileSyncedAt: '2026-07-04T00:00:00.000Z',
+          botUserId: 'U-FRESH-SCOUT',
+        },
+      };
+    },
+    validateAgent: async () => {},
+  });
+
+  await host.reconcileOnce();
+  await host.reconcileOnce();
+
+  assert.deepEqual(synced, ['scout']);
+  assert.deepEqual(started, ['scout:fresh-scout:U-FRESH-SCOUT']);
+  await host.stop();
+  assert.deepEqual(stopped, ['scout']);
+});
+
+test('runtime host does not block startup when Slack display-info refresh fails', async () => {
+  const errors: string[] = [];
+  const started: string[] = [];
+  const host = new RuntimeHost({}, {
+    animaHome: '/tmp/anima-home',
+    loadAgents: async () => [runtimeHostAgent('scout', { connected: true })],
+    logger: {
+      error(message) {
+        errors.push(String(message));
+      },
+      log() {},
+    },
+    startAgent: async (agent) => {
+      started.push(agent.id);
+      return stopHandle(agent.id, []);
+    },
+    syncSlackDisplayInfo: async () => {
+      throw new Error('Slack profile temporarily unavailable');
+    },
+    validateAgent: async () => {},
+  });
+
+  await host.reconcileOnce();
+
+  assert.deepEqual(started, ['scout']);
+  assert.equal(errors.some((message) => message.includes('Slack display-info sync failed before runtime start')), true);
+  await host.stop();
+});
+
 test('runtime host starts Feishu-connected agents without Slack tokens', async () => {
   const scout = runtimeHostAgent('scout', { connected: false, feishuConnected: true });
   const started: string[] = [];
