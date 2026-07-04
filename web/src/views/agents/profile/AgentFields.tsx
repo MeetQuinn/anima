@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, X } from 'lucide-react';
 import {
   DEFAULT_REASONING_EFFORT,
@@ -301,24 +301,37 @@ export function TeamRow({
   value: string;
   onCommit: (teamId: string) => Promise<void>;
 }) {
+  const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [saved, setSaved] = useState(false);
+  // Distinguishes "picked a team" (commit runs, keep the row until it resolves)
+  // from "dismissed the menu" (close edit mode). Both fire onOpenChange(false),
+  // and the `busy` state hasn't flushed yet when it does, so we track it in a ref.
+  const committingRef = useRef(false);
 
   if (teams.length <= 1) return null;
 
   async function change(next: string) {
-    if (!next || next === value || busy) return;
+    if (!next || next === value) {
+      setEditing(false);
+      return;
+    }
+    if (busy) return;
+    committingRef.current = true;
     setBusy(true);
     setError(undefined);
     try {
       await onCommit(next);
       setSaved(true);
       setTimeout(() => setSaved(false), 4000);
+      setEditing(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      // Stay in edit mode so the error is visible next to the control.
     } finally {
       setBusy(false);
+      committingRef.current = false;
     }
   }
 
@@ -326,22 +339,37 @@ export function TeamRow({
 
   return (
     <Field label="Team">
-      <div className="flex flex-wrap items-center gap-2">
-        <Select value={value} onValueChange={(v) => v && void change(v)}>
-          <SelectTrigger className="h-8 w-52 font-serif text-[14px]" disabled={busy}>
-            {currentName}
-          </SelectTrigger>
-          <SelectContent>
-            {teams.map((t) => (
-              <SelectItem key={t.id} value={t.id} className="font-serif text-[14px]">
-                {t.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {saved && <SavedHint />}
-        {error && <ErrorHint message={error} />}
-      </div>
+      {editing ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={value}
+            defaultOpen
+            onValueChange={(v) => v && void change(v)}
+            onOpenChange={(open) => {
+              if (!open && !committingRef.current) setEditing(false);
+            }}
+          >
+            <SelectTrigger className="h-8 w-52 font-serif text-[14px]" disabled={busy}>
+              {currentName}
+            </SelectTrigger>
+            <SelectContent>
+              {teams.map((t) => (
+                <SelectItem key={t.id} value={t.id} className="font-serif text-[14px]">
+                  {t.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {error && <ErrorHint message={error} />}
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <EditAffordance onEdit={() => setEditing(true)}>
+            <span className="font-serif text-[13px] md:text-[15px] text-text">{currentName}</span>
+          </EditAffordance>
+          {saved && <SavedHint />}
+        </div>
+      )}
     </Field>
   );
 }

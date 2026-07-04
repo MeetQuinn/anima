@@ -20,7 +20,7 @@ import { providerCatalog } from '@shared/provider-catalog';
 import { useParams } from 'react-router-dom';
 import { agentDisplayName } from '@/lib/agent-avatar';
 import { formatRelative, shortIso } from '@/lib/format';
-import { Field, ReadonlyValue, Section, extractError } from './Primitives';
+import { EditAffordance, Field, ReadonlyValue, Section, extractError } from './Primitives';
 import {
   InlineTextRow,
   HomeRow,
@@ -330,37 +330,38 @@ export default function Profile() {
           </Field>
           <Field label="Owner">
             {agent.owner ? (
-              <div className="flex items-center gap-2">
-                {agent.owner.avatarUrl ? (
-                  <img
-                    src={agent.owner.avatarUrl}
-                    alt=""
-                    className="h-5 w-5 shrink-0 rounded-full object-cover"
-                  />
-                ) : (
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted font-sans text-[10px] font-bold text-text-muted">
-                    {agent.owner.displayName.charAt(0).toUpperCase()}
-                  </span>
-                )}
-                <span className="font-serif text-[15px] text-text">
-                  {agent.owner.displayName}
-                  {agent.owner.handle && (
-                    <span className="font-sans text-[13px] text-text-muted">
-                      {' '}
-                      @{agent.owner.handle}
+              (() => {
+                // Two-line identity cell: avatar spans name (line 1) + @handle (line 2).
+                // Reveals the edit affordance on hover like the other rows (Change link
+                // dropped) — click opens the owner picker.
+                const owner = agent.owner;
+                const cell = (
+                  <span className="flex items-center gap-2.5">
+                    {owner.avatarUrl ? (
+                      <img
+                        src={owner.avatarUrl}
+                        alt=""
+                        className="h-8 w-8 shrink-0 rounded-full object-cover"
+                      />
+                    ) : (
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted font-sans text-[12px] font-bold text-text-muted">
+                        {owner.displayName.charAt(0).toUpperCase()}
+                      </span>
+                    )}
+                    <span className="flex min-w-0 flex-col leading-tight">
+                      <span className="font-serif text-[15px] text-text">{owner.displayName}</span>
+                      {owner.handle && (
+                        <span className="font-sans text-[13px] text-text-muted">@{owner.handle}</span>
+                      )}
                     </span>
-                  )}
-                </span>
-                {slackConnected && (
-                  <button
-                    type="button"
-                    onClick={() => setOwnerPickerOpen(true)}
-                    className="font-sans ml-1 text-[11px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-text hover:decoration-text/40 transition-colors"
-                  >
-                    Change
-                  </button>
-                )}
-              </div>
+                  </span>
+                );
+                return slackConnected ? (
+                  <EditAffordance onEdit={() => setOwnerPickerOpen(true)}>{cell}</EditAffordance>
+                ) : (
+                  cell
+                );
+              })()
             ) : slackConnected ? (
               <button
                 type="button"
