@@ -9,7 +9,6 @@ import {
   ensureThreadSubscriptionForSentMessage,
   feishuRuntimeDecision,
   muteSubscriptionForAgent,
-  recordChannelPost,
   recordOutboundEngagement,
   shouldReply,
   slackRuntimeDecision,
@@ -301,7 +300,7 @@ test('attention nudge suggests muting after repeated wakes without posting', asy
       assert.equal(last?.shouldStartRuntime, true);
       assert.match(last?.attentionSuggestion ?? '', /anima subscription mute --channel C123/);
 
-      await recordChannelPost({ agentId: 'scout', channelId: 'C123', nowMs: 2_000 });
+      await recordOutboundEngagement({ agentId: 'scout', channelId: 'C123', nowMs: 2_000 });
       const afterPost = await slackRuntimeDecision(
         {
           channel: 'C123',

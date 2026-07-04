@@ -364,15 +364,6 @@ export async function recordOutboundEngagement(input: {
   return updated;
 }
 
-export async function recordChannelPost(input: {
-  agentId: string;
-  channelId: string;
-  nowMs?: number;
-}): Promise<SubscriptionRecord | undefined> {
-  const [channel] = await recordOutboundEngagement(input);
-  return channel;
-}
-
 export async function ensureThreadSubscriptionForSentMessage(input: {
   agentId: string;
   channelId: string;
