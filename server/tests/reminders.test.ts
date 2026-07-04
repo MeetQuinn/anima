@@ -165,7 +165,7 @@ test('due reminder delivery enters the inbox and records fire activity', async (
       });
       await waitUntil(async () => {
         const items = await queue.listRunnable();
-        return items.length > 0 && items.every((item) => item.handling.status !== 'running');
+        return items.length === 0;
       });
       const fireActivity = allActivities(await loadState()).find(
         (activity) => activity.payload?.['tool'] === 'anima.reminder.fire',

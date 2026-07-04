@@ -356,7 +356,7 @@ async function writeAgentQueueFixture(rootDir: string, agentId: string, items: R
   await mkdir(agentDir, { recursive: true });
   await writeFile(join(agentDir, 'config.json'), `${JSON.stringify({ id: agentId }, null, 2)}\n`, 'utf8');
   await writeFile(
-    join(agentDir, 'inbox.json'),
+    join(agentDir, 'wake-queue.json'),
     `${JSON.stringify(Object.fromEntries(items.map((item) => [String(item['id']), item])), null, 2)}\n`,
     'utf8',
   );

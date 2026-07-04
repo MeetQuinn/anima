@@ -508,7 +508,7 @@ test('pid fallback cleanup stops a running web service before OS manager install
   const childPids = new Set<number>();
   try {
     const configDir = join(tempDir, '.anima');
-    await writeMinimalConfig(configDir, { dashboardPort: 0 });
+    await writeMinimalConfig(configDir, { dashboardPort: 4191 });
 
     const start = await runAnimactl(['services', 'start', '--only', 'web'], {
       env: { ANIMA_HOME: configDir },
@@ -521,12 +521,12 @@ test('pid fallback cleanup stops a running web service before OS manager install
 
     await stopPidFallbackService({
       animaHome: configDir,
-      args: ['web', '--host', '0.0.0.0', '--port', '0'],
+      args: ['web', '--host', '0.0.0.0', '--port', '4191'],
       id: 'web',
       legacyIds: ['ui'],
       logName: 'web.log',
       matchAny: [' web ', ' ui '],
-      url: 'http://127.0.0.1:0',
+      url: 'http://127.0.0.1:4191',
     });
 
     assert.equal(pidIsRunning(oldPid), false);
@@ -577,7 +577,7 @@ test('services restart proceeds when invoked from a different environment', asyn
   }
 });
 
-test('services restart refuses to kill running or queued inbox items by default', async () => {
+test('services restart refuses to kill running or queued wake items by default', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'anima-services-restart-gate-'));
   const childPids = new Set<number>();
   try {
@@ -590,7 +590,7 @@ test('services restart refuses to kill running or queued inbox items by default'
     collectStartedPids(start.stdout, childPids);
     assert.equal(start.status, 0, start.stderr || start.stdout);
 
-    await writeInbox(configDir, 'anima', [
+    await writeWakeQueue(configDir, 'anima', [
       slackInboxItem('item_running', 'running', 'Felix is working on this one.'),
       slackInboxItem('item_queued', 'queued', 'Queued message that could be claimed during restart.'),
     ]);
@@ -636,7 +636,7 @@ test('services restart requires drain-active and resume-running together', async
   }
 });
 
-test('services restart drain mode leaves queued inbox items for the new worker', async () => {
+test('services restart drain mode leaves queued wake items for the new worker', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'anima-services-restart-drain-queued-'));
   const childPids = new Set<number>();
   try {
@@ -652,7 +652,7 @@ test('services restart drain mode leaves queued inbox items for the new worker',
     const [oldPid] = childPids;
     assert.ok(oldPid);
 
-    await writeInbox(configDir, 'anima', [
+    await writeWakeQueue(configDir, 'anima', [
       slackInboxItem('item_queued', 'queued', 'Queued message should remain queued.'),
     ]);
 
@@ -671,8 +671,8 @@ test('services restart drain mode leaves queued inbox items for the new worker',
     assert.equal(restart.status, 0, restart.stderr || restart.stdout);
     assert.match(restart.stdout, new RegExp(`agent: stopped pid ${oldPid}`));
     assert.match(restart.stdout, /agent: started pid/);
-    const inbox = JSON.parse(await readFile(join(configDir, 'agents', 'anima', 'inbox.json'), 'utf8')) as Record<string, { handling?: { status?: string } }>;
-    assert.equal(inbox['item_queued']?.handling?.status, 'queued');
+    const wakeQueue = JSON.parse(await readFile(join(configDir, 'agents', 'anima', 'wake-queue.json'), 'utf8')) as Record<string, { handling?: { status?: string } }>;
+    assert.equal(wakeQueue['item_queued']?.handling?.status, 'queued');
   } finally {
     for (const pid of childPids) {
       try {
@@ -699,7 +699,7 @@ test('services restart drain mode continues after timeout and leaves running ite
     const [oldPid] = childPids;
     assert.ok(oldPid);
 
-    await writeInbox(configDir, 'anima', [
+    await writeWakeQueue(configDir, 'anima', [
       slackInboxItem('item_running', 'running', 'Long-running tool should block drain.'),
     ]);
 
@@ -723,7 +723,7 @@ test('services restart drain mode continues after timeout and leaves running ite
     assert.match(restart.stdout, new RegExp(`agent: stopped pid ${oldPid}`));
     assert.match(restart.stdout, /agent: started pid/);
     assert.equal(pidIsRunning(oldPid), false);
-    const inbox = JSON.parse(await readFile(join(configDir, 'agents', 'anima', 'inbox.json'), 'utf8')) as Record<string, {
+    const wakeQueue = JSON.parse(await readFile(join(configDir, 'agents', 'anima', 'wake-queue.json'), 'utf8')) as Record<string, {
       handling?: {
         drainRequestedAt?: string;
         drainTimeoutMs?: number;
@@ -731,10 +731,10 @@ test('services restart drain mode continues after timeout and leaves running ite
         status?: string;
       };
     }>;
-    assert.equal(inbox['item_running']?.handling?.status, 'queued');
-    assert.equal(inbox['item_running']?.handling?.resumeReason, 'runtime_restart');
-    assert.equal(inbox['item_running']?.handling?.drainRequestedAt, undefined);
-    assert.equal(inbox['item_running']?.handling?.drainTimeoutMs, undefined);
+    assert.equal(wakeQueue['item_running']?.handling?.status, 'queued');
+    assert.equal(wakeQueue['item_running']?.handling?.resumeReason, 'runtime_restart');
+    assert.equal(wakeQueue['item_running']?.handling?.drainRequestedAt, undefined);
+    assert.equal(wakeQueue['item_running']?.handling?.drainTimeoutMs, undefined);
     const result = JSON.parse(await readFile(resultPath, 'utf8')) as {
       interruptedCount?: number;
       requestedCount?: number;
@@ -755,7 +755,7 @@ test('services restart drain mode continues after timeout and leaves running ite
   }
 });
 
-test('services restart --force bypasses the inbox idle gate', async () => {
+test('services restart --force bypasses the wake queue idle gate', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'anima-services-restart-force-'));
   const childPids = new Set<number>();
   try {
@@ -770,7 +770,7 @@ test('services restart --force bypasses the inbox idle gate', async () => {
     const [oldPid] = childPids;
     assert.ok(oldPid);
 
-    await writeInbox(configDir, 'anima', [
+    await writeWakeQueue(configDir, 'anima', [
       slackInboxItem('item_running', 'running', 'Force restart intentionally ignores this item.'),
     ]);
 
@@ -874,11 +874,11 @@ async function writeConfig(configDir: string, body: Record<string, unknown>): Pr
   }
 }
 
-async function writeInbox(configDir: string, agentId: string, items: Record<string, unknown>[]): Promise<void> {
-  const inbox = Object.fromEntries(items.map((item) => [String(item['id']), item]));
+async function writeWakeQueue(configDir: string, agentId: string, items: Record<string, unknown>[]): Promise<void> {
+  const wakeQueue = Object.fromEntries(items.map((item) => [String(item['id']), item]));
   await writeFile(
-    join(configDir, 'agents', agentId, 'inbox.json'),
-    `${JSON.stringify(inbox, null, 2)}\n`,
+    join(configDir, 'agents', agentId, 'wake-queue.json'),
+    `${JSON.stringify(wakeQueue, null, 2)}\n`,
     'utf8',
   );
 }

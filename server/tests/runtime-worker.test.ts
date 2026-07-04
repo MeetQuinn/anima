@@ -24,6 +24,7 @@ import { clearRestartDrain, requestRestartDrain } from '../services/restart-drai
 import { runtimeContextForItemId } from '../runtime/context.js';
 import type { RuntimeWorkerConfig, RuntimeItemContext } from '../runtime/types.js';
 import { findActiveRuntimeItem } from '../runtime/active-item.js';
+import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
 import { addProcessingReaction, removeProcessingReactions } from '../runtime/processing-reactions.js';
 import { ReminderStore } from '../storage/schema/reminder.store.js';
 
@@ -105,7 +106,7 @@ test('queued Slack listener persists work for a separate runtime worker', async 
     runtime.finishNext();
     assert.equal(await drain, 1);
 
-    assert.equal((await queueFor('scout').listRunnable())[0]?.handling.status, 'completed');
+    assert.equal(await queueFor('scout').find(decision.ctx.item.id), undefined);
     assert.equal(
       allActivities(await loadState()).some((activity) =>
         activity.type === 'runtime.event'
@@ -211,7 +212,7 @@ test('runtime worker drain close lets active item finish before clearing audit p
       runtime.finishNext();
       await close;
       await drain;
-      assert.equal((await queueFor('scout').find(decision.ctx.item.id))?.handling.status, 'completed');
+      assert.equal(await queueFor('scout').find(decision.ctx.item.id), undefined);
       assert.equal(await findActiveRuntimeItem('scout'), undefined);
       worker = undefined;
     });
@@ -347,9 +348,9 @@ test('runtime worker appends queued follow-up messages into an active runtime', 
 
     runtime.finishNext();
     assert.equal(await drain, 1);
-    assert.equal((await queueFor('scout').listRunnable()).find((item) => item.id === first.ctx.item.id)?.handling.status, 'completed');
-    assert.equal((await queueFor('scout').find(second.ctx.item.id))?.handling.status, 'completed');
-    assert.equal((await queueFor('scout').find(third.ctx.item.id))?.handling.status, 'completed');
+    assert.equal(await queueFor('scout').find(first.ctx.item.id), undefined);
+    assert.equal(await queueFor('scout').find(second.ctx.item.id), undefined);
+    assert.equal(await queueFor('scout').find(third.ctx.item.id), undefined);
     await waitFor(() => settledTurnIds.length === 3);
     assert.deepEqual(reactionCalls, [
       'add:D-user:1770000010.000001:eyes',
@@ -426,8 +427,8 @@ test('runtime worker appends newly queued inbound follow-ups into an active runt
 
     runtime.finishNext();
     assert.equal(await drain, 1);
-    assert.equal((await queueFor('scout').find(first.ctx.item.id))?.handling.status, 'completed');
-    assert.equal((await queueFor('scout').find(second.ctx.item.id))?.handling.status, 'completed');
+    assert.equal(await queueFor('scout').find(first.ctx.item.id), undefined);
+    assert.equal(await queueFor('scout').find(second.ctx.item.id), undefined);
     });
   } finally {
     await worker?.close();
@@ -486,8 +487,8 @@ test('runtime worker queues inbound work while active when follow-up append is r
     await waitFor(() => runtime.calls.length === 2);
     runtime.finishNext();
     assert.equal(await drain, 2);
-    assert.equal((await queueFor('scout').find(first.ctx.item.id))?.handling.status, 'completed');
-    assert.equal((await queueFor('scout').find(second.ctx.item.id))?.handling.status, 'completed');
+    assert.equal(await queueFor('scout').find(first.ctx.item.id), undefined);
+    assert.equal(await queueFor('scout').find(second.ctx.item.id), undefined);
     });
   } finally {
     await worker?.close();
@@ -544,12 +545,9 @@ test('runtime worker requeues appended follow-ups when the parent turn fails', a
 
     runtime.failNext();
     assert.equal(await drain, 2);
-    assert.equal((await queueFor('scout').find(first.ctx.item.id))?.handling.status, 'failed');
+    assert.equal(await queueFor('scout').find(first.ctx.item.id), undefined);
     assert.equal(runtime.calls[1]?.itemId, second.ctx.item.id);
-    const followup = await queueFor('scout').find(second.ctx.item.id);
-    assert.equal(followup?.handling.status, 'completed');
-    assert.equal(followup?.handling.appendedToItemId, undefined);
-    assert.equal(followup?.handling.appendedAt, undefined);
+    assert.equal(await queueFor('scout').find(second.ctx.item.id), undefined);
     });
   } finally {
     await worker?.close();
@@ -612,7 +610,7 @@ test('runtime worker records pending when follow-up append is rejected', async (
     await waitFor(() => runtime.calls.length === 2);
     runtime.finishNext();
     assert.equal(await drain, 2);
-    assert.equal((await queueFor('scout').find(second.ctx.item.id))?.handling.status, 'completed');
+    assert.equal(await queueFor('scout').find(second.ctx.item.id), undefined);
     });
   } finally {
     await worker?.close();
@@ -706,18 +704,19 @@ test('runtime worker reclaims items owned by an exited worker', async () => {
       coordinator,
     );
 
-    await queueFor('scout').claimNext('dead-worker');
+    await queueFor('scout').takeNextRunnable({ isWorkerAlive: () => true, workerId: 'dead-worker' });
     assert.equal((await queueFor('scout').listRunnable())[0]?.handling.status, 'running');
 
     const drain = worker.drainOnce();
     await waitFor(() => runtime.calls.length === 1);
     assert.equal(runtime.calls[0]?.itemId, decision.ctx.item.id);
+    const recovered = await queueFor('scout').find(decision.ctx.item.id);
+    assert.equal(recovered?.handling.status, 'running');
+    assert.equal(recovered?.handling.workerId, 'new-worker');
     runtime.finishNext();
     assert.equal(await drain, 1);
 
-    const recovered = (await queueFor('scout').listRunnable())[0];
-    assert.equal(recovered?.handling.status, 'completed');
-    assert.equal(recovered?.handling.workerId, 'new-worker');
+    assert.equal(await queueFor('scout').find(decision.ctx.item.id), undefined);
     });
   } finally {
     await worker?.close();
@@ -757,19 +756,20 @@ test('runtime worker reclaims running items from a previous worker generation in
     );
 
     const oldWorkerId = `scout:${process.pid}`;
-    const claimed = await queueFor('scout').claimNext(oldWorkerId);
+    const claimed = await queueFor('scout').takeNextRunnable({ isWorkerAlive: () => true, workerId: oldWorkerId });
     assert.equal(claimed?.handling.status, 'running');
     assert.equal(claimed?.handling.workerId, oldWorkerId);
 
     const drain = worker.drainOnce();
     await waitFor(() => runtime.calls.length === 1);
     assert.equal(runtime.calls[0]?.itemId, decision.ctx.item.id);
+    const recovered = await queueFor('scout').find(decision.ctx.item.id);
+    assert.equal(recovered?.handling.status, 'running');
+    assert.equal(recovered?.handling.workerId, newWorkerId);
     runtime.finishNext();
     assert.equal(await drain, 1);
 
-    const recovered = (await queueFor('scout').listRunnable())[0];
-    assert.equal(recovered?.handling.status, 'completed');
-    assert.equal(recovered?.handling.workerId, newWorkerId);
+    assert.equal(await queueFor('scout').find(decision.ctx.item.id), undefined);
     });
   } finally {
     await worker?.close();
@@ -850,7 +850,7 @@ test('runtime worker records memory coherence quiet-skip outcome without parsing
       await queueFor('scout').enqueue(item);
 
       assert.equal(await worker.drainOnce(), 1);
-      assert.equal((await queueFor('scout').find(item.id))?.handling.status, 'completed');
+      assert.equal(await queueFor('scout').find(item.id), undefined);
 
       const outcome = allActivities(await loadState()).find((activity) =>
         activity.type === 'memory_coherence.outcome'
@@ -1083,7 +1083,7 @@ test('runtime worker records failed memory coherence outcome on provider error',
       await queueFor('scout').enqueue(item);
 
       assert.equal(await worker.drainOnce(), 1);
-      assert.equal((await queueFor('scout').find(item.id))?.handling.status, 'failed');
+      assert.equal(await queueFor('scout').find(item.id), undefined);
 
       const outcome = allActivities(await loadState()).find((activity) =>
         activity.type === 'memory_coherence.outcome'
@@ -1298,6 +1298,22 @@ async function waitForInboxItemStatus(
   }
 }
 
+async function waitForInboxItemRemoved(
+  agentId: string,
+  itemId: string,
+  timeoutMs = 1000,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (true) {
+    const item = await queueFor(agentId).find(itemId);
+    if (!item) return;
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error(`Timed out waiting for item ${itemId} to be removed; current status is ${item.handling.status}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 async function waitForInboxItemAppendedTo(
   agentId: string,
   itemId: string,
@@ -1505,7 +1521,7 @@ test('runtime worker records generic provider errors as unhealthy', async () => 
     );
 
     assert.equal(await worker.drainOnce(), 1);
-    assert.equal((await queueFor('scout').find(decision.ctx.item.id))?.handling.status, 'failed');
+    assert.equal(await queueFor('scout').find(decision.ctx.item.id), undefined);
     assert.equal(runtime.calls.length, 1);
 
     const failed = allActivities(await loadState()).find((activity) => activity.type === 'runtime.failed');
@@ -1641,12 +1657,14 @@ test('runtime worker stops a item when queue requestStop sets stopRequestedAt', 
     const drain = worker.drainOnce();
     await waitFor(() => runtime.calls.length === 1);
 
-    await queueFor('scout').requestStop(decision.ctx.item.id);
-    await waitForInboxItemStatus('scout', decision.ctx.item.id, 'failed', 5_000);
+    const stopping = await queueFor('scout').requestStop(decision.ctx.item.id);
+    assert.ok(stopping.handling.stopRequestedAt, 'expected stopRequestedAt to be set');
+    await waitForInboxItemRemoved('scout', decision.ctx.item.id, 5_000);
     await drain;
 
-    const item = await queueFor('scout').find(decision.ctx.item.id);
-    assert.ok(item?.handling.stopRequestedAt, 'expected stopRequestedAt to be set');
+    const activities = allActivities(await loadState());
+    const aborted = activities.find((activity) => activity.type === 'runtime.aborted');
+    assert.equal(aborted?.payload?.['reason'], 'user_stop');
     });
   } finally {
     await worker?.close();
@@ -1682,7 +1700,7 @@ test('runtime worker idle watchdog aborts a item that produces no activity', asy
       coordinator,
     );
     const drain = worker.drainOnce();
-    await waitForInboxItemStatus('scout', decision.ctx.item.id, 'failed', 5_000);
+    await waitForInboxItemRemoved('scout', decision.ctx.item.id, 5_000);
     await drain;
 
     assert.equal(runtime.calls.length, 1);
@@ -1746,8 +1764,7 @@ test('runtime worker records operator restart aborts without requeueing the acti
     await drain;
 
     const item = await queueFor('scout').find(decision.ctx.item.id);
-    assert.equal(item?.handling.status, 'failed');
-    assert.equal(item?.handling.resumeReason, undefined);
+    assert.equal(item, undefined);
     const queuedItem = await queueFor('scout').find(queued.ctx.item.id);
     assert.equal(queuedItem?.handling.status, 'queued');
     const activities = allActivities(await loadState());
@@ -1790,7 +1807,7 @@ test('runtime worker idle watchdog resets on provider activity effects', async (
     const drain = worker.drainOnce();
     assert.equal(await drain, 1);
 
-    assert.equal((await queueFor('scout').find(decision.ctx.item.id))?.handling.status, 'completed');
+    assert.equal(await queueFor('scout').find(decision.ctx.item.id), undefined);
     const activities = allActivities(await loadState());
     assert.ok(activities.some((activity) => activity.type === 'runtime.output'));
     assert.equal(activities.some((activity) => activity.type === 'runtime.aborted'), false);
@@ -1830,7 +1847,7 @@ test('runtime worker retries provider process crashes and continues same item', 
     const drain = worker.drainOnce();
     assert.equal(await drain, 1);
 
-    assert.equal((await queueFor('scout').find(decision.ctx.item.id))?.handling.status, 'completed');
+    assert.equal(await queueFor('scout').find(decision.ctx.item.id), undefined);
     assert.equal(runtime.calls.length, 2);
     assert.match(runtime.calls[1]?.prompt ?? '', /previous provider process crashed/);
     assert.match(runtime.calls[1]?.prompt ?? '', /Do not repeat completed external side effects/);
@@ -1873,15 +1890,16 @@ test('runtime worker records provider failure after retry exhaustion', async () 
     const drain = worker.drainOnce();
     assert.equal(await drain, 1);
 
-    assert.equal((await queueFor('scout').find(decision.ctx.item.id))?.handling.status, 'failed');
+    assert.equal(await queueFor('scout').find(decision.ctx.item.id), undefined);
     assert.equal(runtime.calls.length, 4);
-    const activities = allActivities(await loadState());
+    const activities = await activitiesForInboxItemWindow('scout', decision.ctx.item.id);
     assert.equal(
       activities.filter((activity) => activity.type === 'runtime.event' && activity.payload?.['eventType'] === 'provider.crash.retry').length,
       3,
     );
     const failed = activities.find((activity) => activity.type === 'runtime.failed');
     assert.equal(failed?.payload?.['failureSource'], 'provider');
+    assert.equal(failed?.payload?.['itemId'], decision.ctx.item.id);
     assert.equal(failed?.payload?.['providerReason'], 'process_crash');
     assert.equal(failed?.payload?.['retryAttempts'], 3);
     assert.equal(failed?.payload?.['maxRetries'], 3);
@@ -1922,7 +1940,7 @@ test('runtime worker records non-crash provider errors without retrying', async 
     const drain = worker.drainOnce();
     assert.equal(await drain, 1);
 
-    assert.equal((await queueFor('scout').find(decision.ctx.item.id))?.handling.status, 'failed');
+    assert.equal(await queueFor('scout').find(decision.ctx.item.id), undefined);
     assert.equal(runtime.calls.length, 1);
     const activities = allActivities(await loadState());
     assert.equal(

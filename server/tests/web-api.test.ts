@@ -16,7 +16,7 @@ import { makeSlackEvent } from './helpers/slack.js';
 import { bearerToken, slackRequestBody, startSlackApiMock } from './helpers/slack-api.js';
 import { ingestEvent } from './helpers/inbox.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
-import { recordRuntimeEvent } from '../runtime/activity.js';
+import { recordRuntimeActivity, recordRuntimeEvent } from '../runtime/activity.js';
 import { AgentHealthStore } from '../runtime/agent-health.store.js';
 import { AgentHealthService } from '../runtime/agent-health.service.js';
 import { AgentRestartCommandStore } from '../runtime/agent-restart-command.store.js';
@@ -56,7 +56,7 @@ test('web snapshot summarizes state without exposing secrets', async () => {
         },
         type: 'tool.call.completed',
       });
-      await recordRuntimeEvent({ agentId: 'anima' }, 'codex-cli', undefined, {
+      await recordRuntimeEvent({ agentId: 'anima', itemId: ctx.item.id }, 'codex-cli', undefined, {
         contextWindow: 200000,
         currentContextTokens: 1300,
         eventType: 'codex.context.stats',
@@ -306,13 +306,14 @@ test('web snapshot exposes persisted lifetime token usage', async () => {
         }),
         { agentId: 'anima', stateDir },
       );
-      await recordRuntimeEvent({ agentId: 'anima' }, 'codex-cli', undefined, {
+      await recordRuntimeEvent({ agentId: 'anima', itemId: ctx.item.id }, 'codex-cli', undefined, {
         cacheReadInputTokens: 20,
         eventType: 'codex.session.stats',
         inputTokens: 100,
         outputTokens: 5,
         runtimeKind: 'codex-cli',
       });
+      await recordRuntimeActivity({ agentId: 'anima', itemId: ctx.item.id }, 'codex-cli', 'runtime.completed');
       await new WakeQueueService('anima').complete(ctx.item.id);
 
       await recordLifetimeTokenUsageForItem('anima', ctx.item.id);
@@ -472,7 +473,7 @@ test('lifetime token delta uses one terminal stats activity per item', () => {
   ]), 99);
 });
 
-test('web snapshot includes unfiltered agent queue statuses', async () => {
+test('web snapshot includes active wake queue statuses', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-status-test-'));
   try {
     await writeConfig(stateDir, [
@@ -490,7 +491,7 @@ test('web snapshot includes unfiltered agent queue statuses', async () => {
         }),
         { agentId: 'milo', stateDir },
       );
-      await new WakeQueueService('milo').claimNext('worker-1');
+      await new WakeQueueService('milo').takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-1' });
       await setActiveRuntimeItem({
         agentId: 'milo',
         startedAt: '2026-05-20T08:00:00.000Z',
@@ -592,7 +593,7 @@ test('web status marks a running item unhealthy when no live worker identity mat
         }),
         { agentId: 'milo', stateDir },
       );
-      await new WakeQueueService('milo').claimNext('worker-dead');
+      await new WakeQueueService('milo').takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-dead' });
       await setActiveRuntimeItem({
         agentId: 'milo',
         startedAt: '2026-05-20T08:00:00.000Z',
@@ -655,7 +656,7 @@ test('web status does not flash stale health for a freshly claimed running item 
         }),
         { agentId: 'milo', stateDir },
       );
-      await new WakeQueueService('milo').claimNext('worker-1');
+      await new WakeQueueService('milo').takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-1' });
       await setActiveRuntimeItem({
         agentId: 'milo',
         startedAt: new Date().toISOString(),

@@ -1,7 +1,7 @@
-import { isPrimaryRunningInboxItem, type InboxItem } from '../../shared/inbox.js';
+import type { InboxItem } from '../../shared/inbox.js';
 import { errorMessage } from '../ids.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
-import { WakeQueueStore } from '../storage/schema/wake-queue.store.js';
+import { WakeQueueStore, type TakeNextRunnableInput } from '../storage/schema/wake-queue.store.js';
 
 export type { InboxItem };
 
@@ -12,15 +12,14 @@ export interface WakeQueueEnqueueResult {
 }
 
 export interface WakeQueueMessageRecorder {
+  hasInboxItem?(itemId: string): Promise<boolean>;
   legacyBackfilled?(): Promise<boolean>;
-  recordInboxItem(item: InboxItem): Promise<unknown>;
+  recordInboxItem(item: InboxItem): Promise<{ inserted: boolean } | undefined>;
 }
 
 interface WakeQueueLogger {
   warn(message: string): void;
 }
-
-const WAKE_QUEUE_SETTLED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 export class WakeQueueService {
   constructor(
@@ -31,14 +30,39 @@ export class WakeQueueService {
   ) {}
 
   async enqueue(event: InboxItem): Promise<WakeQueueEnqueueResult> {
+    const existing = await this.store.find(event.id);
+    if (existing) {
+      await this.recordMessage(event);
+      return {
+        duplicate: true,
+        item: existing,
+        queued: false,
+      };
+    }
+    const recorded = await this.recordMessage(event);
+    if (recorded?.inserted === false) {
+      return {
+        duplicate: true,
+        item: event,
+        queued: false,
+      };
+    }
     const result = await this.store.insertIfAbsent(event);
-    await this.recordMessage(result.item);
-    await this.pruneOldSettled();
     return {
       duplicate: !result.inserted,
       item: result.item,
       queued: result.inserted,
     };
+  }
+
+  async hasSeen(itemId: string): Promise<boolean> {
+    if (await this.store.find(itemId)) return true;
+    try {
+      return Boolean(await this.messages.hasInboxItem?.(itemId));
+    } catch (error) {
+      this.logger.warn(`Wake queue message ledger lookup failed for item ${itemId}: ${errorMessage(error)}`);
+      return false;
+    }
   }
 
   find(itemId: string): Promise<InboxItem | undefined> {
@@ -57,13 +81,11 @@ export class WakeQueueService {
     return this.store.listRunnable();
   }
 
-  async claimNext(workerId: string): Promise<InboxItem | undefined> {
-    const items = await this.listRunnable();
-    if (items.some((item) => isPrimaryRunningInboxItem(item))) return undefined;
-    return this.claimFirstQueued(workerId, items);
+  async takeNextRunnable(input: TakeNextRunnableInput): Promise<InboxItem | undefined> {
+    return (await this.store.takeNextRunnable(input)).item;
   }
 
-  async claimNextFollowup(input: {
+  async takeNextFollowup(input: {
     activeItemId: string;
     excludedItemIds?: Iterable<string>;
     workerId: string;
@@ -77,51 +99,23 @@ export class WakeQueueService {
     const excludedItemIds = new Set(input.excludedItemIds ?? []);
     const items = runnable
       .filter((item) => item.handling.status === 'queued' && !excludedItemIds.has(item.id));
-    return this.claimFirstQueued(input.workerId, items);
-  }
-
-  async recoverInterrupted(input: {
-    currentWorkerId?: string;
-    isWorkerAlive: (workerId: string) => boolean;
-    now?: Date;
-    staleRunningMs?: number;
-  }): Promise<InboxItem[]> {
-    const recovered: InboxItem[] = [];
-    const nowMs = input.now?.getTime() ?? Date.now();
-    for (const item of await this.listRunnable()) {
-      if (item.handling.status !== 'running') continue;
-      const workerAlive = item.handling.workerId ? input.isWorkerAlive(item.handling.workerId) : false;
-      const workerReplaced = workerChangedInCurrentProcess(item.handling.workerId, input.currentWorkerId);
-      if (workerAlive && !workerReplaced && !staleRunningItem(item, nowMs, input.staleRunningMs)) continue;
-      await this.store.requeue(item.id, {
-        ...(item.handling.drainRequestedAt ? { resumeReason: 'runtime_restart' as const } : {}),
-      });
-      const updated = await this.find(item.id);
-      if (updated?.handling.status === 'queued') recovered.push(updated);
-    }
-    return recovered;
+    return this.takeFirstQueued(input.workerId, items);
   }
 
   async complete(itemId: string): Promise<void> {
     await this.store.complete(itemId);
-    await this.pruneOldSettled();
   }
 
   async completeAppendedTo(parentItemId: string): Promise<InboxItem[]> {
-    const items = await this.store.completeAppendedTo(parentItemId);
-    await this.pruneOldSettled();
-    return items;
+    return this.store.completeAppendedTo(parentItemId);
   }
 
   async fail(itemId: string): Promise<void> {
     await this.store.fail(itemId);
-    await this.pruneOldSettled();
   }
 
   async failAppendedTo(parentItemId: string): Promise<InboxItem[]> {
-    const items = await this.store.failAppendedTo(parentItemId);
-    await this.pruneOldSettled();
-    return items;
+    return this.store.failAppendedTo(parentItemId);
   }
 
   requeue(itemId: string, options: { resumeReason?: 'runtime_restart' } = {}): Promise<void> {
@@ -170,60 +164,24 @@ export class WakeQueueService {
     itemId: string;
     workerId: string;
   }): Promise<InboxItem | undefined> {
-    const item = await this.store.markSettled(input);
-    await this.pruneOldSettled();
-    return item;
+    return this.store.markSettled(input);
   }
 
-  private async claimFirstQueued(workerId: string, items: InboxItem[]): Promise<InboxItem | undefined> {
+  private async takeFirstQueued(workerId: string, items: InboxItem[]): Promise<InboxItem | undefined> {
     for (const item of items) {
       if (item.handling.status !== 'queued') continue;
-      const claimed = await this.store.claimQueued({ itemId: item.id, workerId });
-      if (claimed) return claimed;
+      const taken = await this.store.takeQueued({ itemId: item.id, workerId });
+      if (taken) return taken;
     }
     return undefined;
   }
 
-  private async recordMessage(item: InboxItem): Promise<void> {
+  private async recordMessage(item: InboxItem): Promise<{ inserted: boolean } | undefined> {
     try {
-      await this.messages.recordInboxItem(item);
+      return await this.messages.recordInboxItem(item);
     } catch (error) {
       this.logger.warn(`Wake queue message ledger write failed for item ${item.id}: ${errorMessage(error)}`);
+      return undefined;
     }
   }
-
-  private async pruneOldSettled(): Promise<void> {
-    if (!this.messages.legacyBackfilled) return;
-    try {
-      if (!await this.messages.legacyBackfilled()) return;
-      const cutoffIso = new Date(Date.now() - WAKE_QUEUE_SETTLED_RETENTION_MS).toISOString();
-      await this.store.pruneSettledBefore(cutoffIso);
-    } catch (error) {
-      this.logger.warn(`Wake queue retention failed for ${this.agentId}: ${errorMessage(error)}`);
-    }
-  }
-}
-
-function workerChangedInCurrentProcess(
-  itemWorkerId: string | undefined,
-  currentWorkerId: string | undefined,
-): boolean {
-  if (!itemWorkerId || !currentWorkerId || itemWorkerId === currentWorkerId) return false;
-  const itemPid = workerPid(itemWorkerId);
-  const currentPid = workerPid(currentWorkerId);
-  return itemPid !== undefined && itemPid === currentPid;
-}
-
-function workerPid(workerId: string): number | undefined {
-  const pidText = workerId.split(':').at(-1);
-  const pid = pidText ? Number.parseInt(pidText, 10) : Number.NaN;
-  return Number.isFinite(pid) && pid > 0 ? pid : undefined;
-}
-
-function staleRunningItem(item: InboxItem, nowMs: number, staleRunningMs: number | undefined): boolean {
-  if (staleRunningMs === undefined || staleRunningMs <= 0) return false;
-  const startedAtMs = Date.parse(item.handling.startedAt ?? item.handling.updatedAt);
-  const updatedAtMs = Date.parse(item.handling.updatedAt);
-  if (Number.isNaN(startedAtMs) || Number.isNaN(updatedAtMs)) return false;
-  return nowMs - startedAtMs >= staleRunningMs && nowMs - updatedAtMs >= staleRunningMs;
 }

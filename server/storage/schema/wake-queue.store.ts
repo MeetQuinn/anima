@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { nowIso } from '../../ids.js';
 import { agentsDir } from './agent.store.js';
 import { JsonStore } from '../json-store.js';
-import { InboxItemSchema, type InboxItem } from '../../../shared/inbox.js';
+import { isPrimaryRunningInboxItem, InboxItemSchema, type InboxItem } from '../../../shared/inbox.js';
 
 export type WakeQueueFile = Record<string, InboxItem>;
 
@@ -34,15 +34,26 @@ export const WakeQueueFileSchema = z.preprocess(migrateLegacyWakeQueueFile, z.re
 export const getWakeQueueFileStore = (agentId: string): JsonStore<WakeQueueFile> =>
   new JsonStore<WakeQueueFile>({
     empty: () => ({}),
-    parse: (value) => WakeQueueFileSchema.parse(value),
-    // Keep the existing filename for live-data compatibility. Product inbox
-    // history now lives in messages.jsonl; this file is only the wake queue.
-    path: () => join(agentsDir(), agentId, 'inbox.json'),
+    parse: (value) => activeWakeQueueFile(WakeQueueFileSchema.parse(value)),
+    path: () => join(agentsDir(), agentId, 'wake-queue.json'),
   });
 
 interface WakeQueueFilePersistence {
   read(): Promise<WakeQueueFile>;
   update(op: (current: WakeQueueFile) => WakeQueueFile | Promise<WakeQueueFile>): Promise<WakeQueueFile>;
+}
+
+export interface TakeNextRunnableInput {
+  currentWorkerId?: string;
+  isWorkerAlive: (workerId: string) => boolean;
+  now?: Date;
+  staleRunningMs?: number;
+  workerId: string;
+}
+
+export interface TakeNextRunnableResult {
+  item?: InboxItem;
+  recovered: InboxItem[];
 }
 
 export class WakeQueueStore {
@@ -52,13 +63,14 @@ export class WakeQueueStore {
   ) {}
 
   async find(itemId: string): Promise<InboxItem | undefined> {
-    return (await this.store.read())[itemId];
+    return activeWakeQueueFile(await this.store.read())[itemId];
   }
 
   async insertIfAbsent(event: InboxItem): Promise<{ inserted: boolean; item: InboxItem }> {
-    const item = InboxItemSchema.parse(event);
+    const item = activeInboxItem(event);
     let result: { inserted: boolean; item: InboxItem } | undefined;
-    await this.store.update((current) => {
+    await this.store.update((rawCurrent) => {
+      const current = activeWakeQueueFile(rawCurrent);
       const existing = current[item.id];
       if (existing) {
         result = { inserted: false, item: existing };
@@ -72,8 +84,9 @@ export class WakeQueueStore {
   }
 
   async replaceItem(item: InboxItem): Promise<InboxItem> {
-    const parsed = InboxItemSchema.parse(item);
-    await this.store.update((current) => {
+    const parsed = activeInboxItem(item);
+    await this.store.update((rawCurrent) => {
+      const current = activeWakeQueueFile(rawCurrent);
       if (!current[parsed.id]) throw new Error(`Wake queue item not found: ${parsed.id}`);
       return { ...current, [parsed.id]: parsed };
     });
@@ -81,7 +94,7 @@ export class WakeQueueStore {
   }
 
   async list(): Promise<InboxItem[]> {
-    return Object.values(await this.store.read())
+    return Object.values(activeWakeQueueFile(await this.store.read()))
       .sort((a, b) => a.handling.createdAt.localeCompare(b.handling.createdAt));
   }
 
@@ -90,25 +103,59 @@ export class WakeQueueStore {
       .sort((a, b) => itemSortAt(a).localeCompare(itemSortAt(b)));
   }
 
-  async pruneSettledBefore(cutoffIso: string): Promise<number> {
-    let pruned = 0;
-    await this.store.update((current) => {
-      pruned = 0;
-      const next: WakeQueueFile = {};
+  async takeNextRunnable(input: TakeNextRunnableInput): Promise<TakeNextRunnableResult> {
+    let result: TakeNextRunnableResult | undefined;
+    const now = input.now ?? new Date();
+    const nowText = now.toISOString();
+    const nowMs = now.getTime();
+    await this.store.update((rawCurrent) => {
+      const current = activeWakeQueueFile(rawCurrent);
+      const next = { ...current };
+      const recovered: InboxItem[] = [];
+      let changed = Object.keys(next).length !== Object.keys(rawCurrent).length;
       for (const [itemId, item] of Object.entries(current)) {
-        if (isSettledBefore(item, cutoffIso)) {
-          pruned += 1;
-        } else {
-          next[itemId] = item;
-        }
+        if (item.handling.status !== 'running') continue;
+        if (!shouldRecoverRunningItem(item, input, nowMs)) continue;
+        const requeued = requeuedItem(item, nowText, {
+          ...(item.handling.drainRequestedAt ? { resumeReason: 'runtime_restart' as const } : {}),
+        });
+        next[itemId] = requeued;
+        recovered.push(requeued);
+        changed = true;
       }
-      return pruned > 0 ? next : current;
+
+      if (Object.values(next).some((item) => isPrimaryRunningInboxItem(item))) {
+        result = { recovered };
+        return changed ? next : rawCurrent;
+      }
+
+      const item = Object.values(next)
+        .filter((candidate) => candidate.handling.status === 'queued')
+        .sort((a, b) => itemSortAt(a).localeCompare(itemSortAt(b)))[0];
+      if (!item) {
+        result = { recovered };
+        return changed ? next : rawCurrent;
+      }
+
+      const claimed: InboxItem = {
+        ...item,
+        handling: {
+          ...item.handling,
+          startedAt: nowText,
+          status: 'running',
+          updatedAt: nowText,
+          workerId: input.workerId,
+        },
+      };
+      next[item.id] = claimed;
+      result = { item: claimed, recovered };
+      return next;
     });
-    return pruned;
+    return result ?? { recovered: [] };
   }
 
   async complete(itemId: string): Promise<void> {
-    await this.replaceItemWithTimestamp(itemId, (item, now) => ({
+    await this.settleItem(itemId, (item, now) => ({
       ...item,
       handling: {
         ...item.handling,
@@ -120,7 +167,7 @@ export class WakeQueueStore {
   }
 
   async completeAppendedTo(parentItemId: string): Promise<InboxItem[]> {
-    return this.updateAppendedTo(parentItemId, (item, now) => ({
+    return this.settleAppendedTo(parentItemId, (item, now) => ({
       ...item,
       handling: {
         ...item.handling,
@@ -131,7 +178,7 @@ export class WakeQueueStore {
     }));
   }
 
-  async claimQueued(input: {
+  async takeQueued(input: {
     itemId: string;
     workerId: string;
   }): Promise<InboxItem | undefined> {
@@ -151,7 +198,7 @@ export class WakeQueueStore {
   }
 
   async fail(itemId: string): Promise<void> {
-    await this.replaceItemWithTimestamp(itemId, (item, now) => ({
+    await this.settleItem(itemId, (item, now) => ({
       ...item,
       handling: {
         ...item.handling,
@@ -163,7 +210,7 @@ export class WakeQueueStore {
   }
 
   async failAppendedTo(parentItemId: string): Promise<InboxItem[]> {
-    return this.updateAppendedTo(parentItemId, (item, now) => ({
+    return this.settleAppendedTo(parentItemId, (item, now) => ({
       ...item,
       handling: {
         ...item.handling,
@@ -205,7 +252,7 @@ export class WakeQueueStore {
   }
 
   async requeue(itemId: string, options: { resumeReason?: 'runtime_restart' } = {}): Promise<void> {
-    await this.replaceItemWithTimestamp(itemId, (item, now) => requeuedItem(item, now, options));
+    await this.updateItem(itemId, (item, now) => requeuedItem(item, now, options));
   }
 
   async requeueAppendedTo(
@@ -266,9 +313,13 @@ export class WakeQueueStore {
     itemId: string;
     workerId: string;
   }): Promise<InboxItem | undefined> {
-    return this.updateItemIfPresent(input.itemId, (item, now) => {
-      if (item.handling.workerId !== input.workerId) return undefined;
-      return {
+    let updated: InboxItem | undefined;
+    await this.store.update((rawCurrent) => {
+      const current = activeWakeQueueFile(rawCurrent);
+      const item = current[input.itemId];
+      if (!item || item.handling.workerId !== input.workerId) return rawCurrent;
+      const now = nowIso();
+      updated = {
         ...item,
         handling: {
           ...item.handling,
@@ -276,14 +327,51 @@ export class WakeQueueStore {
           updatedAt: now,
         },
       };
+      const next = { ...current };
+      delete next[input.itemId];
+      return next;
     });
+    return updated;
   }
 
-  private async replaceItemWithTimestamp(
+  private async settleItem(
     itemId: string,
     update: (item: InboxItem, now: string) => InboxItem,
   ): Promise<void> {
-    await this.updateItem(itemId, update);
+    let found = false;
+    await this.store.update((rawCurrent) => {
+      const current = activeWakeQueueFile(rawCurrent);
+      const item = current[itemId];
+      if (!item) return rawCurrent;
+      found = true;
+      void update(item, nowIso());
+      const next = { ...current };
+      delete next[itemId];
+      return next;
+    });
+    if (!found) throw new Error(`Wake queue item not found: ${itemId}`);
+  }
+
+  private async settleAppendedTo(
+    parentItemId: string,
+    update: (item: InboxItem, now: string) => InboxItem,
+  ): Promise<InboxItem[]> {
+    const updated: InboxItem[] = [];
+    await this.store.update((rawCurrent) => {
+      const current = activeWakeQueueFile(rawCurrent);
+      const now = nowIso();
+      updated.length = 0;
+      const next: WakeQueueFile = {};
+      for (const [itemId, item] of Object.entries(current)) {
+        if (item.handling.status === 'running' && item.handling.appendedToItemId === parentItemId) {
+          updated.push(update(item, now));
+        } else {
+          next[itemId] = item;
+        }
+      }
+      return updated.length > 0 ? next : rawCurrent;
+    });
+    return updated;
   }
 
   private async updateAppendedTo(
@@ -291,7 +379,8 @@ export class WakeQueueStore {
     update: (item: InboxItem, now: string) => InboxItem,
   ): Promise<InboxItem[]> {
     const updated: InboxItem[] = [];
-    await this.store.update((current) => {
+    await this.store.update((rawCurrent) => {
+      const current = activeWakeQueueFile(rawCurrent);
       const now = nowIso();
       updated.length = 0;
       const next: WakeQueueFile = {};
@@ -304,7 +393,7 @@ export class WakeQueueStore {
           next[itemId] = item;
         }
       }
-      return updated.length > 0 ? next : current;
+      return updated.length > 0 ? next : rawCurrent;
     });
     return updated;
   }
@@ -323,11 +412,12 @@ export class WakeQueueStore {
     update: (item: InboxItem, now: string) => InboxItem | undefined,
   ): Promise<InboxItem | undefined> {
     let updated: InboxItem | undefined;
-    await this.store.update((current) => {
+    await this.store.update((rawCurrent) => {
+      const current = activeWakeQueueFile(rawCurrent);
       const item = current[itemId];
-      if (!item) return current;
+      if (!item) return rawCurrent;
       const nextItem = update(item, nowIso());
-      if (!nextItem) return current;
+      if (!nextItem) return rawCurrent;
       updated = nextItem;
       return { ...current, [itemId]: updated };
     });
@@ -337,12 +427,6 @@ export class WakeQueueStore {
 
 function itemSortAt(item: InboxItem): string {
   return item.handling.queuedAt ?? item.handling.startedAt ?? item.handling.updatedAt;
-}
-
-function isSettledBefore(item: InboxItem, cutoffIso: string): boolean {
-  if (item.handling.status !== 'completed' && item.handling.status !== 'failed') return false;
-  const settledAt = item.handling.settledAt ?? item.handling.completedAt ?? item.handling.failedAt ?? item.handling.updatedAt;
-  return settledAt < cutoffIso;
 }
 
 function requeuedItem(
@@ -368,4 +452,57 @@ function requeuedItem(
       updatedAt: now,
     },
   };
+}
+
+function activeWakeQueueFile(file: WakeQueueFile): WakeQueueFile {
+  return Object.fromEntries(
+    Object.entries(file).filter(([, item]) =>
+      item.handling.status === 'queued' || (item.handling.status === 'running' && !item.handling.settledAt)
+    ),
+  );
+}
+
+function activeInboxItem(item: InboxItem): InboxItem {
+  const parsed = InboxItemSchema.parse(item);
+  if (
+    parsed.handling.status !== 'queued' &&
+    (parsed.handling.status !== 'running' || parsed.handling.settledAt)
+  ) {
+    throw new Error(`Wake queue only stores active items; got ${parsed.handling.status} for ${parsed.id}`);
+  }
+  return parsed;
+}
+
+function shouldRecoverRunningItem(
+  item: InboxItem,
+  input: TakeNextRunnableInput,
+  nowMs: number,
+): boolean {
+  const workerAlive = item.handling.workerId ? input.isWorkerAlive(item.handling.workerId) : false;
+  const workerReplaced = workerChangedInCurrentProcess(item.handling.workerId, input.currentWorkerId);
+  return !workerAlive || workerReplaced || staleRunningItem(item, nowMs, input.staleRunningMs);
+}
+
+function workerChangedInCurrentProcess(
+  itemWorkerId: string | undefined,
+  currentWorkerId: string | undefined,
+): boolean {
+  if (!itemWorkerId || !currentWorkerId || itemWorkerId === currentWorkerId) return false;
+  const itemPid = workerPid(itemWorkerId);
+  const currentPid = workerPid(currentWorkerId);
+  return itemPid !== undefined && itemPid === currentPid;
+}
+
+function workerPid(workerId: string): number | undefined {
+  const pidText = workerId.split(':').at(-1);
+  const pid = pidText ? Number.parseInt(pidText, 10) : Number.NaN;
+  return Number.isFinite(pid) && pid > 0 ? pid : undefined;
+}
+
+function staleRunningItem(item: InboxItem, nowMs: number, staleRunningMs: number | undefined): boolean {
+  if (staleRunningMs === undefined || staleRunningMs <= 0) return false;
+  const startedAtMs = Date.parse(item.handling.startedAt ?? item.handling.updatedAt);
+  const updatedAtMs = Date.parse(item.handling.updatedAt);
+  if (Number.isNaN(startedAtMs) || Number.isNaN(updatedAtMs)) return false;
+  return nowMs - startedAtMs >= staleRunningMs && nowMs - updatedAtMs >= staleRunningMs;
 }

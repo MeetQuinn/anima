@@ -40,7 +40,7 @@ export async function appendQueuedFollowupsUntilFinished(input: RuntimeFollowupA
       await sleep(FOLLOWUP_POLL_MS, input.itemDone);
       continue;
     }
-    const item = await input.queue.claimNextFollowup({
+    const item = await input.queue.takeNextFollowup({
       activeItemId: input.activeContext.item.id,
       excludedItemIds: skippedItemIds,
       workerId: input.workerId,

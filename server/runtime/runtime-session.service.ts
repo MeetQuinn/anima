@@ -1,7 +1,6 @@
 import type { Activity } from '../../shared/activity.js';
 import type { ProviderSessionStatsSummary } from '../../shared/snapshot.js';
 import { nowIso } from '../ids.js';
-import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { numberField, stringField } from '../json.js';
 import { AgentUsageStore, type AgentUsage } from '../storage/schema/agent-usage.store.js';
 import {
@@ -21,7 +20,6 @@ export class RuntimeSessionService {
     private readonly agentId: string,
     private readonly sessionStore: SessionStore = new SessionStore(agentId),
     private readonly usageStore: AgentUsageStore = new AgentUsageStore(agentId),
-    private readonly wakeQueue: WakeQueueService = new WakeQueueService(agentId),
   ) {}
 
   async upsertPrimarySession(): Promise<Session> {
@@ -117,10 +115,10 @@ export class RuntimeSessionService {
   }
 
   async recordLifetimeTokenUsageForItem(itemId: string): Promise<number | undefined> {
-    const item = await this.wakeQueue.find(itemId);
-    if (item?.handling.status !== 'completed') return undefined;
+    const activities = await activitiesForInboxItemWindow(this.agentId, itemId);
+    if (!activities.some((activity) => activity.type === 'runtime.completed')) return undefined;
 
-    const delta = tokenDeltaForActivities(await activitiesForInboxItemWindow(this.agentId, itemId));
+    const delta = tokenDeltaForActivities(activities);
     if (delta === undefined || delta <= 0) return undefined;
 
     const updatedAt = nowIso();

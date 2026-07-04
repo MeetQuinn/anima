@@ -35,11 +35,11 @@ export class MessageService {
     private readonly activityStore: ActivityStore = new ActivityStore(agentId),
   ) {}
 
-  async recordInboxItem(item: InboxItem): Promise<AgentMessageRecord | undefined> {
+  async recordInboxItem(item: InboxItem): Promise<{ inserted: boolean; record: AgentMessageRecord } | undefined> {
     const message = messageFromInboxItem(item);
     if (!message) return undefined;
-    await this.store.appendIfAbsent(message);
-    return message;
+    const result = await this.store.appendIfAbsent(message);
+    return { inserted: result.inserted, record: message };
   }
 
   async recordOutboxActivity(activity: Activity): Promise<AgentMessageRecord | undefined> {
@@ -83,6 +83,10 @@ export class MessageService {
 
   legacyBackfilled(): Promise<boolean> {
     return this.store.legacyBackfilled();
+  }
+
+  hasInboxItem(itemId: string): Promise<boolean> {
+    return this.store.hasMessageId(`msg_inbox:${itemId}`);
   }
 
   private async backfillLegacyMessages(): Promise<void> {

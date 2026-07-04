@@ -13,6 +13,7 @@ export async function runProviderWithCrashRetries(input: {
   agentId: string;
   agentRuntime: AgentRuntime;
   buildInput: (retryNotice?: string) => Promise<AgentRuntimeInput>;
+  itemId?: string;
   onFinalFailureRecorded?: () => void;
   signal: AbortSignal;
 }): Promise<AgentRuntimeResult> {
@@ -29,6 +30,7 @@ export async function runProviderWithCrashRetries(input: {
           agentId: input.agentId,
           agentRuntime: input.agentRuntime,
           error,
+          ...(input.itemId ? { itemId: input.itemId } : {}),
           providerFailure: true,
           retryAttempts: retryCount,
         });
@@ -39,7 +41,7 @@ export async function runProviderWithCrashRetries(input: {
       retryCount += 1;
       const retryAfterMs = PROVIDER_CRASH_RETRY_BACKOFF_MS * retryCount;
       await recordRuntimeEvent(
-        { agentId: input.agentId },
+        { agentId: input.agentId, ...(input.itemId ? { itemId: input.itemId } : {}) },
         input.agentRuntime.kind,
         input.agentRuntime.env,
         {
@@ -60,6 +62,7 @@ export async function recordFinalRuntimeFailure(input: {
   agentId: string;
   agentRuntime: AgentRuntime;
   error: unknown;
+  itemId?: string;
   providerFailure?: boolean;
   retryAttempts: number;
 }): Promise<void> {
@@ -68,7 +71,7 @@ export async function recordFinalRuntimeFailure(input: {
     ? processCrash ? 'process_crash' : providerFailureReasonFromError(input.error)
     : undefined;
   await recordRuntimeActivity(
-    { agentId: input.agentId },
+    { agentId: input.agentId, ...(input.itemId ? { itemId: input.itemId } : {}) },
     input.agentRuntime.kind,
     'runtime.failed',
     {

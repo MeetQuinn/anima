@@ -1,6 +1,6 @@
 // API contract types for the agent communication ledger.
-// `messages` is the long-lived inbox/outbox view. Runtime inbox remains the
-// work queue, and activity remains the audit/debug log.
+// `messages` is the long-lived inbox/outbox view. Runtime wake queue remains
+// the active work queue, and activity remains the audit/debug log.
 
 export type AgentMessageDirection = 'in' | 'out';
 

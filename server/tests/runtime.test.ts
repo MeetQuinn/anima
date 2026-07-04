@@ -822,7 +822,7 @@ test('runtime host restart clears only the requested stale running item', async 
       const failedAlpha = await alphaQueue.find(alphaPrimary.item.id);
       const requeuedAlpha = await alphaQueue.find(alphaAppended.item.id);
       const stillQueuedAlpha = await alphaQueue.find(alphaQueued.item.id);
-      assert.equal(failedAlpha?.handling.status, 'failed');
+      assert.equal(failedAlpha, undefined);
       assert.equal(requeuedAlpha?.handling.status, 'queued');
       assert.equal(stillQueuedAlpha?.handling.status, 'queued');
 
@@ -1035,7 +1035,7 @@ test('state is stored per agent with append-only activity logs', async () => {
       assert.equal(Object.hasOwn(sessionRecord, 'activeTopicSummary'), false);
       assert.equal(Object.hasOwn(sessionRecord, 'eventIds'), false);
       assert.equal(Object.hasOwn(sessionRecord, 'turnIds'), false);
-      assert.match(await readFile(join(stateDir, 'agents/anima/inbox.json'), 'utf8'), /Persist this in the folder state/);
+      assert.match(await readFile(join(stateDir, 'agents/anima/wake-queue.json'), 'utf8'), /Persist this in the folder state/);
       await assert.rejects(readFile(join(stateDir, 'state/agents/anima/items', ctx.item.id, 'item.json'), 'utf8'), /ENOENT/);
       assert.match(await readFile(join(stateDir, 'agents/anima/activity.jsonl'), 'utf8'), /Folder activity/);
     });

@@ -40,6 +40,10 @@ export class MessageStore {
     return this.log().readAll();
   }
 
+  async hasMessageId(messageId: string): Promise<boolean> {
+    return (await this.log().readNewestMatching(1, (entry) => entry.messageId === messageId)).length > 0;
+  }
+
   async readLatest(input: {
     before?: string;
     channel?: string;
