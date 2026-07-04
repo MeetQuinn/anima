@@ -503,6 +503,30 @@ test('inbox and outbox commands show recent received and sent history', async ()
     assert.match(outbox.stdout, /^Outbox \(1 entry, newest first\)/);
     assert.match(outbox.stdout, /\[time=2026-05-11T00:06:00\.000Z channel=@alice channel_id=D-alice message_ts=1770000206\.000001\] sent: Sent the summary\./);
 
+    const history = await runNode([cliPath, 'history'], { env });
+    assert.equal(history.status, 0, history.stderr || history.stdout);
+    assert.match(history.stdout, /^History \(3 entries, newest last\)/);
+    assert.match(history.stdout, /\[time=2026-05-11T00:00:00\.000Z direction=in channel=#product channel_id=C-product thread_ts=1770000200\.000001 message_ts=1770000200\.000002\] IN Alice Cooper \(@alice\): Can you summarize the launch thread\?/);
+    assert.match(history.stdout, /\[time=2026-05-11T00:05:00\.000Z direction=in channel=#product channel_id=C-product message_ts=1770000205\.000001\] IN @bob: Second message for pagination\./);
+    assert.match(history.stdout, /\[time=2026-05-11T00:06:00\.000Z direction=out channel=@alice channel_id=D-alice message_ts=1770000206\.000001\] OUT sent: Sent the summary\./);
+    assert.ok(
+      history.stdout.indexOf('Can you summarize the launch thread?') <
+        history.stdout.indexOf('Second message for pagination.'),
+      'history should read oldest to newest inside the recent page',
+    );
+    assert.ok(
+      history.stdout.indexOf('Second message for pagination.') <
+        history.stdout.indexOf('Sent the summary.'),
+      'history should place the latest output last',
+    );
+
+    const productHistory = await runNode([cliPath, 'history', '--channel', '#product'], { env });
+    assert.equal(productHistory.status, 0, productHistory.stderr || productHistory.stdout);
+    assert.match(productHistory.stdout, /^History \(2 entries, newest last\)/);
+    assert.match(productHistory.stdout, /Can you summarize the launch thread\?/);
+    assert.match(productHistory.stdout, /Second message for pagination\./);
+    assert.doesNotMatch(productHistory.stdout, /Sent the summary\./);
+
     const search = await runNode([cliPath, 'message', 'search', 'launch', 'thread'], { env });
     assert.equal(search.status, 0, search.stderr || search.stdout);
     assert.match(search.stdout, /^Message search \(1 match, newest first\)/);
