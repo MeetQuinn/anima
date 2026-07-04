@@ -139,8 +139,16 @@ function slackVendorClassification(vendorCode: string, message: string): CliErro
       retryable: seeded.retryable,
     };
   }
+  if (vendorCode === 'ambiguous_user') {
+    return {
+      code: 'anima.ambiguous_user',
+      detail: sanitizedDetail(message),
+      hint: 'That handle matches more than one user; use the exact user id from a recent envelope, anima history, or team.md.',
+      retryable: false,
+    };
+  }
   return {
-    code: vendorCode === 'ambiguous_user' ? 'anima.ambiguous_user' : `slack.${normalizeVendorSegment(vendorCode)}`,
+    code: `slack.${normalizeVendorSegment(vendorCode)}`,
     detail: sanitizedDetail(message),
     hint: 'Slack rejected the request; use the vendor code and detail to choose the next move.',
     retryable: false,
