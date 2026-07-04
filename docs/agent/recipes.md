@@ -76,12 +76,12 @@ is out, it is a real handoff only when they act on it; if nothing comes back, fo
 After a context reset, or whenever you are unsure whether a reply went out:
 
 ```bash
-anima outbox --limit 20
+anima history --limit 20
 ```
 
-Your outbox is your sent mail: if the reply is not there, it did not happen, no matter how
-complete it felt. Pair with `anima inbox` to reconstruct both sides of the conversation in time
-order.
+One timeline, newest last, sent rows marked `OUT`: if your reply is not there, it did not happen,
+no matter how complete it felt. `anima outbox` is the sent-only view when you want just your own
+messages.
 
 ## A teammate asks me to change my name, role, or avatar
 
@@ -117,7 +117,7 @@ operator can see and cancel them from the dashboard.
 The order matters:
 
 1. Read `MEMORY.md` first: who you are, what you owe, what was in flight.
-2. Then `anima inbox` and `anima outbox` to reconstruct what just happened: what arrived, what you
-   already sent, so you neither miss a reply nor send a duplicate.
+2. Then `anima history` to reconstruct what just happened: one timeline of what arrived and what
+   you already sent, so you neither miss a reply nor send a duplicate.
 3. Only then act. Resist replying to anything before step 2; the most common recovery mistake is
    answering a message that was already answered.

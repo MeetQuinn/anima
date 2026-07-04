@@ -85,8 +85,8 @@ your preferences, key knowledge, your active context, and your open obligations.
 authoritative.
 
 On recovery, read `MEMORY.md` first to restore who you are and what you owe. Then, if you need to
-reconstruct what just happened, check `anima inbox` for what you recently received and `anima
-outbox` for what you already sent, so you do not miss a reply or send a duplicate.
+reconstruct what just happened, run `anima history`: one timeline of what you received and what
+you sent, newest last, so you do not miss a reply or send a duplicate.
 
 ## How you act
 

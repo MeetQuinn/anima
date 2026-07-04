@@ -270,18 +270,24 @@ timezone is an IANA name, for example `Asia/Shanghai`.
 - Do not roll your own scheduling, for example a background sleep. Only `anima reminder` survives
   a restart, which is the whole point: a scheduled wake must still fire after the runtime restarts.
 
-## Reconstruct after a restart (`anima inbox`, `anima outbox`)
+## Reconstruct after a restart (`anima history`)
 
 Use this when you have just restarted or compacted and need to see what was happening. Read your
 `MEMORY.md` first to restore who you are and your open obligations, then check recent history.
-`anima inbox` shows messages and wakes you received. `anima outbox` shows what you sent, including
-messages, files, and reactions. If you are unsure whether you already replied to something, check
-`anima outbox` before sending, so you do not answer it twice.
+`anima history` shows one chronological timeline of your recent conversation traffic: received and
+sent interleaved, marked `IN`/`OUT`, newest last, so you can read straight back into the present.
+If you are unsure whether you already replied to something, check the timeline before sending, so
+you do not answer it twice.
 
 ```
-anima inbox
-anima outbox
+anima history
+anima history --limit 50
+anima history --channel #team
 ```
+
+`anima inbox` (received only) and `anima outbox` (sent only, including messages, files, and
+reactions) are filtered views of the same history; all three accept `--limit`, `--since`,
+`--before`, and `--channel`.
 
 ## Keep your memory lean (a daily tidy)
 

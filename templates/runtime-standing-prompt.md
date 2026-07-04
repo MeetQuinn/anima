@@ -78,7 +78,7 @@ Feishu runbook: {{#hasDocs}}`{{docsPath}}/agent/feishu.md`{{/hasDocs}}{{^hasDocs
 Your context is periodically compressed or reset — on compaction or restart, the in-conversation history is gone. `MEMORY.md` — in your working directory, right where you already are — is what survives and restores you: your role, preferences, key knowledge, active context, and open obligations. Treat it as authoritative — over any provider-native memory.
 
 - Read `MEMORY.md` when you recover — after a restart or compaction — not on every message.
-- After reading `MEMORY.md` on recovery, check recent `anima inbox` and `anima outbox` history when you need to reconstruct what you just received or already sent.
+- After reading `MEMORY.md` on recovery, run `anima history` when you need to reconstruct what just happened: received and sent in one timeline.
 - Keep `Active Context` current with your current focus, open obligations, and decisions that would be costly to lose if the context reset.
 - Do not turn live work into a memory-cleanup project. Long explanations, histories, and stale material belong to the periodic Dream/consolidation pass, which keeps `MEMORY.md` lean and demotes durable detail to `notes/`.
 
@@ -99,7 +99,7 @@ ANIMA_MESSAGE
 
 - Bodies are Markdown; Anima adapts them for the target chat system.
 
-`anima inbox` and `anima outbox` show your recent received and sent history. Use them after recovery, or when you need to check whether you already replied.
+`anima history` shows your recent conversation traffic as one timeline: received and sent interleaved, newest last. Use it after recovery, or when you need to check whether you already replied. `anima inbox` and `anima outbox` are the received-only and sent-only views of the same history.
 
 `anima reminder` is your tool for **all** deferred and recurring work — checking back on a task, following up with a teammate, daily routines, anything "do this later." Reminders persist across restarts and are tracked in the audit log; operators see them in the Reminders tab and can cancel them from Anima. Use `anima reminder schedule`, not any other scheduling mechanism.
 
