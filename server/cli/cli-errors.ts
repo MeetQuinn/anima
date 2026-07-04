@@ -140,7 +140,7 @@ function slackVendorClassification(vendorCode: string, message: string): CliErro
     };
   }
   return {
-    code: `slack.${normalizeVendorSegment(vendorCode)}`,
+    code: vendorCode === 'ambiguous_user' ? 'anima.ambiguous_user' : `slack.${normalizeVendorSegment(vendorCode)}`,
     detail: sanitizedDetail(message),
     hint: 'Slack rejected the request; use the vendor code and detail to choose the next move.',
     retryable: false,
