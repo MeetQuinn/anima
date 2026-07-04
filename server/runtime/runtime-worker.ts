@@ -234,6 +234,7 @@ export class AgentRuntimeWorker {
           signal: itemAbort.signal,
           suppressFailureRecord: true,
         }),
+        itemId: item.id,
         onFinalFailureRecorded: () => {
           runtimeFailureRecorded = true;
         },
@@ -281,6 +282,7 @@ export class AgentRuntimeWorker {
           agentId: this.options.agentId,
           agentRuntime: this.options.agentRuntime,
           error,
+          itemId: item.id,
           retryAttempts: 0,
         });
       }

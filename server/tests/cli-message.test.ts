@@ -284,7 +284,7 @@ test('message send follows a new channel thread using an active channel subscrip
   }
 });
 
-test('message send resolves a just-settled runtime item for audit', async () => {
+test('message send records explicit env item after wake queue settlement for audit', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-message-settled-item-test-'));
   const posts: Array<{ channel: string; text: string; thread_ts?: string }> = [];
   const slackApi = await startSlackApiMock((method, body) => {
@@ -315,20 +315,23 @@ test('message send resolves a just-settled runtime item for audit', async () => 
       await clearActiveRuntimeItem({ agentId: 'scout', itemId, workerId });
 
       const send = await runNode([cliPath, 'message', 'send', '--channel', 'C-product'], {
-        env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_INBOX_ITEM_ID: '', ANIMA_SLACK_API_URL: slackApi.url },
-        input: 'Via settled item grace.',
+        env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_INBOX_ITEM_ID: itemId, ANIMA_SLACK_API_URL: slackApi.url },
+        input: 'Via settled item audit tag.',
       });
       assert.equal(send.status, 0, send.stderr || send.stdout);
       assert.deepEqual(posts, [{
-        blocks: JSON.stringify([{ type: 'markdown', text: 'Via settled item grace.' }]),
+        blocks: JSON.stringify([{ type: 'markdown', text: 'Via settled item audit tag.' }]),
         channel: 'C-product',
-        text: 'Via settled item grace.',
+        text: 'Via settled item audit tag.',
       }]);
 
-      const completed = allActivities(await loadState()).find((activity) => activity.payload?.['ts'] === '1770000300.000125');
+      const completed = (await activitiesForInboxItemWindow('scout', itemId)).find(
+        (activity) => activity.payload?.['ts'] === '1770000300.000125',
+      );
       assert.equal(completed?.type, 'external.effect.completed');
       assert.equal(completed?.payload?.['effect'], 'slack.message.send');
       assert.equal(completed?.payload?.['tool'], 'anima.message.send');
+      assert.equal(completed?.payload?.['itemId'], itemId);
       assert.equal(completed?.payload?.['ts'], '1770000300.000125');
     });
   } finally {

@@ -22,9 +22,11 @@ export async function withToolActivity<T>(input: {
   const startedType = input.effectType ? 'external.effect.started' : 'tool.call.started';
   const completedType = input.effectType ? 'external.effect.completed' : 'tool.call.completed';
   const failedType = input.effectType ? 'external.effect.failed' : 'tool.call.failed';
+  const itemId = input.audit ? await resolveAuditItemId(input.audit.agentId) : undefined;
   const payload = (status: 'completed' | 'failed' | 'started', extra?: Record<string, unknown>) => ({
     ...input.basePayload,
     ...(input.effectType ? { effect: input.effectType } : {}),
+    ...(itemId ? { itemId } : {}),
     status,
     ...(extra ?? {}),
   });
@@ -69,6 +71,15 @@ export async function resolveToolItemId(opts: { agent?: string; item?: string })
   const current = await findToolAuditRuntimeItem(agentId);
   if (current && !current.settledAt && current.itemId !== envItemId) return current.itemId;
   return envItemId ?? current?.itemId;
+}
+
+async function resolveAuditItemId(agentId: string): Promise<string | undefined> {
+  try {
+    return await resolveToolItemId({ agent: agentId });
+  } catch (error) {
+    console.warn(`Tool audit item resolution failed for ${agentId}: ${errorMessage(error)}`);
+    return process.env.ANIMA_INBOX_ITEM_ID?.trim() || undefined;
+  }
 }
 
 export async function loadAgentFromOpts(opts: object): Promise<AgentConfig> {

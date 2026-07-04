@@ -24,6 +24,7 @@ import { clearRestartDrain, requestRestartDrain } from '../services/restart-drai
 import { runtimeContextForItemId } from '../runtime/context.js';
 import type { RuntimeWorkerConfig, RuntimeItemContext } from '../runtime/types.js';
 import { findActiveRuntimeItem } from '../runtime/active-item.js';
+import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
 import { addProcessingReaction, removeProcessingReactions } from '../runtime/processing-reactions.js';
 import { ReminderStore } from '../storage/schema/reminder.store.js';
 
@@ -1891,13 +1892,14 @@ test('runtime worker records provider failure after retry exhaustion', async () 
 
     assert.equal(await queueFor('scout').find(decision.ctx.item.id), undefined);
     assert.equal(runtime.calls.length, 4);
-    const activities = allActivities(await loadState());
+    const activities = await activitiesForInboxItemWindow('scout', decision.ctx.item.id);
     assert.equal(
       activities.filter((activity) => activity.type === 'runtime.event' && activity.payload?.['eventType'] === 'provider.crash.retry').length,
       3,
     );
     const failed = activities.find((activity) => activity.type === 'runtime.failed');
     assert.equal(failed?.payload?.['failureSource'], 'provider');
+    assert.equal(failed?.payload?.['itemId'], decision.ctx.item.id);
     assert.equal(failed?.payload?.['providerReason'], 'process_crash');
     assert.equal(failed?.payload?.['retryAttempts'], 3);
     assert.equal(failed?.payload?.['maxRetries'], 3);
