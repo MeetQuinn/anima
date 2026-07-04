@@ -7,6 +7,7 @@ import { resolveToolAgentId } from './tool-context.js';
 
 const MessageHistorySchema = z.object({
   before: z.string().optional(),
+  channel: z.string().optional(),
   limit: z.coerce.number().int().positive().optional(),
   since: z.string().optional(),
 });
@@ -23,11 +24,24 @@ export interface MessageSearchCliInput {
 
 export function registerMessageHistoryCommands(program: Command): void {
   program
+    .command('history')
+    .description('Show one chronological timeline of recent received and sent conversation traffic.')
+    .option('--limit <n>', 'max entries to return (default: 20; hard cap: 500)')
+    .option('--before <iso>', 'page older than this ISO timestamp')
+    .option('--since <iso>', 'only include entries at or after this ISO timestamp')
+    .option('--channel <id-or-name>', 'only include entries from a channel, DM handle, or conversation id')
+    .action(async (_, command) => {
+      const opts = MessageHistorySchema.parse(command.optsWithGlobals());
+      await runMessageTimeline(opts);
+    });
+
+  program
     .command('inbox')
     .description('Show recent messages and wakes received by this agent.')
     .option('--limit <n>', 'max entries to return (default: 20; hard cap: 500)')
     .option('--before <iso>', 'page older than this ISO timestamp')
     .option('--since <iso>', 'only include entries at or after this ISO timestamp')
+    .option('--channel <id-or-name>', 'only include entries from a channel, DM handle, or conversation id')
     .action(async (_, command) => {
       const opts = MessageHistorySchema.parse(command.optsWithGlobals());
       await runMessageHistory('in', opts);
@@ -39,16 +53,36 @@ export function registerMessageHistoryCommands(program: Command): void {
     .option('--limit <n>', 'max entries to return (default: 20; hard cap: 500)')
     .option('--before <iso>', 'page older than this ISO timestamp')
     .option('--since <iso>', 'only include entries at or after this ISO timestamp')
+    .option('--channel <id-or-name>', 'only include entries from a channel, DM handle, or conversation id')
     .action(async (_, command) => {
       const opts = MessageHistorySchema.parse(command.optsWithGlobals());
       await runMessageHistory('out', opts);
     });
 }
 
+async function runMessageTimeline(opts: MessageHistoryInput): Promise<void> {
+  const agentId = resolveToolAgentId({});
+  if (!agentId) throw new Error('history requires current agent context');
+  const page = await messageServiceForAgent(agentId).list({
+    channel: opts.channel,
+    ...normalizeTimeWindow(opts),
+    limit: opts.limit ?? 20,
+  });
+  if (page.entries.length === 0) {
+    console.log('History is empty.');
+    return;
+  }
+  const entries = [...page.entries].reverse();
+  console.log(`History (${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}, newest last)`);
+  for (const entry of entries) console.log(formatTimelineEntry(entry));
+  console.log(`[page has_more=${Boolean(page.nextCursor)} next_cursor=${page.nextCursor ?? '-'}]`);
+}
+
 async function runMessageHistory(direction: AgentMessageDirection, opts: MessageHistoryInput): Promise<void> {
   const agentId = resolveToolAgentId({});
   if (!agentId) throw new Error(`${direction === 'in' ? 'inbox' : 'outbox'} requires current agent context`);
   const page = await messageServiceForAgent(agentId).list({
+    channel: opts.channel,
     direction,
     ...normalizeTimeWindow(opts),
     limit: opts.limit ?? 20,
@@ -112,6 +146,18 @@ function formatSearchEntry(entry: AgentMessageRecord, keywords: string[]): strin
   if (entry.messageTs) attrs.push(`message_ts=${entry.messageTs}`);
   const lead = entry.direction === 'in' ? `${entry.actor ?? 'Unknown'}:` : `${outboxVerb(entry)}:`;
   return `[${attrs.join(' ')}] ${lead} ${snippet(entry.text, keywords)}`;
+}
+
+function formatTimelineEntry(entry: AgentMessageRecord): string {
+  const attrs = [`time=${entry.timestamp}`, `direction=${entry.direction}`];
+  const surface = surfaceLabel(entry);
+  if (surface) attrs.push(`channel=${surface}`);
+  if (entry.channelId && entry.channelId !== surface) attrs.push(`channel_id=${entry.channelId}`);
+  if (entry.threadTs) attrs.push(`thread_ts=${entry.threadTs}`);
+  if (entry.messageTs) attrs.push(`message_ts=${entry.messageTs}`);
+  const marker = entry.direction === 'in' ? 'IN' : 'OUT';
+  const lead = entry.direction === 'in' ? `${entry.actor ?? 'Unknown'}:` : `${outboxVerb(entry)}:`;
+  return `[${attrs.join(' ')}] ${marker} ${lead} ${oneLineText(entry.text)}`;
 }
 
 function formatHistoryEntry(entry: AgentMessageRecord): string {
