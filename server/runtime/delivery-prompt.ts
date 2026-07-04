@@ -165,7 +165,7 @@ function buildMemoryCoherenceDeliveryPrompt(event: MemoryCoherenceInboxItem): st
 
 [time=${envelopeTime(event.receivedAt)} scheduled_slot_at=${envelopeTime(event.scheduledSlotAt)} scheduled_slot=${event.scheduledSlotLabel}]
 
-You are running your daily memory pass.
+You are running your scheduled memory pass.
 
 This is your scheduled moment to keep your durable memory in good shape: lean, accurate, and genuinely useful to the future you who will recover from it. Memory drifts over time. Duplication creeps in, facts go stale, detail piles up where a short pointer would do.
 

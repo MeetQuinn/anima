@@ -4,10 +4,13 @@ import { DateTime } from 'luxon';
 
 import type { AgentConfig } from '../../shared/agent-config.js';
 import { agentHasConnectedTransport } from '../../shared/agent-transports.js';
+import type { Activity } from '../../shared/activity.js';
 import type { MemoryCoherenceConfig } from '../../shared/server-settings.js';
 import type { InboxItem, MemoryCoherenceInboxItem } from '../../shared/inbox.js';
+import { activityServiceForAgent } from '../activities/activity.service.js';
 import { isAgentRunnable } from '../agents/agent-config-ops.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { messageServiceForAgent } from '../messages/message.service.js';
 import { serverConfigStore, type ServerConfig } from '../storage/schema/server.store.js';
 
 const DEFAULT_WINDOW_START = '05:00';
@@ -30,6 +33,7 @@ export interface MemoryCoherenceQueue {
 }
 
 export interface MemoryCoherenceSchedulerDeps {
+  hasMeaningfulActivitySinceLastPass?: (agentId: string) => Promise<boolean>;
   now?: () => Date;
   queueForAgent?: (agentId: string) => MemoryCoherenceQueue;
   readServerConfig?: () => Promise<ServerConfig>;
@@ -38,11 +42,14 @@ export interface MemoryCoherenceSchedulerDeps {
 
 export class MemoryCoherenceScheduler {
   private readonly now: () => Date;
+  private readonly hasMeaningfulActivitySinceLastPass: (agentId: string) => Promise<boolean>;
   private readonly queueForAgent: (agentId: string) => MemoryCoherenceQueue;
   private readonly readServerConfig: () => Promise<ServerConfig>;
   private readonly timezoneForAgent: (agent: AgentConfig, requested: string) => string;
 
   constructor(deps: MemoryCoherenceSchedulerDeps = {}) {
+    this.hasMeaningfulActivitySinceLastPass =
+      deps.hasMeaningfulActivitySinceLastPass ?? hasMeaningfulActivitySinceLastMemoryPass;
     this.now = deps.now ?? (() => new Date());
     this.queueForAgent = deps.queueForAgent ?? ((agentId) => new WakeQueueService(agentId));
     this.readServerConfig = deps.readServerConfig ?? (() => serverConfigStore.read());
@@ -68,6 +75,7 @@ export class MemoryCoherenceScheduler {
 
     for (const slot of due) {
       if (available <= 0) break;
+      if (!await this.hasMeaningfulActivitySinceLastPass(slot.agent.id)) continue;
       const queue = this.queueForAgent(slot.agent.id);
       const result = await queue.enqueue(memoryCoherenceInboxItem(slot, now));
       if (result.queued) available -= 1;
@@ -85,6 +93,18 @@ export class MemoryCoherenceScheduler {
     }
     return count;
   }
+}
+
+export async function hasMeaningfulActivitySinceLastMemoryPass(agentId: string): Promise<boolean> {
+  const activities = await activityServiceForAgent(agentId).readAll();
+  const latestMemoryPassAt = latestMemoryCoherenceOutcomeAt(activities);
+  const latestMessages = await messageServiceForAgent(agentId).list({
+    limit: 1,
+    ...(latestMemoryPassAt ? { since: latestMemoryPassAt } : {}),
+  });
+  const latestMessageAt = latestMessages.entries[0]?.timestamp;
+  if (!latestMessageAt) return false;
+  return !latestMemoryPassAt || latestMessageAt > latestMemoryPassAt;
 }
 
 export function normalizeMemoryCoherenceConfig(
@@ -159,6 +179,18 @@ export function stableAgentOffsetMinutes(agentId: string, windowDurationMinutes:
   const digest = createHash('sha256').update(agentId).digest();
   const value = digest.readUInt32BE(0);
   return value % windowDurationMinutes;
+}
+
+function latestMemoryCoherenceOutcomeAt(activities: Activity[]): string | undefined {
+  let latest: string | undefined;
+  for (const activity of activities) {
+    if (activity.type !== 'memory_coherence.outcome') continue;
+    const completedAt = typeof activity.payload?.completedAt === 'string'
+      ? activity.payload.completedAt
+      : activity.createdAt;
+    if (!latest || completedAt > latest) latest = completedAt;
+  }
+  return latest;
 }
 
 function memoryCoherenceInboxItem(slot: MemoryCoherenceDueSlot, now: Date): MemoryCoherenceInboxItem {
