@@ -18,7 +18,6 @@ import type {
 import type { Reminder } from '@shared/reminder';
 import type { Activity, AgentActivityFeedEvent, AgentActivityFeedPage } from '@shared/activity';
 import type { AgentDiagnosticsBundle } from '@shared/diagnostics';
-import type { InboxItem } from '@shared/inbox';
 import type {
   AgentChannelListResponse,
   AgentMessageDirection,
@@ -292,7 +291,6 @@ export async function fetchAgentChannels(agentId: string): Promise<AgentChannelL
 
 interface LegacyAgentActivitiesResponse {
   activities?: Activity[];
-  items?: InboxItem[];
   nextCursor?: string | null;
 }
 
@@ -311,13 +309,6 @@ function normalizeAgentActivityFeedPage(body: unknown): AgentActivityFeedPage {
           activity,
           kind: 'activity' as const,
           timestamp: activity.createdAt,
-        }))
-      : []),
-    ...(Array.isArray(record.items)
-      ? record.items.map((item) => ({
-          item,
-          kind: 'inbox' as const,
-          timestamp: item.receivedAt,
         }))
       : []),
   ];

@@ -105,10 +105,13 @@ test('web snapshot summarizes state without exposing secrets', async () => {
       assert.doesNotMatch(serialized, /xapp-secret-value/);
       assert.doesNotMatch(serialized, /xoxb-secret-value/);
 
-      // Activities are now a separate call
+      // Activities are now a separate call and do not carry the inbound wake
+      // queue; conversation rows are served by /messages.
       const activityFeed = await activityServiceForAgent('anima').listActivityFeed();
-      const inboxEvent = activityFeed.events.find((event) => event.kind === 'inbox');
-      assert.equal(inboxEvent?.kind === 'inbox' ? inboxEvent.item.id : undefined, ctx.item.id);
+      assert.equal(
+        activityFeed.events.some((event) => event.activity.type === 'tool.call.completed'),
+        true,
+      );
       assert.deepEqual(Object.keys(activityFeed).sort(), ['events', 'nextCursor']);
     });
   } finally {
@@ -116,12 +119,12 @@ test('web snapshot summarizes state without exposing secrets', async () => {
   }
 });
 
-test('activity feed pages combined feed events without returning all inbox items', async () => {
+test('activity feed pages activity events without wake queue items', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-activity-feed-page-test-'));
   try {
     await writeConfig(stateDir);
     await withAnimaHome(stateDir, async () => {
-      const first = await ingestEvent(
+      await ingestEvent(
         makeSlackEvent({
           channelId: 'D-demo',
           teamId: 'T-demo',
@@ -131,36 +134,29 @@ test('activity feed pages combined feed events without returning all inbox items
         }),
         { agentId: 'anima', stateDir },
       );
-      const second = await ingestEvent(
-        makeSlackEvent({
-          channelId: 'D-demo',
-          teamId: 'T-demo',
-          text: 'Second',
-          ts: '1770000001.000001',
-          userId: 'U1',
-        }),
-        { agentId: 'anima', stateDir },
-      );
-      const third = await ingestEvent(
-        makeSlackEvent({
-          channelId: 'D-demo',
-          teamId: 'T-demo',
-          text: 'Third',
-          ts: '1770000002.000001',
-          userId: 'U1',
-        }),
-        { agentId: 'anima', stateDir },
-      );
+      const service = activityServiceForAgent('anima');
+      const first = await service.record({
+        createdAt: '2026-07-04T00:00:00.000Z',
+        type: 'runtime.started',
+      });
+      const second = await service.record({
+        createdAt: '2026-07-04T00:00:01.000Z',
+        type: 'runtime.completed',
+      });
+      const third = await service.record({
+        createdAt: '2026-07-04T00:00:02.000Z',
+        type: 'runtime.started',
+      });
 
-      const page = await activityServiceForAgent('anima').listActivityFeed({ limit: 2 });
+      const page = await service.listActivityFeed({ limit: 2 });
       assert.equal(page.events.length, 2);
       assert.deepEqual(
-        page.events.map((event) => event.kind === 'inbox' ? event.item.id : event.activity.activityId),
-        [second.item.id, third.item.id],
+        page.events.map((event) => event.activity.activityId),
+        [second.activityId, third.activityId],
       );
       assert.ok(page.nextCursor);
       assert.equal(
-        page.events.some((event) => event.kind === 'inbox' && event.item.id === first.item.id),
+        page.events.some((event) => event.activity.activityId === first.activityId),
         false,
       );
     });
@@ -511,7 +507,7 @@ test('web snapshot includes active wake queue statuses', async () => {
         updatedAt: '2026-05-20T08:00:01.000Z',
       });
 
-      const queued = await ingestEvent(
+      await ingestEvent(
         makeSlackEvent({
           channelId: 'C-demo',
           teamId: 'T-demo',
@@ -522,12 +518,9 @@ test('web snapshot includes active wake queue statuses', async () => {
         { agentId: 'milo', stateDir },
       );
 
-      // Activities are agent-scoped — anima activities contain no milo items
+      // Activities are agent-scoped and do not include Milo's active wake queue.
       const animaActivityFeed = await activityServiceForAgent('anima').listActivityFeed();
-      assert.equal(
-        animaActivityFeed.events.some((event) => event.kind === 'inbox' && event.item.id === queued.item.id),
-        false,
-      );
+      assert.equal(animaActivityFeed.events.length, 0);
 
       // Agent statuses cover all agents regardless of filter
       const server = await createWebServer();
