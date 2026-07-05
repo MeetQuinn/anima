@@ -68,31 +68,40 @@ export class InteractiveAskStore {
   }
 
   async create(ask: InteractiveAskRecord): Promise<InteractiveAskRecord> {
-    const stored = await this.file.read();
-    if (stored[ask.askId]) throw new Error(`Interactive ask already exists: ${ask.askId}`);
-    await this.file.write({ ...stored, [ask.askId]: ask });
+    await this.file.update((stored) => {
+      if (stored[ask.askId]) throw new Error(`Interactive ask already exists: ${ask.askId}`);
+      return {
+        ...stored,
+        [ask.askId]: ask,
+      };
+    });
     return ask;
   }
 
   async update(ask: InteractiveAskRecord): Promise<InteractiveAskRecord> {
-    const stored = await this.file.read();
-    if (!stored[ask.askId]) throw new Error(`Interactive ask not found: ${ask.askId}`);
-    await this.file.write({ ...stored, [ask.askId]: ask });
+    await this.file.update((stored) => {
+      if (!stored[ask.askId]) throw new Error(`Interactive ask not found: ${ask.askId}`);
+      return {
+        ...stored,
+        [ask.askId]: ask,
+      };
+    });
     return ask;
   }
 
   async pruneAnsweredBefore(cutoffIso: string): Promise<number> {
     let pruned = 0;
-    const stored = await this.file.read();
-    const next: InteractiveAskFile = {};
-    for (const [askId, ask] of Object.entries(stored)) {
-      if (isAnsweredBefore(ask, cutoffIso)) {
-        pruned += 1;
-      } else {
-        next[askId] = ask;
+    await this.file.update((stored) => {
+      const next: InteractiveAskFile = {};
+      for (const [askId, ask] of Object.entries(stored)) {
+        if (isAnsweredBefore(ask, cutoffIso)) {
+          pruned += 1;
+        } else {
+          next[askId] = ask;
+        }
       }
-    }
-    if (pruned > 0) await this.file.write(next);
+      return pruned > 0 ? next : stored;
+    });
     return pruned;
   }
 }

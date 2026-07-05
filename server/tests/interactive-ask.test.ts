@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { mkdir, mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -213,6 +213,39 @@ test('interactive ask retention prunes old answered asks but keeps pending asks'
     await interactiveAskServiceForAgent('scout').saveAsk(askRecord({ askId: 'ask-new-pending' }));
 
     assert.deepEqual((await store.list()).map((ask) => ask.askId).sort(), ['ask-new-pending', 'ask-old-pending']);
+  });
+});
+
+test('interactive ask store preserves concurrent creates', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-interactive-ask-concurrent-create-'));
+  await withAnimaHome(stateDir, async () => {
+    const store = new InteractiveAskStore('scout');
+    await Promise.all([
+      store.create(askRecord({ askId: 'ask-concurrent-a' })),
+      store.create(askRecord({ askId: 'ask-concurrent-b' })),
+    ]);
+
+    assert.deepEqual((await store.list()).map((ask) => ask.askId).sort(), [
+      'ask-concurrent-a',
+      'ask-concurrent-b',
+    ]);
+  });
+});
+
+test('interactive ask duplicate create throws and leaves file unchanged', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-interactive-ask-duplicate-create-'));
+  await withAnimaHome(stateDir, async () => {
+    const store = new InteractiveAskStore('scout');
+    const ask = askRecord({ askId: 'ask-duplicate' });
+    await store.create(ask);
+    const before = await readFile(join(stateDir, 'agents', 'scout', 'asks.json'), 'utf8');
+
+    await assert.rejects(
+      store.create(askRecord({ askId: 'ask-duplicate', question: 'Overwrite?' })),
+      /Interactive ask already exists: ask-duplicate/,
+    );
+
+    assert.equal(await readFile(join(stateDir, 'agents', 'scout', 'asks.json'), 'utf8'), before);
   });
 });
 
