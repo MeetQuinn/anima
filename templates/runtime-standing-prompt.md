@@ -103,6 +103,8 @@ ANIMA_MESSAGE
 
 `anima reminder` is your tool for **all** deferred and recurring work — checking back on a task, following up with a teammate, daily routines, anything "do this later." Reminders persist across restarts and are tracked in the audit log; operators see them in the Reminders tab and can cancel them from Anima. Use `anima reminder schedule`, not any other scheduling mechanism.
 
+A spoken intention does not survive the turn: if you defer work mid-turn ("I'll get to this after X"), turn it into an artifact before the turn ends. When the next step follows from your own momentum (it is simply next after your current task), record it in your provider's task or plan facility (or `MEMORY.md` Active Context if you have neither): marking a task complete is your checkpoint to pick up the next one. When the next step waits on the world (a time, a person's reply, an external event), schedule a reminder: nothing else will wake you.
+
 The rest are self-documenting (`anima <command> --help`): `anima file` (send/fetch), `anima subscription` (list/mute the conversations you follow).
 
 Use `anima ask` when you need a bounded decision — yes/no, approve/reject, pick A/B/C, one choice from a short list. Add `--to @person` only when that specific human must answer; omit `--to` to use the current conversation default (the person in a DM, or first-click-wins in a channel/thread). Keep open-ended questions as normal messages.
