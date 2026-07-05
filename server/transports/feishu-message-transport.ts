@@ -15,12 +15,12 @@ import {
 import { agentFeishuServiceForAgent } from '../agents/agent-feishu.service.js';
 import {
   feishuAttentionSuggestionPayload,
-  recordAttentionSuggestionActivity,
 } from '../inbox/attention-suggestion-activity.js';
+import { runIngestPipeline } from '../inbox/ingest-pipeline.js';
 import { feishuRuntimeDecision, type FeishuRuntimeDecision } from '../inbox/slack-subscription.service.js';
 import { WakeQueueService, type WakeQueueEnqueueResult } from '../inbox/wake-queue.service.js';
 import type { FeishuConfig } from '../../shared/agent-config.js';
-import { WakeReason, type FeishuInboxItem, type FeishuQuotedMessage } from '../../shared/inbox.js';
+import type { FeishuInboxItem, FeishuQuotedMessage } from '../../shared/inbox.js';
 import type { MessageTransport } from './message-transport.js';
 import type { FeishuConversationMessage, FeishuMessageClient } from '../feishu/client.js';
 
@@ -90,30 +90,26 @@ export class FeishuMessageTransport implements MessageTransport {
       console.log(JSON.stringify(feishuIgnoredLog(this.options.agentRuntimeKind), null, 2));
       return;
     }
-    const duplicate = Boolean(await this.options.queue.hasSeen(event.id));
-    const runtimeDecision = await feishuRuntimeDecision(event, {
+    await runIngestPipeline<FeishuInboxItem, FeishuRuntimeDecision>({
       agentId: this.options.queue.agentId,
-      duplicate,
-      mentioned: feishuMessageMentionsBot(receiveEvent, this.options.config.botOpenId),
+      attentionSuggestionPayload: feishuAttentionSuggestionPayload,
+      decide: ({ duplicate }) => feishuRuntimeDecision(event, {
+        agentId: this.options.queue.agentId,
+        duplicate,
+        mentioned: feishuMessageMentionsBot(receiveEvent, this.options.config.botOpenId),
+      }),
+      enrich: async () => {
+        let enriched = await this.enrichDirectory(event, receiveEvent);
+        enriched = await this.enrichWithQuotedMessage(enriched);
+        this.maybeSyncDisplayInfo();
+        return enriched;
+      },
+      itemId: event.id,
+      queue: this.options.queue,
+      surfaceLog: (input) => input.outcome === 'ignored'
+        ? feishuIgnoredLog(this.options.agentRuntimeKind, input.decision.reason)
+        : feishuDecisionLog(input.result, this.options.agentRuntimeKind, input.decision),
     });
-    if (!runtimeDecision.shouldStartRuntime) {
-      console.log(JSON.stringify(feishuIgnoredLog(this.options.agentRuntimeKind, runtimeDecision.reason), null, 2));
-      return;
-    }
-    event = await this.enrichDirectory(event, receiveEvent);
-    event = await this.enrichWithQuotedMessage(event);
-    this.maybeSyncDisplayInfo();
-    const queuedEvent: FeishuInboxItem = runtimeDecision.attentionSuggestion
-      ? { ...event, attentionSuggestion: runtimeDecision.attentionSuggestion }
-      : event;
-    const decision = await this.options.queue.enqueue(withFeishuWakeReason(queuedEvent, runtimeDecision.reason));
-    if (runtimeDecision.attentionSuggestion && !decision.duplicate) {
-      await recordAttentionSuggestionActivity(
-        this.options.queue.agentId,
-        feishuAttentionSuggestionPayload(event, runtimeDecision.attentionSuggestion),
-      );
-    }
-    console.log(JSON.stringify(feishuDecisionLog(decision, this.options.agentRuntimeKind, runtimeDecision), null, 2));
   }
 
   private async handleReactionCreated(data: unknown): Promise<void> {
@@ -203,14 +199,6 @@ export class FeishuMessageTransport implements MessageTransport {
       return event;
     }
   }
-}
-
-function withFeishuWakeReason(
-  item: FeishuInboxItem,
-  reason: FeishuRuntimeDecision['reason'],
-): FeishuInboxItem {
-  const parsed = WakeReason.safeParse(reason);
-  return parsed.success ? { ...item, wakeReason: parsed.data } : item;
 }
 
 const FEISHU_DISPLAY_INFO_SYNC_TTL_MS = 6 * 60 * 60 * 1000;

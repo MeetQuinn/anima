@@ -1,7 +1,7 @@
 import { App, LogLevel } from '@slack/bolt';
 import type { WebClient } from '@slack/web-api';
 
-import { WakeReason, type SlackInboxItem } from '../../shared/inbox.js';
+import type { SlackInboxItem } from '../../shared/inbox.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import { interactiveAskServiceForAgent } from '../asks/interactive-ask.service.js';
@@ -28,9 +28,9 @@ import {
   type SlackRawMessageEvent,
 } from './slack-events.js';
 import {
-  recordAttentionSuggestionActivity,
   slackAttentionSuggestionPayload,
 } from './attention-suggestion-activity.js';
+import { runIngestPipeline } from './ingest-pipeline.js';
 import { buildSlackInboxItemWithLatePreview } from './slack-ingest.js';
 import { slackShortcutHandoffServiceForAgent } from './slack-shortcut-handoff.service.js';
 import { slackRuntimeDecision, type SlackRuntimeDecision } from './slack-subscription.service.js';
@@ -221,50 +221,51 @@ export class SlackInboxSubscriber {
 
     const envelope = body as SlackMessageEnvelope;
     const teamId = slackEventTeamId(envelope, rawEvent);
-    const duplicate = Boolean(await this.options.queue.hasSeen(
-      slackMessageEventId(teamId, rawEvent.channel, rawEvent.ts),
-    ));
-    const runtimeDecision = await slackRuntimeDecision(rawEvent, { agentId: this.options.queue.agentId, duplicate });
-    if (!runtimeDecision.shouldStartRuntime) {
-      console.log(JSON.stringify(slackIgnoredLog(rawEvent, this.options.agentRuntimeKind, runtimeDecision.reason), null, 2));
-      return;
-    }
-
-    const webClient = client ?? createSlackWebClient(this.options.botToken);
-    this.maybeSyncBotDisplayInfo(webClient);
-    const buildResult = await buildSlackInboxItemWithLatePreview({
-      ...(runtimeDecision.attentionSuggestion ? { attentionSuggestion: runtimeDecision.attentionSuggestion } : {}),
-      client: webClient,
-      envelope,
-      event: rawEvent,
-      profiles: this.slackProfiles,
+    let latePreview: ((item: SlackInboxItem) => Promise<SlackInboxItem | undefined>) | undefined;
+    await runIngestPipeline<SlackInboxItem, SlackRuntimeDecision>({
+      agentId: this.options.queue.agentId,
+      attentionSuggestionPayload: slackAttentionSuggestionPayload,
+      decide: ({ duplicate }) =>
+        slackRuntimeDecision(rawEvent, { agentId: this.options.queue.agentId, duplicate }),
+      enrich: async () => {
+        const webClient = client ?? createSlackWebClient(this.options.botToken);
+        this.maybeSyncBotDisplayInfo(webClient);
+        const buildResult = await buildSlackInboxItemWithLatePreview({
+          client: webClient,
+          envelope,
+          event: rawEvent,
+          profiles: this.slackProfiles,
+        });
+        latePreview = buildResult.latePreview;
+        return buildResult.item;
+      },
+      itemId: slackMessageEventId(teamId, rawEvent.channel, rawEvent.ts),
+      onAfterEnqueue: ({ item, result }) => {
+        if (result.queued && latePreview) {
+          applyLateSlackPreviewToQueuedItem({
+            item,
+            latePreview,
+            queue: this.options.queue,
+          });
+        }
+      },
+      onAfterAttentionSuggestion: ({ decision, item, result }) => {
+        if (decision.reason === 'mention' && decision.subscription && !result.duplicate) {
+          activityServiceForAgent(this.options.queue.agentId).record({
+            type: 'anima.subscription.add',
+            payload: {
+              channelId: item.channelId,
+              ...(item.channelName ? { channelName: item.channelName } : {}),
+              kind: decision.subscription.kind,
+            },
+          }).catch((err: unknown) => console.warn(`subscription.add activity: ${errorMessage(err)}`));
+        }
+      },
+      queue: this.options.queue,
+      surfaceLog: (input) => input.outcome === 'ignored'
+        ? slackIgnoredLog(rawEvent, this.options.agentRuntimeKind, input.decision.reason)
+        : slackDecisionLog(input.result, this.options.agentRuntimeKind, input.decision),
     });
-    const item = withSlackWakeReason(buildResult.item, runtimeDecision.reason);
-    const decision = await this.options.queue.enqueue(item);
-    if (decision.queued && buildResult.latePreview) {
-      applyLateSlackPreviewToQueuedItem({
-        item,
-        latePreview: buildResult.latePreview,
-        queue: this.options.queue,
-      });
-    }
-    if (runtimeDecision.attentionSuggestion && !decision.duplicate) {
-      await recordAttentionSuggestionActivity(
-        this.options.queue.agentId,
-        slackAttentionSuggestionPayload(item, runtimeDecision.attentionSuggestion),
-      );
-    }
-    if (runtimeDecision.reason === 'mention' && runtimeDecision.subscription && !decision.duplicate) {
-      activityServiceForAgent(this.options.queue.agentId).record({
-        type: 'anima.subscription.add',
-        payload: {
-          channelId: item.channelId,
-          ...(item.channelName ? { channelName: item.channelName } : {}),
-          kind: runtimeDecision.subscription.kind,
-        },
-      }).catch((err: unknown) => console.warn(`subscription.add activity: ${errorMessage(err)}`));
-    }
-    console.log(JSON.stringify(slackDecisionLog(decision, this.options.agentRuntimeKind, runtimeDecision), null, 2));
   }
 
   // Opportunistically refresh the bot's own display info (avatar, name,
@@ -296,14 +297,6 @@ export function applyLateSlackPreviewToQueuedItem(input: {
   }).catch((error: unknown) => {
     console.warn(`Slack late preview update failed for ${input.item.id}: ${errorMessage(error)}`);
   });
-}
-
-function withSlackWakeReason(
-  item: SlackInboxItem,
-  reason: SlackRuntimeDecision['reason'],
-): SlackInboxItem {
-  const parsed = WakeReason.safeParse(reason);
-  return parsed.success ? { ...item, wakeReason: parsed.data } : item;
 }
 
 // Refresh the bot's own Slack display info at most once every 6h while handling
