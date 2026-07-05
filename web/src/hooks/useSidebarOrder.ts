@@ -1,11 +1,11 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useSensor, useSensors, PointerSensor, type DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
-import { fetchAgents } from '@/api/agents';
 import { fetchKbs } from '@/api/kb';
 import { fetchSidebarOrder, saveSidebarOrder, type SidebarOrder } from '@/api/system';
 import { queryClient } from '@/query-client';
 import { queryKeys } from '@/lib/query-keys';
+import { useAgents } from './useAgentDirectory';
 import { useTeams } from './useTeams';
 import { effectiveTeamId } from '@/lib/teams';
 
@@ -44,7 +44,7 @@ function spliceSubset<T>(full: T[], reorderedSubset: T[], inSubset: (item: T) =>
 // against the full list so other teams' order is preserved.
 // ---------------------------------------------------------------------------
 export function useSidebarOrder(currentTeamId: string) {
-  const { data: agents = [] } = useQuery({ queryKey: queryKeys.agents(), queryFn: fetchAgents });
+  const { data: agents = [] } = useAgents();
   const { data: kbs = [] } = useQuery({ queryKey: queryKeys.kbs(), queryFn: fetchKbs });
 
   const { data: sidebarOrder } = useQuery({

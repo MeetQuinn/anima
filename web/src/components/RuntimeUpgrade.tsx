@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { AlertTriangle, Download, ExternalLink, RefreshCw } from 'lucide-react';
-import { fetchAgents } from '@/api/agents';
 import {
   applyRuntimeUpgrade,
   checkRuntimeUpgrade,
   fetchRuntimeUpgrade,
   RuntimeUpgradeApplyError,
 } from '@/api/system';
+import { useAgents } from '@/hooks/useAgentDirectory';
 import { useRuntimeUpgrade } from '@/hooks/useRuntimeUpgrade';
 import { agentDisplayName } from '@/lib/agent-avatar';
 import { queryKeys } from '@/lib/query-keys';
@@ -49,7 +49,7 @@ type Phase = 'idle' | 'confirming' | 'applying';
  */
 export default function RuntimeUpgradeRow() {
   const { data: status, isLoading } = useRuntimeUpgrade();
-  const { data: agents = [] } = useQuery({ queryKey: queryKeys.agents(), queryFn: fetchAgents });
+  const { data: agents = [] } = useAgents();
   const [phase, setPhase] = useState<Phase>('idle');
   const [applyError, setApplyError] = useState<string | null>(null);
   const checkMutation = useMutation({

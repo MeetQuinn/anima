@@ -2,11 +2,12 @@ import { useEffect, useRef } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { BellOff, ChevronLeft, Loader2 } from 'lucide-react';
-import { fetchAgentChannels, fetchAgentMessages, fetchAgents } from '@/api/agents';
+import { fetchAgentChannels, fetchAgentMessages } from '@/api/agents';
 import { buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { dateKey, formatRelativeShort } from '@/lib/format';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
+import { useAgents } from '@/hooks/useAgentDirectory';
 import { useNow } from '@/hooks/useNow';
 import {
   groupByAuthor,
@@ -157,7 +158,7 @@ function ConversationPane({
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // The agent's own avatar/name byline its outbound messages, Slack-style.
-  const agentsQuery = useQuery({ queryKey: queryKeys.agents(), queryFn: fetchAgents });
+  const agentsQuery = useAgents();
   const agentSnapshot = agentsQuery.data?.find((a) => a.id === agentId);
   const agentAuthor: Author = {
     key: 'agent',

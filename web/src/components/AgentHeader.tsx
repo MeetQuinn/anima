@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { stopItem, fetchAgents, fetchAgentStatuses, refreshDashboardData } from '@/api/agents';
+import { stopItem, refreshDashboardData } from '@/api/agents';
 import { useParams } from 'react-router-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { parseLocation, AGENT_TABS, DEFAULT_TAB, type AgentTab } from '@/lib/url-state';
@@ -8,7 +7,7 @@ import { agentColor, initialOf } from '@/lib/avatars';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { Button } from './ui/button';
 import AgentActionsMenu from './AgentActionsMenu';
-import { queryKeys, refetchIntervals } from '@/lib/query-keys';
+import { useAgents, useAgentStatuses } from '@/hooks/useAgentDirectory';
 
 const TABS: { id: AgentTab; label: string }[] = [
   { id: 'activity', label: 'Activity' },
@@ -18,12 +17,8 @@ const TABS: { id: AgentTab; label: string }[] = [
 ];
 
 export default function AgentHeader() {
-  const { data: agents = [] } = useQuery({ queryKey: queryKeys.agents(), queryFn: fetchAgents });
-  const { data: agentStatuses = [] } = useQuery({
-    queryKey: queryKeys.agentStatuses(),
-    queryFn: fetchAgentStatuses,
-    refetchInterval: refetchIntervals.agentStatuses,
-  });
+  const { data: agents = [] } = useAgents();
+  const { data: agentStatuses = [] } = useAgentStatuses({ poll: true });
   const { agentId } = useParams<{ agentId: string }>();
   const { pathname } = useLocation();
   const navigate = useNavigate();

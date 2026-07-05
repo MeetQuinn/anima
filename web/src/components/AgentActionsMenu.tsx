@@ -18,13 +18,10 @@ import {
   RotateCcw,
   Trash2,
 } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
 import {
   disableAgent,
   enableAgent,
   fetchAgentDiagnostics,
-  fetchAgentStatuses,
-  fetchAgents,
   removeAgent,
   restartAgent,
   rotateAgentSession,
@@ -40,7 +37,7 @@ import {
 import { useConfirm } from '@/hooks/useConfirm';
 import { formatAgentDiagnostics } from '@/lib/diagnostics';
 import { copyTextToClipboard } from '@/lib/clipboard';
-import { queryKeys, refetchIntervals } from '@/lib/query-keys';
+import { useAgents, useAgentStatuses } from '@/hooks/useAgentDirectory';
 
 
 
@@ -54,12 +51,8 @@ import { queryKeys, refetchIntervals } from '@/lib/query-keys';
  * `buttonClassName` lets callers tweak sizing for desktop vs mobile contexts.
  */
 export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?: string }) {
-  const { data: agents = [] } = useQuery({ queryKey: queryKeys.agents(), queryFn: fetchAgents });
-  const { data: statuses = [] } = useQuery({
-    queryKey: queryKeys.agentStatuses(),
-    queryFn: fetchAgentStatuses,
-    refetchInterval: refetchIntervals.agentStatuses,
-  });
+  const { data: agents = [] } = useAgents();
+  const { data: statuses = [] } = useAgentStatuses({ poll: true });
   const { agentId } = useParams<{ agentId: string }>();
   const navigate = useNavigate();
   const menuRef = useRef<HTMLDivElement>(null);
