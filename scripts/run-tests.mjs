@@ -17,6 +17,7 @@ const groups = {
     'default-skills.test.js',
     'envelope.test.js',
     'feishu.test.js',
+    'file-cache-eviction.test.js',
     'inbox.test.js',
     'interactive-ask.test.js',
     'message.service.test.js',
