@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { Activity } from '../../shared/activity.js';
 import type { AgentMessageRecord } from '../../shared/messages.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
 import type { InboxItem, MemoryCoherenceInboxItem } from '../../shared/inbox.js';
@@ -242,6 +243,92 @@ test('memory coherence activity gate requires a message after the latest memory 
   }
 });
 
+test('memory coherence activity gate matches legacy decisions across rotated logs', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-memory-coherence-rotated-gate-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeRotatedGateFixture(stateDir, 'aria');
+
+      assert.equal(await legacyMeaningfulActivityGate('aria'), true);
+      assert.equal(await hasMeaningfulActivitySinceLastMemoryPass('aria'), true);
+
+      await activityServiceForAgent('aria').record(memoryOutcomeActivity(
+        'latest-outcome',
+        '2026-06-22T06:30:00.000Z',
+      ));
+
+      assert.equal(await legacyMeaningfulActivityGate('aria'), false);
+      assert.equal(await hasMeaningfulActivitySinceLastMemoryPass('aria'), false);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('memory coherence activity gate ignores irrelevant older message archives', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-memory-coherence-ledger-bound-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const agentDir = join(stateDir, 'agents/aria');
+      const archiveDir = join(agentDir, 'messages.archive');
+      await mkdir(archiveDir, { recursive: true });
+
+      await writeMessageJsonl(join(archiveDir, '0000000000001-messages-000.jsonl'), [
+        messageRecord('ancient-1', '2025-01-01T00:00:00.000Z'),
+        messageRecord('ancient-2', '2025-01-02T00:00:00.000Z'),
+      ]);
+      await writeMessageJsonl(join(archiveDir, '0000000000002-messages-000.jsonl'), [
+        messageRecord('before-since', '2026-06-21T00:00:00.000Z'),
+      ]);
+      await writeMessageJsonl(join(agentDir, 'messages.jsonl'), [
+        messageRecord('after-since', '2026-06-22T06:00:00.000Z'),
+      ]);
+
+      const store = new MessageStore('aria');
+      assert.equal((await store.readAll()).length, 4);
+
+      const oldestArchive = (await readdir(archiveDir)).sort((a, b) => a.localeCompare(b))[0];
+      assert.ok(oldestArchive);
+      await writeFile(join(archiveDir, oldestArchive), '{not-json}\n', 'utf8');
+      await assert.rejects(store.readAll(), SyntaxError);
+
+      assert.equal(await hasMeaningfulActivitySinceLastMemoryPass('aria'), true);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('memory coherence activity gate with zero outcomes stops before old activity archives', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-memory-coherence-zero-outcome-bound-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const agentDir = join(stateDir, 'agents/aria');
+      const archiveDir = join(agentDir, 'activity.archive');
+      await mkdir(archiveDir, { recursive: true });
+
+      await writeActivityJsonl(join(archiveDir, '0000000000001-activity-000.jsonl'), [
+        runtimeActivity('old-activity', '2025-01-01T00:00:00.000Z'),
+      ]);
+      await writeActivityJsonl(join(agentDir, 'activity.jsonl'), [
+        runtimeActivity('before-message', '2026-06-22T05:59:59.000Z'),
+      ]);
+      await new MessageStore('aria').appendManyIfAbsent([
+        messageRecord('live-message', '2026-06-22T06:00:00.000Z'),
+      ]);
+
+      const oldestArchive = (await readdir(archiveDir)).sort((a, b) => a.localeCompare(b))[0];
+      assert.ok(oldestArchive);
+      await writeFile(join(archiveDir, oldestArchive), '{not-json}\n', 'utf8');
+      await assert.rejects(activityServiceForAgent('aria').readAll(), SyntaxError);
+
+      assert.equal(await hasMeaningfulActivitySinceLastMemoryPass('aria'), true);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 class TestMemoryQueues {
   private readonly byAgent = new Map<string, InboxItem[]>();
 
@@ -289,6 +376,87 @@ function memoryItem(agentId: string, scheduledSlotAt: string): MemoryCoherenceIn
     scheduledSlotAt,
     scheduledSlotLabel: '05:47 agent-local',
   };
+}
+
+async function writeRotatedGateFixture(stateDir: string, agentId: string): Promise<void> {
+  const agentDir = join(stateDir, 'agents', agentId);
+  const activityArchiveDir = join(agentDir, 'activity.archive');
+  const messageArchiveDir = join(agentDir, 'messages.archive');
+  await mkdir(activityArchiveDir, { recursive: true });
+  await mkdir(messageArchiveDir, { recursive: true });
+
+  await writeActivityJsonl(join(activityArchiveDir, '0000000000001-activity-000.jsonl'), [
+    runtimeActivity('old-runtime', '2026-06-21T23:00:00.000Z'),
+  ]);
+  await writeActivityJsonl(join(activityArchiveDir, '0000000000002-activity-000.jsonl'), [
+    memoryOutcomeActivity('archived-outcome', '2026-06-22T05:05:00.000Z'),
+  ]);
+  await writeActivityJsonl(join(agentDir, 'activity.jsonl'), [
+    runtimeActivity('live-runtime', '2026-06-22T06:00:30.000Z'),
+  ]);
+
+  await writeMessageJsonl(join(messageArchiveDir, '0000000000001-messages-000.jsonl'), [
+    messageRecord('old-message', '2026-06-22T04:00:00.000Z'),
+  ]);
+  await writeMessageJsonl(join(agentDir, 'messages.jsonl'), [
+    messageRecord('new-message', '2026-06-22T06:00:00.000Z'),
+  ]);
+}
+
+async function legacyMeaningfulActivityGate(agentId: string): Promise<boolean> {
+  const outcomes = (await activityServiceForAgent(agentId).readAll())
+    .filter((activity) => activity.type === 'memory_coherence.outcome')
+    .reverse()
+    .slice(0, 5);
+  let latestMemoryPassAt: string | undefined;
+  for (const activity of outcomes) {
+    const completedAt = completedAtForTestOutcome(activity);
+    if (!latestMemoryPassAt || completedAt > latestMemoryPassAt) latestMemoryPassAt = completedAt;
+  }
+
+  const latestMessageAt = (await new MessageStore(agentId).readAll())
+    .reverse()
+    .find((entry) => !latestMemoryPassAt || entry.timestamp >= latestMemoryPassAt)
+    ?.timestamp;
+  if (!latestMessageAt) return false;
+  return !latestMemoryPassAt || latestMessageAt > latestMemoryPassAt;
+}
+
+function completedAtForTestOutcome(activity: Activity): string {
+  return typeof activity.payload?.completedAt === 'string'
+    ? activity.payload.completedAt
+    : activity.createdAt;
+}
+
+function memoryOutcomeActivity(activityId: string, createdAt: string): Activity {
+  return {
+    activityId,
+    createdAt,
+    payload: {
+      completedAt: createdAt,
+      outcome: 'quiet_skipped',
+      scheduledSlotAt: '2026-06-22T05:00:00.000Z',
+      scheduledSlotLabel: '05:00 agent-local',
+      startedAt: createdAt,
+    },
+    type: 'memory_coherence.outcome',
+  };
+}
+
+function runtimeActivity(activityId: string, createdAt: string): Activity {
+  return {
+    activityId,
+    createdAt,
+    type: 'runtime.event',
+  };
+}
+
+async function writeActivityJsonl(path: string, records: Activity[]): Promise<void> {
+  await writeFile(path, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`, 'utf8');
+}
+
+async function writeMessageJsonl(path: string, records: AgentMessageRecord[]): Promise<void> {
+  await writeFile(path, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`, 'utf8');
 }
 
 function messageRecord(messageId: string, timestamp: string): AgentMessageRecord {
