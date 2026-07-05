@@ -15,6 +15,11 @@ import {
   slackSurfaceForEvent,
 } from '../inbox/slack-events.js';
 import { slackDisplayLabel } from '../slack/slack.helper.js';
+import {
+  envelopeTime,
+  formatUserLocalTime,
+  renderEnvelope,
+} from '../messages/envelope.js';
 import type { Reminder } from '../../shared/reminder.js';
 import {
   providerCrashRetryNote,
@@ -33,7 +38,7 @@ export interface CodeAgentPromptContext {
  *
  *   [channel=#team channel_id=C-team thread_ts=1770000020.000001 message_ts=1770000010.000001 time=... user_id=U1 user_local_time=... user_tz=America/Los_Angeles] Alice (@alice): check this out
  *   <attached_files>
- *   <file id="F-img" name="screenshot.png" mimetype="image/png" size_bytes="4096" path="/tmp/anima/F-img/screenshot.png" />
+ *   <file id="F-img" name="screenshot.png" mimetype="image/png" size_bytes="4096" />
  *   </attached_files>
  *
  * Scheduled reminder (with provenance):
@@ -95,14 +100,25 @@ function formatFeishuQuotedMessage(message: FeishuQuotedMessage): string {
 
 function buildSlackOnboardingDeliveryPrompt(event: OnboardingInboxItem): string {
   return buildOnboardingDeliveryPrompt({
-    envelope: `[platform=slack channel=${event.channelId} time=${envelopeTime(event.receivedAt)} user_id=${event.operator.slackUserId}]`,
+    envelope: renderEnvelope([
+      { key: 'platform', value: 'slack' },
+      { key: 'channel', value: event.channelId },
+      { key: 'time', value: envelopeTime(event.receivedAt) },
+      { key: 'user_id', value: event.operator.slackUserId },
+    ]),
     text: event.text,
   });
 }
 
 function buildFeishuOnboardingDeliveryPrompt(event: FeishuOnboardingInboxItem): string {
   return buildOnboardingDeliveryPrompt({
-    envelope: `[platform=feishu channel=${event.target.receiveId} receive_id_type=${event.target.receiveIdType} time=${envelopeTime(event.receivedAt)} user_id=${event.owner.openId}]`,
+    envelope: renderEnvelope([
+      { key: 'platform', value: 'feishu' },
+      { key: 'channel', value: event.target.receiveId },
+      { key: 'receive_id_type', value: event.target.receiveIdType },
+      { key: 'time', value: envelopeTime(event.receivedAt) },
+      { key: 'user_id', value: event.owner.openId },
+    ]),
     text: event.text,
   });
 }
@@ -135,9 +151,18 @@ function buildDeliveryEventPrompt(input: {
 
 function buildChoiceResponseDeliveryPrompt(event: ChoiceResponseInboxItem): string {
   const actor = readableSlackActor(event.answeredBy);
+  const envelope = renderEnvelope([
+    { key: 'ask_id', value: event.askId },
+    { key: 'channel', value: event.channelId },
+    { key: 'thread_ts', value: event.threadTs },
+    { key: 'message_ts', value: event.messageTs },
+    { key: 'wake', value: 'ask_answered' },
+    { key: 'time', value: envelopeTime(event.receivedAt) },
+    { key: 'user_id', value: event.answeredBy.slackUserId },
+  ]);
   return `Choice response:
 
-[ask_id=${event.askId} channel=${event.channelId} thread_ts=${event.threadTs} message_ts=${event.messageTs} wake=ask_answered time=${envelopeTime(event.receivedAt)} user_id=${event.answeredBy.slackUserId}]
+${envelope}
 ${actor} selected: ${event.optionLabel}
 
 Question:
@@ -153,10 +178,15 @@ function buildReminderDeliveryPrompt(
   const provenance = reminder.provenance
     ? `\n\nScheduled from: ${reminderOriginEnvelope(reminder.provenance)}`
     : '';
+  const envelope = renderEnvelope([
+    { key: 'reminder_id', value: reminder.reminderId },
+    { key: 'time', value: envelopeTime(scheduledDeliveryTime(event)) },
+    { key: 'scheduled', value: envelopeTime(event.scheduledAt ?? event.receivedAt) },
+  ]);
 
   return `Scheduled reminder:
 
-[reminder_id=${reminder.reminderId} time=${envelopeTime(scheduledDeliveryTime(event))} scheduled=${envelopeTime(event.scheduledAt ?? event.receivedAt)}] ${reminder.title}
+${envelope} ${reminder.title}
 
 Instructions:
 ${reminder.instructions}${provenance}`;
@@ -170,14 +200,22 @@ function scheduledDeliveryTime(event: MemoryCoherenceInboxItem | ReminderInboxIt
 }
 
 function reminderOriginEnvelope(provenance: NonNullable<Reminder['provenance']>): string {
-  const threadPart = provenance.threadTs ? ` thread_ts=${provenance.threadTs}` : '';
-  return `[channel_id=${provenance.channelId}${threadPart} message_ts=${provenance.messageTs}]`;
+  return renderEnvelope([
+    { key: 'channel_id', value: provenance.channelId },
+    { key: 'thread_ts', value: provenance.threadTs },
+    { key: 'message_ts', value: provenance.messageTs },
+  ]);
 }
 
 function buildMemoryCoherenceDeliveryPrompt(event: MemoryCoherenceInboxItem): string {
+  const envelope = renderEnvelope([
+    { key: 'time', value: envelopeTime(scheduledDeliveryTime(event)) },
+    { key: 'scheduled', value: envelopeTime(event.scheduledSlotAt) },
+    { key: 'slot', value: event.scheduledSlotLabel },
+  ]);
   return `Memory coherence system wake:
 
-[time=${envelopeTime(scheduledDeliveryTime(event))} scheduled=${envelopeTime(event.scheduledSlotAt)} slot=${event.scheduledSlotLabel}]
+${envelope}
 
 You are running your scheduled memory pass.
 
@@ -193,7 +231,10 @@ export function buildRuntimeRestartContinuationDeliveryPrompt(input: {
   return [
     'Runtime restart continuation:',
     '',
-    `[item=${input.itemId} time=${envelopeTime(input.time)}]`,
+    renderEnvelope([
+      { key: 'item', value: input.itemId },
+      { key: 'time', value: envelopeTime(input.time) },
+    ]),
     '',
     RUNTIME_RESTART_CONTINUATION_NOTE,
   ].join('\n');
@@ -206,11 +247,14 @@ export function buildProviderCrashRetryDeliveryPrompt(input: {
   previousError: string;
   time: string;
 }): string {
-  const itemPart = input.itemId ? `item=${input.itemId} ` : '';
   return [
     'Provider crash retry:',
     '',
-    `[${itemPart}retry=${input.attempt}/${input.maxRetries} time=${envelopeTime(input.time)}]`,
+    renderEnvelope([
+      { key: 'item', value: input.itemId },
+      { key: 'retry', value: `${input.attempt}/${input.maxRetries}` },
+      { key: 'time', value: envelopeTime(input.time) },
+    ]),
     '',
     `Previous error: ${input.previousError}`,
     '',
@@ -222,22 +266,31 @@ function messageEnvelope(event: SlackInboxItem): string {
   const surface = slackSurfaceForEvent(event);
   const { actor } = event;
   const displayRef = slackSurfaceDisplayRef(surface);
-  const channelIdPart = displayRef === surface.channelId ? '' : ` channel_id=${surface.channelId}`;
-  const threadPart = surface.threadTs ? ` thread_ts=${surface.threadTs}` : '';
-  const wakePart = event.wakeReason ? ` wake=${event.wakeReason}` : '';
-  const userPart = actor?.userId ? ` user_id=${actor.userId}` : '';
-  const userTimePart = actor?.timezone ? ` user_local_time=${formatUserLocalTime(event.receivedAt, actor.timezone)} user_tz=${actor.timezone.name}` : '';
-
-  return `[channel=${displayRef}${channelIdPart}${threadPart} message_ts=${event.messageTs}${wakePart} time=${envelopeTime(event.receivedAt)}${userPart}${userTimePart}]`;
+  return renderEnvelope([
+    { key: 'channel', value: displayRef },
+    { key: 'channel_id', value: displayRef === surface.channelId ? undefined : surface.channelId },
+    { key: 'thread_ts', value: surface.threadTs },
+    { key: 'message_ts', value: event.messageTs },
+    { key: 'wake', value: event.wakeReason },
+    { key: 'time', value: envelopeTime(event.receivedAt) },
+    { key: 'user_id', value: actor?.userId },
+    { key: 'user_local_time', value: actor?.timezone ? formatUserLocalTime(event.receivedAt, actor.timezone) : undefined },
+    { key: 'user_tz', value: actor?.timezone?.name },
+  ]);
 }
 
 function feishuMessageEnvelope(event: FeishuInboxItem): string {
-  const threadPart = event.threadId ? ` thread_id=${event.threadId}` : '';
-  const actorUserId = event.actor?.openId ?? event.actor?.userId;
-  const userPart = actorUserId ? ` user_id=${actorUserId}` : '';
-  const wakePart = event.wakeReason ? ` wake=${event.wakeReason}` : '';
-  const chatNamePart = event.chatName ? ` chat_name=${quoteEnvelopeValue(event.chatName)}` : '';
-  return `[platform=feishu chat=${event.chatType} chat_id=${event.chatId}${chatNamePart}${threadPart} message_id=${event.messageId}${wakePart} time=${envelopeTime(event.receivedAt)}${userPart}]`;
+  return renderEnvelope([
+    { key: 'platform', value: 'feishu' },
+    { key: 'chat', value: event.chatType },
+    { key: 'chat_id', value: event.chatId },
+    { key: 'chat_name', value: event.chatName, quoted: true },
+    { key: 'thread_id', value: event.threadId },
+    { key: 'message_id', value: event.messageId },
+    { key: 'wake', value: event.wakeReason },
+    { key: 'time', value: envelopeTime(event.receivedAt) },
+    { key: 'user_id', value: event.actor?.openId ?? event.actor?.userId },
+  ]);
 }
 
 function actorLabel(event: SlackInboxItem): string {
@@ -308,40 +361,3 @@ function escapeAttr(value: string): string {
   return `"${escaped}"`;
 }
 
-function quoteEnvelopeValue(value: string): string {
-  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-}
-
-/** Envelope timestamps render at second granularity; sub-second precision is noise for reading context (message_ts carries exact identity). */
-function envelopeTime(timestamp: string): string {
-  return timestamp.replace(/\.\d{3}(?=Z$|[+-]\d{2}:\d{2}$)/, '');
-}
-
-function formatUserLocalTime(
-  timestamp: string,
-  timezone: NonNullable<NonNullable<SlackInboxItem['actor']>['timezone']>,
-): string {
-  const date = new Date(timestamp);
-  if (!Number.isFinite(date.getTime())) return timestamp;
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    day: '2-digit',
-    hour: '2-digit',
-    hour12: false,
-    minute: '2-digit',
-    month: '2-digit',
-    second: '2-digit',
-    timeZone: timezone.name,
-    year: 'numeric',
-  }).formatToParts(date);
-  const value = (type: string) => parts.find((part) => part.type === type)?.value;
-  const offset = typeof timezone.offsetSeconds === 'number' ? timezoneOffsetSuffix(timezone.offsetSeconds) : '';
-  return `${value('year')}-${value('month')}-${value('day')}T${value('hour')}:${value('minute')}:${value('second')}${offset}`;
-}
-
-function timezoneOffsetSuffix(offsetSeconds: number): string {
-  const sign = offsetSeconds < 0 ? '-' : '+';
-  const absolute = Math.abs(offsetSeconds);
-  const hours = Math.floor(absolute / 3600);
-  const minutes = Math.floor((absolute % 3600) / 60);
-  return `${sign}${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-}

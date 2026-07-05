@@ -2,6 +2,7 @@ import type { Command } from 'commander';
 import { z } from 'zod';
 
 import type { AgentMessageDirection, AgentMessageRecord } from '../../shared/messages.js';
+import { renderEnvelope, renderPageFooter } from '../messages/envelope.js';
 import { messageServiceForAgent, normalizeSearchKeywords } from '../messages/message.service.js';
 import { resolveToolAgentId } from './tool-context.js';
 
@@ -75,7 +76,7 @@ async function runMessageTimeline(opts: MessageHistoryInput): Promise<void> {
   const entries = [...page.entries].reverse();
   console.log(`History (${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}, newest last)`);
   for (const entry of entries) console.log(formatTimelineEntry(entry));
-  console.log(`[page has_more=${Boolean(page.nextCursor)} next_cursor=${page.nextCursor ?? '-'}]`);
+  console.log(renderPageFooter({ hasMore: Boolean(page.nextCursor), nextCursor: page.nextCursor }));
 }
 
 async function runMessageHistory(direction: AgentMessageDirection, opts: MessageHistoryInput): Promise<void> {
@@ -94,7 +95,7 @@ async function runMessageHistory(direction: AgentMessageDirection, opts: Message
   }
   console.log(`${title} (${page.entries.length} entr${page.entries.length === 1 ? 'y' : 'ies'}, newest first)`);
   for (const entry of page.entries) console.log(formatHistoryEntry(entry));
-  console.log(`[page has_more=${Boolean(page.nextCursor)} next_cursor=${page.nextCursor ?? '-'}]`);
+  console.log(renderPageFooter({ hasMore: Boolean(page.nextCursor), nextCursor: page.nextCursor }));
 }
 
 export async function runMessageSearch(opts: MessageSearchCliInput): Promise<void> {
@@ -114,7 +115,7 @@ export async function runMessageSearch(opts: MessageSearchCliInput): Promise<voi
   }
   console.log(`Message search (${page.entries.length} match${page.entries.length === 1 ? '' : 'es'}, newest first)`);
   for (const entry of page.entries) console.log(formatSearchEntry(entry, keywords));
-  console.log(`[page has_more=${Boolean(page.nextCursor)} next_cursor=${page.nextCursor ?? '-'}]`);
+  console.log(renderPageFooter({ hasMore: Boolean(page.nextCursor), nextCursor: page.nextCursor }));
 }
 
 function normalizeTimeWindow(opts: MessageHistoryInput): { before?: string; since?: string } {
@@ -131,37 +132,32 @@ function normalizeIsoCursor(value: string, flag: string): string {
 }
 
 function formatSearchEntry(entry: AgentMessageRecord, keywords: string[]): string {
-  const attrs = [`time=${entry.timestamp}`, `direction=${entry.direction}`];
-  const surface = surfaceLabel(entry);
-  if (surface) attrs.push(`channel=${surface}`);
-  if (entry.channelId && entry.channelId !== surface) attrs.push(`channel_id=${entry.channelId}`);
-  if (entry.threadTs) attrs.push(`thread_ts=${entry.threadTs}`);
-  if (entry.messageTs) attrs.push(`message_ts=${entry.messageTs}`);
-  const lead = entry.direction === 'in' ? `${entry.actor ?? 'Unknown'}:` : `${outboxVerb(entry)}:`;
-  return `[${attrs.join(' ')}] ${lead} ${snippet(entry.text, keywords)}`;
+  return `${entryEnvelope(entry, { direction: true })} ${entryLead(entry)} ${snippet(entry.text, keywords)}`;
 }
 
 function formatTimelineEntry(entry: AgentMessageRecord): string {
-  const attrs = [`time=${entry.timestamp}`, `direction=${entry.direction}`];
-  const surface = surfaceLabel(entry);
-  if (surface) attrs.push(`channel=${surface}`);
-  if (entry.channelId && entry.channelId !== surface) attrs.push(`channel_id=${entry.channelId}`);
-  if (entry.threadTs) attrs.push(`thread_ts=${entry.threadTs}`);
-  if (entry.messageTs) attrs.push(`message_ts=${entry.messageTs}`);
   const marker = entry.direction === 'in' ? 'IN' : 'OUT';
-  const lead = entry.direction === 'in' ? `${entry.actor ?? 'Unknown'}:` : `${outboxVerb(entry)}:`;
-  return `[${attrs.join(' ')}] ${marker} ${lead} ${oneLineText(entry.text)}`;
+  return `${entryEnvelope(entry, { direction: true })} ${marker} ${entryLead(entry)} ${oneLineText(entry.text)}`;
 }
 
 function formatHistoryEntry(entry: AgentMessageRecord): string {
-  const attrs = [`time=${entry.timestamp}`];
+  return `${entryEnvelope(entry, { direction: false })} ${entryLead(entry)} ${oneLineText(entry.text)}`;
+}
+
+function entryEnvelope(entry: AgentMessageRecord, opts: { direction: boolean }): string {
   const surface = surfaceLabel(entry);
-  if (surface) attrs.push(`channel=${surface}`);
-  if (entry.channelId && entry.channelId !== surface) attrs.push(`channel_id=${entry.channelId}`);
-  if (entry.threadTs) attrs.push(`thread_ts=${entry.threadTs}`);
-  if (entry.messageTs) attrs.push(`message_ts=${entry.messageTs}`);
-  const lead = entry.direction === 'in' ? `${entry.actor ?? 'Unknown'}:` : `${outboxVerb(entry)}:`;
-  return `[${attrs.join(' ')}] ${lead} ${oneLineText(entry.text)}`;
+  return renderEnvelope([
+    { key: 'time', value: entry.timestamp },
+    { key: 'direction', value: opts.direction ? entry.direction : undefined },
+    { key: 'channel', value: surface },
+    { key: 'channel_id', value: entry.channelId === surface ? undefined : entry.channelId },
+    { key: 'thread_ts', value: entry.threadTs },
+    { key: 'message_ts', value: entry.messageTs },
+  ]);
+}
+
+function entryLead(entry: AgentMessageRecord): string {
+  return entry.direction === 'in' ? `${entry.actor ?? 'Unknown'}:` : `${outboxVerb(entry)}:`;
 }
 
 function snippet(text: string, keywords: string[]): string {
