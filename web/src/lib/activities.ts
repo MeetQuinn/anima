@@ -5,6 +5,7 @@
 
 import { formatTimeShort } from './format';
 import type { Activity as ActivityRecord } from '@shared/activity';
+import { classifyOutboundEffect } from '@shared/outbound-effects';
 
 type ActivityKind = 'tool' | 'lifecycle' | 'failure' | 'output' | 'unknown';
 
@@ -92,15 +93,7 @@ export function isNarrativeStep(activity: ActivityRecord): boolean {
   if (activity.type === 'tool.call.completed' || activity.type === 'external.effect.completed') {
     const tool = String(activity.payload?.['tool'] ?? '').toLowerCase();
     const effect = String(activity.payload?.['effect'] ?? '').toLowerCase();
-    if (
-      effect === 'slack.message.send' ||
-      effect === 'slack.message.update' ||
-      effect === 'slack.file.send' ||
-      effect === 'slack.reaction' ||
-      effect === 'slack.ask.post'
-    )
-      return true;
-    // anima outbound (message/file/react) → own row types, not steps.
+    if (classifyOutboundEffect({ effect, tool })) return true;
     // anima.message.read + reminder management DO emit completed (CLI tools).
     if (tool === 'anima.message.read') return true;
     if (tool.startsWith('anima.reminder.') && tool !== 'anima.reminder.list') return true;
@@ -180,13 +173,9 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
         kind: 'failure',
       };
     }
-    const slackFailure = outboundFailureRow(normalized, err);
-    if (slackFailure) return slackFailure;
-    // For external effects, also try matching by the effect field.
-    if (activity.type === 'external.effect.failed') {
-      const effectFailure = outboundFailureRow(String(payload['effect'] ?? '').toLowerCase(), err);
-      if (effectFailure) return effectFailure;
-    }
+    const effect = String(payload['effect'] ?? '').toLowerCase();
+    const outboundFailure = outboundFailureRow({ effect, tool: normalized }, err);
+    if (outboundFailure) return outboundFailure;
     // A failed shell drops its most useful detail if we only show the error —
     // lead with the command, append a terse reason (exit code or first line).
     if (normalized === 'bash' || normalized === 'shell') {
@@ -249,7 +238,9 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
 
   const effect = String(payload['effect'] ?? '').toLowerCase();
 
-  if (normalized === 'anima.file.send' || effect === 'slack.file.send') {
+  const classifiedOutbound = classifyOutboundEffect({ effect, tool: normalized });
+
+  if (classifiedOutbound?.kind === 'file') {
     // Count belongs in the title (Sent file / Sent 3 files), not the target —
     // the target column is for the destination identifier.
     const fileCount = payload['fileCount'];
@@ -584,20 +575,24 @@ function tool_(title: string, target?: string, targetFull?: string): ActivityRow
 function skillActivityRow(payload: Record<string, unknown>): ActivityRow {
   const skill = pickString(payload, ['skill', 'target']);
   // Older records from delegated Claude subagents only carried `name`.
-  const nameFallback = skill ? '' : pickString(payload, ['name']);
+  const subject = skill || pickString(payload, ['name']);
   const args = pickString(payload, ['args', 'arguments']);
-  const subject = skill || nameFallback;
   const inline = [subject, args].filter(Boolean).join(' · ');
+  const target = truncatedTarget(inline, 220);
   const full = subject && args ? `${subject}\n\n${args}` : inline;
-  return tool_('Ran skill', truncatedTarget(inline, 220).target, full);
+  return tool_('Ran skill', target.target, target.targetFull ? full : undefined);
 }
 
-function outboundFailureRow(tool: string, error: string): ActivityRow | undefined {
+function outboundFailureRow(
+  input: { effect?: string | undefined; tool?: string | undefined },
+  error: string,
+): ActivityRow | undefined {
+  const tool = input.tool ?? '';
   let title: string | undefined;
-  if (tool === 'anima.message.send' || tool === 'slack.message.send') title = 'Message failed';
-  else if (tool === 'anima.message.update' || tool === 'slack.message.update') title = 'Edit failed';
-  else if (tool === 'anima.file.send' || tool === 'slack.file.send') title = 'File upload failed';
-  else if (tool === 'anima.message.react' || tool === 'slack.reaction') title = 'Reaction failed';
+  const classified = classifyOutboundEffect(input);
+  if (classified?.kind === 'message') title = classified.isEdit ? 'Edit failed' : 'Message failed';
+  else if (classified?.kind === 'file') title = 'File upload failed';
+  else if (classified?.kind === 'reaction') title = 'Reaction failed';
   else if (tool === 'anima.message.read') title = 'Read failed';
   else if (tool.startsWith('anima.reminder.')) {
     const action = tool.replace('anima.reminder.', '');
