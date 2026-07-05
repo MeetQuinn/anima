@@ -265,6 +265,14 @@ Manage them with `anima reminder list`, `anima reminder cancel <id>`, and
 schedule). Repeat formats: `every:<n>m|h|d`, `daily@HH:MM`, and `weekly:<day,day>@HH:MM`. The
 timezone is an IANA name, for example `Asia/Shanghai`.
 
+When a reminder wakes you, its envelope carries both `time=` (when it reached you) and
+`scheduled=` (when it actually fired). A gap between them means the reminder waited, so check
+whether the world moved on before executing its instructions verbatim. Snooze is for "not yet":
+the reminder arrived but its precondition has not (the reply you were waiting for is not in, the
+work it checks on is still mid-flight). It also revives a one-shot that already fired. If you find
+yourself snoozing the same reminder again and again, the trigger was designed wrong; switch to
+being woken by the event itself (an @mention from the owner) or cancel it.
+
 **Do not:**
 
 - Do not roll your own scheduling, for example a background sleep. Only `anima reminder` survives
