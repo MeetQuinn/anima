@@ -14,14 +14,6 @@ import type { ActivityFeedItem } from '@/lib/activity-feed';
 // messages / file sends are shown in the compact chrome register.
 // ---------------------------------------------------------------------------
 
-// Build a jump-to-Slack URL for an outbound message using `permalink` from the
-// activity payload. Only present when the backend recorded it (send-message
-// completion payload). Degrades gracefully — returns undefined when absent.
-function slackOutboundLink(payload: Record<string, unknown>): string | undefined {
-  const permalink = payload['permalink'];
-  return typeof permalink === 'string' && permalink ? permalink : undefined;
-}
-
 // Small external-link affordance rendered at the end of a row's title line.
 // Always visible at low opacity (touch-friendly); lifts to full on hover.
 function SlackLink({ href }: { href: string }) {
@@ -70,7 +62,9 @@ export function MessageOutRow({
     : isDm && item.surface.label
       ? `${verb} to ${item.surface.label.replace(/^@/, '')}`
       : verb;
-  const outLink = slackOutboundLink(item.activity.payload ?? {});
+  // Jump-to-Slack URL for the sent message. Only present when the backend
+  // recorded it (send-message completion payload). Degrades gracefully.
+  const outLink = item.permalink;
   return (
     <Row
       time={time}
@@ -115,7 +109,7 @@ export function FileOutRow({
     : isDm && item.surface.label && item.surface.label !== 'DM'
       ? `${base} to ${item.surface.label.replace(/^@/, '')}`
       : base;
-  const fileLink = item.permalink ?? slackOutboundLink(item.activity.payload ?? {});
+  const fileLink = item.permalink;
   return (
     <Row
       time={time}

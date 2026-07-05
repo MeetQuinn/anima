@@ -5,7 +5,8 @@ import { emojiGlyph } from '@/lib/emoji';
 import { clockHM, dateLabel, dateTimeFull } from '@/lib/format';
 import { AttachedFiles, UploadedFile } from '../activity/Attachments';
 import type { ActivityFeedItem, SurfaceChip } from '@/lib/activity-feed';
-import type { InboxItem, SlackMessagePreview } from '@shared/inbox';
+import type { SlackMessagePreview } from '@shared/inbox';
+import type { AgentMessageRecord } from '@shared/messages';
 import type { SlackFile } from '@/types';
 
 // ---------------------------------------------------------------------------
@@ -53,42 +54,64 @@ export function isMessageItem(item: ActivityFeedItem): boolean {
   );
 }
 
+// A person's inbound message (slack/feishu), as opposed to a system wake or a
+// choice response. Author/file/preview readers key off this split.
+function isPersonMessage(message: AgentMessageRecord): boolean {
+  return (
+    message.kind === 'message' || message.kind === 'file' || message.kind === 'reaction'
+  );
+}
+
 // Inbound author byline (Slack only in v1; other kinds degrade to a label).
-export function inboundAuthorName(event: InboxItem): string {
-  if (event.kind === 'slack') {
+export function inboundAuthorName(message: AgentMessageRecord): string {
+  if (message.kind === 'choice_response') {
     return (
-      event.actor?.displayName ||
-      event.actor?.realName ||
-      event.actor?.handle?.replace(/^@/, '') ||
-      event.actor?.userId ||
-      'Unknown user'
+      message.actorHandle?.replace(/^@/, '') || message.actorDisplayName || 'Choice response'
     );
   }
-  if (event.kind === 'feishu') {
-    return event.actor?.displayName || event.actor?.openId || event.actor?.userId || 'Feishu user';
+  if (message.kind === 'reminder') return message.reminderTitle?.trim() || 'Reminder';
+  if (message.kind === 'onboarding') return 'Onboarding';
+  if (message.platform === 'feishu') {
+    return message.actorDisplayName || message.actorUserId || 'Feishu user';
   }
-  if (event.kind === 'choice_response')
-    return event.answeredBy.handle?.replace(/^@/, '') || event.answeredBy.displayName || 'Choice response';
-  if (event.kind === 'reminder') return event.title?.trim() || 'Reminder';
-  if (event.kind === 'memory_coherence') return 'Memory coherence';
-  return 'Onboarding';
+  return (
+    message.actorDisplayName ||
+    message.actorHandle?.replace(/^@/, '') ||
+    message.actorUserId ||
+    'Unknown user'
+  );
 }
 
-export function inboundText(event: InboxItem): string {
-  if (event.kind === 'reminder' || event.kind === 'memory_coherence') return '';
-  if (event.kind === 'choice_response') return `Selected: ${event.optionLabel}`;
-  return ('text' in event ? event.text : '') ?? '';
+// Inbound sender's Slack user id — the author-grouping key. Undefined for
+// non-Slack sources (feishu / system wakes / choice responses) and when the
+// id is unknown, so callers fall back to the display name.
+export function inboundSlackUserId(message: AgentMessageRecord): string | undefined {
+  if (!isPersonMessage(message) || message.platform === 'feishu') return undefined;
+  return message.actorUserId || undefined;
 }
 
-export function inboundFiles(event: InboxItem): SlackFile[] {
-  if (event.kind === 'slack' || event.kind === 'feishu') {
-    return (event.files ?? []) as SlackFile[];
-  }
-  return [];
+export function inboundText(message: AgentMessageRecord): string {
+  if (message.kind === 'reminder') return '';
+  if (message.kind === 'choice_response')
+    return `Selected: ${message.optionLabel ?? message.text}`;
+  return message.text ?? '';
 }
 
-function inboundPreviews(event: InboxItem): SlackMessagePreview[] {
-  return event.kind === 'slack' ? event.previews ?? [] : [];
+export function inboundFiles(message: AgentMessageRecord): SlackFile[] {
+  if (!isPersonMessage(message)) return [];
+  return (message.files ?? []).map((file, index) => ({
+    id: file.fileId ?? `${message.messageId}:file:${index}`,
+    mimetype: file.mimetype ?? 'application/octet-stream',
+    name: file.filename,
+    sizeBytes: file.sizeBytes ?? 0,
+  }));
+}
+
+function inboundPreviews(message: AgentMessageRecord): SlackMessagePreview[] {
+  if (!isPersonMessage(message) || message.platform === 'feishu') return [];
+  return (message.previews ?? []).filter(
+    (preview) => preview.platform === 'slack' && preview.type === 'message_unfurl',
+  );
 }
 
 export function MsgAvatar({ author }: { author: Author }) {
@@ -118,9 +141,9 @@ export function MsgAvatar({ author }: { author: Author }) {
 // One message's content (text + files), avatar/byline handled by the group.
 export function MessageBody({ item, agentId }: { item: ActivityFeedItem; agentId: string }) {
   if (item.kind === 'message-in') {
-    const text = inboundText(item.event).trim();
-    const files = inboundFiles(item.event);
-    const previews = inboundPreviews(item.event);
+    const text = inboundText(item.message).trim();
+    const files = inboundFiles(item.message);
+    const previews = inboundPreviews(item.message);
     return (
       <>
         {text && (

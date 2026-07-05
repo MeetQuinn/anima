@@ -24,6 +24,7 @@ import {
   groupByAuthor,
   initialOf,
   inboundAuthorName,
+  inboundSlackUserId,
   isMessageItem,
   DayLabelPill,
   MessageGroupRow,
@@ -34,7 +35,7 @@ import {
 } from '../conversation/SlackTimeline';
 import { StepRow, WorkingIndicator } from './AuditRows';
 import { useStickToBottom } from './useStickToBottom';
-import type { Activity as ActivityRecord, AgentActivityFeedEvent } from '@shared/activity';
+import type { Activity as ActivityRecord } from '@shared/activity';
 import type { AgentFeishuScopeAuthUrl } from '@shared/agent-config';
 import type { AgentMessageRecord } from '@shared/messages';
 import type { AgentStatusSummary } from '@shared/snapshot';
@@ -526,11 +527,10 @@ export default function Activity() {
   // live-refetch of the newest page never creates duplicates.
   const activitiesData = useMemo(() => {
     if (!activityQuery.data?.pages.length) return undefined;
-    const eventMap = new Map<string, AgentActivityFeedEvent>();
+    const eventMap = new Map<string, ActivityRecord>();
     for (const page of activityQuery.data.pages) {
       for (const event of page.events ?? []) {
-        const key = `activity:${event.activity.activityId}`;
-        eventMap.set(key, event);
+        eventMap.set(event.activityId, event);
       }
     }
     return { events: Array.from(eventMap.values()) };
@@ -727,7 +727,7 @@ export default function Activity() {
     if (!activitiesData?.events.length) return null;
     let min = Infinity;
     for (const ev of activitiesData.events) {
-      const t = Date.parse(ev.timestamp);
+      const t = Date.parse(ev.createdAt);
       if (Number.isFinite(t) && t < min) min = t;
     }
     return min === Infinity ? null : min;
@@ -755,9 +755,7 @@ export default function Activity() {
 
   const latestCurrentItemActivity = useMemo(() => {
     if (!currentItemId || !activitiesData) return undefined;
-    const activities = activitiesData.events.flatMap((event) =>
-      event.kind === 'activity' ? [event.activity] : [],
-    );
+    const activities = activitiesData.events;
     const itemActivities = currentItemStartedAt
       ? activities.filter((a) => a.createdAt >= currentItemStartedAt)
       : activities;
@@ -962,8 +960,8 @@ export default function Activity() {
   };
   const resolveAuthor: AuthorResolver = (item) => {
     if (item.kind !== 'message-in') return agentAuthor;
-    const name = inboundAuthorName(item.event);
-    const uid = item.event.kind === 'slack' ? item.event.actor?.userId : undefined;
+    const name = inboundAuthorName(item.message);
+    const uid = inboundSlackUserId(item.message);
     return {
       key: `in:${uid ?? name}`,
       name,
