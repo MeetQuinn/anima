@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "type-check": "npx tsc -b --dry",
+    "type-check": "tsc -b --force --pretty false",
     "lint": "eslint .",
     "format": "prettier --write src/",
     "preview": "vite preview",
