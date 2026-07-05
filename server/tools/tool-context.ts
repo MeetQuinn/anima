@@ -3,6 +3,10 @@ import type { WebClient } from '@slack/web-api';
 import type { AgentConfig } from '../../shared/agent-config.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
+import {
+  createFeishuMessageClient as createDefaultFeishuMessageClient,
+  type FeishuMessageClient,
+} from '../feishu/client.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { resolveAgentIdFrom } from '../cli/shared.js';
 import { errorMessage } from '../ids.js';
@@ -123,6 +127,21 @@ export async function slackWebClientForOpts(opts: object): Promise<{
   const id = resolveAgentIdFrom(rawAgent);
   if (!id) throw new Error('Agent not specified. Pass --agent <id> or set ANIMA_AGENT_ID.');
   return agentSlackServiceForAgent(id).getAgentWebClient();
+}
+
+export async function feishuMessageClientForOpts(
+  opts: object,
+  createClient: typeof createDefaultFeishuMessageClient = createDefaultFeishuMessageClient,
+): Promise<{
+  agent: AgentConfig;
+  client: FeishuMessageClient;
+}> {
+  const agent = await loadAgentFromOpts(opts);
+  if (!agent.feishu.connected) throw new Error(`Agent ${agent.id} has no Feishu connection configured`);
+  return {
+    agent,
+    client: createClient(agent.feishu),
+  };
 }
 
 export async function readStdin(): Promise<string> {

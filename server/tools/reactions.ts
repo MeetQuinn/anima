@@ -12,7 +12,7 @@ import { outcomeLine, type OutcomePart } from './outcome-line.js';
 import {
   currentFeishuItem,
   currentSlackItem,
-  loadAgentFromOpts,
+  feishuMessageClientForOpts,
   resolveToolAgentId,
   slackWebClientForOpts,
   withToolActivity,
@@ -138,12 +138,10 @@ async function runFeishuMessageReact(input: {
   if (input.action === 'removed' && !reactionId) throw new Error('Feishu message react remove requires --reaction-id');
   if (!name) throw new Error('Feishu message react requires --name');
 
-  const agent = await loadAgentFromOpts(input.opts);
-  if (!agent.feishu.connected) throw new Error(`Agent ${input.agentId} has no Feishu connection configured`);
+  const { client } = await feishuMessageClientForOpts(input.opts, input.createFeishuMessageClient);
   const feishuItem = await currentFeishuItem(input.agentId, input.opts);
   const channelKind = feishuItem?.kind === 'feishu' && feishuItem.chatId === input.channel ? feishuItem.chatType : 'chat';
   const channelDisplayName = channelKind === 'p2p' ? 'Feishu DM' : `Feishu ${channelKind}`;
-  const client = input.createFeishuMessageClient(agent.feishu);
   const basePayload = {
     action: input.action,
     channel: input.channel,
@@ -202,7 +200,8 @@ async function currentSlackThreadTs(
 }
 
 function isFeishuReactionTarget(input: { channel: string; targetMessageId: string }): boolean {
-  return resolveChatTarget(input.channel).platform === 'feishu' || input.targetMessageId.startsWith('om_');
+  const target = resolveChatTarget(input.channel);
+  return (target.platform === 'feishu' && target.receiveIdType === 'chat_id') || input.targetMessageId.startsWith('om_');
 }
 
 function feishuReactionOutputLine(input: {

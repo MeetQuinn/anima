@@ -23,7 +23,7 @@ import {
 } from './slack-target.js';
 import { outcomeLine, type OutcomePart } from './outcome-line.js';
 import {
-  loadAgentFromOpts,
+  feishuMessageClientForOpts,
   resolveToolAgentId,
   slackWebClientForOpts,
   withToolActivity,
@@ -93,14 +93,14 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
   const caption = await captionFromOpts(opts);
   const chatTarget = resolveChatTarget(opts.channel);
   if (chatTarget.platform === 'feishu') {
-    const agent = await loadAgentFromOpts(opts);
-    if (!agent.feishu.connected) {
-      throw new Error(`Agent ${agentId} has no Feishu connection configured`);
-    }
+    const { client } = await feishuMessageClientForOpts(
+      opts,
+      deps.createFeishuMessageClient ?? createDefaultFeishuMessageClient,
+    );
     await runFeishuFileSend({
       agentId,
       caption,
-      client: (deps.createFeishuMessageClient ?? createDefaultFeishuMessageClient)(agent.feishu),
+      client,
       files: validated,
       opts,
       target: {

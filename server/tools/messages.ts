@@ -29,6 +29,7 @@ import { outcomeLine, type OutcomePart } from './outcome-line.js';
 import {
   loadAgentFromOpts,
   currentFeishuItem,
+  feishuMessageClientForOpts,
   resolveToolAgentId,
   slackWebClientForOpts,
   withToolActivity,
@@ -186,9 +187,7 @@ async function runFeishuMessageSend(input: {
   threadMessageId?: string;
   writeOutput?: (line: string) => void;
 }): Promise<void> {
-  const agent = await loadAgentFromOpts(input.opts);
-  if (!agent.feishu.connected) throw new Error(`Agent ${input.agentId} has no Feishu connection configured`);
-  const client = input.createFeishuMessageClient(agent.feishu);
+  const { client } = await feishuMessageClientForOpts(input.opts, input.createFeishuMessageClient);
   const basePayload = {
     ...(input.target.receiveIdType === 'chat_id' ? { channel: input.target.receiveId } : {}),
     channelDisplayName: input.target.displayName,
@@ -369,9 +368,7 @@ async function runFeishuMessageUpdate(input: {
   if (!input.targetMessageId.startsWith('om_')) {
     throw new Error('Feishu message update requires --message-ts to be a Feishu message_id (om_...)');
   }
-  const agent = await loadAgentFromOpts(input.opts);
-  if (!agent.feishu.connected) throw new Error(`Agent ${input.agentId} has no Feishu connection configured`);
-  const client = input.createFeishuMessageClient(agent.feishu);
+  const { client } = await feishuMessageClientForOpts(input.opts, input.createFeishuMessageClient);
   if (!client.updatePost) {
     throw new Error('Feishu message client does not support message.update');
   }
