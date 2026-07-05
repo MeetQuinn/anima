@@ -42,13 +42,16 @@ export interface FeishuMessageTransportDeps {
 
 export class FeishuMessageTransport implements MessageTransport {
   readonly kind = 'feishu';
+  private readonly client: FeishuMessageClient;
   private displayInfoSyncInFlight = false;
   private wsClient?: FeishuWsClient;
 
   constructor(
     private readonly options: FeishuMessageTransportOptions,
     private readonly deps: FeishuMessageTransportDeps = {},
-  ) {}
+  ) {
+    this.client = this.deps.createMessageClient?.(this.options.config) ?? createFeishuMessageClient(this.options.config);
+  }
 
   async start(): Promise<void> {
     const wsClient = this.deps.createWsClient?.(this.options.config) ?? createFeishuWsClient(this.options.config);
@@ -87,9 +90,6 @@ export class FeishuMessageTransport implements MessageTransport {
       console.log(JSON.stringify(feishuIgnoredLog(this.options.agentRuntimeKind), null, 2));
       return;
     }
-    event = await this.enrichDirectory(event, receiveEvent);
-    event = await this.enrichWithQuotedMessage(event);
-    this.maybeSyncDisplayInfo();
     const duplicate = Boolean(await this.options.queue.hasSeen(event.id));
     const runtimeDecision = await feishuRuntimeDecision(event, {
       agentId: this.options.queue.agentId,
@@ -100,6 +100,9 @@ export class FeishuMessageTransport implements MessageTransport {
       console.log(JSON.stringify(feishuIgnoredLog(this.options.agentRuntimeKind, runtimeDecision.reason), null, 2));
       return;
     }
+    event = await this.enrichDirectory(event, receiveEvent);
+    event = await this.enrichWithQuotedMessage(event);
+    this.maybeSyncDisplayInfo();
     const queuedEvent: FeishuInboxItem = runtimeDecision.attentionSuggestion
       ? { ...event, attentionSuggestion: runtimeDecision.attentionSuggestion }
       : event;
@@ -119,12 +122,11 @@ export class FeishuMessageTransport implements MessageTransport {
     // Only wake on human reactions, not bot-generated ones or unknown operators.
     if (reactionEvent.operator_type !== 'user') return;
 
-    const client = this.deps.createMessageClient?.(this.options.config) ?? createFeishuMessageClient(this.options.config);
-    if (!client.getMessage) return;
+    if (!this.client.getMessage) return;
 
-    let message: Awaited<ReturnType<NonNullable<typeof client.getMessage>>>;
+    let message: FeishuConversationMessage | undefined;
     try {
-      message = await client.getMessage({ messageId: reactionEvent.message_id });
+      message = await this.client.getMessage({ messageId: reactionEvent.message_id });
     } catch {
       return;
     }
@@ -168,10 +170,9 @@ export class FeishuMessageTransport implements MessageTransport {
 
   private async enrichWithQuotedMessage(event: FeishuInboxItem): Promise<FeishuInboxItem> {
     if (!event.parentId) return event;
-    const client = this.deps.createMessageClient?.(this.options.config) ?? createFeishuMessageClient(this.options.config);
-    if (!client.getMessage) return event;
+    if (!this.client.getMessage) return event;
     try {
-      const parent = await client.getMessage({ messageId: event.parentId });
+      const parent = await this.client.getMessage({ messageId: event.parentId });
       if (!parent) return event;
       const quoted = quotedMessageFromConversation(parent);
       if (!quoted) return event;
@@ -190,10 +191,9 @@ export class FeishuMessageTransport implements MessageTransport {
       tenantKey: event.tenantKey,
     });
     if (!directoryId) return event;
-    const client = this.deps.createMessageClient?.(this.options.config) ?? createFeishuMessageClient(this.options.config);
     try {
       return await new FeishuDirectoryService({ directoryId }).enrichInboxItem({
-        client,
+        client: this.client,
         item: event,
         receiveEvent,
       });
