@@ -741,6 +741,7 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
         '  console.log(JSON.stringify({ type: "rate_limit_event", rate_limit_info: { status: "allowed_warning", rateLimitType: "seven_day", resetsAt: "2026-05-21T00:00:00Z", utilization: 0.26, isUsingOverage: false }, session_id: "claude-session-1" }));',
         '  console.log(JSON.stringify({ type: "assistant", message: { usage: { input_tokens: 10, cache_read_input_tokens: 100, cache_creation_input_tokens: 5 }, content: [{ type: "tool_use", id: "toolu_read_1", name: "Read", input: { file_path: "/tmp/context.md" } }] }, session_id: "claude-session-1" }));',
         '  console.log(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_read_1", content: "file contents should stay out of agent text", is_error: false }] }, session_id: "claude-session-1" }));',
+        '  console.log(JSON.stringify({ type: "assistant", message: { usage: { input_tokens: 11, cache_read_input_tokens: 200, cache_creation_input_tokens: 6 }, content: [{ type: "tool_use", id: "toolu_skill_1", name: "Skill", input: { skill: "deep-research", args: "research usage telemetry and summarize with citations" } }] }, session_id: "claude-session-1" }));',
         '  console.log(JSON.stringify({ type: "assistant", message: { usage: { input_tokens: 11, cache_read_input_tokens: 200, cache_creation_input_tokens: 6 }, content: [{ type: "tool_use", id: "toolu_anima_1", name: "Bash", input: { command: "ANIMA_HOME=/tmp/anima anima file send --channel C1 /tmp/image.png", description: "Upload file" } }] }, session_id: "claude-session-1" }));',
         '  console.log(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_anima_1", content: "uploaded successfully", is_error: false }] }, session_id: "claude-session-1" }));',
         '  console.log(JSON.stringify({ type: "assistant", message: { usage: { input_tokens: 11, cache_read_input_tokens: 200, cache_creation_input_tokens: 6 }, content: [{ type: "tool_use", id: "toolu_parent_task", name: "Task", input: { description: "Research child" } }] }, session_id: "claude-session-1" }));',
@@ -818,6 +819,12 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
     assert.equal(providerToolActivity?.type, 'tool.call.started');
     assert.equal(providerToolActivity?.payload?.['target'], '/tmp/context.md');
     assert.equal(providerToolActivity?.payload?.['providerToolId'], 'toolu_read_1');
+    const skillToolActivity = firstActivities.find((activity) => activity.payload?.['providerToolId'] === 'toolu_skill_1');
+    assert.equal(skillToolActivity?.type, 'tool.call.started');
+    assert.equal(skillToolActivity?.payload?.['providerToolName'], 'Skill');
+    assert.equal(skillToolActivity?.payload?.['skill'], 'deep-research');
+    assert.equal(skillToolActivity?.payload?.['args'], 'research usage telemetry and summarize with citations');
+    assert.equal(skillToolActivity?.payload?.['target'], 'deep-research');
     const childToolActivity = firstActivities.find((activity) => activity.payload?.['providerToolId'] === 'toolu_child_read');
     assert.equal(childToolActivity?.type, 'tool.call.started');
     assert.equal(childToolActivity?.payload?.['parentToolCallId'], 'toolu_parent_task');

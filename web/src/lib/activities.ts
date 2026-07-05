@@ -518,7 +518,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     return tool_('Edited', pickString(payload, ['target']), pickString(payload, ['diff']));
   }
   if (bare === 'agent') return tool_('Delegated to subagent', pickString(payload, ['target', 'description']));
-  if (bare === 'skill') return tool_('Ran skill', pickString(payload, ['target', 'name']));
+  if (bare === 'skill') return skillActivityRow(payload);
   if (bare === 'taskcreate') return tool_('Created task', pickString(payload, ['target', 'title']));
   if (bare === 'taskupdate') return tool_('Updated task', pickString(payload, ['target', 'title']));
 
@@ -579,6 +579,17 @@ function tool_(title: string, target?: string, targetFull?: string): ActivityRow
     color: COLOR_TOOL,
     kind: 'tool',
   };
+}
+
+function skillActivityRow(payload: Record<string, unknown>): ActivityRow {
+  const skill = pickString(payload, ['skill', 'target']);
+  // Older records from delegated Claude subagents only carried `name`.
+  const nameFallback = skill ? '' : pickString(payload, ['name']);
+  const args = pickString(payload, ['args', 'arguments']);
+  const subject = skill || nameFallback;
+  const inline = [subject, args].filter(Boolean).join(' · ');
+  const full = subject && args ? `${subject}\n\n${args}` : inline;
+  return tool_('Ran skill', truncatedTarget(inline, 220).target, full);
 }
 
 function outboundFailureRow(tool: string, error: string): ActivityRow | undefined {
