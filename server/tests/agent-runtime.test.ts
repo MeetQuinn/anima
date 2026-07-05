@@ -1033,7 +1033,7 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
     await waitFor(async () => {
       const state = JSON.parse(await readFile(tmuxStatePath, 'utf8')) as { sends?: number };
       return state.sends === 1;
-    });
+    }, 5_000);
 
     const followupCtx = await ingestEvent(
       makeSlackEvent({
@@ -1149,7 +1149,7 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
     await waitFor(async () => {
       const currentState = JSON.parse(await readFile(tmuxStatePath, 'utf8')) as { prompts?: string[] };
       return currentState.prompts?.some((prompt) => prompt.includes('Post a daily stand-up to #team.')) === true;
-    });
+    }, 5_000);
 
     const reminderFollowupCtx = await ingestEvent(
       makeReminderInboxItem({
@@ -1190,6 +1190,146 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
     const reminderActivities = await activitiesForInboxItemWindow('anima', reminderCtx.item.id);
     assert.ok(reminderActivities.some((activity) => activity.type === 'runtime.completed'));
     assert.equal(reminderActivities.some((activity) => activity.type === 'runtime.failed'), false);
+    await runtime.close?.();
+    runtime = undefined;
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('claude-code tmux transport memoizes liveness and health does not spawn', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+    const callsPath = join(stateDir, 'tmux-liveness-calls.jsonl');
+    const tmuxStatePath = join(stateDir, 'tmux-liveness-state.json');
+    const fakeTmux = join(stateDir, 'tmux');
+    await writeFile(
+      fakeTmux,
+      [
+        '#!/usr/bin/env node',
+        "import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';",
+        "const callsPath = process.env.TMUX_CALLS_PATH;",
+        "const statePath = process.env.TMUX_STATE_PATH;",
+        "if (!callsPath || !statePath) process.exit(90);",
+        "const args = process.argv.slice(2);",
+        "appendFileSync(callsPath, JSON.stringify({ args }) + '\\n');",
+        "const load = () => existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : { buffers: {}, sessions: {} };",
+        "const save = (state) => writeFileSync(statePath, JSON.stringify(state, null, 2));",
+        "const valueAfter = (flag) => args[args.indexOf(flag) + 1];",
+        "const state = load();",
+        "if (args[0] === '-V') { console.log('tmux 3.4-test'); process.exit(0); }",
+        "if (args[0] === 'has-session') process.exit(state.sessions[valueAfter('-t')] ? 0 : 1);",
+        "if (args[0] === 'new-session') {",
+        "  const session = valueAfter('-s');",
+        "  state.sessions[session] = { command: args.at(-1), capture: 'bypass permissions on' };",
+        "  save(state);",
+        "  process.exit(0);",
+        "}",
+        "if (args[0] === 'pipe-pane') { save(state); process.exit(0); }",
+        "if (args[0] === 'capture-pane') { console.log(state.sessions[valueAfter('-t')]?.capture || 'bypass permissions on'); process.exit(0); }",
+        "if (args[0] === 'load-buffer') { state.buffers[valueAfter('-b')] = args.at(-1); save(state); process.exit(0); }",
+        "if (args[0] === 'paste-buffer') { save(state); process.exit(0); }",
+        "if (args[0] === 'delete-buffer') { delete state.buffers[valueAfter('-b')]; save(state); process.exit(0); }",
+        "if (args[0] === 'send-keys') {",
+        "  if (args.includes('C-m')) {",
+        "    const session = valueAfter('-t');",
+        "    const command = state.sessions[session]?.command || '';",
+        "    const mcpMatch = command.match(/'--mcp-config'\\s+'([^']+)'/);",
+        "    if (!mcpMatch) process.exit(91);",
+        "    const mcp = JSON.parse(readFileSync(mcpMatch[1], 'utf8'));",
+        "    const mcpArgs = mcp.mcpServers.anima.args;",
+        "    const targetFile = mcpArgs[mcpArgs.indexOf('--target-file') + 1];",
+        "    const target = JSON.parse(readFileSync(targetFile, 'utf8'));",
+        "    writeFileSync(target.completionFile, JSON.stringify({ status: 'completed' }) + '\\n', 'utf8');",
+        "  }",
+        "  save(state);",
+        "  process.exit(0);",
+        "}",
+        "process.exit(92);",
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await chmod(fakeTmux, 0o755);
+
+    runtime = createAgentRuntime({
+      env: runtimeTestEnv(stateDir, { TMUX_CALLS_PATH: callsPath, TMUX_STATE_PATH: tmuxStatePath }),
+      kind: 'claude-code',
+      transport: 'tmux',
+    });
+
+    const firstCtx = await ingestEvent(
+      makeSlackEvent({
+        channelId: 'D-anima',
+        teamId: 'T-demo',
+        text: 'First tmux liveness turn.',
+        userId: 'U1',
+      }),
+      { agentId: 'anima', stateDir },
+    );
+    await runtime.run(await runtimeInput(runtime, firstCtx, await loadState()));
+    const afterCreateChecks = await countTmuxCalls(callsPath, 'has-session');
+
+    runtime.health?.();
+    runtime.health?.();
+    assert.equal(await countTmuxCalls(callsPath, 'has-session'), afterCreateChecks);
+
+    const secondCtx = await ingestEvent(
+      makeSlackEvent({
+        channelId: 'D-anima',
+        teamId: 'T-demo',
+        text: 'Second tmux liveness turn.',
+        ts: '1770001000.000001',
+        userId: 'U1',
+      }),
+      { agentId: 'anima', stateDir },
+    );
+    await runtime.run(await runtimeInput(runtime, secondCtx, await loadState()));
+    const afterFreshCheck = await countTmuxCalls(callsPath, 'has-session');
+    assert.equal(afterFreshCheck, afterCreateChecks + 1);
+
+    const thirdCtx = await ingestEvent(
+      makeSlackEvent({
+        channelId: 'D-anima',
+        teamId: 'T-demo',
+        text: 'Third tmux liveness turn.',
+        ts: '1770001000.000002',
+        userId: 'U1',
+      }),
+      { agentId: 'anima', stateDir },
+    );
+    await runtime.run(await runtimeInput(runtime, thirdCtx, await loadState()));
+    assert.equal(await countTmuxCalls(callsPath, 'has-session'), afterFreshCheck);
+
+    await sleepForTest(3_100);
+    const fourthCtx = await ingestEvent(
+      makeSlackEvent({
+        channelId: 'D-anima',
+        teamId: 'T-demo',
+        text: 'Fourth tmux liveness turn.',
+        ts: '1770001000.000003',
+        userId: 'U1',
+      }),
+      { agentId: 'anima', stateDir },
+    );
+    await runtime.run(await runtimeInput(runtime, fourthCtx, await loadState()));
+    assert.equal(await countTmuxCalls(callsPath, 'has-session'), afterFreshCheck + 1);
+
+    const killedState = JSON.parse(await readFile(tmuxStatePath, 'utf8')) as { sessions?: Record<string, unknown> };
+    killedState.sessions = {};
+    await writeFile(tmuxStatePath, `${JSON.stringify(killedState, null, 2)}\n`, 'utf8');
+    const beforeHealthRefresh = await countTmuxCalls(callsPath, 'has-session');
+    await sleepForTest(3_100);
+    assert.equal(runtime.health?.().child?.alive, true);
+    await waitFor(async () =>
+      await countTmuxCalls(callsPath, 'has-session') === beforeHealthRefresh + 1,
+    );
+    assert.equal(runtime.health?.().child?.alive, false);
+
     await runtime.close?.();
     runtime = undefined;
     });
@@ -2207,6 +2347,21 @@ function runtimeTestEnv(binDir: string, env: Record<string, string> = {}): Recor
     ...env,
     PATH: [binDir, process.env.PATH ?? ''].filter(Boolean).join(':'),
   };
+}
+
+async function countTmuxCalls(path: string, command: string): Promise<number> {
+  const content = await readFile(path, 'utf8').catch(() => '');
+  return content
+    .split('\n')
+    .filter(Boolean)
+    .filter((line) => {
+      const parsed = JSON.parse(line) as { args?: string[] };
+      return parsed.args?.[0] === command;
+    }).length;
+}
+
+function sleepForTest(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function waitForPredicate(predicate: () => boolean | Promise<boolean>): Promise<boolean> {

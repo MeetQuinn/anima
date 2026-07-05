@@ -1,7 +1,8 @@
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import { isRecord, stringField } from "../json.js";
 import { runtimeErrorPayload } from "../activities/format.js";
@@ -30,9 +31,11 @@ import {
 const TMUX_COMPLETION_POLL_INTERVAL_MS = 250;
 const TMUX_READY_POLL_INTERVAL_MS = 500;
 const TMUX_READY_TIMEOUT_MS = 30_000;
+const TMUX_SESSION_EXISTS_CACHE_MS = 3_000;
 const TMUX_TURN_TIMEOUT_MS = 10 * 60 * 1000;
 const TMUX_TRANSPORT_NAME = "tmux";
 const TMUX_SESSION_PROTOCOL = "cli-complete-v1";
+const execFileAsync = promisify(execFile);
 
 interface ClaudeTmuxCompletionResult {
   text?: string;
@@ -45,7 +48,16 @@ interface TmuxSession {
   name: string;
   startedAt: string;
   targetFile: string;
+  tmuxAlive: boolean;
 }
+
+interface TmuxSessionExistsCacheEntry {
+  checkedAt: number;
+  promise?: Promise<boolean>;
+  value: boolean;
+}
+
+const tmuxSessionExistsCache = new Map<string, TmuxSessionExistsCacheEntry>();
 
 export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
   readonly env: Record<string, string> | undefined;
@@ -67,7 +79,15 @@ export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
   health(): AgentRuntimeHealth {
     const session = this.session;
     if (!session) return { childExpected: this.activeRun.isActive() };
-    const alive = tmuxSessionExists(session.name, session.env);
+    const cachedAlive = cachedTmuxSessionExists(session.name, session.env);
+    if (cachedAlive === undefined) {
+      void tmuxSessionExists(session.name, session.env)
+        .then((alive) => {
+          if (this.session === session) session.tmuxAlive = alive;
+        })
+        .catch(() => {});
+    }
+    const alive = cachedAlive ?? session.tmuxAlive;
     return {
       childExpected: true,
       child: {
@@ -143,7 +163,7 @@ export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
   }
 
   private async ensureSession(input: AgentRuntimeInput): Promise<TmuxSession> {
-    assertTmuxAvailable(input.env);
+    await assertTmuxAvailable(input.env);
     const agentId = input.env.ANIMA_AGENT_ID;
     if (!agentId)
       throw new Error(
@@ -158,8 +178,11 @@ export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
     });
     const existing =
       this.session?.name === sessionName ? this.session : undefined;
-    if (existing && tmuxSessionExists(existing.name, existing.env))
-      return existing;
+    if (existing) {
+      const existingAlive = await tmuxSessionExists(existing.name, existing.env);
+      existing.tmuxAlive = existingAlive;
+      if (existingAlive) return existing;
+    }
 
     const files = await writeTmuxFiles(input, sessionName);
     const systemPromptFilePath = await writeSystemPromptFile(input);
@@ -167,12 +190,15 @@ export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
       CLAUDE_COMMAND,
       ...this.claudeArgs(files.mcpConfigFile, systemPromptFilePath),
     ]);
-    if (!tmuxSessionExists(sessionName, input.env)) {
-      tmux(["new-session", "-d", "-s", sessionName, "-c", input.cwd, command], {
+    let sessionAlive = await tmuxSessionExists(sessionName, input.env);
+    if (!sessionAlive) {
+      await tmux(["new-session", "-d", "-s", sessionName, "-c", input.cwd, command], {
         env: input.env,
       });
+      invalidateTmuxSessionExists(sessionName, input.env);
+      sessionAlive = true;
     }
-    tmux(
+    await tmux(
       [
         "pipe-pane",
         "-o",
@@ -190,6 +216,7 @@ export class ClaudeCodeTmuxAgentRuntime implements AgentRuntime {
       env: input.env,
       name: sessionName,
       startedAt: nowIso(),
+      tmuxAlive: sessionAlive,
     };
     return this.session;
   }
@@ -359,18 +386,18 @@ async function sendTmuxPrompt(input: {
   const promptFile = join(input.workDir, `prompt-${id}.txt`);
   const bufferName = `anima-${id}`;
   await writeFile(promptFile, input.prompt, "utf8");
-  tmux(["load-buffer", "-b", bufferName, promptFile], { env: input.env });
+  await tmux(["load-buffer", "-b", bufferName, promptFile], { env: input.env });
   try {
-    tmux(["paste-buffer", "-p", "-r", "-b", bufferName, "-t", input.session], {
+    await tmux(["paste-buffer", "-p", "-r", "-b", bufferName, "-t", input.session], {
       env: input.env,
     });
   } finally {
-    tmux(["delete-buffer", "-b", bufferName], {
+    await tmux(["delete-buffer", "-b", bufferName], {
       allowFailure: true,
       env: input.env,
     });
   }
-  tmux(["send-keys", "-t", input.session, "C-m"], { env: input.env });
+  await tmux(["send-keys", "-t", input.session, "C-m"], { env: input.env });
 }
 
 async function waitForTmuxReady(
@@ -381,7 +408,7 @@ async function waitForTmuxReady(
   while (Date.now() - startedAt < TMUX_READY_TIMEOUT_MS) {
     if (input.signal?.aborted) throw new Error("Claude Code tmux turn aborted");
     input.onActivity?.();
-    const captured = tmux(
+    const captured = await tmux(
       ["capture-pane", "-p", "-J", "-S", "-120", "-t", session.name],
       {
         allowFailure: true,
@@ -392,7 +419,7 @@ async function waitForTmuxReady(
     if (
       /Quick safety check|Yes, I trust this folder|Enter to confirm/.test(text)
     ) {
-      tmux(["send-keys", "-t", session.name, "C-m"], {
+      await tmux(["send-keys", "-t", session.name, "C-m"], {
         allowFailure: true,
         env: session.env,
       });
@@ -431,52 +458,114 @@ async function readCompletionFile(
   return { text: stringField(value, "text") };
 }
 
-function assertTmuxAvailable(env: NodeJS.ProcessEnv): void {
-  const result = spawnSync("tmux", ["-V"], {
-    encoding: "utf8",
-    env: { ...process.env, ...env },
-  });
+async function assertTmuxAvailable(env: NodeJS.ProcessEnv): Promise<void> {
+  const result = await tmux(["-V"], { allowFailure: true, env });
   if (result.status !== 0)
     throw new Error("tmux is required for Claude Code Tmux session transport");
 }
 
-function tmux(
+async function tmux(
   args: string[],
   options: {
     allowFailure?: boolean;
     env?: NodeJS.ProcessEnv;
   } = {},
-): { status: number | null; stdout?: string; stderr?: string } {
-  const result = spawnSync("tmux", args, {
-    encoding: "utf8",
-    env: { ...process.env, ...(options.env ?? {}) },
-  });
-  if (options.allowFailure) {
+): Promise<{ status: number | null; stdout?: string; stderr?: string }> {
+  try {
+    const result = await execFileAsync("tmux", args, {
+      encoding: "utf8",
+      env: { ...process.env, ...(options.env ?? {}) },
+    });
     return {
-      status: result.status,
+      status: 0,
       stderr: result.stderr,
       stdout: result.stdout,
     };
+  } catch (error) {
+    if (isExecFileError(error) && options.allowFailure) {
+      return {
+        status: typeof error.code === "number" ? error.code : null,
+        stderr: error.stderr,
+        stdout: error.stdout,
+      };
+    }
+    invalidateTmuxSessionExistsCache();
+    if (isExecFileError(error) && typeof error.code === "number") {
+      const output = error.stderr || error.stdout || `exit ${error.code}`;
+      throw new Error(
+        `tmux ${args.join(" ")} failed: ${output}`.trim(),
+      );
+    }
+    throw error;
   }
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(
-      `tmux ${args.join(" ")} failed: ${result.stderr || result.stdout}`.trim(),
-    );
-  }
-  return {
-    status: result.status,
-    stderr: result.stderr,
-    stdout: result.stdout,
-  };
 }
 
-function tmuxSessionExists(session: string, env?: NodeJS.ProcessEnv): boolean {
-  const result = tmux(["has-session", "-t", session], {
+function cachedTmuxSessionExists(
+  session: string,
+  env?: NodeJS.ProcessEnv,
+): boolean | undefined {
+  const entry = tmuxSessionExistsCache.get(
+    tmuxSessionExistsCacheKey(session, env),
+  );
+  if (!entry || Date.now() - entry.checkedAt > TMUX_SESSION_EXISTS_CACHE_MS)
+    return undefined;
+  return entry.value;
+}
+
+async function tmuxSessionExists(
+  session: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<boolean> {
+  const key = tmuxSessionExistsCacheKey(session, env);
+  const now = Date.now();
+  const cached = tmuxSessionExistsCache.get(key);
+  if (cached && now - cached.checkedAt <= TMUX_SESSION_EXISTS_CACHE_MS) {
+    if (cached.promise) return cached.promise;
+    return cached.value;
+  }
+
+  const entry: TmuxSessionExistsCacheEntry = {
+    checkedAt: now,
+    value: cached?.value ?? false,
+  };
+  const promise = tmux(["has-session", "-t", session], {
     allowFailure: true,
     env,
+  }).then((result) => {
+    const value = result.status === 0;
+    tmuxSessionExistsCache.set(key, { checkedAt: Date.now(), value });
+    return value;
+  }).catch(() => {
+    if (tmuxSessionExistsCache.get(key) === entry)
+      tmuxSessionExistsCache.delete(key);
+    return false;
   });
-  return result.status === 0;
+  entry.promise = promise;
+  tmuxSessionExistsCache.set(key, entry);
+  return promise;
+}
+
+function invalidateTmuxSessionExists(session: string, env?: NodeJS.ProcessEnv): void {
+  tmuxSessionExistsCache.delete(tmuxSessionExistsCacheKey(session, env));
+}
+
+function invalidateTmuxSessionExistsCache(): void {
+  tmuxSessionExistsCache.clear();
+}
+
+function tmuxSessionExistsCacheKey(
+  session: string,
+  env?: NodeJS.ProcessEnv,
+): string {
+  return `${env?.TMUX ?? ""}\0${env?.TMUX_TMPDIR ?? ""}\0${session}`;
+}
+
+function isExecFileError(error: unknown): error is Error & {
+  code?: number | string;
+  stderr?: string;
+  stdout?: string;
+} {
+  return error instanceof Error;
 }
 
 function tmuxSessionName(input: {
