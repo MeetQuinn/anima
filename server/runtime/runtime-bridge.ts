@@ -5,6 +5,7 @@ import { resolveAnimaHome } from '../anima-home.js';
 import type { InboxItem } from '../inbox/wake-queue.service.js';
 import type { RuntimeItemContext } from './types.js';
 import { reminderServiceForAgent } from '../reminders/reminder.service.js';
+import { FOLLOWUP_NOTE } from './delivery-notes.js';
 import {
   recordAgentText,
   recordRuntimeActivity,
@@ -29,11 +30,10 @@ import type {
   ProviderSessionRecord,
 } from '../providers/contract.js';
 
-const FOLLOWUP_NOTE = 'Anima note: this message arrived while you were mid-task. '
-  + 'Finish or pause your current work as you judge best, but address it before the turn ends: '
-  + 'an unanswered mid-turn message is a dropped one.';
-
 export class AgentRuntimeBridge {
+  private currentRunItemId: string | undefined;
+  private readonly followupNoteInjectedForItemIds = new Set<string>();
+
   constructor(private readonly runtime: AgentRuntime) {}
 
   async runInput(input: {
@@ -45,6 +45,7 @@ export class AgentRuntimeBridge {
     signal?: AbortSignal;
     suppressFailureRecord?: boolean;
   }): Promise<AgentRuntimeInput> {
+    this.notePrimaryRun(input.context.item.id);
     const promptContext = await this.promptContext(input.context.item, input.context.agentId);
     const prompt = buildCodeAgentDeliveryPrompt(input.context.item, promptContext);
     return {
@@ -67,11 +68,24 @@ export class AgentRuntimeBridge {
     context: RuntimeItemContext;
   }): Promise<AgentRuntimeFollowupInput> {
     const promptContext = await this.promptContext(input.context.item, input.context.agentId);
+    const includeFollowupNote = this.shouldIncludeFollowupNote(input.activeContext.item.id);
     return {
       activeItemId: input.activeContext.item.id,
-      prompt: followupPrompt(buildCodeAgentDeliveryPrompt(input.context.item, promptContext)),
+      prompt: followupPrompt(buildCodeAgentDeliveryPrompt(input.context.item, promptContext), includeFollowupNote),
       itemId: input.context.item.id,
     };
+  }
+
+  private notePrimaryRun(itemId: string): void {
+    if (this.currentRunItemId === itemId) return;
+    this.currentRunItemId = itemId;
+    this.followupNoteInjectedForItemIds.clear();
+  }
+
+  private shouldIncludeFollowupNote(activeItemId: string): boolean {
+    if (this.followupNoteInjectedForItemIds.has(activeItemId)) return false;
+    this.followupNoteInjectedForItemIds.add(activeItemId);
+    return true;
   }
 
   private async promptContext(event: InboxItem, agentId: string): Promise<CodeAgentPromptContext> {
@@ -117,7 +131,8 @@ export class AgentRuntimeBridge {
   }
 }
 
-function followupPrompt(prompt: string): string {
+function followupPrompt(prompt: string, includeFollowupNote: boolean): string {
+  if (!includeFollowupNote) return prompt;
   if (prompt.startsWith(FOLLOWUP_NOTE)) return prompt;
   return `${FOLLOWUP_NOTE}\n\n${prompt}`;
 }

@@ -1406,7 +1406,7 @@ test('Feishu onboarding prompt targets the owner open_id without requiring an ow
   });
 
   assert.match(text, /^Agent onboarding:/);
-  assert.match(text, /\[platform=feishu owner=feishu-owner channel=ou_owner receive_id_type=open_id time=2026-01-01T00:00:00Z\]/);
+  assert.match(text, /\[platform=feishu channel=ou_owner receive_id_type=open_id time=2026-01-01T00:00:00Z user_id=ou_owner\]/);
   assert.match(text, /Your owner is the person who connected you to Feishu/);
   assert.doesNotMatch(text, /Reply target:|Use `anima message send/);
   assert.doesNotMatch(text, /Slack|Lark|<@|ou_owner.*owner is/);

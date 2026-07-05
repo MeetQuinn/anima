@@ -21,7 +21,11 @@ export async function runProviderWithCrashRetries(input: {
   let previousError: unknown;
   for (;;) {
     try {
-      return await input.agentRuntime.run(await input.buildInput(retryNoticeFor(retryCount, previousError)));
+      return await input.agentRuntime.run(await input.buildInput(retryNoticeFor({
+        itemId: input.itemId,
+        previousError,
+        retryCount,
+      })));
     } catch (error) {
       previousError = error;
       if (input.signal.aborted) throw error;
@@ -99,12 +103,18 @@ export async function recordFinalRuntimeFailure(input: {
   }
 }
 
-function retryNoticeFor(retryCount: number, previousError: unknown): string | undefined {
-  if (retryCount === 0) return undefined;
+function retryNoticeFor(input: {
+  itemId?: string;
+  previousError: unknown;
+  retryCount: number;
+}): string | undefined {
+  if (input.retryCount === 0) return undefined;
   return buildProviderCrashRetryDeliveryPrompt({
-    attempt: retryCount,
+    attempt: input.retryCount,
+    itemId: input.itemId,
     maxRetries: PROVIDER_CRASH_MAX_RETRIES,
-    previousError: errorMessage(previousError),
+    previousError: errorMessage(input.previousError),
+    time: nowIso(),
   });
 }
 

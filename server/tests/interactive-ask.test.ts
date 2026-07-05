@@ -159,7 +159,7 @@ test('interactive ask answer enqueues one choice_response with envelope context'
     const prompt = buildCodeAgentDeliveryPrompt(choice);
     assert.match(prompt, /^Choice response:/);
     assert.match(prompt, /Alice \(@alice, <@U-operator>\) selected: Hold/);
-    assert.match(prompt, /\[ask_id=.* channel=C-product thread_ts=1770000500\.000001/);
+    assert.match(prompt, /\[ask_id=.* channel=C-product thread_ts=1770000500\.000001 message_ts=1770000500\.000001 wake=ask_answered time=/);
     assert.doesNotMatch(prompt, /Reply target:|Use `anima message send/);
   });
 });
