@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -204,6 +204,39 @@ test('JsonFile cache serves the warm value across two readers in the same proces
     assert.deepEqual(first, { n: 42 });
     assert.deepEqual(second, { n: 42 });
     assert.strictEqual(first, second, 'cached reads share a reference; callers must not mutate the returned value');
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test('JsonFile update skips same-reference writes and persists new objects', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-jsonfile-update-noop-'));
+  try {
+    const path = join(dir, 'value.json');
+    const file = new JsonFile<{ count: number }>(path, () => ({ count: 0 }));
+
+    await file.write({ count: 1 });
+    const beforeStat = await stat(path);
+    const beforeContent = await readFile(path, 'utf8');
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const same = await file.update((current) => current);
+    const afterNoopStat = await stat(path);
+    const afterNoopContent = await readFile(path, 'utf8');
+
+    assert.deepEqual(same, { count: 1 });
+    assert.equal(afterNoopStat.mtimeMs, beforeStat.mtimeMs);
+    assert.equal(afterNoopContent, beforeContent);
+    assert.deepEqual(await file.read(), { count: 1 });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const changed = await file.update((current) => ({ count: current.count + 1 }));
+    const afterWriteStat = await stat(path);
+
+    assert.deepEqual(changed, { count: 2 });
+    assert.ok(afterWriteStat.mtimeMs > afterNoopStat.mtimeMs);
+    assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), { count: 2 });
+    assert.deepEqual(await file.read(), { count: 2 });
   } finally {
     await rm(dir, { force: true, recursive: true });
   }

@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { makeSlackEvent } from './helpers/slack.js';
@@ -14,10 +14,12 @@ import { isFirstClassAnimaCliCommand } from '../activities/format.js';
 import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
 import { startChildProcess, terminateChildProcess } from '../providers/child-process.js';
 import { clearRestartDrain, requestRestartDrain } from '../services/restart-drain.js';
+import { recordRuntimeEvent } from '../runtime/activity.js';
 import { AgentHealthStore } from '../runtime/agent-health.store.js';
 import { AgentHealthService } from '../runtime/agent-health.service.js';
 import { AgentRestartCommandStore } from '../runtime/agent-restart-command.store.js';
 import { managedProviderEnvForAgent, RuntimeHost, type RunningAgentHandle } from '../runtime/host.js';
+import { RuntimeSessionService } from '../runtime/runtime-session.service.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
 import { withAnimaHome } from './anima-home.js';
 
@@ -77,6 +79,58 @@ test('first-class anima CLI command detection covers plain agent-facing tools', 
   assert.equal(isFirstClassAnimaCliCommand('anima subscription mute --channel C123'), true);
   assert.equal(isFirstClassAnimaCliCommand('anima message send --channel C123'), true);
   assert.equal(isFirstClassAnimaCliCommand('cd ~/anima && ANIMA_AGENT_ID=scout anima ask --question "Pick"'), false);
+});
+
+test('recordRuntimeEvent skips runtime stats updates for noise events', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-activity-noise-'));
+  const updateRuntimeStats = mock.method(
+    RuntimeSessionService.prototype,
+    'updateRuntimeStats',
+    async () => undefined,
+  );
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await recordRuntimeEvent({ agentId: 'anima' }, 'claude-code', undefined, {
+        eventType: 'claude.stream.content.delta',
+        text: 'token',
+      });
+
+      assert.equal(updateRuntimeStats.mock.callCount(), 0);
+    });
+  } finally {
+    updateRuntimeStats.mock.restore();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('recordRuntimeEvent updates runtime stats for session stats events', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-activity-stats-'));
+  const updateRuntimeStats = mock.method(
+    RuntimeSessionService.prototype,
+    'updateRuntimeStats',
+    async () => undefined,
+  );
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await recordRuntimeEvent({ agentId: 'anima' }, 'codex-cli', undefined, {
+        eventType: 'codex.session.stats',
+        inputTokens: 12,
+        outputTokens: 3,
+      });
+
+      assert.equal(updateRuntimeStats.mock.callCount(), 1);
+      const call = updateRuntimeStats.mock.calls[0];
+      assert.ok(call);
+      assert.equal(call.arguments[0], 'codex-cli');
+      const activity = call.arguments[2];
+      assert.ok(activity);
+      assert.ok(activity.payload);
+      assert.equal(activity.payload.eventType, 'codex.session.stats');
+    });
+  } finally {
+    updateRuntimeStats.mock.restore();
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 test('runtime host idles with zero agents and starts a newly runnable agent once', async () => {

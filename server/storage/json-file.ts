@@ -58,6 +58,7 @@ export class JsonFile<T> {
     return withFileLock(this.path, async () => {
       const current = await this.readUnlocked();
       const next = await op(current);
+      if (next === current) return next;
       await writeAtomic(this.path, next);
       await this.refreshCache(next);
       return next;
