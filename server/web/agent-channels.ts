@@ -15,6 +15,8 @@ import type {
   AgentMessageRecord,
 } from '../../shared/messages.js';
 
+export const CHANNEL_LIST_MESSAGE_WINDOW = 3_000;
+
 function isFeishuChatId(id: string): boolean {
   return id.startsWith('oc_');
 }
@@ -76,11 +78,10 @@ function displayNameForMessage(message: AgentMessageRecord, kind: 'channel' | 'd
   return cleanChannelName(message.channelName) ?? cleanChannelName(message.channelDisplayName);
 }
 
-// Pure composition: local message-history conversations only. A channel or DM
-// appears if the agent has at least one local Slack message for that surface.
-// Subscriptions overlay muted/following status and activity timestamps, but they
-// never create rows by themselves. That intentionally means silent adds are not
-// listed, and historical channels remain visible if the local ledger has them.
+// Pure composition: recent local message-history conversations plus active
+// channel subscriptions. Subscriptions overlay muted/following status and
+// activity timestamps, and channel subscriptions create rows for subscribed but
+// quiet channels.
 export function composeChannelList(input: {
   subscriptions: SubscriptionRecord[];
   messages: AgentMessageRecord[];
@@ -121,10 +122,21 @@ export function composeChannelList(input: {
   const subscriptionByChannel = bestSubscriptionByChannel(input.subscriptions);
   for (const [channelId, subscription] of subscriptionByChannel) {
     const channel = byId.get(channelId);
-    if (!channel) continue;
-    channel.status = subscriptionStatus(subscription);
-    channel.lastActivityAt = laterOf(channel.lastActivityAt, subscription.lastActivityAt);
-    channel.lastPostedAt = laterOf(channel.lastPostedAt, subscription.lastPostedAt);
+    if (channel) {
+      channel.status = subscriptionStatus(subscription);
+      channel.lastActivityAt = laterOf(channel.lastActivityAt, subscription.lastActivityAt);
+      channel.lastPostedAt = laterOf(channel.lastPostedAt, subscription.lastPostedAt);
+      continue;
+    }
+    const subscribedChannel: AgentChannelSummary = {
+      id: channelId,
+      platform: 'slack',
+      kind: kindForChannelId(channelId),
+      status: subscriptionStatus(subscription),
+    };
+    if (subscription.lastActivityAt) subscribedChannel.lastActivityAt = subscription.lastActivityAt;
+    if (subscription.lastPostedAt) subscribedChannel.lastPostedAt = subscription.lastPostedAt;
+    byId.set(channelId, subscribedChannel);
   }
 
   const channels = [...byId.values()].sort((a, b) => {
@@ -156,7 +168,7 @@ function dmCounterpartsByChannel(messages: AgentMessageRecord[]): Map<string, st
   return byChannel;
 }
 
-// IO wrapper: fetch local message history + subscription overlay. The durable
+// IO wrapper: fetch bounded local message history + subscription overlay. The durable
 // message ledger never persists sender avatars, so DM rows would render from
 // raw records with no photo and fall back to the initial letter, even though
 // the detail-pane bylines (served by the already-enriched /messages route) show
@@ -172,7 +184,7 @@ export async function buildAgentChannelList(
 ): Promise<AgentChannelListResponse> {
   const [subscriptions, messages] = await Promise.all([
     listSubscriptionsForAgent(agentId),
-    messageServiceForAgent(agentId).listAll(),
+    messageServiceForAgent(agentId).listLatest({ limit: CHANNEL_LIST_MESSAGE_WINDOW }),
   ]);
 
   const dmCounterparts = dmCounterpartsByChannel(messages);

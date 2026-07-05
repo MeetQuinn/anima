@@ -93,10 +93,10 @@ export function normalizeHistoryLimit(limit: number | undefined): number {
   return Math.min(Math.max(1, Math.trunc(limit as number)), 500);
 }
 
-// Channels tab: Slack channels + DMs with local message history. This is a
-// conversation-history view, not a current Slack membership inventory: silent
-// adds with no messages are absent, and historical channels remain visible if
-// the local ledger contains them. Slack only in v1.
+// Channels tab: Slack channels + DMs with recent local message history, plus
+// active Slack channel subscriptions. This is not a current Slack membership
+// inventory; quiet channels without local history appear only when subscribed.
+// Slack only in v1.
 export type AgentChannelKind = 'channel' | 'dm';
 
 export interface AgentChannelSummary {

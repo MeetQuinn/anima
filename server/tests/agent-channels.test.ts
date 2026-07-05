@@ -1,11 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { buildAgentChannelList, composeChannelList } from '../web/agent-channels.js';
+import {
+  buildAgentChannelList,
+  CHANNEL_LIST_MESSAGE_WINDOW,
+  composeChannelList,
+} from '../web/agent-channels.js';
 import type { AvatarEnrichmentDeps } from '../web/message-profiles.js';
 import { memberChannelsResultForAgent } from '../inbox/member-channels.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
@@ -86,7 +90,7 @@ test('channels are derived from local Slack message history', () => {
   }]);
 });
 
-test('subscription-only channels do not appear without local message history', () => {
+test('subscription-only channels appear without local message history', () => {
   const res = composeChannelList({
     subscriptions: [
       channelSub({
@@ -97,7 +101,13 @@ test('subscription-only channels do not appear without local message history', (
     ],
     messages: [],
   });
-  assert.equal(res.channels.length, 0);
+  assert.deepEqual(res.channels, [{
+    id: 'C-silent',
+    platform: 'slack',
+    kind: 'channel',
+    status: 'muted',
+    lastActivityAt: '2026-06-22T10:00:00.000Z',
+  }]);
 });
 
 test('historical channels remain visible when local message history exists', () => {
@@ -409,6 +419,42 @@ test('buildAgentChannelList resolves zero avatars for a channel-only history', a
         'channel should still be listed',
       );
       assert.equal(resolverCalls, 0, 'no avatar resolution for channel-only history');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('buildAgentChannelList reads only the bounded newest message window', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-channels-window-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const agentDir = join(stateDir, 'agents/scout');
+      await mkdir(join(agentDir, 'messages.archive'), { recursive: true });
+      await writeFile(join(agentDir, 'messages.archive/0000000000001-messages-000.jsonl'), '{bad json}\n', 'utf8');
+
+      const records: AgentMessageRecord[] = [];
+      for (let index = 0; index <= CHANNEL_LIST_MESSAGE_WINDOW; index += 1) {
+        const timestamp = new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString();
+        const channelId = index === 0 ? 'C-too-old' : index === 1 ? 'C-edge' : 'C-new';
+        records.push(channelMessage({
+          channelId,
+          channelName: channelId.slice(2).toLowerCase(),
+          messageId: `m-${index}`,
+          timestamp,
+        }));
+      }
+      await writeFile(
+        join(agentDir, 'messages.jsonl'),
+        `${records.map((record) => JSON.stringify(record)).join('\n')}\n`,
+        'utf8',
+      );
+
+      const res = await buildAgentChannelList('scout');
+      const ids = res.channels.map((channel) => channel.id);
+      assert.ok(ids.includes('C-new'), 'new messages inside the window should be listed');
+      assert.ok(ids.includes('C-edge'), 'the oldest message inside the window should be listed');
+      assert.equal(ids.includes('C-too-old'), false, 'messages older than the window should not be listed');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

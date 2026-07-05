@@ -153,10 +153,9 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
       return enrichInboundAvatars(request.params.agentId, page);
     },
   );
-  // Channels tab: Slack channels + DMs with local message history. This is a
-  // fast conversation-history view (no Slack membership fetch): silent adds with
-  // no messages are absent, and historical channels remain visible if the local
-  // ledger contains them. See server/web/agent-channels.ts.
+  // Channels tab: Slack channels + DMs with bounded local message history plus
+  // active channel subscriptions. This is a fast conversation-history view with
+  // no Slack membership fetch. See server/web/agent-channels.ts.
   //
   // `/channels` is the current name; `/subscriptions` is kept as a back-compat
   // alias for any client still on the old path.
