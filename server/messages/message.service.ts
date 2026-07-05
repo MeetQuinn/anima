@@ -57,10 +57,6 @@ export class MessageService {
     return this.store.readLatest({ limit: input.limit });
   }
 
-  async listAll(): Promise<AgentMessageRecord[]> {
-    return this.store.readAll();
-  }
-
   async latestMessageAt(): Promise<string | undefined> {
     return (await this.store.readLatest({ limit: 1 }))[0]?.timestamp;
   }

@@ -10,9 +10,7 @@ import {
 } from './messages.js';
 import { runMessageSearch } from './message-history-cli.js';
 
-const GlobalFlags = z.object({});
-
-const MessageReadSchema = GlobalFlags.extend({
+const MessageReadSchema = z.object({
   after: z.string().optional(),
   around: z.string().optional(),
   before: z.string().optional(),
@@ -26,13 +24,13 @@ const MessageReadSchema = GlobalFlags.extend({
   threadTs: z.string().optional(),
 });
 
-const MessageSendSchema = GlobalFlags.extend({
+const MessageSendSchema = z.object({
   chatId: z.string().optional(),
   channel: z.string().optional(),
   threadTs: z.string().optional(),
 });
 
-const MessageSearchSchema = GlobalFlags.extend({
+const MessageSearchSchema = z.object({
   before: z.string().optional(),
   channel: z.string().optional(),
   keywords: z.array(z.string()).min(1),
@@ -40,13 +38,13 @@ const MessageSearchSchema = GlobalFlags.extend({
   since: z.string().optional(),
 });
 
-const MessageUpdateSchema = GlobalFlags.extend({
+const MessageUpdateSchema = z.object({
   chatId: z.string().optional(),
   channel: z.string().optional(),
   messageTs: z.string().optional(),
 });
 
-const MessageReactSchema = GlobalFlags.extend({
+const MessageReactSchema = z.object({
   chatId: z.string().optional(),
   channel: z.string().optional(),
   emoji: z.string().optional(),

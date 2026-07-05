@@ -76,11 +76,6 @@ export class WakeQueueService {
     return this.store.list();
   }
 
-  /** @deprecated Post-#377 the queue only stores runnable work; same as list(). */
-  listRunnable(): Promise<InboxItem[]> {
-    return this.store.list();
-  }
-
   async takeNextRunnable(input: TakeNextRunnableInput): Promise<InboxItem | undefined> {
     return (await this.store.takeNextRunnable(input)).item;
   }

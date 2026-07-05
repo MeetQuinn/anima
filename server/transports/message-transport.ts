@@ -1,4 +1,4 @@
-import type { MessageTransportKind } from '../../shared/message-transport.js';
+export type MessageTransportKind = 'slack' | 'feishu' | 'lark' | 'dingtalk';
 
 export interface MessageTransport {
   kind: MessageTransportKind;
