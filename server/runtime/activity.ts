@@ -46,7 +46,9 @@ export async function recordRuntimeEvent(
   } as const;
   if (shouldPersistRuntimeEvent(activityInput.payload)) {
     const activity = await activityServiceForAgent(target.agentId).record(activityInput);
-    await runtimeSessionServiceForAgent(target.agentId).updateRuntimeStats(runtimeKind, runtimeEnv, activity);
+    if (shouldUpdateRuntimeStats(activityInput.payload)) {
+      await runtimeSessionServiceForAgent(target.agentId).updateRuntimeStats(runtimeKind, runtimeEnv, activity);
+    }
     return;
   }
 
@@ -56,7 +58,9 @@ export async function recordRuntimeEvent(
     payload: activityInput.payload,
     type: 'runtime.event',
   };
-  await runtimeSessionServiceForAgent(target.agentId).updateRuntimeStats(runtimeKind, runtimeEnv, activity);
+  if (shouldUpdateRuntimeStats(activityInput.payload)) {
+    await runtimeSessionServiceForAgent(target.agentId).updateRuntimeStats(runtimeKind, runtimeEnv, activity);
+  }
 }
 
 function shouldPersistRuntimeEvent(payload: Record<string, unknown> | undefined): boolean {
@@ -67,6 +71,18 @@ function shouldPersistRuntimeEvent(payload: Record<string, unknown> | undefined)
   // though the read side never renders them.
   if (eventType === 'kimi.context.stats') return true;
   return !isRuntimeEventNoise(eventType);
+}
+
+function shouldUpdateRuntimeStats(payload: Record<string, unknown> | undefined): boolean {
+  const eventType = stringField(payload, 'eventType');
+  return (
+    eventType === 'claude.session.stats'
+    || eventType === 'codex.session.stats'
+    || eventType === 'kimi.context.stats'
+    || eventType === 'claude.context.stats'
+    || eventType === 'codex.context.stats'
+    || eventType?.endsWith('.compact.completed') === true
+  );
 }
 
 export async function recordRuntimeOutputChunk(
