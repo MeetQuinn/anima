@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { waitFor } from './helpers/harness.js';
 import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
 import {
   CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW,
@@ -168,15 +169,6 @@ function deferred<T>(): { promise: Promise<T>; reject(error: unknown): void; res
   return { promise, reject, resolve };
 }
 
-async function waitFor(predicate: () => boolean, message: string): Promise<void> {
-  const deadline = Date.now() + 500;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  assert.fail(message);
-}
-
 test('controller runtime lifecycle records started and completed around the turn', async () => {
   const runtime = new LifecycleProbeRuntime();
   runtime.turn = async () => ({ text: 'done' });
@@ -259,7 +251,7 @@ test('controller runtime resets an idle provider child after the provider-child 
 
   await waitFor(
     () => controller.killedWith.length === 1 && runtime.health().child === undefined,
-    'provider child was not reset after becoming idle',
+    { description: 'provider child was not reset after becoming idle', intervalMs: 5, timeoutMs: 500 },
   );
   assert.deepEqual(controller.killedWith, ['SIGTERM']);
   assert.deepEqual(runtime.health(), { childExpected: false });
@@ -286,7 +278,7 @@ test('controller runtime cancels pending idle reset while another turn is active
 
   await waitFor(
     () => controller.killedWith.length === 1 && runtime.health().child === undefined,
-    'provider child was not reset after the second turn became idle',
+    { description: 'provider child was not reset after the second turn became idle', intervalMs: 5, timeoutMs: 500 },
   );
   assert.deepEqual(controller.killedWith, ['SIGTERM']);
 });
