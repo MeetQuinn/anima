@@ -360,4 +360,3 @@ function escapeAttr(value: string): string {
     .replace(/>/g, '&gt;');
   return `"${escaped}"`;
 }
-
