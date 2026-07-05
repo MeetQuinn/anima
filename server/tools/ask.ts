@@ -13,7 +13,7 @@ import { makeId, nowIso } from '../ids.js';
 import {
   ensureThreadSubscriptionForSentMessage,
   recordOutboundEngagement,
-} from '../inbox/slack-subscription.service.js';
+} from '../inbox/subscription.service.js';
 import { SlackWorkspaceDirectoryService } from '../slack/workspace-directory.service.js';
 import type { InteractiveAskOption, InteractiveAskRecord } from '../storage/schema/interactive-ask.store.js';
 import { resolveSlackChannelArgument, type ResolvedSlackChannel } from './slack-channel-resolver.js';

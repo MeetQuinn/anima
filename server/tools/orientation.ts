@@ -13,8 +13,9 @@ import {
 } from '../feishu/client.js';
 import {
   listSubscriptionsForAgent,
+  platformForSubscription,
   type SubscriptionRecord,
-} from '../inbox/slack-subscription.service.js';
+} from '../inbox/subscription.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import {
   normalizeSlackHandle,
@@ -233,7 +234,7 @@ export function composePlaceRows(input: {
 
   for (const subscription of input.subscriptions) {
     if (subscription.kind !== 'channel' || !subscription.mutedAt) continue;
-    const platform: PlaceRow['platform'] = isFeishuChatId(subscription.channelId) ? 'feishu' : 'slack';
+    const platform = platformForSubscription(subscription);
     const key = placeKey(platform, subscription.channelId);
     const existing = rows.get(key);
     rows.set(key, {
@@ -377,7 +378,7 @@ async function feishuPlaces(
     }
   }
   for (const subscription of subscriptions) {
-    if (subscription.kind === 'channel' && isFeishuChatId(subscription.channelId)) {
+    if (subscription.kind === 'channel' && platformForSubscription(subscription) === 'feishu') {
       knownChatIds.add(subscription.channelId);
     }
   }
