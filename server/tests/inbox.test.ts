@@ -4,7 +4,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { MemoryCoherenceInboxItem } from '../../shared/inbox.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { messageServiceForAgent } from '../messages/message.service.js';
 import { WakeQueueStore, type WakeQueueFile } from '../storage/schema/wake-queue.store.js';
 import { makeSlackEvent } from './helpers/slack.js';
 import { withAnimaHome } from './anima-home.js';
@@ -25,6 +27,28 @@ function memoryWakeQueueStore(initial: WakeQueueFile = {}) {
       previousUpdate = currentUpdate.then(() => undefined, () => undefined);
       return currentUpdate;
     },
+  };
+}
+
+function makeMemoryCoherenceItem(input: {
+  agentId: string;
+  localDate: string;
+  receivedAt: string;
+  scheduledSlotAt: string;
+  scheduledSlotLabel?: string;
+}): MemoryCoherenceInboxItem {
+  return {
+    handling: {
+      createdAt: input.receivedAt,
+      queuedAt: input.receivedAt,
+      status: 'queued',
+      updatedAt: input.receivedAt,
+    },
+    id: `memory-coherence:${input.agentId}:${input.localDate}`,
+    kind: 'memory_coherence',
+    receivedAt: input.receivedAt,
+    scheduledSlotAt: input.scheduledSlotAt,
+    scheduledSlotLabel: input.scheduledSlotLabel ?? '05:02 agent-local',
   };
 }
 
@@ -97,6 +121,51 @@ test('wake queue store can use an injected file persistence', async () => {
   const completed = await queue.find(event.id);
   assert.equal(completed, undefined);
   assert.deepEqual((await queue.list()).map((item) => item.id), []);
+});
+
+test('wake queue retains completed memory coherence ids for per-day dedupe', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-memory-wake-dedupe-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const queue = new WakeQueueService('iris');
+      const first = makeMemoryCoherenceItem({
+        agentId: 'iris',
+        localDate: '2026-07-04',
+        receivedAt: '2026-07-05T03:51:43.000Z',
+        scheduledSlotAt: '2026-07-04T22:05:00.000Z',
+        scheduledSlotLabel: '06:05 agent-local',
+      });
+
+      const firstDecision = await queue.enqueue(first);
+      assert.equal(firstDecision.queued, true);
+
+      const claimed = await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'iris:worker-1' });
+      assert.equal(claimed?.id, first.id);
+      await queue.complete(first.id);
+
+      assert.equal(await queue.find(first.id), undefined);
+      assert.deepEqual((await queue.list()).map((item) => item.id), []);
+      assert.equal(await messageServiceForAgent('iris').hasInboxItem(first.id), false);
+      assert.equal(await queue.hasSeen(first.id), true);
+
+      const second = makeMemoryCoherenceItem({
+        agentId: 'iris',
+        localDate: '2026-07-04',
+        receivedAt: '2026-07-05T04:06:13.000Z',
+        scheduledSlotAt: '2026-07-04T22:05:00.000Z',
+        scheduledSlotLabel: '06:05 agent-local',
+      });
+
+      const secondDecision = await queue.enqueue(second);
+      assert.equal(secondDecision.duplicate, true);
+      assert.equal(secondDecision.queued, false);
+      assert.equal(secondDecision.item.id, first.id);
+      assert.equal(secondDecision.item.handling.status, 'completed');
+      assert.deepEqual((await queue.list()).map((item) => item.id), []);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 test('wake queue enqueue does not fail when message ledger write fails', async () => {

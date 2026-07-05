@@ -56,7 +56,7 @@ export class WakeQueueService {
   }
 
   async hasSeen(itemId: string): Promise<boolean> {
-    if (await this.store.find(itemId)) return true;
+    if (await this.store.has(itemId)) return true;
     try {
       return Boolean(await this.messages.hasInboxItem?.(itemId));
     } catch (error) {
