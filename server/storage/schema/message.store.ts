@@ -1,23 +1,11 @@
 import { join } from 'node:path';
 
-import { z } from 'zod';
-
 import { agentsDir } from './agent.store.js';
 import type { AgentMessageDirection, AgentMessageRecord } from '../../../shared/messages.js';
-import { messageMatchesChannel } from '../../messages/channel-match.js';
-import { nowIso } from '../../ids.js';
+import { messageMatchesChannel } from '../../../shared/channel-match.js';
 import { DEFAULT_JSONL_ROTATE_BYTES, JsonlAppendLog } from '../jsonl-log.js';
-import { JsonStore } from '../json-store.js';
 
 const MESSAGE_DEDUPE_RECENT_LIMIT = 10_000;
-
-interface MessageMeta {
-  legacyBackfilledAt?: string;
-}
-
-const MessageMetaSchema = z.object({
-  legacyBackfilledAt: z.string().optional(),
-});
 
 export class MessageStore {
   constructor(private readonly agentId: string) {}
@@ -49,22 +37,16 @@ export class MessageStore {
     channel?: string;
     direction?: AgentMessageDirection;
     limit: number;
+    matches?: (entry: AgentMessageRecord) => boolean;
     since?: string;
   }): Promise<AgentMessageRecord[]> {
     return this.log().readNewestMatching(input.limit, (entry) =>
       (!input.direction || entry.direction === input.direction) &&
       (!input.before || entry.timestamp < input.before) &&
       (!input.since || entry.timestamp >= input.since) &&
-      (!input.channel || messageMatchesChannel(entry, input.channel))
+      (!input.channel || messageMatchesChannel(entry, input.channel)) &&
+      (!input.matches || input.matches(entry))
     );
-  }
-
-  async legacyBackfilled(): Promise<boolean> {
-    return Boolean((await this.metaStore().read()).legacyBackfilledAt);
-  }
-
-  async markLegacyBackfilled(): Promise<void> {
-    await this.metaStore().write({ legacyBackfilledAt: nowIso() });
   }
 
   private log(): JsonlAppendLog<AgentMessageRecord> {
@@ -72,14 +54,6 @@ export class MessageStore {
     return new JsonlAppendLog<AgentMessageRecord>(join(root, 'messages.jsonl'), {
       archiveDir: join(root, 'messages.archive'),
       maxBytes: DEFAULT_JSONL_ROTATE_BYTES,
-    });
-  }
-
-  private metaStore(): JsonStore<MessageMeta> {
-    return new JsonStore<MessageMeta>({
-      empty: () => ({}),
-      parse: (value) => MessageMetaSchema.parse(value),
-      path: () => join(agentsDir(), this.agentId, 'messages.meta.json'),
     });
   }
 }

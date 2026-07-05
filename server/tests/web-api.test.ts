@@ -109,7 +109,7 @@ test('web snapshot summarizes state without exposing secrets', async () => {
       // queue; conversation rows are served by /messages.
       const activityFeed = await activityServiceForAgent('anima').listActivityFeed();
       assert.equal(
-        activityFeed.events.some((event) => event.activity.type === 'tool.call.completed'),
+        activityFeed.events.some((event) => event.type === 'tool.call.completed'),
         true,
       );
       assert.deepEqual(Object.keys(activityFeed).sort(), ['events', 'nextCursor']);
@@ -151,12 +151,12 @@ test('activity feed pages activity events without wake queue items', async () =>
       const page = await service.listActivityFeed({ limit: 2 });
       assert.equal(page.events.length, 2);
       assert.deepEqual(
-        page.events.map((event) => event.activity.activityId),
+        page.events.map((event) => event.activityId),
         [second.activityId, third.activityId],
       );
       assert.ok(page.nextCursor);
       assert.equal(
-        page.events.some((event) => event.activity.activityId === first.activityId),
+        page.events.some((event) => event.activityId === first.activityId),
         false,
       );
     });
@@ -1166,7 +1166,6 @@ test('web API rotates the current provider session and records activity', async 
 
       const activityFeed = await activityServiceForAgent('anima').listActivityFeed();
       const rotateActivity = activityFeed.events
-        .flatMap((event) => event.kind === 'activity' ? [event.activity] : [])
         .find((activity) => activity.type === 'anima.session.rotate');
       assert.equal(Object.hasOwn(rotateActivity ?? {}, 'itemId'), false);
       assert.equal(rotateActivity?.payload?.['archivedCount'], 1);

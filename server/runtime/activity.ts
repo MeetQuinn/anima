@@ -2,6 +2,7 @@ import { activityServiceForAgent } from '../activities/activity.service.js';
 import { makeId, nowIso } from '../ids.js';
 import { stringField } from '../json.js';
 import type { Activity } from '../../shared/activity.js';
+import { isRuntimeEventNoise } from '../../shared/runtime-event-noise.js';
 import { truncateForActivity } from '../activities/format.js';
 import { runtimeSessionServiceForAgent } from './runtime-session.service.js';
 import type { ItemStopReason } from './types.js';
@@ -61,27 +62,11 @@ export async function recordRuntimeEvent(
 function shouldPersistRuntimeEvent(payload: Record<string, unknown> | undefined): boolean {
   const eventType = stringField(payload, 'eventType');
   if (!eventType) return true;
-  if (eventType === 'provider.reasoning') return false;
-  if (eventType.endsWith('.context.stats') && eventType !== 'kimi.context.stats') return false;
-  if (eventType.endsWith('.system.init')) return false;
-  if (eventType.includes('.stream.')) return false;
-  if (eventType.includes('.reasoning.')) return false;
-  if (eventType.endsWith('.thinking.delta')) return false;
-  if (eventType.endsWith('.content.part')) return false;
-  if (eventType.endsWith('.tool.call.part')) return false;
-  if (eventType.endsWith('.tool_result')) return false;
-  if (eventType.endsWith('.hook.triggered') || eventType.endsWith('.hook.resolved')) return false;
-  if (eventType.endsWith('.plan.display') || eventType.endsWith('.plan.updated')) return false;
-  if (eventType.endsWith('.diff.updated')) return false;
-  if (eventType.endsWith('.subagent.event')) return false;
-  if (eventType.endsWith('.mcp.progress')) return false;
-  if (eventType.endsWith('.raw_response_item.completed')) return false;
-  if (eventType.endsWith('.steer.consumed')) return false;
-  if (eventType.endsWith('.turn.started') || eventType.endsWith('.turn.completed')) return false;
-  if (eventType.endsWith('.step.started')) return false;
-  if (eventType.includes('.outputDelta')) return false;
-  if (eventType.includes('.patchUpdated')) return false;
-  return true;
+  // Persist-side exception to the shared noise list: kimi context stats feed
+  // runtime session stats (updateRuntimeStats), so they are kept on disk even
+  // though the read side never renders them.
+  if (eventType === 'kimi.context.stats') return true;
+  return !isRuntimeEventNoise(eventType);
 }
 
 export async function recordRuntimeOutputChunk(

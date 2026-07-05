@@ -12,6 +12,7 @@ import {
   groupByAuthor,
   initialOf,
   inboundAuthorName,
+  inboundSlackUserId,
   isMessageItem,
   DayDivider,
   MessageGroupRow,
@@ -110,7 +111,7 @@ function ChannelRow({
 
 function authorFor(item: ActivityFeedItem, channel: AgentChannelSummary, agent: Author): Author {
   if (item.kind !== 'message-in') return agent;
-  const name = inboundAuthorName(item.event);
+  const name = inboundAuthorName(item.message);
   // In a DM the counterpart is fixed — reuse the row's resolved name + avatar so
   // the byline and the master-list row agree.
   if (channel.kind === 'dm') {
@@ -123,7 +124,7 @@ function authorFor(item: ActivityFeedItem, channel: AgentChannelSummary, agent: 
       isAgent: false,
     };
   }
-  const uid = item.event.kind === 'slack' ? item.event.actor?.userId : undefined;
+  const uid = inboundSlackUserId(item.message);
   return {
     key: `in:${uid ?? name}`,
     name,

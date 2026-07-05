@@ -215,7 +215,6 @@ test('memory coherence activity gate requires a message after the latest memory 
       await store.appendManyIfAbsent([
         messageRecord('older', '2026-06-22T04:00:00.000Z'),
       ]);
-      await store.markLegacyBackfilled();
       assert.equal(await hasMeaningfulActivitySinceLastMemoryPass('aria'), false);
 
       await store.appendManyIfAbsent([

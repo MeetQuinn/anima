@@ -29,10 +29,6 @@ export class ActivityStore {
     return await this.log().readAll();
   }
 
-  async readSince(createdAt: string): Promise<Activity[]> {
-    return (await this.readAll()).filter((activity) => activity.createdAt >= createdAt);
-  }
-
   /** Read the last `n` activity records without loading the full log file. */
   async readLastN(n: number): Promise<Activity[]> {
     return this.log().readTail(n);

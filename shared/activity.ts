@@ -114,6 +114,16 @@ export interface SubscriptionEffectPayload {
   threadTs?: string;
 }
 
+// Recorded when an interactive ask (anima ask) receives a button response.
+// Extra keys carry outcome-specific detail (e.g. rejection reasons).
+export interface AskAnswerPayload {
+  askId: string;
+  optionId: string;
+  outcome: string;
+  userId: string;
+  [key: string]: unknown;
+}
+
 export interface AttentionSuggestionPayload {
   channelId: string;
   channelName?: string;
@@ -153,7 +163,8 @@ export type ExternalEffectActivity =
   | ActivityBase<'anima.subscription.add', SubscriptionEffectPayload>
   | ActivityBase<'anima.subscription.mute', SubscriptionEffectPayload>
   | ActivityBase<'anima.subscription.remove', SubscriptionEffectPayload>
-  | ActivityBase<'anima.attention.suggestion', AttentionSuggestionPayload>;
+  | ActivityBase<'anima.attention.suggestion', AttentionSuggestionPayload>
+  | ActivityBase<'anima.ask.answer', AskAnswerPayload>;
 
 export type Activity =
   | AgentMessageActivity
@@ -167,14 +178,9 @@ export type Activity =
 
 export type ActivityType = Activity['type'];
 
-export interface AgentActivityFeedEvent {
-  activity: Activity;
-  kind: 'activity';
-  timestamp: string;
-}
-
 export interface AgentActivityFeedPage {
-  events: AgentActivityFeedEvent[];
+  // Oldest-first within the page. Feed ordering derives from `createdAt`.
+  events: Activity[];
   // Cursor for the previous (older) page. ISO timestamp of the oldest feed
   // event in this response. Null means there are no older events to load.
   nextCursor?: string | null;

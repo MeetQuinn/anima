@@ -5,8 +5,9 @@
 // rhythm comes from typography + day separators.
 
 import type { Activity as ActivityRecord, AgentActivityFeedPage } from '@shared/activity';
-import type { ChoiceResponseInboxItem, FeishuInboxItem, InboxItem, SlackInboxItem } from '@shared/inbox';
 import type { AgentMessageHistoryPage, AgentMessageRecord } from '@shared/messages';
+import { classifyOutboundEffect } from '@shared/outbound-effects';
+import { isRuntimeEventNoise } from '@shared/runtime-event-noise';
 
 // Hidden by default. Toggled on by "show all steps".
 //   - runtime.* are spawn-lifecycle plumbing
@@ -31,34 +32,14 @@ interface RecentOutboundText {
 //   Always hidden (even in show-all): raw streaming internals — `.stream.*`,
 //     `.reasoning.*`, `.content.part`, `.tool.call.part`, etc. These produce
 //     thousands of rows with no diagnostic value (the 21k `claude.stream.
-//     message_stop` case, iris #49 round-2 scope). hiddenRuntimeEvent() below.
+//     message_stop` case, iris #49 round-2 scope). This predicate is the
+//     shared `isRuntimeEventNoise` from `@shared/runtime-event-noise` — the
+//     same list the server uses on the write side (shouldPersistRuntimeEvent),
+//     so read-side hiding and write-side suppression can no longer drift.
 //   Default-hidden, visible in show-all: meaningful lifecycle plumbing —
 //     HIDDEN_TYPES (runtime.started/output/followup/pending/legacy steer) +
 //     session stats / compact / rate-limit / model-routing events. These
 //     surface when showHidden=true so the user can trace execution.
-function hiddenRuntimeEvent(eventType: string): boolean {
-  if (eventType === 'provider.reasoning') return true;
-  if (eventType.endsWith('.context.stats')) return true;
-  if (eventType.endsWith('.system.init')) return true;
-  if (eventType.includes('.stream.')) return true;
-  if (eventType.includes('.reasoning.')) return true;
-  if (eventType.endsWith('.thinking.delta')) return true;
-  if (eventType.endsWith('.content.part')) return true;
-  if (eventType.endsWith('.tool.call.part')) return true;
-  if (eventType.endsWith('.tool_result')) return true;
-  if (eventType.endsWith('.hook.triggered') || eventType.endsWith('.hook.resolved')) return true;
-  if (eventType.endsWith('.plan.display') || eventType.endsWith('.plan.updated')) return true;
-  if (eventType.endsWith('.diff.updated')) return true;
-  if (eventType.endsWith('.subagent.event')) return true;
-  if (eventType.endsWith('.mcp.progress')) return true;
-  if (eventType.endsWith('.raw_response_item.completed')) return true;
-  if (eventType.endsWith('.steer.consumed')) return true;
-  if (eventType.endsWith('.turn.started') || eventType.endsWith('.turn.completed')) return true;
-  if (eventType.endsWith('.step.started')) return true;
-  if (eventType.includes('.outputDelta')) return true;
-  if (eventType.includes('.patchUpdated')) return true;
-  return false;
-}
 
 function activityProviderToolId(activity: ActivityRecord): string | undefined {
   return typeof activity.payload?.['providerToolId'] === 'string'
@@ -113,25 +94,26 @@ export interface SubagentStream {
 export type ActivityFeedItem =
   | {
       kind: 'message-in';
-      event: InboxItem;
+      // The ledger record itself. Renderers (SlackTimeline, author resolvers)
+      // read author identity / text / files / previews straight off it.
+      message: AgentMessageRecord;
       timestamp: string;
       surface: SurfaceChip;
-      followupAppended: boolean;
       // Inbound sender's Slack avatar (image_72), resolved best-effort by the
       // /messages route. Absent → the author resolver falls back to an initial.
       avatarUrl?: string;
     }
   | {
       kind: 'message-out';
-      activity: ActivityRecord;
       text: string;
+      // Jump-to-Slack link for the sent message, when the backend recorded it.
+      permalink?: string;
       timestamp: string;
       surface: SurfaceChip;
       isEdit: boolean;
     }
   | {
       kind: 'file-out';
-      activity: ActivityRecord;
       caption: string;
       files: OutboundFile[];
       permalink?: string;
@@ -144,7 +126,6 @@ export type ActivityFeedItem =
       // byline trace (accent dot, no margin pull-rule) so reaction rows show
       // the specific reaction without looking like full message rows.
       kind: 'reaction-out';
-      activity: ActivityRecord;
       action: 'added' | 'removed';
       emoji: string;
       noop: boolean;
@@ -166,32 +147,30 @@ export type ActivityFeedItem =
       timestamp: string;
     };
 
-// Map an inbound inbox event to a system-event timeline item when it is a
+// Map an inbound ledger record to a system-event timeline item when it is a
 // system wake (reminder / onboarding) rather than a person's message. Returns
 // null for real messages (slack/feishu) and for choice_response — a user's
-// explicit selection, which stays on the message side. Shared by both feed
-// builders so the conversation and activity feeds agree on what is a system row.
-function systemEventForInbox(
-  event: InboxItem,
-  timestamp: string,
+// explicit selection, which stays on the message side.
+function systemEventForMessage(
+  message: AgentMessageRecord,
 ): Extract<ActivityFeedItem, { kind: 'system-event' }> | null {
-  if (isOnboardingWake(event)) {
-    const text = ('text' in event && typeof event.text === 'string' ? event.text : '').trim();
+  if (isOnboardingWakeMessage(message)) {
+    const text = message.text.trim();
     return {
       kind: 'system-event',
       eventKind: 'onboarding',
       label: 'Onboarding',
       body: text || 'Agent onboarding completed',
-      timestamp,
+      timestamp: message.timestamp,
     };
   }
-  if (event.kind === 'reminder') {
+  if (message.kind === 'reminder') {
     return {
       kind: 'system-event',
       eventKind: 'reminder',
       label: 'Reminder',
-      body: event.title?.trim() || 'Reminder fired',
-      timestamp,
+      body: message.reminderTitle?.trim() || 'Reminder fired',
+      timestamp: message.timestamp,
     };
   }
   return null;
@@ -201,7 +180,7 @@ export function buildActivityFeed(
   activityFeed: AgentActivityFeedPage,
   showHidden = false,
 ): ActivityFeedItem[] {
-  const activities = activityFeed.events.map((event) => event.activity);
+  const activities = activityFeed.events;
 
   // Pre-scan: group child activities (those with parentToolCallId) by parentId → subRunId.
   // These are skipped from the flat feed and attached to their parent step row instead.
@@ -261,38 +240,38 @@ export function buildActivityFeed(
       continue;
     }
 
-    // External message/file/reaction effects → outbound feed items.
+    // External message/file/reaction effects → outbound feed items. The
+    // (tool, effect) → kind decision lives in the shared classifier so the
+    // web feed and the server's ledger projection can never drift.
     if (activity.type === 'tool.call.completed' || activity.type === 'external.effect.completed') {
-      const tool = activity.payload?.['tool'];
-      const effect = activity.payload?.['effect'];
-      if (
-        tool === 'anima.message.send' ||
-        tool === 'anima.message.update' ||
-        effect === 'slack.message.send' ||
-        effect === 'slack.message.update' ||
-        effect === 'feishu.message.send'
-      ) {
-        const text = activity.payload?.['text'];
+      const payload = activity.payload ?? {};
+      const tool = typeof payload['tool'] === 'string' ? payload['tool'] : undefined;
+      const effect = typeof payload['effect'] === 'string' ? payload['effect'] : undefined;
+      const classified = classifyOutboundEffect({ effect, tool });
+      if (classified?.kind === 'message') {
+        const text = payload['text'];
+        const permalink =
+          typeof payload['permalink'] === 'string' && payload['permalink']
+            ? payload['permalink']
+            : undefined;
         items.push({
           kind: 'message-out',
-          activity,
           text: typeof text === 'string' ? text : '',
+          ...(permalink ? { permalink } : {}),
           timestamp: activity.createdAt,
           surface: surfaceChipForOutbound(activity),
-          isEdit: tool === 'anima.message.update' || effect === 'slack.message.update',
+          isEdit: classified.isEdit,
         });
         rememberOutboundText(recentOutboundTexts, activity);
         continue;
       }
-      if (tool === 'anima.file.send' || effect === 'slack.file.send') {
-        const payload = activity.payload ?? {};
+      if (classified?.kind === 'file') {
         const caption = typeof payload['caption'] === 'string' ? payload['caption'] : '';
         const permalink =
           typeof payload['permalink'] === 'string' ? payload['permalink'] : undefined;
         const files = outboundFilesFromPayload(payload['uploads']);
         items.push({
           kind: 'file-out',
-          activity,
           caption,
           files,
           ...(permalink ? { permalink } : {}),
@@ -307,14 +286,12 @@ export function buildActivityFeed(
         // alongside the reminder wake byline.
         continue;
       }
-      if (tool === 'anima.message.react' || effect === 'slack.reaction') {
-        const payload = activity.payload ?? {};
+      if (classified?.kind === 'reaction') {
         const action: 'added' | 'removed' = payload['action'] === 'removed' ? 'removed' : 'added';
         const emoji = typeof payload['name'] === 'string' ? payload['name'] : '';
         const noop = payload['noop'] === true;
         items.push({
           kind: 'reaction-out',
-          activity,
           action,
           emoji,
           noop,
@@ -368,7 +345,7 @@ export function buildActivityFeed(
     // runtime.pending, legacy steer records) is meaningful lifecycle plumbing
     // that Show all steps does expose.
     if (activity.type === 'runtime.event') {
-      if (hiddenRuntimeEvent(String(activity.payload?.['eventType'] ?? ''))) continue;
+      if (isRuntimeEventNoise(String(activity.payload?.['eventType'] ?? ''))) continue;
     } else if (!showHidden && HIDDEN_TYPES.has(activity.type)) {
       continue;
     }
@@ -454,39 +431,34 @@ export function buildMessageFeed(messagePage: AgentMessageHistoryPage): Activity
   const items: ActivityFeedItem[] = [];
   for (const message of messagePage.entries) {
     if (message.direction === 'in') {
-      const event = inboxItemForMessage(message);
-      const systemEvent = systemEventForInbox(event, message.timestamp);
+      const systemEvent = systemEventForMessage(message);
       if (systemEvent) {
         items.push(systemEvent);
         continue;
       }
       items.push({
         kind: 'message-in',
-        event,
+        message,
         timestamp: message.timestamp,
-        surface: surfaceChipForEvent(event),
-        followupAppended: false,
+        surface: surfaceChipForInboundMessage(message),
         ...(message.actorAvatarUrl ? { avatarUrl: message.actorAvatarUrl } : {}),
       });
       continue;
     }
     if (message.kind === 'message') {
-      const activity = activityForMessage(message);
       items.push({
         kind: 'message-out',
-        activity,
         text: message.text,
+        ...(message.permalink ? { permalink: message.permalink } : {}),
         timestamp: message.timestamp,
-        surface: surfaceChipForOutbound(activity),
+        surface: surfaceChipForOutboundMessage(message),
         isEdit: message.isEdit === true,
       });
       continue;
     }
     if (message.kind === 'file') {
-      const activity = activityForMessage(message);
       items.push({
         kind: 'file-out',
-        activity,
         caption: message.text.split(/\r?\nFiles:/)[0] ?? '',
         files: (message.files ?? []).map((file, index) => ({
           fileId: file.fileId ?? `${message.messageId}:file:${index}`,
@@ -499,203 +471,22 @@ export function buildMessageFeed(messagePage: AgentMessageHistoryPage): Activity
         })),
         ...(message.permalink ? { permalink: message.permalink } : {}),
         timestamp: message.timestamp,
-        surface: surfaceChipForOutbound(activity),
+        surface: surfaceChipForOutboundMessage(message),
       });
       continue;
     }
     if (message.kind === 'reaction') {
-      const activity = activityForMessage(message);
       items.push({
         kind: 'reaction-out',
-        activity,
         action: message.reaction?.action ?? 'added',
         emoji: message.reaction?.name ?? '',
         noop: message.reaction?.noop === true,
         timestamp: message.timestamp,
-        surface: surfaceChipForOutbound(activity),
+        surface: surfaceChipForOutboundMessage(message),
       });
     }
   }
   return items.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-}
-
-function inboxItemForMessage(message: AgentMessageRecord): InboxItem {
-  const handling = {
-    completedAt: message.timestamp,
-    createdAt: message.timestamp,
-    status: 'completed' as const,
-    updatedAt: message.timestamp,
-  };
-  const base = {
-    handling,
-    id: message.source.kind === 'inbox' ? message.source.id : message.messageId,
-    receivedAt: message.timestamp,
-  };
-  if (message.kind === 'reminder') {
-    return {
-      ...base,
-      kind: 'reminder',
-      reminderId: message.reminderId ?? message.source.id,
-      ...(message.reminderTitle ? { title: message.reminderTitle } : {}),
-    };
-  }
-  if (message.kind === 'onboarding') {
-    if (message.platform === 'feishu') {
-      const ownerOpenId = message.actorUserId ?? '';
-      return {
-        ...base,
-        kind: 'feishu_onboarding',
-        owner: {
-          openId: ownerOpenId,
-        },
-        target: {
-          platform: 'feishu',
-          receiveId: ownerOpenId,
-          receiveIdType: 'open_id',
-        },
-        text: message.text,
-      };
-    }
-    return {
-      ...base,
-      channelId: message.channelId ?? '',
-      kind: 'onboarding',
-      operator: {
-        displayName: message.actorDisplayName ?? message.actor ?? 'Owner',
-        ...(message.actorHandle ? { handle: message.actorHandle } : {}),
-        slackUserId: message.actorUserId ?? '',
-      },
-      teamId: '',
-      text: message.text,
-    };
-  }
-  if (message.kind === 'choice_response') {
-    return {
-      ...base,
-      answeredBy: {
-        ...(message.actorDisplayName ? { displayName: message.actorDisplayName } : {}),
-        ...(message.actorHandle ? { handle: message.actorHandle } : {}),
-        slackUserId: message.actorUserId ?? '',
-      },
-      askId: message.source.id,
-      channelId: message.channelId ?? '',
-      ...(message.channelName ? { channelName: message.channelName } : {}),
-      kind: 'choice_response',
-      messageTs: message.messageTs ?? '',
-      optionId: message.optionLabel ?? message.messageId,
-      optionLabel: message.optionLabel ?? message.text,
-      question: message.question ?? '',
-      teamId: '',
-      threadTs: message.threadTs ?? '',
-    };
-  }
-  if (message.platform === 'feishu') {
-    return {
-      ...base,
-      actor: {
-        ...(message.actorDisplayName ? { displayName: message.actorDisplayName } : {}),
-        ...(message.actorUserId ? { openId: message.actorUserId } : {}),
-      },
-      chatId: message.channelId ?? '',
-      chatType: message.channelKind ?? 'group',
-      ...(message.files?.length ? {
-        files: message.files.map((file, index) => ({
-          id: file.fileId ?? `${message.messageId}:file:${index}`,
-          mimetype: file.mimetype ?? 'application/octet-stream',
-          name: file.filename,
-          sizeBytes: file.sizeBytes ?? 0,
-        })),
-      } : {}),
-      kind: 'feishu',
-      messageId: message.messageTs ?? message.messageId,
-      text: message.text,
-      ...(message.threadTs ? { threadId: message.threadTs } : {}),
-    };
-  }
-  return {
-    ...base,
-    actor: {
-      ...(message.actorDisplayName ? { displayName: message.actorDisplayName } : {}),
-      ...(message.actorHandle ? { handle: message.actorHandle } : {}),
-      ...(message.actorUserId ? { userId: message.actorUserId } : {}),
-    },
-    channelId: message.channelId ?? '',
-    ...(message.channelName ? { channelName: message.channelName } : {}),
-    ...(message.files?.length ? {
-      files: message.files.map((file, index) => ({
-        id: file.fileId ?? `${message.messageId}:file:${index}`,
-        mimetype: file.mimetype ?? 'application/octet-stream',
-        name: file.filename,
-        sizeBytes: file.sizeBytes ?? 0,
-      })),
-    } : {}),
-    kind: 'slack',
-    messageTs: message.messageTs ?? '',
-    ...(message.permalink ? { permalink: message.permalink } : {}),
-    ...(message.previews?.length ? {
-      previews: message.previews
-        .filter((preview) => preview.platform === 'slack' && preview.type === 'message_unfurl')
-        .map((preview) => ({
-          text: preview.text,
-          ...(preview.authorId ? { authorId: preview.authorId } : {}),
-          ...(preview.authorName ? { authorName: preview.authorName } : {}),
-          ...(preview.authorSubname ? { authorSubname: preview.authorSubname } : {}),
-          ...(preview.channelId ? { channelId: preview.channelId } : {}),
-          ...(preview.fromUrl ? { fromUrl: preview.fromUrl } : {}),
-          ...(preview.isPrivate ? { isPrivate: true } : {}),
-          ...(preview.messageTs ? { messageTs: preview.messageTs } : {}),
-        })),
-    } : {}),
-    teamId: '',
-    text: message.text,
-    ...(message.threadTs ? { threadTs: message.threadTs } : {}),
-  };
-}
-
-function activityForMessage(message: AgentMessageRecord): ActivityRecord {
-  const payload: Record<string, unknown> = {
-    channel: message.channelId,
-    channelDisplayName: message.channelDisplayName,
-    channelKind: message.channelKind,
-    channelName: message.channelName,
-    dmHandle: message.dmHandle,
-    dmUserId: message.dmUserId,
-    permalink: message.permalink,
-    platform: message.platform,
-    status: 'completed',
-    text: message.text,
-    threadTs: message.threadTs,
-    ts: message.messageTs,
-  };
-  if (message.kind === 'message') {
-    payload['effect'] = message.platform === 'feishu'
-      ? 'feishu.message.send'
-      : message.isEdit ? 'slack.message.update' : 'slack.message.send';
-  } else if (message.kind === 'file') {
-    payload['effect'] = 'slack.file.send';
-    payload['caption'] = message.text.split(/\r?\nFiles:/)[0] ?? '';
-    payload['uploads'] = (message.files ?? []).map((file, index) => ({
-      fileId: file.fileId ?? `${message.messageId}:file:${index}`,
-      filename: file.filename,
-      mimetype: file.mimetype ?? 'application/octet-stream',
-      permalink: file.permalink,
-      sizeBytes: file.sizeBytes ?? 0,
-      thumb360: file.thumb360,
-      thumb720: file.thumb720,
-    }));
-  } else if (message.kind === 'reaction') {
-    payload['effect'] = 'slack.reaction';
-    payload['action'] = message.reaction?.action ?? 'added';
-    payload['name'] = message.reaction?.name ?? '';
-    payload['noop'] = message.reaction?.noop === true;
-    payload['targetTs'] = message.messageTs;
-  }
-  return {
-    activityId: message.source.kind === 'activity' ? message.source.id : message.messageId,
-    createdAt: message.timestamp,
-    payload,
-    type: 'external.effect.completed',
-  };
 }
 
 function activityFeedSortRank(item: ActivityFeedItem): number {
@@ -730,20 +521,30 @@ function outboundFilesFromPayload(uploads: unknown): OutboundFile[] {
 
 // --- surface chip derivation ---------------------------------------------
 
-function surfaceChipForEvent(event: InboxItem): SurfaceChip {
-  if (isOnboardingWake(event)) return { kind: 'onboarding', label: 'Onboarding' };
-  if (event.kind === 'reminder') {
-    return { kind: 'reminder', label: 'Reminder' };
-  }
-  if (event.kind === 'memory_coherence') return { kind: 'reminder', label: 'Memory coherence' };
-  if (event.kind === 'choice_response') return surfaceChipForChoice(event);
-  if (event.kind === 'feishu') return surfaceChipForFeishu(event);
-  if (event.kind !== 'slack') return { kind: 'onboarding', label: 'Onboarding' };
-  return surfaceChipForSlack(event);
+// DM chip label: `@` + the handle with any leading `@` stripped, so a stored
+// `@alice` never renders as `@@alice`. One home for the idiom that was
+// previously copy-pasted across the chip builders.
+function dmLabel(handle: string): string {
+  return `@${handle.replace(/^@/, '')}`;
 }
 
-export function isOnboardingWake(event: InboxItem): boolean {
-  return event.kind === 'onboarding' || event.kind === 'feishu_onboarding' || event.id.startsWith('agent-onboarding:');
+function surfaceChipForInboundMessage(message: AgentMessageRecord): SurfaceChip {
+  if (isOnboardingWakeMessage(message)) return { kind: 'onboarding', label: 'Onboarding' };
+  if (message.kind === 'reminder') {
+    return { kind: 'reminder', label: 'Reminder' };
+  }
+  if (message.kind === 'choice_response') return surfaceChipForChoiceMessage(message);
+  if (message.platform === 'feishu') return surfaceChipForFeishuMessage(message);
+  return surfaceChipForSlackMessage(message);
+}
+
+// A system wake recorded in the ledger as an onboarding pass — either typed as
+// one, or an inbox-sourced record whose original inbox id carries the
+// `agent-onboarding:` prefix (older records predate the dedicated kind).
+function isOnboardingWakeMessage(message: AgentMessageRecord): boolean {
+  if (message.kind === 'onboarding') return true;
+  const sourceId = message.source.kind === 'inbox' ? message.source.id : message.messageId;
+  return sourceId.startsWith('agent-onboarding:');
 }
 
 // Chip label rules (iris-locked 1779212784.593679, "Option A"):
@@ -758,10 +559,10 @@ export function isOnboardingWake(event: InboxItem): boolean {
 //     chip itself. Asymmetric vs outbound but each register puts threaded-
 //     ness in its own reading-flow slot.
 
-function surfaceChipForSlack(event: SlackInboxItem): SurfaceChip {
-  const channelId = event.channelId ?? 'unknown-channel';
-  const channelName = event.channelName;
-  const threadTs = event.threadTs;
+function surfaceChipForSlackMessage(message: AgentMessageRecord): SurfaceChip {
+  const channelId = message.channelId ?? '';
+  const channelName = message.channelName;
+  const threadTs = message.threadTs;
   const kind = channelId.startsWith('D') ? 'dm' : threadTs ? 'thread' : 'channel';
   // Fall back to the raw channel id rather than "Unknown channel" — the id is
   // real data and at least lets the user look it up; the string literal
@@ -770,55 +571,98 @@ function surfaceChipForSlack(event: SlackInboxItem): SurfaceChip {
   // Carry the real channel id so the Activity timeline can link the chip to the
   // Channels tab. Omit the placeholder so an unknown surface stays non-clickable
   // rather than linking to nowhere (iris's honest-degrade bar).
-  const target = event.channelId ? { channelId: event.channelId } : {};
+  const target = message.channelId ? { channelId: message.channelId } : {};
   if (kind === 'dm') {
-    const handle = event.actor?.handle || event.actor?.displayName;
-    return { kind: 'dm', label: handle ? `@${handle.replace(/^@/, '')}` : 'DM', ...target };
+    const handle = message.actorHandle || message.actorDisplayName;
+    return { kind: 'dm', label: handle ? dmLabel(handle) : 'DM', ...target };
   }
   if (kind === 'thread') return { kind: 'thread', label: `${channel} · thread`, ...target };
   return { kind: 'channel', label: channel, ...target };
 }
 
-function surfaceChipForFeishu(event: FeishuInboxItem): SurfaceChip {
-  const label = event.chatType === 'p2p' ? 'Feishu DM' : `Feishu ${event.chatType || 'chat'}`;
-  if (event.threadId) return { kind: 'thread', label: `${label} · topic` };
-  if (event.chatType === 'p2p') return { kind: 'dm', label };
+function surfaceChipForFeishuMessage(message: AgentMessageRecord): SurfaceChip {
+  const chatType = message.channelKind ?? 'group';
+  const label = chatType === 'p2p' ? 'Feishu DM' : `Feishu ${chatType || 'chat'}`;
+  if (message.threadTs) return { kind: 'thread', label: `${label} · topic` };
+  if (chatType === 'p2p') return { kind: 'dm', label };
   return { kind: 'channel', label };
 }
 
-function surfaceChipForChoice(event: ChoiceResponseInboxItem): SurfaceChip {
-  const channelId = event.channelId ?? 'unknown-channel';
-  const channelName = event.channelName;
-  const threadTs = event.threadTs;
+function surfaceChipForChoiceMessage(message: AgentMessageRecord): SurfaceChip {
+  const channelId = message.channelId ?? '';
+  const channelName = message.channelName;
+  const threadTs = message.threadTs;
   const kind = channelId.startsWith('D') ? 'dm' : threadTs ? 'thread' : 'channel';
   const channel = channelName
     ? channelName.startsWith('#') ? channelName : `#${channelName}`
     : channelId;
   if (kind === 'dm') {
-    const handle = event.answeredBy.handle || event.answeredBy.displayName;
-    return { kind: 'dm', label: handle ? `@${handle.replace(/^@/, '')}` : 'DM' };
+    const handle = message.actorHandle || message.actorDisplayName;
+    return { kind: 'dm', label: handle ? dmLabel(handle) : 'DM' };
   }
   if (kind === 'thread') return { kind: 'thread', label: `${channel} · thread` };
   return { kind: 'channel', label: channel };
+}
+
+// The outbound chip fields as they appear in an activity payload (from the
+// tool run) or a ledger message record. Empty string = absent.
+interface OutboundSurfaceFields {
+  channel: string;
+  channelDisplayName: string;
+  channelKind: string;
+  channelName: string;
+  dmHandle: string;
+  platform: string;
+  threadTs: string;
 }
 
 function surfaceChipForOutbound(activity: ActivityRecord): SurfaceChip {
   // Activities are agent-level, so outbound rows derive their surface from
   // the tool payload itself instead of joining back to an inbox item.
   const payload = activity.payload ?? {};
-  const payloadChannel = typeof payload['channel'] === 'string' ? payload['channel'] : '';
-  const payloadChannelName =
-    typeof payload['channelName'] === 'string' ? payload['channelName'] : '';
-  // channelDisplayName + channelKind come from slackTargetSummary() (e.g.
-  // runMessageReact). channelDisplayName for channels = raw name like "team";
-  // for DMs = "DM with <handle>". Use them when channelName is absent.
-  const payloadChannelDisplayName =
-    typeof payload['channelDisplayName'] === 'string' ? payload['channelDisplayName'] : '';
-  const payloadChannelKind =
-    typeof payload['channelKind'] === 'string' ? payload['channelKind'] : '';
-  const payloadDmHandle = typeof payload['dmHandle'] === 'string' ? payload['dmHandle'] : '';
-  const payloadThreadTs = typeof payload['threadTs'] === 'string' ? payload['threadTs'] : '';
-  const platform = typeof payload['platform'] === 'string' ? payload['platform'] : '';
+  const str = (key: string): string => {
+    const value = payload[key];
+    return typeof value === 'string' ? value : '';
+  };
+  return outboundSurfaceChip({
+    channel: str('channel'),
+    // channelDisplayName + channelKind come from slackTargetSummary() (e.g.
+    // runMessageReact). channelDisplayName for channels = raw name like "team";
+    // for DMs = "DM with <handle>". Used when channelName is absent.
+    channelDisplayName: str('channelDisplayName'),
+    channelKind: str('channelKind'),
+    channelName: str('channelName'),
+    dmHandle: str('dmHandle'),
+    platform: str('platform'),
+    threadTs: str('threadTs'),
+  });
+}
+
+// Sibling of surfaceChipForOutbound for ledger records: outbound message rows
+// carry the same surface fields flat on the record, so the chip derives
+// directly instead of round-tripping through a synthesized activity.
+function surfaceChipForOutboundMessage(message: AgentMessageRecord): SurfaceChip {
+  return outboundSurfaceChip({
+    channel: message.channelId ?? '',
+    channelDisplayName: message.channelDisplayName ?? '',
+    channelKind: message.channelKind ?? '',
+    channelName: message.channelName ?? '',
+    dmHandle: message.dmHandle ?? '',
+    platform: message.platform ?? '',
+    threadTs: message.threadTs ?? '',
+  });
+}
+
+function outboundSurfaceChip(fields: OutboundSurfaceFields): SurfaceChip {
+  const {
+    channel: payloadChannel,
+    channelDisplayName: payloadChannelDisplayName,
+    channelKind: payloadChannelKind,
+    channelName: payloadChannelName,
+    dmHandle: payloadDmHandle,
+    platform,
+    threadTs: payloadThreadTs,
+  } = fields;
 
   if (platform === 'feishu') {
     const kind = payloadChannelKind || (payloadChannel.startsWith('oc_') ? 'group' : 'chat');
@@ -837,7 +681,7 @@ function surfaceChipForOutbound(activity: ActivityRecord): SurfaceChip {
     // return wins over the payloadChannel branch below, so attach the channel id
     // here too, else outbound DM chips render as plain text while channel chips
     // deep-link, the same asymmetry the channel fix below resolves.
-    const label = `@${payloadDmHandle.replace(/^@/, '')}`;
+    const label = dmLabel(payloadDmHandle);
     return payloadChannel ? { kind: 'dm', label, channelId: payloadChannel } : { kind: 'dm', label };
   }
   if (payloadChannel) {
@@ -856,7 +700,7 @@ function surfaceChipForOutbound(activity: ActivityRecord): SurfaceChip {
       // payloadDmHandle is empty here (the early-return above consumed it).
       const rawHandle = payloadChannelDisplayName.replace(/^DM with /i, '');
       const handle = rawHandle && rawHandle !== payloadChannelDisplayName ? rawHandle : '';
-      return { kind: 'dm', label: handle ? `@${handle.replace(/^@/, '')}` : 'DM', ...target };
+      return { kind: 'dm', label: handle ? dmLabel(handle) : 'DM', ...target };
     }
     // Channel label: channelName (explicit) > channelDisplayName from
     // slackTargetSummary > raw id as last resort. slackChannelDisplayName()
@@ -955,41 +799,40 @@ function buildChildFeedItems(
   for (const activity of activities) {
     if (activity.type === 'runtime.steer_failed') continue;
 
-    // Outbound external effects → typed rows (same as main loop).
+    // Outbound external effects → typed rows (same as main loop, via the
+    // shared classifier).
     if (
       activity.type === 'tool.call.completed' ||
       activity.type === 'external.effect.completed'
     ) {
-      const tool = activity.payload?.['tool'];
-      const effect = activity.payload?.['effect'];
-      if (
-        tool === 'anima.message.send' ||
-        tool === 'anima.message.update' ||
-        effect === 'slack.message.send' ||
-        effect === 'slack.message.update' ||
-        effect === 'feishu.message.send'
-      ) {
-        const text = activity.payload?.['text'];
+      const payload = activity.payload ?? {};
+      const tool = typeof payload['tool'] === 'string' ? payload['tool'] : undefined;
+      const effect = typeof payload['effect'] === 'string' ? payload['effect'] : undefined;
+      const classified = classifyOutboundEffect({ effect, tool });
+      if (classified?.kind === 'message') {
+        const text = payload['text'];
+        const permalink =
+          typeof payload['permalink'] === 'string' && payload['permalink']
+            ? payload['permalink']
+            : undefined;
         items.push({
           kind: 'message-out',
-          activity,
           text: typeof text === 'string' ? text : '',
+          ...(permalink ? { permalink } : {}),
           timestamp: activity.createdAt,
           surface: surfaceChipForOutbound(activity),
-          isEdit: tool === 'anima.message.update' || effect === 'slack.message.update',
+          isEdit: classified.isEdit,
         });
         rememberOutboundText(recentOutboundTexts, activity);
         continue;
       }
-      if (tool === 'anima.file.send' || effect === 'slack.file.send') {
-        const payload = activity.payload ?? {};
+      if (classified?.kind === 'file') {
         const caption = typeof payload['caption'] === 'string' ? payload['caption'] : '';
         const permalink =
           typeof payload['permalink'] === 'string' ? payload['permalink'] : undefined;
         const files = outboundFilesFromPayload(payload['uploads']);
         items.push({
           kind: 'file-out',
-          activity,
           caption,
           files,
           ...(permalink ? { permalink } : {}),
@@ -999,14 +842,12 @@ function buildChildFeedItems(
         continue;
       }
       if (tool === 'anima.reminder.fire') continue;
-      if (tool === 'anima.message.react' || effect === 'slack.reaction') {
-        const payload = activity.payload ?? {};
+      if (classified?.kind === 'reaction') {
         const action: 'added' | 'removed' = payload['action'] === 'removed' ? 'removed' : 'added';
         const emoji = typeof payload['name'] === 'string' ? payload['name'] : '';
         const noop = payload['noop'] === true;
         items.push({
           kind: 'reaction-out',
-          activity,
           action,
           emoji,
           noop,
@@ -1041,7 +882,7 @@ function buildChildFeedItems(
     }
 
     if (activity.type === 'runtime.event') {
-      if (hiddenRuntimeEvent(String(activity.payload?.['eventType'] ?? ''))) continue;
+      if (isRuntimeEventNoise(String(activity.payload?.['eventType'] ?? ''))) continue;
     } else if (!showHidden && HIDDEN_TYPES.has(activity.type)) {
       continue;
     }

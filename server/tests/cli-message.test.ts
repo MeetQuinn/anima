@@ -11,6 +11,7 @@ import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
 import { slackRuntimeDecision } from '../inbox/slack-subscription.service.js';
 import { clearActiveRuntimeItem, setActiveRuntimeItem } from '../runtime/active-item.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
+import { messageServiceForAgent } from '../messages/message.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { makeSlackEvent } from './helpers/slack.js';
 import { slackBlocks, slackRequestBody, startSlackApiMock } from './helpers/slack-api.js';
@@ -471,7 +472,10 @@ test('inbox and outbox commands show recent received and sent history', async ()
         }),
         { agentId: 'scout', stateDir },
       );
-      await activityServiceForAgent('scout').record({
+      // Seed the outbound the way the live writer does: the tool run records
+      // the activity AND projects it into the message ledger (the legacy
+      // read-time backfill that used to cover activity-only seeding is gone).
+      const outboundActivity = await activityServiceForAgent('scout').record({
         createdAt: '2026-05-11T00:06:00.000Z',
         payload: {
           channel: 'D-alice',
@@ -488,6 +492,7 @@ test('inbox and outbox commands show recent received and sent history', async ()
         },
         type: 'external.effect.completed',
       });
+      await messageServiceForAgent('scout').recordOutboxActivity(outboundActivity);
     });
 
     const env = { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir };

@@ -1,4 +1,5 @@
 import type { Activity } from '../../shared/activity.js';
+import { classifyOutboundEffect } from '../../shared/outbound-effects.js';
 import type {
   AgentMessageFile,
   AgentMessagePreview,
@@ -44,25 +45,22 @@ export function messageFromInboxItem(item: InboxItem): AgentMessageRecord | unde
 export function messageFromActivity(activity: Activity): AgentMessageRecord | undefined {
   if (activity.type !== 'external.effect.completed' && activity.type !== 'tool.call.completed') return undefined;
   const payload = activity.payload ?? {};
-  const tool = stringField(payload, 'tool');
-  const effect = stringField(payload, 'effect');
+  const classified = classifyOutboundEffect({
+    effect: stringField(payload, 'effect'),
+    tool: stringField(payload, 'tool'),
+  });
+  if (!classified) return undefined;
 
-  if (
-    tool === 'anima.message.send' ||
-    tool === 'anima.message.update' ||
-    effect === 'slack.message.send' ||
-    effect === 'slack.message.update' ||
-    effect === 'feishu.message.send'
-  ) {
+  if (classified.kind === 'message') {
     return baseOutboxMessage(activity, payload, {
-      isEdit: tool === 'anima.message.update' || effect === 'slack.message.update',
+      isEdit: classified.isEdit,
       kind: 'message',
       messageTs: stringField(payload, 'ts') ?? stringField(payload, 'targetTs') ?? stringField(payload, 'messageId'),
       text: stringField(payload, 'text') ?? '',
     });
   }
 
-  if (tool === 'anima.file.send' || effect === 'slack.file.send') {
+  if (classified.kind === 'file') {
     const files = uploadFiles(payload['uploads']);
     const caption = stringField(payload, 'caption') ?? '';
     const text = [caption, files.length ? `Files: ${files.map((file) => file.filename).join(', ')}` : 'Files uploaded']
@@ -75,22 +73,18 @@ export function messageFromActivity(activity: Activity): AgentMessageRecord | un
     });
   }
 
-  if (tool === 'anima.message.react' || effect === 'slack.reaction') {
-    const action = stringField(payload, 'action') === 'removed' ? 'removed' : 'added';
-    const name = stringField(payload, 'name') ?? '';
-    return baseOutboxMessage(activity, payload, {
-      kind: 'reaction',
-      messageTs: stringField(payload, 'targetTs') ?? stringField(payload, 'ts'),
-      reaction: {
-        action,
-        name,
-        ...(payload['noop'] === true ? { noop: true } : {}),
-      },
-      text: `Reaction ${action}: :${name || 'unknown'}:`,
-    });
-  }
-
-  return undefined;
+  const action = stringField(payload, 'action') === 'removed' ? 'removed' : 'added';
+  const name = stringField(payload, 'name') ?? '';
+  return baseOutboxMessage(activity, payload, {
+    kind: 'reaction',
+    messageTs: stringField(payload, 'targetTs') ?? stringField(payload, 'ts'),
+    reaction: {
+      action,
+      name,
+      ...(payload['noop'] === true ? { noop: true } : {}),
+    },
+    text: `Reaction ${action}: :${name || 'unknown'}:`,
+  });
 }
 
 export function messageIdForInboxItem(item: InboxItem): string {

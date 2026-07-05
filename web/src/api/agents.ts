@@ -16,7 +16,7 @@ import type {
   SlackUserCandidate,
 } from '@shared/agent-config';
 import type { Reminder } from '@shared/reminder';
-import type { Activity, AgentActivityFeedEvent, AgentActivityFeedPage } from '@shared/activity';
+import type { AgentActivityFeedPage } from '@shared/activity';
 import type { AgentDiagnosticsBundle } from '@shared/diagnostics';
 import type {
   AgentChannelListResponse,
@@ -289,32 +289,11 @@ export async function fetchAgentChannels(agentId: string): Promise<AgentChannelL
   );
 }
 
-interface LegacyAgentActivitiesResponse {
-  activities?: Activity[];
-  nextCursor?: string | null;
-}
-
 function normalizeAgentActivityFeedPage(body: unknown): AgentActivityFeedPage {
   if (!body || typeof body !== 'object') return { events: [], nextCursor: null };
-  const record = body as Partial<AgentActivityFeedPage> & LegacyAgentActivitiesResponse;
-  if (Array.isArray(record.events)) {
-    return {
-      events: record.events,
-      nextCursor: record.nextCursor ?? null,
-    };
-  }
-  const events: AgentActivityFeedEvent[] = [
-    ...(Array.isArray(record.activities)
-      ? record.activities.map((activity) => ({
-          activity,
-          kind: 'activity' as const,
-          timestamp: activity.createdAt,
-        }))
-      : []),
-  ];
-  events.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  const record = body as Partial<AgentActivityFeedPage>;
   return {
-    events,
+    events: Array.isArray(record.events) ? record.events : [],
     nextCursor: record.nextCursor ?? null,
   };
 }

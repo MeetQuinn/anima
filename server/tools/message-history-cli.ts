@@ -2,7 +2,7 @@ import type { Command } from 'commander';
 import { z } from 'zod';
 
 import type { AgentMessageDirection, AgentMessageRecord } from '../../shared/messages.js';
-import { messageServiceForAgent } from '../messages/message.service.js';
+import { messageServiceForAgent, normalizeSearchKeywords } from '../messages/message.service.js';
 import { resolveToolAgentId } from './tool-context.js';
 
 const MessageHistorySchema = z.object({
@@ -122,13 +122,6 @@ function normalizeTimeWindow(opts: MessageHistoryInput): { before?: string; sinc
     ...(opts.before ? { before: normalizeIsoCursor(opts.before, '--before') } : {}),
     ...(opts.since ? { since: normalizeIsoCursor(opts.since, '--since') } : {}),
   };
-}
-
-function normalizeSearchKeywords(keywords: string[]): string[] {
-  return keywords
-    .flatMap((keyword) => keyword.split(/\s+/g))
-    .map((keyword) => keyword.trim())
-    .filter(Boolean);
 }
 
 function normalizeIsoCursor(value: string, flag: string): string {

@@ -1,4 +1,4 @@
-import type { AgentMessageRecord } from '../../shared/messages.js';
+import type { AgentMessageRecord } from './messages.js';
 
 // Shared channel matching for message history queries. Used by both the
 // keyword search path and the channel-scoped list path so the Channels detail
@@ -6,6 +6,10 @@ import type { AgentMessageRecord } from '../../shared/messages.js';
 // message against a channel term by id, name, display name, or (for DMs) the
 // counterpart handle / user id, after normalizing away leading #/@ and the
 // "DM with @" prefix the UI renders.
+//
+// Lives in shared/ because it depends only on the AgentMessageRecord contract:
+// the storage layer's readLatest predicate needs it, and stores must not
+// import from the server domain layer.
 
 export function normalizeChannelSearchTerm(value: string): string {
   return value.trim().toLowerCase().replace(/^[@#]/, '').replace(/^dm with @/i, '');
