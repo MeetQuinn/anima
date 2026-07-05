@@ -1379,6 +1379,10 @@ test('server preflights Socket Mode token before constructing the Slack app', as
     const server = await runNodeUntilOutput([adminCliPath, '--agent', 'scout', 'server'], {
       env: { ...process.env, ANIMA_HOME: stateDir, ANIMA_SLACK_API_URL: slackApi.url },
       match: /apps\.connections\.open failed/,
+      // Server cold-boot takes ~0.4s idle but has blown the default 5s deadline on a
+      // heavily loaded machine (flakes only under parallel load, never isolated or in CI).
+      // This is an until-match wait, so a generous ceiling adds no latency when fast.
+      timeoutMs: 30_000,
     });
     assert.match(server.stderr || server.stdout, /apps\.connections\.open failed/);
     assert.doesNotMatch(server.stderr + server.stdout, /SocketModeClient/);
