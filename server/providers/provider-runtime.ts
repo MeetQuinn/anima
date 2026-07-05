@@ -15,6 +15,10 @@ import {
   type AgentRuntimeResult,
 } from './contract.js';
 
+interface ControllerAgentRuntimeOptions {
+  providerChildIdleTimeoutMs?: number;
+}
+
 export interface ProviderTurnController {
   completion: Promise<unknown>;
   acceptStderrChunk(chunk: string): Promise<void>;
@@ -33,11 +37,15 @@ export abstract class ControllerAgentRuntime<C extends ProviderTurnController> i
   abstract readonly kind: string;
   protected readonly slot = new ProviderControllerSlot<C>();
   protected readonly activeRun = new ActiveRuntimeRun();
+  private providerChildIdleReset?: NodeJS.Timeout;
+
+  constructor(private readonly options: ControllerAgentRuntimeOptions = {}) {}
 
   abstract run(input: AgentRuntimeInput): Promise<AgentRuntimeResult>;
   abstract appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<AgentRuntimeFollowupResult>;
 
   async close(options: AgentRuntimeCloseOptions = {}): Promise<void> {
+    this.cancelProviderChildIdleReset();
     await this.slot.reset(options.signal, options);
   }
 
@@ -61,6 +69,7 @@ export abstract class ControllerAgentRuntime<C extends ProviderTurnController> i
     input: AgentRuntimeInput,
     create: (child: RunningChildProcess) => C,
   ): C {
+    this.cancelProviderChildIdleReset();
     let controller!: C;
     controller = create(startChildProcess({
       args: spawn.args,
@@ -87,12 +96,14 @@ export abstract class ControllerAgentRuntime<C extends ProviderTurnController> i
       turn(): Promise<AgentRuntimeResult>;
     },
   ): Promise<AgentRuntimeResult> {
-    await input.effects.recordRuntime('runtime.started', {
-      ...options.startedPayload,
-      providerSession: providerSessionPayload(input.providerSession, this.kind),
-    });
-    const finishRun = this.activeRun.start(input, options.label, (signal) => void this.slot.reset(signal));
+    this.cancelProviderChildIdleReset();
+    let finishRun: (() => void) | undefined;
     try {
+      await input.effects.recordRuntime('runtime.started', {
+        ...options.startedPayload,
+        providerSession: providerSessionPayload(input.providerSession, this.kind),
+      });
+      finishRun = this.activeRun.start(input, options.label, (signal) => void this.slot.reset(signal));
       const result = await options.turn();
       await input.effects.recordRuntime('runtime.completed');
       return result;
@@ -106,8 +117,32 @@ export abstract class ControllerAgentRuntime<C extends ProviderTurnController> i
       }
       throw error;
     } finally {
-      options.beforeFinishRun?.();
-      finishRun();
+      if (finishRun) {
+        options.beforeFinishRun?.();
+        finishRun();
+      }
+      this.scheduleProviderChildIdleReset();
     }
+  }
+
+  private cancelProviderChildIdleReset(): void {
+    if (!this.providerChildIdleReset) return;
+    clearTimeout(this.providerChildIdleReset);
+    this.providerChildIdleReset = undefined;
+  }
+
+  private scheduleProviderChildIdleReset(): void {
+    this.cancelProviderChildIdleReset();
+    const timeoutMs = this.options.providerChildIdleTimeoutMs;
+    if (timeoutMs === undefined || timeoutMs <= 0) return;
+    const controller = this.slot.get();
+    if (!controller || this.activeRun.isActive()) return;
+
+    this.providerChildIdleReset = setTimeout(() => {
+      this.providerChildIdleReset = undefined;
+      if (this.activeRun.isActive() || this.slot.get() !== controller) return;
+      void this.slot.reset().catch(() => {});
+    }, timeoutMs);
+    this.providerChildIdleReset.unref?.();
   }
 }

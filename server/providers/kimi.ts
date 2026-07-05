@@ -34,7 +34,7 @@ export class KimiCliAgentRuntime extends ControllerAgentRuntime<KimiAcpControlle
   private readonly config: KimiCliAgentProviderConfig;
 
   constructor(config: KimiCliAgentProviderConfig) {
-    super();
+    super({ providerChildIdleTimeoutMs: config.providerChildIdleTimeoutMs });
     this.config = config;
     this.env = config.env;
   }

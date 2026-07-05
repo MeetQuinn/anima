@@ -122,6 +122,9 @@ function mergeProviderSelection(
 
   const next: Record<string, unknown> = { kind: entry.kind, model };
   if (current.idleTimeoutMs !== undefined) next.idleTimeoutMs = current.idleTimeoutMs;
+  if (current.providerChildIdleTimeoutMs !== undefined) {
+    next.providerChildIdleTimeoutMs = current.providerChildIdleTimeoutMs;
+  }
   if (reasoningEffort !== undefined) next.reasoningEffort = reasoningEffort;
   if (entry.kind === 'claude-code' && update.transport !== undefined) next.transport = update.transport;
   return next;

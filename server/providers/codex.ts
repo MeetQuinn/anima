@@ -33,7 +33,7 @@ export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerC
   private readonly config: CodexCliAgentProviderConfig;
 
   constructor(config: CodexCliAgentProviderConfig) {
-    super();
+    super({ providerChildIdleTimeoutMs: config.providerChildIdleTimeoutMs });
     this.config = config;
     this.env = config.env;
   }

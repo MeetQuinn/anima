@@ -15,7 +15,12 @@ import {
   readManagedRuntimeStatus,
   resolveManagedAnimaHome,
 } from '../runtime-management/managed-runtime.js';
-import { AgentCreateRequest, agentIdFromName, PROVIDER_IDLE_TIMEOUT_MS_DEFAULT } from '../../shared/agent-config.js';
+import {
+  AgentCreateRequest,
+  agentIdFromName,
+  PROVIDER_CHILD_IDLE_TIMEOUT_MS_DEFAULT,
+  PROVIDER_IDLE_TIMEOUT_MS_DEFAULT,
+} from '../../shared/agent-config.js';
 import { providerCatalogEntry } from '../../shared/provider-catalog.js';
 import { withAnimaHome } from './anima-home.js';
 
@@ -272,7 +277,7 @@ test('claude-code catalog includes Fable without changing the default model', ()
   assert.equal(entry?.defaultModel, 'opus');
 });
 
-test('provider idle timeout defaults to 30 minutes for all providers', async () => {
+test('provider turn and child idle timeouts default for all providers', async () => {
   for (const provider of [
     { kind: 'claude-code', model: 'opus' },
     { kind: 'codex-cli', model: 'gpt-5.5' },
@@ -290,6 +295,7 @@ test('provider idle timeout defaults to 30 minutes for all providers', async () 
       await withAnimaHome(configDir, async () => {
         const agent = await agentService(provider.kind).getConfig();
         assert.equal(agent.provider.idleTimeoutMs, PROVIDER_IDLE_TIMEOUT_MS_DEFAULT);
+        assert.equal(agent.provider.providerChildIdleTimeoutMs, PROVIDER_CHILD_IDLE_TIMEOUT_MS_DEFAULT);
       });
     } finally {
       await rm(configDir, { force: true, recursive: true });
@@ -468,6 +474,7 @@ test('agent provider kind patch resets provider defaults, preserves env, and arc
           },
           kind: 'codex-cli',
           model: 'gpt-5.5',
+          providerChildIdleTimeoutMs: 12_345,
           reasoningEffort: 'high',
         },
         homePath: 'agents/anima',
@@ -497,6 +504,7 @@ test('agent provider kind patch resets provider defaults, preserves env, and arc
       assert.equal(agent.provider.model, 'opus');
       assert.ok('reasoningEffort' in agent.provider);
       assert.equal(agent.provider.reasoningEffort, 'xhigh');
+      assert.equal(agent.provider.providerChildIdleTimeoutMs, 12_345);
       assert.deepEqual(agent.provider.env, { CUSTOM_LAUNCH_FLAG: 'kept' });
 
       const session = await new SessionStore('anima').read();

@@ -52,6 +52,8 @@ export interface AgentRuntime {
 
 `close` is optional. It is for provider adapters that keep resources alive across items, such as a persistent child process. `AgentRuntimeCloseOptions` lets the caller choose the kill signal and a force-kill deadline.
 
+Controller-style adapters (Codex app-server, Claude stream-json, Kimi ACP) may keep a provider child warm after a turn so the next item can reuse the session. Once no item is active, `providerChildIdleTimeoutMs` bounds that warm child before Anima terminates it.
+
 `health` is optional. It returns a snapshot of the adapter's child-process state (whether a child is expected, and how the live one looks) for the runtime health service.
 
 `requestDrain` is optional. It asks the adapter to bring the active item to a clean stop; the graceful service restart path uses it so in-flight work finishes or saves its place instead of being dropped.
