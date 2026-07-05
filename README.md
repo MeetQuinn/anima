@@ -73,6 +73,7 @@ Anima downloads the managed runtime into `~/.anima/runtime/current` and keeps lo
 **How it is built**
 
 - [Architecture overview](https://anima.meetquinn.ai/architecture/overview): components, message flow, and where each concern lives in code
+- [Codebase internals](https://anima.meetquinn.ai/architecture/internals): where things live and how a message flows through code
 
 **Reference**
 
@@ -81,6 +82,8 @@ Anima downloads the managed runtime into `~/.anima/runtime/current` and keeps lo
 - [Agent guidance](CLAUDE.md)
 
 ## Development
+
+For the full contributor workflow, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 To work on Anima itself, run it from a source checkout with an isolated repo-local home:
 
