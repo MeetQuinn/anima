@@ -28,6 +28,11 @@ export class ActivityService {
     return this.store.readLastN(n);
   }
 
+  /** Newest `n` activities matching a predicate, newest-first. */
+  readNewestMatching(n: number, matches: (activity: Activity) => boolean): Promise<Activity[]> {
+    return this.store.readNewestMatching(n, matches);
+  }
+
   readSince(createdAt: string): Promise<Activity[]> {
     return this.store.readSince(createdAt);
   }

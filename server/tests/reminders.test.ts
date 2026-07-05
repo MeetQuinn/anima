@@ -123,6 +123,7 @@ test('due reminder delivery enters the inbox and records fire activity', async (
       const event = makeReminderInboxItem({
         eventId: `reminder:${dueReminder.reminderId}:fire:${dueReminder.firedCount + 1}`,
         reminderId: dueReminder.reminderId,
+        ...(dueReminder.nextDueAt ? { scheduledAt: dueReminder.nextDueAt } : {}),
         title: dueReminder.title,
         timestamp: firedAt.toISOString(),
       });
@@ -158,7 +159,9 @@ test('due reminder delivery enters the inbox and records fire activity', async (
 
       const call = runtime.calls[0];
       assert.match(call?.prompt ?? '', new RegExp(`reminder_id=${reminder.reminderId}`));
-      assert.match(call?.prompt ?? '', /scheduled=2026-05-14T09:00:01Z/);
+      // scheduled= reflects the intended fire time (nextDueAt), not the
+      // 09:00:01 poll tick that noticed the reminder was due.
+      assert.match(call?.prompt ?? '', /scheduled=2026-05-14T09:00:00Z/);
 
       await waitUntil(async () => {
         const state = await loadState();
@@ -215,6 +218,8 @@ test('reminder subscriber carries the human title into the inbox item and messag
       if (item.kind !== 'reminder') assert.fail('expected reminder inbox item');
       assert.equal(item.title, 'Launch queue review');
       assert.equal(item.reminderId, reminder.reminderId);
+      // The subscriber stamps the intended fire moment before completing the fire.
+      assert.equal(item.scheduledAt, '2026-05-14T09:00:00.000Z');
 
       const message = (await messageServiceForAgent('scout').list()).entries.find(
         (entry) => entry.reminderId === reminder.reminderId,

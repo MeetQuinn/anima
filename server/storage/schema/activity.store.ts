@@ -39,6 +39,15 @@ export class ActivityStore {
   }
 
   /**
+   * Read the newest `n` records matching a predicate, scanning segments
+   * newest-first and stopping as soon as `n` matches are found. Returns
+   * newest-first. Avoids loading the full log when the match is recent.
+   */
+  async readNewestMatching(n: number, matches: (activity: Activity) => boolean): Promise<Activity[]> {
+    return this.log().readNewestMatching(n, matches);
+  }
+
+  /**
    * Read the last `n` activity records with `createdAt` strictly before the
    * given ISO timestamp cursor. Used for cursor-based backward pagination.
    * Falls back to a full file read (all activities before cursor) because the

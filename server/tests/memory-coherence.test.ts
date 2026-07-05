@@ -133,12 +133,29 @@ test('memory coherence prompt uses the self-contained scheduled memory pass copy
   const prompt = buildCodeAgentDeliveryPrompt(memoryItem('iris', '2026-06-22T05:47:00.000Z'));
 
   assert.match(prompt, /^Memory coherence system wake:/);
-  assert.match(prompt, /scheduled_slot_at=2026-06-22T05:47:00\.000Z/);
+  // envelopeTime renders second granularity (stale .000Z assertion predated #353's envelope rewrite).
+  assert.match(prompt, /scheduled_slot_at=2026-06-22T05:47:00Z/);
   assert.match(prompt, /You are running your scheduled memory pass\./);
   assert.match(prompt, /Do not churn to look busy\./);
   assert.doesNotMatch(prompt, /design\/memory-coherence-procedure\.md/);
   assert.doesNotMatch(prompt, /Memory coherence outcome:/);
   assert.doesNotMatch(prompt, /End your final response with exactly one status line/);
+});
+
+test('memory coherence prompt time= reflects claim time, matching reminder envelopes', () => {
+  const item = memoryItem('iris', '2026-06-22T05:47:00.000Z');
+  item.handling = {
+    ...item.handling,
+    startedAt: '2026-06-22T06:02:15.000Z',
+    status: 'running',
+    updatedAt: '2026-06-22T06:02:15.000Z',
+    workerId: 'worker-memory',
+  };
+
+  const prompt = buildCodeAgentDeliveryPrompt(item);
+
+  assert.match(prompt, /time=2026-06-22T06:02:15Z/);
+  assert.match(prompt, /scheduled_slot_at=2026-06-22T05:47:00Z/);
 });
 
 test('memory coherence outcome derives from a coarse memory digest change boolean', () => {
@@ -206,6 +223,21 @@ test('memory coherence activity gate requires a message after the latest memory 
         messageRecord('newer', '2026-06-22T06:00:00.000Z'),
       ]);
       assert.equal(await hasMeaningfulActivitySinceLastMemoryPass('aria'), true);
+
+      // A newer outcome closes the gate again: the gate must key off the
+      // LATEST memory_coherence.outcome, not the first one it finds.
+      await activityServiceForAgent('aria').record({
+        createdAt: '2026-06-22T06:30:00.000Z',
+        payload: {
+          completedAt: '2026-06-22T06:30:00.000Z',
+          outcome: 'completed',
+          scheduledSlotAt: '2026-06-22T05:00:00.000Z',
+          scheduledSlotLabel: '05:00 agent-local',
+          startedAt: '2026-06-22T06:29:00.000Z',
+        },
+        type: 'memory_coherence.outcome',
+      });
+      assert.equal(await hasMeaningfulActivitySinceLastMemoryPass('aria'), false);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

@@ -266,7 +266,8 @@ schedule). Repeat formats: `every:<n>m|h|d`, `daily@HH:MM`, and `weekly:<day,day
 timezone is an IANA name, for example `Asia/Shanghai`.
 
 When a reminder wakes you, its envelope carries both `time=` (when it reached you) and
-`scheduled=` (when it actually fired). A gap between them means the reminder waited, so check
+`scheduled=` (when it was meant to fire; reminders from before this field existed show the actual
+fire time instead). A gap between them means the reminder waited, so check
 whether the world moved on before executing its instructions verbatim. Snooze is for "not yet":
 the reminder arrived but its precondition has not (the reply you were waiting for is not in, the
 work it checks on is still mid-flight). It also revives a one-shot that already fired. If you find

@@ -150,6 +150,10 @@ export type FeishuOnboardingInboxItem = z.infer<typeof FeishuOnboardingInboxItem
 export const ReminderInboxItem = InboxItemBase.extend({
   kind: z.literal('reminder'),
   reminderId: z.string(),
+  // The reminder's intended fire moment (nextDueAt at fire time), as opposed
+  // to receivedAt (the poll tick that noticed it was due). Optional because
+  // items enqueued before this field existed lack it.
+  scheduledAt: z.string().optional(),
   title: z.string().optional(),
 });
 

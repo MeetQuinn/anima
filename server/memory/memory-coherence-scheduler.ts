@@ -1,16 +1,16 @@
 import { createHash } from 'node:crypto';
 
-import { DateTime } from 'luxon';
+import type { DateTime } from 'luxon';
 
 import type { AgentConfig } from '../../shared/agent-config.js';
 import { agentHasConnectedTransport } from '../../shared/agent-transports.js';
-import type { Activity } from '../../shared/activity.js';
 import type { MemoryCoherenceConfig } from '../../shared/server-settings.js';
 import type { InboxItem, MemoryCoherenceInboxItem } from '../../shared/inbox.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { isAgentRunnable } from '../agents/agent-config-ops.js';
 import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
+import { systemTimezone, timeOnLocalDay, zonedDateTime } from '../schedule/local-time.js';
 import { serverConfigStore, type ServerConfig } from '../storage/schema/server.store.js';
 
 const DEFAULT_WINDOW_START = '05:00';
@@ -64,14 +64,20 @@ export class MemoryCoherenceScheduler {
     if (candidates.length === 0) return;
 
     const now = this.now();
-    const activeCount = await this.activeMemoryCoherenceCount(candidates);
-    let available = Math.max(0, config.maxConcurrent - activeCount);
-    if (available <= 0) return;
-
+    // Due-slot computation is pure time math, so it runs before any file I/O.
+    // Note: with the 2-day catchup window ([0, -1]) every candidate always has
+    // a most-recent slot, so `due` is only empty when there are no candidates;
+    // it is the enqueue-side settled-id dedupe (wake-queue `seen` markers) and
+    // the activity gate that make this loop a no-op on most ticks.
     const due = candidates
       .map((agent) => dueMemoryCoherenceSlot(agent, config, now, this.timezoneForAgent(agent, config.timezone)))
       .filter((slot): slot is MemoryCoherenceDueSlot => Boolean(slot))
       .sort((a, b) => a.scheduledSlotAt.localeCompare(b.scheduledSlotAt));
+    if (due.length === 0) return;
+
+    const activeCount = await this.activeMemoryCoherenceCount(candidates);
+    let available = Math.max(0, config.maxConcurrent - activeCount);
+    if (available <= 0) return;
 
     for (const slot of due) {
       if (available <= 0) break;
@@ -95,9 +101,17 @@ export class MemoryCoherenceScheduler {
   }
 }
 
+// Activity gate: enqueue a pass only if the message ledger has at least one
+// entry newer than the latest memory_coherence.outcome. This couples the gate
+// to two projection rules that must hold for it to stay correct:
+// - memory_coherence outcomes are recorded to the activity log for EVERY
+//   terminal state (success and failure alike), so a failed pass still
+//   advances the gate instead of retrying forever;
+// - memory_coherence items never project into the message ledger (see
+//   message.projection.ts), so a pass cannot count as the "meaningful
+//   activity" that justifies the next pass.
 export async function hasMeaningfulActivitySinceLastMemoryPass(agentId: string): Promise<boolean> {
-  const activities = await activityServiceForAgent(agentId).readAll();
-  const latestMemoryPassAt = latestMemoryCoherenceOutcomeAt(activities);
+  const latestMemoryPassAt = await latestMemoryCoherenceOutcomeAt(agentId);
   const latestMessages = await messageServiceForAgent(agentId).list({
     limit: 1,
     ...(latestMemoryPassAt ? { since: latestMemoryPassAt } : {}),
@@ -143,8 +157,7 @@ function dueMemoryCoherenceSlot(
   now: Date,
   timezone: string,
 ): MemoryCoherenceDueSlot | undefined {
-  const current = DateTime.fromJSDate(now, { zone: timezone });
-  if (!current.isValid) throw new Error(`Invalid memory coherence timezone: ${timezone}`);
+  const current = zonedDateTime(now, timezone);
   const offsetMinutes = stableAgentOffsetMinutes(agent.id, config.windowDurationMinutes);
   const candidates = [0, -1]
     .map((dayOffset) => slotForLocalDay(current.plus({ days: dayOffset }), config.windowStart, offsetMinutes, timezone))
@@ -162,17 +175,7 @@ function dueMemoryCoherenceSlot(
 }
 
 function slotForLocalDay(day: DateTime, windowStart: string, offsetMinutes: number, timezone: string): DateTime {
-  const [hourText, minuteText] = windowStart.split(':');
-  const hour = Number.parseInt(hourText ?? '', 10);
-  const minute = Number.parseInt(minuteText ?? '', 10);
-  const start = DateTime.fromObject(
-    { day: day.day, hour, minute, month: day.month, year: day.year },
-    { zone: timezone },
-  );
-  if (!start.isValid) {
-    throw new Error(`Invalid memory coherence windowStart ${windowStart}: ${start.invalidReason ?? 'invalid'}`);
-  }
-  return start.plus({ minutes: offsetMinutes });
+  return timeOnLocalDay(day, windowStart, timezone, 'memory coherence windowStart').plus({ minutes: offsetMinutes });
 }
 
 export function stableAgentOffsetMinutes(agentId: string, windowDurationMinutes: number): number {
@@ -181,10 +184,20 @@ export function stableAgentOffsetMinutes(agentId: string, windowDurationMinutes:
   return value % windowDurationMinutes;
 }
 
-function latestMemoryCoherenceOutcomeAt(activities: Activity[]): string | undefined {
+// Outcomes are appended at completion time, so the newest few records by
+// position contain the latest completion; reading newest-first avoids loading
+// the full activity log on every reconcile tick. A small window (rather than
+// exactly one) keeps the max-of-completedAt semantics robust to near-
+// simultaneous appends.
+const LATEST_OUTCOME_WINDOW = 5;
+
+async function latestMemoryCoherenceOutcomeAt(agentId: string): Promise<string | undefined> {
+  const outcomes = await activityServiceForAgent(agentId).readNewestMatching(
+    LATEST_OUTCOME_WINDOW,
+    (activity) => activity.type === 'memory_coherence.outcome',
+  );
   let latest: string | undefined;
-  for (const activity of activities) {
-    if (activity.type !== 'memory_coherence.outcome') continue;
+  for (const activity of outcomes) {
     const completedAt = typeof activity.payload?.completedAt === 'string'
       ? activity.payload.completedAt
       : activity.createdAt;
@@ -212,5 +225,5 @@ function memoryCoherenceInboxItem(slot: MemoryCoherenceDueSlot, now: Date): Memo
 
 function defaultTimezoneForAgent(_agent: AgentConfig, requested: string): string {
   if (requested !== 'agent-local') return requested;
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  return systemTimezone();
 }
