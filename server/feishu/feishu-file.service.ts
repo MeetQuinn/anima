@@ -6,6 +6,7 @@ import {
   getFeishuFileCacheMetaStore,
   type FeishuFileCacheMeta,
 } from '../storage/schema/cache.js';
+import { triggerFeishuFileCacheEviction } from '../storage/file-cache-eviction.js';
 import { safeFilename } from '../storage/safe-filename.js';
 
 export type FeishuMessageResourceType = 'audio' | 'file' | 'image';
@@ -49,6 +50,7 @@ export class FeishuFileService {
       sizeBytes: input.file.bytes.length,
     };
     await getFeishuFileCacheMetaStore(input.ref.fileId).write(meta);
+    triggerFeishuFileCacheEviction();
     return destPath;
   }
 

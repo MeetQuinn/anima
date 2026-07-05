@@ -2,6 +2,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { errorMessage } from '../ids.js';
+import { triggerSlackFileCacheEviction } from '../storage/file-cache-eviction.js';
 import { getSlackFileCacheMetaStore, slackFileCacheDir, type SlackFileCacheMeta } from '../storage/schema/cache.js';
 import { safeFilename } from '../storage/safe-filename.js';
 import type { InboxFileMeta } from '../../shared/inbox.js';
@@ -115,6 +116,7 @@ export class SlackFileService {
         teamId: input.teamId,
       };
       await getSlackFileCacheMetaStore(input.teamId, file.id).write(meta);
+      triggerSlackFileCacheEviction();
       return {
         id: file.id,
         localPath: destPath,
