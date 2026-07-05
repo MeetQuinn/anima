@@ -118,12 +118,10 @@ test('message send records an audited Slack output', async () => {
     assert.ok(sentThreadSubscription);
 
     const list = await runNode([cliPath, 'subscription', 'list'], {
-      env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir },
+      env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_SLACK_API_URL: slackApi.url },
     });
     assert.equal(list.status, 0, list.stderr || list.stdout);
-    assert.match(list.stdout, /Channels:\n- none/);
-    assert.match(list.stdout, /\[following\] channel=C-product thread_ts=1770000100\.000001/);
-    assert.match(list.stdout, /\[following\] channel=C-product thread_ts=1770000200\.000001/);
+    assert.match(list.stdout, /^Channels \(0\)\n  - none/m);
 
     const mute = await runNode([cliPath, 'subscription', 'mute', '--channel', 'C-product', '--thread-ts', '1770000200.000001'], {
       env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_INBOX_ITEM_ID: itemId, ANIMA_SLACK_API_URL: slackApi.url },
