@@ -16,3 +16,18 @@ export function providerCrashRetryNote(): string {
     'Do not repeat completed external side effects such as chat messages, file sends, or file edits; check `anima outbox` for what already went out, and inspect files/state, before redoing anything.',
   ].join('\n');
 }
+
+export function slackChannelAttentionNote(channelId: string): string {
+  const command = `anima subscription mute --channel ${channelId}`;
+  return `Anima note: you've been reading channel ${channelId} without posting. If it is not relevant, mute it with \`${command}\`.`;
+}
+
+export function slackThreadAttentionNote(channelId: string, threadTs: string): string {
+  const command = `anima subscription mute --channel ${channelId} --thread-ts ${threadTs}`;
+  return `Anima note: you've been reading thread ${threadTs} in ${channelId} without posting. If it is not relevant, mute it with \`${command}\`.`;
+}
+
+export function feishuChatAttentionNote(chatId: string): string {
+  const command = `anima subscription mute --chat-id ${chatId}`;
+  return `Anima note: you've been reading Feishu chat ${chatId} without posting. If it is not relevant, mute it with \`${command}\`.`;
+}
