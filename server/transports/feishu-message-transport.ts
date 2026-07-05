@@ -17,7 +17,7 @@ import {
   feishuAttentionSuggestionPayload,
 } from '../inbox/attention-suggestion-activity.js';
 import { runIngestPipeline } from '../inbox/ingest-pipeline.js';
-import { feishuRuntimeDecision, type FeishuRuntimeDecision } from '../inbox/slack-subscription.service.js';
+import { feishuRuntimeDecision, type FeishuRuntimeDecision } from '../inbox/feishu-subscription.service.js';
 import { WakeQueueService, type WakeQueueEnqueueResult } from '../inbox/wake-queue.service.js';
 import type { FeishuConfig } from '../../shared/agent-config.js';
 import type { FeishuInboxItem, FeishuQuotedMessage } from '../../shared/inbox.js';

@@ -13,7 +13,7 @@ import type { FeishuReceiveMessageEvent } from '../feishu/events.js';
 import { SlackProfileResolver } from '../slack/profiles.js';
 import { SlackInboxSubscriber } from '../inbox/slack-subscriber.js';
 import type { SlackMessageEnvelope, SlackRawMessageEvent } from '../inbox/slack-events.js';
-import { muteSubscriptionForAgent } from '../inbox/slack-subscription.service.js';
+import { muteSubscriptionForAgent } from '../inbox/subscription.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { SubscriptionStore } from '../storage/schema/subscription.store.js';
 import { withAnimaHome } from './anima-home.js';

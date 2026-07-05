@@ -8,7 +8,7 @@ import { nowIso } from '../ids.js';
 import {
   ensureThreadSubscriptionForSentMessage,
   recordOutboundEngagement,
-} from '../inbox/slack-subscription.service.js';
+} from '../inbox/subscription.service.js';
 import { resolveChatTarget } from './chat-target-resolver.js';
 import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
 import { slackMessageContentForText } from './slack-message-format.js';

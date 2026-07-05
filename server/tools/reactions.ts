@@ -17,7 +17,7 @@ import {
   slackWebClientForOpts,
   withToolActivity,
 } from './tool-context.js';
-import { recordOutboundEngagement } from '../inbox/slack-subscription.service.js';
+import { recordOutboundEngagement } from '../inbox/subscription.service.js';
 
 type FeishuMessageClientFactory = typeof createDefaultFeishuMessageClient;
 

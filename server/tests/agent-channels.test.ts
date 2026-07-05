@@ -15,7 +15,7 @@ import { memberChannelsResultForAgent } from '../inbox/member-channels.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import type { Activity } from '../../shared/activity.js';
-import type { SubscriptionRecord } from '../inbox/slack-subscription.service.js';
+import type { SubscriptionRecord } from '../inbox/subscription.service.js';
 import type { AgentMessageRecord } from '../../shared/messages.js';
 import { withAnimaHome } from './anima-home.js';
 import { makeSlackEvent } from './helpers/slack.js';

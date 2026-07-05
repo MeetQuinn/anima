@@ -1,8 +1,9 @@
 import {
   listSubscriptionsForAgent,
+  platformForSubscription,
   subscriptionStatus,
   type SubscriptionRecord,
-} from '../inbox/slack-subscription.service.js';
+} from '../inbox/subscription.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import {
   resolveAvatarsForUsers,
@@ -16,10 +17,6 @@ import type {
 } from '../../shared/messages.js';
 
 export const CHANNEL_LIST_MESSAGE_WINDOW = 3_000;
-
-function isFeishuChatId(id: string): boolean {
-  return id.startsWith('oc_');
-}
 
 // Slack channel IDs are prefixed by kind: D = 1:1 DM, everything else (C public,
 // G private/mpim) is a channel. Lets a DM that was muted as a subscription still
@@ -42,7 +39,7 @@ function bestSubscriptionByChannel(subscriptions: SubscriptionRecord[]): Map<str
   const byChannel = new Map<string, SubscriptionRecord>();
   for (const subscription of subscriptions) {
     if (subscription.kind !== 'channel') continue;
-    if (isFeishuChatId(subscription.channelId)) continue;
+    if (platformForSubscription(subscription) === 'feishu') continue;
     const existing = byChannel.get(subscription.channelId);
     if (!existing || subscriptionActivityAt(subscription) > subscriptionActivityAt(existing)) {
       byChannel.set(subscription.channelId, subscription);
@@ -54,7 +51,7 @@ function bestSubscriptionByChannel(subscriptions: SubscriptionRecord[]): Map<str
 function isSlackSurfaceMessage(message: AgentMessageRecord): boolean {
   if (message.platform && message.platform !== 'slack') return false;
   const id = message.channelId?.trim();
-  return Boolean(id && !isFeishuChatId(id));
+  return Boolean(id && !id.startsWith('oc_'));
 }
 
 function cleanChannelName(value: string | undefined): string | undefined {

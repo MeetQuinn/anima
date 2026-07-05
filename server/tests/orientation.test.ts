@@ -16,7 +16,7 @@ import {
 } from '../tools/orientation.js';
 import { runPlaces } from '../tools/orientation-cli.js';
 import { runSubscriptionList } from '../tools/subscriptions-cli.js';
-import type { SubscriptionRecord } from '../inbox/slack-subscription.service.js';
+import type { SubscriptionRecord } from '../inbox/subscription.service.js';
 import type { SlackConversationInfo, SlackUserInfo } from '../slack/slack.helper.js';
 
 test('whois overlays this-runtime Slack agents by exact bot id and leaves foreign bots plain', async () => {

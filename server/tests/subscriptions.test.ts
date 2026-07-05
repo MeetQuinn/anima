@@ -6,13 +6,18 @@ import { join } from 'node:path';
 
 import {
   attentionMapForSubscriptions,
+  channelSubscriptionId,
   ensureThreadSubscriptionForSentMessage,
-  feishuRuntimeDecision,
   muteSubscriptionForAgent,
+  platformForSubscription,
   recordOutboundEngagement,
+  threadSubscriptionId,
+} from '../inbox/subscription.service.js';
+import {
   shouldReply,
   slackRuntimeDecision,
 } from '../inbox/slack-subscription.service.js';
+import { feishuRuntimeDecision } from '../inbox/feishu-subscription.service.js';
 import { withAnimaHome } from './anima-home.js';
 import { loadState } from './helpers/state.js';
 import { SubscriptionStore, type SubscriptionRecord } from '../storage/schema/subscription.store.js';
@@ -151,6 +156,64 @@ test('subscription store rejects wrong agent writes and leaves file unchanged', 
         /Cannot write subscription for other through scout store/,
       );
 
+      assert.equal(await readFile(join(stateDir, 'agents', 'scout', 'subscription.json'), 'utf8'), before);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('subscription id builders preserve legacy byte shape', () => {
+  assert.deepEqual({
+    slackChannel: channelSubscriptionId('scout', 'C-alpha'),
+    slackPrivateChannel: channelSubscriptionId('scout', 'G-private'),
+    slackDm: channelSubscriptionId('scout', 'D-user'),
+    slackThread: threadSubscriptionId('scout', 'C-alpha', '1770000010.000001'),
+    slackReplyRoot: threadSubscriptionId('scout', 'C-alpha', '1770000020.000123'),
+    feishuChat: channelSubscriptionId('scout', 'oc_group'),
+    feishuTopic: threadSubscriptionId('scout', 'oc_group', 'omt_topic'),
+  }, {
+    slackChannel: 'slack-subscription:scout:C-alpha:channel',
+    slackPrivateChannel: 'slack-subscription:scout:G-private:channel',
+    slackDm: 'slack-subscription:scout:D-user:channel',
+    slackThread: 'slack-subscription:scout:C-alpha:thread:1770000010.000001',
+    slackReplyRoot: 'slack-subscription:scout:C-alpha:thread:1770000020.000123',
+    feishuChat: 'slack-subscription:scout:oc_group:channel',
+    feishuTopic: 'slack-subscription:scout:oc_group:thread:omt_topic',
+  });
+});
+
+test('new subscription records carry platform while legacy records round-trip without it', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-subscription-platform-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await slackRuntimeDecision(
+        {
+          channel: 'C123',
+          channel_type: 'channel',
+          text: 'top-level member-channel message',
+          ts: '1770000011.000001',
+          type: 'message',
+          user: 'U123',
+        },
+        { agentId: 'scout', nowMs: 2_000 },
+      );
+      await feishuRuntimeDecision(
+        makeFeishuItem({ messageId: 'om_platform', text: 'top-level group message' }),
+        { agentId: 'scout', nowMs: 3_000 },
+      );
+
+      const store = new SubscriptionStore('scout');
+      assert.equal((await store.find(channelSubscriptionId('scout', 'C123')))?.platform, 'slack');
+      assert.equal((await store.find(channelSubscriptionId('scout', 'oc_group')))?.platform, 'feishu');
+
+      await store.replace(channelSubscription({ channelId: 'oc_legacy' }));
+      const before = await readFile(join(stateDir, 'agents', 'scout', 'subscription.json'), 'utf8');
+      const legacy = await store.find(channelSubscriptionId('scout', 'oc_legacy'));
+      assert.ok(legacy);
+      assert.equal(legacy.platform, undefined);
+      assert.equal(platformForSubscription(legacy), 'feishu');
+      await store.replace(legacy);
       assert.equal(await readFile(join(stateDir, 'agents', 'scout', 'subscription.json'), 'utf8'), before);
     });
   } finally {

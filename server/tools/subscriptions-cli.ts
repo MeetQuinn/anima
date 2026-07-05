@@ -6,7 +6,7 @@ import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { resolveAgentIdFrom } from '../cli/shared.js';
 import {
   muteSubscriptionForAgent,
-} from '../inbox/slack-subscription.service.js';
+} from '../inbox/subscription.service.js';
 import { runPlaces, type PlacesOptions } from './orientation-cli.js';
 import type { OrientationDeps } from './orientation.js';
 import { normalizeChatTargetOptions } from './chat-target-options.js';
@@ -78,6 +78,7 @@ async function subscriptionMute(opts: SubscriptionMuteOptions): Promise<void> {
     await muteSubscriptionForAgent({
       agentId: agentIdResolved,
       channelId: target.receiveId,
+      platform: 'feishu',
     });
     console.log(outcomeLine('muted', [['feishu chat_id', target.receiveId]]));
     return;
@@ -96,6 +97,7 @@ async function subscriptionMute(opts: SubscriptionMuteOptions): Promise<void> {
     agentId: agent.id,
     channelId: channel.id,
     ...(channel.name ? { channelName: channel.name } : {}),
+    platform: 'slack',
     ...(opts.threadTs ? { threadTs: opts.threadTs } : {}),
   });
 

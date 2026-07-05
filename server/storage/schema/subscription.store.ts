@@ -22,6 +22,7 @@ const SubscriptionBase = z.object({
   lastNudgeAt: z.string().optional(),
   lastPostedAt: z.string().optional(),
   mutedAt: z.string().optional(),
+  platform: z.enum(['slack', 'feishu']).optional(),
   silentWakeStartedAt: z.string().optional(),
   updatedAt: z.string(),
   wakeCount: z.number().int().nonnegative().optional(),
