@@ -26,10 +26,13 @@ test('classifyOutboundEffect maps file and reaction tools', () => {
   assert.deepEqual(classifyOutboundEffect({ effect: 'slack.reaction' }), { kind: 'reaction' });
 });
 
-test('classifyOutboundEffect leaves ask posts and unknown effects unclassified', () => {
-  // slack.ask.post projection into the ledger is a separate semantics change;
-  // this refactor deliberately keeps it out of the classifier.
-  assert.equal(classifyOutboundEffect({ effect: 'slack.ask.post', tool: 'anima.ask' }), undefined);
+test('classifyOutboundEffect classifies ask posts and leaves unknown effects unclassified', () => {
+  // Interactive ask posts are agent-authored channel content: they classify
+  // as `ask` so the server ledger projects them while the web activity feed
+  // keeps its generic step row.
+  assert.deepEqual(classifyOutboundEffect({ effect: 'slack.ask.post', tool: 'anima.ask' }), { kind: 'ask' });
+  assert.deepEqual(classifyOutboundEffect({ effect: 'slack.ask.post' }), { kind: 'ask' });
+  assert.deepEqual(classifyOutboundEffect({ tool: 'anima.ask' }), { kind: 'ask' });
   assert.equal(classifyOutboundEffect({ effect: 'slack.channel.join' }), undefined);
   assert.equal(classifyOutboundEffect({}), undefined);
 });
