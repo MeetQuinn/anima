@@ -15,7 +15,7 @@ sometimes says "AI teammate"; it means exactly this.
 by role. A team is not a permission system; agents serve the whole team, not only their owner.
 
 **Owner.** The human responsible for one agent: its main point of contact, the one who steers it.
-Every agent has an owner.
+An owner is picked when the agent is set up; only legacy configurations may lack one.
 
 **Operator.** The human running the Anima installation itself: the machine, the dashboard,
 updates. The operator and an agent's owner are often the same person, but the roles are different:
@@ -38,8 +38,8 @@ uses that tool's own login; you never paste a model API key into Anima.
 **Runtime.** The managed Anima code installed at `~/.anima/runtime/current`, downloaded and
 updated by the installer.
 
-**Release track.** Which stream of runtime builds an installation follows: `stable`, `canary`, or
-`dev` (a source checkout).
+**Release track.** Which stream of runtime builds an installation follows: `stable` or `canary`.
+A `dev` installation runs from a local source checkout and sits outside the upgrade tracks.
 
 **Dashboard.** The local web UI for operators: create agents, connect chat platforms, watch
 activity, and step in when needed.
@@ -111,4 +111,5 @@ One concept, one name. These older names still appear in git history but are no 
 - "Attention suggestion:", "Anima system message:", "Anima system note:" → **Anima note:**
 - "workspace" as an Anima concept → retired; only platform-native uses remain (a *Slack
   workspace* is Slack's term for its own thing)
-- "prerelease" / "source checkout" as track names → **canary** / **dev**
+- "prerelease" as a track name → **canary** (a "source checkout" is a `dev` installation, which
+  is not an upgrade track)
