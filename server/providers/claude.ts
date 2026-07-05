@@ -30,7 +30,7 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
   private readonly config: ClaudeCodeAgentProviderConfig;
 
   constructor(config: ClaudeCodeAgentProviderConfig) {
-    super();
+    super({ providerChildIdleTimeoutMs: config.providerChildIdleTimeoutMs });
     this.config = config;
     this.env = claudeProviderEnv(config);
   }

@@ -17,6 +17,7 @@ import {
 } from './provider-catalog.js';
 
 export const PROVIDER_IDLE_TIMEOUT_MS_DEFAULT = 30 * 60 * 1000;
+export const PROVIDER_CHILD_IDLE_TIMEOUT_MS_DEFAULT = 10 * 60 * 1000;
 export const ClaudeCodeTransport = z.enum(['stream-json', 'tmux']);
 export type ClaudeCodeTransport = z.infer<typeof ClaudeCodeTransport>;
 export const ANIMA_MANAGED_PROVIDER_ENV_KEYS = [
@@ -245,6 +246,7 @@ export const CodexCliAgentProviderConfig = z.object({
   idleTimeoutMs: z.number().optional(),
   kind: z.literal('codex-cli'),
   model: z.string().optional(),
+  providerChildIdleTimeoutMs: z.number().nonnegative().optional(),
   reasoningEffort: z.string().optional(),
   reasoningSummary: z.enum(['auto', 'concise', 'detailed', 'none']).optional(),
 });
@@ -256,6 +258,7 @@ export const ClaudeCodeAgentProviderConfig = z.object({
   idleTimeoutMs: z.number().optional(),
   kind: z.literal('claude-code'),
   model: z.string().optional(),
+  providerChildIdleTimeoutMs: z.number().nonnegative().optional(),
   reasoningEffort: z.string().optional(),
   transport: ClaudeCodeTransport.optional(),
 });
@@ -267,6 +270,7 @@ export const KimiCliAgentProviderConfig = z.object({
   idleTimeoutMs: z.number().optional(),
   kind: z.literal('kimi-cli'),
   model: z.string().optional(),
+  providerChildIdleTimeoutMs: z.number().nonnegative().optional(),
 });
 
 export type KimiCliAgentProviderConfig = z.infer<typeof KimiCliAgentProviderConfig>;
@@ -287,6 +291,9 @@ export const AgentProviderConfig = z.preprocess(
     return {
       ...input,
       ...(typeof input.idleTimeoutMs !== 'number' ? { idleTimeoutMs: PROVIDER_IDLE_TIMEOUT_MS_DEFAULT } : {}),
+      ...(typeof input.providerChildIdleTimeoutMs !== 'number'
+        ? { providerChildIdleTimeoutMs: PROVIDER_CHILD_IDLE_TIMEOUT_MS_DEFAULT }
+        : {}),
       kind,
       model: typeof input.model === 'string' ? input.model : defaultModelForProvider(kind),
       ...(kind === 'claude-code' ? { transport: claudeTransport } : {}),

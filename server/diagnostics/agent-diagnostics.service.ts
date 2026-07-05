@@ -85,6 +85,7 @@ function safeAgent(agent: AgentConfig): AgentDiagnosticsBundle['agent'] {
       idleTimeoutMs: agent.provider.idleTimeoutMs,
       kind: agent.provider.kind,
       ...(agent.provider.model ? { model: agent.provider.model } : {}),
+      providerChildIdleTimeoutMs: agent.provider.providerChildIdleTimeoutMs,
       ...('reasoningEffort' in agent.provider && agent.provider.reasoningEffort
         ? { reasoningEffort: agent.provider.reasoningEffort }
         : {}),

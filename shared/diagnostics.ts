@@ -33,6 +33,7 @@ export interface AgentDiagnosticsAgent {
     idleTimeoutMs?: number;
     kind: string;
     model?: string;
+    providerChildIdleTimeoutMs?: number;
     reasoningEffort?: string;
   };
   transports: {

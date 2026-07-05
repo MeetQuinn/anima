@@ -105,6 +105,10 @@ class LifecycleProbeRuntime extends ControllerAgentRuntime<FakeController> {
   beforeFinishRun?: () => void;
   failurePayload?: (error: unknown) => Promise<Record<string, unknown>>;
 
+  constructor(options: { providerChildIdleTimeoutMs?: number } = {}) {
+    super(options);
+  }
+
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
     return this.runTurnLifecycle(input, {
       ...(this.beforeFinishRun ? { beforeFinishRun: this.beforeFinishRun } : {}),
@@ -162,6 +166,15 @@ function deferred<T>(): { promise: Promise<T>; reject(error: unknown): void; res
     reject = promiseReject;
   });
   return { promise, reject, resolve };
+}
+
+async function waitFor(predicate: () => boolean, message: string): Promise<void> {
+  const deadline = Date.now() + 500;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.fail(message);
 }
 
 test('controller runtime lifecycle records started and completed around the turn', async () => {
@@ -231,6 +244,51 @@ test('controller runtime lifecycle honors suppressFailureRecord but still runs t
   await assert.rejects(runtime.run(probeInput(effects, { suppressFailureRecord: true })), /suppressed failure/);
   assert.equal(failureHookRan, true);
   assert.deepEqual(runtimeRecords.map((record) => record.type), ['runtime.started']);
+});
+
+test('controller runtime resets an idle provider child after the provider-child timeout', async () => {
+  const runtime = new LifecycleProbeRuntime({ providerChildIdleTimeoutMs: 10 });
+  const controller = runtime.installController(new FakeController());
+  runtime.turn = async () => ({ text: 'done' });
+  const { effects } = recordingEffects();
+
+  await runtime.run(probeInput(effects));
+
+  assert.deepEqual(controller.killedWith, []);
+  assert.deepEqual(runtime.health(), { child: controller.snapshot(), childExpected: false });
+
+  await waitFor(
+    () => controller.killedWith.length === 1 && runtime.health().child === undefined,
+    'provider child was not reset after becoming idle',
+  );
+  assert.deepEqual(controller.killedWith, ['SIGTERM']);
+  assert.deepEqual(runtime.health(), { childExpected: false });
+});
+
+test('controller runtime cancels pending idle reset while another turn is active', async () => {
+  const runtime = new LifecycleProbeRuntime({ providerChildIdleTimeoutMs: 20 });
+  const controller = runtime.installController(new FakeController());
+  runtime.turn = async () => ({ text: 'first' });
+  const { effects } = recordingEffects();
+
+  await runtime.run(probeInput(effects, { itemId: 'item-first' }));
+
+  const gate = deferred<AgentRuntimeResult>();
+  runtime.turn = () => gate.promise;
+  const run = runtime.run(probeInput(effects, { itemId: 'item-second' }));
+  await new Promise((resolve) => setTimeout(resolve, 40));
+
+  assert.deepEqual(controller.killedWith, []);
+  assert.equal(runtime.health().childExpected, true);
+
+  gate.resolve({ text: 'second' });
+  await run;
+
+  await waitFor(
+    () => controller.killedWith.length === 1 && runtime.health().child === undefined,
+    'provider child was not reset after the second turn became idle',
+  );
+  assert.deepEqual(controller.killedWith, ['SIGTERM']);
 });
 
 test('controller runtime rejects overlapping runs for different items', async () => {
