@@ -91,6 +91,7 @@ export default defineConfig({
         text: "Architecture",
         items: [
           { text: "Overview", link: "/architecture/overview" },
+          { text: "Codebase internals", link: "/architecture/internals" },
           { text: "Provider layer", link: "/runtime-providers" },
           { text: "Activity events", link: "/activity-events" },
         ],
