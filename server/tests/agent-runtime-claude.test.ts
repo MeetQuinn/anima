@@ -1,5 +1,5 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { sleep, waitFor, withTimeout } from './helpers/harness.js';
+import { waitFor, withTimeout } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -351,7 +351,15 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
         "      const mcpArgs = mcp.mcpServers.anima.args;",
         "      const targetFile = mcpArgs[mcpArgs.indexOf('--target-file') + 1];",
         "      const target = JSON.parse(readFileSync(targetFile, 'utf8'));",
-        "      if (target.active !== true) process.exit(94);",
+        "      // A C-m can land after the turn completed and the runtime cleared the",
+        "      // target: the test fires its steering append as soon as the paste is",
+        "      // visible in state, so its C-m races the runtime's own in-flight C-m,",
+        "      // and the loser can observe the cleared target. Real tmux delivers such",
+        "      // a straggler keystroke into an idle pane harmlessly - mirror that",
+        "      // instead of failing (was: exit 94, a recurring CI flake). Recorded as",
+        "      // staleSends for debuggability; the test's final assertions on prompts",
+        "      // and target.active still pin the active-turn contract.",
+        "      if (target.active !== true) { state.staleSends = (state.staleSends || 0) + 1; save(state); process.exit(0); }",
         "      const isReminder = String(target.itemId || '').startsWith('reminder:');",
         "      const promptCount = state.prompts.length;",
         "      const shouldComplete = !isReminder || promptCount >= 5;",
@@ -563,7 +571,18 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
   }
 });
 
-test('claude-code tmux transport memoizes liveness and health does not spawn', async () => {
+test('claude-code tmux transport memoizes liveness and health does not spawn', async (t) => {
+  // The liveness cache TTL (3s) is wall-clock based. This test's exact
+  // has-session counts assume consecutive operations land inside one TTL
+  // window, which a loaded CI runner can violate (recurring flake). Mock the
+  // Date API only — real timers keep the runtime's completion polling alive —
+  // so the TTL clock advances exactly when the test says so. The mock stays on
+  // for the whole test: resetting mid-test would leave cache checkedAt stamps
+  // in the mocked future relative to the real clock. Trade-off: with a frozen
+  // Date the harness waitFor timeout never fires, so a genuine regression in
+  // the health refresh shows up as the CI job timeout instead of a crisp
+  // assertion — acceptable for a deterministic memoization proof.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
   let runtime: AgentRuntime | undefined;
   try {
@@ -669,7 +688,10 @@ test('claude-code tmux transport memoizes liveness and health does not spawn', a
     await runtime.run(await runtimeInput(runtime, thirdCtx, await loadState()));
     assert.equal(await countTmuxCalls(callsPath, 'has-session'), afterFreshCheck);
 
-    await sleep(3_100);
+    // Advance the mocked TTL clock past the 3s liveness window (was a real
+    // sleep(3_100), which also let the earlier same-window assertions flake
+    // when a slow runner stretched them past the TTL).
+    t.mock.timers.tick(3_100);
     const fourthCtx = await ingestEvent(
       makeSlackEvent({
         channelId: 'D-anima',
@@ -687,7 +709,7 @@ test('claude-code tmux transport memoizes liveness and health does not spawn', a
     killedState.sessions = {};
     await writeFile(tmuxStatePath, `${JSON.stringify(killedState, null, 2)}\n`, 'utf8');
     const beforeHealthRefresh = await countTmuxCalls(callsPath, 'has-session');
-    await sleep(3_100);
+    t.mock.timers.tick(3_100);
     assert.equal(runtime.health?.().child?.alive, true);
     await waitFor(async () =>
       await countTmuxCalls(callsPath, 'has-session') === beforeHealthRefresh + 1,
