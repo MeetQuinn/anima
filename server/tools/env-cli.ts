@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { AgentEnvStore, maskEnvSecret, type AgentEnvKind } from '../env/agent-env-store.js';
 import { resolveAgentIdFrom } from '../cli/shared.js';
 import { cleanServiceEnv } from '../services/env.js';
+import { outcomeLine } from './outcome-line.js';
 
 const SharedFlags = z.object({
   agent: z.string().optional(),
@@ -96,7 +97,7 @@ async function runEnvSet(opts: EnvSetOptions): Promise<void> {
     throw new Error(opts.secret ? 'Secret value is required on stdin' : 'Plain env value is required');
   }
   await store.set(opts.key, value, kind);
-  console.log(`set successfully. key=${opts.key}, kind=${kind}.`);
+  console.log(outcomeLine('set', [['key', opts.key], ['kind', kind]]));
 }
 
 async function runEnvList(opts: EnvListOptions): Promise<void> {

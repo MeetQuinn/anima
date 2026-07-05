@@ -25,6 +25,7 @@ import {
   type SlackTargetSummary,
   type SlackThreadSummary,
 } from './slack-target.js';
+import { outcomeLine, type OutcomePart } from './outcome-line.js';
 import {
   loadAgentFromOpts,
   resolveToolAgentId,
@@ -476,11 +477,10 @@ function slackOutputLine(input: {
   thread?: SlackThreadSummary;
   warnings?: string[];
 }): string {
-  const parts = [slackOutputTarget(input.target)];
-  if (input.thread) parts.push(`thread_ts=${input.thread.threadTs}`);
-  if (input.messageTs) parts.push(`message_ts=${input.messageTs}`);
-  const warning = input.warnings?.length ? ` Note: ${input.warnings.join(' ')}` : '';
-  return `${input.status} successfully. ${parts.join(', ')}.${warning}`;
+  const parts: OutcomePart[] = [slackOutputTarget(input.target)];
+  if (input.thread) parts.push(['thread_ts', input.thread.threadTs]);
+  if (input.messageTs) parts.push(['message_ts', input.messageTs]);
+  return outcomeLine(input.status, parts, input.warnings?.length ? { note: input.warnings.join(' ') } : undefined);
 }
 
 function feishuOutputLine(input: {
@@ -490,20 +490,20 @@ function feishuOutputLine(input: {
   responseChatId?: string;
   threadId?: string;
 }): string {
-  const parts = input.receiveIdType === 'chat_id'
-    ? [`feishu chat_id=${input.receiveId}`]
-    : [`feishu receive_id_type=open_id`, `receive_id=${input.receiveId}`];
-  if (input.responseChatId && input.responseChatId !== input.receiveId) parts.push(`chat_id=${input.responseChatId}`);
-  if (input.threadId) parts.push(`thread_id=${input.threadId}`);
-  if (input.messageId) parts.push(`message_id=${input.messageId}`);
-  return `sent successfully. ${parts.join(', ')}.`;
+  const parts: OutcomePart[] = input.receiveIdType === 'chat_id'
+    ? [['feishu chat_id', input.receiveId]]
+    : [['feishu receive_id_type', 'open_id'], ['receive_id', input.receiveId]];
+  if (input.responseChatId && input.responseChatId !== input.receiveId) parts.push(['chat_id', input.responseChatId]);
+  if (input.threadId) parts.push(['thread_id', input.threadId]);
+  if (input.messageId) parts.push(['message_id', input.messageId]);
+  return outcomeLine('sent', parts);
 }
 
 function feishuUpdateOutputLine(input: {
   channel: string;
   messageId: string;
 }): string {
-  return `updated successfully. feishu chat_id=${input.channel}, message_id=${input.messageId}.`;
+  return outcomeLine('updated', [['feishu chat_id', input.channel], ['message_id', input.messageId]]);
 }
 
 function feishuChatDisplayName(item: FeishuInboxItem): string {

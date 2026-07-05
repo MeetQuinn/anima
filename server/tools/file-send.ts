@@ -21,6 +21,7 @@ import {
   slackTargetSummary,
   type SlackTargetSummary,
 } from './slack-target.js';
+import { outcomeLine, type OutcomePart } from './outcome-line.js';
 import {
   loadAgentFromOpts,
   resolveToolAgentId,
@@ -341,12 +342,12 @@ function feishuFileOutputLine(input: {
   receiveIdType: FeishuReceiveIdType;
   threadMessageId?: string;
 }): string {
-  const parts = input.receiveIdType === 'chat_id'
-    ? [`feishu chat_id=${input.receiveId}`]
-    : [`feishu receive_id_type=open_id`, `receive_id=${input.receiveId}`];
-  if (input.threadMessageId) parts.push(`thread_id=${input.threadMessageId}`);
-  parts.push(`files=${input.fileCount}`);
-  return `uploaded successfully. ${parts.join(', ')}.`;
+  const parts: OutcomePart[] = input.receiveIdType === 'chat_id'
+    ? [['feishu chat_id', input.receiveId]]
+    : [['feishu receive_id_type', 'open_id'], ['receive_id', input.receiveId]];
+  if (input.threadMessageId) parts.push(['thread_id', input.threadMessageId]);
+  parts.push(['files', input.fileCount]);
+  return outcomeLine('uploaded', parts);
 }
 
 function slackFileOutputLine(input: {
@@ -354,10 +355,10 @@ function slackFileOutputLine(input: {
   target: SlackTargetSummary;
   threadTs?: string;
 }): string {
-  const parts = [slackOutputTarget(input.target)];
-  if (input.threadTs) parts.push(`thread_ts=${input.threadTs}`);
-  parts.push(`files=${input.fileCount}`);
-  return `uploaded successfully. ${parts.join(', ')}.`;
+  const parts: OutcomePart[] = [slackOutputTarget(input.target)];
+  if (input.threadTs) parts.push(['thread_ts', input.threadTs]);
+  parts.push(['files', input.fileCount]);
+  return outcomeLine('uploaded', parts);
 }
 
 function assertFeishuFileSize(file: ValidatedLocalFile): void {

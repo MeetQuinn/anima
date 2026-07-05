@@ -26,6 +26,7 @@ import {
   type SlackTargetSummary,
   type SlackThreadSummary,
 } from './slack-target.js';
+import { outcomeLine, type OutcomePart } from './outcome-line.js';
 import {
   resolveToolAgentId,
   resolveToolItemId,
@@ -380,11 +381,11 @@ function askOutputLine(input: {
   target: SlackTargetSummary;
   thread?: SlackThreadSummary;
 }): string {
-  const parts = [slackOutputTarget(input.target)];
-  if (input.thread) parts.push(`thread_ts=${input.thread.threadTs}`);
-  parts.push(`message_ts=${input.messageTs}`);
-  parts.push(`ask_id=${input.askId}`);
-  return `asked successfully. ${parts.join(', ')}.`;
+  const parts: OutcomePart[] = [slackOutputTarget(input.target)];
+  if (input.thread) parts.push(['thread_ts', input.thread.threadTs]);
+  parts.push(['message_ts', input.messageTs]);
+  parts.push(['ask_id', input.askId]);
+  return outcomeLine('asked', parts);
 }
 
 function subscriptionPayload(subscription: { kind: string; mutedAt?: string; subscriptionId: string; threadTs?: string }): Record<string, unknown> {
