@@ -24,3 +24,18 @@ jobs:
       - run: pnpm build
       - run: pnpm animactl:package-smoke
       - run: pnpm test:fast:dist
+      - run: pnpm --dir web test
+
+  # The runtime tier is macOS-shaped on purpose: launchd plist tests pin
+  # darwin service PATHs and production runs on a Mac host.
+  runtime-tests:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test:runtime:dist
