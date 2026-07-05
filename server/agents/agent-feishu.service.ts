@@ -20,7 +20,7 @@ import {
   type FeishuRegisterAppResult,
 } from '../feishu/client.js';
 import { nowIso } from '../ids.js';
-import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import { singleLine } from '../json.js';
 import { defaultAgentRegistryService } from './agent.service.js';
 import { randomUUID } from 'crypto';
@@ -329,7 +329,7 @@ export class AgentFeishuService {
     if (agent.feishu.ownerGreetingPromptedAt) return agent.feishu.ownerGreetingPromptedAt;
 
     const now = nowIso();
-    await new WakeQueueService(agent.id).enqueue({
+    await wakeQueueServiceForAgent(agent.id).enqueue({
       handling: { createdAt: now, queuedAt: now, status: 'queued', updatedAt: now },
       id: `feishu-onboarding:${agent.id}:${ownerOpenId}`,
       kind: 'feishu_onboarding',

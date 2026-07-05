@@ -1,6 +1,6 @@
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { isAgentRunnable } from '../agents/agent-config-ops.js';
-import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import type {
   AgentConfig,
 } from '../../shared/agent-config.js';
@@ -38,8 +38,8 @@ export class RuntimeService {
   }
 
   async stopCurrentItem(agentId: string): Promise<void> {
-    const queue = new WakeQueueService(agentId);
-    const running = latestPrimaryRunningItem(await queue.listRunnable());
+    const queue = wakeQueueServiceForAgent(agentId);
+    const running = latestPrimaryRunningItem(await queue.list());
     if (!running) throw new RuntimeServiceError(409, `No running item for agent ${agentId}`);
     await queue.requestStop(running.id);
   }
@@ -60,8 +60,8 @@ export class RuntimeService {
   }
 
   private async statusForAgent(agent: AgentConfig): Promise<AgentStatusSummary> {
-    const queue = new WakeQueueService(agent.id);
-    const items = await queue.listRunnable();
+    const queue = wakeQueueServiceForAgent(agent.id);
+    const items = await queue.list();
     const running = latestPrimaryRunningItem(items);
     const active = running ? await findActiveRuntimeItem(agent.id, queue) : undefined;
     const currentItemStartedAt = active?.startedAt ?? running?.handling.startedAt;

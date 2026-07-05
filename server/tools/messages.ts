@@ -9,7 +9,7 @@ import {
   ensureThreadSubscriptionForSentMessage,
   recordOutboundEngagement,
 } from '../inbox/slack-subscription.service.js';
-import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
 import { slackMessageContentForText } from './slack-message-format.js';
 import {
@@ -245,7 +245,7 @@ async function currentFeishuItem(
 ): Promise<FeishuInboxItem | FeishuOnboardingInboxItem | undefined> {
   const itemId = await resolveToolItemId(opts);
   if (!itemId) return undefined;
-  const item = await new WakeQueueService(agentId).find(itemId);
+  const item = await wakeQueueServiceForAgent(agentId).find(itemId);
   return item?.kind === 'feishu' || item?.kind === 'feishu_onboarding' ? item : undefined;
 }
 

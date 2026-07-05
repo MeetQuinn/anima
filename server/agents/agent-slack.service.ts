@@ -22,7 +22,7 @@ import {
   validateSlackTokenPair,
 } from './agent-slack-validation.js';
 import { nowIso } from '../ids.js';
-import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import {
   slackAppInstallUrl,
   slackAppManifestUrl,
@@ -257,7 +257,7 @@ export class AgentSlackService {
     textLines.push(
       `Start by reading your MEMORY.md — its Onboarding section walks you through getting set up — then reply here to introduce yourself to ${ownerName}.`,
     );
-    await new WakeQueueService(agent.id).enqueue({
+    await wakeQueueServiceForAgent(agent.id).enqueue({
       channelId: dm.id,
       handling: { createdAt: now, queuedAt: now, status: 'queued', updatedAt: now },
       id: `agent-onboarding:${agent.id}:${owner.slackUserId}`,

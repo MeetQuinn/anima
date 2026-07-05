@@ -4,7 +4,7 @@ import type {
   SlackShortcutHandoffService,
 } from '../slack-interactions/shortcut.service.js';
 import { nowIso } from '../ids.js';
-import { WakeQueueService, type InboxItem } from './wake-queue.service.js';
+import { wakeQueueServiceForAgent, type InboxItem } from './wake-queue.service.js';
 
 export function slackShortcutHandoffServiceForAgent(agentId: string): SlackShortcutHandoffService {
   return new SlackShortcutWakeQueueHandoffService(agentId);
@@ -15,7 +15,7 @@ class SlackShortcutWakeQueueHandoffService implements SlackShortcutHandoffServic
 
   async handMessageToAgent(input: SlackShortcutHandoffInput): Promise<SlackShortcutHandoffResult> {
     const item = slackShortcutInboxItem(input);
-    const result = await new WakeQueueService(this.agentId).enqueue(item);
+    const result = await wakeQueueServiceForAgent(this.agentId).enqueue(item);
     return {
       duplicate: result.duplicate,
       itemId: result.item.id,

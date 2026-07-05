@@ -1,5 +1,5 @@
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
-import { WakeQueueService, type InboxItem } from '../inbox/wake-queue.service.js';
+import { wakeQueueServiceForAgent, type InboxItem } from '../inbox/wake-queue.service.js';
 import { isAppendedRunningInboxItem } from '../../shared/inbox.js';
 import { clearRestartDrain, requestRestartDrain } from './restart-drain.js';
 
@@ -70,7 +70,7 @@ export async function waitForRestartDrain(input: {
   }
 
   await Promise.all(initialRunning.map(({ agentId, item }) =>
-    new WakeQueueService(agentId).requestDrain({ itemId: item.id, timeoutMs: drainTimeoutMs }),
+    wakeQueueServiceForAgent(agentId).requestDrain({ itemId: item.id, timeoutMs: drainTimeoutMs }),
   ));
 
   let loggedWait = false;
@@ -106,7 +106,7 @@ export async function waitForRestartDrain(input: {
       }
       await clearRestartDrain().catch(() => {});
       await Promise.all(initialRunning.map(({ agentId, item }) =>
-        new WakeQueueService(agentId).clearDrainRequest(item.id).catch(() => undefined),
+        wakeQueueServiceForAgent(agentId).clearDrainRequest(item.id).catch(() => undefined),
       ));
       throw restartBlockedError(
         blockers,
@@ -129,7 +129,7 @@ export async function listRestartBlockers(options: {
   const statuses = new Set(options.statuses ?? ['queued', 'running']);
   const blockers: RestartBlocker[] = [];
   for (const agentId of await defaultAgentRegistryService.listAgentIds()) {
-    for (const item of await new WakeQueueService(agentId).list()) {
+    for (const item of await wakeQueueServiceForAgent(agentId).list()) {
       if (!statuses.has(item.handling.status)) continue;
       if (isAppendedRunningInboxItem(item)) continue;
       blockers.push({ agentId, item });
@@ -143,7 +143,7 @@ export async function listRestartBlockers(options: {
 export async function recoverInterruptedRestartItems(blockers: RestartBlocker[]): Promise<number> {
   let count = 0;
   await Promise.all(blockers.map(async ({ agentId, item }) => {
-    const queue = new WakeQueueService(agentId);
+    const queue = wakeQueueServiceForAgent(agentId);
     const current = await queue.find(item.id).catch(() => undefined);
     if (!current || current.handling.status === 'completed') return;
     if (current.handling.status === 'queued' && !current.handling.drainRequestedAt) {
@@ -160,7 +160,7 @@ export async function recoverInterruptedRestartItems(blockers: RestartBlocker[])
 export async function countRequeuedItems(blockers: RestartBlocker[]): Promise<number> {
   let count = 0;
   await Promise.all(blockers.map(async ({ agentId, item }) => {
-    const current = await new WakeQueueService(agentId).find(item.id).catch(() => undefined);
+    const current = await wakeQueueServiceForAgent(agentId).find(item.id).catch(() => undefined);
     if (current?.handling.status === 'queued' && !current.handling.drainRequestedAt) count += 1;
   }));
   return count;

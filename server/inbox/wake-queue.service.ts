@@ -13,13 +13,15 @@ export interface WakeQueueEnqueueResult {
 
 export interface WakeQueueMessageRecorder {
   hasInboxItem?(itemId: string): Promise<boolean>;
-  legacyBackfilled?(): Promise<boolean>;
   recordInboxItem(item: InboxItem): Promise<{ inserted: boolean } | undefined>;
 }
 
 interface WakeQueueLogger {
   warn(message: string): void;
 }
+
+export const wakeQueueServiceForAgent = (agentId: string): WakeQueueService =>
+  new WakeQueueService(agentId);
 
 export class WakeQueueService {
   constructor(
@@ -29,30 +31,27 @@ export class WakeQueueService {
     private readonly logger: WakeQueueLogger = console,
   ) {}
 
+  /**
+   * Enqueue with the wake-queue file as the dedupe authority: the insert
+   * atomically checks active items plus settled seen markers, so a crash
+   * between steps can no longer drop a wake. The message ledger is written
+   * after the item is safely queued — it is conversation history, not dedupe
+   * state — with one legacy exception: ids settled before seen markers
+   * existed are only known to the ledger, so a ledger hit withdraws the
+   * just-queued item (or, if a worker already claimed it, lets it run once).
+   */
   async enqueue(event: InboxItem): Promise<WakeQueueEnqueueResult> {
-    const existing = await this.store.find(event.id);
-    if (existing) {
+    const result = await this.store.insertIfAbsent(event);
+    if (!result.inserted) {
       await this.recordMessage(event);
-      return {
-        duplicate: true,
-        item: existing,
-        queued: false,
-      };
+      return { duplicate: true, item: result.item, queued: false };
     }
     const recorded = await this.recordMessage(event);
     if (recorded?.inserted === false) {
-      return {
-        duplicate: true,
-        item: event,
-        queued: false,
-      };
+      const withdrawn = await this.store.withdrawQueued(event.id);
+      if (withdrawn) return { duplicate: true, item: withdrawn, queued: false };
     }
-    const result = await this.store.insertIfAbsent(event);
-    return {
-      duplicate: !result.inserted,
-      item: result.item,
-      queued: result.inserted,
-    };
+    return { duplicate: false, item: result.item, queued: true };
   }
 
   async hasSeen(itemId: string): Promise<boolean> {
@@ -77,8 +76,9 @@ export class WakeQueueService {
     return this.store.list();
   }
 
+  /** @deprecated Post-#377 the queue only stores runnable work; same as list(). */
   listRunnable(): Promise<InboxItem[]> {
-    return this.store.listRunnable();
+    return this.store.list();
   }
 
   async takeNextRunnable(input: TakeNextRunnableInput): Promise<InboxItem | undefined> {
@@ -90,16 +90,16 @@ export class WakeQueueService {
     excludedItemIds?: Iterable<string>;
     workerId: string;
   }): Promise<InboxItem | undefined> {
-    const runnable = await this.listRunnable();
-    const activeItem = runnable.find((item) => item.id === input.activeItemId);
+    const items = await this.list();
+    const activeItem = items.find((item) => item.id === input.activeItemId);
     if (!activeItem || activeItem.handling.status !== 'running' || activeItem.handling.workerId !== input.workerId) {
       return undefined;
     }
 
     const excludedItemIds = new Set(input.excludedItemIds ?? []);
-    const items = runnable
+    const queued = items
       .filter((item) => item.handling.status === 'queued' && !excludedItemIds.has(item.id));
-    return this.takeFirstQueued(input.workerId, items);
+    return this.takeFirstQueued(input.workerId, queued);
   }
 
   async complete(itemId: string): Promise<void> {

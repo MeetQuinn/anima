@@ -10,7 +10,7 @@ import {
 } from '../asks/interactive-ask.service.js';
 import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import { makeId, nowIso } from '../ids.js';
-import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import {
   ensureThreadSubscriptionForSentMessage,
   recordOutboundEngagement,
@@ -297,7 +297,7 @@ async function currentSlackSurface(agentId: string): Promise<{
 } | undefined> {
   const itemId = await resolveToolItemId({ agent: agentId });
   if (!itemId) return undefined;
-  const item = await new WakeQueueService(agentId).find(itemId);
+  const item = await wakeQueueServiceForAgent(agentId).find(itemId);
   if (!item) return undefined;
   return slackSurfaceFromItem(item);
 }

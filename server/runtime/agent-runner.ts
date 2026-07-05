@@ -1,5 +1,5 @@
 import { errorMessage } from '../ids.js';
-import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import { InboxSubscriber } from '../inbox/subscriber.js';
 import {
   addFeishuProcessingReaction,
@@ -33,7 +33,7 @@ export interface RunningAgentHandle {
 }
 
 export async function startRunningAgent(options: RunningAgentOptions): Promise<RunningAgentHandle> {
-  const queue = new WakeQueueService(options.agentId);
+  const queue = wakeQueueServiceForAgent(options.agentId);
   const reactionClient = options.botToken ? slackReactionClient(options.botToken) : undefined;
   const feishuClient = options.feishu?.connected ? feishuProcessingReactionClient(options.feishu) : undefined;
   const worker = new AgentRuntimeWorker({
