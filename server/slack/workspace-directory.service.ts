@@ -143,12 +143,16 @@ export class SlackWorkspaceDirectoryService {
   async getUserByHandle(handleInput: string): Promise<SlackUserInfo> {
     const handle = normalizeSlackHandle(handleInput);
     const users = await this.getUsers();
-    return uniqueSlackUserByHandle(users, handle);
+    const matches = users.filter((user) => slackUserHandleCandidates(user).includes(handle));
+    if (matches.length === 1 && matches[0]) return matches[0];
+    if (matches.length > 1) throw new Error(`Slack handle @${handle} matched multiple users`);
+    return uniqueSlackUserByHandle(await this.recoverUsersByHandle(handle), handle);
   }
 
   async getUserByHandleForTarget(handleInput: string, target: { channelId?: string }): Promise<SlackUserInfo> {
     const handle = normalizeSlackHandle(handleInput);
-    const matches = (await this.getUsers()).filter((user) => slackUserHandleCandidates(user).includes(handle));
+    let matches = (await this.getUsers()).filter((user) => slackUserHandleCandidates(user).includes(handle));
+    if (!matches.length) matches = await this.recoverUsersByHandle(handle);
     return this.preferredUniqueUserByHandle(handle, matches, target);
   }
 
@@ -224,6 +228,8 @@ export class SlackWorkspaceDirectoryService {
     });
     const match = findSlackConversationByName(channels, name);
     if (match?.id) return match;
+    const recovered = findSlackConversationByName(await this.recoverConversationsByName(name, types), name);
+    if (recovered?.id) return recovered;
     throw new Error(`Slack channel not found: #${name}`);
   }
 
@@ -340,6 +346,28 @@ export class SlackWorkspaceDirectoryService {
     throw new Error(`Slack handle @${handle} matched multiple users`);
   }
 
+  private async recoverUsersByHandle(handle: string): Promise<SlackUserInfo[]> {
+    const teamId = this.input.teamId;
+    if (!teamId) return [];
+    const negativeKey = `${teamId}:user-handle:${handle}`;
+    if (hasFreshNegativeLookup(negativeKey)) throw new Error(`Slack user not found: @${handle}`);
+    const users = await this.singleFlightCollectionFetch(teamId, 'users', () => this.refreshUsers());
+    const matches = users.filter((user) => slackUserHandleCandidates(user).includes(handle));
+    if (!matches.length) recordNegativeLookup(negativeKey);
+    return matches;
+  }
+
+  private async recoverConversationsByName(name: string, types?: string): Promise<SlackConversationInfo[]> {
+    const teamId = this.input.teamId;
+    if (!teamId) return [];
+    const negativeKey = `${teamId}:channel-name:${name}`;
+    if (hasFreshNegativeLookup(negativeKey)) throw new Error(`Slack channel not found: #${name}`);
+    const channels = await this.singleFlightCollectionFetch(teamId, 'channels', () => this.refreshConversations(types));
+    const match = findSlackConversationByName(channels, name);
+    if (!match) recordNegativeLookup(negativeKey);
+    return channels;
+  }
+
   private async fetchUser(userId: string): Promise<SlackUserInfo | undefined> {
     const user = (await this.input.client.users.info({ user: userId })).user;
     const normalized = user?.id ? normalizeSlackUserInfo(user as SlackApiUserInfo) : undefined;
@@ -447,13 +475,13 @@ export class SlackWorkspaceDirectoryService {
     }
 
     const negativeKey = `${teamId}:${input.kind}:${input.id}`;
-    if (negativeLookups.get(negativeKey) && isFreshSlackNegative(negativeLookups.get(negativeKey)!)) return undefined;
+    if (hasFreshNegativeLookup(negativeKey)) return undefined;
     try {
       const fetched = await this.singleFlightEntryFetch(teamId, input.kind, input.id, input.fetch);
-      if (fetched === undefined) negativeLookups.set(negativeKey, Date.now());
+      if (fetched === undefined) recordNegativeLookup(negativeKey);
       return fetched;
     } catch (error) {
-      negativeLookups.set(negativeKey, Date.now());
+      recordNegativeLookup(negativeKey);
       throw error;
     }
   }
@@ -561,6 +589,15 @@ function uniqueSlackUserByHandle(users: SlackUserInfo[], handle: string): SlackU
   throw new Error(`Slack user not found: @${handle}`);
 }
 
-function isFreshSlackNegative(timestamp: number): boolean {
-  return Date.now() - timestamp < SLACK_WORKSPACE_DIRECTORY_NEGATIVE_TTL_MS;
+function hasFreshNegativeLookup(key: string): boolean {
+  const timestamp = negativeLookups.get(key);
+  if (timestamp === undefined) return false;
+  if (Date.now() - timestamp < SLACK_WORKSPACE_DIRECTORY_NEGATIVE_TTL_MS) return true;
+  negativeLookups.delete(key);
+  return false;
+}
+
+function recordNegativeLookup(key: string): void {
+  negativeLookups.delete(key);
+  negativeLookups.set(key, Date.now());
 }

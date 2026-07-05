@@ -194,6 +194,118 @@ test('concurrent stale reads trigger only one background refresh', async () => {
   }
 });
 
+test('getUserByHandle recovers a fresh collection miss with one blocking full sync', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-wd-handle-recovery-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const teamId = 'T-handle-recovery';
+      await seedCache(teamId, {
+        users: [{ id: 'U-old', name: 'old', syncedAt: nowIso() }],
+        usersFullSyncAt: nowIso(),
+      });
+      const counter = { calls: 0 };
+      const service = new SlackWorkspaceDirectoryService({
+        client: countingUsersClient([
+          { id: 'U-old', name: 'old' },
+          { id: 'U-new', name: 'newbie', profile: { display_name: 'Newbie' } },
+        ], counter),
+        teamId,
+      });
+
+      const user = await service.getUserByHandle('newbie');
+
+      assert.equal(user.id, 'U-new');
+      assert.equal(counter.calls, 1, 'missing handle in a fresh collection triggers exactly one recovery sync');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('getUserByHandle negative handle recovery is cached for 60 seconds only', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-wd-handle-negative-'));
+  const realNow = Date.now;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const teamId = 'T-handle-negative';
+      let now = realNow();
+      Date.now = () => now;
+      await seedCache(teamId, {
+        users: [{ id: 'U-old', name: 'old', syncedAt: nowIso() }],
+        usersFullSyncAt: nowIso(),
+      });
+      const counter = { calls: 0 };
+      const service = new SlackWorkspaceDirectoryService({
+        client: countingUsersClient([{ id: 'U-old', name: 'old' }], counter),
+        teamId,
+      });
+
+      await assert.rejects(() => service.getUserByHandle('missing'), /Slack user not found: @missing/);
+      assert.equal(counter.calls, 1);
+      await assert.rejects(() => service.getUserByHandle('missing'), /Slack user not found: @missing/);
+      assert.equal(counter.calls, 1, 'fresh negative suppresses immediate recovery sync');
+
+      now += 61_000;
+      await assert.rejects(() => service.getUserByHandle('missing'), /Slack user not found: @missing/);
+      assert.equal(counter.calls, 2, 'expired negative is pruned and the next lookup re-syncs');
+    });
+  } finally {
+    Date.now = realNow;
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('getUserByHandleForTarget recovers a fresh collection miss before target disambiguation', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-wd-target-handle-recovery-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const teamId = 'T-target-handle-recovery';
+      await seedCache(teamId, {
+        users: [{ id: 'U-old', name: 'old', syncedAt: nowIso() }],
+        usersFullSyncAt: nowIso(),
+      });
+      const counter = { calls: 0 };
+      const service = new SlackWorkspaceDirectoryService({
+        client: countingUsersClient([{ id: 'U-new', name: 'newbie' }], counter),
+        teamId,
+      });
+
+      const user = await service.getUserByHandleForTarget('newbie', { channelId: 'C-team' });
+
+      assert.equal(user.id, 'U-new');
+      assert.equal(counter.calls, 1);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('getConversationByName recovers a fresh collection miss with one blocking full sync', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-wd-channel-name-recovery-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const teamId = 'T-channel-name-recovery';
+      await seedCache(teamId, {
+        channels: [{ id: 'C-old', name: 'old', syncedAt: nowIso() }],
+        channelsFullSyncAt: nowIso(),
+        channelsFullSyncTypes: 'public_channel,private_channel',
+      });
+      const counter = { calls: 0 };
+      const service = new SlackWorkspaceDirectoryService({
+        client: countingClient([{ id: 'C-new', name: 'new-room' } as SlackConversationInfo], counter),
+        teamId,
+      });
+
+      const channel = await service.getConversationByName('new-room');
+
+      assert.equal(channel.id, 'C-new');
+      assert.equal(counter.calls, 1, 'missing channel name in a fresh collection triggers exactly one recovery sync');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('directory events do not restamp collection full-sync timestamps', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-wd-event-stamp-'));
   try {
@@ -334,6 +446,27 @@ function deferredValue(): { promise: Promise<void>; resolve: () => void } {
     resolve = done;
   });
   return { promise, resolve };
+}
+
+function countingUsersClient(users: SlackApiUser[], counter: { calls: number }): WebClient {
+  return {
+    users: {
+      list: async () => {
+        counter.calls += 1;
+        return { members: users, ok: true };
+      },
+    },
+  } as unknown as WebClient;
+}
+
+interface SlackApiUser {
+  id: string;
+  name?: string;
+  profile?: {
+    display_name?: string;
+    real_name?: string;
+  };
+  real_name?: string;
 }
 
 async function waitForUser(
