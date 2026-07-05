@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import { AgentRuntimeBridge } from '../../runtime/runtime-bridge.js';
 import type { AgentRuntime } from '../../providers/contract.js';
 import type { RuntimeItemContext } from '../../runtime/types.js';
@@ -66,13 +65,3 @@ export function runtimeTestEnv(binDir: string, env: Record<string, string> = {})
   };
 }
 
-export async function countTmuxCalls(path: string, command: string): Promise<number> {
-  const content = await readFile(path, 'utf8').catch(() => '');
-  return content
-    .split('\n')
-    .filter(Boolean)
-    .filter((line) => {
-      const parsed = JSON.parse(line) as { args?: string[] };
-      return parsed.args?.[0] === command;
-    }).length;
-}
