@@ -24,7 +24,9 @@ const cliPath = resolve('dist/server/cli/anima.js');
 test('message send records an audited Slack output', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-message-test-'));
   const posts: Array<{ channel: string; text: string; thread_ts?: string }> = [];
+  const slackMethods: string[] = [];
   const slackApi = await startSlackApiMock((method, body) => {
+    slackMethods.push(method);
     if (method === 'users.list') {
       return {
         members: [{ id: 'U123', name: 'alice' }],
@@ -117,11 +119,13 @@ test('message send records an audited Slack output', async () => {
     );
     assert.ok(sentThreadSubscription);
 
+    const methodsBeforeList = slackMethods.length;
     const list = await runNode([cliPath, 'subscription', 'list'], {
       env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_SLACK_API_URL: slackApi.url },
     });
     assert.equal(list.status, 0, list.stderr || list.stdout);
     assert.match(list.stdout, /^Channels \(0\)\n  - none/m);
+    assert.ok(slackMethods.slice(methodsBeforeList).includes('conversations.list'));
 
     const mute = await runNode([cliPath, 'subscription', 'mute', '--channel', 'C-product', '--thread-ts', '1770000200.000001'], {
       env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_INBOX_ITEM_ID: itemId, ANIMA_SLACK_API_URL: slackApi.url },
@@ -1460,9 +1464,10 @@ async function runNode(
   args: string[],
   options: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string } = {},
 ): Promise<{ status: number | null; stderr: string; stdout: string }> {
+  const env = cliMessageChildEnv(options.env);
   const child = spawn(process.execPath, args, {
     cwd: options.cwd,
-    env: options.env,
+    env,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   let stdout = '';
@@ -1484,9 +1489,10 @@ async function runNodeUntilOutput(
   args: string[],
   options: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string; match: RegExp; timeoutMs?: number },
 ): Promise<{ status: number | null; stderr: string; stdout: string }> {
+  const env = cliMessageChildEnv(options.env);
   const child = spawn(process.execPath, args, {
     cwd: options.cwd,
-    env: options.env,
+    env,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   let stdout = '';
@@ -1546,4 +1552,31 @@ async function runNodeUntilOutput(
       }
     }
   }
+}
+
+function cliMessageChildEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const source: NodeJS.ProcessEnv = {
+    HOME: process.env.HOME,
+    PATH: process.env.PATH,
+    ...overrides,
+  };
+  const allowed = [
+    'HOME',
+    'PATH',
+    'ANIMA_AGENT_ID',
+    'ANIMA_HOME',
+    'ANIMA_INBOX_ITEM_ID',
+    'ANIMA_SLACK_API_URL',
+    'ANIMA_THREAD',
+    'ANIMA_THREAD_TS',
+  ] as const;
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of allowed) {
+    const value = source[key];
+    if (value !== undefined) env[key] = value;
+  }
+  assert.equal(env.SLACK_BOT_TOKEN, undefined);
+  assert.equal(env.ANIMA_SLACK_BOT_TOKEN, undefined);
+  assert.equal(env.ANIMA_RUNTIME_HOME, undefined);
+  return env;
 }
