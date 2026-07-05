@@ -73,7 +73,9 @@ const groups = {
     'web-api.test.js',
   ],
   runtime: [
-    'agent-runtime.test.js',
+    'agent-runtime-codex.test.js',
+    'agent-runtime-claude.test.js',
+    'agent-runtime-kimi.test.js',
     'cli-env.test.js',
     'cli-errors.test.js',
     'cli-file.test.js',
