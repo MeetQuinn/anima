@@ -133,8 +133,7 @@ test('memory coherence prompt uses the self-contained scheduled memory pass copy
   const prompt = buildCodeAgentDeliveryPrompt(memoryItem('iris', '2026-06-22T05:47:00.000Z'));
 
   assert.match(prompt, /^Memory coherence system wake:/);
-  // envelopeTime renders second granularity (stale .000Z assertion predated #353's envelope rewrite).
-  assert.match(prompt, /scheduled_slot_at=2026-06-22T05:47:00Z/);
+  assert.match(prompt, /scheduled=2026-06-22T05:47:00Z slot=05:47 agent-local/);
   assert.match(prompt, /You are running your scheduled memory pass\./);
   assert.match(prompt, /Do not churn to look busy\./);
   assert.doesNotMatch(prompt, /design\/memory-coherence-procedure\.md/);
@@ -155,7 +154,7 @@ test('memory coherence prompt time= reflects claim time, matching reminder envel
   const prompt = buildCodeAgentDeliveryPrompt(item);
 
   assert.match(prompt, /time=2026-06-22T06:02:15Z/);
-  assert.match(prompt, /scheduled_slot_at=2026-06-22T05:47:00Z/);
+  assert.match(prompt, /scheduled=2026-06-22T05:47:00Z slot=05:47 agent-local/);
 });
 
 test('memory coherence outcome derives from a coarse memory digest change boolean', () => {

@@ -12,6 +12,11 @@ import {
   buildRuntimeRestartContinuationDeliveryPrompt,
   buildCodeAgentDeliveryPrompt,
 } from '../runtime/delivery-prompt.js';
+import {
+  FOLLOWUP_NOTE,
+  providerCrashRetryNote,
+  RUNTIME_RESTART_CONTINUATION_NOTE,
+} from '../runtime/delivery-notes.js';
 import { resolveAnimaReferencePathsFromRoots } from '../runtime/anima-reference.js';
 import { runtimeEnv } from '../runtime/runtime-bridge.js';
 import { buildAnimaRuntimeProfile } from '../runtime/standing-prompt.js';
@@ -92,24 +97,53 @@ test('buildCodeAgentDeliveryPrompt renders restart resumes as a short system con
 
   const text = buildCodeAgentDeliveryPrompt(event);
 
-  assert.equal(text, buildRuntimeRestartContinuationDeliveryPrompt());
+  assert.equal(text, buildRuntimeRestartContinuationDeliveryPrompt({
+    itemId: event.id,
+    time: event.receivedAt,
+  }));
   assert.doesNotMatch(text, /New Slack message/);
   assert.doesNotMatch(text, /do the expensive thing/);
 });
 
 test('delivery prompt module exposes named provider-facing Anima builders', () => {
-  assert.match(buildRuntimeRestartContinuationDeliveryPrompt(), /runtime restarted/);
+  assert.equal(FOLLOWUP_NOTE, 'Anima note: this message arrived while you were mid-task. Finish or pause your current work as you judge best, but address it before the turn ends: an unanswered mid-turn message is a dropped one. If it is heavy and unrelated, record it as a task before this turn ends.');
+  assert.equal(RUNTIME_RESTART_CONTINUATION_NOTE, [
+    'Anima note: the runtime restarted while this task was in progress.',
+    'Continue the same task from the current session; do not repeat completed external side effects.',
+    'Check `anima outbox` for what you already sent and `anima inbox` for what arrived before re-sending anything.',
+  ].join('\n'));
+  assert.equal(providerCrashRetryNote(), [
+    'Anima note: the previous provider process crashed before completing this same item.',
+    'Continue the original task from the current files, conversation, and connected chat state.',
+    'Do not repeat completed external side effects such as chat messages, file sends, or file edits; check `anima outbox` for what already went out, and inspect files/state, before redoing anything.',
+  ].join('\n'));
+  assert.match(buildRuntimeRestartContinuationDeliveryPrompt({
+    itemId: 'msg-test',
+    time: '2026-01-01T00:00:00.000Z',
+  }), /runtime restarted/);
+  assert.equal(buildProviderCrashRetryDeliveryPrompt({
+    attempt: 2,
+    itemId: 'msg-test',
+    maxRetries: 3,
+    previousError: 'boom',
+    time: '2026-01-01T00:00:00.000Z',
+  }), [
+    'Provider crash retry:',
+    '',
+    '[item=msg-test retry=2/3 time=2026-01-01T00:00:00Z]',
+    '',
+    'Previous error: boom',
+    '',
+    'Anima note: the previous provider process crashed before completing this same item.',
+    'Continue the original task from the current files, conversation, and connected chat state.',
+    'Do not repeat completed external side effects such as chat messages, file sends, or file edits; check `anima outbox` for what already went out, and inspect files/state, before redoing anything.',
+  ].join('\n'));
   assert.equal(buildProviderCrashRetryDeliveryPrompt({
     attempt: 2,
     maxRetries: 3,
     previousError: 'boom',
-  }), [
-    'Anima system note: the previous provider process crashed before completing this same item.',
-    'This is retry 2/3.',
-    'Previous error: boom',
-    'Continue the original task from the current files, conversation, and connected chat state.',
-    'Do not repeat completed external side effects such as chat messages, file sends, or file edits; check `anima outbox` for what already went out, and inspect files/state, before redoing anything.',
-  ].join('\n'));
+    time: '2026-01-01T00:00:00.000Z',
+  }).split('\n')[2], '[retry=2/3 time=2026-01-01T00:00:00Z]');
 });
 
 test('buildCodeAgentDeliveryPrompt omits channel_id for DMs (channel= already shows the raw id) and still emits user_id', () => {
@@ -280,7 +314,7 @@ test('buildCodeAgentDeliveryPrompt renders onboarding as an onboarding wake, not
   });
 
   assert.match(text, /^Agent onboarding:/);
-  assert.match(text, /\[owner=Iris \(@iris, <@U-owner>\) channel=D-owner time=2026-01-01T00:00:00Z\]/);
+  assert.match(text, /\[platform=slack channel=D-owner time=2026-01-01T00:00:00Z user_id=U-owner\]/);
   assert.doesNotMatch(text, /Reply target:|Use `anima message send/);
   assert.doesNotMatch(text, /^New Slack message:/);
 });

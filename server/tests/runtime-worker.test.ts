@@ -30,6 +30,8 @@ import { ReminderStore } from '../storage/schema/reminder.store.js';
 
 type TestInboxDecision = WakeQueueEnqueueResult & { ctx: RuntimeItemContext };
 
+const FOLLOWUP_NOTE_PREFIX = 'Anima note: this message arrived while you were mid-task.';
+
 async function enqueueInbox(
   event: InboxItem,
   options: RuntimeWorkerConfig,
@@ -43,6 +45,10 @@ async function enqueueInbox(
 }
 
 const queueFor = (agentId: string): WakeQueueService => new WakeQueueService(agentId);
+
+function countOccurrences(text: string, needle: string): number {
+  return text.split(needle).length - 1;
+}
 
 async function ensureTestAgentConfig(options: RuntimeWorkerConfig): Promise<void> {
   const agentDir = join(options.stateDir, 'agents', options.agentId);
@@ -314,6 +320,8 @@ test('runtime worker appends queued follow-up messages into an active runtime', 
     await waitFor(() => runtime.followups.length === 1);
     assert.equal(runtime.followups[0]?.activeItemId, first.ctx.item.id);
     assert.equal(runtime.followups[0]?.itemId, second.ctx.item.id);
+    assert.equal(countOccurrences(runtime.followups[0]?.prompt ?? '', FOLLOWUP_NOTE_PREFIX), 1);
+    assert.match(runtime.followups[0]?.prompt ?? '', /record it as a task before this turn ends/);
     await waitForInboxItemAppendedTo('scout', second.ctx.item.id, first.ctx.item.id);
     await waitFor(() => reactionCalls.includes('add:D-user:1770000011.000001:eyes'));
     assert.deepEqual(reactionCalls, [
@@ -337,6 +345,8 @@ test('runtime worker appends queued follow-up messages into an active runtime', 
     await waitFor(() => runtime.followups.length === 2);
     assert.equal(runtime.followups[1]?.activeItemId, first.ctx.item.id);
     assert.equal(runtime.followups[1]?.itemId, third.ctx.item.id);
+    assert.equal(countOccurrences(runtime.followups[1]?.prompt ?? '', FOLLOWUP_NOTE_PREFIX), 0);
+    assert.match(runtime.followups[1]?.prompt ?? '', /third/);
     await waitForInboxItemAppendedTo('scout', third.ctx.item.id, first.ctx.item.id);
     await waitFor(() => reactionCalls.includes('add:D-user:1770000012.000001:eyes'));
     assert.deepEqual(reactionCalls, [
@@ -1601,11 +1611,10 @@ test('runtime worker drains a running item for restart without marking it failed
       const resumeDrain = worker.drainOnce();
       await waitFor(() => resumedRuntime.calls.length === 1);
       assert.equal(resumedRuntime.calls[0]?.itemId, decision.ctx.item.id);
-      assert.equal(resumedRuntime.calls[0]?.prompt, [
-        'Anima system message: runtime restarted while this task was in progress.',
-        'Continue the same task from the current session; do not repeat completed external side effects.',
-        'Check `anima outbox` for what you already sent (and `anima inbox` for what arrived) before re-sending anything.',
-      ].join('\n'));
+      const resumedPrompt = resumedRuntime.calls[0]?.prompt ?? '';
+      assert.match(resumedPrompt, new RegExp(`^Runtime restart continuation:\\n\\n\\[item=${decision.ctx.item.id} time=[^\\]]+\\]\\n\\nAnima note: the runtime restarted while this task was in progress\\.`));
+      assert.match(resumedPrompt, /Check `anima outbox` for what you already sent and `anima inbox` for what arrived before re-sending anything\./);
+      assert.doesNotMatch(resumedPrompt, /Anima system/);
       assert.doesNotMatch(resumedRuntime.calls[0]?.prompt ?? '', /drain me/);
       resumedRuntime.finishNext();
       assert.equal(await resumeDrain, 1);

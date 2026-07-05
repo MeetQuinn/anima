@@ -16,6 +16,10 @@ import {
 } from '../inbox/slack-events.js';
 import { slackDisplayLabel } from '../slack/slack.helper.js';
 import type { Reminder } from '../../shared/reminder.js';
+import {
+  providerCrashRetryNote,
+  RUNTIME_RESTART_CONTINUATION_NOTE,
+} from './delivery-notes.js';
 
 export interface CodeAgentPromptContext {
   reminder?: Reminder;
@@ -44,7 +48,10 @@ export interface CodeAgentPromptContext {
  */
 export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgentPromptContext = {}): string {
   if (event.handling.resumeReason === 'runtime_restart') {
-    return buildRuntimeRestartContinuationDeliveryPrompt();
+    return buildRuntimeRestartContinuationDeliveryPrompt({
+      itemId: event.id,
+      time: event.handling.startedAt ?? event.receivedAt,
+    });
   }
   if (event.kind === 'reminder') return buildReminderDeliveryPrompt(event, context);
   if (event.kind === 'memory_coherence') return buildMemoryCoherenceDeliveryPrompt(event);
@@ -88,14 +95,14 @@ function formatFeishuQuotedMessage(message: FeishuQuotedMessage): string {
 
 function buildSlackOnboardingDeliveryPrompt(event: OnboardingInboxItem): string {
   return buildOnboardingDeliveryPrompt({
-    envelope: `[owner=${readableSlackActor(event.operator)} channel=${event.channelId} time=${envelopeTime(event.receivedAt)}]`,
+    envelope: `[platform=slack channel=${event.channelId} time=${envelopeTime(event.receivedAt)} user_id=${event.operator.slackUserId}]`,
     text: event.text,
   });
 }
 
 function buildFeishuOnboardingDeliveryPrompt(event: FeishuOnboardingInboxItem): string {
   return buildOnboardingDeliveryPrompt({
-    envelope: `[platform=feishu owner=feishu-owner channel=${event.target.receiveId} receive_id_type=${event.target.receiveIdType} time=${envelopeTime(event.receivedAt)}]`,
+    envelope: `[platform=feishu channel=${event.target.receiveId} receive_id_type=${event.target.receiveIdType} time=${envelopeTime(event.receivedAt)} user_id=${event.owner.openId}]`,
     text: event.text,
   });
 }
@@ -130,7 +137,7 @@ function buildChoiceResponseDeliveryPrompt(event: ChoiceResponseInboxItem): stri
   const actor = readableSlackActor(event.answeredBy);
   return `Choice response:
 
-[ask_id=${event.askId} channel=${event.channelId} thread_ts=${event.threadTs} message_ts=${event.messageTs} time=${envelopeTime(event.receivedAt)} user_id=${event.answeredBy.slackUserId}]
+[ask_id=${event.askId} channel=${event.channelId} thread_ts=${event.threadTs} message_ts=${event.messageTs} wake=ask_answered time=${envelopeTime(event.receivedAt)} user_id=${event.answeredBy.slackUserId}]
 ${actor} selected: ${event.optionLabel}
 
 Question:
@@ -170,7 +177,7 @@ function reminderOriginEnvelope(provenance: NonNullable<Reminder['provenance']>)
 function buildMemoryCoherenceDeliveryPrompt(event: MemoryCoherenceInboxItem): string {
   return `Memory coherence system wake:
 
-[time=${envelopeTime(scheduledDeliveryTime(event))} scheduled_slot_at=${envelopeTime(event.scheduledSlotAt)} scheduled_slot=${event.scheduledSlotLabel}]
+[time=${envelopeTime(scheduledDeliveryTime(event))} scheduled=${envelopeTime(event.scheduledSlotAt)} slot=${event.scheduledSlotLabel}]
 
 You are running your scheduled memory pass.
 
@@ -179,25 +186,35 @@ This is your scheduled moment to keep your durable memory in good shape: lean, a
 Use your judgment. Consolidate what is redundant, fix what is outdated, and move detail that no longer needs to live in \`MEMORY.md\` out to your \`notes/\` (just make sure it lands there before it leaves \`MEMORY.md\`, so nothing is lost). You know your own memory best. If it is already in good shape, leaving it alone is the right call. Do not churn to look busy.`;
 }
 
-export function buildRuntimeRestartContinuationDeliveryPrompt(): string {
+export function buildRuntimeRestartContinuationDeliveryPrompt(input: {
+  itemId: string;
+  time: string;
+}): string {
   return [
-    'Anima system message: runtime restarted while this task was in progress.',
-    'Continue the same task from the current session; do not repeat completed external side effects.',
-    'Check `anima outbox` for what you already sent (and `anima inbox` for what arrived) before re-sending anything.',
+    'Runtime restart continuation:',
+    '',
+    `[item=${input.itemId} time=${envelopeTime(input.time)}]`,
+    '',
+    RUNTIME_RESTART_CONTINUATION_NOTE,
   ].join('\n');
 }
 
 export function buildProviderCrashRetryDeliveryPrompt(input: {
   attempt: number;
+  itemId?: string;
   maxRetries: number;
   previousError: string;
+  time: string;
 }): string {
+  const itemPart = input.itemId ? `item=${input.itemId} ` : '';
   return [
-    'Anima system note: the previous provider process crashed before completing this same item.',
-    `This is retry ${input.attempt}/${input.maxRetries}.`,
+    'Provider crash retry:',
+    '',
+    `[${itemPart}retry=${input.attempt}/${input.maxRetries} time=${envelopeTime(input.time)}]`,
+    '',
     `Previous error: ${input.previousError}`,
-    'Continue the original task from the current files, conversation, and connected chat state.',
-    'Do not repeat completed external side effects such as chat messages, file sends, or file edits; check `anima outbox` for what already went out, and inspect files/state, before redoing anything.',
+    '',
+    providerCrashRetryNote(),
   ].join('\n');
 }
 

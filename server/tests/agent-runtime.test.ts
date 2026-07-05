@@ -56,6 +56,7 @@ const FOLLOWUP_NOTE_PREFIX = 'Anima note: this message arrived while you were mi
 function assertFollowupPrompt(prompt: string, expectedBody: string): void {
   assert.equal(countOccurrences(prompt, FOLLOWUP_NOTE_PREFIX), 1);
   assert.match(prompt, /address it before the turn ends/);
+  assert.match(prompt, /record it as a task before this turn ends/);
   assert.ok(prompt.includes(expectedBody));
   assert.ok(prompt.indexOf(FOLLOWUP_NOTE_PREFIX) < prompt.indexOf(expectedBody));
 }
