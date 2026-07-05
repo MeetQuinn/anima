@@ -12,6 +12,7 @@ import {
   record,
   resetAtFromValue,
   stringValue,
+  windowFromUsedPercent,
 } from './common.js';
 
 const execFileAsync = promisify(execFile);
@@ -54,12 +55,11 @@ export function parseClaudeUsageResponse(
   const root = record(data);
   if (!root) return { error: usageError('parse_error', 'Claude usage response is not an object'), extras: [], windows: [] };
 
-  const windows = [
+  const windows = dedupeWindowsByLabel([
     claudeWindow('5h', root.five_hour),
     claudeWindow('Weekly', root.seven_day),
-    claudeWindow('Weekly Sonnet', root.seven_day_sonnet),
-    claudeWindow('Weekly Opus', root.seven_day_opus),
-  ].filter((window): window is ProviderUsageWindow => Boolean(window));
+    ...claudeScopedWeeklyWindows(root.limits),
+  ].filter((window): window is ProviderUsageWindow => Boolean(window)));
 
   if (windows.length === 0) {
     return { error: usageError('parse_error', 'Claude usage response did not include quota windows'), extras: [], windows: [] };
@@ -122,6 +122,34 @@ function parseJsonOrHex(text: string): unknown {
       return undefined;
     }
   }
+}
+
+// Model-scoped weekly quotas moved into the `limits` array; each entry carries the
+// active model under scope.model.display_name (e.g. "Fable"). The legacy top-level
+// seven_day_sonnet / seven_day_opus fields now return null, so read these here too.
+function claudeScopedWeeklyWindows(value: unknown): ProviderUsageWindow[] {
+  if (!Array.isArray(value)) return [];
+  const windows: ProviderUsageWindow[] = [];
+  for (const entry of value) {
+    const limit = record(entry);
+    if (!limit || stringValue(limit.kind) !== 'weekly_scoped') continue;
+    const modelName = stringValue(record(record(limit.scope)?.model)?.display_name);
+    if (!modelName) continue;
+    const window = windowFromUsedPercent(`Weekly ${modelName}`, numberValue(limit.percent), {
+      ...(resetAtFromValue(limit.resets_at) ? { resetsAt: resetAtFromValue(limit.resets_at) } : {}),
+    });
+    if (window) windows.push(window);
+  }
+  return windows;
+}
+
+function dedupeWindowsByLabel(windows: ProviderUsageWindow[]): ProviderUsageWindow[] {
+  const seen = new Set<string>();
+  return windows.filter((window) => {
+    if (seen.has(window.label)) return false;
+    seen.add(window.label);
+    return true;
+  });
 }
 
 function claudeWindow(label: string, value: unknown): ProviderUsageWindow | undefined {

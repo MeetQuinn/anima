@@ -20,14 +20,27 @@ test('Claude usage parser returns remaining windows and extra usage', () => {
     },
     five_hour: { resets_at: '2026-05-29T06:00:00.000Z', utilization: 7 },
     seven_day: { resets_at: '2026-06-01T00:00:00.000Z', utilization: 4 },
+    // Legacy model-scoped fields are now always null upstream and must be ignored.
     seven_day_sonnet: { resets_at: '2026-06-01T00:00:00.000Z', utilization: 2 },
+    seven_day_opus: null,
+    // Model-scoped weekly quotas now arrive in the `limits` array under scope.model.
+    limits: [
+      { kind: 'session', percent: 7, resets_at: '2026-05-29T06:00:00.000Z', scope: null },
+      { kind: 'weekly_all', percent: 4, resets_at: '2026-06-01T00:00:00.000Z', scope: null },
+      {
+        kind: 'weekly_scoped',
+        percent: 51,
+        resets_at: '2026-06-01T00:00:00.000Z',
+        scope: { model: { id: null, display_name: 'Fable' } },
+      },
+    ],
   }, { subscriptionType: 'max' });
 
   assert.equal(parsed.error, undefined);
   assert.deepEqual(parsed.windows.map(({ label, remainingPercent }) => [label, remainingPercent]), [
     ['5h', 93],
     ['Weekly', 96],
-    ['Weekly Sonnet', 98],
+    ['Weekly Fable', 49],
   ]);
   assert.deepEqual(parsed.extras, [
     { balance: 'Claude Max', label: 'Plan' },
