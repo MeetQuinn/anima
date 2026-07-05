@@ -53,6 +53,10 @@ export class MessageService {
     return { entries: page, nextCursor };
   }
 
+  async listLatest(input: { limit: number }): Promise<AgentMessageRecord[]> {
+    return this.store.readLatest({ limit: input.limit });
+  }
+
   async listAll(): Promise<AgentMessageRecord[]> {
     return this.store.readAll();
   }
