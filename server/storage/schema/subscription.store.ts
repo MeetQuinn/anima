@@ -85,21 +85,25 @@ export class SubscriptionStore {
     if (subscription.agentId !== this.agentId) {
       throw new Error(`Cannot write subscription for ${subscription.agentId} through ${this.agentId} store`);
     }
-    const stored = await this.file.read();
-    await this.file.write({
-      ...stored,
-      [subscription.subscriptionId]: persistedSubscription(subscription),
+    await this.file.update((stored) => {
+      return {
+        ...stored,
+        [subscription.subscriptionId]: persistedSubscription(subscription),
+      };
     });
     return subscription;
   }
 
   async remove(subscriptionId: string): Promise<boolean> {
-    const stored = await this.file.read();
-    if (!stored[subscriptionId]) return false;
-    const next = { ...stored };
-    delete next[subscriptionId];
-    await this.file.write(next);
-    return true;
+    let removed = false;
+    await this.file.update((stored) => {
+      if (!stored[subscriptionId]) return stored;
+      removed = true;
+      const next = { ...stored };
+      delete next[subscriptionId];
+      return next;
+    });
+    return removed;
   }
 }
 

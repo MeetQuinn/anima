@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -15,6 +15,7 @@ import {
 } from '../inbox/slack-subscription.service.js';
 import { withAnimaHome } from './anima-home.js';
 import { loadState } from './helpers/state.js';
+import { SubscriptionStore, type SubscriptionRecord } from '../storage/schema/subscription.store.js';
 import type { FeishuInboxItem } from '../../shared/inbox.js';
 
 test('Slack routing replies to DMs without mention', () => {
@@ -111,6 +112,46 @@ test('member channel top-level messages wake unless muted', async () => {
       );
       assert.equal(stillMuted.shouldStartRuntime, false);
       assert.equal(stillMuted.reason, 'muted');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('subscription store preserves concurrent replaces', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-subscription-concurrent-replace-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const store = new SubscriptionStore('scout');
+      await Promise.all([
+        store.replace(channelSubscription({ channelId: 'C-alpha' })),
+        store.replace(channelSubscription({ channelId: 'C-beta' })),
+      ]);
+
+      assert.deepEqual((await store.list()).map((subscription) => subscription.subscriptionId).sort(), [
+        'slack-subscription:scout:C-alpha:channel',
+        'slack-subscription:scout:C-beta:channel',
+      ]);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('subscription store rejects wrong agent writes and leaves file unchanged', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-subscription-wrong-agent-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const store = new SubscriptionStore('scout');
+      await store.replace(channelSubscription({ channelId: 'C-alpha' }));
+      const before = await readFile(join(stateDir, 'agents', 'scout', 'subscription.json'), 'utf8');
+
+      await assert.rejects(
+        store.replace(channelSubscription({ agentId: 'other', channelId: 'C-beta' })),
+        /Cannot write subscription for other through scout store/,
+      );
+
+      assert.equal(await readFile(join(stateDir, 'agents', 'scout', 'subscription.json'), 'utf8'), before);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
@@ -543,5 +584,23 @@ function makeFeishuItem(input: {
     receivedAt: '2026-06-05T07:00:00.000Z',
     tenantKey: 'tenant_test',
     text: input.text,
+  };
+}
+
+function channelSubscription(
+  overrides: {
+    agentId?: string;
+    channelId: string;
+    subscriptionId?: string;
+    updatedAt?: string;
+  },
+): SubscriptionRecord {
+  const agentId = overrides.agentId ?? 'scout';
+  return {
+    agentId,
+    channelId: overrides.channelId,
+    kind: 'channel',
+    subscriptionId: overrides.subscriptionId ?? `slack-subscription:${agentId}:${overrides.channelId}:channel`,
+    updatedAt: overrides.updatedAt ?? '2026-06-05T07:00:00.000Z',
   };
 }
