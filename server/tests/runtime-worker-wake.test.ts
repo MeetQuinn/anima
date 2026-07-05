@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { withAnimaHome } from './anima-home.js';
 import { makeSlackEvent } from './helpers/slack.js';
-import { waitFor } from './helpers/harness.js';
+import { sleep, waitFor } from './helpers/harness.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { onWake } from '../inbox/wake-signal.js';
 import { allActivities, loadState } from './helpers/state.js';
@@ -115,7 +115,8 @@ test('runtime worker re-drains when a wake arrives before active drain clears', 
       runtime.finishNext();
       await waitFor(() => runtime.completed === 2);
       await waitForInboxItemRemoved('scout', second.id);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // settle window: asserting absence of an extra redrain runtime call.
+      await sleep(50);
       assert.equal(runtime.calls.length, 2);
       assert.equal(queue.redrainEmptyChecks, 1);
     });
@@ -187,7 +188,8 @@ test('runtime worker close unsubscribes from wake signals', async () => {
         }),
         coordinator,
       );
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // settle window: asserting absence of runtime calls after the worker unsubscribes.
+      await sleep(50);
       assert.equal(runtime.calls.length, 0);
     });
   } finally {
@@ -240,7 +242,8 @@ test('runtime worker wake signals are isolated by agent id', async () => {
       );
 
       await waitFor(() => alphaRuntime.calls.length === 1);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // settle window: asserting absence of wake handling by the other agent.
+      await sleep(50);
       assert.equal(bravoRuntime.calls.length, 0);
       alphaRuntime.finishNext();
       await waitFor(() => alphaRuntime.completed === 1);
@@ -345,7 +348,8 @@ test('runtime worker drain close lets active item finish before clearing audit p
       assert.equal((await findActiveRuntimeItem('scout'))?.itemId, decision.ctx.item.id);
 
       const close = worker.close({ drainActive: true });
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      // settle window: asserting absence of active-item cleanup while drainActive close is waiting.
+      await sleep(30);
       assert.equal((await findActiveRuntimeItem('scout'))?.itemId, decision.ctx.item.id);
       assert.equal((await queueFor('scout').find(decision.ctx.item.id))?.handling.status, 'running');
 

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { withAnimaHome } from './anima-home.js';
+import { sleep } from './helpers/harness.js';
 import { defaultServerSettingsService } from '../settings/settings.service.js';
 import {
   RuntimeUpgradeCheckStore,
@@ -433,7 +434,8 @@ test('runtime upgrade status returns cached state immediately and refreshes in b
         checkTtlMs: 0,
         distTagLookup: async () => {
           lookupCalls += 1;
-          await new Promise((resolve) => setTimeout(resolve, 20));
+          // fixed delay: simulated npm dist-tag lookup latency.
+          await sleep(20);
           return '0.1.3';
         },
         now: () => new Date('2026-05-29T09:00:00.000Z'),
@@ -526,7 +528,8 @@ async function waitFor(predicate: () => Promise<boolean>): Promise<void> {
   const deadline = Date.now() + 1000;
   while (Date.now() < deadline) {
     if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    // fixed delay: local waitFor poll interval, preserving this helper's failure shape.
+    await sleep(10);
   }
   assert.fail('condition did not become true before timeout');
 }

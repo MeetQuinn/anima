@@ -14,6 +14,7 @@ import {
 import type { SlackConversationInfo } from '../slack/slack.helper.js';
 import { nowIso } from '../ids.js';
 import { withAnimaHome } from './anima-home.js';
+import { waitFor } from './helpers/harness.js';
 
 // A WebClient whose conversations.list returns a fixed set and counts how many
 // times Slack was actually hit, so we can prove the hot path stays off the wire.
@@ -45,16 +46,12 @@ async function seedCache(teamId: string, file: Partial<SlackWorkspaceDirectoryFi
 }
 
 async function waitForChannelIds(teamId: string, ids: string[], timeoutMs = 2000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
+  const expectedIds = [...ids].sort();
+  await waitFor(async () => {
     const cache = await getSlackWorkspaceDirectoryStore(teamId).read();
     const have = cache.channels.map((c) => c.id).sort();
-    if (have.length === ids.length && have.every((id, i) => id === [...ids].sort()[i])) return;
-    if (Date.now() >= deadline) {
-      throw new Error(`cache channels ${JSON.stringify(have)} never became ${JSON.stringify(ids)}`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
+    return have.length === expectedIds.length && have.every((id, i) => id === expectedIds[i]);
+  }, { description: `cache channels to become ${JSON.stringify(ids)}`, timeoutMs });
 }
 
 test('getMemberConversations serves a fresh cache without hitting Slack', async () => {
@@ -475,11 +472,8 @@ async function waitForUser(
   match: (user: SlackDirectoryUser) => boolean,
   timeoutMs = 2000,
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
+  await waitFor(async () => {
     const user = (await getSlackWorkspaceDirectoryStore(teamId).read()).users.find((entry) => entry.id === userId);
-    if (user && match(user)) return;
-    if (Date.now() >= deadline) throw new Error(`cache user ${userId} never matched`);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
+    return user !== undefined && match(user);
+  }, { description: `cache user ${userId} to match`, timeoutMs });
 }
