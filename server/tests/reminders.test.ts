@@ -158,6 +158,7 @@ test('due reminder delivery enters the inbox and records fire activity', async (
 
       const call = runtime.calls[0];
       assert.match(call?.prompt ?? '', new RegExp(`reminder_id=${reminder.reminderId}`));
+      assert.match(call?.prompt ?? '', /scheduled=2026-05-14T09:00:01Z/);
 
       await waitUntil(async () => {
         const state = await loadState();
