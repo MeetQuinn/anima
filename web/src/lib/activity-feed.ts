@@ -28,6 +28,18 @@ interface RecentOutboundText {
   timestampMs: number;
 }
 
+type CompletedOutboundEffectProjection =
+  | {
+      action: 'emit';
+      item: Extract<
+        ActivityFeedItem,
+        { kind: 'file-out' | 'message-out' | 'reaction-out' }
+      >;
+      rememberText: boolean;
+    }
+  | { action: 'pass' }
+  | { action: 'suppress' };
+
 // Provider protocol frames are filtered in TWO layers:
 //   Always hidden (even in show-all): raw streaming internals — `.stream.*`,
 //     `.reasoning.*`, `.content.part`, `.tool.call.part`, etc. These produce
@@ -245,62 +257,13 @@ export function buildActivityFeed(
     // (tool, effect) → kind decision lives in the shared classifier so the
     // web feed and the server's ledger projection can never drift.
     if (activity.type === 'tool.call.completed' || activity.type === 'external.effect.completed') {
-      const payload = activity.payload ?? {};
-      const tool = typeof payload['tool'] === 'string' ? payload['tool'] : undefined;
-      const effect = typeof payload['effect'] === 'string' ? payload['effect'] : undefined;
-      const classified = classifyOutboundEffect({ effect, tool });
-      if (classified?.kind === 'message') {
-        const text = payload['text'];
-        const permalink =
-          typeof payload['permalink'] === 'string' && payload['permalink']
-            ? payload['permalink']
-            : undefined;
-        items.push({
-          kind: 'message-out',
-          text: typeof text === 'string' ? text : '',
-          ...(permalink ? { permalink } : {}),
-          timestamp: activity.createdAt,
-          surface: surfaceChipForOutbound(activity),
-          isEdit: classified.isEdit,
-        });
-        rememberOutboundText(recentOutboundTexts, activity);
+      const projection = projectCompletedOutboundEffect(activity);
+      if (projection.action === 'emit') {
+        items.push(projection.item);
+        if (projection.rememberText) rememberOutboundText(recentOutboundTexts, activity);
         continue;
       }
-      if (classified?.kind === 'file') {
-        const caption = typeof payload['caption'] === 'string' ? payload['caption'] : '';
-        const permalink =
-          typeof payload['permalink'] === 'string' ? payload['permalink'] : undefined;
-        const files = outboundFilesFromPayload(payload['uploads']);
-        items.push({
-          kind: 'file-out',
-          caption,
-          files,
-          ...(permalink ? { permalink } : {}),
-          timestamp: activity.createdAt,
-          surface: surfaceChipForOutbound(activity),
-        });
-        continue;
-      }
-      if (tool === 'anima.reminder.fire') {
-        // Consumed by the message-in row for this item (see pre-scan above).
-        // Suppress as a standalone step — it would otherwise double-render
-        // alongside the reminder wake byline.
-        continue;
-      }
-      if (classified?.kind === 'reaction') {
-        const action: 'added' | 'removed' = payload['action'] === 'removed' ? 'removed' : 'added';
-        const emoji = typeof payload['name'] === 'string' ? payload['name'] : '';
-        const noop = payload['noop'] === true;
-        items.push({
-          kind: 'reaction-out',
-          action,
-          emoji,
-          noop,
-          timestamp: activity.createdAt,
-          surface: surfaceChipForOutbound(activity),
-        });
-        continue;
-      }
+      if (projection.action === 'suppress') continue;
     }
 
     if (isDuplicateAgentText(activity, recentOutboundTexts)) continue;
@@ -518,6 +481,69 @@ function outboundFilesFromPayload(uploads: unknown): OutboundFile[] {
       },
     ];
   });
+}
+
+function projectCompletedOutboundEffect(
+  activity: ActivityRecord,
+): CompletedOutboundEffectProjection {
+  const payload = activity.payload ?? {};
+  const tool = typeof payload['tool'] === 'string' ? payload['tool'] : undefined;
+  const effect = typeof payload['effect'] === 'string' ? payload['effect'] : undefined;
+  const classified = classifyOutboundEffect({ effect, tool });
+  if (classified?.kind === 'message') {
+    const text = payload['text'];
+    const permalink =
+      typeof payload['permalink'] === 'string' && payload['permalink']
+        ? payload['permalink']
+        : undefined;
+    return {
+      action: 'emit',
+      item: {
+        kind: 'message-out',
+        text: typeof text === 'string' ? text : '',
+        ...(permalink ? { permalink } : {}),
+        timestamp: activity.createdAt,
+        surface: surfaceChipForOutbound(activity),
+        isEdit: classified.isEdit,
+      },
+      rememberText: true,
+    };
+  }
+  if (classified?.kind === 'file') {
+    const caption = typeof payload['caption'] === 'string' ? payload['caption'] : '';
+    const permalink =
+      typeof payload['permalink'] === 'string' ? payload['permalink'] : undefined;
+    return {
+      action: 'emit',
+      item: {
+        kind: 'file-out',
+        caption,
+        files: outboundFilesFromPayload(payload['uploads']),
+        ...(permalink ? { permalink } : {}),
+        timestamp: activity.createdAt,
+        surface: surfaceChipForOutbound(activity),
+      },
+      rememberText: false,
+    };
+  }
+  if (tool === 'anima.reminder.fire') {
+    return { action: 'suppress' };
+  }
+  if (classified?.kind === 'reaction') {
+    return {
+      action: 'emit',
+      item: {
+        kind: 'reaction-out',
+        action: payload['action'] === 'removed' ? 'removed' : 'added',
+        emoji: typeof payload['name'] === 'string' ? payload['name'] : '',
+        noop: payload['noop'] === true,
+        timestamp: activity.createdAt,
+        surface: surfaceChipForOutbound(activity),
+      },
+      rememberText: false,
+    };
+  }
+  return { action: 'pass' };
 }
 
 // --- surface chip derivation ---------------------------------------------
@@ -806,57 +832,13 @@ function buildChildFeedItems(
       activity.type === 'tool.call.completed' ||
       activity.type === 'external.effect.completed'
     ) {
-      const payload = activity.payload ?? {};
-      const tool = typeof payload['tool'] === 'string' ? payload['tool'] : undefined;
-      const effect = typeof payload['effect'] === 'string' ? payload['effect'] : undefined;
-      const classified = classifyOutboundEffect({ effect, tool });
-      if (classified?.kind === 'message') {
-        const text = payload['text'];
-        const permalink =
-          typeof payload['permalink'] === 'string' && payload['permalink']
-            ? payload['permalink']
-            : undefined;
-        items.push({
-          kind: 'message-out',
-          text: typeof text === 'string' ? text : '',
-          ...(permalink ? { permalink } : {}),
-          timestamp: activity.createdAt,
-          surface: surfaceChipForOutbound(activity),
-          isEdit: classified.isEdit,
-        });
-        rememberOutboundText(recentOutboundTexts, activity);
+      const projection = projectCompletedOutboundEffect(activity);
+      if (projection.action === 'emit') {
+        items.push(projection.item);
+        if (projection.rememberText) rememberOutboundText(recentOutboundTexts, activity);
         continue;
       }
-      if (classified?.kind === 'file') {
-        const caption = typeof payload['caption'] === 'string' ? payload['caption'] : '';
-        const permalink =
-          typeof payload['permalink'] === 'string' ? payload['permalink'] : undefined;
-        const files = outboundFilesFromPayload(payload['uploads']);
-        items.push({
-          kind: 'file-out',
-          caption,
-          files,
-          ...(permalink ? { permalink } : {}),
-          timestamp: activity.createdAt,
-          surface: surfaceChipForOutbound(activity),
-        });
-        continue;
-      }
-      if (tool === 'anima.reminder.fire') continue;
-      if (classified?.kind === 'reaction') {
-        const action: 'added' | 'removed' = payload['action'] === 'removed' ? 'removed' : 'added';
-        const emoji = typeof payload['name'] === 'string' ? payload['name'] : '';
-        const noop = payload['noop'] === true;
-        items.push({
-          kind: 'reaction-out',
-          action,
-          emoji,
-          noop,
-          timestamp: activity.createdAt,
-          surface: surfaceChipForOutbound(activity),
-        });
-        continue;
-      }
+      if (projection.action === 'suppress') continue;
     }
 
     if (isDuplicateAgentText(activity, recentOutboundTexts)) continue;
