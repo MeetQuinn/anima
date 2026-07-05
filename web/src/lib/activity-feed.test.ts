@@ -187,7 +187,8 @@ describe('buildMessageFeed', () => {
     expect(reminder.body).toBe('Ship the report');
     if (onboarding?.kind !== 'system-event') throw new Error('expected system event');
     expect(onboarding.eventKind).toBe('onboarding');
-    expect(onboarding.body).toBe('Welcome aboard');
+    // The raw onboarding prompt is collapsed to a short fixed label.
+    expect(onboarding.body).toBe('Agent onboarding started');
   });
 
   it('projects outbound records to flat message/file/reaction rows', () => {
