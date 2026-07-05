@@ -10,18 +10,26 @@ interface CacheEntry {
   value: unknown;
 }
 
+const MAX_CACHE_ENTRIES = 256;
 const cache = new Map<string, CacheEntry>();
 
 export function cacheHit<T>(path: string, stat: { mtimeMs: number; size: number }): T | undefined {
   const entry = cache.get(path);
   if (entry && entry.mtimeMs === stat.mtimeMs && entry.size === stat.size) {
+    cache.delete(path);
+    cache.set(path, entry);
     return entry.value as T;
   }
   return undefined;
 }
 
 export function cacheSet(path: string, value: unknown, stat: { mtimeMs: number; size: number }): void {
+  cache.delete(path);
   cache.set(path, { value, mtimeMs: stat.mtimeMs, size: stat.size });
+  if (cache.size > MAX_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
 }
 
 export function cacheDelete(path: string): void {

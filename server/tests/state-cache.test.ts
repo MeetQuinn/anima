@@ -7,6 +7,13 @@ import assert from 'node:assert/strict';
 import { JsonFile } from '../storage/json-file.js';
 import { JsonlAppendLog } from '../storage/jsonl-log.js';
 
+const JSON_FILE_CACHE_ENTRY_CAP = 256;
+
+function must<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('Expected value to be present');
+  return value;
+}
+
 test('JsonFile cache invalidates when another writer changes the file on disk', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'anima-jsonfile-cache-'));
   try {
@@ -186,6 +193,70 @@ test('JsonlAppendLog appendIfRecent dedupes only within the recent tail window',
     assert.equal(oldDuplicate.appended, true);
     assert.equal(recentDuplicate.appended, false);
     assert.deepEqual((await log.readAll()).map((record) => record.id), ['old', 'recent', 'old']);
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test('JsonFile cache evicts the least recently used entry beyond the cap', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-jsonfile-lru-'));
+  try {
+    const files: JsonFile<{ index: number }>[] = [];
+    const cachedValues: { index: number }[] = [];
+    for (let index = 0; index < JSON_FILE_CACHE_ENTRY_CAP; index += 1) {
+      const file = new JsonFile<{ index: number }>(join(dir, `${index}.json`), () => ({ index: -1 }));
+      const value = { index };
+      await file.write(value);
+      files.push(file);
+      cachedValues.push(value);
+    }
+
+    const hotFile = must(files[0]);
+    const coldFile = must(files[1]);
+    const hotBefore = await hotFile.read();
+    assert.strictEqual(hotBefore, must(cachedValues[0]));
+
+    await new JsonFile<{ index: number }>(join(dir, 'extra.json'), () => ({ index: -1 })).write({
+      index: JSON_FILE_CACHE_ENTRY_CAP,
+    });
+
+    assert.strictEqual(await hotFile.read(), hotBefore, 'recently used entry should remain cached');
+    const coldAfter = await coldFile.read();
+    assert.deepEqual(coldAfter, { index: 1 });
+    assert.notStrictEqual(coldAfter, must(cachedValues[1]), 'least recently used entry should be re-read');
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test('JsonFile cache refreshes recency on repeated reads', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-jsonfile-lru-refresh-'));
+  try {
+    const files: JsonFile<{ index: number }>[] = [];
+    const cachedValues: { index: number }[] = [];
+    for (let index = 0; index < JSON_FILE_CACHE_ENTRY_CAP; index += 1) {
+      const file = new JsonFile<{ index: number }>(join(dir, `${index}.json`), () => ({ index: -1 }));
+      const value = { index };
+      await file.write(value);
+      files.push(file);
+      cachedValues.push(value);
+    }
+
+    const hotFile = must(files[0]);
+    const hotBefore = await hotFile.read();
+    for (let index = 0; index < 10; index += 1) {
+      assert.strictEqual(await hotFile.read(), hotBefore);
+      await new JsonFile<{ index: number }>(join(dir, `extra-${index}.json`), () => ({ index: -1 })).write({
+        index: JSON_FILE_CACHE_ENTRY_CAP + index,
+      });
+    }
+
+    assert.strictEqual(await hotFile.read(), hotBefore, 'repeated reads should keep the entry hot');
+    for (let index = 1; index <= 10; index += 1) {
+      const reread = await must(files[index]).read();
+      assert.deepEqual(reread, { index });
+      assert.notStrictEqual(reread, must(cachedValues[index]), 'colder entries should be evicted first');
+    }
   } finally {
     await rm(dir, { force: true, recursive: true });
   }
