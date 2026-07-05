@@ -4,7 +4,7 @@ import type { AgentOwner } from '../../shared/agent-config.js';
 import type { ChoiceResponseInboxItem } from '../../shared/inbox.js';
 import { activityServiceForAgent, type ActivityService } from '../activities/activity.service.js';
 import { errorMessage, nowIso } from '../ids.js';
-import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { WakeQueueService, wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import { SlackWorkspaceDirectoryService, type SlackUserInfo } from '../slack/workspace-directory.service.js';
 import {
   InteractiveAskStore,
@@ -32,7 +32,7 @@ export class InteractiveAskService {
   constructor(
     agentId: string,
     private readonly store: InteractiveAskStore = new InteractiveAskStore(agentId),
-    private readonly queue: WakeQueueService = new WakeQueueService(agentId),
+    private readonly queue: WakeQueueService = wakeQueueServiceForAgent(agentId),
     private readonly activity: ActivityService = activityServiceForAgent(agentId),
   ) {}
 

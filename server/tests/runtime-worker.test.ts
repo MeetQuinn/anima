@@ -97,12 +97,12 @@ test('queued Slack listener persists work for a separate runtime worker', async 
     );
 
     assert.equal(decision.queued, true);
-    assert.equal((await queueFor('scout').listRunnable())[0]?.handling.status, 'queued');
+    assert.equal((await queueFor('scout').list())[0]?.handling.status, 'queued');
 
     const drain = worker.drainOnce();
     await waitFor(() => runtime.calls.length === 1);
     assert.match(runtime.calls[0]?.prompt ?? '', /queued/);
-    assert.equal((await queueFor('scout').listRunnable())[0]?.handling.status, 'running');
+    assert.equal((await queueFor('scout').list())[0]?.handling.status, 'running');
     runtime.finishNext();
     assert.equal(await drain, 1);
 
@@ -705,7 +705,7 @@ test('runtime worker reclaims items owned by an exited worker', async () => {
     );
 
     await queueFor('scout').takeNextRunnable({ isWorkerAlive: () => true, workerId: 'dead-worker' });
-    assert.equal((await queueFor('scout').listRunnable())[0]?.handling.status, 'running');
+    assert.equal((await queueFor('scout').list())[0]?.handling.status, 'running');
 
     const drain = worker.drainOnce();
     await waitFor(() => runtime.calls.length === 1);
@@ -1289,7 +1289,7 @@ async function waitForInboxItemStatus(
 ): Promise<void> {
   const startedAt = Date.now();
   while (true) {
-    const item = (await queueFor(agentId).listRunnable()).find((candidate) => candidate.id === itemId);
+    const item = (await queueFor(agentId).list()).find((candidate) => candidate.id === itemId);
     if (item?.handling.status === status) return;
     if (Date.now() - startedAt > timeoutMs) {
       throw new Error(`Timed out waiting for item ${itemId} to reach ${status}; current status is ${item?.handling.status ?? 'missing'}`);

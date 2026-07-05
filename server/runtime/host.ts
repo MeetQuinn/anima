@@ -11,7 +11,7 @@ import {
 import { ensureDefaultSkills } from '../agents/default-skills.js';
 import { resolveAnimaHome } from '../anima-home.js';
 import { errorMessage, nowIso } from '../ids.js';
-import { WakeQueueService, type InboxItem } from '../inbox/wake-queue.service.js';
+import { WakeQueueService, wakeQueueServiceForAgent, type InboxItem } from '../inbox/wake-queue.service.js';
 import { MemoryCoherenceScheduler } from '../memory/memory-coherence-scheduler.js';
 import { createAgentRuntime } from '../providers/factory.js';
 import type { AgentProviderConfig } from '../providers/contract.js';
@@ -602,7 +602,7 @@ export class RuntimeHost {
     agentId: string,
     runtime: AgentRuntimeHandleSnapshot | undefined,
   ): Promise<void> {
-    const queue = new WakeQueueService(agentId);
+    const queue = wakeQueueServiceForAgent(agentId);
     const stale = await staleRunningItemForAgent(agentId, runtime, queue);
     if (!stale) return;
     await queue.fail(stale.id);
@@ -903,9 +903,9 @@ function runtimeWithEnv(config: AgentProviderConfig, env: Record<string, string>
 async function staleRunningItemForAgent(
   agentId: string,
   runtime: AgentRuntimeHandleSnapshot | undefined,
-  queue: Pick<WakeQueueService, 'listRunnable' | 'list'> = new WakeQueueService(agentId),
+  queue: Pick<WakeQueueService, 'list'> = wakeQueueServiceForAgent(agentId),
 ): Promise<InboxItem | undefined> {
-  const running = latestPrimaryRunningItem(await queue.listRunnable());
+  const running = latestPrimaryRunningItem(await queue.list());
   if (!running) return undefined;
   const active = await findActiveRuntimeItem(agentId, queue);
   // Zero grace and the provider-child check: the host is about to fail this

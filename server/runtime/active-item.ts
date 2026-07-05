@@ -1,4 +1,4 @@
-import { WakeQueueService, type InboxItem } from '../inbox/wake-queue.service.js';
+import { wakeQueueServiceForAgent, type InboxItem } from '../inbox/wake-queue.service.js';
 import { isPrimaryRunningInboxItem } from '../../shared/inbox.js';
 
 export interface ActiveRuntimeItemRecord {
@@ -28,7 +28,7 @@ export async function setActiveRuntimeItem(input: {
   itemId: string;
   startedAt?: string;
   workerId: string;
-}, queue: ActiveRuntimeItemQueue = new WakeQueueService(input.agentId)): Promise<void> {
+}, queue: ActiveRuntimeItemQueue = wakeQueueServiceForAgent(input.agentId)): Promise<void> {
   await queue.markRunning(input);
 }
 
@@ -36,13 +36,13 @@ export async function clearActiveRuntimeItem(input: {
   agentId: string;
   itemId: string;
   workerId: string;
-}, queue: ActiveRuntimeItemQueue = new WakeQueueService(input.agentId)): Promise<void> {
+}, queue: ActiveRuntimeItemQueue = wakeQueueServiceForAgent(input.agentId)): Promise<void> {
   await queue.markSettled(input);
 }
 
 export async function findActiveRuntimeItem(
   agentId: string,
-  queue: Pick<ActiveRuntimeItemQueue, 'list'> = new WakeQueueService(agentId),
+  queue: Pick<ActiveRuntimeItemQueue, 'list'> = wakeQueueServiceForAgent(agentId),
 ): Promise<ActiveRuntimeItemRecord | undefined> {
   const running = (await queue.list())
     .filter((event) => isPrimaryRunningInboxItem(event) && event.handling.workerId && !event.handling.settledAt)
@@ -53,7 +53,7 @@ export async function findActiveRuntimeItem(
 
 export async function findToolAuditRuntimeItem(
   agentId: string,
-  queue: Pick<ActiveRuntimeItemQueue, 'list'> = new WakeQueueService(agentId),
+  queue: Pick<ActiveRuntimeItemQueue, 'list'> = wakeQueueServiceForAgent(agentId),
 ): Promise<ActiveRuntimeItemRecord | undefined> {
   const candidates = (await queue.list())
     .filter((event) => event.handling.workerId);

@@ -165,7 +165,7 @@ test('due reminder delivery enters the inbox and records fire activity', async (
         return state.reminders[reminder.reminderId]?.status === 'fired';
       });
       await waitUntil(async () => {
-        const items = await queue.listRunnable();
+        const items = await queue.list();
         return items.length === 0;
       });
       const fireActivity = allActivities(await loadState()).find(
@@ -201,14 +201,14 @@ test('reminder subscriber carries the human title into the inbox item and messag
       subscriber.start();
       try {
         await waitUntil(async () => {
-          const items = await queue.listRunnable();
+          const items = await queue.list();
           return items.some((item) => item.kind === 'reminder' && item.reminderId === reminder.reminderId);
         });
       } finally {
         await subscriber.stop();
       }
 
-      const item = (await queue.listRunnable()).find(
+      const item = (await queue.list()).find(
         (candidate) => candidate.kind === 'reminder' && candidate.reminderId === reminder.reminderId,
       );
       assert.ok(item);

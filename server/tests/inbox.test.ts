@@ -1,19 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { MemoryCoherenceInboxItem } from '../../shared/inbox.js';
+import type { InboxItem, MemoryCoherenceInboxItem } from '../../shared/inbox.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
-import { WakeQueueStore, type WakeQueueFile } from '../storage/schema/wake-queue.store.js';
+import {
+  WakeQueueStore,
+  type WakeQueueFile,
+  type WakeQueueSeenMarker,
+} from '../storage/schema/wake-queue.store.js';
 import { makeSlackEvent } from './helpers/slack.js';
 import { withAnimaHome } from './anima-home.js';
 import { loadState } from './helpers/state.js';
 
-function memoryWakeQueueStore(initial: WakeQueueFile = {}) {
-  let state = { ...initial };
+function memoryWakeQueueStore(
+  initialItems: Record<string, InboxItem> = {},
+  initialSeen: Record<string, WakeQueueSeenMarker> = {},
+) {
+  let state: WakeQueueFile = { items: { ...initialItems }, seen: { ...initialSeen } };
   let previousUpdate = Promise.resolve();
   return {
     async read() {
@@ -82,7 +89,7 @@ test('wake queue store ignores duplicate Slack message deliveries', async () => 
       assert.equal(first.queued, true);
       assert.equal(second.duplicate, true);
       assert.equal(second.item.id, first.item.id);
-      assert.deepEqual((await queue.listRunnable()).map((item) => item.id), [first.item.id]);
+      assert.deepEqual((await queue.list()).map((item) => item.id), [first.item.id]);
 
       const state = await loadState();
       assert.equal(Object.keys(state.events).length, 1);
@@ -160,12 +167,138 @@ test('wake queue retains completed memory coherence ids for per-day dedupe', asy
       assert.equal(secondDecision.duplicate, true);
       assert.equal(secondDecision.queued, false);
       assert.equal(secondDecision.item.id, first.id);
-      assert.equal(secondDecision.item.handling.status, 'completed');
       assert.deepEqual((await queue.list()).map((item) => item.id), []);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }
+});
+
+test('wake queue settled ids dedupe re-delivery for every kind without the message ledger', async () => {
+  const queue = new WakeQueueService(
+    'scout',
+    new WakeQueueStore('scout', memoryWakeQueueStore()),
+    { recordInboxItem: async () => undefined },
+  );
+  const event = makeSlackEvent({
+    channelId: 'C-product',
+    eventId: 'slack:T-demo:C-product:1770000020.000001',
+    teamId: 'T-demo',
+    text: 'settle then redeliver',
+    ts: '1770000020.000001',
+    userId: 'U1',
+  });
+
+  assert.equal((await queue.enqueue(event)).queued, true);
+  const claimed = await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'w1' });
+  assert.equal(claimed?.id, event.id);
+  await queue.complete(event.id);
+
+  assert.equal(await queue.find(event.id), undefined);
+  assert.equal(await queue.hasSeen(event.id), true);
+
+  const redelivered = await queue.enqueue(event);
+  assert.equal(redelivered.duplicate, true);
+  assert.equal(redelivered.queued, false);
+  assert.deepEqual((await queue.list()).map((item) => item.id), []);
+});
+
+test('wake queue migrates v1 files including retained memory coherence markers', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-wake-v1-migration-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const active = makeSlackEvent({
+        channelId: 'C-product',
+        eventId: 'slack:T-demo:C-product:1770000030.000001',
+        teamId: 'T-demo',
+        text: 'still queued',
+        ts: '1770000030.000001',
+        userId: 'U1',
+      });
+      const retained = makeMemoryCoherenceItem({
+        agentId: 'iris',
+        localDate: '2026-07-04',
+        receivedAt: '2026-07-05T03:51:43.000Z',
+        scheduledSlotAt: '2026-07-04T22:05:00.000Z',
+      });
+      const v1File = {
+        [active.id]: active,
+        [retained.id]: {
+          ...retained,
+          handling: {
+            ...retained.handling,
+            completedAt: '2026-07-05T03:55:00.000Z',
+            status: 'completed',
+            updatedAt: '2026-07-05T03:55:00.000Z',
+          },
+        },
+      };
+      const queueFile = join(stateDir, 'agents', 'iris', 'wake-queue.json');
+      await mkdir(join(stateDir, 'agents', 'iris'), { recursive: true });
+      await writeFile(queueFile, JSON.stringify(v1File), 'utf8');
+
+      const queue = new WakeQueueService('iris');
+      assert.deepEqual((await queue.list()).map((item) => item.id), [active.id]);
+      assert.equal(await queue.hasSeen(retained.id), true);
+
+      const again = await queue.enqueue(makeMemoryCoherenceItem({
+        agentId: 'iris',
+        localDate: '2026-07-04',
+        receivedAt: '2026-07-05T04:06:13.000Z',
+        scheduledSlotAt: '2026-07-04T22:05:00.000Z',
+      }));
+      assert.equal(again.duplicate, true);
+      assert.equal(again.queued, false);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('wake queue withdraws items whose id is only known to the legacy message ledger', async () => {
+  const queue = new WakeQueueService(
+    'scout',
+    new WakeQueueStore('scout', memoryWakeQueueStore()),
+    { recordInboxItem: async () => ({ inserted: false }) },
+  );
+  const event = makeSlackEvent({
+    channelId: 'C-product',
+    eventId: 'slack:T-demo:C-product:1770000040.000001',
+    teamId: 'T-demo',
+    text: 'settled before seen markers existed',
+    ts: '1770000040.000001',
+    userId: 'U1',
+  });
+
+  const decision = await queue.enqueue(event);
+  assert.equal(decision.duplicate, true);
+  assert.equal(decision.queued, false);
+  assert.deepEqual((await queue.list()).map((item) => item.id), []);
+  assert.equal(await queue.hasSeen(event.id), true);
+});
+
+test('wake queue prunes seen markers past the retention window', async () => {
+  const queue = new WakeQueueService(
+    'scout',
+    new WakeQueueStore('scout', memoryWakeQueueStore({}, {
+      'slack:T-demo:C-old:1000000000.000001': { kind: 'slack', settledAt: '2000-01-01T00:00:00.000Z' },
+    })),
+    { recordInboxItem: async () => undefined },
+  );
+
+  assert.equal(await queue.hasSeen('slack:T-demo:C-old:1000000000.000001'), true);
+
+  const fresh = makeSlackEvent({
+    channelId: 'C-product',
+    eventId: 'slack:T-demo:C-product:1770000050.000001',
+    teamId: 'T-demo',
+    text: 'a write triggers pruning',
+    ts: '1770000050.000001',
+    userId: 'U1',
+  });
+  assert.equal((await queue.enqueue(fresh)).queued, true);
+
+  assert.equal(await queue.hasSeen('slack:T-demo:C-old:1000000000.000001'), false);
 });
 
 test('wake queue enqueue does not fail when message ledger write fails', async () => {

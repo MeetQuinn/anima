@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 
 import { defaultAgentHomePath as defaultAgentHomeDisplayPath } from '../../shared/agent-home.js';
-import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import { runtimeSessionServiceForAgent } from './runtime-session.service.js';
 import type { RuntimeWorkerConfig, RuntimeItemContext } from './types.js';
 import type { InboxItem } from '../../shared/inbox.js';
@@ -14,7 +14,7 @@ export interface RuntimeContextQueue {
 export async function runtimeContextForItemId(
   itemId: string,
   config: RuntimeWorkerConfig,
-  queue: RuntimeContextQueue = new WakeQueueService(config.agentId),
+  queue: RuntimeContextQueue = wakeQueueServiceForAgent(config.agentId),
 ): Promise<RuntimeItemContext> {
   const item = await queue.find(itemId);
   if (!item) throw new Error(`Wake queue item ${itemId} was not found.`);

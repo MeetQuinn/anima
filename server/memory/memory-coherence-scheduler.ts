@@ -9,7 +9,7 @@ import type { MemoryCoherenceConfig } from '../../shared/server-settings.js';
 import type { InboxItem, MemoryCoherenceInboxItem } from '../../shared/inbox.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { isAgentRunnable } from '../agents/agent-config-ops.js';
-import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import { serverConfigStore, type ServerConfig } from '../storage/schema/server.store.js';
 
@@ -51,7 +51,7 @@ export class MemoryCoherenceScheduler {
     this.hasMeaningfulActivitySinceLastPass =
       deps.hasMeaningfulActivitySinceLastPass ?? hasMeaningfulActivitySinceLastMemoryPass;
     this.now = deps.now ?? (() => new Date());
-    this.queueForAgent = deps.queueForAgent ?? ((agentId) => new WakeQueueService(agentId));
+    this.queueForAgent = deps.queueForAgent ?? ((agentId) => wakeQueueServiceForAgent(agentId));
     this.readServerConfig = deps.readServerConfig ?? (() => serverConfigStore.read());
     this.timezoneForAgent = deps.timezoneForAgent ?? defaultTimezoneForAgent;
   }

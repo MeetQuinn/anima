@@ -1,4 +1,4 @@
-import { WakeQueueService, type InboxItem } from '../inbox/wake-queue.service.js';
+import { wakeQueueServiceForAgent, type InboxItem } from '../inbox/wake-queue.service.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import type { Activity } from '../../shared/activity.js';
 
@@ -7,7 +7,7 @@ export async function activitiesForInboxItemWindow(agentId: string, itemId: stri
   const tagged = activities.filter((activity) => taggedToItem(activity, itemId));
   if (tagged.length > 0) return sortActivities(tagged);
 
-  const item = await new WakeQueueService(agentId).find(itemId);
+  const item = await wakeQueueServiceForAgent(agentId).find(itemId);
   const current = item ? activities.filter((activity) => activityFallsWithinItemHandling(activity, item)) : [];
   return sortActivities(current);
 }

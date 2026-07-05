@@ -671,7 +671,9 @@ test('services restart drain mode leaves queued wake items for the new worker', 
     assert.equal(restart.status, 0, restart.stderr || restart.stdout);
     assert.match(restart.stdout, new RegExp(`agent: stopped pid ${oldPid}`));
     assert.match(restart.stdout, /agent: started pid/);
-    const wakeQueue = JSON.parse(await readFile(join(configDir, 'agents', 'anima', 'wake-queue.json'), 'utf8')) as Record<string, { handling?: { status?: string } }>;
+    const wakeQueue = readWakeQueueItems(
+      await readFile(join(configDir, 'agents', 'anima', 'wake-queue.json'), 'utf8'),
+    ) as Record<string, { handling?: { status?: string } }>;
     assert.equal(wakeQueue['item_queued']?.handling?.status, 'queued');
   } finally {
     for (const pid of childPids) {
@@ -723,7 +725,9 @@ test('services restart drain mode continues after timeout and leaves running ite
     assert.match(restart.stdout, new RegExp(`agent: stopped pid ${oldPid}`));
     assert.match(restart.stdout, /agent: started pid/);
     assert.equal(pidIsRunning(oldPid), false);
-    const wakeQueue = JSON.parse(await readFile(join(configDir, 'agents', 'anima', 'wake-queue.json'), 'utf8')) as Record<string, {
+    const wakeQueue = readWakeQueueItems(
+      await readFile(join(configDir, 'agents', 'anima', 'wake-queue.json'), 'utf8'),
+    ) as Record<string, {
       handling?: {
         drainRequestedAt?: string;
         drainTimeoutMs?: number;
@@ -872,6 +876,17 @@ async function writeConfig(configDir: string, body: Record<string, unknown>): Pr
       await writeFile(join(agentDir, 'config.json'), `${JSON.stringify(agent, null, 2)}\n`, 'utf8');
     }
   }
+}
+
+// The wake queue file may be the legacy flat record (as written by
+// writeWakeQueue) or the v2 {items, seen} shape once the runtime rewrites it.
+function readWakeQueueItems(raw: string): Record<string, unknown> {
+  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  const items = parsed['items'];
+  if (items && typeof items === 'object' && !Array.isArray(items) && 'seen' in parsed) {
+    return items as Record<string, unknown>;
+  }
+  return parsed;
 }
 
 async function writeWakeQueue(configDir: string, agentId: string, items: Record<string, unknown>[]): Promise<void> {
