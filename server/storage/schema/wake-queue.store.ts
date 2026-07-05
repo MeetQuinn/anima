@@ -34,7 +34,7 @@ export const WakeQueueFileSchema = z.preprocess(migrateLegacyWakeQueueFile, z.re
 export const getWakeQueueFileStore = (agentId: string): JsonStore<WakeQueueFile> =>
   new JsonStore<WakeQueueFile>({
     empty: () => ({}),
-    parse: (value) => activeWakeQueueFile(WakeQueueFileSchema.parse(value)),
+    parse: (value) => storedWakeQueueFile(WakeQueueFileSchema.parse(value)),
     path: () => join(agentsDir(), agentId, 'wake-queue.json'),
   });
 
@@ -66,11 +66,15 @@ export class WakeQueueStore {
     return activeWakeQueueFile(await this.store.read())[itemId];
   }
 
+  async has(itemId: string): Promise<boolean> {
+    return Boolean(storedWakeQueueFile(await this.store.read())[itemId]);
+  }
+
   async insertIfAbsent(event: InboxItem): Promise<{ inserted: boolean; item: InboxItem }> {
     const item = activeInboxItem(event);
     let result: { inserted: boolean; item: InboxItem } | undefined;
     await this.store.update((rawCurrent) => {
-      const current = activeWakeQueueFile(rawCurrent);
+      const current = storedWakeQueueFile(rawCurrent);
       const existing = current[item.id];
       if (existing) {
         result = { inserted: false, item: existing };
@@ -88,7 +92,7 @@ export class WakeQueueStore {
     await this.store.update((rawCurrent) => {
       const current = activeWakeQueueFile(rawCurrent);
       if (!current[parsed.id]) throw new Error(`Wake queue item not found: ${parsed.id}`);
-      return { ...current, [parsed.id]: parsed };
+      return mergeRetainedWakeDedupeItems(rawCurrent, { ...current, [parsed.id]: parsed });
     });
     return parsed;
   }
@@ -112,7 +116,7 @@ export class WakeQueueStore {
       const current = activeWakeQueueFile(rawCurrent);
       const next = { ...current };
       const recovered: InboxItem[] = [];
-      let changed = Object.keys(next).length !== Object.keys(rawCurrent).length;
+      let changed = false;
       for (const [itemId, item] of Object.entries(current)) {
         if (item.handling.status !== 'running') continue;
         if (!shouldRecoverRunningItem(item, input, nowMs)) continue;
@@ -126,7 +130,7 @@ export class WakeQueueStore {
 
       if (Object.values(next).some((item) => isPrimaryRunningInboxItem(item))) {
         result = { recovered };
-        return changed ? next : rawCurrent;
+        return changed ? mergeRetainedWakeDedupeItems(rawCurrent, next) : rawCurrent;
       }
 
       const item = Object.values(next)
@@ -134,7 +138,7 @@ export class WakeQueueStore {
         .sort((a, b) => itemSortAt(a).localeCompare(itemSortAt(b)))[0];
       if (!item) {
         result = { recovered };
-        return changed ? next : rawCurrent;
+        return changed ? mergeRetainedWakeDedupeItems(rawCurrent, next) : rawCurrent;
       }
 
       const claimed: InboxItem = {
@@ -149,7 +153,7 @@ export class WakeQueueStore {
       };
       next[item.id] = claimed;
       result = { item: claimed, recovered };
-      return next;
+      return mergeRetainedWakeDedupeItems(rawCurrent, next);
     });
     return result ?? { recovered: [] };
   }
@@ -329,7 +333,7 @@ export class WakeQueueStore {
       };
       const next = { ...current };
       delete next[input.itemId];
-      return next;
+      return mergeRetainedWakeDedupeItems(rawCurrent, next, updated);
     });
     return updated;
   }
@@ -344,10 +348,10 @@ export class WakeQueueStore {
       const item = current[itemId];
       if (!item) return rawCurrent;
       found = true;
-      void update(item, nowIso());
+      const updated = update(item, nowIso());
       const next = { ...current };
       delete next[itemId];
-      return next;
+      return mergeRetainedWakeDedupeItems(rawCurrent, next, updated);
     });
     if (!found) throw new Error(`Wake queue item not found: ${itemId}`);
   }
@@ -369,7 +373,7 @@ export class WakeQueueStore {
           next[itemId] = item;
         }
       }
-      return updated.length > 0 ? next : rawCurrent;
+      return updated.length > 0 ? mergeRetainedWakeDedupeItems(rawCurrent, next, ...updated) : rawCurrent;
     });
     return updated;
   }
@@ -393,7 +397,7 @@ export class WakeQueueStore {
           next[itemId] = item;
         }
       }
-      return updated.length > 0 ? next : rawCurrent;
+      return updated.length > 0 ? mergeRetainedWakeDedupeItems(rawCurrent, next) : rawCurrent;
     });
     return updated;
   }
@@ -419,7 +423,7 @@ export class WakeQueueStore {
       const nextItem = update(item, nowIso());
       if (!nextItem) return rawCurrent;
       updated = nextItem;
-      return { ...current, [itemId]: updated };
+      return mergeRetainedWakeDedupeItems(rawCurrent, { ...current, [itemId]: updated });
     });
     return updated;
   }
@@ -454,12 +458,38 @@ function requeuedItem(
   };
 }
 
-function activeWakeQueueFile(file: WakeQueueFile): WakeQueueFile {
+function storedWakeQueueFile(file: WakeQueueFile): WakeQueueFile {
   return Object.fromEntries(
-    Object.entries(file).filter(([, item]) =>
-      item.handling.status === 'queued' || (item.handling.status === 'running' && !item.handling.settledAt)
-    ),
+    Object.entries(file).filter(([, item]) => isActiveWakeQueueItem(item) || isRetainedWakeDedupeItem(item)),
   );
+}
+
+function activeWakeQueueFile(file: WakeQueueFile): WakeQueueFile {
+  return Object.fromEntries(Object.entries(file).filter(([, item]) => isActiveWakeQueueItem(item)));
+}
+
+function mergeRetainedWakeDedupeItems(
+  current: WakeQueueFile,
+  activeItems: WakeQueueFile,
+  ...settledItems: Array<InboxItem | undefined>
+): WakeQueueFile {
+  const retained = Object.fromEntries(
+    Object.entries(current).filter(([, item]) => isRetainedWakeDedupeItem(item)),
+  );
+  for (const item of settledItems) {
+    if (item && isRetainedWakeDedupeItem(item)) retained[item.id] = item;
+  }
+  return { ...retained, ...activeItems };
+}
+
+function isActiveWakeQueueItem(item: InboxItem): boolean {
+  return item.handling.status === 'queued' || (item.handling.status === 'running' && !item.handling.settledAt);
+}
+
+// Memory coherence wakes are not message-ledger rows, so their settled ids stay
+// in this file as dedupe markers while remaining hidden from active queue APIs.
+function isRetainedWakeDedupeItem(item: InboxItem): boolean {
+  return item.kind === 'memory_coherence' && !isActiveWakeQueueItem(item);
 }
 
 function activeInboxItem(item: InboxItem): InboxItem {
