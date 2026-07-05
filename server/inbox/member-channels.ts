@@ -32,7 +32,7 @@ export async function memberChannelsResultForAgent(
     return {
       channels: channels.flatMap((channel) => {
         if (!channel.id) return [];
-        const name = channel.name_normalized?.trim() || channel.name?.trim();
+        const name = channel.name?.trim();
         return [{ id: channel.id, ...(name ? { name } : {}) }];
       }),
       degraded: false,

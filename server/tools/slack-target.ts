@@ -1,5 +1,6 @@
 import type { WebClient } from '@slack/web-api';
 
+import { nowIso } from '../ids.js';
 import {
   type SlackConversationInfo,
   SlackWorkspaceDirectoryService,
@@ -83,7 +84,7 @@ async function slackConversationInfoForTarget(
   channel: ResolvedSlackChannel,
   directory: SlackWorkspaceDirectoryService,
 ): Promise<SlackConversationInfo | undefined> {
-  if (channel.name) return { id: channel.id, name: channel.name };
+  if (channel.name) return { id: channel.id, name: channel.name, syncedAt: nowIso() };
   try {
     return await directory.getConversation(channel.id);
   } catch {
@@ -92,14 +93,13 @@ async function slackConversationInfoForTarget(
 }
 
 function slackConversationUserId(info: SlackConversationInfo | undefined): string | undefined {
-  const userId = (info as Record<string, unknown> | undefined)?.['user'];
-  return typeof userId === 'string' ? userId : undefined;
+  return info?.userId;
 }
 
 function slackChannelKind(info: SlackConversationInfo | undefined, channelId: string): SlackChannelKind {
   if (info) {
-    if (info.is_im) return 'dm';
-    if (info.is_mpim) return 'mpim';
+    if (info.isIm) return 'dm';
+    if (info.isMpim) return 'mpim';
     return 'channel';
   }
   if (channelId.startsWith('D')) return 'dm';
@@ -108,9 +108,9 @@ function slackChannelKind(info: SlackConversationInfo | undefined, channelId: st
 }
 
 function slackChannelDisplayName(channel: ResolvedSlackChannel, info: SlackConversationInfo | undefined): string {
-  const name = channel.name?.trim() || info?.name_normalized?.trim() || info?.name?.trim();
+  const name = channel.name?.trim() || info?.name?.trim();
   if (name) return `#${name}`;
-  if (info?.is_im || channel.id.startsWith('D')) {
+  if (info?.isIm || channel.id.startsWith('D')) {
     const handle = channel.dmHandle ? `@${channel.dmHandle}` : channel.dmUserId;
     return handle ? `DM with ${handle}` : channel.id;
   }

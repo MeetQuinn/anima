@@ -5,6 +5,22 @@ import type { InboxFileMeta } from '../../shared/inbox.js';
 export type SlackConversationInfo = NonNullable<ConversationsInfoResponse['channel']>;
 export type SlackUserInfo = NonNullable<UsersInfoResponse['user']>;
 
+interface SlackHandleCandidateUser {
+  displayName?: string;
+  name?: string;
+  profile?: {
+    display_name?: string;
+    real_name?: string;
+  };
+  realName?: string;
+  real_name?: string;
+}
+
+interface SlackNamedConversation {
+  name?: string;
+  name_normalized?: string;
+}
+
 export interface SlackRawFile {
   id?: string;
   name?: string;
@@ -143,10 +159,10 @@ export function slackTsToIso(ts: string): string | undefined {
   return new Date(seconds * 1000).toISOString();
 }
 
-export function findSlackConversationByName(
-  channels: SlackConversationInfo[],
+export function findSlackConversationByName<T extends SlackNamedConversation>(
+  channels: T[],
   name: string,
-): SlackConversationInfo | undefined {
+): T | undefined {
   return channels.find((channel) => normalizeSlackConversationName(channel.name_normalized ?? channel.name ?? '') === name);
 }
 
@@ -198,9 +214,11 @@ export function slackFileFromRaw(raw: SlackRawFile): DownloadableSlackFile | und
   };
 }
 
-export function slackUserHandleCandidates(user: SlackUserInfo): string[] {
+export function slackUserHandleCandidates(user: SlackHandleCandidateUser): string[] {
   return [
     user.name,
+    user.displayName,
+    user.realName,
     user.profile?.display_name,
     user.profile?.real_name,
     user.real_name,

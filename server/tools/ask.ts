@@ -246,12 +246,12 @@ async function resolveSlackUserArgument(input: {
 }
 
 function assertHumanAskTarget(
-  user: { deleted?: boolean; is_app_user?: boolean; is_bot?: boolean } | undefined,
+  user: { deleted?: boolean; isAppUser?: boolean; isBot?: boolean } | undefined,
   label: string,
 ): void {
   if (!user) return;
   if (user.deleted) throw new Error(`Cannot ask ${label}: that Slack user is deleted`);
-  if (user.is_bot || user.is_app_user) {
+  if (user.isBot || user.isAppUser) {
     throw new Error(`Cannot ask ${label}: anima ask is for human Slack users, not bots`);
   }
 }

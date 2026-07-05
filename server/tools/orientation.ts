@@ -20,10 +20,12 @@ import { messageServiceForAgent } from '../messages/message.service.js';
 import {
   normalizeSlackHandle,
   slackUserHandleCandidates,
+} from '../slack/slack.helper.js';
+import {
+  SlackWorkspaceDirectoryService,
   type SlackConversationInfo,
   type SlackUserInfo,
-} from '../slack/slack.helper.js';
-import { SlackWorkspaceDirectoryService } from '../slack/workspace-directory.service.js';
+} from '../slack/workspace-directory.service.js';
 
 const SLACK_USER_ID = /^U[A-Z0-9]+$/;
 const SLACK_CONVERSATION_ID = /^[CDG][A-Za-z0-9_-]+$/;
@@ -500,7 +502,7 @@ function slackUserWhois(user: SlackUserInfo, agents: AgentConfig[]): WhoisResult
       ...(local.profile.role ? { role: { source: 'agent_config', text: local.profile.role } } : {}),
     };
   }
-  const isBot = Boolean(user.is_bot || user.is_app_user);
+  const isBot = Boolean(user.isBot || user.isAppUser);
   return {
     handle: user.name,
     id,
@@ -513,14 +515,14 @@ function slackUserWhois(user: SlackUserInfo, agents: AgentConfig[]): WhoisResult
 
 function slackConversationWhois(conversation: SlackConversationInfo): WhoisResult {
   const kind: Extract<WhoisResult, { platform: 'slack'; kind: 'channel' | 'dm' | 'mpim' }>['kind'] =
-    conversation.is_im ? 'dm' : conversation.is_mpim ? 'mpim' : 'channel';
+    conversation.isIm ? 'dm' : conversation.isMpim ? 'mpim' : 'channel';
   const topic = platformTopic(conversation.topic);
   return {
-    id: conversation.id ?? '',
-    isMember: typeof conversation.is_member === 'boolean' ? conversation.is_member : undefined,
+    id: conversation.id,
+    isMember: typeof conversation.isMember === 'boolean' ? conversation.isMember : undefined,
     kind,
-    memberCount: typeof conversation.num_members === 'number' ? conversation.num_members : undefined,
-    name: conversation.name_normalized?.trim() || conversation.name?.trim() || undefined,
+    memberCount: typeof conversation.memberCount === 'number' ? conversation.memberCount : undefined,
+    name: conversation.name?.trim() || undefined,
     platform: 'slack',
     ...(topic ? { topic } : {}),
   };
@@ -530,9 +532,9 @@ function slackConversationPlaceSeed(
   conversation: SlackConversationInfo,
 ): Omit<PlaceRow, 'lastDeliveredAt' | 'muted'> {
   return {
-    id: conversation.id ?? '',
-    kind: conversation.is_im ? 'dm' : 'channel',
-    label: conversation.name_normalized?.trim() || conversation.name?.trim() || undefined,
+    id: conversation.id,
+    kind: conversation.isIm ? 'dm' : 'channel',
+    label: conversation.name?.trim() || undefined,
     platform: 'slack',
     ...(platformTopic(conversation.topic) ? { topic: platformTopic(conversation.topic) } : {}),
   };
@@ -651,9 +653,8 @@ function compactColumns(parts: string[]): string {
 }
 
 function slackDisplayName(user: SlackUserInfo, fallback: string): string {
-  return user.profile?.display_name?.trim()
-    || user.profile?.real_name?.trim()
-    || user.real_name?.trim()
+  return user.displayName?.trim()
+    || user.realName?.trim()
     || user.name?.trim()
     || fallback;
 }
@@ -666,7 +667,7 @@ function slackUserCandidateDetail(user: SlackUserInfo): string {
 }
 
 function platformTopic(topic: SlackConversationInfo['topic']): SourcedText | undefined {
-  const value = typeof topic?.value === 'string' ? topic.value.trim() : '';
+  const value = topic?.trim() ?? '';
   return value ? { source: 'platform', text: value } : undefined;
 }
 
