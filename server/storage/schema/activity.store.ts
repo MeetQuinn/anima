@@ -43,6 +43,10 @@ export class ActivityStore {
     return this.log().readNewestMatching(n, matches);
   }
 
+  async readNewestUntil(shouldStop: (activity: Activity) => boolean): Promise<Activity[]> {
+    return this.log().readNewestUntil(shouldStop);
+  }
+
   /**
    * Read the last `n` activity records with `createdAt` strictly before the
    * given ISO timestamp cursor. Used for cursor-based backward pagination.
