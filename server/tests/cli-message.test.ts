@@ -7,6 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { allActivities, loadState } from './helpers/state.js';
+import { writeSlackAgentConfig as writeSlackConfig } from './helpers/harness.js';
 import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
 import { slackRuntimeDecision } from '../inbox/slack-subscription.service.js';
 import { clearActiveRuntimeItem, setActiveRuntimeItem } from '../runtime/active-item.js';
@@ -1413,31 +1414,6 @@ test('message commands reject agent and item flags', async () => {
   assert.notEqual(item.status, 0);
   assert.match(item.stderr, /^error input\.invalid_options \(not retryable\): /);
 });
-
-async function writeSlackConfig(
-  configDir: string,
-  slack: { appToken?: string; botToken?: string; teamId?: string } = {},
-  profile: { displayName?: string; role?: string } = {},
-): Promise<void> {
-  await mkdir(configDir, { recursive: true });
-  const agent = {
-    id: 'scout',
-    profile,
-    slack: {
-      appToken: slack.appToken ?? 'xapp-test',
-      botToken: slack.botToken ?? 'xoxb-test',
-      teamId: slack.teamId ?? 'T-demo',
-    },
-  };
-  const agentDir = join(configDir, 'agents', agent.id);
-  await mkdir(agentDir, { recursive: true });
-  await writeFile(join(configDir, 'config.json'), `${JSON.stringify({}, null, 2)}\n`, 'utf8');
-  await writeFile(
-    join(agentDir, 'config.json'),
-    `${JSON.stringify(agent, null, 2)}\n`,
-    'utf8',
-  );
-}
 
 async function ingestSlackThread(stateDir: string): Promise<string> {
   return withAnimaHome(stateDir, async () => {
