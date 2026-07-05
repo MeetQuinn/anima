@@ -46,6 +46,8 @@ export const refetchIntervals = {
   agentStatuses: (query: { state: { data?: unknown } }) =>
     hasTransientAgentStatus(query.state.data) ? 2_000 : 5_000,
   agentActivities: 3_000,
+  // KB tree/file content changes at human editing pace, not agent pace.
+  kbContent: 30_000,
 } as const;
 
 function hasTransientAgentStatus(value: unknown): boolean {

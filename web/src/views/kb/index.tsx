@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
 import { fetchKb, fetchKbFile, fetchKbTree } from '@/api/kb';
 import { useNavigate, useParams } from 'react-router-dom';
 import { buildKbPath } from '@/lib/url-state';
-import { queryKeys } from '@/lib/query-keys';
+import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useIsMobile } from '@/hooks/use-mobile';
 import type { KbTreeNode } from '@shared/kb';
 
@@ -94,7 +94,7 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
   } = useQuery({
     queryKey: queryKeys.kbTree(id),
     queryFn: () => fetchKbTree(id),
-    refetchInterval: 30_000,
+    refetchInterval: refetchIntervals.kbContent,
   });
 
   const {
@@ -105,7 +105,7 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
     queryKey: queryKeys.kbFile(id, filePath ?? ''),
     queryFn: () => fetchKbFile(id, filePath!),
     enabled: !!filePath,
-    refetchInterval: 30_000,
+    refetchInterval: refetchIntervals.kbContent,
   });
 
   // Find the top-level README so we can show it as default right-panel content.
@@ -126,7 +126,7 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
     queryKey: queryKeys.kbFile(id, readmePath ?? ''),
     queryFn: () => fetchKbFile(id, readmePath!),
     enabled: !filePath && !!readmePath,
-    refetchInterval: 30_000,
+    refetchInterval: refetchIntervals.kbContent,
   });
 
   // Desktop "resume where you left off": when the URL points at a KB root (no
