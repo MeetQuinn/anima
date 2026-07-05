@@ -22,6 +22,7 @@ import {
 import { FeishuDirectoryService } from '../feishu/directory.service.js';
 import { AgentFeishuService } from '../agents/agent-feishu.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
+import { muteSubscriptionForAgent } from '../inbox/slack-subscription.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { FeishuMessageTransport } from '../transports/feishu-message-transport.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
@@ -919,6 +920,110 @@ test('Feishu quoted message lookup failure does not drop delivery', async () => 
       assert.equal(item?.kind, 'feishu');
       assert.equal(item?.kind === 'feishu' ? item.quotedMessage : undefined, undefined);
       assert.equal(item?.kind === 'feishu' ? item.text : undefined, 'current reply');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('Feishu transport decides before API enrichment and reuses one message client', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-decide-before-enrich-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeFeishuConfig(stateDir, {
+        botOpenId: 'ou_anima_bot',
+        botProfileSyncedAt: '2099-01-01T00:00:00.000Z',
+      });
+      await muteSubscriptionForAgent({
+        agentId: 'scout',
+        channelId: 'oc_ignored_group',
+        nowMs: Date.parse('2026-06-03T00:00:00.000Z'),
+      });
+
+      const calls: string[] = [];
+      let clientCreates = 0;
+      const queue = new WakeQueueService('scout');
+      const transport = new FeishuMessageTransport(
+        {
+          agentRuntimeKind: 'kimi-cli',
+          config: feishuTransportConfig({ appId: 'cli_test', botOpenId: 'ou_anima_bot' }),
+          queue,
+        },
+        {
+          createMessageClient: () => {
+            clientCreates += 1;
+            return testFeishuMessageClient({
+              async getChat(input) {
+                calls.push(`getChat:${input.chatId}`);
+                return { chatId: input.chatId, chatName: '产品群', chatType: 'group' };
+              },
+              async getMessage(input) {
+                calls.push(`getMessage:${input.messageId}`);
+                if (input.messageId === 'om_addressed') {
+                  return {
+                    chatId: 'oc_addressed_group',
+                    messageId: 'om_addressed',
+                    sender: { id: 'ou_alice', idType: 'open_id', senderName: 'Alice', senderType: 'user' },
+                  };
+                }
+                if (input.messageId === 'om_parent') {
+                  return {
+                    bodyContent: JSON.stringify({ text: 'quoted parent' }),
+                    chatId: 'oc_addressed_group',
+                    messageId: 'om_parent',
+                    messageType: 'text',
+                    sender: { id: 'ou_bob', idType: 'open_id', senderName: 'Bob', senderType: 'user' },
+                  };
+                }
+                throw new Error(`unexpected message read: ${input.messageId}`);
+              },
+            });
+          },
+        },
+      );
+
+      assert.equal(clientCreates, 1);
+      await handleFeishuReceiveForTest(transport, makeFeishuEvent({
+        event_id: 'evt-ignored',
+        message: {
+          chat_id: 'oc_ignored_group',
+          chat_type: 'group',
+          content: JSON.stringify({ text: 'muted chatter' }),
+          message_id: 'om_ignored',
+        },
+      }));
+      assert.deepEqual(calls, []);
+
+      await handleFeishuReceiveForTest(transport, makeFeishuEvent({
+        event_id: 'evt-addressed',
+        message: {
+          chat_id: 'oc_addressed_group',
+          chat_type: 'group',
+          content: JSON.stringify({ text: '@_user_1 please check' }),
+          mentions: [{
+            id: { open_id: 'ou_anima_bot' },
+            key: '@_user_1',
+            mentioned_type: 'app',
+            name: 'Anima',
+          }],
+          message_id: 'om_addressed',
+          parent_id: 'om_parent',
+        },
+      }));
+
+      assert.equal(clientCreates, 1);
+      assert.deepEqual(calls, [
+        'getMessage:om_addressed',
+        'getChat:oc_addressed_group',
+        'getMessage:om_parent',
+      ]);
+      const item = (await queue.list()).find((queued) => queued.kind === 'feishu' && queued.messageId === 'om_addressed');
+      assert.equal(item?.kind, 'feishu');
+      assert.equal(item?.kind === 'feishu' ? item.chatName : undefined, '产品群');
+      assert.deepEqual(item?.kind === 'feishu' ? item.quotedMessage : undefined, {
+        actorLabel: 'Bob',
+        text: 'quoted parent',
+      });
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
@@ -1870,6 +1975,103 @@ test('Feishu client can fetch chat display info', async () => {
     method: 'GET',
     url: 'https://open.feishu.cn/open-apis/im/v1/chats/oc_test_chat',
   }]);
+});
+
+test('Feishu OpenAPI requester reuses tenant tokens until expiry and retries rejected mints', async () => {
+  const config: FeishuConfig = {
+    appId: 'cli_test',
+    appSecret: 'secret',
+    connected: true,
+    encryptKey: '',
+    verificationToken: '',
+  };
+  let nowMs = Date.parse('2026-06-03T00:00:00.000Z');
+  const minted: string[] = [];
+  const client = createFeishuMessageClient(config, {
+    createClient() {
+      return {
+        im: {
+          message: {
+            async create() { throw new Error('unexpected create call'); },
+            async reply() { throw new Error('unexpected reply call'); },
+          },
+          messageReaction: {
+            async create() { throw new Error('unexpected reaction create call'); },
+            async delete() { throw new Error('unexpected reaction delete call'); },
+          },
+        },
+      };
+    },
+    async fetch(input, init) {
+      assert.equal(input.toString(), 'https://open.feishu.cn/open-apis/im/v1/chats/oc_test_chat');
+      assert.ok(init);
+      const headers = init.headers as Record<string, string>;
+      return jsonResponse({
+        code: 0,
+        data: {
+          chat: {
+            chat_id: 'oc_test_chat',
+            name: headers.Authorization,
+          },
+        },
+      });
+    },
+    async fetchFeishuTenantAccessToken() {
+      const token = `t-${minted.length + 1}`;
+      minted.push(token);
+      return {
+        expiresAt: new Date(nowMs + 120_000).toISOString(),
+        tenantAccessToken: token,
+      };
+    },
+    nowMs: () => nowMs,
+  });
+
+  assert.equal((await client.getChat?.({ chatId: 'oc_test_chat' }))?.chatName, 'Bearer t-1');
+  nowMs += 30_000;
+  assert.equal((await client.getChat?.({ chatId: 'oc_test_chat' }))?.chatName, 'Bearer t-1');
+  nowMs += 31_000;
+  assert.equal((await client.getChat?.({ chatId: 'oc_test_chat' }))?.chatName, 'Bearer t-2');
+  assert.deepEqual(minted, ['t-1', 't-2']);
+
+  let attempts = 0;
+  const retryClient = createFeishuMessageClient(config, {
+    createClient() {
+      return {
+        im: {
+          message: {
+            async create() { throw new Error('unexpected create call'); },
+            async reply() { throw new Error('unexpected reply call'); },
+          },
+          messageReaction: {
+            async create() { throw new Error('unexpected reaction create call'); },
+            async delete() { throw new Error('unexpected reaction delete call'); },
+          },
+        },
+      };
+    },
+    async fetch() {
+      return jsonResponse({
+        code: 0,
+        data: {
+          chat: {
+            chat_id: 'oc_test_chat',
+            name: 'retry ok',
+          },
+        },
+      });
+    },
+    async fetchFeishuTenantAccessToken() {
+      attempts += 1;
+      if (attempts === 1) throw new Error('temporary mint failure');
+      return { tenantAccessToken: 't-retry' };
+    },
+  });
+
+  assert.ok(retryClient.getChat);
+  await assert.rejects(retryClient.getChat({ chatId: 'oc_test_chat' }), /temporary mint failure/);
+  assert.equal((await retryClient.getChat?.({ chatId: 'oc_test_chat' }))?.chatName, 'retry ok');
+  assert.equal(attempts, 2);
 });
 
 test('Feishu client can fetch basic user names by open_id', async () => {

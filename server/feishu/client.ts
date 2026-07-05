@@ -427,6 +427,7 @@ interface FeishuSdkClient {
 interface FeishuOpenApiDeps {
   fetch?: typeof fetch;
   fetchFeishuTenantAccessToken?: typeof fetchFeishuTenantAccessToken;
+  nowMs?: () => number;
 }
 
 interface FeishuMessageClientDeps extends FeishuOpenApiDeps {
@@ -879,8 +880,11 @@ function feishuOpenApiRequester(
   const fetchImpl = deps.fetch ?? fetch;
   let cachedToken: Promise<FeishuTenantAccessToken> | undefined;
   return async (input) => {
-    cachedToken ??= (deps.fetchFeishuTenantAccessToken ?? fetchFeishuTenantAccessToken)(config);
-    const token = await cachedToken;
+    let token = await feishuCachedTenantToken();
+    if (feishuTenantTokenExpired(token, deps.nowMs?.() ?? Date.now())) {
+      cachedToken = undefined;
+      token = await feishuCachedTenantToken();
+    }
     const response = await fetchImpl(`${FEISHU_OPEN_API_BASE_URL}${input.path}`, {
       ...(input.data !== undefined ? { body: JSON.stringify(input.data) } : {}),
       headers: {
@@ -895,6 +899,24 @@ function feishuOpenApiRequester(
     }
     return payload;
   };
+
+  async function feishuCachedTenantToken(): Promise<FeishuTenantAccessToken> {
+    if (cachedToken) return cachedToken;
+    const nextToken = (deps.fetchFeishuTenantAccessToken ?? fetchFeishuTenantAccessToken)(config);
+    const guardedToken = nextToken.catch((error: unknown) => {
+      if (cachedToken === guardedToken) cachedToken = undefined;
+      throw error;
+    });
+    cachedToken = guardedToken;
+    return guardedToken;
+  }
+}
+
+const FEISHU_TENANT_TOKEN_REFRESH_SKEW_MS = 60_000;
+
+function feishuTenantTokenExpired(token: FeishuTenantAccessToken, nowMs: number): boolean {
+  if (!token.expiresAt) return false;
+  return Date.parse(token.expiresAt) - FEISHU_TENANT_TOKEN_REFRESH_SKEW_MS <= nowMs;
 }
 
 function feishuApiError(operation: string, code: number, payload: Record<string, unknown> | undefined): FeishuApiError {
