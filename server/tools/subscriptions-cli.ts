@@ -4,13 +4,11 @@ import { z } from 'zod';
 import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { resolveAgentIdFrom } from '../cli/shared.js';
-import { memberChannelsForAgent } from '../inbox/member-channels.js';
 import {
-  attentionMapForSubscriptions,
-  listSubscriptionsForAgent,
   muteSubscriptionForAgent,
-  type SubscriptionRecord,
 } from '../inbox/slack-subscription.service.js';
+import { runPlaces, type PlacesOptions } from './orientation-cli.js';
+import type { OrientationDeps } from './orientation.js';
 import { normalizeChatTargetOptions } from './chat-target-options.js';
 import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
 
@@ -29,11 +27,10 @@ const SubscriptionListSchema = GlobalFlags.extend({
 });
 
 type SubscriptionMuteOptions = Omit<z.infer<typeof SubscriptionMuteSchema>, 'chatId'>;
-type SubscriptionListOptions = z.infer<typeof SubscriptionListSchema>;
 
 // Input:   anima subscription list
-// Output:  attention map: member channels with following/muted status, active
-//          followed threads, muted threads, and a quiet-thread tail count.
+// Output:  compatibility alias for `anima places`; thread subscriptions remain
+//          internal wake behavior and are intentionally not rendered.
 // Failure: human-readable error to stderr; exit 1.
 
 // Input:   anima subscription mute --channel <id> [--thread-ts <ts>]
@@ -46,11 +43,11 @@ export function registerSubscriptionCommands(program: Command): void {
 
   subscription
     .command('list')
-    .description('List where this agent is listening.')
-    .option('--all', 'include quiet old followed threads')
+    .description('Alias for anima places.')
+    .option('--all', 'show all places instead of the 50 most recently delivered per section')
     .action(async (_, command) => {
       const opts = SubscriptionListSchema.parse(command.optsWithGlobals());
-      await subscriptionList(opts);
+      await runSubscriptionList(opts);
     });
 
   subscription
@@ -65,45 +62,8 @@ export function registerSubscriptionCommands(program: Command): void {
     });
 }
 
-async function subscriptionList(opts: SubscriptionListOptions): Promise<void> {
-  const agentId = resolveAgentIdFrom(opts.agent);
-  if (!agentId) throw new Error('Agent not specified. Pass --agent <id> or set ANIMA_AGENT_ID.');
-  const agent = await defaultAgentRegistryService.serviceFor(agentId).getConfig();
-  const [subscriptions, memberChannels] = await Promise.all([
-    listSubscriptionsForAgent(agentId),
-    memberChannelsForAgent(agent),
-  ]);
-  const map = attentionMapForSubscriptions({
-    includeAll: opts.all,
-    memberChannels,
-    subscriptions,
-  });
-
-  if (
-    map.channels.length === 0 &&
-    map.activeThreads.length === 0 &&
-    map.mutedThreads.length === 0 &&
-    map.quietThreadCount === 0
-  ) {
-    console.log('No attention records.');
-    return;
-  }
-  console.log('Channels:');
-  if (map.channels.length === 0) {
-    console.log('- none');
-  } else {
-    for (const channel of map.channels) {
-      console.log(`- [${channel.status}] ${subscriptionChannelRef(channel)}`);
-    }
-  }
-  console.log('Threads:');
-  for (const thread of map.activeThreads) console.log(`- [following] ${threadLine(thread)}`);
-  for (const thread of map.mutedThreads) console.log(`- [muted] ${threadLine(thread)}`);
-  for (const thread of map.quietThreads) console.log(`- [quiet] ${threadLine(thread)}`);
-  if (map.quietThreadCount > map.quietThreads.length) {
-    console.log(`+ ${map.quietThreadCount - map.quietThreads.length} quiet threads still followed. Pass --all to show.`);
-  }
-  if (map.activeThreads.length === 0 && map.mutedThreads.length === 0 && map.quietThreads.length === 0) console.log('- none');
+export async function runSubscriptionList(opts: PlacesOptions, deps?: OrientationDeps): Promise<void> {
+  await runPlaces(opts, deps);
 }
 
 async function subscriptionMute(opts: SubscriptionMuteOptions): Promise<void> {
@@ -142,13 +102,4 @@ async function subscriptionMute(opts: SubscriptionMuteOptions): Promise<void> {
 
 function isFeishuChatId(channel: string): boolean {
   return channel.startsWith('oc_');
-}
-
-function subscriptionChannelRef(channel: { channelId: string; channelName?: string }): string {
-  if (isFeishuChatId(channel.channelId) && !channel.channelName) return `feishu chat_id=${channel.channelId}`;
-  return `channel=${channel.channelName ? `#${channel.channelName}` : channel.channelId}`;
-}
-
-function threadLine(sub: SubscriptionRecord): string {
-  return `channel=${sub.channelId} thread_ts=${sub.kind === 'thread' ? sub.threadTs : ''}`;
 }

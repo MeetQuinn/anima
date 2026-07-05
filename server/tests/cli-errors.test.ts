@@ -153,7 +153,7 @@ test('CLI renderer preserves Slack handle ambiguity detail', () => {
   assert.equal(
     rendered,
     [
-      'error anima.ambiguous_user (not retryable): That handle matches more than one user; use the exact user id from a recent envelope, anima history, or team.md.',
+      'error anima.ambiguous_user (not retryable): That handle matches more than one user; use an exact user id, then verify it with anima whois <id>.',
       'detail: Slack handle @alex matched multiple users',
     ].join('\n'),
   );
