@@ -5,7 +5,7 @@ import type { ReminderInboxItem } from '../../../shared/inbox.js';
 
 export async function ingestEvent(event: InboxItem, config: RuntimeWorkerConfig): Promise<RuntimeItemContext> {
   const result = await new WakeQueueService(config.agentId).enqueue(event);
-  return runtimeContextForItemId(result.item.id, config);
+  return runtimeContextForItemId(result.item.id, { homePath: config.stateDir, ...config });
 }
 
 export function makeReminderInboxItem(opts: {

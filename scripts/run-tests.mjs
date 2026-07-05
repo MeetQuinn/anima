@@ -4,33 +4,54 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 
 const distTestsDir = 'dist/server/tests';
+const sourceTestsDir = 'server/tests';
+
+const quarantine = [
+  // No quarantined tests.
+];
 
 const groups = {
   unit: [
+    'active-item.test.js',
+    'active-runtime.test.js',
     'agent-channels.test.js',
     'agent-config.test.js',
     'agent-health.test.js',
     'agent-seed-memory.test.js',
+    'agent-skills.test.js',
     'attention-suggestion-activity.test.js',
     'channel-match.test.js',
+    'chat-target-options.test.js',
+    'chat-target-resolver.test.js',
     'config.test.js',
     'default-skills.test.js',
     'envelope.test.js',
+    'feishu-processing-reaction.test.js',
     'feishu.test.js',
     'file-cache-eviction.test.js',
     'inbox.test.js',
+    'ingest-golden.test.js',
     'interactive-ask.test.js',
+    'memory-coherence.test.js',
     'message.service.test.js',
     'message-profiles.test.js',
     'messages.test.js',
     'message-transport.test.js',
     'orientation.test.js',
+    'outbound-effects.test.js',
+    'outcome-line.test.js',
     'workspace-directory.test.js',
     'prompt-attachments.test.js',
+    'prompt-template.test.js',
     'provider-failure.test.js',
     'provider-launch.test.js',
+    'provider-line-buffer.test.js',
+    'provider-quiescent-waiters.test.js',
+    'provider-usage.test.js',
     'inbox-slack-events.test.js',
     'reminders.test.js',
+    'runtime-cli.test.js',
+    'runtime-host-config-watch.test.js',
     'runtime.test.js',
     'runtime-upgrade.test.js',
     'slack-files.test.js',
@@ -40,6 +61,7 @@ const groups = {
     'slack.test.js',
     'state-cache.test.js',
     'subscriptions.test.js',
+    'system-service.test.js',
     'url-routes.test.js',
   ],
   api: [
@@ -49,18 +71,20 @@ const groups = {
   ],
   runtime: [
     'agent-runtime.test.js',
+    'cli-env.test.js',
     'cli-errors.test.js',
     'cli-file.test.js',
     'cli-message.test.js',
     'runtime-worker.test.js',
     'services.test.js',
   ],
+  quarantine,
 };
 
+auditTierMembership();
+
 groups.fast = [...groups.unit, ...groups.api];
-groups.all = readdirSync(distTestsDir)
-  .filter((name) => name.endsWith('.test.js'))
-  .sort();
+groups.all = [...groups.unit, ...groups.api, ...groups.runtime].sort();
 
 const timeouts = {
   unit: 30_000,
@@ -114,6 +138,46 @@ child.on('error', (error) => {
   console.error(error);
   process.exit(1);
 });
+
+function auditTierMembership() {
+  const sourceTests = readdirSync(sourceTestsDir)
+    .filter((name) => name.endsWith('.test.ts'))
+    .map((name) => name.replace(/\.ts$/, '.js'))
+    .sort();
+  const sourceSet = new Set(sourceTests);
+  const tieredTests = [
+    ...groups.unit,
+    ...groups.api,
+    ...groups.runtime,
+    ...groups.quarantine,
+  ];
+  const tierCounts = new Map();
+  for (const name of tieredTests) tierCounts.set(name, (tierCounts.get(name) ?? 0) + 1);
+  const tieredSet = new Set(tieredTests);
+  const untiered = sourceTests.filter((name) => !tieredSet.has(name));
+  const stale = tieredTests.filter((name) => !sourceSet.has(name));
+  const duplicated = Array.from(tierCounts)
+    .filter(([, count]) => count > 1)
+    .map(([name]) => name)
+    .sort();
+
+  if (untiered.length === 0 && stale.length === 0 && duplicated.length === 0) return;
+
+  console.error('Test tier membership is out of date.');
+  if (untiered.length > 0) {
+    console.error('\nUntiered server/tests/*.test.ts files:');
+    for (const name of untiered) console.error(`  - ${name}`);
+  }
+  if (stale.length > 0) {
+    console.error('\nTier entries without a matching server/tests/*.test.ts file:');
+    for (const name of stale) console.error(`  - ${name}`);
+  }
+  if (duplicated.length > 0) {
+    console.error('\nTest files listed in more than one tier:');
+    for (const name of duplicated) console.error(`  - ${name}`);
+  }
+  process.exit(1);
+}
 
 function killChildTree(childProcess, signal) {
   if (!childProcess.pid) return;
