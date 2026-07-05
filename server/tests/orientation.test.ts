@@ -140,6 +140,33 @@ test('places puts muted rooms in Muted with stale ledger delivery time', async (
   assert.match(rendered, /Muted \(1\)\n  #noisy\s+C-noisy\s+last_delivery=2026-07-01T00:00:00.000Z/);
 });
 
+test('places reads only the bounded recent message window', async () => {
+  const allMessages = Array.from({ length: 510 }, (_, index) => {
+    const n = index + 1;
+    return message({
+      channelDisplayName: `user-${String(n).padStart(3, '0')}`,
+      channelId: `D-${String(n).padStart(3, '0')}`,
+      timestamp: new Date(Date.UTC(2026, 6, 1, 0, 0, index)).toISOString(),
+    });
+  });
+  const listRequests: Array<{ agentId: string; limit: number }> = [];
+  const deps = depsFor({});
+  deps.listMessages = async (agentId, input) => {
+    listRequests.push({ agentId, limit: input.limit });
+    return allMessages.slice(-input.limit);
+  };
+
+  const result = await placesForAgent({ agentId: 'scout', deps });
+  const rendered = formatPlaces(result);
+  assert.deepEqual(listRequests, [{ agentId: 'scout', limit: 500 }]);
+  assert.equal(result.rows.length, 500);
+  assert.ok(result.rows.some((row) => row.id === 'D-011'));
+  assert.ok(result.rows.some((row) => row.id === 'D-510'));
+  assert.ok(!result.rows.some((row) => row.id === 'D-001'));
+  assert.match(rendered, /DMs \(500, showing 50 most recent; use --all\)/);
+  assert.doesNotMatch(rendered, /D-001|user-001/);
+});
+
 test('Feishu places are honestly labeled as known-to-runtime chats', async () => {
   const scout = agent({
     feishu: { appId: 'cli-test', appSecret: 'secret', botOpenId: 'ou-bot' },
