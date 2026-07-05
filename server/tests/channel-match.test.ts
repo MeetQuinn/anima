@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { messageMatchesChannel, normalizeChannelSearchTerm } from '../messages/channel-match.js';
+import { messageMatchesChannel, normalizeChannelSearchTerm } from '../../shared/channel-match.js';
 import type { AgentMessageRecord } from '../../shared/messages.js';
 
 function record(input: Partial<AgentMessageRecord>): AgentMessageRecord {

@@ -1,4 +1,5 @@
-import type { Activity, AgentActivityFeedEvent, AgentActivityFeedPage } from '../../shared/activity.js';
+import type { Activity, AgentActivityFeedPage } from '../../shared/activity.js';
+import { normalizeHistoryLimit } from '../../shared/messages.js';
 import { ActivityStore, type ActivityRecordInput } from '../storage/schema/activity.store.js';
 
 export interface ActivityListInput {
@@ -33,20 +34,16 @@ export class ActivityService {
     return this.store.readNewestMatching(n, matches);
   }
 
-  readSince(createdAt: string): Promise<Activity[]> {
-    return this.store.readSince(createdAt);
-  }
-
   async listActivityFeed(input: ActivityListInput = {}): Promise<AgentActivityFeedPage> {
-    const limit = normalizeActivityLimit(input.limit);
+    const limit = normalizeHistoryLimit(input.limit);
     const activities = input.before
       ? await this.store.readBefore(input.before, limit)
       : await this.store.readLastN(limit);
-    const events = activities.map(activityFeedEvent)
-      .filter((event) => !input.before || event.timestamp < input.before)
-      .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+    const events = activities
+      .filter((activity) => !input.before || activity.createdAt < input.before)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .slice(-limit);
-    const nextCursor = events.length >= limit ? (events[0]?.timestamp ?? null) : null;
+    const nextCursor = events.length >= limit ? (events[0]?.createdAt ?? null) : null;
     return { events, nextCursor };
   }
 
@@ -59,12 +56,3 @@ export function activityServiceForAgent(agentId: string): ActivityService {
 export const defaultActivityRecorder: ActivityRecorder = {
   record: (agentId, input) => activityServiceForAgent(agentId).record(input),
 };
-
-function normalizeActivityLimit(limit: number | undefined): number {
-  if (!Number.isFinite(limit)) return 100;
-  return Math.min(Math.max(1, Math.trunc(limit as number)), 500);
-}
-
-function activityFeedEvent(activity: Activity): AgentActivityFeedEvent {
-  return { activity, kind: 'activity', timestamp: activity.createdAt };
-}

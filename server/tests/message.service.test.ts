@@ -13,7 +13,7 @@ import { withToolActivity } from '../tools/tool-context.js';
 import { withAnimaHome } from './anima-home.js';
 import { makeSlackEvent } from './helpers/slack.js';
 
-test('message service projects legacy inbox and activity records into one ledger', async () => {
+test('message service projects live inbox and outbox writes into one ledger', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-message-service-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
@@ -30,7 +30,7 @@ test('message service projects legacy inbox and activity records into one ledger
           userId: 'U-alice',
         }),
       );
-      await activityServiceForAgent('scout').record({
+      const outboundActivity = await activityServiceForAgent('scout').record({
         createdAt: '2026-05-11T00:01:00.000Z',
         payload: {
           channel: 'C-product',
@@ -42,6 +42,7 @@ test('message service projects legacy inbox and activity records into one ledger
         },
         type: 'external.effect.completed',
       });
+      await messageServiceForAgent('scout').recordOutboxActivity(outboundActivity);
 
       const page = await messageServiceForAgent('scout').list({ limit: 10 });
       assert.deepEqual(page.entries.map((entry) => entry.direction), ['out', 'in']);
@@ -66,7 +67,6 @@ test('message service reads newest matching page without requiring a full ledger
         testMessage({ messageId: 'mid-out', timestamp: '2026-05-11T00:01:00.000Z', direction: 'out' }),
         testMessage({ messageId: 'new-in', timestamp: '2026-05-11T00:02:00.000Z', direction: 'in' }),
       ]);
-      await new MessageStore('scout').markLegacyBackfilled();
 
       const firstPage = await messageServiceForAgent('scout').list({ limit: 2 });
       assert.deepEqual(firstPage.entries.map((entry) => entry.messageId), ['new-in', 'mid-out']);
@@ -91,7 +91,6 @@ test('message service list scopes to a single channel when given a channel filte
         channelMessage({ messageId: 'p2', timestamp: '2026-05-11T00:02:00.000Z', channelId: 'C-product', channelName: 'product' }),
         dmMessage({ messageId: 'd1', timestamp: '2026-05-11T00:03:00.000Z', channelId: 'D-alice', dmHandle: 'alice', dmUserId: 'U-alice' }),
       ]);
-      await new MessageStore('scout').markLegacyBackfilled();
 
       const byId = await messageServiceForAgent('scout').list({ channel: 'C-product', limit: 10 });
       assert.deepEqual(byId.entries.map((e) => e.messageId), ['p2', 'p1']);
@@ -122,7 +121,6 @@ test('message service listAll returns the complete local ledger', async () => {
         }),
       );
       await new MessageStore('scout').appendManyIfAbsent(records);
-      await new MessageStore('scout').markLegacyBackfilled();
 
       const page = await messageServiceForAgent('scout').list({ limit: 500 });
       assert.equal(page.entries.length, 500);
