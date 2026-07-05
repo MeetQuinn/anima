@@ -1392,6 +1392,51 @@ test('server preflights Socket Mode token before constructing the Slack app', as
   }
 });
 
+// Regression: whois declares <target>, so commander passes (target, options, command).
+// A mis-bound action once read the options object as the Command and crashed with
+// "command.optsWithGlobals is not a function" on every invocation. This drives the
+// REAL CLI wiring end to end; unit tests that call runWhois directly cannot catch it.
+test('whois resolves a Slack user id through the CLI command wiring', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-whois-test-'));
+  const slackApi = await startSlackApiMock((method) => {
+    if (method === 'auth.test') return { ok: true, team: 'Demo', team_id: 'T-demo', user: 'scout', user_id: 'U-scout' };
+    if (method === 'users.info') {
+      return { ok: true, user: { id: 'U0NORA0001', name: 'nora', profile: { display_name: 'Nora' } } };
+    }
+    if (method === 'team.info') return { ok: true, team: { id: 'T-demo', name: 'Demo' } };
+    throw new Error(`unexpected method ${method}`);
+  });
+  try {
+    const homePath = join(stateDir, 'home');
+    const agentDir = join(stateDir, 'agents', 'scout');
+    await mkdir(homePath, { recursive: true });
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(stateDir, 'config.json'), `${JSON.stringify({}, null, 2)}\n`, 'utf8');
+    await writeFile(
+      join(agentDir, 'config.json'),
+      `${JSON.stringify({
+        id: 'scout',
+        provider: { kind: 'codex-cli', model: 'gpt-5.5' },
+        slack: { appToken: 'xapp-valid-format', botToken: 'xoxb-valid-format', connected: true },
+        homePath,
+      }, null, 2)}\n`,
+      'utf8',
+    );
+
+    // Target must match orientation's SLACK_USER_ID (/^U[A-Z0-9]+$/) to take the
+    // getUserById path; a non-matching id falls through to handle lookup instead.
+    const result = await runNode([cliPath, 'whois', 'U0NORA0001'], {
+      env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_SLACK_API_URL: slackApi.url },
+    });
+    assert.equal(result.status, 0, `whois failed:\n${result.stderr}`);
+    assert.doesNotMatch(result.stderr, /optsWithGlobals/);
+    assert.match(result.stdout, /U0NORA0001/);
+    assert.match(result.stdout, /nora/i);
+  } finally {
+    await slackApi.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
 
 test('message commands reject non-ts timestamp flags', async () => {
   const send = await runNode([cliPath, 'message', 'send', '--channel', 'C-product', '--thread', '1770000200.000001'], {

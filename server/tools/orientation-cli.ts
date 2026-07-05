@@ -30,7 +30,10 @@ export function registerOrientationCommands(program: Command): void {
     .command('whois')
     .description('Resolve a Slack or Feishu user, bot, channel, or chat id live.')
     .argument('<target>', 'user/bot/channel/chat handle or id, such as @milo, #team, U..., C..., ou_..., or oc_...')
-    .action(async (target, command) => {
+    .action(async (target, _options, command) => {
+      // Commander action args are (...declaredArgs, options, command). `whois` declares
+      // <target>, so the Command instance is the THIRD parameter — binding it second
+      // hands you the plain options object, which has no optsWithGlobals().
       await runWhois({ ...command.optsWithGlobals(), target });
     });
 
