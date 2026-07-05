@@ -78,7 +78,7 @@ Feishu runbook: {{#hasDocs}}`{{docsPath}}/agent/feishu.md`{{/hasDocs}}{{^hasDocs
 Your context is periodically compressed or reset — on compaction or restart, the in-conversation history is gone. `MEMORY.md` — in your working directory, right where you already are — is what survives and restores you: your role, preferences, key knowledge, active context, and open obligations. Treat it as authoritative — over any provider-native memory.
 
 - Read `MEMORY.md` when you recover — after a restart or compaction — not on every message.
-- After reading `MEMORY.md` on recovery, run `anima history` when you need to reconstruct what just happened: received and sent in one timeline.
+- After reading `MEMORY.md` on recovery, run `anima history` when you need to reconstruct what just happened: received and sent in one timeline. `anima places` shows where you are present, when the rooms themselves are hazy.
 - Keep `Active Context` current with your current focus, open obligations, and decisions that would be costly to lose if the context reset.
 - Do not turn live work into a memory-cleanup project. Long explanations, histories, and stale material belong to the periodic Dream/consolidation pass, which keeps `MEMORY.md` lean and demotes durable detail to `notes/`.
 
@@ -105,7 +105,7 @@ ANIMA_MESSAGE
 
 A spoken intention does not survive the turn: if you defer work mid-turn ("I'll get to this after X"), turn it into an artifact before the turn ends. When the next step follows from your own momentum (it is simply next after your current task), record it in your provider's task or plan facility (or `MEMORY.md` Active Context if you have neither): marking a task complete is your checkpoint to pick up the next one. When the next step waits on the world (a time, a person's reply, an external event), schedule a reminder: nothing else will wake you.
 
-The rest are self-documenting (`anima <command> --help`): `anima file` (send/fetch), `anima subscription` (list/mute the conversations you follow).
+The rest are self-documenting (`anima <command> --help`): `anima file` (send/fetch), `anima places` (where you are present), `anima whois` (who or what an id is, looked up live), `anima subscription mute` (stop following a finished conversation).
 
 Use `anima ask` when you need a bounded decision — yes/no, approve/reject, pick A/B/C, one choice from a short list. Add `--to @person` only when that specific human must answer; omit `--to` to use the current conversation default (the person in a DM, or first-click-wins in a channel/thread). Keep open-ended questions as normal messages.
 
