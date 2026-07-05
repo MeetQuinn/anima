@@ -5,7 +5,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   awaitAgentsRefresh,
   createAgent,
-  fetchAgentFeishuAppRegistration,
   refreshDashboardData,
   startAgentFeishuAppRegistration,
   updateAgentProfile,
@@ -37,6 +36,10 @@ import {
 } from '@/views/agents/profile/FeishuOnboardingConnect';
 import { OwnerPickerForm } from '@/views/agents/profile/OwnerPickerForm';
 import { queryKeys } from '@/lib/query-keys';
+import {
+  isFeishuRegistrationActive,
+  useFeishuRegistrationPoll,
+} from '@/hooks/useFeishuRegistrationPoll';
 import type { AgentFeishuRegisterAppStatus } from '@shared/agent-config';
 import { DEFAULT_TEAM_ID, type TeamConfig, type WorkspacePlatform } from '@shared/server-settings';
 
@@ -46,8 +49,6 @@ const WORKSPACE_PLATFORM_LABELS: Record<WorkspacePlatform, string> = {
 };
 
 const FEISHU_CREATE_SLOW_MS = 15_000;
-const FEISHU_REGISTRATION_POLL_MS = 2000;
-const FEISHU_REGISTRATION_ACTIVE_STATES = ['starting', 'waiting', 'slow_down', 'domain_switched'];
 
 // ---------------------------------------------------------------------------
 // AgentCreateFlow
@@ -178,6 +179,9 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
   // the success check never sits under an active (red) step dot.
   const feishuAllDone = workspacePlatform === 'feishu' && feishuPhase === 'connected';
   const derivedId = agentIdFromName(name.trim());
+  const { pollUntil: pollFeishuRegistrationUntil } = useFeishuRegistrationPoll({
+    agentId: createdAgentId ?? derivedId,
+  });
 
   // Display helpers — Base UI SelectValue shows raw value before items register;
   // use render-prop form to always resolve a human label.
@@ -315,22 +319,16 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
     agentId: string,
     runId: number,
   ): Promise<AgentFeishuRegisterAppStatus | null> {
-    let next = await startAgentFeishuAppRegistration(agentId, { botName: name.trim() || undefined });
+    const next = await startAgentFeishuAppRegistration(agentId, { botName: name.trim() || undefined });
     if (createRunRef.current !== runId) return null;
     setFeishuRegistration(next);
 
-    while (
-      FEISHU_REGISTRATION_ACTIVE_STATES.includes(next.state) &&
-      !next.verificationUrl
-    ) {
-      await delay(FEISHU_REGISTRATION_POLL_MS);
-      if (createRunRef.current !== runId) return null;
-      next = await fetchAgentFeishuAppRegistration(agentId, next.registrationId);
-      if (createRunRef.current !== runId) return null;
-      setFeishuRegistration(next);
-    }
-
-    return next;
+    return pollFeishuRegistrationUntil(next, {
+      agentId,
+      isCurrentRun: () => createRunRef.current === runId,
+      onStatus: setFeishuRegistration,
+      shouldContinue: (status) => isFeishuRegistrationActive(status) && !status.verificationUrl,
+    });
   }
 
   async function handleCreate() {
@@ -851,10 +849,6 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
   }
 
   return card;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 // ---------------------------------------------------------------------------

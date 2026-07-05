@@ -3,18 +3,20 @@ import { Check } from 'lucide-react';
 
 import {
   connectAgentFeishu,
-  fetchAgentFeishuAppRegistration,
   refreshDashboardData,
   startAgentFeishuAppRegistration,
 } from '@/api/agents';
 import { Button } from '@/components/ui/button';
+import {
+  isFeishuRegistrationActive,
+  useFeishuRegistrationPoll,
+} from '@/hooks/useFeishuRegistrationPoll';
 import {
   FEISHU_CONNECT_SLOW_SOFTEN_MS,
   FeishuConnectAffordances,
   FeishuCreatingAppLabel,
   FeishuExistingCredentialsCard,
   FeishuSlowLine,
-  isFeishuRegistrationActive,
 } from './feishu-connect-shared';
 import type { AgentFeishuRegisterAppStatus } from '@shared/agent-config';
 
@@ -57,38 +59,30 @@ export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
     };
   }, []);
 
-  useEffect(() => {
-    if (!registrationActive || !registration?.registrationId) return undefined;
-    let cancelled = false;
-    const timer = window.setInterval(() => {
-      void fetchAgentFeishuAppRegistration(agentId, registration.registrationId)
-        .then((next) => {
-          if (cancelled) return;
-          setRegistration(next);
-          if (next.verificationUrl) clearSlowTimer();
-          if (next.state === 'connected') {
-            setSaved(true);
-            clearSlowTimer();
-            refreshDashboardData();
-            onConnect?.();
-          }
-          if (next.state === 'failed') {
-            clearSlowTimer();
-            setExistingReason('failed');
-            setError(next.error?.description ?? next.error?.message);
-            setSetupMode('existing');
-          }
-        })
-        .catch((err) => {
-          if (cancelled) return;
-          setError(err instanceof Error ? err.message : 'Could not refresh Feishu app registration');
-        });
-    }, 2000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [agentId, onConnect, registration?.registrationId, registrationActive]);
+  useFeishuRegistrationPoll({
+    agentId,
+    enabled: registrationActive,
+    registration,
+    onStatus: (next) => {
+      setRegistration(next);
+      if (next.verificationUrl) clearSlowTimer();
+      if (next.state === 'connected') {
+        setSaved(true);
+        clearSlowTimer();
+        refreshDashboardData();
+        onConnect?.();
+      }
+      if (next.state === 'failed') {
+        clearSlowTimer();
+        setExistingReason('failed');
+        setError(next.error?.description ?? next.error?.message);
+        setSetupMode('existing');
+      }
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : 'Could not refresh Feishu app registration');
+    },
+  });
 
   function clearSlowTimer() {
     if (slowTimerRef.current === null) return;
