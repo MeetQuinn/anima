@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -24,9 +24,9 @@ test('JsonFile cache invalidates when another writer changes the file on disk', 
     await writer.write({ count: 1 });
     assert.deepEqual(await reader.read(), { count: 1 });
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
     await writeFile(path, `${JSON.stringify({ count: 2 })}\n`, 'utf8');
+    const updatedMtime = new Date((await stat(path)).mtimeMs + 1000);
+    await utimes(path, updatedMtime, updatedMtime);
     assert.deepEqual(await reader.read(), { count: 2 }, 'reader should see the external write via stat invalidation');
   } finally {
     await rm(dir, { force: true, recursive: true });
@@ -42,9 +42,9 @@ test('JsonlAppendLog cache invalidates when another writer appends to the file o
     await log.append({ id: 'a' });
     assert.deepEqual(await log.readAll(), [{ id: 'a' }]);
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
     await writeFile(path, `${JSON.stringify({ id: 'a' })}\n${JSON.stringify({ id: 'b' })}\n`, 'utf8');
+    const updatedMtime = new Date((await stat(path)).mtimeMs + 1000);
+    await utimes(path, updatedMtime, updatedMtime);
     assert.deepEqual(await log.readAll(), [{ id: 'a' }, { id: 'b' }], 'readAll should see the external append');
   } finally {
     await rm(dir, { force: true, recursive: true });
@@ -287,10 +287,11 @@ test('JsonFile update skips same-reference writes and persists new objects', asy
     const file = new JsonFile<{ count: number }>(path, () => ({ count: 0 }));
 
     await file.write({ count: 1 });
+    const warmMtime = new Date(1_700_000_000_000);
+    await utimes(path, warmMtime, warmMtime);
     const beforeStat = await stat(path);
     const beforeContent = await readFile(path, 'utf8');
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
     const same = await file.update((current) => current);
     const afterNoopStat = await stat(path);
     const afterNoopContent = await readFile(path, 'utf8');
@@ -300,7 +301,6 @@ test('JsonFile update skips same-reference writes and persists new objects', asy
     assert.equal(afterNoopContent, beforeContent);
     assert.deepEqual(await file.read(), { count: 1 });
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
     const changed = await file.update((current) => ({ count: current.count + 1 }));
     const afterWriteStat = await stat(path);
 

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { waitFor } from './helpers/harness.js';
+import { sleep, waitFor } from './helpers/harness.js';
 import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
 import {
   CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW,
@@ -268,7 +268,8 @@ test('controller runtime cancels pending idle reset while another turn is active
   const gate = deferred<AgentRuntimeResult>();
   runtime.turn = () => gate.promise;
   const run = runtime.run(probeInput(effects, { itemId: 'item-second' }));
-  await new Promise((resolve) => setTimeout(resolve, 40));
+  // settle window: asserting absence of idle provider-child reset while another turn is active.
+  await sleep(40);
 
   assert.deepEqual(controller.killedWith, []);
   assert.equal(runtime.health().childExpected, true);

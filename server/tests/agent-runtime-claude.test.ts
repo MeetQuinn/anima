@@ -1,5 +1,5 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { waitFor, withTimeout } from './helpers/harness.js';
+import { sleep, waitFor, withTimeout } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -731,7 +731,8 @@ test('claude-code follow-up append waits for compact and tool gates before writi
       appendSettled = true;
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    // settle window: asserting absence of follow-up append completion before the Claude gate is released.
+    await sleep(100);
     assert.equal(appendSettled, false);
     assert.equal((await readFile(callsPath, 'utf8')).trim().split('\n').length, 1);
     await writeFile(releasePath, '1', 'utf8');

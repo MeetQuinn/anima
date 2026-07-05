@@ -424,6 +424,7 @@ test('kimi-cli closed stdin startup failure stays on provider promise', async ()
         runtime.run(await runtimeInput(runtime, ctx, await loadState())),
         /Kimi ACP runtime (exited|stdin is closed)/,
       );
+      // yield to pending microtasks/IO.
       await sleep(0);
       assert.deepEqual(unhandledRejections, []);
     });

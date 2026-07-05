@@ -21,6 +21,7 @@ import type {
 } from '../providers/contract.js';
 import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
 import { withAnimaHome } from './anima-home.js';
+import { waitFor } from './helpers/harness.js';
 
 const cliPath = resolve('dist/server/cli/anima.js');
 const reminderService = reminderServiceForAgent('scout');
@@ -152,7 +153,7 @@ test('due reminder delivery enters the inbox and records fire activity', async (
 
       worker.start();
       try {
-        await waitUntil(() => runtime.calls.length === 1);
+        await waitFor(() => runtime.calls.length === 1);
       } finally {
         await worker.close();
       }
@@ -163,11 +164,11 @@ test('due reminder delivery enters the inbox and records fire activity', async (
       // 09:00:01 poll tick that noticed the reminder was due.
       assert.match(call?.prompt ?? '', /scheduled=2026-05-14T09:00:00Z/);
 
-      await waitUntil(async () => {
+      await waitFor(async () => {
         const state = await loadState();
         return state.reminders[reminder.reminderId]?.status === 'fired';
       });
-      await waitUntil(async () => {
+      await waitFor(async () => {
         const items = await queue.list();
         return items.length === 0;
       });
@@ -203,7 +204,7 @@ test('reminder subscriber carries the human title into the inbox item and messag
       const subscriber = new ReminderInboxSubscriber(queue, reminderService);
       subscriber.start();
       try {
-        await waitUntil(async () => {
+        await waitFor(async () => {
           const items = await queue.list();
           return items.some((item) => item.kind === 'reminder' && item.reminderId === reminder.reminderId);
         });
@@ -465,15 +466,6 @@ class CapturingRuntime implements AgentRuntime {
   async appendToActiveRun(_input: AgentRuntimeFollowupInput): Promise<{ accepted: boolean }> {
     return { accepted: false };
   }
-}
-
-async function waitUntil(predicate: () => boolean | Promise<boolean>, timeoutMs = 1000): Promise<void> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error('Timed out waiting for condition.');
 }
 
 async function writeConfig(configDir: string): Promise<void> {

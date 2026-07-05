@@ -24,6 +24,7 @@ import type { AgentConfig } from '../../shared/agent-config.js';
 import { withAnimaHome } from './anima-home.js';
 import type { Activity } from '../../shared/activity.js';
 import type { InboxItem } from '../../shared/inbox.js';
+import { sleep } from './helpers/harness.js';
 
 test('child process completion preserves exit details when stream effects fail', async () => {
   const child = startChildProcess({
@@ -723,7 +724,8 @@ test('runtime host times out a blocked agent start and continues booting later a
 
     releaseAlpha();
     await alphaStoppedPromise;
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    // yield to pending microtasks/IO.
+    await sleep(0);
     assert.deepEqual(stopped, ['alpha']);
     assert.equal(alphaStopOptions?.abortReason, 'operator_restart');
     assert.deepEqual(errors, [

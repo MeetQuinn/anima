@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import { waitFor } from './harness.js';
+import { sleep, waitFor } from './harness.js';
 import { WakeQueueService, type WakeQueueEnqueueResult } from '../../inbox/wake-queue.service.js';
 import { runtimeContextForItemId } from '../../runtime/context.js';
 import { ReminderStore } from '../../storage/schema/reminder.store.js';
@@ -364,10 +364,12 @@ export class ActivityBeforeFinishRuntime implements AgentRuntime {
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
     this.calls.push(input);
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    // fixed delay: keep the fake runtime active long enough to observe mid-run activity.
+    await sleep(150);
     if (input.signal?.aborted) throw new Error(`aborted: ${String(input.signal.reason)}`);
     await input.effects.recordOutput('stdout', 'still running');
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    // fixed delay: keep the fake runtime active after output so drain/close behavior can be observed.
+    await sleep(150);
     if (input.signal?.aborted) throw new Error(`aborted: ${String(input.signal.reason)}`);
     return { text: 'finished after activity' };
   }

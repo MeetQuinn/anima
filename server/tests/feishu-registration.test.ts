@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { writeFeishuAgentConfig } from './helpers/harness.js';
+import { sleep, writeFeishuAgentConfig } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { normalizeFeishuMessage } from '../feishu/events.js';
@@ -269,7 +269,8 @@ test('manual Feishu credentials supersede an active registerApp session', async 
         appSecret: 'generated-secret-late',
         userOpenId: 'ou_late_owner',
       });
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // settle window: asserting absence of late registration overwriting manual Feishu config.
+      await sleep(50);
 
       const stored = await defaultAgentRegistryService.serviceFor('scout').getConfig();
       assert.equal(stored.feishu.appId, 'manual-app');
