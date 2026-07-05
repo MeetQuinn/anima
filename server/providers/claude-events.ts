@@ -597,6 +597,8 @@ function providerToolCallFromClaudeContent(
     provider: 'claude-code',
     providerToolName: name,
     ...(summary.command ? { command: summary.command } : {}),
+    ...(summary.skill ? { skill: summary.skill } : {}),
+    ...(summary.args ? { args: summary.args } : {}),
     ...(summary.target ? { target: summary.target } : {}),
     tool: `claude.${name}`,
   };
@@ -605,7 +607,7 @@ function providerToolCallFromClaudeContent(
 function summarizeClaudeToolInput(
   name: string,
   input: Record<string, unknown>,
-): { command?: string; target?: string } {
+): { args?: string; command?: string; skill?: string; target?: string } {
   if (name === 'Bash') {
     const description = stringField(input, 'description');
     const command = stringField(input, 'command');
@@ -616,6 +618,16 @@ function summarizeClaudeToolInput(
         : command
           ? { target: singleLineForActivity(command) }
           : {}),
+    };
+  }
+  if (name === 'Skill') {
+    const skill = stringField(input, 'skill');
+    const args = stringField(input, 'args');
+    const target = skill ?? args;
+    return {
+      ...(args ? { args: truncateForActivity(args) } : {}),
+      ...(skill ? { skill: singleLine(skill) } : {}),
+      ...(target ? { target: singleLineForActivity(target) } : {}),
     };
   }
   const target =
