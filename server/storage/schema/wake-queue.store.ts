@@ -207,6 +207,8 @@ export class WakeQueueStore {
     const now = input.now ?? new Date();
     const nowText = now.toISOString();
     const nowMs = now.getTime();
+    if (!hasPotentialRunnableWork(await this.read(), input, nowMs)) return { recovered: [] };
+
     await this.update((current) => {
       const next = { ...current.items };
       const recovered: InboxItem[] = [];
@@ -558,6 +560,17 @@ function shouldRecoverRunningItem(
   const workerAlive = item.handling.workerId ? input.isWorkerAlive(item.handling.workerId) : false;
   const workerReplaced = workerChangedInCurrentProcess(item.handling.workerId, input.currentWorkerId);
   return !workerAlive || workerReplaced || staleRunningItem(item, nowMs, input.staleRunningMs);
+}
+
+function hasPotentialRunnableWork(
+  file: WakeQueueFile,
+  input: TakeNextRunnableInput,
+  nowMs: number,
+): boolean {
+  return Object.values(file.items).some((item) => (
+    item.handling.status === 'queued' ||
+    (item.handling.status === 'running' && shouldRecoverRunningItem(item, input, nowMs))
+  ));
 }
 
 function workerChangedInCurrentProcess(

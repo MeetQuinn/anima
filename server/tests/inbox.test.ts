@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -201,6 +201,70 @@ test('wake queue settled ids dedupe re-delivery for every kind without the messa
   assert.equal(redelivered.duplicate, true);
   assert.equal(redelivered.queued, false);
   assert.deepEqual((await queue.list()).map((item) => item.id), []);
+});
+
+test('wake queue claims one item for only one racing worker', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-wake-racing-claim-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const queue = new WakeQueueService('scout');
+      const event = makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-racing-claim',
+        teamId: 'T-demo',
+        text: 'claim me once',
+        ts: '1770000025.000001',
+        userId: 'U1',
+      });
+
+      assert.equal((await queue.enqueue(event)).queued, true);
+
+      const claimed = await Promise.all([
+        queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-1' }),
+        queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-2' }),
+      ]);
+
+      assert.equal(claimed.filter((item) => item?.id === event.id).length, 1);
+      const stored = await queue.find(event.id);
+      assert.equal(stored?.handling.status, 'running');
+      assert.ok(['worker-1', 'worker-2'].includes(stored?.handling.workerId ?? ''));
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('wake queue idle poll leaves the queue file mtime unchanged', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-wake-idle-poll-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const queue = new WakeQueueService('scout');
+      const event = makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-idle-poll-settled',
+        teamId: 'T-demo',
+        text: 'settle before idle poll',
+        ts: '1770000026.000001',
+        userId: 'U1',
+      });
+
+      assert.equal((await queue.enqueue(event)).queued, true);
+      const claimed = await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-1' });
+      assert.equal(claimed?.id, event.id);
+      await queue.complete(event.id);
+
+      const queueFile = join(stateDir, 'agents', 'scout', 'wake-queue.json');
+      const before = await stat(queueFile);
+
+      const idle = await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-2' });
+
+      const after = await stat(queueFile);
+      assert.equal(idle, undefined);
+      assert.equal(after.mtimeMs, before.mtimeMs);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 test('wake queue migrates v1 files including retained memory coherence markers', async () => {
