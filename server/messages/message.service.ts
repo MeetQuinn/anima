@@ -61,6 +61,10 @@ export class MessageService {
     return this.store.readAll();
   }
 
+  async latestMessageAt(): Promise<string | undefined> {
+    return (await this.store.readLatest({ limit: 1 }))[0]?.timestamp;
+  }
+
   async search(input: MessageSearchInput): Promise<AgentMessageHistoryPage> {
     const keywords = normalizeSearchKeywords(input.keywords);
     if (keywords.length === 0) return { entries: [], nextCursor: null };

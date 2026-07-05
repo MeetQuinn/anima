@@ -111,13 +111,10 @@ export class MemoryCoherenceScheduler {
 //   message.projection.ts), so a pass cannot count as the "meaningful
 //   activity" that justifies the next pass.
 export async function hasMeaningfulActivitySinceLastMemoryPass(agentId: string): Promise<boolean> {
-  const latestMemoryPassAt = await latestMemoryCoherenceOutcomeAt(agentId);
-  const latestMessages = await messageServiceForAgent(agentId).list({
-    limit: 1,
-    ...(latestMemoryPassAt ? { since: latestMemoryPassAt } : {}),
-  });
-  const latestMessageAt = latestMessages.entries[0]?.timestamp;
+  const messages = messageServiceForAgent(agentId);
+  const latestMessageAt = await messages.latestMessageAt();
   if (!latestMessageAt) return false;
+  const latestMemoryPassAt = await latestMemoryCoherenceOutcomeAt(agentId, latestMessageAt);
   return !latestMemoryPassAt || latestMessageAt > latestMemoryPassAt;
 }
 
@@ -184,26 +181,26 @@ export function stableAgentOffsetMinutes(agentId: string, windowDurationMinutes:
   return value % windowDurationMinutes;
 }
 
-// Outcomes are appended at completion time, so the newest few records by
-// position contain the latest completion; reading newest-first avoids loading
-// the full activity log on every reconcile tick. A small window (rather than
-// exactly one) keeps the max-of-completedAt semantics robust to near-
-// simultaneous appends.
-const LATEST_OUTCOME_WINDOW = 5;
-
-async function latestMemoryCoherenceOutcomeAt(agentId: string): Promise<string | undefined> {
-  const outcomes = await activityServiceForAgent(agentId).readNewestMatching(
-    LATEST_OUTCOME_WINDOW,
-    (activity) => activity.type === 'memory_coherence.outcome',
-  );
+async function latestMemoryCoherenceOutcomeAt(
+  agentId: string,
+  newestMeaningfulActivityAt: string,
+): Promise<string | undefined> {
   let latest: string | undefined;
-  for (const activity of outcomes) {
-    const completedAt = typeof activity.payload?.completedAt === 'string'
-      ? activity.payload.completedAt
-      : activity.createdAt;
+  await activityServiceForAgent(agentId).readNewestUntil((activity) => {
+    if (latest && activity.createdAt < latest) return true;
+    if (activity.createdAt < newestMeaningfulActivityAt) return true;
+    if (activity.type !== 'memory_coherence.outcome') return false;
+    const completedAt = completedAtForMemoryCoherenceOutcome(activity);
     if (!latest || completedAt > latest) latest = completedAt;
-  }
+    return false;
+  });
   return latest;
+}
+
+function completedAtForMemoryCoherenceOutcome(activity: { createdAt: string; payload?: Record<string, unknown> }): string {
+  return typeof activity.payload?.completedAt === 'string'
+    ? activity.payload.completedAt
+    : activity.createdAt;
 }
 
 function memoryCoherenceInboxItem(slot: MemoryCoherenceDueSlot, now: Date): MemoryCoherenceInboxItem {
