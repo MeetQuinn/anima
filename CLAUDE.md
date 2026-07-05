@@ -166,6 +166,8 @@ Keep design and code simple and direct. Bias toward fewer concepts, fewer files,
 
 Before non-trivial changes, propose the plan in chat (what you'll touch, why, the seams involved) and wait for explicit approval. Then edit. Read-only exploration (grep, read, run tests) doesn't need approval — looking is not acting.
 
+**Exception — spec-driven runs.** When the prompt itself is a written spec (boundary files, invariants, acceptance commands), the spec IS the approved plan: implement it directly, run its acceptance commands, and commit as instructed — do not pause to ask for approval. Stay inside the spec's boundary; if the spec turns out to be wrong or its boundary doesn't hold, stop and report instead of improvising around it. The "Architecture & code quality" section above applies in full: prefer the straightforward implementation, no defensive branches against internal callers, no speculative generality the spec didn't ask for.
+
 ## Repo conventions
 
 - **Imports use `.js` suffixes** in TypeScript source (NodeNext ESM): `import { foo } from './bar.js'` even though the source is `bar.ts`.
