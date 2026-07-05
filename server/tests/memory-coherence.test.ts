@@ -7,6 +7,10 @@ import { join } from 'node:path';
 import type { AgentMessageRecord } from '../../shared/messages.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
 import type { InboxItem, MemoryCoherenceInboxItem } from '../../shared/inbox.js';
+import {
+  DEFAULT_MEMORY_COHERENCE_CONSOLIDATION_THRESHOLD_BYTES,
+  MemoryCoherenceConfig,
+} from '../../shared/server-settings.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import {
@@ -129,16 +133,137 @@ test('memory coherence scheduler uses a stable per-agent offset', () => {
   assert.equal(first >= 0 && first < 120, true);
 });
 
-test('memory coherence prompt uses the self-contained scheduled memory pass copy', () => {
-  const prompt = buildCodeAgentDeliveryPrompt(memoryItem('iris', '2026-06-22T05:47:00.000Z'));
+test('memory coherence config accepts consolidation threshold', () => {
+  assert.equal(
+    MemoryCoherenceConfig.parse({ consolidationThresholdBytes: 2048 }).consolidationThresholdBytes,
+    2048,
+  );
+  assert.throws(() => MemoryCoherenceConfig.parse({ consolidationThresholdBytes: 0 }));
+});
 
-  assert.match(prompt, /^Memory coherence system wake:/);
-  assert.match(prompt, /scheduled=2026-06-22T05:47:00Z slot=05:47 agent-local/);
-  assert.match(prompt, /You are running your scheduled memory pass\./);
-  assert.match(prompt, /Do not churn to look busy\./);
-  assert.doesNotMatch(prompt, /design\/memory-coherence-procedure\.md/);
-  assert.doesNotMatch(prompt, /Memory coherence outcome:/);
-  assert.doesNotMatch(prompt, /End your final response with exactly one status line/);
+test('memory coherence prompt renders exact maintenance copy with memory size', async () => {
+  const homePath = await mkdtemp(join(tmpdir(), 'anima-memory-prompt-test-'));
+  try {
+    await writeFile(join(homePath, 'MEMORY.md'), Buffer.alloc(1536, 'a'));
+
+    const prompt = buildCodeAgentDeliveryPrompt(memoryItem('iris', '2026-06-22T05:47:00.000Z'), {
+      memoryCoherence: {
+        consolidationThresholdBytes: 2048,
+        homePath,
+      },
+    });
+
+    assert.equal(prompt, [
+      'Memory coherence system wake:',
+      '',
+      '[time=2026-06-22T05:47:00Z scheduled=2026-06-22T05:47:00Z slot=05:47 agent-local]',
+      '',
+      'You are running your scheduled memory pass. Your `MEMORY.md` is currently 1.5 KB.',
+      '',
+      'Read `MEMORY.md` as if you had just recovered from a context reset: it is the first thing the recovered you would see. What reads as noise? What open obligation is missing? Which recorded fact no longer matches the world? Fix what you find; if your notes record friction from a real recovery since the last pass, fix those spots first.',
+      '',
+      'If it all reads clean and current, leaving it alone is the right call. Do not churn to look busy.',
+    ].join('\n'));
+    assert.doesNotMatch(prompt, /design\/memory-coherence-procedure\.md/);
+    assert.doesNotMatch(prompt, /Memory coherence outcome:/);
+  } finally {
+    await rm(homePath, { force: true, recursive: true });
+  }
+});
+
+test('memory coherence prompt renders exact consolidation copy above threshold', async () => {
+  const homePath = await mkdtemp(join(tmpdir(), 'anima-memory-prompt-test-'));
+  try {
+    await writeFile(join(homePath, 'MEMORY.md'), Buffer.alloc(2560, 'a'));
+
+    const prompt = buildCodeAgentDeliveryPrompt(memoryItem('iris', '2026-06-22T05:47:00.000Z'), {
+      memoryCoherence: {
+        consolidationThresholdBytes: 2048,
+        homePath,
+      },
+    });
+
+    assert.equal(prompt, [
+      'Memory coherence system wake:',
+      '',
+      '[time=2026-06-22T05:47:00Z scheduled=2026-06-22T05:47:00Z slot=05:47 agent-local]',
+      '',
+      'You are running your scheduled memory pass. Your `MEMORY.md` is currently 2.5 KB, above the 2.0 KB consolidation threshold: this pass is structural consolidation, not routine upkeep.',
+      '',
+      'Read `MEMORY.md` as if you had just recovered from a context reset, and keep a line only if the recovering you needs it to take over correctly; everything else becomes a pointer into your `notes/`. Work in this order: first copy the full current `MEMORY.md` verbatim into a `notes/` archive file, so nothing can be lost. Then restructure: demote closed work to one-line pointers, merge duplicates, correct stale facts, keep open obligations sharp. If your notes record friction from a real recovery, fix those spots first.',
+      '',
+      'Do not delete anything that has not landed in `notes/` first. If the size turns out to be genuinely open work rather than leftovers, trimming little is a legitimate outcome.',
+    ].join('\n'));
+  } finally {
+    await rm(homePath, { force: true, recursive: true });
+  }
+});
+
+test('memory coherence prompt uses the default consolidation threshold', async () => {
+  const homePath = await mkdtemp(join(tmpdir(), 'anima-memory-prompt-test-'));
+  try {
+    await writeFile(
+      join(homePath, 'MEMORY.md'),
+      Buffer.alloc(DEFAULT_MEMORY_COHERENCE_CONSOLIDATION_THRESHOLD_BYTES + 512, 'a'),
+    );
+
+    const prompt = buildCodeAgentDeliveryPrompt(memoryItem('iris', '2026-06-22T05:47:00.000Z'), {
+      memoryCoherence: { homePath },
+    });
+
+    assert.match(
+      prompt,
+      /Your `MEMORY\.md` is currently 16\.5 KB, above the 16\.0 KB consolidation threshold/,
+    );
+  } finally {
+    await rm(homePath, { force: true, recursive: true });
+  }
+});
+
+test('memory coherence prompt treats equal threshold as maintenance', async () => {
+  const homePath = await mkdtemp(join(tmpdir(), 'anima-memory-prompt-test-'));
+  try {
+    await writeFile(join(homePath, 'MEMORY.md'), Buffer.alloc(2048, 'a'));
+
+    const prompt = buildCodeAgentDeliveryPrompt(memoryItem('iris', '2026-06-22T05:47:00.000Z'), {
+      memoryCoherence: {
+        consolidationThresholdBytes: 2048,
+        homePath,
+      },
+    });
+
+    assert.match(prompt, /Your `MEMORY\.md` is currently 2\.0 KB\./);
+    assert.doesNotMatch(prompt, /consolidation threshold/);
+  } finally {
+    await rm(homePath, { force: true, recursive: true });
+  }
+});
+
+test('memory coherence prompt omits size fact when MEMORY.md cannot be read', async () => {
+  const homePath = await mkdtemp(join(tmpdir(), 'anima-memory-prompt-test-'));
+  try {
+    const prompt = buildCodeAgentDeliveryPrompt(memoryItem('iris', '2026-06-22T05:47:00.000Z'), {
+      memoryCoherence: {
+        consolidationThresholdBytes: 2048,
+        homePath,
+      },
+    });
+
+    assert.equal(prompt, [
+      'Memory coherence system wake:',
+      '',
+      '[time=2026-06-22T05:47:00Z scheduled=2026-06-22T05:47:00Z slot=05:47 agent-local]',
+      '',
+      'You are running your scheduled memory pass.',
+      '',
+      'Read `MEMORY.md` as if you had just recovered from a context reset: it is the first thing the recovered you would see. What reads as noise? What open obligation is missing? Which recorded fact no longer matches the world? Fix what you find; if your notes record friction from a real recovery since the last pass, fix those spots first.',
+      '',
+      'If it all reads clean and current, leaving it alone is the right call. Do not churn to look busy.',
+    ].join('\n'));
+    assert.doesNotMatch(prompt, /currently/);
+  } finally {
+    await rm(homePath, { force: true, recursive: true });
+  }
 });
 
 test('memory coherence prompt time= reflects claim time, matching reminder envelopes', () => {
