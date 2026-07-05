@@ -48,6 +48,8 @@ export type ServerTrack = z.infer<typeof ServerTrack>;
 export const WorkspacePlatform = z.enum(['slack', 'feishu']);
 export type WorkspacePlatform = z.infer<typeof WorkspacePlatform>;
 
+export const DEFAULT_MEMORY_COHERENCE_CONSOLIDATION_THRESHOLD_BYTES = 16 * 1024;
+
 export const DashboardAuth = z.object({
   enabled: z.boolean().optional(),
   passwordHash: z.string().min(1).optional(),
@@ -57,6 +59,7 @@ export const DashboardAuth = z.object({
 export type DashboardAuth = z.infer<typeof DashboardAuth>;
 
 export const MemoryCoherenceConfig = z.object({
+  consolidationThresholdBytes: z.number().int().positive().optional(),
   enabled: z.boolean().optional(),
   maxConcurrent: z.number().int().positive().max(100).optional(),
   scopeAgentIds: z.array(z.string().min(1)).optional(),

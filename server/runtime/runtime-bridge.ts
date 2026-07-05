@@ -2,7 +2,6 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolveAnimaHome } from '../anima-home.js';
-import type { InboxItem } from '../inbox/wake-queue.service.js';
 import type { RuntimeItemContext } from './types.js';
 import { reminderServiceForAgent } from '../reminders/reminder.service.js';
 import { FOLLOWUP_NOTE } from './delivery-notes.js';
@@ -16,6 +15,7 @@ import {
   type RuntimeActivityTarget,
 } from './activity.js';
 import { buildCodeAgentDeliveryPrompt, type CodeAgentPromptContext } from './delivery-prompt.js';
+import { defaultServerSettingsService } from '../settings/settings.service.js';
 import {
   runtimeSessionServiceForAgent,
   type ProviderSession,
@@ -46,7 +46,7 @@ export class AgentRuntimeBridge {
     suppressFailureRecord?: boolean;
   }): Promise<AgentRuntimeInput> {
     this.notePrimaryRun(input.context.item.id);
-    const promptContext = await this.promptContext(input.context.item, input.context.agentId);
+    const promptContext = await this.promptContext(input.context);
     const prompt = buildCodeAgentDeliveryPrompt(input.context.item, promptContext);
     return {
       cwd: input.context.homePath,
@@ -67,7 +67,7 @@ export class AgentRuntimeBridge {
     activeContext: RuntimeItemContext;
     context: RuntimeItemContext;
   }): Promise<AgentRuntimeFollowupInput> {
-    const promptContext = await this.promptContext(input.context.item, input.context.agentId);
+    const promptContext = await this.promptContext(input.context);
     const includeFollowupNote = this.shouldIncludeFollowupNote(input.activeContext.item.id);
     return {
       activeItemId: input.activeContext.item.id,
@@ -88,8 +88,19 @@ export class AgentRuntimeBridge {
     return true;
   }
 
-  private async promptContext(event: InboxItem, agentId: string): Promise<CodeAgentPromptContext> {
+  private async promptContext(context: RuntimeItemContext): Promise<CodeAgentPromptContext> {
+    const event = context.item;
+    if (event.kind === 'memory_coherence') {
+      const config = await defaultServerSettingsService.readConfig();
+      return {
+        memoryCoherence: {
+          consolidationThresholdBytes: config.memoryCoherence?.consolidationThresholdBytes,
+          homePath: context.homePath,
+        },
+      };
+    }
     if (event.kind !== 'reminder') return {};
+    const agentId = context.agentId;
     const reminder = await reminderServiceForAgent(agentId).findReminder(event.reminderId);
     if (!reminder) throw new Error(`Reminder context not found: ${event.reminderId}`);
     return { reminder };

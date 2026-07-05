@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import type {
   ChoiceResponseInboxItem,
   FeishuInboxItem,
@@ -10,6 +13,7 @@ import type {
   ReminderInboxItem,
   SlackInboxItem,
 } from '../../shared/inbox.js';
+import { DEFAULT_MEMORY_COHERENCE_CONSOLIDATION_THRESHOLD_BYTES } from '../../shared/server-settings.js';
 import {
   slackSurfaceDisplayRef,
   slackSurfaceForEvent,
@@ -27,6 +31,10 @@ import {
 } from './delivery-notes.js';
 
 export interface CodeAgentPromptContext {
+  memoryCoherence?: {
+    consolidationThresholdBytes?: number;
+    homePath?: string;
+  };
   reminder?: Reminder;
 }
 
@@ -59,7 +67,7 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
     });
   }
   if (event.kind === 'reminder') return buildReminderDeliveryPrompt(event, context);
-  if (event.kind === 'memory_coherence') return buildMemoryCoherenceDeliveryPrompt(event);
+  if (event.kind === 'memory_coherence') return buildMemoryCoherenceDeliveryPrompt(event, context.memoryCoherence);
   if (event.kind === 'choice_response') return buildChoiceResponseDeliveryPrompt(event);
   if (event.kind === 'onboarding') return buildSlackOnboardingDeliveryPrompt(event);
   if (event.kind === 'feishu_onboarding') return buildFeishuOnboardingDeliveryPrompt(event);
@@ -207,21 +215,69 @@ function reminderOriginEnvelope(provenance: NonNullable<Reminder['provenance']>)
   ]);
 }
 
-function buildMemoryCoherenceDeliveryPrompt(event: MemoryCoherenceInboxItem): string {
+function buildMemoryCoherenceDeliveryPrompt(
+  event: MemoryCoherenceInboxItem,
+  context: CodeAgentPromptContext['memoryCoherence'] = {},
+): string {
   const envelope = renderEnvelope([
     { key: 'time', value: envelopeTime(scheduledDeliveryTime(event)) },
     { key: 'scheduled', value: envelopeTime(event.scheduledSlotAt) },
     { key: 'slot', value: event.scheduledSlotLabel },
   ]);
+  const thresholdBytes =
+    context.consolidationThresholdBytes ?? DEFAULT_MEMORY_COHERENCE_CONSOLIDATION_THRESHOLD_BYTES;
+  const sizeBytes = memoryFileSizeBytes(context.homePath);
   return `Memory coherence system wake:
 
 ${envelope}
 
-You are running your scheduled memory pass.
+${memoryCoherenceBody({ sizeBytes, thresholdBytes })}`;
+}
 
-This is your scheduled moment to keep your durable memory in good shape: lean, accurate, and genuinely useful to the future you who will recover from it. Memory drifts over time. Duplication creeps in, facts go stale, detail piles up where a short pointer would do.
+function memoryFileSizeBytes(homePath: string | undefined): number | undefined {
+  if (!homePath) return undefined;
+  try {
+    return readFileSync(join(homePath, 'MEMORY.md')).byteLength;
+  } catch {
+    return undefined;
+  }
+}
 
-Use your judgment. Consolidate what is redundant, fix what is outdated, and move detail that no longer needs to live in \`MEMORY.md\` out to your \`notes/\` (just make sure it lands there before it leaves \`MEMORY.md\`, so nothing is lost). You know your own memory best. If it is already in good shape, leaving it alone is the right call. Do not churn to look busy.`;
+function memoryCoherenceBody(input: {
+  sizeBytes: number | undefined;
+  thresholdBytes: number;
+}): string {
+  if (input.sizeBytes !== undefined && input.sizeBytes > input.thresholdBytes) {
+    return memoryCoherenceConsolidationBody(input.sizeBytes, input.thresholdBytes);
+  }
+  return memoryCoherenceMaintenanceBody(input.sizeBytes);
+}
+
+function memoryCoherenceMaintenanceBody(sizeBytes: number | undefined): string {
+  const opening = sizeBytes === undefined
+    ? 'You are running your scheduled memory pass.'
+    : `You are running your scheduled memory pass. Your \`MEMORY.md\` is currently ${formatMemorySize(sizeBytes)}.`;
+  return [
+    opening,
+    '',
+    'Read `MEMORY.md` as if you had just recovered from a context reset: it is the first thing the recovered you would see. What reads as noise? What open obligation is missing? Which recorded fact no longer matches the world? Fix what you find; if your notes record friction from a real recovery since the last pass, fix those spots first.',
+    '',
+    'If it all reads clean and current, leaving it alone is the right call. Do not churn to look busy.',
+  ].join('\n');
+}
+
+function memoryCoherenceConsolidationBody(sizeBytes: number, thresholdBytes: number): string {
+  return [
+    `You are running your scheduled memory pass. Your \`MEMORY.md\` is currently ${formatMemorySize(sizeBytes)}, above the ${formatMemorySize(thresholdBytes)} consolidation threshold: this pass is structural consolidation, not routine upkeep.`,
+    '',
+    'Read `MEMORY.md` as if you had just recovered from a context reset, and keep a line only if the recovering you needs it to take over correctly; everything else becomes a pointer into your `notes/`. Work in this order: first copy the full current `MEMORY.md` verbatim into a `notes/` archive file, so nothing can be lost. Then restructure: demote closed work to one-line pointers, merge duplicates, correct stale facts, keep open obligations sharp. If your notes record friction from a real recovery, fix those spots first.',
+    '',
+    'Do not delete anything that has not landed in `notes/` first. If the size turns out to be genuinely open work rather than leftovers, trimming little is a legitimate outcome.',
+  ].join('\n');
+}
+
+function formatMemorySize(bytes: number): string {
+  return `${(bytes / 1024).toFixed(1)} KB`;
 }
 
 export function buildRuntimeRestartContinuationDeliveryPrompt(input: {

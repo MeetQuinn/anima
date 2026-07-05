@@ -1,3 +1,10 @@
 {
-  "dashboardPort": 4174
+  "dashboardPort": 4174,
+  "memoryCoherence": {
+    "consolidationThresholdBytes": 16384,
+    "enabled": false,
+    "maxConcurrent": 1,
+    "windowDurationMinutes": 120,
+    "windowStart": "05:00"
+  }
 }
