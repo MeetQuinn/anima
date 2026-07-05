@@ -18,7 +18,9 @@ import {
 
 export const PROVIDER_IDLE_TIMEOUT_MS_DEFAULT = 30 * 60 * 1000;
 export const PROVIDER_CHILD_IDLE_TIMEOUT_MS_DEFAULT = 10 * 60 * 1000;
-export const ClaudeCodeTransport = z.enum(['stream-json', 'tmux']);
+// 'tmux' was removed 2026-07 (unused; git history has the transport if ever needed).
+// Keeping the enum keeps stale configs failing loudly with a clear message.
+export const ClaudeCodeTransport = z.enum(['stream-json']);
 export type ClaudeCodeTransport = z.infer<typeof ClaudeCodeTransport>;
 export const ANIMA_MANAGED_PROVIDER_ENV_KEYS = [
   'ANIMA_AGENT_ID',

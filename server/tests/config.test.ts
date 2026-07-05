@@ -326,7 +326,7 @@ test('claude-code provider transport defaults to stream-json', async () => {
   }
 });
 
-test('claude-code provider transport patch archives the current provider session', async () => {
+test('removed tmux transport is rejected and leaves the provider session untouched', async () => {
   const configDir = await mkdtemp(join(tmpdir(), 'anima-config-claude-transport-switch-test-'));
   try {
     await writeConfig(configDir, [
@@ -351,16 +351,24 @@ test('claude-code provider transport patch archives the current provider session
         updatedAt: '2026-05-26T00:01:00.000Z',
       });
 
-      const agent = await agentService('anima').updateProvider({ transport: 'tmux' });
+      // 'tmux' was removed from ClaudeCodeTransport; stale configs must fail loudly,
+      // naming the offending field and the value it expected.
+      await assert.rejects(
+        agentService('anima').updateProvider({ transport: 'tmux' as never }),
+        (error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          return message.includes('"transport"') && message.includes('stream-json');
+        },
+      );
+
+      const agent = await agentService('anima').getConfig();
       assert.equal(agent.provider.kind, 'claude-code');
-      assert.equal(agent.provider.transport, 'tmux');
+      assert.equal(agent.provider.transport, 'stream-json');
 
       const session = await new SessionStore('anima').read();
       assert.ok(session);
-      assert.equal(session.current, undefined);
-      assert.equal(session.archived?.[0]?.kind, 'claude-code');
-      assert.equal(session.archived?.[0]?.id, 'claude-session-1');
-      assert.match(session.archived?.[0]?.note ?? '', /Claude Code transport switched from stream-json to tmux/);
+      assert.equal(session.current?.id, 'claude-session-1');
+      assert.equal(session.archived, undefined);
     });
   } finally {
     await rm(configDir, { force: true, recursive: true });
@@ -594,9 +602,9 @@ test('agent provider patch rejects invalid kind/model/effort combinations', asyn
       );
       await assert.rejects(
         agentService('anima').updateProvider({
-          transport: 'tmux',
+          transport: 'stream-json',
         }),
-        /unsupported transport for codex-cli: tmux/,
+        /unsupported transport for codex-cli: stream-json/,
       );
       const agent = await agentService('anima').getConfig();
       assert.equal(agent.provider.kind, 'codex-cli');

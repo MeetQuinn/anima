@@ -209,16 +209,12 @@ Activity mapping:
 
 Implementation: `server/providers/claude.ts`.
 
-Claude Code has two transports. The default is stream-json over stdio, described below. Setting
-`transport: "tmux"` on the agent's provider config selects `ClaudeCodeTmuxAgentRuntime`
-(`server/providers/claude-tmux.ts`) instead, which drives an interactive `claude` session inside a
-tmux pane and polls it for turn completion. The tmux transport is mainly for operators who want an
-inspectable terminal that can survive an Anima runtime restart; use stream-json unless you need
-that terminal-shaped behavior. Both transports share the launch pieces in
+Claude Code uses the stream-json transport over stdio. (A tmux transport existed until 2026-07;
+it was removed as unused — git history has it if ever needed.) The launch pieces live in
 `server/providers/claude-launch.ts`: the common CLI flags, the provider env defaults, and the
 system-prompt file written from `systemPromptFilePath`.
 
-Current process model (stream-json):
+Current process model:
 
 - Anima starts one persistent `claude` process for the runtime worker.
 - It uses stream-json input/output over stdio.
