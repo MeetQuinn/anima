@@ -1,4 +1,5 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { sleep, waitFor, withTimeout } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -1033,7 +1034,7 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
     await waitFor(async () => {
       const state = JSON.parse(await readFile(tmuxStatePath, 'utf8')) as { sends?: number };
       return state.sends === 1;
-    }, 5_000);
+    }, { timeoutMs: 5_000 });
 
     const followupCtx = await ingestEvent(
       makeSlackEvent({
@@ -1149,7 +1150,7 @@ test('claude-code tmux transport reuses a session and accepts steering follow-up
     await waitFor(async () => {
       const currentState = JSON.parse(await readFile(tmuxStatePath, 'utf8')) as { prompts?: string[] };
       return currentState.prompts?.some((prompt) => prompt.includes('Post a daily stand-up to #team.')) === true;
-    }, 5_000);
+    }, { timeoutMs: 5_000 });
 
     const reminderFollowupCtx = await ingestEvent(
       makeReminderInboxItem({
@@ -1305,7 +1306,7 @@ test('claude-code tmux transport memoizes liveness and health does not spawn', a
     await runtime.run(await runtimeInput(runtime, thirdCtx, await loadState()));
     assert.equal(await countTmuxCalls(callsPath, 'has-session'), afterFreshCheck);
 
-    await sleepForTest(3_100);
+    await sleep(3_100);
     const fourthCtx = await ingestEvent(
       makeSlackEvent({
         channelId: 'D-anima',
@@ -1323,7 +1324,7 @@ test('claude-code tmux transport memoizes liveness and health does not spawn', a
     killedState.sessions = {};
     await writeFile(tmuxStatePath, `${JSON.stringify(killedState, null, 2)}\n`, 'utf8');
     const beforeHealthRefresh = await countTmuxCalls(callsPath, 'has-session');
-    await sleepForTest(3_100);
+    await sleep(3_100);
     assert.equal(runtime.health?.().child?.alive, true);
     await waitFor(async () =>
       await countTmuxCalls(callsPath, 'has-session') === beforeHealthRefresh + 1,
@@ -2318,7 +2319,7 @@ test('kimi-cli closed stdin startup failure stays on provider promise', async ()
         runtime.run(await runtimeInput(runtime, ctx, await loadState())),
         /Kimi ACP runtime (exited|stdin is closed)/,
       );
-      await tick();
+      await sleep(0);
       assert.deepEqual(unhandledRejections, []);
     });
   } finally {
@@ -2327,14 +2328,6 @@ test('kimi-cli closed stdin startup failure stays on provider promise', async ()
     await rm(stateDir, { force: true, recursive: true });
   }
 });
-
-async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 1000): Promise<void> {
-  const startedAt = Date.now();
-  while (!(await waitForPredicate(predicate))) {
-    if (Date.now() - startedAt > timeoutMs) throw new Error('Timed out waiting for condition');
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
 
 async function providerSessionStartedPayload(turnId: string): Promise<Record<string, unknown> | undefined> {
   const payload = (await activitiesForInboxItemWindow('anima', turnId)).find((activity) => activity.type === 'runtime.started')
@@ -2358,34 +2351,4 @@ async function countTmuxCalls(path: string, command: string): Promise<number> {
       const parsed = JSON.parse(line) as { args?: string[] };
       return parsed.args?.[0] === command;
     }).length;
-}
-
-function sleepForTest(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForPredicate(predicate: () => boolean | Promise<boolean>): Promise<boolean> {
-  try {
-    return await predicate();
-  } catch {
-    return false;
-  }
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  let timeout: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
-}
-
-function tick(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve));
 }

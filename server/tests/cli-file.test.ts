@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { writeSlackAgentConfig } from './helpers/harness.js';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -74,7 +75,7 @@ test('file send uploads a local file and records an audited Slack output', async
 
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeSlackConfig(stateDir);
+      await writeSlackAgentConfig(stateDir);
       const itemId = await ingestSlackThread(stateDir);
 
       const localPath = join(stateDir, 'screenshot.png');
@@ -170,7 +171,7 @@ test('file send supports multi-file batch with caption and thread', async () => 
 
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeSlackConfig(stateDir);
+      await writeSlackAgentConfig(stateDir);
       const itemId = await ingestSlackThread(stateDir);
 
       const a = join(stateDir, 'a.png');
@@ -255,7 +256,7 @@ test('file send accepts caption from stdin when --caption is not passed', async 
 
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeSlackConfig(stateDir);
+      await writeSlackAgentConfig(stateDir);
       const itemId = await ingestSlackThread(stateDir);
 
       const localPath = join(stateDir, 'evidence.png');
@@ -330,7 +331,7 @@ test('file send records external.effect.failed when Slack rejects completeUpload
 
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeSlackConfig(stateDir);
+      await writeSlackAgentConfig(stateDir);
       const itemId = await ingestSlackThread(stateDir);
 
       const localPath = join(stateDir, 'doomed.png');
@@ -407,7 +408,7 @@ test('file send records audit without an active item', async () => {
   });
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeSlackConfig(stateDir);
+      await writeSlackAgentConfig(stateDir);
       const localPath = join(stateDir, 'never.png');
       await writeFile(localPath, Buffer.from('x'));
       const send = await runNode(
@@ -468,7 +469,7 @@ test('file fetch supports --file-id/--output and positional output aliases', asy
 
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeSlackConfig(stateDir);
+      await writeSlackAgentConfig(stateDir);
       const env = {
         ...process.env,
         ANIMA_AGENT_ID: 'scout',
@@ -521,7 +522,7 @@ test('file send rejects missing local path before any Slack call', async () => {
   });
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeSlackConfig(stateDir);
+      await writeSlackAgentConfig(stateDir);
       const itemId = await ingestSlackThread(stateDir);
 
       const send = await runNode(
@@ -545,25 +546,6 @@ test('file send rejects missing local path before any Slack call', async () => {
     await rm(stateDir, { force: true, recursive: true });
   }
 });
-
-async function writeSlackConfig(
-  configDir: string,
-  slack: { appToken?: string; botToken?: string; teamId?: string } = {},
-): Promise<void> {
-  await mkdir(configDir, { recursive: true });
-  const agent = {
-    id: 'scout',
-    slack: {
-      appToken: slack.appToken ?? 'xapp-test',
-      botToken: slack.botToken ?? 'xoxb-test',
-      teamId: slack.teamId ?? 'T-demo',
-    },
-  };
-  const agentDir = join(configDir, 'agents', agent.id);
-  await mkdir(agentDir, { recursive: true });
-  await writeFile(join(configDir, 'config.json'), `${JSON.stringify({}, null, 2)}\n`, 'utf8');
-  await writeFile(join(agentDir, 'config.json'), `${JSON.stringify(agent, null, 2)}\n`, 'utf8');
-}
 
 async function ingestSlackThread(stateDir: string): Promise<string> {
   return withAnimaHome(stateDir, async () => {
