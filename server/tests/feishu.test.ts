@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { waitFor, writeFeishuAgentConfig } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -736,7 +737,7 @@ test('Feishu transport stamps accepted wake reason before queueing', async () =>
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-wake-reason-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir, { botProfileSyncedAt: '2099-01-01T00:00:00.000Z' });
+      await writeFeishuAgentConfig(stateDir, { botProfileSyncedAt: '2099-01-01T00:00:00.000Z' });
       const queue = new WakeQueueService('scout');
       const transport = new FeishuMessageTransport(
         {
@@ -766,7 +767,7 @@ test('Feishu transport records an activity trace when an attention suggestion at
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-attention-trace-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir, { botProfileSyncedAt: '2099-01-01T00:00:00.000Z' });
+      await writeFeishuAgentConfig(stateDir, { botProfileSyncedAt: '2099-01-01T00:00:00.000Z' });
       const queue = new WakeQueueService('scout');
       const transport = new FeishuMessageTransport(
         {
@@ -815,7 +816,7 @@ test('Feishu delivery prompt includes resolved quoted message content', async ()
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-quoted-message-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir, { botProfileSyncedAt: '2099-01-01T00:00:00.000Z' });
+      await writeFeishuAgentConfig(stateDir, { botProfileSyncedAt: '2099-01-01T00:00:00.000Z' });
       const queue = new WakeQueueService('scout');
       const reads: string[] = [];
       const transport = new FeishuMessageTransport(
@@ -885,7 +886,7 @@ test('Feishu quoted message lookup failure does not drop delivery', async () => 
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-quoted-message-failure-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir, { botProfileSyncedAt: '2099-01-01T00:00:00.000Z' });
+      await writeFeishuAgentConfig(stateDir, { botProfileSyncedAt: '2099-01-01T00:00:00.000Z' });
       const queue = new WakeQueueService('scout');
       const transport = new FeishuMessageTransport(
         {
@@ -930,7 +931,7 @@ test('Feishu transport decides before API enrichment and reuses one message clie
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-decide-before-enrich-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir, {
+      await writeFeishuAgentConfig(stateDir, {
         botOpenId: 'ou_anima_bot',
         botProfileSyncedAt: '2099-01-01T00:00:00.000Z',
       });
@@ -1258,7 +1259,7 @@ test('manual Feishu credentials path clears registerApp owner greeting metadata'
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-manual-connect-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir, {
+      await writeFeishuAgentConfig(stateDir, {
         ownerGreetingChatId: 'oc_owner_dm',
         ownerGreetingDeliveredAt: '2026-01-01T00:00:00.000Z',
         ownerGreetingMessageId: 'om_owner_hello',
@@ -1301,7 +1302,7 @@ test('manual Feishu credentials supersede an active registerApp session', async 
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-manual-supersede-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir);
+      await writeFeishuAgentConfig(stateDir);
 
       let resolveRegister: ((result: { appId: string; appSecret: string; userOpenId: string }) => void) | undefined;
       const registerPromise = new Promise<{ appId: string; appSecret: string; userOpenId: string }>((resolve) => {
@@ -1367,7 +1368,7 @@ test('Feishu display-info sync refreshes once then throttles within the TTL', as
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-sync-throttle-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir);
+      await writeFeishuAgentConfig(stateDir);
 
       let calls = 0;
       const service = new AgentFeishuService('scout', {
@@ -2187,7 +2188,7 @@ test('Feishu service reports missing recommended scopes with authorization link'
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-scope-status-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir);
+      await writeFeishuAgentConfig(stateDir);
       const service = new AgentFeishuService('scout', {
         async getFeishuAppScopes() {
           return [{
@@ -2278,7 +2279,7 @@ test('Feishu service keeps profile-name compatibility while recommended scopes a
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-scope-granted-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir);
+      await writeFeishuAgentConfig(stateDir);
       const service = new AgentFeishuService('scout', {
         async getFeishuAppScopes() {
           return [{
@@ -2315,7 +2316,7 @@ test('Feishu service reports granted recommended scopes', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-recommended-scopes-granted-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir);
+      await writeFeishuAgentConfig(stateDir);
       const service = new AgentFeishuService('scout', {
         async getFeishuAppScopes() {
           return FEISHU_RECOMMENDED_SCOPE_NAMES.map((scopeName) => ({
@@ -2425,7 +2426,7 @@ test('message read can fetch Feishu chat history explicitly', async () => {
   const originalLog = console.log;
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir);
+      await writeFeishuAgentConfig(stateDir);
       console.log = (...args: unknown[]) => {
         logLines.push(args.map(String).join(' '));
       };
@@ -2556,7 +2557,7 @@ test('message read can fetch Feishu topic history explicitly', async () => {
   const originalLog = console.log;
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir);
+      await writeFeishuAgentConfig(stateDir);
       console.log = (...args: unknown[]) => {
         logLines.push(args.map(String).join(' '));
       };
@@ -2656,7 +2657,7 @@ test('message send can target a Feishu chat explicitly', async () => {
   const sent: FeishuPostSendInput[] = [];
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir);
+      await writeFeishuAgentConfig(stateDir);
       await runMessageSend(
         { agent: 'scout', channel: 'oc_target_chat', text: 'hello <mention open_id="ou_alice">Alice</mention>' },
         {
@@ -2716,7 +2717,7 @@ test('message send to explicit Feishu chat does not inherit active DM labels', a
   const previousItemId = process.env.ANIMA_INBOX_ITEM_ID;
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir);
+      await writeFeishuAgentConfig(stateDir);
       const now = '2026-06-02T14:20:00.000Z';
       await new WakeQueueService('scout').enqueue({
         chatId: 'oc_dm_chat',
@@ -2768,7 +2769,7 @@ test('message update can edit a Feishu message explicitly', async () => {
   const originalLog = console.log;
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir);
+      await writeFeishuAgentConfig(stateDir);
       console.log = (...args: unknown[]) => {
         logLines.push(args.map(String).join(' '));
       };
@@ -2857,7 +2858,7 @@ test('message send can target a Feishu owner open_id and record greeting deliver
   const previousItemId = process.env.ANIMA_INBOX_ITEM_ID;
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir, {
+      await writeFeishuAgentConfig(stateDir, {
         ownerGreetingPromptedAt: '2026-01-01T00:00:00.000Z',
         ownerOpenId: 'ou_owner',
       });
@@ -2942,7 +2943,7 @@ test('message send can target a Feishu topic explicitly', async () => {
   const replies: Array<{ messageId: string; replyInThread: boolean }> = [];
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir);
+      await writeFeishuAgentConfig(stateDir);
       await runMessageSend(
         { agent: 'scout', channel: 'oc_target_chat', text: 'topic message', threadTs: 'om_topic_root' },
         {
@@ -3000,7 +3001,7 @@ test('message react can add a Feishu reaction by message id', async () => {
   const originalLog = console.log;
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir);
+      await writeFeishuAgentConfig(stateDir);
       console.log = (...args: unknown[]) => {
         logLines.push(args.map(String).join(' '));
       };
@@ -3083,7 +3084,7 @@ test('message react can remove a Feishu reaction with a reaction id', async () =
   const originalLog = console.log;
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir);
+      await writeFeishuAgentConfig(stateDir);
       console.log = (...args: unknown[]) => {
         logLines.push(args.map(String).join(' '));
       };
@@ -3150,7 +3151,7 @@ test('message react remove requires reaction id for Feishu messages', async () =
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-reaction-validation-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir);
+      await writeFeishuAgentConfig(stateDir);
       await assert.rejects(
         () => runMessageReact({
           agent: 'scout',
@@ -3326,7 +3327,7 @@ test('file send can upload to a Feishu chat explicitly', async () => {
   const originalLog = console.log;
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir);
+      await writeFeishuAgentConfig(stateDir);
       const localPath = join(stateDir, 'evidence.png');
       await writeFile(localPath, Buffer.from('fake-png-bytes'));
 
@@ -3499,7 +3500,7 @@ test('message read emits Feishu file resource ids for fetch', async () => {
   const originalLog = console.log;
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir);
+      await writeFeishuAgentConfig(stateDir);
       console.log = (...args: unknown[]) => {
         logLines.push(args.map(String).join(' '));
       };
@@ -3587,7 +3588,7 @@ test('file fetch can download a Feishu message resource id', async () => {
   const originalLog = console.log;
   try {
     await withAnimaHome(stateDir, async () => {
-      await writeFeishuConfig(stateDir);
+      await writeFeishuAgentConfig(stateDir);
       console.log = (...args: unknown[]) => {
         logLines.push(args.map(String).join(' '));
       };
@@ -3668,28 +3669,6 @@ test('file fetch can download a Feishu message resource id', async () => {
   }
 });
 
-async function writeFeishuConfig(configDir: string, feishu: Partial<FeishuConfig> = {}): Promise<void> {
-  const agentDir = join(configDir, 'agents', 'scout');
-  const homePath = join(configDir, 'home');
-  await mkdir(agentDir, { recursive: true });
-  await mkdir(homePath, { recursive: true });
-  await writeFile(join(configDir, 'config.json'), `${JSON.stringify({}, null, 2)}\n`, 'utf8');
-  await writeFile(
-    join(agentDir, 'config.json'),
-    `${JSON.stringify({
-      feishu: {
-        appId: 'cli_test',
-        appSecret: 'secret',
-        ...feishu,
-      },
-      homePath,
-      id: 'scout',
-      provider: { kind: 'codex-cli', model: 'gpt-5.5' },
-    }, null, 2)}\n`,
-    'utf8',
-  );
-}
-
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -3699,12 +3678,14 @@ async function waitForRegistration(
   registrationId: string,
   state: 'connected' | 'failed',
 ) {
-  const deadline = Date.now() + 2_000;
   let last = await service.registrationStatus(registrationId);
-  while (Date.now() < deadline) {
+  await waitFor(async () => {
     last = await service.registrationStatus(registrationId);
-    if (last.state === state) return last;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error(`Timed out waiting for registration ${registrationId} to reach ${state}; last state ${last.state}`);
+    return last.state === state;
+  }, {
+    description: `registration ${registrationId} to reach ${state}; last state ${last.state}`,
+    intervalMs: 20,
+    timeoutMs: 2_000,
+  });
+  return last;
 }

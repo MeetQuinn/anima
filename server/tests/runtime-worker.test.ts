@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { waitFor } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -864,7 +865,7 @@ test('runtime worker records pending when follow-up append is rejected', async (
     assert.equal(second.queued, true);
     await waitFor(() => runtime.followups.length === 1);
     await waitForInboxItemStatus('scout', second.ctx.item.id, 'queued');
-    await waitForAsync(async () => allActivities(await loadState()).some((activity) => activity.type === 'runtime.pending'));
+    await waitFor(async () => allActivities(await loadState()).some((activity) => activity.type === 'runtime.pending'));
     const pending = allActivities(await loadState()).find((activity) => activity.type === 'runtime.pending');
     assert.equal(pending?.payload?.['reason'], 'followup_rejected');
 
@@ -1523,41 +1524,19 @@ class RejectingFollowupRuntime extends ControlledRuntime {
   }
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
-  const startedAt = Date.now();
-  while (!predicate()) {
-    if (Date.now() - startedAt > timeoutMs) {
-      throw new Error('Timed out waiting for condition');
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
-
-async function waitForAsync(predicate: () => Promise<boolean>, timeoutMs = 1000): Promise<void> {
-  const startedAt = Date.now();
-  while (!(await predicate())) {
-    if (Date.now() - startedAt > timeoutMs) {
-      throw new Error('Timed out waiting for condition');
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
-
 async function waitForInboxItemStatus(
   agentId: string,
   itemId: string,
   status: InboxItemStatus,
   timeoutMs = 1000,
 ): Promise<void> {
-  const startedAt = Date.now();
-  while (true) {
+  await waitFor(async () => {
     const item = (await queueFor(agentId).list()).find((candidate) => candidate.id === itemId);
-    if (item?.handling.status === status) return;
-    if (Date.now() - startedAt > timeoutMs) {
-      throw new Error(`Timed out waiting for item ${itemId} to reach ${status}; current status is ${item?.handling.status ?? 'missing'}`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
+    return item?.handling.status === status;
+  }, {
+    description: `item ${itemId} to reach ${status}`,
+    timeoutMs,
+  });
 }
 
 async function waitForInboxItemRemoved(
@@ -1565,15 +1544,13 @@ async function waitForInboxItemRemoved(
   itemId: string,
   timeoutMs = 1000,
 ): Promise<void> {
-  const startedAt = Date.now();
-  while (true) {
+  await waitFor(async () => {
     const item = await queueFor(agentId).find(itemId);
-    if (!item) return;
-    if (Date.now() - startedAt > timeoutMs) {
-      throw new Error(`Timed out waiting for item ${itemId} to be removed; current status is ${item.handling.status}`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
+    return !item;
+  }, {
+    description: `item ${itemId} to be removed`,
+    timeoutMs,
+  });
 }
 
 async function waitForInboxItemAppendedTo(
@@ -1582,17 +1559,13 @@ async function waitForInboxItemAppendedTo(
   parentItemId: string,
   timeoutMs = 1000,
 ): Promise<void> {
-  const startedAt = Date.now();
-  while (true) {
+  await waitFor(async () => {
     const item = await queueFor(agentId).find(itemId);
-    if (item?.handling.status === 'running' && item.handling.appendedToItemId === parentItemId) return;
-    if (Date.now() - startedAt > timeoutMs) {
-      throw new Error(
-        `Timed out waiting for item ${itemId} to append to ${parentItemId}; current status is ${item?.handling.status ?? 'missing'}, appendedToItemId=${item?.handling.appendedToItemId ?? 'missing'}`,
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
+    return item?.handling.status === 'running' && item.handling.appendedToItemId === parentItemId;
+  }, {
+    description: `item ${itemId} to append to ${parentItemId}`,
+    timeoutMs,
+  });
 }
 
 async function seedReminder(agentId: string, reminderId: string, timestamp: string): Promise<void> {

@@ -1,5 +1,6 @@
 import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { defaultAgentConfig, writeAgentConfigs } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -32,7 +33,7 @@ const agentService = (agentId: string) => defaultAgentRegistryService.serviceFor
 test('web snapshot summarizes state without exposing secrets', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-test-'));
   try {
-    await writeConfig(stateDir);
+    await writeAgentConfigs(stateDir);
     await withAnimaHome(stateDir, async () => {
       const ctx = await ingestEvent(
         makeSlackEvent({
@@ -123,7 +124,7 @@ test('web snapshot summarizes state without exposing secrets', async () => {
 test('activity feed pages activity events without wake queue items', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-activity-feed-page-test-'));
   try {
-    await writeConfig(stateDir);
+    await writeAgentConfigs(stateDir);
     await withAnimaHome(stateDir, async () => {
       await ingestEvent(
         makeSlackEvent({
@@ -169,7 +170,7 @@ test('activity feed pages activity events without wake queue items', async () =>
 test('activity feed cursor pagination matches readAll reference across archives', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-activity-feed-archive-page-test-'));
   try {
-    await writeConfig(stateDir);
+    await writeAgentConfigs(stateDir);
     await withAnimaHome(stateDir, async () => {
       const agentDir = join(stateDir, 'agents/anima');
       const archiveDir = join(agentDir, 'activity.archive');
@@ -206,7 +207,7 @@ test('activity feed cursor pagination matches readAll reference across archives'
 test('web snapshot includes Claude auto-compact threshold with provider stats', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-claude-stats-test-'));
   try {
-    await writeConfig(stateDir, [
+    await writeAgentConfigs(stateDir, [
       {
         ...defaultAgentConfig('iris'),
         provider: {
@@ -277,7 +278,7 @@ test('web snapshot includes Claude auto-compact threshold with provider stats', 
 test('web snapshot includes Kimi context-window occupancy', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-kimi-stats-test-'));
   try {
-    await writeConfig(stateDir, [
+    await writeAgentConfigs(stateDir, [
       {
         ...defaultAgentConfig('kimi'),
         provider: {
@@ -328,7 +329,7 @@ test('web snapshot includes Kimi context-window occupancy', async () => {
 test('web snapshot exposes persisted lifetime token usage', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-lifetime-usage-test-'));
   try {
-    await writeConfig(stateDir);
+    await writeAgentConfigs(stateDir);
     await withAnimaHome(stateDir, async () => {
       const ctx = await ingestEvent(
         makeSlackEvent({
@@ -369,7 +370,7 @@ test('web snapshot exposes persisted lifetime token usage', async () => {
 test('web snapshot scopes current-session metrics to the latest rotation boundary', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-current-session-test-'));
   try {
-    await writeConfig(stateDir);
+    await writeAgentConfigs(stateDir);
     await withAnimaHome(stateDir, async () => {
       const before = await ingestEvent(
         makeSlackEvent({
@@ -510,7 +511,7 @@ test('lifetime token delta uses one terminal stats activity per item', () => {
 test('web snapshot includes active wake queue statuses', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-status-test-'));
   try {
-    await writeConfig(stateDir, [
+    await writeAgentConfigs(stateDir, [
       defaultAgentConfig('anima'),
       defaultAgentConfig('milo'),
     ]);
@@ -610,7 +611,7 @@ test('web snapshot includes active wake queue statuses', async () => {
 test('web status marks a running item unhealthy when no live worker identity matches', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-stale-worker-test-'));
   try {
-    await writeConfig(stateDir, [
+    await writeAgentConfigs(stateDir, [
       defaultAgentConfig('milo'),
     ]);
     await withAnimaHome(stateDir, async () => {
@@ -673,7 +674,7 @@ test('web status marks a running item unhealthy when no live worker identity mat
 test('web status does not flash stale health for a freshly claimed running item before health publish catches up', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-fresh-running-health-test-'));
   try {
-    await writeConfig(stateDir, [
+    await writeAgentConfigs(stateDir, [
       defaultAgentConfig('milo'),
     ]);
     await withAnimaHome(stateDir, async () => {
@@ -736,7 +737,7 @@ test('web status does not flash stale health for a freshly claimed running item 
 test('web status does not carry stale failed restart onto healthy agents', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-stale-restart-test-'));
   try {
-    await writeConfig(stateDir, [
+    await writeAgentConfigs(stateDir, [
       defaultAgentConfig('milo'),
     ]);
     await withAnimaHome(stateDir, async () => {
@@ -794,7 +795,7 @@ test('web status does not carry stale failed restart onto healthy agents', async
 test('web status surfaces provider failure health reasons', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-provider-health-test-'));
   try {
-    await writeConfig(stateDir, [
+    await writeAgentConfigs(stateDir, [
       defaultAgentConfig('milo'),
     ]);
     await withAnimaHome(stateDir, async () => {
@@ -834,7 +835,7 @@ test('web status surfaces provider failure health reasons', async () => {
 test('agent diagnostics endpoint returns allowlisted support state without secrets or message bodies', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-diagnostics-test-'));
   try {
-    await writeConfig(stateDir, [
+    await writeAgentConfigs(stateDir, [
       {
         ...defaultAgentConfig('anima'),
         profile: {
@@ -975,7 +976,7 @@ test('agent diagnostics endpoint returns allowlisted support state without secre
 
 test('web API stop endpoint writes stopRequestedAt onto the item record', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-stop-test-'));
-  await writeConfig(stateDir);
+  await writeAgentConfigs(stateDir);
   await withAnimaHome(stateDir, async () => {
     const server = await createWebServer();
     try {
@@ -1023,7 +1024,7 @@ test('web API stop endpoint writes stopRequestedAt onto the item record', async 
 
 test('web API blocks disabling a running agent and disables idle agents immediately', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-disable-running-test-'));
-  await writeConfig(stateDir);
+  await writeAgentConfigs(stateDir);
   await withAnimaHome(stateDir, async () => {
     const server = await createWebServer();
     try {
@@ -1071,7 +1072,7 @@ test('web API blocks disabling a running agent and disables idle agents immediat
 
 test('web API restart endpoint writes an operator restart command', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-restart-test-'));
-  await writeConfig(stateDir);
+  await writeAgentConfigs(stateDir);
   await withAnimaHome(stateDir, async () => {
     const server = await createWebServer();
     try {
@@ -1103,7 +1104,7 @@ test('web API restart endpoint writes an operator restart command', async () => 
 
 test('web API restart endpoint rejects disabled agents', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-restart-disabled-test-'));
-  await writeConfig(stateDir, [{ ...defaultAgentConfig('anima'), enabled: false }]);
+  await writeAgentConfigs(stateDir, [{ ...defaultAgentConfig('anima'), enabled: false }]);
   await withAnimaHome(stateDir, async () => {
     const server = await createWebServer();
     try {
@@ -1128,7 +1129,7 @@ test('web API restart endpoint rejects disabled agents', async () => {
 
 test('web API rotates the current provider session and records activity', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-rotate-test-'));
-  await writeConfig(stateDir);
+  await writeAgentConfigs(stateDir);
   await withAnimaHome(stateDir, async () => {
     const ctx = await ingestEvent(
       makeSlackEvent({
@@ -1216,7 +1217,7 @@ test('web API rotates the current provider session and records activity', async 
 
 test('web API rotate fails closed when no provider session exists', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-rotate-empty-test-'));
-  await writeConfig(stateDir);
+  await writeAgentConfigs(stateDir);
   await withAnimaHome(stateDir, async () => {
     await ingestEvent(
       makeSlackEvent({
@@ -1249,7 +1250,7 @@ test('web API rotate fails closed when no provider session exists', async () => 
 
 test('web API serves the web app and agents API', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-server-test-'));
-  await writeConfig(stateDir);
+  await writeAgentConfigs(stateDir);
   await withAnimaHome(stateDir, async () => {
     const server = await createWebServer();
     try {
@@ -1326,7 +1327,7 @@ test('web API mutates agent configs with redacted responses', async () => {
   const previousSlackApiUrl = process.env.ANIMA_SLACK_API_URL;
   process.env.ANIMA_SLACK_API_URL = slackApi.url;
   try {
-    await writeConfig(stateDir);
+    await writeAgentConfigs(stateDir);
     await withAnimaHome(stateDir, async () => {
       const server = await createWebServer();
       try {
@@ -1594,7 +1595,7 @@ test('web API validates Slack tokens with structured reasons before persisting',
   const previousSlackApiUrl = process.env.ANIMA_SLACK_API_URL;
   process.env.ANIMA_SLACK_API_URL = slackApi.url;
   try {
-    await writeConfig(stateDir, [
+    await writeAgentConfigs(stateDir, [
       {
         ...defaultAgentConfig('anima'),
         slack: { appToken: '', botToken: '' },
@@ -1713,7 +1714,7 @@ test('web API exposes Slack manifest update flow and bumps version after scoped 
   const previousSlackApiUrl = process.env.ANIMA_SLACK_API_URL;
   process.env.ANIMA_SLACK_API_URL = slackApi.url;
   try {
-    await writeConfig(stateDir, [
+    await writeAgentConfigs(stateDir, [
       {
         ...defaultAgentConfig('anima'),
         slack: { appId: 'ADEMO123', appToken: 'xapp-1-ADEMO123-valid', botToken: 'xoxb-old', teamId: 'TDEMO123' },
@@ -1806,7 +1807,7 @@ test('web API sets Slack owner and queues onboarding wake-up', async () => {
   const previousSlackApiUrl = process.env.ANIMA_SLACK_API_URL;
   process.env.ANIMA_SLACK_API_URL = slackApi.url;
   try {
-    await writeConfig(stateDir, [{ ...defaultAgentConfig('anima'), homePath: homeDir }]);
+    await writeAgentConfigs(stateDir, [{ ...defaultAgentConfig('anima'), homePath: homeDir }]);
     await withAnimaHome(stateDir, async () => {
       const server = await createWebServer();
       try {
@@ -1891,7 +1892,7 @@ test('web API setOwner with openerNote threads it into kickoff text', async () =
   const previousSlackApiUrl = process.env.ANIMA_SLACK_API_URL;
   process.env.ANIMA_SLACK_API_URL = slackApi.url;
   try {
-    await writeConfig(stateDir, [{ ...defaultAgentConfig('anima'), homePath: homeDir }]);
+    await writeAgentConfigs(stateDir, [{ ...defaultAgentConfig('anima'), homePath: homeDir }]);
     await withAnimaHome(stateDir, async () => {
       const server = await createWebServer();
       try {
@@ -1976,7 +1977,7 @@ test('web API setOwner with introduce:false persists owner without enqueueing on
   const previousSlackApiUrl = process.env.ANIMA_SLACK_API_URL;
   process.env.ANIMA_SLACK_API_URL = slackApi.url;
   try {
-    await writeConfig(stateDir, [{ ...defaultAgentConfig('anima'), homePath: homeDir }]);
+    await writeAgentConfigs(stateDir, [{ ...defaultAgentConfig('anima'), homePath: homeDir }]);
     await withAnimaHome(stateDir, async () => {
       const server = await createWebServer();
       try {
@@ -2036,7 +2037,7 @@ test('web API syncs Slack avatar metadata and exposes app id without secrets', a
   const previousSlackApiUrl = process.env.ANIMA_SLACK_API_URL;
   process.env.ANIMA_SLACK_API_URL = slackApi.url;
   try {
-    await writeConfig(stateDir, [
+    await writeAgentConfigs(stateDir, [
       {
         ...defaultAgentConfig('anima'),
         slack: { appToken: 'xapp-1-ADEMO123-secret', botToken: 'xoxb-secret-value' },
@@ -2142,7 +2143,7 @@ test('syncDisplayInfoIfStale refreshes once then throttles within the TTL', asyn
   const previousSlackApiUrl = process.env.ANIMA_SLACK_API_URL;
   process.env.ANIMA_SLACK_API_URL = slackApi.url;
   try {
-    await writeConfig(stateDir, [
+    await writeAgentConfigs(stateDir, [
       {
         ...defaultAgentConfig('anima'),
         slack: { appToken: 'xapp-1-ADEMO123-secret', botToken: 'xoxb-secret-value' },
@@ -2211,7 +2212,7 @@ test('syncDisplayInfoIfStale does not clobber a concurrent config edit made mid-
   const previousSlackApiUrl = process.env.ANIMA_SLACK_API_URL;
   process.env.ANIMA_SLACK_API_URL = slackApi.url;
   try {
-    await writeConfig(stateDir, [
+    await writeAgentConfigs(stateDir, [
       {
         ...defaultAgentConfig('anima'),
         profile: { displayName: 'Original Name', role: 'tester' },
@@ -2243,7 +2244,7 @@ test('syncDisplayInfoIfStale does not clobber a concurrent config edit made mid-
 
 test('web API reports provider availability', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-provider-availability-test-'));
-  await writeConfig(stateDir);
+  await writeAgentConfigs(stateDir);
   await withAnimaHome(stateDir, async () => {
     const server = await createWebServer();
     try {
@@ -2269,7 +2270,7 @@ test('web API reports provider availability', async () => {
 
 test('server-info exposes the last standalone restart result for UI echoes', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-last-restart-test-'));
-  await writeConfig(stateDir);
+  await writeAgentConfigs(stateDir);
   await mkdir(join(stateDir, 'run'), { recursive: true });
   await writeFile(
     join(stateDir, 'run', 'services-restart-result.json'),
@@ -2320,7 +2321,7 @@ test('server-info exposes the last standalone restart result for UI echoes', asy
 
 test('server-info exposes blocked standalone restart results for honest UI errors', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-blocked-restart-test-'));
-  await writeConfig(stateDir);
+  await writeAgentConfigs(stateDir);
   await mkdir(join(stateDir, 'run'), { recursive: true });
   await writeFile(
     join(stateDir, 'run', 'services-restart-result.json'),
@@ -2379,7 +2380,7 @@ test('server-info exposes blocked standalone restart results for honest UI error
 
 test('web API exposes Slack manifest install links without secrets', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-slack-install-test-'));
-  await writeConfig(stateDir, [
+  await writeAgentConfigs(stateDir, [
     {
       ...defaultAgentConfig('scout'),
       profile: {
@@ -2420,7 +2421,7 @@ test('web API exposes Slack manifest install links without secrets', async () =>
 test('web API stamps and exposes createdAt through create response and snapshot', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-created-at-test-'));
   const homeDir = await mkdtemp(join(tmpdir(), 'anima-web-api-created-at-home-'));
-  await writeConfig(stateDir);
+  await writeAgentConfigs(stateDir);
   await withAnimaHome(stateDir, async () => {
     const server = await createWebServer();
     try {
@@ -2469,7 +2470,7 @@ test('dashboard auth protects dashboard APIs and static app while leaving health
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-dashboard-auth-test-'));
   const kbRepoDir = await mkdtemp(join(tmpdir(), 'anima-dashboard-auth-kb-'));
   try {
-    await writeConfig(stateDir);
+    await writeAgentConfigs(stateDir);
     await mkdir(join(kbRepoDir, 'docs'), { recursive: true });
     await writeFile(join(kbRepoDir, 'docs', 'report.html'), '<!doctype html><h1>Private KB</h1>\n', 'utf8');
     await mkdir(join(stateDir, 'kbs', 'test'), { recursive: true });
@@ -2561,45 +2562,8 @@ test('dashboard auth protects dashboard APIs and static app while leaving health
   }
 });
 
-function defaultAgentConfig(id: string) {
-  return {
-    id,
-    provider: {
-      env: {
-        CODEX_SECRET: 'runtime-secret-value',
-      },
-      kind: 'codex-cli',
-      model: 'gpt-5.2-codex',
-      reasoningEffort: 'high',
-    },
-    slack: {
-      appToken: 'xapp-secret-value',
-      botToken: 'xoxb-secret-value',
-    },
-  };
-}
-
 function testRuntime() {
   return { kind: 'codex-cli', model: 'gpt-5.5', reasoningEffort: 'medium' };
-}
-
-type TestAgentConfig = Omit<ReturnType<typeof defaultAgentConfig>, 'slack'> & {
-  enabled?: boolean;
-  homePath?: string;
-  profile?: { displayName?: string; role?: string };
-  slack?: ReturnType<typeof defaultAgentConfig>['slack'] & { appId?: string; manifestVersion?: number; teamId?: string };
-};
-
-async function writeConfig(configDir: string, agents: TestAgentConfig[] = [defaultAgentConfig('anima')]): Promise<void> {
-  await mkdir(configDir, { recursive: true });
-  await writeFile(join(configDir, 'config.json'), `${JSON.stringify({}, null, 2)}\n`, 'utf8');
-  for (const agent of agents) {
-    const agentDir = join(configDir, 'agents', agent.id);
-    const homePath = agent.homePath ?? join(configDir, 'agent-homes', agent.id);
-    await mkdir(homePath, { recursive: true });
-    await mkdir(agentDir, { recursive: true });
-    await writeFile(join(agentDir, 'config.json'), `${JSON.stringify({ ...agent, homePath }, null, 2)}\n`, 'utf8');
-  }
 }
 
 async function writeActivityJsonl(path: string, activities: Activity[]): Promise<void> {
