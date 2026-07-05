@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
-import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { Fragment, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   AlertCircle,
   BrainCircuit,
@@ -13,15 +13,25 @@ import {
 } from 'lucide-react';
 import {
   fetchAgentStatuses,
-  fetchAgentActivities,
   fetchAgentFeishuScopeStatus,
-  fetchAgentMessages,
   fetchAgents,
 } from '@/api/agents';
-import { buildActivityFeed, buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
+import { type ActivityFeedItem } from '@/lib/activity-feed';
+import { buildActivityAuthorResolvers } from '@/lib/activity-authors';
+import {
+  activityCoverageDecision,
+  buildBlocks,
+  buildTimelineByDay,
+  currentTurnHasStep as buildCurrentTurnHasStep,
+  latestCurrentItemActivity as buildLatestCurrentItemActivity,
+  latestMessageKey as buildLatestMessageKey,
+  oldestActivityTimestamp,
+  oldestConversationTimestamp,
+  sortConversationItems,
+  type Step,
+} from '@/lib/activity-timeline';
 import { activityRow, isNarrativeStep } from '@/lib/activities';
-import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
-import { clockHM, dateKey, formatRelativeShort } from '@/lib/format';
+import { clockHM, formatRelativeShort } from '@/lib/format';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useNow } from '@/hooks/useNow';
 import {
@@ -31,22 +41,17 @@ import {
 } from '@/components/AgentHealthIndicator';
 import {
   groupByAuthor,
-  initialOf,
-  inboundAuthorName,
-  inboundSlackUserId,
-  isMessageItem,
   DayLabelPill,
   MessageGroupRow,
   SystemEventRow,
-  type Author,
-  type AuthorResolver,
-  type SurfaceResolver,
 } from '../conversation/SlackTimeline';
 import { StepRow, WorkingIndicator } from './AuditRows';
+import { useActivityCoverageAutoFetch } from './useActivityCoverageAutoFetch';
+import { useActivityFeeds } from './useActivityFeeds';
+import { useFeishuOnboardingBanners } from './useFeishuOnboardingBanners';
 import { useStickToBottom } from './useStickToBottom';
 import type { Activity as ActivityRecord } from '@shared/activity';
 import type { AgentFeishuScopeAuthUrl } from '@shared/agent-config';
-import type { AgentMessageRecord } from '@shared/messages';
 import type { AgentStatusSummary } from '@shared/snapshot';
 
 // ---------------------------------------------------------------------------
@@ -63,67 +68,6 @@ function StepLane({ children }: { children: ReactNode }) {
       {children}
     </div>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Chronological stream model.
-//
-// The timeline is ONE ascending stream by real timestamp. Items split two ways:
-//   SPECIAL  — Slack chat in/out, file-out, reactions, and system events
-//              (reminders, onboarding, runtime restart/stop). These render as
-//              their own rows in their true time slot.
-//   NON-SPECIAL — thinking/OUTPUT, RAN tool steps, memory passes, IDLE/Working.
-//              A contiguous run of these between two specials FOLDS in place
-//              into one collapsible `▸ N steps` group sitting in its slot.
-// The live (current) run's trailing fold is auto-expanded while it streams and
-// collapses (animated) the moment the run completes.
-// ---------------------------------------------------------------------------
-type Step = Extract<ActivityFeedItem, { kind: 'step' }>;
-
-// Within a special-run, separate centred system lines from the Slack message
-// groups so a reminder/onboarding row doesn't get swept into an author group.
-type DayBlock = { type: 'msgs' | 'steps' | 'system'; items: ActivityFeedItem[] };
-
-// One entry in a day's chronological stream: a special conversation row, a
-// promoted lifecycle system line, or a folded run of non-special steps.
-type TimelineEntry =
-  | { type: 'conv'; ts: number; timestamp: string; item: ActivityFeedItem }
-  | { type: 'lifecycle'; ts: number; timestamp: string; step: Step }
-  | { type: 'fold'; ts: number; timestamp: string; id: string; steps: Step[] };
-
-// Steps promoted OUT of the fold into their own centred system line: important,
-// non-chat lifecycle signals that should always show, not hide behind a fold.
-// Two members: runtime restart/stop/idle-timeout (`runtime.aborted`), and the
-// daily memory-coherence pass (`memory_coherence.outcome`) — its result is a
-// first-class signal the owner wants to see at a glance, while the steps that
-// ran inside the pass still fold beneath it. Everything else folds.
-function isSpecialSystemStep(activity: ActivityRecord): boolean {
-  return (
-    activity.type === 'runtime.aborted' ||
-    activity.type === 'memory_coherence.outcome'
-  );
-}
-
-// Tie-break for atoms sharing a timestamp: inbound first, then outbound/system
-// specials, then promoted lifecycle, then folded steps, with IDLE
-// (runtime.completed) last so it reads as closing the slot.
-function atomRank(kind: 'conv-in' | 'conv-out' | 'lifecycle' | 'fold', idle: boolean): number {
-  if (kind === 'conv-in') return 0;
-  if (kind === 'conv-out') return 1;
-  if (kind === 'lifecycle') return 2;
-  return idle ? 4 : 3;
-}
-
-function buildBlocks(items: ActivityFeedItem[]): DayBlock[] {
-  const blocks: DayBlock[] = [];
-  for (const item of items) {
-    const type: DayBlock['type'] =
-      item.kind === 'step' ? 'steps' : item.kind === 'system-event' ? 'system' : 'msgs';
-    const last = blocks[blocks.length - 1];
-    if (last && last.type === type) last.items.push(item);
-    else blocks.push({ type, items: [item] });
-  }
-  return blocks;
 }
 
 // ---------------------------------------------------------------------------
@@ -537,77 +481,15 @@ export default function Activity() {
   // day headers still resolve to the scroll container.
   const contentRef = useRef<HTMLDivElement>(null);
 
-  // Conversation layer — always loaded (complete history, Channels-identical).
-  // Always both directions; the inbox/outbox sub-filter was retired.
-  const messageQuery = useInfiniteQuery({
-    queryKey: queryKeys.agentMessages(agentId ?? ''),
-    queryFn: ({ pageParam }) =>
-      fetchAgentMessages(agentId!, { before: pageParam, limit: 100 }),
-    enabled: !!agentId,
-    initialPageParam: undefined as string | undefined,
-    // Forward pagination toward OLDER history: page[0] stays the newest page so a
-    // poll/refetch (which rebuilds the page list from page[0] forward via
-    // getNextPageParam) never drops the latest records once older history loads.
-    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-    getPreviousPageParam: () => undefined,
-    refetchInterval: agentId ? refetchIntervals.agentActivities : false,
-  });
-
-  // Step layer — always loaded now (steps fold in place in the chronological
-  // stream rather than hiding behind a global toggle). The conversation is
-  // still primary: an activity error or slow load never blocks or blanks the
-  // message timeline (feedError / loadingActivities track the conversation only);
-  // steps simply populate the folds as they arrive.
-  const activityQuery = useInfiniteQuery({
-    queryKey: queryKeys.agentActivities(agentId ?? ''),
-    queryFn: ({ pageParam }) => fetchAgentActivities(agentId!, 100, pageParam),
-    enabled: !!agentId,
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-    getPreviousPageParam: () => undefined,
-    refetchInterval: agentId ? refetchIntervals.agentActivities : false,
-  });
+  const { activityQuery, messageQuery, activitiesData, conversationItems, stepItems } =
+    useActivityFeeds(agentId);
 
   const feedError = messageQuery.error;
   const loadingActivities = messageQuery.isLoading;
 
-  // Merge all loaded pages into single feed pages, deduped by source id so the
-  // live-refetch of the newest page never creates duplicates.
-  const activitiesData = useMemo(() => {
-    if (!activityQuery.data?.pages.length) return undefined;
-    const eventMap = new Map<string, ActivityRecord>();
-    for (const page of activityQuery.data.pages) {
-      for (const event of page.events ?? []) {
-        eventMap.set(event.activityId, event);
-      }
-    }
-    return { events: Array.from(eventMap.values()) };
-  }, [activityQuery.data]);
-
-  const messagesData = useMemo(() => {
-    if (!messageQuery.data?.pages.length) return undefined;
-    const messageMap = new Map<string, AgentMessageRecord>();
-    for (const page of messageQuery.data.pages) {
-      for (const entry of page.entries ?? []) {
-        messageMap.set(entry.messageId, entry);
-      }
-    }
-    return { entries: Array.from(messageMap.values()) };
-  }, [messageQuery.data]);
-
   const currentStatus = agentStatuses.find((s) => s.agentId === agentId);
   const currentItemId = currentStatus?.currentItemId;
   const currentItemStartedAt = currentStatus?.currentItemStartedAt;
-
-  // Conversation layer items — the timeline backbone. Keep system-event rows
-  // (reminder / onboarding) alongside messages: they are conversation-layer
-  // timeline annotations, not tool steps.
-  const conversationItems = useMemo(() => {
-    if (!messagesData) return [];
-    return buildMessageFeed(messagesData).filter(
-      (item) => isMessageItem(item) || item.kind === 'system-event',
-    );
-  }, [messagesData]);
 
   // Identity of the newest conversation row. Changes whenever a message/event
   // arrives (count grows or a newer timestamp appears). The live-follow effect
@@ -615,49 +497,14 @@ export default function Activity() {
   // bottom: message data arrives on a different query than activity, so without
   // this the follow only fired on activity changes and landed short of the
   // freshly appended row.
-  const latestMessageKey = useMemo(() => {
-    if (conversationItems.length === 0) return null;
-    let maxTs = conversationItems[0]!.timestamp;
-    for (const item of conversationItems) {
-      if (item.timestamp > maxTs) maxTs = item.timestamp;
-    }
-    return `${conversationItems.length}|${maxTs}`;
-  }, [conversationItems]);
-
-  // Step layer items — curated isNarrativeStep set only (never the firehose;
-  // iris-locked `795d974`). Suppress a tool's started row when its failure row is
-  // present so a failed tool shows once, as the failure. These feed the
-  // chronological stream: foldable steps collapse into `N steps` groups in their
-  // time slot, and `runtime.aborted` is promoted to a standalone lifecycle line
-  // (see timelineByDay).
-  const stepItems = useMemo(() => {
-    if (!activitiesData) return [] as Extract<ActivityFeedItem, { kind: 'step' }>[];
-    const feed = buildActivityFeed(activitiesData, false);
-    const failedProviderToolIds = new Set<string>();
-    for (const item of feed) {
-      if (item.kind === 'step' && item.activity.type === 'tool.call.failed') {
-        const pid = item.activity.payload?.['providerToolId'];
-        if (typeof pid === 'string' && pid) failedProviderToolIds.add(pid);
-      }
-    }
-    return feed.filter((item): item is Extract<ActivityFeedItem, { kind: 'step' }> => {
-      if (item.kind !== 'step') return false;
-      if (!isNarrativeStep(item.activity)) return false;
-      if (item.activity.type === 'tool.call.started' && failedProviderToolIds.size > 0) {
-        const pid = item.activity.payload?.['providerToolId'];
-        if (typeof pid === 'string' && pid && failedProviderToolIds.has(pid)) return false;
-      }
-      return true;
-    });
-  }, [activitiesData]);
+  const latestMessageKey = useMemo(
+    () => buildLatestMessageKey(conversationItems),
+    [conversationItems],
+  );
 
   // The conversation backbone — special chat rows, chronological. Used for the
   // coverage/empty/hero gates below; the rendered stream is timelineByDay.
-  const filteredItems = useMemo(() => {
-    return [...conversationItems].sort(
-      (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
-    );
-  }, [conversationItems]);
+  const filteredItems = useMemo(() => sortConversationItems(conversationItems), [conversationItems]);
 
   // Build the single chronological stream, bucketed by day. Every timeline atom
   // (special conversation row, promoted lifecycle step, or foldable non-special
@@ -665,72 +512,10 @@ export default function Activity() {
   // foldable steps collapse into one `fold` entry sitting between the specials
   // that bracket them. Folds never cross a day boundary (atoms bucket by day
   // first), so the day dividers stay honest.
-  const timelineByDay = useMemo<[string, TimelineEntry[]][]>(() => {
-    type Atom =
-      | { ts: number; timestamp: string; kind: 'conv'; item: ActivityFeedItem }
-      | { ts: number; timestamp: string; kind: 'lifecycle'; step: Step }
-      | { ts: number; timestamp: string; kind: 'fold'; step: Step };
-    const atoms: Atom[] = [];
-    for (const item of conversationItems) {
-      const ts = Date.parse(item.timestamp);
-      if (Number.isFinite(ts)) atoms.push({ ts, timestamp: item.timestamp, kind: 'conv', item });
-    }
-    for (const step of stepItems) {
-      const ts = Date.parse(step.timestamp);
-      if (!Number.isFinite(ts)) continue;
-      if (isSpecialSystemStep(step.activity))
-        atoms.push({ ts, timestamp: step.timestamp, kind: 'lifecycle', step });
-      else atoms.push({ ts, timestamp: step.timestamp, kind: 'fold', step });
-    }
-
-    const rankOf = (a: Atom): number => {
-      if (a.kind === 'conv')
-        return atomRank(a.item.kind === 'message-in' ? 'conv-in' : 'conv-out', false);
-      if (a.kind === 'lifecycle') return atomRank('lifecycle', false);
-      return atomRank('fold', a.step.activity.type === 'runtime.completed');
-    };
-
-    const days = new Map<string, Atom[]>();
-    for (const a of atoms) {
-      const key = dateKey(a.timestamp);
-      const list = days.get(key);
-      if (list) list.push(a);
-      else days.set(key, [a]);
-    }
-
-    const result: [string, TimelineEntry[]][] = [];
-    for (const [day, list] of days) {
-      list.sort((a, b) => a.ts - b.ts || rankOf(a) - rankOf(b));
-      const entries: TimelineEntry[] = [];
-      let pending: Step[] = [];
-      const flush = () => {
-        if (pending.length === 0) return;
-        const first = pending[0]!;
-        entries.push({
-          type: 'fold',
-          ts: Date.parse(first.timestamp),
-          timestamp: first.timestamp,
-          id: `fold:${first.activity.activityId}`,
-          steps: pending,
-        });
-        pending = [];
-      };
-      for (const a of list) {
-        if (a.kind === 'fold') {
-          pending.push(a.step);
-          continue;
-        }
-        flush();
-        if (a.kind === 'conv')
-          entries.push({ type: 'conv', ts: a.ts, timestamp: a.timestamp, item: a.item });
-        else entries.push({ type: 'lifecycle', ts: a.ts, timestamp: a.timestamp, step: a.step });
-      }
-      flush();
-      result.push([day, entries]);
-    }
-    result.sort(([a], [b]) => a.localeCompare(b));
-    return result;
-  }, [conversationItems, stepItems]);
+  const timelineByDay = useMemo(
+    () => buildTimelineByDay(conversationItems, stepItems),
+    [conversationItems, stepItems],
+  );
 
   // The live run's trailing steps are the last fold in the latest day. While the
   // run is current we force that fold open (auto-expand); when currentItemId
@@ -758,43 +543,29 @@ export default function Activity() {
   const interleaving = true;
 
   // Oldest loaded conversation timestamp (the older edge of the visible window).
-  const oldestMessageTs = useMemo(() => {
-    let min = Infinity;
-    for (const item of conversationItems) {
-      const t = Date.parse(item.timestamp);
-      if (Number.isFinite(t) && t < min) min = t;
-    }
-    return min === Infinity ? null : min;
-  }, [conversationItems]);
+  const oldestMessageTs = useMemo(
+    () => oldestConversationTimestamp(conversationItems),
+    [conversationItems],
+  );
 
   // Oldest loaded RAW activity event — coverage is measured by the feed window
   // we have actually paged in, NOT the curated step subset (a covered region may
   // legitimately have no narrative step; an un-paged region must not be confused
   // with it).
-  const oldestActivityTs = useMemo(() => {
-    if (!activitiesData?.events.length) return null;
-    let min = Infinity;
-    for (const ev of activitiesData.events) {
-      const t = Date.parse(ev.createdAt);
-      if (Number.isFinite(t) && t < min) min = t;
-    }
-    return min === Infinity ? null : min;
-  }, [activitiesData]);
+  const oldestActivityTs = useMemo(() => oldestActivityTimestamp(activitiesData), [activitiesData]);
 
   // Step coverage reaches the loaded conversation window when the oldest loaded
   // activity event is at or before the oldest loaded message.
-  const activityCoversMessages =
-    oldestMessageTs === null ||
-    (oldestActivityTs !== null && oldestActivityTs <= oldestMessageTs);
+  const { activityCoversMessages, shouldFetchMoreActivity } = activityCoverageDecision({
+    oldestMessageTs,
+    oldestActivityTs,
+    interleaving,
+    hasNextActivityPage: !!activityQuery.hasNextPage,
+    isFetchingNextActivityPage: activityQuery.isFetchingNextPage,
+  });
 
   const latestCurrentItemActivity = useMemo(() => {
-    if (!currentItemId || !activitiesData) return undefined;
-    const activities = activitiesData.events;
-    const itemActivities = currentItemStartedAt
-      ? activities.filter((a) => a.createdAt >= currentItemStartedAt)
-      : activities;
-    if (!itemActivities.length) return undefined;
-    return itemActivities.reduce((latest, a) => (a.createdAt > latest.createdAt ? a : latest));
+    return buildLatestCurrentItemActivity({ currentItemId, currentItemStartedAt, activitiesData });
   }, [currentItemId, currentItemStartedAt, activitiesData]);
 
   // Whether the current (live) turn has produced a lane-rendered step yet. Until
@@ -812,12 +583,7 @@ export default function Activity() {
   // Special system steps are excluded too: they promote to top-level rows (not
   // the lane), so the indicator should stay on the rail to align with them.
   const currentTurnHasStep = useMemo(() => {
-    if (!currentItemId || !currentItemStartedAt) return false;
-    return stepItems.some(
-      (item) =>
-        item.activity.createdAt >= currentItemStartedAt &&
-        !isSpecialSystemStep(item.activity),
-    );
+    return buildCurrentTurnHasStep({ currentItemId, currentItemStartedAt, stepItems });
   }, [currentItemId, currentItemStartedAt, stepItems]);
 
   // The live indicator's timestamp: when the latest activity in this turn
@@ -842,128 +608,16 @@ export default function Activity() {
       stepItems.length === 0 &&
       connectedPlatform !== undefined);
 
-  // --- Post-onboarding first landing -----------------------------------------
-  // A fresh Feishu connect navigates here with router state:
-  //   { onboardingConnected: 'feishu', feishuGreetingBanner?: boolean }
-  // We arm the one-time greeting + recommended-permissions banners (no lens to
-  // force any more — the Activity tab is the only view). The manual existing-app
-  // path has no owner open_id and is left ungreeted (#154): it shows no "say hi".
-  //
-  // The signal is read from the *current* location every render and consumed via
-  // a route-keyed effect, NOT captured at mount: React Router reuses this Activity
-  // component when the user creates another agent from an existing activity page.
-  const location = useLocation();
-  const navigate = useNavigate();
-  const landingState = location.state as
-    | { onboardingConnected?: 'feishu' | 'slack'; feishuGreetingBanner?: boolean }
-    | null;
-  const justConnectedFeishu = landingState?.onboardingConnected === 'feishu';
-  const landingWantsBanner = justConnectedFeishu && landingState?.feishuGreetingBanner === true;
-
-  // --- One-time "say hi in Feishu" banner ------------------------------------
-  // Dismissal is permanent and keyed to the connection (appId), so a fresh
-  // reconnect can legitimately show it again, but within one connection it is
-  // one-shot. The banner is decoupled from the async greeting: it never blocks
-  // and never claims the hello already happened.
-  const previewHelloBanner = import.meta.env.DEV && searchParams.get('_previewHelloBanner') === '1';
   const feishuConnKey = agent?.feishu?.connected
     ? agent.feishu.appId?.trim() || 'connected'
     : undefined;
-  const [, forceHelloRerender] = useReducer((n: number) => n + 1, 0);
-
-  // Arm + consume the landing signal. Keyed on the route + connection so it
-  // survives this component being reused for a freshly created agent, and waits
-  // for the connection key (appId) to resolve before persisting the arm so a late
-  // appId can't drop it. The ref stops a re-arm after the consuming replace.
-  const landingProcessedRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!justConnectedFeishu) return;
-    if (landingProcessedRef.current === location.key) return;
-    if (!agentId || !feishuConnKey) return;
-    try {
-      localStorage.setItem(`feishu-recommended-scopes-armed:${agentId}`, feishuConnKey);
-    } catch {
-      /* localStorage unavailable */
-    }
-    if (landingWantsBanner) {
-      try {
-        localStorage.setItem(`feishu-hello-armed:${agentId}`, feishuConnKey);
-      } catch {
-        /* localStorage unavailable */
-      }
-    }
-    landingProcessedRef.current = location.key;
-    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
-  }, [
-    justConnectedFeishu,
-    landingWantsBanner,
-    location.key,
-    location.pathname,
-    location.search,
-    agentId,
-    feishuConnKey,
-    navigate,
-  ]);
-
-  // Read the persisted arm/dismiss flags fresh each render — cheap, and always in
-  // sync with the writes above and the dismissal below (each is followed by a
-  // re-render: the consuming navigate, or forceHelloRerender on dismiss).
-  const helloPersisted = (() => {
-    if (!agentId || !feishuConnKey) return { armed: false, dismissed: false };
-    try {
-      return {
-        armed: localStorage.getItem(`feishu-hello-armed:${agentId}`) === feishuConnKey,
-        dismissed: localStorage.getItem(`feishu-hello-dismissed:${agentId}`) === feishuConnKey,
-      };
-    } catch {
-      return { armed: false, dismissed: false };
-    }
-  })();
-  const recommendedPermissionsPersisted = (() => {
-    if (!agentId || !feishuConnKey) return { armed: false, dismissed: false };
-    try {
-      return {
-        armed: localStorage.getItem(`feishu-recommended-scopes-armed:${agentId}`) === feishuConnKey,
-        dismissed:
-          localStorage.getItem(`feishu-recommended-scopes-dismissed:${agentId}`) === feishuConnKey,
-      };
-    } catch {
-      return { armed: false, dismissed: false };
-    }
-  })();
-
-  function dismissHelloBanner() {
-    if (agentId && feishuConnKey) {
-      try {
-        localStorage.setItem(`feishu-hello-dismissed:${agentId}`, feishuConnKey);
-      } catch {
-        /* localStorage unavailable */
-      }
-    }
-    forceHelloRerender();
-  }
-
-  function dismissRecommendedPermissionsBanner() {
-    if (agentId && feishuConnKey) {
-      try {
-        localStorage.setItem(`feishu-recommended-scopes-dismissed:${agentId}`, feishuConnKey);
-      } catch {
-        /* localStorage unavailable */
-      }
-    }
-    forceHelloRerender();
-  }
-
-  const showHelloBanner =
-    previewHelloBanner ||
-    ((landingWantsBanner || helloPersisted.armed) && !helloPersisted.dismissed);
-
-  const shouldCheckRecommendedPermissions = Boolean(
-    agentId &&
-      recommendedPermissionsPersisted.armed &&
-      !recommendedPermissionsPersisted.dismissed &&
-      connectedPlatform === 'feishu',
-  );
+  const {
+    recommendedPermissionsPersisted,
+    dismissHelloBanner,
+    dismissRecommendedPermissionsBanner,
+    showHelloBanner,
+    shouldCheckRecommendedPermissions,
+  } = useFeishuOnboardingBanners({ agentId, feishuConnKey, connectedPlatform });
   const { data: feishuScopeStatus } = useQuery({
     queryKey: queryKeys.agentFeishuScopes(agentId ?? ''),
     queryFn: () => fetchAgentFeishuScopeStatus(agentId!),
@@ -983,34 +637,10 @@ export default function Activity() {
   // byline their sender. Avatars fall back to initials cross-channel (no single
   // DM channel to pull an image from). The surface resolver adds a per-group
   // channel chip and breaks groups when the conversation jumps channels.
-  const agentDisplay = agent ? agentDisplayName(agent) : (agentId ?? '');
-  const agentAvatar = agentAvatarUrl(agent);
-  const agentAuthor: Author = {
-    key: 'agent',
-    name: agentDisplay,
-    ...(agentAvatar ? { avatarUrl: agentAvatar } : {}),
-    initial: initialOf(agentDisplay),
-    isAgent: true,
-  };
-  const resolveAuthor: AuthorResolver = (item) => {
-    if (item.kind !== 'message-in') return agentAuthor;
-    const name = inboundAuthorName(item.message);
-    const uid = inboundSlackUserId(item.message);
-    return {
-      key: `in:${uid ?? name}`,
-      name,
-      // Sender's real Slack avatar when resolved (see /messages enrichment);
-      // falls back to the initial when absent (left workspace, no photo).
-      ...(item.avatarUrl ? { avatarUrl: item.avatarUrl } : {}),
-      initial: initialOf(name),
-      isAgent: false,
-    };
-  };
-  const resolveSurface: SurfaceResolver = (item) => {
-    const chip = 'surface' in item ? item.surface : undefined;
-    if (!chip) return { key: '' };
-    return { key: `${chip.kind}:${chip.label}`, chip };
-  };
+  const { resolveAuthor, resolveSurface } = useMemo(
+    () => buildActivityAuthorResolvers({ agent, agentId }),
+    [agent, agentId],
+  );
 
   // Render a chronological run of special conversation items into centred system
   // lines + author-grouped message rows. Steps no longer bind to turns (they live
@@ -1065,18 +695,10 @@ export default function Activity() {
   // oldest loaded activity reaches the oldest loaded message. The prepended older
   // steps are position-preserved by the scroll controller (this counts as an
   // older-page fetch through `isFetchingOlder`).
-  const autoFetchActivity = activityQuery.fetchNextPage;
-  useEffect(() => {
-    if (!interleaving || activityCoversMessages) return;
-    if (!activityQuery.hasNextPage || activityQuery.isFetchingNextPage) return;
-    void autoFetchActivity();
-  }, [
-    interleaving,
-    activityCoversMessages,
-    activityQuery.hasNextPage,
-    activityQuery.isFetchingNextPage,
-    autoFetchActivity,
-  ]);
+  useActivityCoverageAutoFetch({
+    shouldFetchMoreActivity,
+    fetchNextActivityPage: activityQuery.fetchNextPage,
+  });
 
   const pageCount =
     (messageQuery.data?.pages.length ?? 0) + (activityQuery.data?.pages.length ?? 0);
