@@ -117,6 +117,6 @@ function slackChannelDisplayName(channel: ResolvedSlackChannel, info: SlackConve
   return channel.id;
 }
 
-function quoteIfNeeded(value: string): string {
+export function quoteIfNeeded(value: string): string {
   return /^[^\s"]+$/.test(value) ? value : JSON.stringify(value);
 }

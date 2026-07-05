@@ -7,6 +7,7 @@ import {
   slackTargetSummary,
   type SlackTargetSummary,
 } from './slack-target.js';
+import { outcomeLine, type OutcomePart } from './outcome-line.js';
 import {
   loadAgentFromOpts,
   resolveToolAgentId,
@@ -225,13 +226,10 @@ function feishuReactionOutputLine(input: {
   name?: string;
   reactionId?: string;
 }): string {
-  const parts = [
-    `feishu chat_id=${input.channel}`,
-    `message_id=${input.messageId}`,
-    ...(input.name ? [`reaction=${input.name}`] : []),
-    ...(input.reactionId ? [`reaction_id=${input.reactionId}`] : []),
-  ];
-  return `reaction ${input.action} successfully. ${parts.join(', ')}.`;
+  const parts: OutcomePart[] = [['feishu chat_id', input.channel], ['message_id', input.messageId]];
+  if (input.name) parts.push(['reaction', input.name]);
+  if (input.reactionId) parts.push(['reaction_id', input.reactionId]);
+  return outcomeLine(`reaction ${input.action}`, parts);
 }
 
 function slackReactionOutputLine(input: {
@@ -242,8 +240,7 @@ function slackReactionOutputLine(input: {
   target: SlackTargetSummary;
 }): string {
   const parts = [slackOutputTarget(input.target), `message_ts=${input.messageTs}`, `reaction=:${input.name}:`];
-  const lead = input.noop
-    ? `reaction already ${input.action === 'added' ? 'present' : 'absent'} (noop).`
-    : `reaction ${input.action} successfully.`;
+  if (!input.noop) return outcomeLine(`reaction ${input.action}`, parts);
+  const lead = `reaction already ${input.action === 'added' ? 'present' : 'absent'} (noop).`;
   return `${lead} ${parts.join(', ')}.`;
 }

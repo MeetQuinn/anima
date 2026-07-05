@@ -11,6 +11,7 @@ import { runPlaces, type PlacesOptions } from './orientation-cli.js';
 import type { OrientationDeps } from './orientation.js';
 import { normalizeChatTargetOptions } from './chat-target-options.js';
 import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
+import { outcomeLine, type OutcomePart } from './outcome-line.js';
 
 const GlobalFlags = z.object({
   agent: z.string().optional(),
@@ -35,7 +36,7 @@ type SubscriptionMuteOptions = Omit<z.infer<typeof SubscriptionMuteSchema>, 'cha
 
 // Input:   anima subscription mute --channel <id> [--thread-ts <ts>]
 // Input:   anima subscription mute --chat-id <oc_...>
-// Output:  muted successfully. channel=<ref> [thread_ts=<ts>].
+// Output:  muted successfully. channel=<ref>[, thread_ts=<ts>].
 // Failure: human-readable error to stderr; exit 1.
 
 export function registerSubscriptionCommands(program: Command): void {
@@ -76,7 +77,7 @@ async function subscriptionMute(opts: SubscriptionMuteOptions): Promise<void> {
       agentId: agentIdResolved,
       channelId: opts.channel,
     });
-    console.log(`muted successfully. feishu chat_id=${opts.channel}.`);
+    console.log(outcomeLine('muted', [['feishu chat_id', opts.channel]]));
     return;
   }
   const agent = await defaultAgentRegistryService.serviceFor(agentIdResolved).getConfig();
@@ -97,7 +98,9 @@ async function subscriptionMute(opts: SubscriptionMuteOptions): Promise<void> {
   });
 
   const channelRef = channel.name ? `#${channel.name}` : channel.id;
-  console.log(`muted successfully. channel=${channelRef}${opts.threadTs ? ` thread_ts=${opts.threadTs}` : ''}.`);
+  const parts: OutcomePart[] = [['channel', channelRef]];
+  if (opts.threadTs) parts.push(['thread_ts', opts.threadTs]);
+  console.log(outcomeLine('muted', parts));
 }
 
 function isFeishuChatId(channel: string): boolean {

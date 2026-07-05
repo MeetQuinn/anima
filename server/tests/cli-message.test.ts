@@ -127,7 +127,7 @@ test('message send records an audited Slack output', async () => {
       env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_INBOX_ITEM_ID: itemId, ANIMA_SLACK_API_URL: slackApi.url },
     });
     assert.equal(mute.status, 0, mute.stderr || mute.stdout);
-    assert.equal(mute.stdout.trim(), 'muted successfully. channel=C-product thread_ts=1770000200.000001.');
+    assert.equal(mute.stdout.trim(), 'muted successfully. channel=C-product, thread_ts=1770000200.000001.');
     const mutedState = await loadState();
     assert.ok(Object.values(mutedState.subscriptions).some(
       (subscription) => subscription.kind === 'thread' && subscription.threadTs === '1770000200.000001' && subscription.mutedAt,
