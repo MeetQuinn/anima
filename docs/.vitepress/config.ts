@@ -31,6 +31,7 @@ export default defineConfig({
       alt: "Anima",
     },
     nav: [
+      { text: "How it works", link: "/how-it-works" },
       { text: "Guide", link: "/guide/quickstart" },
       {
         text: "Use Cases",
@@ -57,6 +58,7 @@ export default defineConfig({
           },
           { text: "Updating Anima", link: "/guide/updating-anima" },
           { text: "Deployment and upgrades", link: "/deployment" },
+          { text: "Service runbook", link: "/service-runbook" },
           { text: "How an agent works", link: "/guide/how-an-agent-works" },
           {
             text: "How your agents work as a team",

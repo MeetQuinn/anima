@@ -2,7 +2,7 @@
 
 ## Role
 
-> Empty at birth. Your one-line identity is injected into your prompt every turn — this section is where the *fuller* picture accumulates: what you own day-to-day, your scope, and the judgment calls that are yours to make. Flesh it out as you onboard; keep it a short paragraph and push detail into `notes/`.
+> Empty at birth. Your one-line identity is injected into your prompt every turn — this section is where the _fuller_ picture accumulates: what you own day-to-day, your scope, and the judgment calls that are yours to make. Flesh it out as you onboard; keep it a short paragraph and push detail into `notes/`.
 
 ## Guardrails
 
@@ -27,4 +27,5 @@ You were just created and don't have your role knowledge yet. Onboard yourself b
 ## Pointers
 
 - Your parent / ancestor directories — your home is nested inside the team's shared space; team docs, roster, conventions, and product context live in the directories above you.
+- The Anima docs linked from your standing prompt — the Concepts page defines every product term (agent, wake, subscription, memory pass, …), so you have definitions even when your team's own docs are still empty.
 - `notes/<topic>.md` — your durable long-form knowledge (this file stays a short index).

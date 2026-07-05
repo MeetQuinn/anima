@@ -83,35 +83,8 @@ Anima downloads the managed runtime into `~/.anima/runtime/current` and keeps lo
 
 ## Development
 
-For the full contributor workflow, see [CONTRIBUTING.md](CONTRIBUTING.md).
-
-To work on Anima itself, run it from a source checkout with an isolated repo-local home:
-
-```bash
-git clone https://github.com/MeetQuinn/anima.git
-cd anima
-pnpm install
-pnpm build
-pnpm dev:services:start   # repo-local ./.anima-dev/ home + dashboard at http://127.0.0.1:14174
-```
-
-`pnpm dev:services:start|status|restart|stop` set `ANIMA_HOME=./.anima-dev` so dev state stays inside the clone, separate from any managed `~/.anima/` install. A development rebuild should never change the code a live `~/.anima/` install runs.
-
-Build and test commands:
-
-```bash
-pnpm build           # full server + web production build
-pnpm build:server    # server + shared TypeScript build; skips Vite
-pnpm typecheck       # TypeScript only
-pnpm test            # fast default gate: server build + unit/api tests
-pnpm test:fast:dist  # run fast tests against an existing dist
-pnpm test:runtime    # heavier CLI/provider/service subprocess tests
-pnpm test:all        # full build + every compiled test file
-```
-
-Server tests live under `server/tests` and use Node's built-in test runner over compiled files in `dist/server/tests`. The default `pnpm test` skips the web build and the heavier runtime subprocess suite so local feedback stays fast; use `pnpm test:runtime` when changing provider, CLI, or service process behavior.
-
-The docs site is built with VitePress: run `pnpm docs:dev` to preview it locally at <http://127.0.0.1:14175/>, or `pnpm docs:build` to build it.
+To work on Anima itself (source checkout, dev home, build and test commands), see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
