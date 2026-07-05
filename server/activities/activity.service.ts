@@ -34,6 +34,10 @@ export class ActivityService {
     return this.store.readNewestMatching(n, matches);
   }
 
+  readNewestUntil(shouldStop: (activity: Activity) => boolean): Promise<Activity[]> {
+    return this.store.readNewestUntil(shouldStop);
+  }
+
   async listActivityFeed(input: ActivityListInput = {}): Promise<AgentActivityFeedPage> {
     const limit = normalizeHistoryLimit(input.limit);
     const activities = input.before

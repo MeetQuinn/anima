@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -20,6 +20,8 @@ import { AgentRestartCommandStore } from '../runtime/agent-restart-command.store
 import { managedProviderEnvForAgent, RuntimeHost, type RunningAgentHandle } from '../runtime/host.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
 import { withAnimaHome } from './anima-home.js';
+import type { Activity } from '../../shared/activity.js';
+import type { InboxItem } from '../../shared/inbox.js';
 
 test('child process completion preserves exit details when stream effects fail', async () => {
   const child = startChildProcess({
@@ -923,6 +925,61 @@ test('Slack DM and channel events share one primary session', async () => {
   }
 });
 
+test('activitiesForInboxItemWindow uses a bounded rotated activity scan for recent items', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-item-activity-window-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const agentDir = join(stateDir, 'agents/anima');
+      const archiveDir = join(agentDir, 'activity.archive');
+      await mkdir(archiveDir, { recursive: true });
+
+      const recentItem = runtimeTestSlackItem({
+        createdAt: '2026-01-03T00:00:00.000Z',
+        id: 'recent-item',
+        startedAt: '2026-01-03T00:01:15.000Z',
+        updatedAt: '2026-01-03T00:03:00.000Z',
+      });
+      await writeFile(join(agentDir, 'wake-queue.json'), `${JSON.stringify({
+        items: { [recentItem.id]: recentItem },
+        seen: {},
+      })}\n`, 'utf8');
+
+      await writeJsonl(join(archiveDir, '0000000000001-activity-000.jsonl'), [
+        runtimeTestActivity('old-a', '2026-01-01T00:00:00.000Z', { itemId: 'old-item' }),
+        runtimeTestActivity('old-b', '2026-01-01T00:01:00.000Z', { itemId: 'old-item' }),
+      ]);
+      await writeJsonl(join(archiveDir, '0000000000002-activity-000.jsonl'), [
+        runtimeTestActivity('before-window', '2026-01-02T23:59:59.000Z'),
+      ]);
+      await writeJsonl(join(archiveDir, '0000000000003-activity-000.jsonl'), [
+        runtimeTestActivity('recent-archived-a', '2026-01-03T00:00:30.000Z', { itemId: recentItem.id }),
+        runtimeTestActivity('recent-archived-b', '2026-01-03T00:01:30.000Z', { itemId: recentItem.id }),
+      ]);
+      await writeJsonl(join(agentDir, 'activity.jsonl'), [
+        runtimeTestActivity('recent-live', '2026-01-03T00:02:00.000Z', { itemId: recentItem.id }),
+      ]);
+
+      const allActivities = await activityServiceForAgent('anima').readAll();
+      const reference = readAllItemActivityReference(allActivities, recentItem);
+      assert.deepEqual(reference.map((activity) => activity.activityId), [
+        'recent-archived-a',
+        'recent-archived-b',
+        'recent-live',
+      ]);
+
+      const oldestArchive = (await readdir(archiveDir))
+        .sort((a, b) => a.localeCompare(b))[0];
+      assert.ok(oldestArchive);
+      await writeFile(join(archiveDir, oldestArchive), '{not-json}\n', 'utf8');
+      await assert.rejects(activityServiceForAgent('anima').readAll(), SyntaxError);
+
+      assert.deepEqual(await activitiesForInboxItemWindow('anima', recentItem.id), reference);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('duplicate queue enqueue creates one item', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-duplicate-ingest-test-'));
   try {
@@ -1059,6 +1116,69 @@ test('inbox queue does not bootstrap home memory', async () => {
     await rm(stateDir, { force: true, recursive: true });
   }
 });
+
+async function writeJsonl(path: string, records: Activity[]): Promise<void> {
+  await writeFile(path, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`, 'utf8');
+}
+
+function runtimeTestActivity(
+  activityId: string,
+  createdAt: string,
+  payload?: Record<string, unknown>,
+): Activity {
+  return {
+    activityId,
+    createdAt,
+    ...(payload ? { payload } : {}),
+    type: 'runtime.event',
+  };
+}
+
+function runtimeTestSlackItem(input: {
+  createdAt?: string;
+  id: string;
+  startedAt: string;
+  updatedAt: string;
+}): InboxItem {
+  const createdAt = input.createdAt ?? input.startedAt;
+  return {
+    channelId: 'D-test',
+    handling: {
+      createdAt,
+      queuedAt: createdAt,
+      startedAt: input.startedAt,
+      status: 'running',
+      updatedAt: input.updatedAt,
+      workerId: 'worker-test',
+    },
+    id: input.id,
+    kind: 'slack',
+    messageTs: '1770000000.000001',
+    receivedAt: createdAt,
+    teamId: 'T-test',
+    text: 'recent item',
+  };
+}
+
+function readAllItemActivityReference(activities: Activity[], item: InboxItem): Activity[] {
+  const tagged = activities.filter((activity) => (
+    activity.payload?.['itemId'] === item.id || activity.payload?.['activeItemId'] === item.id
+  ));
+  if (tagged.length > 0) return sortTestActivities(tagged);
+  const start = item.handling.startedAt ?? item.handling.queuedAt ?? item.handling.createdAt;
+  const end = item.handling.status === 'completed' || item.handling.status === 'failed'
+    ? item.handling.updatedAt
+    : undefined;
+  return sortTestActivities(activities.filter((activity) => {
+    if (activity.createdAt < start) return false;
+    if (end && activity.createdAt > end) return false;
+    return true;
+  }));
+}
+
+function sortTestActivities(activities: Activity[]): Activity[] {
+  return activities.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
 
 function runtimeHostAgent(
   id: string,

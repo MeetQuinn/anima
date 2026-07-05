@@ -114,6 +114,23 @@ export class JsonlAppendLog<T> {
     return out;
   }
 
+  async readNewestUntil(shouldStop: (record: T) => boolean): Promise<T[]> {
+    const segments = this.rotationEnabled()
+      ? await this.segmentPaths()
+      : (await statOrNull(this.path)) ? [this.path] : [];
+    const out: T[] = [];
+    for (const path of segments.reverse()) {
+      const records = await this.readAllFromPath(path);
+      for (let index = records.length - 1; index >= 0; index -= 1) {
+        const record = records[index];
+        if (record === undefined) continue;
+        if (shouldStop(record)) return out;
+        out.push(record);
+      }
+    }
+    return out;
+  }
+
   async readAll(): Promise<T[]> {
     if (this.rotationEnabled()) return this.readAllFromDisk();
     const fileStat = await statOrNull(this.path);

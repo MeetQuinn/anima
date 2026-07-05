@@ -3,12 +3,18 @@ import { activityServiceForAgent } from '../activities/activity.service.js';
 import type { Activity } from '../../shared/activity.js';
 
 export async function activitiesForInboxItemWindow(agentId: string, itemId: string): Promise<Activity[]> {
-  const activities = await activityServiceForAgent(agentId).readAll();
+  const item = await wakeQueueServiceForAgent(agentId).find(itemId);
+  if (!item) {
+    const allActivities = await activityServiceForAgent(agentId).readAll();
+    return sortActivities(allActivities.filter((activity) => taggedToItem(activity, itemId)));
+  }
+
+  const activities = await activityServiceForAgent(agentId)
+    .readNewestUntil((activity) => activity.createdAt < item.handling.createdAt);
   const tagged = activities.filter((activity) => taggedToItem(activity, itemId));
   if (tagged.length > 0) return sortActivities(tagged);
 
-  const item = await wakeQueueServiceForAgent(agentId).find(itemId);
-  const current = item ? activities.filter((activity) => activityFallsWithinItemHandling(activity, item)) : [];
+  const current = activities.filter((activity) => activityFallsWithinItemHandling(activity, item));
   return sortActivities(current);
 }
 
