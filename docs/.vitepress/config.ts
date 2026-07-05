@@ -45,6 +45,7 @@ export default defineConfig({
       {
         text: "Guide",
         items: [
+          { text: "Concepts", link: "/concepts" },
           { text: "Quickstart", link: "/guide/quickstart" },
           {
             text: "Working with your agent",

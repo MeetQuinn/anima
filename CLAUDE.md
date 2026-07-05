@@ -144,7 +144,7 @@ Anima bootstraps `MEMORY.md` and `notes/` in the agent home. Provider-native ins
 
 ### Chat eligibility (current default)
 
-DMs/direct chats always wake. Slack channel top-level messages wake on @mention; Feishu group messages wake according to the Feishu subscription/attention decision. Mentioning in a thread or group can open a bounded subscription window; once involved, follow-ups wake without a re-mention until muted or expired. Top-level channel chatter without attention is ignored. Wake decisions live in `server/inbox/`; platform protocol details live in `server/slack/`, `server/feishu/`, and `server/transports/`.
+DMs, direct chats, and @mentions always wake. Channel membership and thread involvement create a subscription; while subscribed, new messages wake without a re-mention. Subscriptions are permanent until explicitly muted: no time limit, no expiry window (`subscriptionStatus()` in `server/storage/schema/subscription.store.ts` checks only `mutedAt`; the `expiresAt`/`remainingMessages` fields are legacy, kept for migration). Feishu group messages wake according to the Feishu subscription/attention decision. Messages in places the agent is not subscribed to are ignored. Wake decisions live in `server/inbox/`; platform protocol details live in `server/slack/`, `server/feishu/`, and `server/transports/`.
 
 ## Architecture & code quality
 
