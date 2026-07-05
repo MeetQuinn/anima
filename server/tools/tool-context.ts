@@ -3,11 +3,22 @@ import type { WebClient } from '@slack/web-api';
 import type { AgentConfig } from '../../shared/agent-config.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
+import {
+  createFeishuMessageClient as createDefaultFeishuMessageClient,
+  type FeishuMessageClient,
+} from '../feishu/client.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { resolveAgentIdFrom } from '../cli/shared.js';
 import { errorMessage } from '../ids.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import { findToolAuditRuntimeItem } from '../runtime/active-item.js';
+import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
+import type {
+  FeishuInboxItem,
+  FeishuOnboardingInboxItem,
+  InboxItem,
+  SlackInboxItem,
+} from '../../shared/inbox.js';
 
 export interface ToolActivityAudit {
   agentId: string;
@@ -73,6 +84,25 @@ export async function resolveToolItemId(opts: { agent?: string; item?: string })
   return envItemId ?? current?.itemId;
 }
 
+export async function currentToolItem(agentId: string, opts: { agent?: string; item?: string }): Promise<InboxItem | undefined> {
+  const itemId = await resolveToolItemId(opts);
+  if (!itemId) return undefined;
+  return wakeQueueServiceForAgent(agentId).find(itemId);
+}
+
+export async function currentSlackItem(agentId: string, opts: { agent?: string; item?: string }): Promise<SlackInboxItem | undefined> {
+  const item = await currentToolItem(agentId, opts);
+  return item?.kind === 'slack' ? item : undefined;
+}
+
+export async function currentFeishuItem(
+  agentId: string,
+  opts: { agent?: string; item?: string },
+): Promise<FeishuInboxItem | FeishuOnboardingInboxItem | undefined> {
+  const item = await currentToolItem(agentId, opts);
+  return item?.kind === 'feishu' || item?.kind === 'feishu_onboarding' ? item : undefined;
+}
+
 async function resolveAuditItemId(agentId: string): Promise<string | undefined> {
   try {
     return await resolveToolItemId({ agent: agentId });
@@ -97,6 +127,21 @@ export async function slackWebClientForOpts(opts: object): Promise<{
   const id = resolveAgentIdFrom(rawAgent);
   if (!id) throw new Error('Agent not specified. Pass --agent <id> or set ANIMA_AGENT_ID.');
   return agentSlackServiceForAgent(id).getAgentWebClient();
+}
+
+export async function feishuMessageClientForOpts(
+  opts: object,
+  createClient: typeof createDefaultFeishuMessageClient = createDefaultFeishuMessageClient,
+): Promise<{
+  agent: AgentConfig;
+  client: FeishuMessageClient;
+}> {
+  const agent = await loadAgentFromOpts(opts);
+  if (!agent.feishu.connected) throw new Error(`Agent ${agent.id} has no Feishu connection configured`);
+  return {
+    agent,
+    client: createClient(agent.feishu),
+  };
 }
 
 export async function readStdin(): Promise<string> {
