@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Check, ChevronDown, FolderTree, GripVertical, Pencil, Plus, Server } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DndContext, closestCenter } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import AnimaIcon from '@/components/AnimaIcon';
-import { fetchAgentStatuses } from '@/api/agents';
 import { queryClient } from '@/query-client';
-import { queryKeys, refetchIntervals } from '@/lib/query-keys';
+import { queryKeys } from '@/lib/query-keys';
+import { useAgentStatuses } from '@/hooks/useAgentDirectory';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
 import { useCurrentTeam, useTeams } from '@/hooks/useTeams';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
@@ -122,11 +121,7 @@ export default function MobileNavScreen({
     navigate(`/kb/${id}`);
   };
 
-  const { data: statuses = [] } = useQuery({
-    queryKey: queryKeys.agentStatuses(),
-    queryFn: fetchAgentStatuses,
-    refetchInterval: refetchIntervals.agentStatuses,
-  });
+  const { data: statuses = [] } = useAgentStatuses({ poll: true });
   const runningIds = new Set(
     statuses.filter((s) => s.currentItemId || s.queueDepth > 0).map((s) => s.agentId),
   );

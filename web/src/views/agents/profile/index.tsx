@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query';
 import {
   fetchAgent,
   fetchAgentSession,
-  fetchAgentStatuses,
   refreshAgentData,
   syncAgentAvatar,
   syncAgentFeishuAvatar,
@@ -14,6 +13,7 @@ import {
 } from '@/api/agents';
 import { fetchProviderAvailability, fetchWorkspacePlatform } from '@/api/system';
 import { queryKeys } from '@/lib/query-keys';
+import { useAgentStatuses } from '@/hooks/useAgentDirectory';
 import { useNow } from '@/hooks/useNow';
 
 import { providerCatalog } from '@shared/provider-catalog';
@@ -75,10 +75,7 @@ export default function Profile() {
     enabled: !!agentId,
     retry: false,
   });
-  const { data: agentStatuses = [] } = useQuery({
-    queryKey: queryKeys.agentStatuses(),
-    queryFn: fetchAgentStatuses,
-  });
+  const { data: agentStatuses = [] } = useAgentStatuses();
   const { data: workspacePlatform = 'slack' } = useQuery({
     queryKey: queryKeys.workspacePlatform(),
     queryFn: fetchWorkspacePlatform,

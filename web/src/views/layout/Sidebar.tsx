@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, ChevronLeft, FolderTree, MoreHorizontal, Plus, Server } from 'lucide-react';
 import {
   DndContext,
@@ -12,13 +11,13 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { parseLocation } from '@/lib/url-state';
-import { fetchAgentStatuses } from '@/api/agents';
 import { useLocation, useNavigate } from 'react-router-dom';
 import AnimaIcon from '@/components/AnimaIcon';
 import ServerPanel from '@/components/ServerPanel';
 import { removeKb, renameKb } from '@/api/kb';
 import { queryClient } from '@/query-client';
-import { queryKeys, refetchIntervals } from '@/lib/query-keys';
+import { queryKeys } from '@/lib/query-keys';
+import { useAgentStatuses } from '@/hooks/useAgentDirectory';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
 import { useCurrentTeam, useTeams, useTeamWarnings, TEAM_PARAM } from '@/hooks/useTeams';
 import type { TeamConfig } from '@/api/teams';
@@ -109,11 +108,7 @@ export default function Sidebar({
   collapsed: boolean;
   onToggle: () => void;
 }) {
-  const { data: statuses = [] } = useQuery({
-    queryKey: queryKeys.agentStatuses(),
-    queryFn: fetchAgentStatuses,
-    refetchInterval: refetchIntervals.agentStatuses,
-  });
+  const { data: statuses = [] } = useAgentStatuses({ poll: true });
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const { agentId } = parseLocation(pathname);

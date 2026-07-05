@@ -1,13 +1,12 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { parseLocation } from '@/lib/url-state';
-import { stopItem, fetchAgents, fetchAgentStatuses, refreshDashboardData } from '@/api/agents';
+import { stopItem, refreshDashboardData } from '@/api/agents';
 import { agentColor, initialOf } from '@/lib/avatars';
 import { agentAvatarUrl } from '@/lib/agent-avatar';
 import AgentActionsMenu from '@/components/AgentActionsMenu';
-import { queryKeys, refetchIntervals } from '@/lib/query-keys';
+import { useAgents, useAgentStatuses } from '@/hooks/useAgentDirectory';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
 
 /**
@@ -20,12 +19,8 @@ import { agentHasConnectedTransport } from '@shared/agent-transports';
  * users can reach it via the Server panel on the home screen (Screen 1).
  */
 export default function MobileTopBar() {
-  const { data: agents = [] } = useQuery({ queryKey: queryKeys.agents(), queryFn: fetchAgents });
-  const { data: agentStatuses = [] } = useQuery({
-    queryKey: queryKeys.agentStatuses(),
-    queryFn: fetchAgentStatuses,
-    refetchInterval: refetchIntervals.agentStatuses,
-  });
+  const { data: agents = [] } = useAgents();
+  const { data: agentStatuses = [] } = useAgentStatuses({ poll: true });
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const { agentId } = parseLocation(pathname);

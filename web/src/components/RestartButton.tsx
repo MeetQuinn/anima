@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useQuery } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
-import { fetchAgents, fetchAgentStatuses } from '@/api/agents';
 import { pingHealth, restartServices } from '@/api/system';
+import { useAgents, useAgentStatuses } from '@/hooks/useAgentDirectory';
 import { agentDisplayName } from '@/lib/agent-avatar';
-import { queryKeys } from '@/lib/query-keys';
 import { BusyConfirmModal } from './restart-shared';
 
 type Phase = 'idle' | 'restarting' | 'recovered' | 'failed';
@@ -18,8 +16,8 @@ export default function RestartButton({ compact = false }: { compact?: boolean }
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const startedAt = useRef<number>(0);
-  const { data: agents = [] } = useQuery({ queryKey: queryKeys.agents(), queryFn: fetchAgents });
-  const { data: agentStatuses = [] } = useQuery({ queryKey: queryKeys.agentStatuses(), queryFn: fetchAgentStatuses });
+  const { data: agents = [] } = useAgents();
+  const { data: agentStatuses = [] } = useAgentStatuses();
 
   // Drain mode coordinates only the RUNNING agents (mid-item) — queued items
   // are left untouched for the new worker, so they're not blockers and don't

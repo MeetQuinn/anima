@@ -12,9 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import {
-  fetchAgentStatuses,
   fetchAgentFeishuScopeStatus,
-  fetchAgents,
 } from '@/api/agents';
 import { type ActivityFeedItem } from '@/lib/activity-feed';
 import { buildActivityAuthorResolvers } from '@/lib/activity-authors';
@@ -32,7 +30,8 @@ import {
 } from '@/lib/activity-timeline';
 import { activityRow, isNarrativeStep } from '@/lib/activities';
 import { clockHM, formatRelativeShort } from '@/lib/format';
-import { queryKeys, refetchIntervals } from '@/lib/query-keys';
+import { queryKeys } from '@/lib/query-keys';
+import { useAgents, useAgentStatuses } from '@/hooks/useAgentDirectory';
 import { useNow } from '@/hooks/useNow';
 import {
   agentHealthDegradedText,
@@ -446,12 +445,8 @@ function FeishuRecommendedPermissionsConnectBanner({
 // ---------------------------------------------------------------------------
 
 export default function Activity() {
-  const { data: agents = [] } = useQuery({ queryKey: queryKeys.agents(), queryFn: fetchAgents });
-  const { data: agentStatuses = [] } = useQuery({
-    queryKey: queryKeys.agentStatuses(),
-    queryFn: fetchAgentStatuses,
-    refetchInterval: refetchIntervals.agentStatuses,
-  });
+  const { data: agents = [] } = useAgents();
+  const { data: agentStatuses = [] } = useAgentStatuses({ poll: true });
   const { agentId } = useParams<{ agentId: string }>();
   const agent = agents.find((a) => a.id === agentId);
   const [searchParams] = useSearchParams();
