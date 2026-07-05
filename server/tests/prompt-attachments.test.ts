@@ -159,9 +159,38 @@ test('buildCodeAgentDeliveryPrompt renders scheduled reminders as the current ev
     },
   });
 
-  assert.match(text, /^Scheduled reminder:\n\n\[reminder_id=reminder-test time=2026-05-18T17:00:00Z\] Follow up on deploy/);
+  assert.match(text, /^Scheduled reminder:\n\n\[reminder_id=reminder-test time=2026-05-18T17:00:00Z scheduled=2026-05-18T17:00:00Z\] Follow up on deploy/);
   assert.match(text, /Instructions:\nCheck whether the deploy finished\./);
   assert.doesNotMatch(text, /Reply command|Recovery context/);
+});
+
+test('buildCodeAgentDeliveryPrompt renders reminder scheduled time separately from delivery time', () => {
+  const event = makeReminderInboxItem({
+      reminderId: 'reminder-test',
+      timestamp: '2026-05-18T17:00:00.000Z',
+  });
+  event.handling = {
+    ...event.handling,
+    startedAt: '2026-05-18T17:12:30.000Z',
+    status: 'running',
+    updatedAt: '2026-05-18T17:12:30.000Z',
+    workerId: 'worker-reminder',
+  };
+
+  const text = buildCodeAgentDeliveryPrompt(event, {
+    reminder: {
+      createdAt: '2026-05-18T16:00:00.000Z',
+      firedCount: 0,
+      instructions: 'Check whether the deploy finished.',
+      reminderId: 'reminder-test',
+      schedule: { kind: 'once' },
+      status: 'scheduled',
+      title: 'Follow up on deploy',
+      updatedAt: '2026-05-18T16:00:00.000Z',
+    },
+  });
+
+  assert.match(text, /\[reminder_id=reminder-test time=2026-05-18T17:12:30Z scheduled=2026-05-18T17:00:00Z\]/);
 });
 
 test('buildCodeAgentDeliveryPrompt renders reminder provenance as an origin envelope, not JSON', () => {

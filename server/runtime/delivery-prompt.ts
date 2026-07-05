@@ -35,7 +35,7 @@ export interface CodeAgentPromptContext {
  * Scheduled reminder (with provenance):
  *   Scheduled reminder:
  *
- *   [reminder_id=reminder-test time=2026-05-18T17:00:00Z] Follow up on deploy
+ *   [reminder_id=reminder-test time=2026-05-18T17:00:00Z scheduled=2026-05-18T17:00:00Z] Follow up on deploy
  *
  *   Instructions:
  *   Check whether the deploy finished.
@@ -149,10 +149,14 @@ function buildReminderDeliveryPrompt(
 
   return `Scheduled reminder:
 
-[reminder_id=${reminder.reminderId} time=${envelopeTime(event.receivedAt)}] ${reminder.title}
+[reminder_id=${reminder.reminderId} time=${envelopeTime(reminderDeliveryTime(event))} scheduled=${envelopeTime(event.receivedAt)}] ${reminder.title}
 
 Instructions:
 ${reminder.instructions}${provenance}`;
+}
+
+function reminderDeliveryTime(event: ReminderInboxItem): string {
+  return event.handling.startedAt ?? event.receivedAt;
 }
 
 function reminderOriginEnvelope(provenance: NonNullable<Reminder['provenance']>): string {
