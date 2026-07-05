@@ -7,6 +7,7 @@ import { registerReminderCommands } from '../reminders/cli.js';
 import { registerFileCommands } from '../tools/files-cli.js';
 import { registerMessageHistoryCommands } from '../tools/message-history-cli.js';
 import { registerMessageCommands } from '../tools/messages-cli.js';
+import { registerOrientationCommands } from '../tools/orientation-cli.js';
 import { registerReactionCommands } from '../tools/reactions-cli.js';
 import { registerSubscriptionCommands } from '../tools/subscriptions-cli.js';
 import { renderCliError } from './cli-errors.js';
@@ -27,6 +28,7 @@ export function createCliProgram(): Command {
 
   registerMessageCommands(program);
   registerMessageHistoryCommands(program);
+  registerOrientationCommands(program);
   registerEnvCommands(program);
   registerReactionCommands(program);
   registerSubscriptionCommands(program);

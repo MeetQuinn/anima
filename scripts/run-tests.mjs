@@ -22,6 +22,7 @@ const groups = {
     'message-profiles.test.js',
     'messages.test.js',
     'message-transport.test.js',
+    'orientation.test.js',
     'workspace-directory.test.js',
     'prompt-attachments.test.js',
     'provider-failure.test.js',

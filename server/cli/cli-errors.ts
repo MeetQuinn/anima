@@ -143,7 +143,7 @@ function slackVendorClassification(vendorCode: string, message: string): CliErro
     return {
       code: 'anima.ambiguous_user',
       detail: sanitizedDetail(message),
-      hint: 'That handle matches more than one user; use the exact user id from a recent envelope, anima history, or team.md.',
+      hint: 'That handle matches more than one user; use an exact user id, then verify it with anima whois <id>.',
       retryable: false,
     };
   }
