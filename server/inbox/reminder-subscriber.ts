@@ -62,6 +62,7 @@ export class ReminderInboxSubscriber {
         updatedAt: receivedAt,
       },
       reminderId: reminder.reminderId,
+      ...(reminder.nextDueAt ? { scheduledAt: reminder.nextDueAt } : {}),
       title: reminder.title,
     };
     const decision = await this.queue.enqueue(event);

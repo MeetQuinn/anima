@@ -1,6 +1,9 @@
-import { DateTime } from 'luxon';
+import type { DateTime } from 'luxon';
 
 import type { Reminder, ReminderSchedule } from '../../shared/reminder.js';
+import { parseTimeOfDay, timeOnLocalDay, zonedDateTime } from '../schedule/local-time.js';
+
+export { systemTimezone } from '../schedule/local-time.js';
 
 const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 type Weekday = (typeof WEEKDAYS)[number];
@@ -77,10 +80,6 @@ export function nextDueAtForSchedule(schedule: ReminderSchedule, after: Date): s
   }
 }
 
-export function systemTimezone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-}
-
 export function initialDueAt(input: {
   delaySeconds?: number;
   fireAt?: string;
@@ -143,20 +142,8 @@ function nextWeeklyDueAt(weekdays: Weekday[], time: string, timezone: string, af
   throw new Error('Unable to calculate next weekly reminder time.');
 }
 
-function zonedDateTime(date: Date, timezone: string): DateTime {
-  const result = DateTime.fromJSDate(date, { zone: timezone });
-  if (!result.isValid) throw new Error(`Invalid timezone: ${timezone}`);
-  return result;
-}
-
 function localTimeOnDay(day: DateTime, time: string, timezone: string): DateTime {
-  const [hour, minute] = parseTime(time);
-  const result = DateTime.fromObject(
-    { day: day.day, hour, minute, month: day.month, year: day.year },
-    { zone: timezone },
-  );
-  if (!result.isValid) throw new Error(`Invalid reminder time ${time} in timezone ${timezone}: ${result.invalidReason ?? 'invalid'}`);
-  return result;
+  return timeOnLocalDay(day, time, timezone, 'reminder time');
 }
 
 function luxonWeekdayToSundayFirst(weekday: number): number {
@@ -164,16 +151,7 @@ function luxonWeekdayToSundayFirst(weekday: number): number {
 }
 
 function assertValidTime(time: string): void {
-  parseTime(time);
-}
-
-function parseTime(time: string): [number, number] {
-  const match = time.match(/^(\d{2}):(\d{2})$/);
-  if (!match) throw new Error(`Invalid time: ${time}`);
-  const hour = Number.parseInt(match[1] ?? '', 10);
-  const minute = Number.parseInt(match[2] ?? '', 10);
-  if (hour > 23 || minute > 59) throw new Error(`Invalid time: ${time}`);
-  return [hour, minute];
+  parseTimeOfDay(time);
 }
 
 function isWeekday(value: string): value is Weekday {

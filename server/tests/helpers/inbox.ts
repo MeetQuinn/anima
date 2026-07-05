@@ -11,6 +11,7 @@ export async function ingestEvent(event: InboxItem, config: RuntimeWorkerConfig)
 export function makeReminderInboxItem(opts: {
   eventId?: string;
   reminderId: string;
+  scheduledAt?: string;
   title?: string;
   timestamp?: string;
 }): ReminderInboxItem {
@@ -26,6 +27,7 @@ export function makeReminderInboxItem(opts: {
       updatedAt: receivedAt,
     },
     reminderId: opts.reminderId,
+    ...(opts.scheduledAt ? { scheduledAt: opts.scheduledAt } : {}),
     title: opts.title ?? 'Reminder test',
   };
 }

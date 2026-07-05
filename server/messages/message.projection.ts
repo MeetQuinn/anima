@@ -32,6 +32,12 @@ export function messageFromInboxItem(item: InboxItem): AgentMessageRecord | unde
   if (item.kind === 'onboarding') return onboardingMessage(item);
   if (item.kind === 'feishu_onboarding') return feishuOnboardingMessage(item);
   if (item.kind === 'choice_response') return choiceResponseMessage(item);
+  // memory_coherence deliberately does NOT project into the message ledger.
+  // The memory-coherence scheduler's activity gate treats "a ledger entry
+  // newer than the last pass" as meaningful activity; if a pass wrote a
+  // ledger entry, every pass would justify the next one and the schedule
+  // would never go quiet. See hasMeaningfulActivitySinceLastMemoryPass in
+  // memory-coherence-scheduler.ts before adding projections here.
   return undefined;
 }
 

@@ -149,13 +149,16 @@ function buildReminderDeliveryPrompt(
 
   return `Scheduled reminder:
 
-[reminder_id=${reminder.reminderId} time=${envelopeTime(reminderDeliveryTime(event))} scheduled=${envelopeTime(event.receivedAt)}] ${reminder.title}
+[reminder_id=${reminder.reminderId} time=${envelopeTime(scheduledDeliveryTime(event))} scheduled=${envelopeTime(event.scheduledAt ?? event.receivedAt)}] ${reminder.title}
 
 Instructions:
 ${reminder.instructions}${provenance}`;
 }
 
-function reminderDeliveryTime(event: ReminderInboxItem): string {
+// Delivery time for scheduled wakes: the moment the runtime claimed the item
+// (so a wake queued behind a busy turn shows its real delay), falling back to
+// enqueue time for items rendered before claim.
+function scheduledDeliveryTime(event: MemoryCoherenceInboxItem | ReminderInboxItem): string {
   return event.handling.startedAt ?? event.receivedAt;
 }
 
@@ -167,7 +170,7 @@ function reminderOriginEnvelope(provenance: NonNullable<Reminder['provenance']>)
 function buildMemoryCoherenceDeliveryPrompt(event: MemoryCoherenceInboxItem): string {
   return `Memory coherence system wake:
 
-[time=${envelopeTime(event.receivedAt)} scheduled_slot_at=${envelopeTime(event.scheduledSlotAt)} scheduled_slot=${event.scheduledSlotLabel}]
+[time=${envelopeTime(scheduledDeliveryTime(event))} scheduled_slot_at=${envelopeTime(event.scheduledSlotAt)} scheduled_slot=${event.scheduledSlotLabel}]
 
 You are running your scheduled memory pass.
 
