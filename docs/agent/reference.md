@@ -289,6 +289,59 @@ anima history --channel #team
 reactions) are filtered views of the same history; all three accept `--limit`, `--since`,
 `--before`, and `--channel`.
 
+## See where you are present (`anima places`)
+
+Use this when you need to re-place yourself: `anima places` answers "where am I" by listing the
+rooms whose conversation reaches you without being named. Channels come from live membership, DMs
+from your own message ledger, and `Muted (n)` always renders, even at zero, so nothing is hidden.
+
+```
+anima places
+anima places --all
+```
+
+Each row shows the name, the id (ready to paste into `--channel`), the topic when the platform
+actually has one, and the time the runtime last delivered a message from that room. Rows sort by
+last delivery with the newest last, the same direction as `anima history`, so the most alive rooms
+sit closest to your prompt; rooms with no delivery yet sort to the top. A section over 50 rows
+shows only the 50 most recent and says so in its header, with the full count and a `--all`
+pointer; the list may be partial, the count never is.
+
+Three things to read correctly:
+
+- Timestamps are delivery times from your own ledger, not the room's latest activity. A muted room
+  shows its pre-mute time; that is the truth.
+- On Feishu the sections are labeled "Feishu known chats" and "Feishu known DMs": the platform
+  offers no full-membership listing today, so the view covers the chats this runtime knows from
+  its ledger and subscriptions.
+- There is no thread section. Thread-following is a behavior rule (you posted or were @mentioned,
+  so follow-ups reach you), not a thing to browse. The thread that concerns you is waking you, so
+  its `thread_ts` is already in the envelope in your hand.
+
+`anima subscription list` is an alias of this command.
+
+## Look up who or what an id is (`anima whois`)
+
+Use this the moment before you act on an id or a name: `anima whois` answers "who is this" with a
+point lookup, always queried live, never cached. It accepts a user, bot, or channel through one
+entrance: `@handle`, `#channel`, or a raw id (Slack `U…`/`C…`, Feishu `ou_…`/`oc_…`). It never
+opens a DM as a side effect.
+
+```
+anima whois @milo
+anima whois #team
+anima whois U0BXXXXXXX
+```
+
+Agents hosted by this runtime render with full detail, name, handle, id, and role, marked
+`(this runtime)`. Everything else renders exactly as the platform reports it: a bot from another
+runtime is `bot (not managed by this runtime)`, with nothing invented about whose it is or what it
+does, and a channel shows your membership and member count from the live API. If a name matches
+more than one entity, the command lists the candidates with ids and fails with
+`anima.ambiguous_user`; rerun it with the exact id.
+
+Prefer this over ids remembered in `MEMORY.md`: stored rosters go stale, and the lookup is cheap.
+
 ## Keep your memory lean (a daily tidy)
 
 Use this to stop your durable memory from rotting. `MEMORY.md` is what restores you after a reset,
@@ -343,13 +396,12 @@ itself instead of in a separate message.
 The `fileId` comes from the `attached: id=<id>` line in message-read output. To actually look at
 an image a teammate sent, fetch it to a path and then read that path.
 
-## See where you are listening, mute what is done (`anima subscription`)
+## Mute what is done (`anima subscription`)
 
-Use this to check which channels and threads you are following (`list`), or to stop following one
-that is finished with you (`mute`).
+Use this to stop following a channel or thread that is finished with you. To see where you are
+present, use `anima places`; `anima subscription list` is an alias of it.
 
 ```
-anima subscription list
 anima subscription mute --channel <id>
 anima subscription mute --channel <id> --thread-ts <ts>   # mute one thread, keep the channel
 ```

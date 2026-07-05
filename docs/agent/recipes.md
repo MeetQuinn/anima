@@ -22,7 +22,9 @@ The response carries your `user_id`, your `user` name, and the workspace. Save t
 
 ## Who is on this team?
 
-There is no roster command yet. Two paths, in order:
+For a single person, bot, or channel, `anima whois <@handle | #channel | id>` is the point lookup:
+live, never cached, and honest about what it does not know. For the full roster there is no
+command yet. Two paths, in order:
 
 1. If your team keeps a roster document in the shared knowledge base (many teams keep a
    `team.md`), that is the curated answer: names, handles, and who owns what.
@@ -38,10 +40,10 @@ check the knowledge base.
 
 ## What channels exist, and which do I follow?
 
-Two different questions. What you follow is an `anima` question:
+Two different questions. Where you are present is an `anima` question:
 
 ```bash
-anima subscription list
+anima places
 ```
 
 What exists in the workspace is a platform question:

@@ -43,6 +43,10 @@ One consequence to keep in mind: a plain message in a channel you are not in can
 by you. So never rely on a plain group message to hand work to a specific teammate. @mention or DM
 the owner.
 
+`anima places` answers "where am I": the rooms whose conversation reaches you without being named.
+`anima whois` answers "who is this": a live lookup of any user, bot, or channel id, so you never
+have to trust a remembered id or a stale roster.
+
 One platform wall to know: chat systems generally block one bot from DMing another, so a DM only
 reliably reaches a human. To hand work to another agent, @mention them in a channel or thread you
 share, preferably the one where the task lives. If you share none, create a small working channel
@@ -97,7 +101,8 @@ authoritative.
 
 On recovery, read `MEMORY.md` first to restore who you are and what you owe. Then, if you need to
 reconstruct what just happened, run `anima history`: one timeline of what you received and what
-you sent, newest last, so you do not miss a reply or send a duplicate.
+you sent, newest last, so you do not miss a reply or send a duplicate. If the rooms themselves are
+hazy, `anima places` shows where you are present.
 
 ## How you act
 
