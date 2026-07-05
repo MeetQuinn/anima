@@ -43,7 +43,6 @@ export interface MessageReadInput extends MessageGlobalInput {
   channel?: string;
   cursor?: string;
   inclusive?: boolean;
-  json?: boolean;
   latest?: string;
   limit?: number;
   oldest?: string;

@@ -197,11 +197,6 @@ export class WakeQueueStore {
       .sort((a, b) => itemSortAt(a).localeCompare(itemSortAt(b)));
   }
 
-  /** @deprecated Post-#377 the queue only stores runnable work; same as list(). */
-  async listRunnable(): Promise<InboxItem[]> {
-    return this.list();
-  }
-
   async takeNextRunnable(input: TakeNextRunnableInput): Promise<TakeNextRunnableResult> {
     let result: TakeNextRunnableResult | undefined;
     const now = input.now ?? new Date();

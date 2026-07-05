@@ -4,9 +4,7 @@ import { z } from 'zod';
 import { normalizeChatTargetOptions } from './chat-target-options.js';
 import { runMessageReact } from './reactions.js';
 
-const GlobalFlags = z.object({});
-
-const ReactionSchema = GlobalFlags.extend({
+const ReactionSchema = z.object({
   chatId: z.string().optional(),
   channel: z.string().optional(),
   emoji: z.string().optional(),

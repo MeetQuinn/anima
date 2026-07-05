@@ -15,8 +15,6 @@ import { normalizeChatTargetOptions } from './chat-target-options.js';
 import { runFileSend, type FileSendInputData } from './file-send.js';
 import { loadAgentFromOpts, slackWebClientForOpts } from './tool-context.js';
 
-const GlobalFlags = z.object({});
-
 interface FileFetchInputData {
   agent?: string;
   file?: string;
@@ -24,7 +22,7 @@ interface FileFetchInputData {
   output?: string;
 }
 
-const FileFetchSchema = GlobalFlags.extend({
+const FileFetchSchema = z.object({
   file: z.string().min(1).optional(),
   fileId: z.string().min(1).optional(),
   output: z.string().min(1).optional(),
@@ -37,7 +35,7 @@ interface FileFetchDeps {
   feishuFileService?: typeof defaultFeishuFileService;
 }
 
-const FileSendSchema = GlobalFlags.extend({
+const FileSendSchema = z.object({
   caption: z.string().optional(),
   chatId: z.string().optional(),
   channel: z.string().optional(),
