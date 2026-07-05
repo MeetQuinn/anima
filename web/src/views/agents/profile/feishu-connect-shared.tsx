@@ -3,22 +3,8 @@ import { QRCode } from 'react-qr-code';
 
 import { Button } from '@/components/ui/button';
 import { useIsMobile } from '@/hooks/use-mobile';
-import type { AgentFeishuRegisterAppStatus } from '@shared/agent-config';
 
 export const FEISHU_CONNECT_SLOW_SOFTEN_MS = 15_000;
-
-const FEISHU_REGISTRATION_ACTIVE_STATES: AgentFeishuRegisterAppStatus['state'][] = [
-  'starting',
-  'waiting',
-  'slow_down',
-  'domain_switched',
-];
-
-export function isFeishuRegistrationActive(
-  registration: AgentFeishuRegisterAppStatus | null | undefined,
-): boolean {
-  return Boolean(registration && FEISHU_REGISTRATION_ACTIVE_STATES.includes(registration.state));
-}
 
 export function FeishuCreatingAppLabel() {
   return (

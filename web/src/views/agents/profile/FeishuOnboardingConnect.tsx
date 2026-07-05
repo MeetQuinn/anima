@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query';
 
 import {
   connectAgentFeishu,
-  fetchAgentFeishuAppRegistration,
   fetchAgentFeishuScopeStatus,
   refreshDashboardData,
   startAgentFeishuAppRegistration,
@@ -13,12 +12,15 @@ import { Button } from '@/components/ui/button';
 import { FeishuRecommendedPermissionsChecklist } from './FeishuRecommendedPermissionsChecklist';
 import { queryKeys } from '@/lib/query-keys';
 import {
+  isFeishuRegistrationActive,
+  useFeishuRegistrationPoll,
+} from '@/hooks/useFeishuRegistrationPoll';
+import {
   FEISHU_CONNECT_SLOW_SOFTEN_MS,
   FeishuConnectAffordances,
   FeishuCreatingAppLabel,
   FeishuExistingCredentialsCard,
   FeishuSlowLine,
-  isFeishuRegistrationActive,
 } from './feishu-connect-shared';
 import {
   FEISHU_RECOMMENDED_SCOPES,
@@ -46,8 +48,6 @@ const PREVIEW_VERIFICATION_URL =
 // ---------------------------------------------------------------------------
 
 export type FeishuOnboardingPhase = 'creating' | 'authorizing' | 'fallback' | 'permissions' | 'connected';
-
-const POLL_INTERVAL_MS = 2000;
 
 interface Props {
   agentId: string;
@@ -129,41 +129,31 @@ export function FeishuOnboardingConnect({
   // --- Poll while registration is active ------------------------------------
   const registrationActive = !isPreview && isFeishuRegistrationActive(registration);
 
-  useEffect(() => {
-    if (!registrationActive || !registration?.registrationId) return undefined;
-    let cancelled = false;
-    const runId = registrationRunRef.current;
-    const timer = window.setInterval(() => {
-      void fetchAgentFeishuAppRegistration(agentId, registration.registrationId)
-        .then((next) => {
-          if (cancelled || runId !== registrationRunRef.current) return;
-          setRegistration(next);
-          if (next.verificationUrl) {
-            clearRetrySlowTimer();
-            setRetrying(false);
-            setRetrySlow(false);
-            setPhase((prev) => (prev === 'connected' ? prev : 'authorizing'));
-          }
-          if (next.state === 'connected') handleConnected('registerApp');
-          if (next.state === 'failed') {
-            clearRetrySlowTimer();
-            setRetrying(false);
-            setRetrySlow(false);
-            setError(next.error?.description ?? next.error?.message);
-            setPhase((prev) => (prev === 'connected' ? prev : 'fallback'));
-          }
-        })
-        .catch((err) => {
-          if (cancelled || runId !== registrationRunRef.current) return;
-          setError(err instanceof Error ? err.message : 'Could not refresh Feishu app setup');
-        });
-    }, POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentId, registration?.registrationId, registrationActive]);
+  useFeishuRegistrationPoll({
+    agentId,
+    enabled: registrationActive,
+    registration,
+    onStatus: (next) => {
+      setRegistration(next);
+      if (next.verificationUrl) {
+        clearRetrySlowTimer();
+        setRetrying(false);
+        setRetrySlow(false);
+        setPhase((prev) => (prev === 'connected' ? prev : 'authorizing'));
+      }
+      if (next.state === 'connected') handleConnected('registerApp');
+      if (next.state === 'failed') {
+        clearRetrySlowTimer();
+        setRetrying(false);
+        setRetrySlow(false);
+        setError(next.error?.description ?? next.error?.message);
+        setPhase((prev) => (prev === 'connected' ? prev : 'fallback'));
+      }
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : 'Could not refresh Feishu app setup');
+    },
+  });
 
   function handleConnected(source: 'registerApp' | 'manual') {
     clearRetrySlowTimer();
