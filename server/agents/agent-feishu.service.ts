@@ -329,6 +329,7 @@ export class AgentFeishuService {
     if (agent.feishu.ownerGreetingPromptedAt) return agent.feishu.ownerGreetingPromptedAt;
 
     const now = nowIso();
+    // cross-process write: picked up by the worker's fallback poll, not the in-process wake signal
     await wakeQueueServiceForAgent(agent.id).enqueue({
       handling: { createdAt: now, queuedAt: now, status: 'queued', updatedAt: now },
       id: `feishu-onboarding:${agent.id}:${ownerOpenId}`,

@@ -2,6 +2,7 @@ import type { InboxItem } from '../../shared/inbox.js';
 import { errorMessage } from '../ids.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import { WakeQueueStore, type TakeNextRunnableInput } from '../storage/schema/wake-queue.store.js';
+import { signalWake } from './wake-signal.js';
 
 export type { InboxItem };
 
@@ -51,6 +52,7 @@ export class WakeQueueService {
       const withdrawn = await this.store.withdrawQueued(event.id);
       if (withdrawn) return { duplicate: true, item: withdrawn, queued: false };
     }
+    signalWake(this.agentId);
     return { duplicate: false, item: result.item, queued: true };
   }
 
@@ -117,15 +119,18 @@ export class WakeQueueService {
     return this.store.failAppendedTo(parentItemId);
   }
 
-  requeue(itemId: string, options: { resumeReason?: 'runtime_restart' } = {}): Promise<void> {
-    return this.store.requeue(itemId, options);
+  async requeue(itemId: string, options: { resumeReason?: 'runtime_restart' } = {}): Promise<void> {
+    await this.store.requeue(itemId, options);
+    signalWake(this.agentId);
   }
 
-  requeueAppendedTo(
+  async requeueAppendedTo(
     parentItemId: string,
     options: { resumeReason?: 'runtime_restart' } = {},
   ): Promise<InboxItem[]> {
-    return this.store.requeueAppendedTo(parentItemId, options);
+    const items = await this.store.requeueAppendedTo(parentItemId, options);
+    if (items.length > 0) signalWake(this.agentId);
+    return items;
   }
 
   requestStop(itemId: string): Promise<InboxItem> {
