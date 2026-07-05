@@ -23,6 +23,7 @@ import { AgentRestartCommandStore } from '../runtime/agent-restart-command.store
 import { persistProviderSession } from '../runtime/runtime-bridge.js';
 import { setActiveRuntimeItem } from '../runtime/active-item.js';
 import { recordLifetimeTokenUsageForItem, tokenDeltaForActivities } from '../runtime/usage.js';
+import type { Activity, AgentActivityFeedPage } from '../../shared/activity.js';
 import { CURRENT_SLACK_MANIFEST_VERSION } from '../../shared/slack-manifest.js';
 import { withAnimaHome } from './anima-home.js';
 
@@ -159,6 +160,43 @@ test('activity feed pages activity events without wake queue items', async () =>
         page.events.some((event) => event.activityId === first.activityId),
         false,
       );
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('activity feed cursor pagination matches readAll reference across archives', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-activity-feed-archive-page-test-'));
+  try {
+    await writeConfig(stateDir);
+    await withAnimaHome(stateDir, async () => {
+      const agentDir = join(stateDir, 'agents/anima');
+      const archiveDir = join(agentDir, 'activity.archive');
+      await mkdir(archiveDir, { recursive: true });
+
+      const activities = [
+        webApiTestActivity('archived-oldest', '2026-07-04T00:00:00.000Z'),
+        webApiTestActivity('archived-before-cursor', '2026-07-04T00:00:01.000Z'),
+        webApiTestActivity('archived-tie-skipped', '2026-07-04T00:00:03.000Z'),
+        webApiTestActivity('archived-tie-cursor', '2026-07-04T00:00:03.000Z'),
+        webApiTestActivity('archived-newer', '2026-07-04T00:00:04.000Z'),
+        webApiTestActivity('live-newer', '2026-07-04T00:00:05.000Z'),
+      ];
+      await writeActivityJsonl(join(archiveDir, '0000000000001-activity-000.jsonl'), activities.slice(0, 3));
+      await writeActivityJsonl(join(archiveDir, '0000000000002-activity-000.jsonl'), activities.slice(3, 5));
+      await writeActivityJsonl(join(agentDir, 'activity.jsonl'), activities.slice(5));
+
+      const service = activityServiceForAgent('anima');
+      const actualPages: AgentActivityFeedPage[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await service.listActivityFeed({ before: cursor, limit: 3 });
+        actualPages.push(page);
+        cursor = page.nextCursor ?? undefined;
+      } while (cursor);
+
+      assert.deepEqual(actualPages, activityFeedReferencePages(await service.readAll(), 3));
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
@@ -2562,6 +2600,31 @@ async function writeConfig(configDir: string, agents: TestAgentConfig[] = [defau
     await mkdir(agentDir, { recursive: true });
     await writeFile(join(agentDir, 'config.json'), `${JSON.stringify({ ...agent, homePath }, null, 2)}\n`, 'utf8');
   }
+}
+
+async function writeActivityJsonl(path: string, activities: Activity[]): Promise<void> {
+  await writeFile(path, `${activities.map((activity) => JSON.stringify(activity)).join('\n')}\n`, 'utf8');
+}
+
+function webApiTestActivity(activityId: string, createdAt: string): Activity {
+  return {
+    activityId,
+    createdAt,
+    type: 'runtime.completed',
+  };
+}
+
+function activityFeedReferencePages(activities: Activity[], limit: number): AgentActivityFeedPage[] {
+  const pages: AgentActivityFeedPage[] = [];
+  let cursor: string | undefined;
+  do {
+    const before = cursor;
+    const events = (before ? activities.filter((activity) => activity.createdAt < before) : activities).slice(-limit);
+    const nextCursor = events.length >= limit ? (events[0]?.createdAt ?? null) : null;
+    pages.push({ events, nextCursor });
+    cursor = nextCursor ?? undefined;
+  } while (cursor);
+  return pages;
 }
 
 function postJson(url: string, body: unknown): Promise<Response> {
