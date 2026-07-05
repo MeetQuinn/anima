@@ -13,9 +13,12 @@ import {
   buildCodeAgentDeliveryPrompt,
 } from '../runtime/delivery-prompt.js';
 import {
+  feishuChatAttentionNote,
   FOLLOWUP_NOTE,
   providerCrashRetryNote,
   RUNTIME_RESTART_CONTINUATION_NOTE,
+  slackChannelAttentionNote,
+  slackThreadAttentionNote,
 } from '../runtime/delivery-notes.js';
 import { resolveAnimaReferencePathsFromRoots } from '../runtime/anima-reference.js';
 import { runtimeEnv } from '../runtime/runtime-bridge.js';
@@ -117,6 +120,18 @@ test('delivery prompt module exposes named provider-facing Anima builders', () =
     'Continue the original task from the current files, conversation, and connected chat state.',
     'Do not repeat completed external side effects such as chat messages, file sends, or file edits; check `anima outbox` for what already went out, and inspect files/state, before redoing anything.',
   ].join('\n'));
+  assert.equal(
+    slackChannelAttentionNote('C123'),
+    'Anima note: you\'ve been reading channel C123 without posting. If it is not relevant, mute it with `anima subscription mute --channel C123`.',
+  );
+  assert.equal(
+    slackThreadAttentionNote('C123', '1770000010.000001'),
+    'Anima note: you\'ve been reading thread 1770000010.000001 in C123 without posting. If it is not relevant, mute it with `anima subscription mute --channel C123 --thread-ts 1770000010.000001`.',
+  );
+  assert.equal(
+    feishuChatAttentionNote('oc_test_chat'),
+    'Anima note: you\'ve been reading Feishu chat oc_test_chat without posting. If it is not relevant, mute it with `anima subscription mute --chat-id oc_test_chat`.',
+  );
   assert.match(buildRuntimeRestartContinuationDeliveryPrompt({
     itemId: 'msg-test',
     time: '2026-01-01T00:00:00.000Z',

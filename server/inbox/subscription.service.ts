@@ -4,6 +4,11 @@ import {
   type SubscriptionRecord,
 } from '../storage/schema/subscription.store.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
+import {
+  feishuChatAttentionNote,
+  slackChannelAttentionNote,
+  slackThreadAttentionNote,
+} from '../runtime/delivery-notes.js';
 
 export { subscriptionStatus };
 export type { SubscriptionRecord };
@@ -411,15 +416,12 @@ function composeAttentionSuggestion(input: {
 function attentionSuggestionFor(subscription: SubscriptionRecord): string {
   const isFeishuChat = subscription.kind === 'channel' && platformForSubscription(subscription) === 'feishu';
   if (subscription.kind === 'thread') {
-    const command = `anima subscription mute --channel ${subscription.channelId} --thread-ts ${subscription.threadTs}`;
-    return `You've been reading thread ${subscription.threadTs} in ${subscription.channelId} without posting. If it is not relevant, mute it with \`${command}\`.`;
+    return slackThreadAttentionNote(subscription.channelId, subscription.threadTs);
   }
   if (isFeishuChat) {
-    const command = `anima subscription mute --chat-id ${subscription.channelId}`;
-    return `You've been reading Feishu chat ${subscription.channelId} without posting. If it is not relevant, mute it with \`${command}\`.`;
+    return feishuChatAttentionNote(subscription.channelId);
   }
-  const command = `anima subscription mute --channel ${subscription.channelId}`;
-  return `You've been reading channel ${subscription.channelId} without posting. If it is not relevant, mute it with \`${command}\`.`;
+  return slackChannelAttentionNote(subscription.channelId);
 }
 
 function threadRecentlyActive(subscription: SubscriptionRecord, nowMs: number): boolean {

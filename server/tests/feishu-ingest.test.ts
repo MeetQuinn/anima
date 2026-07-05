@@ -10,6 +10,7 @@ import { muteSubscriptionForAgent } from '../inbox/subscription.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { FeishuMessageTransport } from '../transports/feishu-message-transport.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
+import { feishuChatAttentionNote } from '../runtime/delivery-notes.js';
 import { messageFromInboxItem } from '../messages/message.projection.js';
 import { feishuTranscriptOutput } from '../tools/feishu-transcript.js';
 import { withAnimaHome } from './anima-home.js';
@@ -116,10 +117,10 @@ test('Feishu delivery prompt includes attention suggestions', () => {
   assert.ok(item);
   const prompt = buildCodeAgentDeliveryPrompt({
     ...item,
-    attentionSuggestion: 'Mute with `anima subscription mute --chat-id oc_test_chat`.',
+    attentionSuggestion: feishuChatAttentionNote('oc_test_chat'),
   });
 
-  assert.match(prompt, /Attention suggestion:\nMute with `anima subscription mute --chat-id oc_test_chat`\./);
+  assert.match(prompt, /Anima note: you've been reading Feishu chat oc_test_chat without posting\. If it is not relevant, mute it with `anima subscription mute --chat-id oc_test_chat`\./);
 });
 
 test('normalizes Feishu image messages into fetchable prompt attachments', () => {

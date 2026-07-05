@@ -127,7 +127,7 @@ test('Slack wake ingest decision matrix golden logs, queue outcomes, and attenti
       channelId: 'C-team',
       channelName: 'team',
       platform: 'slack',
-      suggestion: "You've been reading thread 1780408700.000001 in C-team without posting. If it is not relevant, mute it with `anima subscription mute --channel C-team --thread-ts 1780408700.000001`.",
+      suggestion: "Anima note: you've been reading thread 1780408700.000001 in C-team without posting. If it is not relevant, mute it with `anima subscription mute --channel C-team --thread-ts 1780408700.000001`.",
       threadTs: '1780408700.000001',
     }],
   }, {
@@ -307,7 +307,7 @@ test('Feishu wake ingest decision matrix golden logs, queue outcomes, and attent
       channelId: 'oc_group',
       channelKind: 'group',
       platform: 'feishu',
-      suggestion: "You've been reading Feishu chat oc_group without posting. If it is not relevant, mute it with `anima subscription mute --chat-id oc_group`.",
+      suggestion: "Anima note: you've been reading Feishu chat oc_group without posting. If it is not relevant, mute it with `anima subscription mute --chat-id oc_group`.",
     }],
   }, {
     name: 'muted ignored',

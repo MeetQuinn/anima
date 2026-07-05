@@ -153,7 +153,7 @@ function buildDeliveryEventPrompt(input: {
   return [
     primary,
     formatAttachedFiles(input.files),
-    input.attentionSuggestion ? `Attention suggestion:\n${input.attentionSuggestion}` : '',
+    input.attentionSuggestion,
   ].filter(Boolean).join('\n\n');
 }
 

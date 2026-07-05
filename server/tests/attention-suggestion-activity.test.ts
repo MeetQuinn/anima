@@ -8,6 +8,7 @@ import {
   recordAttentionSuggestionActivity,
   slackAttentionSuggestionPayload,
 } from '../inbox/attention-suggestion-activity.js';
+import { slackChannelAttentionNote } from '../runtime/delivery-notes.js';
 import { withAnimaHome } from './anima-home.js';
 import { allActivities, loadState } from './helpers/state.js';
 import type { SlackInboxItem } from '../../shared/inbox.js';
@@ -32,7 +33,7 @@ test('attention suggestion activity records Slack surface and suggestion payload
         text: 'wake',
         threadTs: '1770000010.000001',
       };
-      const suggestion = 'Attention suggestion: run `anima subscription mute --channel C123`.';
+      const suggestion = slackChannelAttentionNote('C123');
 
       await recordAttentionSuggestionActivity('scout', slackAttentionSuggestionPayload(item, suggestion));
 

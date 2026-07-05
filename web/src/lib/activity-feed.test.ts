@@ -23,7 +23,7 @@ describe('buildActivityFeed', () => {
           channelId: 'C123',
           channelName: 'build',
           platform: 'slack',
-          suggestion: 'Attention suggestion: run `anima subscription mute --channel C123`.',
+          suggestion: 'Anima note: you\'ve been reading channel C123 without posting. If it is not relevant, mute it with `anima subscription mute --channel C123`.',
           threadTs: '1770000010.000001',
         },
         type: 'anima.attention.suggestion',
@@ -38,7 +38,7 @@ describe('buildActivityFeed', () => {
     expect(item.eventKind).toBe('attention');
     expect(item.label).toBe('Attention');
     expect(item.body).toBe('#build · thread suggestion attached');
-    expect(item.meta).toBe('Attention suggestion: run `anima subscription mute --channel C123`.');
+    expect(item.meta).toBe('Anima note: you\'ve been reading channel C123 without posting. If it is not relevant, mute it with `anima subscription mute --channel C123`.');
     expect(item.timestamp).toBe('2026-07-04T14:00:00.000Z');
   });
 
