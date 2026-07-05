@@ -257,6 +257,7 @@ export class AgentSlackService {
     textLines.push(
       `Start by reading your MEMORY.md — its Onboarding section walks you through getting set up — then reply here to introduce yourself to ${ownerName}.`,
     );
+    // cross-process write: picked up by the worker's fallback poll, not the in-process wake signal
     await wakeQueueServiceForAgent(agent.id).enqueue({
       channelId: dm.id,
       handling: { createdAt: now, queuedAt: now, status: 'queued', updatedAt: now },

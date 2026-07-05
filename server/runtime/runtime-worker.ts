@@ -5,6 +5,7 @@ import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { errorMessage, nowIso } from '../ids.js';
 import { PROVIDER_IDLE_TIMEOUT_MS_DEFAULT } from '../../shared/agent-config.js';
 import type { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { onWake } from '../inbox/wake-signal.js';
 import {
   memoryCoherenceDigest,
   recordMemoryCoherenceCompleted,
@@ -62,7 +63,9 @@ export class AgentRuntimeWorker {
   private activeItem?: ActiveRunHandle;
   private activeDrain?: Promise<number>;
   private closing = false;
+  private pendingWake = false;
   private pollTimer?: NodeJS.Timeout;
+  private unsubscribeWake?: () => void;
 
   constructor(
     private readonly options: AgentRuntimeWorkerOptions,
@@ -76,13 +79,22 @@ export class AgentRuntimeWorker {
   }
 
   async drainOnce(): Promise<number> {
-    if (this.activeDrain) return 0;
+    if (this.activeDrain) {
+      this.pendingWake = true;
+      return 0;
+    }
     const drain = this.drainLoop();
     this.activeDrain = drain;
     try {
       return await drain;
     } finally {
-      if (this.activeDrain === drain) this.activeDrain = undefined;
+      if (this.activeDrain === drain) {
+        this.activeDrain = undefined;
+        if (this.pendingWake && !this.closing) {
+          this.pendingWake = false;
+          this.tick();
+        }
+      }
     }
   }
 
@@ -93,7 +105,9 @@ export class AgentRuntimeWorker {
   }
 
   start(): NodeJS.Timeout {
-    const intervalMs = this.options.pollIntervalMs ?? 1_000;
+    const intervalMs = this.options.pollIntervalMs ?? 15_000;
+    this.unsubscribeWake = onWake(this.options.agentId, () => this.tick());
+    // Fallback covers stale-running crash recovery and cross-process onboarding enqueues.
     this.pollTimer = setInterval(() => this.tick(), intervalMs);
     this.tick();
     return this.pollTimer;
@@ -132,6 +146,8 @@ export class AgentRuntimeWorker {
       clearInterval(this.pollTimer);
       this.pollTimer = undefined;
     }
+    this.unsubscribeWake?.();
+    this.unsubscribeWake = undefined;
     if (!options.drainActive) {
       this.activeItem?.abortController.abort(options.abortReason ?? 'shutdown');
       await this.options.agentRuntime.close?.(

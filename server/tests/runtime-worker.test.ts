@@ -8,6 +8,7 @@ import { withAnimaHome } from './anima-home.js';
 import { makeSlackEvent } from './helpers/slack.js';
 import { makeReminderInboxItem } from './helpers/inbox.js';
 import { WakeQueueService, type WakeQueueEnqueueResult } from '../inbox/wake-queue.service.js';
+import { onWake } from '../inbox/wake-signal.js';
 import { allActivities, loadState } from './helpers/state.js';
 import type { InboxItem, InboxItemStatus, MemoryCoherenceInboxItem } from '../../shared/inbox.js';
 import type {
@@ -65,6 +66,257 @@ async function prepareMemoryCoherenceHome(options: RuntimeWorkerConfig): Promise
   await mkdir(join(options.homePath, 'notes'), { recursive: true });
   await writeFile(join(options.homePath, 'MEMORY.md'), '# Existing memory\n', 'utf8');
 }
+
+class NullReadEnqueueQueue extends WakeQueueService {
+  redrainEmptyChecks = 0;
+  private injected = false;
+
+  constructor(
+    agentId: string,
+    private readonly shouldInject: () => boolean,
+    private readonly injectedItem: InboxItem,
+  ) {
+    super(agentId);
+  }
+
+  override async takeNextRunnable(
+    input: Parameters<WakeQueueService['takeNextRunnable']>[0],
+  ): Promise<InboxItem | undefined> {
+    const item = await super.takeNextRunnable(input);
+    if (item) return item;
+    if (!this.injected && this.shouldInject()) {
+      this.injected = true;
+      await this.enqueue(this.injectedItem);
+      return undefined;
+    }
+    if (this.injected) this.redrainEmptyChecks += 1;
+    return undefined;
+  }
+}
+
+test('runtime worker wakes on enqueue without waiting for poll interval', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-wake-signal-test-'));
+  const runtime = new ControlledRuntime();
+  const coordinator = { agentId: 'scout', stateDir };
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await ensureTestAgentConfig(coordinator);
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        pollIntervalMs: 60_000,
+        queue: queueFor('scout'),
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+      worker.start();
+
+      const decision = await enqueueInbox(
+        makeSlackEvent({
+          channelId: 'D-user',
+          eventId: 'evt-wake-signal',
+          teamId: 'T-demo',
+          text: 'wake now',
+          ts: '1770000010.000001',
+          userId: 'U1',
+        }),
+        coordinator,
+      );
+
+      await waitFor(() => runtime.calls.length === 1);
+      assert.equal((await queueFor('scout').find(decision.ctx.item.id))?.handling.status, 'running');
+      runtime.finishNext();
+      await waitForInboxItemRemoved('scout', decision.ctx.item.id);
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker re-drains when a wake arrives before active drain clears', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-pending-redrain-test-'));
+  const runtime = new ControlledRuntime();
+  const coordinator = { agentId: 'scout', stateDir };
+  const second = makeSlackEvent({
+    channelId: 'D-user',
+    eventId: 'evt-pending-redrain-second',
+    teamId: 'T-demo',
+    text: 'second prompt',
+    ts: '1770000011.000001',
+    userId: 'U1',
+  });
+  const queue = new NullReadEnqueueQueue('scout', () => runtime.completed === 1, second);
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await ensureTestAgentConfig(coordinator);
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        pollIntervalMs: 60_000,
+        queue,
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+      worker.start();
+
+      await enqueueInbox(
+        makeSlackEvent({
+          channelId: 'D-user',
+          eventId: 'evt-pending-redrain-first',
+          teamId: 'T-demo',
+          text: 'first prompt',
+          ts: '1770000010.000001',
+          userId: 'U1',
+        }),
+        coordinator,
+      );
+
+      await waitFor(() => runtime.calls.length === 1);
+      runtime.finishNext();
+      await waitFor(() => runtime.calls.length === 2);
+      assert.match(runtime.calls[1]?.prompt ?? '', /second prompt/);
+      runtime.finishNext();
+      await waitFor(() => runtime.completed === 2);
+      await waitForInboxItemRemoved('scout', second.id);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.equal(runtime.calls.length, 2);
+      assert.equal(queue.redrainEmptyChecks, 1);
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker duplicate enqueue does not emit a wake signal', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-duplicate-wake-test-'));
+  const coordinator = { agentId: 'scout', stateDir };
+  let wakes = 0;
+  let unsubscribe: (() => void) | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await ensureTestAgentConfig(coordinator);
+      unsubscribe = onWake('scout', () => {
+        wakes += 1;
+      });
+      const event = makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-duplicate-wake',
+        teamId: 'T-demo',
+        text: 'dedupe me',
+        ts: '1770000010.000001',
+        userId: 'U1',
+      });
+
+      assert.equal((await new WakeQueueService('scout').enqueue(event)).queued, true);
+      assert.equal(wakes, 1);
+      assert.equal((await new WakeQueueService('scout').enqueue(event)).duplicate, true);
+      assert.equal(wakes, 1);
+    });
+  } finally {
+    unsubscribe?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker close unsubscribes from wake signals', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-wake-close-test-'));
+  const runtime = new ControlledRuntime();
+  const coordinator = { agentId: 'scout', stateDir };
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await ensureTestAgentConfig(coordinator);
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        pollIntervalMs: 60_000,
+        queue: queueFor('scout'),
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+      worker.start();
+      await worker.close();
+      worker = undefined;
+
+      await enqueueInbox(
+        makeSlackEvent({
+          channelId: 'D-user',
+          eventId: 'evt-after-close',
+          teamId: 'T-demo',
+          text: 'after close',
+          ts: '1770000010.000001',
+          userId: 'U1',
+        }),
+        coordinator,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.equal(runtime.calls.length, 0);
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker wake signals are isolated by agent id', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-wake-isolation-test-'));
+  const alphaRuntime = new ControlledRuntime();
+  const bravoRuntime = new ControlledRuntime();
+  let alphaWorker: AgentRuntimeWorker | undefined;
+  let bravoWorker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const alpha = { agentId: 'alpha', stateDir };
+      const bravo = { agentId: 'bravo', stateDir };
+      await ensureTestAgentConfig(alpha);
+      await ensureTestAgentConfig(bravo);
+      alphaWorker = new AgentRuntimeWorker({
+        agentId: 'alpha',
+        agentRuntime: alphaRuntime,
+        pollIntervalMs: 60_000,
+        queue: queueFor('alpha'),
+        stateDir,
+        workerId: 'alpha-worker',
+      }, silentLogger);
+      bravoWorker = new AgentRuntimeWorker({
+        agentId: 'bravo',
+        agentRuntime: bravoRuntime,
+        pollIntervalMs: 60_000,
+        queue: queueFor('bravo'),
+        stateDir,
+        workerId: 'bravo-worker',
+      }, silentLogger);
+      alphaWorker.start();
+      bravoWorker.start();
+
+      await enqueueInbox(
+        makeSlackEvent({
+          channelId: 'D-alpha',
+          eventId: 'evt-alpha-wake',
+          teamId: 'T-demo',
+          text: 'alpha only',
+          ts: '1770000010.000001',
+          userId: 'U1',
+        }),
+        alpha,
+      );
+
+      await waitFor(() => alphaRuntime.calls.length === 1);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.equal(bravoRuntime.calls.length, 0);
+      alphaRuntime.finishNext();
+      await waitFor(() => alphaRuntime.completed === 1);
+    });
+  } finally {
+    await alphaWorker?.close();
+    await bravoWorker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
 
 test('queued Slack listener persists work for a separate runtime worker', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-queued-worker-test-'));
