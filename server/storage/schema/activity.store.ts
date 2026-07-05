@@ -50,14 +50,10 @@ export class ActivityStore {
   /**
    * Read the last `n` activity records with `createdAt` strictly before the
    * given ISO timestamp cursor. Used for cursor-based backward pagination.
-   * Falls back to a full file read (all activities before cursor) because the
-   * seek-from-end optimisation in readTail cannot efficiently skip a mid-file
-   * boundary — backward pagination is rare so the full scan is acceptable.
+   * Returns oldest-first within the page.
    */
   async readBefore(beforeCreatedAt: string, n: number): Promise<Activity[]> {
-    const all = await this.readAll();
-    const slice = all.filter((a) => a.createdAt < beforeCreatedAt);
-    return slice.slice(-n);
+    return (await this.readNewestMatching(n, (a) => a.createdAt < beforeCreatedAt)).reverse();
   }
 
   private log(): JsonlAppendLog<Activity> {

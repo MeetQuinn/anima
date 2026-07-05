@@ -43,10 +43,7 @@ export class ActivityService {
     const activities = input.before
       ? await this.store.readBefore(input.before, limit)
       : await this.store.readLastN(limit);
-    const events = activities
-      .filter((activity) => !input.before || activity.createdAt < input.before)
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-      .slice(-limit);
+    const events = activities;
     const nextCursor = events.length >= limit ? (events[0]?.createdAt ?? null) : null;
     return { events, nextCursor };
   }
