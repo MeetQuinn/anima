@@ -31,7 +31,7 @@ import {
   recordAttentionSuggestionActivity,
   slackAttentionSuggestionPayload,
 } from './attention-suggestion-activity.js';
-import { buildSlackInboxItem } from './slack-ingest.js';
+import { buildSlackInboxItemWithLatePreview } from './slack-ingest.js';
 import { slackShortcutHandoffServiceForAgent } from './slack-shortcut-handoff.service.js';
 import { slackRuntimeDecision, type SlackRuntimeDecision } from './slack-subscription.service.js';
 import { WakeQueueService, type WakeQueueEnqueueResult } from './wake-queue.service.js';
@@ -232,14 +232,22 @@ export class SlackInboxSubscriber {
 
     const webClient = client ?? createSlackWebClient(this.options.botToken);
     this.maybeSyncBotDisplayInfo(webClient);
-    const item = await buildSlackInboxItem({
+    const buildResult = await buildSlackInboxItemWithLatePreview({
       ...(runtimeDecision.attentionSuggestion ? { attentionSuggestion: runtimeDecision.attentionSuggestion } : {}),
       client: webClient,
       envelope,
       event: rawEvent,
       profiles: this.slackProfiles,
     });
-    const decision = await this.options.queue.enqueue(withSlackWakeReason(item, runtimeDecision.reason));
+    const item = withSlackWakeReason(buildResult.item, runtimeDecision.reason);
+    const decision = await this.options.queue.enqueue(item);
+    if (decision.queued && buildResult.latePreview) {
+      applyLateSlackPreviewToQueuedItem({
+        item,
+        latePreview: buildResult.latePreview,
+        queue: this.options.queue,
+      });
+    }
     if (runtimeDecision.attentionSuggestion && !decision.duplicate) {
       await recordAttentionSuggestionActivity(
         this.options.queue.agentId,
@@ -275,6 +283,19 @@ export class SlackInboxSubscriber {
         this.botDisplayInfoSyncInFlight = false;
       });
   }
+}
+
+export function applyLateSlackPreviewToQueuedItem(input: {
+  item: SlackInboxItem;
+  latePreview: (item: SlackInboxItem) => Promise<SlackInboxItem | undefined>;
+  queue: Pick<WakeQueueService, 'replaceQueuedItem'>;
+}): Promise<void> {
+  return input.latePreview(input.item).then(async (updatedItem) => {
+    if (!updatedItem) return;
+    await input.queue.replaceQueuedItem(updatedItem);
+  }).catch((error: unknown) => {
+    console.warn(`Slack late preview update failed for ${input.item.id}: ${errorMessage(error)}`);
+  });
 }
 
 function withSlackWakeReason(

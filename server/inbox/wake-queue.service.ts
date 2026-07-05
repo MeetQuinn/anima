@@ -72,6 +72,10 @@ export class WakeQueueService {
     return this.store.replaceItem(item);
   }
 
+  replaceQueuedItem(item: InboxItem): Promise<boolean> {
+    return this.store.replaceQueuedItem(item);
+  }
+
   list(): Promise<InboxItem[]> {
     return this.store.list();
   }

@@ -192,6 +192,21 @@ export class WakeQueueStore {
     return parsed;
   }
 
+  async replaceQueuedItem(item: InboxItem): Promise<boolean> {
+    const parsed = activeInboxItem(item);
+    let replaced = false;
+    await this.update((current) => {
+      const currentItem = current.items[parsed.id];
+      if (!currentItem || currentItem.handling.status !== 'queued') return current;
+      replaced = true;
+      return {
+        items: { ...current.items, [parsed.id]: { ...parsed, handling: currentItem.handling } },
+        seen: current.seen,
+      };
+    });
+    return replaced;
+  }
+
   async list(): Promise<InboxItem[]> {
     return Object.values((await this.read()).items)
       .sort((a, b) => itemSortAt(a).localeCompare(itemSortAt(b)));
