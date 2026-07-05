@@ -9,11 +9,16 @@
 // feishu.file.send are real emitted effects but were only recognized via the
 // tool field, so an effect-only payload was silently dropped.
 //
-// `slack.ask.post` is deliberately NOT classified here: projecting ask posts
-// into the message ledger is a semantics change tracked separately.
+// `slack.ask.post` classifies as `ask`: the posted question is agent-authored
+// channel content, so it belongs in the message ledger ("the ledger holds
+// everything conversational; the boundary excludes runtime bookkeeping, not
+// agent-authored channel content"). Consumers decide what `ask` means for
+// them: the server projects it into the ledger as an outbound message; the
+// web activity feed leaves it to the generic step row (unchanged rendering).
 
 export type OutboundEffectClassification =
   | { isEdit: boolean; kind: 'message' }
+  | { kind: 'ask' }
   | { kind: 'file' }
   | { kind: 'reaction' };
 
@@ -33,6 +38,9 @@ const FILE_EFFECTS = new Set(['feishu.file.send', 'slack.file.send']);
 const REACTION_TOOL = 'anima.message.react';
 const REACTION_EFFECTS = new Set(['feishu.reaction', 'slack.reaction']);
 
+const ASK_TOOL = 'anima.ask';
+const ASK_EFFECTS = new Set(['slack.ask.post']);
+
 export function classifyOutboundEffect(input: {
   effect?: string | undefined;
   tool?: string | undefined;
@@ -49,6 +57,9 @@ export function classifyOutboundEffect(input: {
   }
   if (tool === REACTION_TOOL || (effect && REACTION_EFFECTS.has(effect))) {
     return { kind: 'reaction' };
+  }
+  if (tool === ASK_TOOL || (effect && ASK_EFFECTS.has(effect))) {
+    return { kind: 'ask' };
   }
   return undefined;
 }

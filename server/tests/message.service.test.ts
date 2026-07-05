@@ -236,6 +236,92 @@ test('tool activity does not fail successful effects when message ledger write f
   }
 });
 
+// iris's QA scenario for ask-post projection: the posted question must survive
+// a crash after the post — a recovered agent's `anima outbox` shows it, and
+// re-projecting the same activity (recovery/replay) never double-posts a row.
+test('interactive ask posts project into the outbox once, surviving re-projection', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-message-ask-outbox-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      // Write through the live tool path, shaped like runAsk's payloads.
+      await withToolActivity({
+        audit: { agentId: 'scout' },
+        basePayload: {
+          channel: 'C-product',
+          channelDisplayName: 'product',
+          channelKind: 'channel',
+          channelName: 'product',
+          optionCount: 2,
+          target: 'Ship the canary today?',
+          tool: 'anima.ask',
+        },
+        effectType: 'slack.ask.post',
+        op: async () => ({
+          completedPayload: {
+            askId: 'ask_test_1',
+            messageTs: '1770000300.000001',
+            optionLabels: ['Ship it', 'Hold'],
+            payload: {
+              channel: 'C-product',
+              text: 'Ship the canary today?\n\nOptions:\n1. Ship it\n2. Hold\n\nNone fit? Just reply in this thread.',
+            },
+            question: 'Ship the canary today?',
+          },
+          result: undefined,
+        }),
+      });
+
+      // "Recovery": a fresh service reads the persisted ledger (anima outbox).
+      const outbox = await messageServiceForAgent('scout').list({ direction: 'out', limit: 10 });
+      assert.equal(outbox.entries.length, 1);
+      const entry = outbox.entries[0]!;
+      assert.equal(entry.kind, 'message');
+      assert.equal(entry.question, 'Ship the canary today?');
+      assert.equal(entry.messageTs, '1770000300.000001');
+      assert.equal(entry.channelId, 'C-product');
+      assert.match(entry.text, /^Ship the canary today\?/);
+      assert.match(entry.text, /1\. Ship it/);
+
+      // Replaying the projection for the same activity must not duplicate.
+      const completed = (await activityServiceForAgent('scout').readAll())
+        .find((activity) => activity.type === 'external.effect.completed');
+      assert.ok(completed);
+      await messageServiceForAgent('scout').recordOutboxActivity(completed);
+      const replayed = await messageServiceForAgent('scout').list({ direction: 'out', limit: 10 });
+      assert.equal(replayed.entries.length, 1);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+// Older ask activities predate the recorded raw post payload: text falls back
+// to question + options reconstruction.
+test('ask projection reconstructs text when the raw post payload is absent', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-message-ask-fallback-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const activity = await activityServiceForAgent('scout').record({
+        payload: {
+          channel: 'C-product',
+          effect: 'slack.ask.post',
+          messageTs: '1770000301.000001',
+          optionLabels: ['Yes', 'No'],
+          question: 'Proceed?',
+          status: 'completed',
+          tool: 'anima.ask',
+        },
+        type: 'external.effect.completed',
+      });
+      const record = await messageServiceForAgent('scout').recordOutboxActivity(activity);
+      assert.equal(record?.text, 'Proceed?\n\nOptions:\n1. Yes\n2. No');
+      assert.equal(record?.question, 'Proceed?');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 async function withMutedWarnings<T>(op: () => Promise<T>): Promise<T> {
   const original = console.warn;
   console.warn = () => undefined;

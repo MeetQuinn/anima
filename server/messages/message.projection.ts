@@ -73,6 +73,21 @@ export function messageFromActivity(activity: Activity): AgentMessageRecord | un
     });
   }
 
+  if (classified.kind === 'ask') {
+    // An interactive ask is an agent-authored channel message (question +
+    // answer buttons), so it projects into the ledger as an outbound message.
+    // Text prefers the exact posted fallback content recorded in the raw
+    // chat.postMessage payload; reconstruction from question/options covers
+    // older activity rows that predate that field.
+    const question = stringField(payload, 'question') ?? stringField(payload, 'target') ?? '';
+    return baseOutboxMessage(activity, payload, {
+      kind: 'message',
+      messageTs: stringField(payload, 'messageTs'),
+      ...(question ? { question } : {}),
+      text: askPostText(payload, question),
+    });
+  }
+
   const action = stringField(payload, 'action') === 'removed' ? 'removed' : 'added';
   const name = stringField(payload, 'name') ?? '';
   return baseOutboxMessage(activity, payload, {
@@ -85,6 +100,20 @@ export function messageFromActivity(activity: Activity): AgentMessageRecord | un
     },
     text: `Reaction ${action}: :${name || 'unknown'}:`,
   });
+}
+
+function askPostText(payload: Record<string, unknown>, question: string): string {
+  const posted = payload['payload'];
+  if (posted && typeof posted === 'object') {
+    const text = stringField(posted as Record<string, unknown>, 'text');
+    if (text) return text;
+  }
+  const optionLabels = Array.isArray(payload['optionLabels'])
+    ? payload['optionLabels'].filter((label): label is string => typeof label === 'string' && label.length > 0)
+    : [];
+  if (!optionLabels.length) return question;
+  const optionLines = optionLabels.map((label, index) => `${index + 1}. ${label}`);
+  return `${question}\n\nOptions:\n${optionLines.join('\n')}`;
 }
 
 export function messageIdForInboxItem(item: InboxItem): string {
