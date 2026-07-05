@@ -155,12 +155,13 @@ function systemEventForMessage(
   message: AgentMessageRecord,
 ): Extract<ActivityFeedItem, { kind: 'system-event' }> | null {
   if (isOnboardingWakeMessage(message)) {
-    const text = message.text.trim();
+    // Collapse to a short fixed label - the raw onboarding prompt is long and
+    // internal, so it should not be exposed in the timeline.
     return {
       kind: 'system-event',
       eventKind: 'onboarding',
       label: 'Onboarding',
-      body: text || 'Agent onboarding completed',
+      body: 'Agent onboarding started',
       timestamp: message.timestamp,
     };
   }

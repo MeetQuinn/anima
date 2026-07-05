@@ -1,7 +1,16 @@
-import { Fragment, useEffect, useMemo, useReducer, useRef, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { AlertCircle, BrainCircuit, ChevronRight, ExternalLink, Loader2, Power, X } from 'lucide-react';
+import {
+  AlertCircle,
+  BrainCircuit,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  Loader2,
+  Power,
+  X,
+} from 'lucide-react';
 import {
   fetchAgentStatuses,
   fetchAgentActivities,
@@ -12,7 +21,7 @@ import {
 import { buildActivityFeed, buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
 import { activityRow, isNarrativeStep } from '@/lib/activities';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
-import { clockHM, dateKey, dateLabel, formatRelativeShort } from '@/lib/format';
+import { clockHM, dateKey, formatRelativeShort } from '@/lib/format';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useNow } from '@/hooks/useNow';
 import {
@@ -211,32 +220,71 @@ function LifecycleLineRow({ step }: { step: Step }) {
   const isFailure = row.kind === 'failure';
   const Icon = isMemory ? BrainCircuit : Power;
   const accentClass = isFailure ? 'text-health-error' : 'text-text-subtle';
-  return (
-    <div className="flex items-center justify-center gap-2.5 px-1 py-1.5">
-      <span aria-hidden className="hidden h-px w-8 shrink-0 bg-border-soft sm:block" />
+  const [expanded, setExpanded] = useState(false);
+  // Memory-coherence summaries can be long, so we collapse them to the label
+  // and reveal the full text on tap. Other lifecycle lines (runtime
+  // restart/stop) keep their short target inline.
+  const expandable = isMemory && Boolean(row.target);
+  const fullText = row.targetFull ?? row.target;
+
+  const pillClass = [
+    'inline-flex max-w-[85%] items-center gap-1.5 rounded-full border bg-surface-raised px-2.5 py-0.5',
+    isFailure ? 'border-health-error/40' : 'border-border-soft',
+  ].join(' ');
+
+  const pillInner = (
+    <>
+      <Icon className={['h-3 w-3 shrink-0', accentClass].join(' ')} aria-hidden />
       <span
         className={[
-          'inline-flex max-w-[85%] items-center gap-1.5 rounded-full border bg-surface-raised px-2.5 py-0.5',
-          isFailure ? 'border-health-error/40' : 'border-border-soft',
+          'shrink-0 font-sans text-[9.5px] font-semibold uppercase tracking-[0.12em]',
+          accentClass,
         ].join(' ')}
       >
-        <Icon className={['h-3 w-3 shrink-0', accentClass].join(' ')} aria-hidden />
-        <span
-          className={[
-            'shrink-0 font-sans text-[9.5px] font-semibold uppercase tracking-[0.12em]',
-            accentClass,
-          ].join(' ')}
-        >
-          {row.title}
-        </span>
-        {row.target && (
-          <span className="truncate font-sans text-[12px] text-text-muted">{row.target}</span>
-        )}
-        <span className="shrink-0 font-sans text-[10px] text-text-subtle">
-          {clockHM(step.timestamp)}
-        </span>
+        {row.title}
       </span>
-      <span aria-hidden className="hidden h-px w-8 shrink-0 bg-border-soft sm:block" />
+      {expandable ? (
+        <ChevronDown
+          className={[
+            'h-3 w-3 shrink-0 text-text-subtle transition-transform',
+            expanded ? 'rotate-180' : '',
+          ].join(' ')}
+          aria-hidden
+        />
+      ) : (
+        row.target && (
+          <span className="truncate font-sans text-[12px] text-text-muted">{row.target}</span>
+        )
+      )}
+      <span className="shrink-0 font-sans text-[10px] text-text-subtle">
+        {clockHM(step.timestamp)}
+      </span>
+    </>
+  );
+
+  return (
+    <div className="flex flex-col items-center gap-1.5 px-1 py-1.5">
+      <div className="flex w-full items-center justify-center gap-2.5">
+        <span aria-hidden className="hidden h-px w-8 shrink-0 bg-border-soft sm:block" />
+        {expandable ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((prev) => !prev)}
+            aria-expanded={expanded}
+            className={[pillClass, 'transition-colors hover:bg-surface-elevated'].join(' ')}
+          >
+            {pillInner}
+          </button>
+        ) : (
+          <span className={pillClass}>{pillInner}</span>
+        )}
+        <span aria-hidden className="hidden h-px w-8 shrink-0 bg-border-soft sm:block" />
+      </div>
+      {expandable && expanded && fullText && (
+        <div className="max-w-prose whitespace-pre-wrap px-3 text-center font-sans text-[12px] leading-snug text-text-muted">
+          {fullText}
+        </div>
+      )}
     </div>
   );
 }
@@ -739,20 +787,6 @@ export default function Activity() {
     oldestMessageTs === null ||
     (oldestActivityTs !== null && oldestActivityTs <= oldestMessageTs);
 
-  // Explicit boundary: steps are interleaved and the conversation has loaded
-  // messages, but the activity feed is exhausted and still does not reach the
-  // oldest loaded message. Below this timestamp older steps are no longer
-  // retained, so we label it instead of implying those messages had no activity.
-  const stepCoverageFloorTs =
-    interleaving &&
-    activityQuery.hasNextPage === false &&
-    !activityQuery.isFetchingNextPage &&
-    oldestActivityTs !== null &&
-    oldestMessageTs !== null &&
-    oldestActivityTs > oldestMessageTs
-      ? oldestActivityTs
-      : null;
-
   const latestCurrentItemActivity = useMemo(() => {
     if (!currentItemId || !activitiesData) return undefined;
     const activities = activitiesData.events;
@@ -1130,16 +1164,6 @@ export default function Activity() {
               className="h-3.5 w-3.5 animate-spin text-text-subtle"
               aria-label="Loading older activity"
             />
-          </div>
-        )}
-        {stepCoverageFloorTs !== null && !showFirstRunHero && filteredItems.length > 0 && (
-          <div className="mx-auto mb-2 flex max-w-prose items-start gap-2 rounded-md border border-border-soft bg-surface-raised/40 px-3 py-2 text-[11px] leading-snug text-text-muted">
-            <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-text-subtle" />
-            <span>
-              Tool steps load back to {dateLabel(new Date(stepCoverageFloorTs).toISOString())}.
-              Messages older than that show without tool steps, because the activity history does
-              not reach further back.
-            </span>
           </div>
         )}
         {showFirstRunHero ? (
