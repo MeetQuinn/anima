@@ -10,6 +10,7 @@ import {
 import { runPlaces, type PlacesOptions } from './orientation-cli.js';
 import type { OrientationDeps } from './orientation.js';
 import { normalizeChatTargetOptions } from './chat-target-options.js';
+import { resolveChatTarget } from './chat-target-resolver.js';
 import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
 import { outcomeLine, type OutcomePart } from './outcome-line.js';
 
@@ -71,13 +72,14 @@ async function subscriptionMute(opts: SubscriptionMuteOptions): Promise<void> {
   const agentIdResolved = resolveAgentIdFrom(opts.agent);
   if (!agentIdResolved) throw new Error('Agent not specified. Pass --agent <id> or set ANIMA_AGENT_ID.');
   if (!opts.channel) throw new Error('subscription mute requires --channel or --chat-id');
-  if (isFeishuChatId(opts.channel)) {
+  const target = resolveChatTarget(opts.channel);
+  if (target.platform === 'feishu' && target.receiveIdType === 'chat_id') {
     if (opts.threadTs) throw new Error('Feishu subscription mute currently supports chat-level mutes only.');
     await muteSubscriptionForAgent({
       agentId: agentIdResolved,
-      channelId: opts.channel,
+      channelId: target.receiveId,
     });
-    console.log(outcomeLine('muted', [['feishu chat_id', opts.channel]]));
+    console.log(outcomeLine('muted', [['feishu chat_id', target.receiveId]]));
     return;
   }
   const agent = await defaultAgentRegistryService.serviceFor(agentIdResolved).getConfig();
@@ -101,8 +103,4 @@ async function subscriptionMute(opts: SubscriptionMuteOptions): Promise<void> {
   const parts: OutcomePart[] = [['channel', channelRef]];
   if (opts.threadTs) parts.push(['thread_ts', opts.threadTs]);
   console.log(outcomeLine('muted', parts));
-}
-
-function isFeishuChatId(channel: string): boolean {
-  return channel.startsWith('oc_');
 }

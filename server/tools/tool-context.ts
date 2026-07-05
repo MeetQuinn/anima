@@ -8,6 +8,13 @@ import { resolveAgentIdFrom } from '../cli/shared.js';
 import { errorMessage } from '../ids.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import { findToolAuditRuntimeItem } from '../runtime/active-item.js';
+import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
+import type {
+  FeishuInboxItem,
+  FeishuOnboardingInboxItem,
+  InboxItem,
+  SlackInboxItem,
+} from '../../shared/inbox.js';
 
 export interface ToolActivityAudit {
   agentId: string;
@@ -71,6 +78,25 @@ export async function resolveToolItemId(opts: { agent?: string; item?: string })
   const current = await findToolAuditRuntimeItem(agentId);
   if (current && !current.settledAt && current.itemId !== envItemId) return current.itemId;
   return envItemId ?? current?.itemId;
+}
+
+export async function currentToolItem(agentId: string, opts: { agent?: string; item?: string }): Promise<InboxItem | undefined> {
+  const itemId = await resolveToolItemId(opts);
+  if (!itemId) return undefined;
+  return wakeQueueServiceForAgent(agentId).find(itemId);
+}
+
+export async function currentSlackItem(agentId: string, opts: { agent?: string; item?: string }): Promise<SlackInboxItem | undefined> {
+  const item = await currentToolItem(agentId, opts);
+  return item?.kind === 'slack' ? item : undefined;
+}
+
+export async function currentFeishuItem(
+  agentId: string,
+  opts: { agent?: string; item?: string },
+): Promise<FeishuInboxItem | FeishuOnboardingInboxItem | undefined> {
+  const item = await currentToolItem(agentId, opts);
+  return item?.kind === 'feishu' || item?.kind === 'feishu_onboarding' ? item : undefined;
 }
 
 async function resolveAuditItemId(agentId: string): Promise<string | undefined> {

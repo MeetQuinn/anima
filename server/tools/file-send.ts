@@ -29,6 +29,7 @@ import {
   withToolActivity,
   readStdin,
 } from './tool-context.js';
+import { resolveChatTarget } from './chat-target-resolver.js';
 
 export interface FileSendInputData {
   agent?: string;
@@ -90,8 +91,8 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
   }));
 
   const caption = await captionFromOpts(opts);
-  const feishuTarget = feishuFileTargetFromChannelArg(opts.channel);
-  if (feishuTarget) {
+  const chatTarget = resolveChatTarget(opts.channel);
+  if (chatTarget.platform === 'feishu') {
     const agent = await loadAgentFromOpts(opts);
     if (!agent.feishu.connected) {
       throw new Error(`Agent ${agentId} has no Feishu connection configured`);
@@ -102,7 +103,12 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
       client: (deps.createFeishuMessageClient ?? createDefaultFeishuMessageClient)(agent.feishu),
       files: validated,
       opts,
-      target: feishuTarget,
+      target: {
+        displayName: chatTarget.displayName ?? 'Feishu chat',
+        receiveId: chatTarget.receiveId,
+        receiveIdType: chatTarget.receiveIdType,
+        surfaceKind: chatTarget.surfaceKind ?? 'chat',
+      },
     });
     return;
   }
@@ -302,27 +308,6 @@ async function sendFeishuCaption(input: {
     receiveIdType: input.target.receiveIdType,
     text: input.caption,
   });
-}
-
-function feishuFileTargetFromChannelArg(channel: string | undefined): FeishuFileTarget | undefined {
-  if (!channel) return undefined;
-  if (channel.startsWith('oc_')) {
-    return {
-      displayName: 'Feishu chat',
-      receiveId: channel,
-      receiveIdType: 'chat_id',
-      surfaceKind: 'chat',
-    };
-  }
-  if (channel.startsWith('ou_')) {
-    return {
-      displayName: 'Feishu owner',
-      receiveId: channel,
-      receiveIdType: 'open_id',
-      surfaceKind: 'open_id',
-    };
-  }
-  return undefined;
 }
 
 async function safeFetchSlackFileInfo(input: {

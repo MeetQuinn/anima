@@ -1,5 +1,6 @@
 import { errorMessage } from '../ids.js';
 import { createFeishuMessageClient as createDefaultFeishuMessageClient } from '../feishu/client.js';
+import { resolveChatTarget } from './chat-target-resolver.js';
 import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
 import {
   slackOutputTarget,
@@ -9,15 +10,14 @@ import {
 } from './slack-target.js';
 import { outcomeLine, type OutcomePart } from './outcome-line.js';
 import {
+  currentFeishuItem,
+  currentSlackItem,
   loadAgentFromOpts,
   resolveToolAgentId,
-  resolveToolItemId,
   slackWebClientForOpts,
   withToolActivity,
 } from './tool-context.js';
 import { recordOutboundEngagement } from '../inbox/slack-subscription.service.js';
-import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
-import type { FeishuInboxItem, SlackInboxItem } from '../../shared/inbox.js';
 
 type FeishuMessageClientFactory = typeof createDefaultFeishuMessageClient;
 
@@ -141,7 +141,7 @@ async function runFeishuMessageReact(input: {
   const agent = await loadAgentFromOpts(input.opts);
   if (!agent.feishu.connected) throw new Error(`Agent ${input.agentId} has no Feishu connection configured`);
   const feishuItem = await currentFeishuItem(input.agentId, input.opts);
-  const channelKind = feishuItem?.chatId === input.channel ? feishuItem.chatType : 'chat';
+  const channelKind = feishuItem?.kind === 'feishu' && feishuItem.chatId === input.channel ? feishuItem.chatType : 'chat';
   const channelDisplayName = channelKind === 'p2p' ? 'Feishu DM' : `Feishu ${channelKind}`;
   const client = input.createFeishuMessageClient(agent.feishu);
   const basePayload = {
@@ -201,22 +201,8 @@ async function currentSlackThreadTs(
   return item.threadTs;
 }
 
-async function currentSlackItem(agentId: string, opts: MessageReactInput): Promise<SlackInboxItem | undefined> {
-  const itemId = await resolveToolItemId(opts);
-  if (!itemId) return undefined;
-  const item = await wakeQueueServiceForAgent(agentId).find(itemId);
-  return item?.kind === 'slack' ? item : undefined;
-}
-
-async function currentFeishuItem(agentId: string, opts: MessageReactInput): Promise<FeishuInboxItem | undefined> {
-  const itemId = await resolveToolItemId(opts);
-  if (!itemId) return undefined;
-  const item = await wakeQueueServiceForAgent(agentId).find(itemId);
-  return item?.kind === 'feishu' ? item : undefined;
-}
-
 function isFeishuReactionTarget(input: { channel: string; targetMessageId: string }): boolean {
-  return input.channel.startsWith('oc_') || input.targetMessageId.startsWith('om_');
+  return resolveChatTarget(input.channel).platform === 'feishu' || input.targetMessageId.startsWith('om_');
 }
 
 function feishuReactionOutputLine(input: {
