@@ -17,12 +17,12 @@ import {
 } from '../inbox/slack-subscription.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import {
-  normalizeSlackConversationName,
   normalizeSlackHandle,
   slackUserHandleCandidates,
   type SlackConversationInfo,
   type SlackUserInfo,
 } from '../slack/slack.helper.js';
+import { SlackWorkspaceDirectoryService } from '../slack/workspace-directory.service.js';
 
 const SLACK_USER_ID = /^U[A-Z0-9]+$/;
 const SLACK_CONVERSATION_ID = /^[CDG][A-Za-z0-9_-]+$/;
@@ -30,6 +30,8 @@ const FEISHU_CHAT_ID = /^oc_[A-Za-z0-9_-]+$/;
 const FEISHU_OPEN_ID = /^ou_[A-Za-z0-9_-]+$/;
 const SLACK_CONVERSATION_TYPES = 'public_channel,private_channel,mpim';
 const DEFAULT_PLACES_LIMIT = 50;
+// Matches MessageService's clamp; broad enough to avoid channel dropout while staying bounded.
+const PLACES_MESSAGE_WINDOW = 500;
 
 export interface SourcedText {
   source: 'agent_config' | 'platform';
@@ -104,7 +106,7 @@ export interface OrientationDeps {
   feishuAdapterForAgent?(agent: AgentConfig): FeishuOrientationAdapter | undefined;
   getAgentConfig?(agentId: string): Promise<AgentConfig>;
   listAgentConfigs?(): Promise<AgentConfig[]>;
-  listMessages?(agentId: string): Promise<AgentMessageRecord[]>;
+  listMessages?(agentId: string, input: { limit: number }): Promise<AgentMessageRecord[]>;
   listSubscriptions?(agentId: string): Promise<SubscriptionRecord[]>;
   slackAdapterForAgent?(agent: AgentConfig): SlackOrientationAdapter | undefined;
 }
@@ -217,14 +219,14 @@ export function composePlaceRows(input: {
   seeds: Array<Omit<PlaceRow, 'lastDeliveredAt' | 'muted'> & { muted?: boolean }>;
   subscriptions: SubscriptionRecord[];
 }): PlaceRow[] {
-  const lastDelivered = lastDeliveredByChannel(input.messages);
+  const index = messagesByChannel(input.messages);
   const rows = new Map<string, PlaceRow>();
 
   for (const seed of input.seeds) {
     const key = placeKey(seed.platform, seed.id);
     rows.set(key, {
       ...seed,
-      lastDeliveredAt: lastDelivered.get(seed.id),
+      lastDeliveredAt: index.get(seed.id)?.lastDeliveredAt,
       muted: Boolean(seed.muted),
     });
   }
@@ -239,7 +241,7 @@ export function composePlaceRows(input: {
       kind: existing?.kind ?? (platform === 'slack' && subscription.channelId.startsWith('D') ? 'dm' : 'channel'),
       label: existing?.label,
       handle: existing?.handle,
-      lastDeliveredAt: existing?.lastDeliveredAt ?? lastDelivered.get(subscription.channelId),
+      lastDeliveredAt: existing?.lastDeliveredAt ?? index.get(subscription.channelId)?.lastDeliveredAt,
       muted: true,
       platform,
       topic: existing?.topic,
@@ -258,7 +260,8 @@ function listAgentConfigs(deps: OrientationDeps): Promise<AgentConfig[]> {
 }
 
 function listMessages(deps: OrientationDeps, agentId: string): Promise<AgentMessageRecord[]> {
-  return deps.listMessages?.(agentId) ?? messageServiceForAgent(agentId).listAll();
+  return deps.listMessages?.(agentId, { limit: PLACES_MESSAGE_WINDOW })
+    ?? messageServiceForAgent(agentId).list({ limit: PLACES_MESSAGE_WINDOW }).then((page) => page.entries);
 }
 
 function listSubscriptions(deps: OrientationDeps, agentId: string): Promise<SubscriptionRecord[]> {
@@ -380,10 +383,17 @@ async function feishuPlaces(
   }
 
   const adapter = feishuAdapter(agent, deps);
+  const latestMessages = messagesByChannel(messages);
   const seeds: Array<Omit<PlaceRow, 'lastDeliveredAt' | 'muted'> & { muted?: boolean }> = [];
+  const chats = new Map<string, FeishuChatInfo | undefined>();
+  if (adapter) {
+    await Promise.all([...knownChatIds].map(async (chatId) => {
+      chats.set(chatId, await adapter.getChat(chatId));
+    }));
+  }
   for (const chatId of knownChatIds) {
-    const chat = adapter ? await adapter.getChat(chatId) : undefined;
-    const fromMessage = latestMessageForChannel(messages, chatId);
+    const chat = chats.get(chatId);
+    const fromMessage = latestMessages.get(chatId)?.latestMessage;
     seeds.push({
       id: chatId,
       kind: (chat?.chatType ?? fromMessage?.channelKind) === 'p2p' ? 'dm' : 'channel',
@@ -409,32 +419,37 @@ function feishuAdapter(agent: AgentConfig, deps: OrientationDeps): FeishuOrienta
 
 function liveSlackOrientationAdapter(agent: AgentConfig): SlackOrientationAdapter {
   let clientPromise: Promise<WebClient> | undefined;
+  let directoryPromise: Promise<SlackWorkspaceDirectoryService> | undefined;
   const client = () => {
     clientPromise ??= agentSlackServiceForAgent(agent.id).getWebClient();
     return clientPromise;
   };
+  const directory = () => {
+    directoryPromise ??= client().then((slackClient) => new SlackWorkspaceDirectoryService({
+      client: slackClient,
+      teamId: agent.slack.teamId,
+    }));
+    return directoryPromise;
+  };
   return {
     async getConversationById(id) {
-      const response = await (await client()).conversations.info({ channel: id });
-      return response.channel;
+      return (await directory()).getConversation(id);
     },
     async getConversationByName(name) {
-      const channels = await listSlackConversations(await client(), SLACK_CONVERSATION_TYPES);
-      return channels.find((channel) =>
-        normalizeSlackConversationName(channel.name_normalized ?? channel.name ?? '') === normalizeSlackConversationName(name)
-      );
+      return (await directory()).getConversationByName(name, SLACK_CONVERSATION_TYPES).catch((error: unknown) => {
+        if (error instanceof Error && error.message.startsWith('Slack channel not found:')) return undefined;
+        throw error;
+      });
     },
     async getMemberConversations() {
-      const channels = await listSlackConversations(await client(), SLACK_CONVERSATION_TYPES);
-      return channels.filter((channel) => channel.is_member || channel.is_mpim || channel.is_group);
+      return (await directory()).getMemberConversations(SLACK_CONVERSATION_TYPES);
     },
     async getUserById(id) {
-      const response = await (await client()).users.info({ user: id });
-      return response.user;
+      return (await directory()).getUser(id);
     },
     async getUsersByHandle(handle) {
       const normalized = normalizeSlackHandle(handle);
-      return (await listSlackUsers(await client()))
+      return (await (await directory()).getUsers())
         .filter((user) => !user.deleted && slackUserHandleCandidates(user).includes(normalized));
     },
   };
@@ -449,38 +464,6 @@ function liveFeishuOrientationAdapter(client: FeishuMessageClient): FeishuOrient
       return (await client.getUserBasics?.({ openIds: [openId] }))?.[0];
     },
   };
-}
-
-async function listSlackUsers(client: WebClient): Promise<SlackUserInfo[]> {
-  const users: SlackUserInfo[] = [];
-  let cursor = '';
-  for (;;) {
-    const body = await client.users.list({
-      ...(cursor ? { cursor } : {}),
-      limit: 200,
-    });
-    users.push(...(body.members ?? []).filter((user): user is SlackUserInfo => Boolean(user.id)));
-    cursor = body.response_metadata?.next_cursor ?? '';
-    if (!cursor) break;
-  }
-  return users;
-}
-
-async function listSlackConversations(client: WebClient, types: string): Promise<SlackConversationInfo[]> {
-  const channels: SlackConversationInfo[] = [];
-  let cursor = '';
-  for (;;) {
-    const body = await client.conversations.list({
-      ...(cursor ? { cursor } : {}),
-      exclude_archived: true,
-      limit: 200,
-      types,
-    });
-    channels.push(...(body.channels ?? []).filter((channel): channel is SlackConversationInfo => Boolean(channel.id)));
-    cursor = body.response_metadata?.next_cursor ?? '';
-    if (!cursor) break;
-  }
-  return channels;
 }
 
 async function uniqueSlackUserForHandle(adapter: SlackOrientationAdapter, handle: string): Promise<SlackUserInfo> {
@@ -577,18 +560,23 @@ function slackDmSeedsFromMessages(messages: AgentMessageRecord[]): Array<Omit<Pl
   return [...byId.values()];
 }
 
-function latestMessageForChannel(messages: AgentMessageRecord[], channelId: string): AgentMessageRecord | undefined {
-  return messages
-    .filter((message) => message.channelId === channelId)
-    .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
-}
-
-function lastDeliveredByChannel(messages: AgentMessageRecord[]): Map<string, string> {
-  const byChannel = new Map<string, string>();
+function messagesByChannel(messages: AgentMessageRecord[]): Map<string, {
+  lastDeliveredAt?: string;
+  latestMessage: AgentMessageRecord;
+}> {
+  const byChannel = new Map<string, {
+    lastDeliveredAt?: string;
+    latestMessage: AgentMessageRecord;
+  }>();
   for (const message of messages) {
-    if (message.direction !== 'in' || !message.channelId) continue;
+    if (!message.channelId) continue;
     const existing = byChannel.get(message.channelId);
-    if (!existing || message.timestamp > existing) byChannel.set(message.channelId, message.timestamp);
+    const next = existing ?? { latestMessage: message };
+    if (!existing || message.timestamp > existing.latestMessage.timestamp) next.latestMessage = message;
+    if (message.direction === 'in' && (!next.lastDeliveredAt || message.timestamp > next.lastDeliveredAt)) {
+      next.lastDeliveredAt = message.timestamp;
+    }
+    byChannel.set(message.channelId, next);
   }
   return byChannel;
 }
