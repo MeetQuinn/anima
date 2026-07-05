@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import type { FilesInfoResponse, UsersInfoResponse, WebClient } from '@slack/web-api';
+import type { FilesInfoResponse, WebClient } from '@slack/web-api';
 
 import {
   formatUserLocalTime,
@@ -9,6 +9,7 @@ import {
 import {
   SlackWorkspaceDirectoryService,
   type SlackConversationInfo,
+  type SlackUserInfo,
 } from '../slack/workspace-directory.service.js';
 import { cachedSlackFilePath } from '../slack/slack-file.service.js';
 import {
@@ -50,7 +51,6 @@ export interface SlackConversationMessage {
 }
 
 type SlackFileInfo = NonNullable<FilesInfoResponse['file']>;
-type SlackUserInfo = UsersInfoResponse['user'];
 
 export function slackTranscriptOutput(
   messages: SlackConversationMessage[],
@@ -106,8 +106,8 @@ export async function slackTranscriptUserLabels(
         };
         actors.set(userId, slackDisplayLabel(parts));
         userMentions.set(userId, slackMentionLabel(parts));
-        if (user?.tz && typeof user.tz_offset === 'number') {
-          timezones.set(userId, { name: user.tz, offsetSeconds: user.tz_offset });
+        if (user?.timezone?.name && typeof user.timezone.offsetSeconds === 'number') {
+          timezones.set(userId, { name: user.timezone.name, offsetSeconds: user.timezone.offsetSeconds });
         }
       } catch {
         actors.set(userId, atLabel(userId));
@@ -170,12 +170,12 @@ function cachedFilePath(
   return undefined;
 }
 
-function slackUserDisplayName(user: SlackUserInfo): string | undefined {
-  return user?.profile?.display_name?.trim() || user?.profile?.real_name?.trim() || user?.real_name?.trim() || undefined;
+function slackUserDisplayName(user: SlackUserInfo | undefined): string | undefined {
+  return user?.displayName?.trim() || user?.realName?.trim() || undefined;
 }
 
 function slackChannelLabel(channel: SlackConversationInfo | undefined, fallbackChannelId: string): string {
-  return channelLabel(channel?.name_normalized?.trim() || channel?.name?.trim() || fallbackChannelId);
+  return channelLabel(channel?.name?.trim() || fallbackChannelId);
 }
 
 function slackTranscriptLine(

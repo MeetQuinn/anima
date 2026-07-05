@@ -149,7 +149,7 @@ test('Slack workspace directory caches user lists by team', async () => {
   }
 });
 
-test('Slack directory cache accepts user change events', async () => {
+test('Slack directory replica accepts user change events for id lookups without full-syncing users', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-directory-event-'));
   const previousHome = process.env.ANIMA_HOME;
   process.env.ANIMA_HOME = stateDir;
@@ -169,7 +169,7 @@ test('Slack directory cache accepts user change events', async () => {
       user: { id: 'U123', name: 'alice', profile: { display_name: 'Alice' } },
     });
 
-    assert.equal((await directory.getUserByHandle('alice')).id, 'U123');
+    assert.equal((await directory.getUser('U123'))?.name, 'alice');
   } finally {
     if (previousHome === undefined) delete process.env.ANIMA_HOME;
     else process.env.ANIMA_HOME = previousHome;
@@ -218,7 +218,7 @@ test('Slack channel resolver resolves DM handles through the workspace directory
   });
 });
 
-test('SlackProfileResolver caches Slack timezone metadata with the handle profile', async () => {
+test('SlackProfileResolver delegates to the directory replica for timezone metadata', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-profile-cache-'));
   const previousHome = process.env.ANIMA_HOME;
   process.env.ANIMA_HOME = stateDir;
@@ -248,7 +248,7 @@ test('SlackProfileResolver caches Slack timezone metadata with the handle profil
     const cached = await profiles.user({ client, teamId: 'T123', userId: 'U123' });
 
     assert.equal(calls, 1);
-    assert.equal(cached, profile);
+    assert.deepEqual(cached, profile);
     assert.deepEqual(profile?.timezone, {
       label: 'China Standard Time',
       name: 'Asia/Shanghai',

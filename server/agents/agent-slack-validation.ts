@@ -10,7 +10,8 @@ import {
 } from '../../shared/agent-config.js';
 import { isRecord } from '../json.js';
 import { createSlackWebClient } from '../slack/client.js';
-import { SlackWorkspaceDirectoryService, type SlackUserInfo } from '../slack/workspace-directory.service.js';
+import type { SlackUserInfo } from '../slack/slack.helper.js';
+import { SlackWorkspaceDirectoryService } from '../slack/workspace-directory.service.js';
 import { parseOauthScopesHeader } from '../slack/shortcuts.js';
 
 export interface SlackDisplayInfo {

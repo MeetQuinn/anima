@@ -65,6 +65,6 @@ async function resolveSlackChannelName(input: {
   }).getConversationByName(input.name);
   if (!conversation.id) throw new Error(`Slack channel not found: #${input.name}`);
 
-  const channelName = conversation.name_normalized?.trim() || conversation.name?.trim();
+  const channelName = conversation.name?.trim();
   return { id: conversation.id, ...(channelName ? { name: channelName } : {}) };
 }

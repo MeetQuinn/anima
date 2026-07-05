@@ -6,7 +6,7 @@
 //   cache/feishu/tenants/<tenant or app id>/directory.json
 //   cache/slack/files/<teamId>/<fileId>/meta.json
 //   cache/slack/files/<teamId>/<fileId>/<safe original filename>
-//   cache/slack/teams/<teamId>/directory.json
+//   cache/slack/teams/<teamId>/directory-v2.json
 //
 // The inbox keeps Slack file metadata for the product surface. The cache only
 // records downloaded bytes so duplicate files shared across agents are stored
@@ -18,7 +18,6 @@ import { z } from 'zod';
 
 import { resolveAnimaHome } from '../../anima-home.js';
 import { JsonStore } from '../json-store.js';
-import type { SlackConversationInfo, SlackUserInfo } from '../../slack/slack.helper.js';
 
 export const FeishuFileCacheMeta = z.object({
   fileId: z.string(),
@@ -42,17 +41,50 @@ export const SlackFileCacheMeta = z.object({
 
 export type SlackFileCacheMeta = z.infer<typeof SlackFileCacheMeta>;
 
+export interface SlackDirectoryTimezone {
+  label?: string;
+  name: string;
+  offsetSeconds?: number;
+}
+
+export interface SlackDirectoryUser {
+  avatarUrl?: string;
+  deleted?: boolean;
+  displayName?: string;
+  id: string;
+  isAppUser?: boolean;
+  isBot?: boolean;
+  isStranger?: boolean;
+  name?: string;
+  realName?: string;
+  syncedAt: string;
+  teamId?: string;
+  timezone?: SlackDirectoryTimezone;
+}
+
+export interface SlackDirectoryConversation {
+  id: string;
+  isGroup?: boolean;
+  isIm?: boolean;
+  isMember?: boolean;
+  isMpim?: boolean;
+  memberCount?: number;
+  name?: string;
+  syncedAt: string;
+  topic?: string;
+  userId?: string;
+}
+
 export interface SlackWorkspaceDirectoryFile {
-  channels: SlackConversationInfo[];
-  channelsSyncedAt?: string;
-  // The conversation `types` set that populated `channels` on the last refresh
+  channels: SlackDirectoryConversation[];
+  channelsFullSyncAt?: string;
+  // The conversation `types` set that populated `channels` on the last full sync
   // (e.g. "public_channel,private_channel,mpim"). A cache hit is only honored
-  // when this coverage is a superset of what the caller asked for, so a narrow
-  // refresh (no mpim) can never masquerade as a complete membership list.
-  channelsSyncedTypes?: string;
+  // when this coverage is a superset of what the caller asked for.
+  channelsFullSyncTypes?: string;
   teamId: string;
-  users: SlackUserInfo[];
-  usersSyncedAt?: string;
+  users: SlackDirectoryUser[];
+  usersFullSyncAt?: string;
   workspace?: {
     iconUrl?: string;
     syncedAt: string;
@@ -82,18 +114,52 @@ export interface FeishuDirectoryFile {
   users: FeishuDirectoryUserInfo[];
 }
 
+const SlackDirectoryTimezoneSchema = z.object({
+  label: z.string().optional(),
+  name: z.string(),
+  offsetSeconds: z.number().optional(),
+}).strict();
+
+const SlackDirectoryUserSchema = z.object({
+  avatarUrl: z.string().optional(),
+  deleted: z.boolean().optional(),
+  displayName: z.string().optional(),
+  id: z.string(),
+  isAppUser: z.boolean().optional(),
+  isBot: z.boolean().optional(),
+  isStranger: z.boolean().optional(),
+  name: z.string().optional(),
+  realName: z.string().optional(),
+  syncedAt: z.string(),
+  teamId: z.string().optional(),
+  timezone: SlackDirectoryTimezoneSchema.optional(),
+}).strict();
+
+const SlackDirectoryConversationSchema = z.object({
+  id: z.string(),
+  isGroup: z.boolean().optional(),
+  isIm: z.boolean().optional(),
+  isMember: z.boolean().optional(),
+  isMpim: z.boolean().optional(),
+  memberCount: z.number().optional(),
+  name: z.string().optional(),
+  syncedAt: z.string(),
+  topic: z.string().optional(),
+  userId: z.string().optional(),
+}).strict();
+
 export const SlackWorkspaceDirectoryFileSchema = z.object({
-  channels: z.array(z.object({ id: z.string() }).passthrough()).default([]),
-  channelsSyncedAt: z.string().optional(),
-  channelsSyncedTypes: z.string().optional(),
+  channels: z.array(SlackDirectoryConversationSchema).default([]),
+  channelsFullSyncAt: z.string().optional(),
+  channelsFullSyncTypes: z.string().optional(),
   teamId: z.string(),
-  users: z.array(z.object({ id: z.string() }).passthrough()).default([]),
-  usersSyncedAt: z.string().optional(),
+  users: z.array(SlackDirectoryUserSchema).default([]),
+  usersFullSyncAt: z.string().optional(),
   workspace: z.object({
     iconUrl: z.string().optional(),
     syncedAt: z.string(),
-  }).optional(),
-});
+  }).strict().optional(),
+}).strict();
 
 export const FeishuDirectoryFileSchema = z.object({
   chats: z.array(z.object({
@@ -140,7 +206,7 @@ export const getSlackWorkspaceDirectoryStore = (teamId: string): JsonStore<Slack
   new JsonStore<SlackWorkspaceDirectoryFile>({
     empty: () => ({ channels: [], teamId, users: [] }),
     parse: (value) => SlackWorkspaceDirectoryFileSchema.parse(value) as SlackWorkspaceDirectoryFile,
-    path: () => join(resolveAnimaHome(), 'cache', 'slack', 'teams', teamId, 'directory.json'),
+    path: () => join(resolveAnimaHome(), 'cache', 'slack', 'teams', teamId, 'directory-v2.json'),
   });
 
 export const getFeishuDirectoryStore = (directoryId: string): JsonStore<FeishuDirectoryFile> =>

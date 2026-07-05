@@ -216,9 +216,8 @@ export function slackAnswerUser(user: SlackUserInfo | undefined, fallback: strin
   slackUserId: string;
 } {
   const displayName =
-    user?.profile?.display_name?.trim()
-    || user?.profile?.real_name?.trim()
-    || user?.real_name?.trim()
+    user?.displayName?.trim()
+    || user?.realName?.trim()
     || user?.name?.trim()
     || undefined;
   const handle = user?.name?.trim() || undefined;

@@ -17,7 +17,7 @@ import {
 import { runPlaces } from '../tools/orientation-cli.js';
 import { runSubscriptionList } from '../tools/subscriptions-cli.js';
 import type { SubscriptionRecord } from '../inbox/subscription.service.js';
-import type { SlackConversationInfo, SlackUserInfo } from '../slack/slack.helper.js';
+import type { SlackConversationInfo, SlackUserInfo } from '../slack/workspace-directory.service.js';
 
 test('whois overlays this-runtime Slack agents by exact bot id and leaves foreign bots plain', async () => {
   const local = agent({
@@ -349,13 +349,11 @@ function slackUser(input: {
 }): SlackUserInfo {
   return {
     id: input.id,
-    is_app_user: input.isAppUser,
-    is_bot: input.isBot,
+    isAppUser: input.isAppUser,
+    isBot: input.isBot,
     name: input.name,
-    profile: {
-      real_name: input.realName,
-    },
-    real_name: input.realName,
+    realName: input.realName,
+    syncedAt: '2026-07-01T00:00:00.000Z',
   } as SlackUserInfo;
 }
 
@@ -368,12 +366,11 @@ function slackChannel(input: {
 }): SlackConversationInfo {
   return {
     id: input.id,
-    is_channel: true,
-    is_member: input.isMember,
+    isMember: input.isMember,
+    memberCount: input.numMembers,
     name: input.name,
-    name_normalized: input.name,
-    num_members: input.numMembers,
-    topic: input.topic ? { value: input.topic } : undefined,
+    syncedAt: '2026-07-01T00:00:00.000Z',
+    topic: input.topic,
   } as SlackConversationInfo;
 }
 
