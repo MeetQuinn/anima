@@ -1,7 +1,11 @@
 import { existsSync } from 'node:fs';
 import type { FilesInfoResponse, UsersInfoResponse, WebClient } from '@slack/web-api';
-import { DateTime } from 'luxon';
 
+import {
+  formatUserLocalTime,
+  renderEnvelope,
+  renderPageFooter,
+} from '../messages/envelope.js';
 import {
   SlackWorkspaceDirectoryService,
   type SlackConversationInfo,
@@ -57,7 +61,7 @@ export function slackTranscriptOutput(
 ): string {
   const lines = messages.map((message) => slackTranscriptLine(message, request, userLabels, cacheContext));
   if (page.hasMore || page.nextCursor) {
-    lines.push(`[page has_more=${String(page.hasMore)} next_cursor=${page.nextCursor || '-'}]`);
+    lines.push(renderPageFooter(page));
   }
   return lines.join('\n');
 }
@@ -184,15 +188,16 @@ function slackTranscriptLine(
   const timezone = message.user ? userLabels.timezones.get(message.user) : undefined;
   const isoTs = slackTsToIso(message.ts) ?? message.ts;
   const threadRef = slackReadThreadRef(message, request);
-  const fields = [
-    `channel=${displayRef}`,
-    ...(displayRef === request.channel ? [] : [`channel_id=${request.channel}`]),
-    ...(threadRef ? [`thread_ts=${threadRef}`] : []),
-    `message_ts=${message.ts}`,
-    `time=${isoTs}`,
-    ...(message.user ? [`user_id=${message.user}`] : []),
-    ...(timezone ? [`user_local_time=${formatUserLocalTime(isoTs, timezone)} user_tz=${timezone.name}`] : []),
-  ];
+  const envelope = renderEnvelope([
+    { key: 'channel', value: displayRef },
+    { key: 'channel_id', value: displayRef === request.channel ? undefined : request.channel },
+    { key: 'thread_ts', value: threadRef },
+    { key: 'message_ts', value: message.ts },
+    { key: 'time', value: isoTs },
+    { key: 'user_id', value: message.user },
+    { key: 'user_local_time', value: timezone ? formatUserLocalTime(isoTs, timezone) : undefined },
+    { key: 'user_tz', value: timezone?.name },
+  ]);
   const text = replaceSlackChannelMentions(
     replaceSlackUserMentions(message.text ?? '', userLabels.userMentions),
     userLabels.channelMentions,
@@ -201,7 +206,7 @@ function slackTranscriptLine(
   const previewAnnotations = slackTranscriptPreviewAnnotations(message.attachments);
   const annotations = [fileAnnotations, previewAnnotations].filter(Boolean).join('\n');
   const trailer = annotations ? `\n${annotations}` : '';
-  return `[${fields.join(' ')}] ${slackTranscriptActor(message, userLabels.actors)}: ${text}${trailer}`;
+  return `${envelope} ${slackTranscriptActor(message, userLabels.actors)}: ${text}${trailer}`;
 }
 
 function slackTranscriptFileAnnotations(
@@ -263,10 +268,4 @@ function slackTranscriptActor(message: SlackConversationMessage, userLabels: Map
   if (message.user) return atLabel(message.user);
   if (message.bot_id) return `bot:${message.bot_id}`;
   return '@unknown';
-}
-
-function formatUserLocalTime(isoTimestamp: string, timezone: UserTimezone): string {
-  const dt = DateTime.fromISO(isoTimestamp, { zone: timezone.name });
-  if (!dt.isValid) return isoTimestamp;
-  return dt.toFormat("yyyy-MM-dd'T'HH:mm:ssZZ");
 }

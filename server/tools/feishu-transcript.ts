@@ -2,6 +2,7 @@ import type {
   FeishuConversationMention,
   FeishuConversationMessage,
 } from '../feishu/client.js';
+import { renderEnvelope, renderPageFooter } from '../messages/envelope.js';
 import {
   feishuMessageAttachmentsFromContent,
   feishuPostPlainTextFromContent,
@@ -22,24 +23,22 @@ export function feishuTranscriptOutput(
 ): string {
   const lines = messages.map((message) => feishuTranscriptLine(message, request));
   if (page.hasMore || page.nextCursor) {
-    lines.push(`[page has_more=${String(page.hasMore)} next_cursor=${page.nextCursor || '-'}]`);
+    lines.push(renderPageFooter(page));
   }
   return lines.join('\n');
 }
 
 function feishuTranscriptLine(message: FeishuConversationMessage, request: FeishuTranscriptRequest): string {
-  const chatId = message.chatId ?? request.chatId;
-  const actorId = message.sender?.id;
-  const fields = [
-    'platform=feishu',
-    `chat_id=${chatId}`,
-    ...(request.chatName ? [`chat_name=${quoteEnvelopeValue(request.chatName)}`] : []),
-    ...(message.threadId ? [`thread_id=${message.threadId}`] : []),
-    `message_id=${message.messageId}`,
-    `time=${feishuTimestampToIso(message.createTime)}`,
-    ...(actorId ? [`user_id=${actorId}`] : []),
-  ];
-  return `[${fields.join(' ')}] ${feishuTranscriptActor(message)}: ${feishuTranscriptText(message)}`;
+  const envelope = renderEnvelope([
+    { key: 'platform', value: 'feishu' },
+    { key: 'chat_id', value: message.chatId ?? request.chatId },
+    { key: 'chat_name', value: request.chatName, quoted: true },
+    { key: 'thread_id', value: message.threadId },
+    { key: 'message_id', value: message.messageId },
+    { key: 'time', value: feishuTimestampToIso(message.createTime) },
+    { key: 'user_id', value: message.sender?.id },
+  ]);
+  return `${envelope} ${feishuTranscriptActor(message)}: ${feishuTranscriptText(message)}`;
 }
 
 function feishuTranscriptActor(message: FeishuConversationMessage): string {
@@ -153,8 +152,4 @@ function feishuTimestampToIso(timestamp: string | undefined): string {
   const millis = value > 10_000_000_000 ? value : value * 1000;
   const date = new Date(millis);
   return Number.isFinite(date.getTime()) ? date.toISOString() : timestamp || 'unknown';
-}
-
-function quoteEnvelopeValue(value: string): string {
-  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
