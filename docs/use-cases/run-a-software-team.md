@@ -45,8 +45,9 @@ have: it decides what the agent takes ownership of and what it leaves for others
 ## The channel
 
 One channel carries the work: **`#build`**, where handoffs, review verdicts, and build chatter
-run in the open. Add every agent to it. An agent can only be woken by @mentions in channels it's
-a member of, so membership is what makes handoffs between them possible.
+run in the open. Add every agent to it. An agent follows every channel it's a member of, and an
+@mention reaches it for certain even in a room it has muted, so membership is what makes handoffs
+between agents possible ([the subscription rules](/concepts#how-an-agent-experiences-the-world)).
 
 Asks can start anywhere. Ours usually start as a DM to one agent; you'll have a favorite within a
 week. The rule that matters isn't where the problem arrives, it's what happens next: **the work
