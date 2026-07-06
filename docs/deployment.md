@@ -5,11 +5,11 @@ goal is to keep the runtime package replaceable while your local Anima home stay
 
 ## Runtime Shape
 
-| Runtime shape      | Code source                         | Anima home                              | Purpose                    |
-| ------------------ | ----------------------------------- | --------------------------------------- | -------------------------- |
-| Stable install     | Pinned npm stable package           | User's chosen home, normally `~/.anima` | Default user install       |
-| Prerelease install | Pinned npm prerelease package       | User's chosen home                      | Opt-in validation          |
-| Source checkout    | Local source tree, for contributors | Repo-local `./.anima-dev`               | Development and PR testing |
+| Runtime shape                   | Code source                         | Anima home                              | Purpose                    |
+| ------------------------------- | ----------------------------------- | --------------------------------------- | -------------------------- |
+| Stable install (`stable` track) | Pinned npm stable package           | User's chosen home, normally `~/.anima` | Default user install       |
+| Canary install (`canary` track) | Pinned npm canary package           | User's chosen home                      | Opt-in validation          |
+| Source checkout (`dev`)         | Local source tree, for contributors | Repo-local `./.anima-dev`               | Development and PR testing |
 
 Do not run a managed install directly from a development checkout. A development rebuild should not
 be able to change the UI or server code used by a live `~/.anima` install.
@@ -49,7 +49,7 @@ npx -y @meetquinn/animactl@latest start # first start on stable/latest
 npx -y @meetquinn/animactl@latest install-services # optional: install macOS launchd or Linux systemd services
 npx -y @meetquinn/animactl@latest dashboard # launch the local dashboard
 npx -y @meetquinn/animactl@latest restart # command-line upgrade to stable/latest
-npx -y @meetquinn/animactl@canary restart # opt in to the prerelease restart path
+npx -y @meetquinn/animactl@canary restart # opt in to the canary-track restart path
 npx -y @meetquinn/animactl@latest status
 npx -y @meetquinn/animactl@latest stop
 ```
@@ -96,7 +96,7 @@ First-version behavior:
 7. If the upgrade fails, report the error and leave the old version running when possible.
 
 Canary installs may optionally check `canary` instead of `latest`, but that should be an explicit
-setting. Stable users should not see pre-release upgrades unless they opt in.
+setting. Stable users should not see canary upgrades unless they opt in.
 
 ## Restart Behavior
 
