@@ -55,8 +55,13 @@ function readStoredTeam(): string | null {
 function writeStoredTeam(id: string): void {
   try {
     sessionStorage.setItem(CURRENT_TEAM_KEY, id);
+    // Garbage-collect the pre-sessionStorage key. Older builds wrote this same
+    // key to localStorage, where it lingers unread forever (and was the shared
+    // value that caused cross-tab bleed). Drop it so no stale origin-shared team
+    // survives the upgrade. Best-effort: a failure here is harmless.
+    localStorage.removeItem(CURRENT_TEAM_KEY);
   } catch {
-    // Storage unavailable (private mode / quota) — the URL param still carries
+    // Storage unavailable (private mode / quota): the URL param still carries
     // the team for this tab's session, which is enough.
   }
 }

@@ -59,6 +59,18 @@ describe('useCurrentTeam persistence', () => {
     expect(localStorage.getItem(CURRENT_TEAM_KEY)).toBeNull();
   });
 
+  it('garbage-collects the stale localStorage key on write', () => {
+    // A pre-upgrade build left the origin-shared key behind.
+    localStorage.setItem(CURRENT_TEAM_KEY, 'beta');
+
+    render('/?team=alpha');
+
+    // The write path (sync effect) should have removed it, so no stale
+    // origin-shared team survives the upgrade.
+    expect(localStorage.getItem(CURRENT_TEAM_KEY)).toBeNull();
+    expect(sessionStorage.getItem(CURRENT_TEAM_KEY)).toBe('alpha');
+  });
+
   it('ignores a localStorage seed left by another tab (cross-tab jump regression)', () => {
     // Simulate the old shared-localStorage world: another tab wrote its team.
     localStorage.setItem(CURRENT_TEAM_KEY, 'beta');
