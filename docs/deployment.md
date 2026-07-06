@@ -96,7 +96,7 @@ First-version behavior:
 7. If the upgrade fails, report the error and leave the old version running when possible.
 
 Canary installs may optionally check `canary` instead of `latest`, but that should be an explicit
-setting. Stable users should not see pre-release upgrades unless they opt in.
+setting. Stable users should not see canary upgrades unless they opt in.
 
 ## Restart Behavior
 
