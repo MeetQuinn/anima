@@ -9,8 +9,15 @@ import { makeSlackEvent } from './helpers/slack.js';
 import { waitFor } from './helpers/harness.js';
 import { allActivities, loadState } from './helpers/state.js';
 import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
+import { AgentHealthService } from '../runtime/agent-health.service.js';
 import { AgentHealthStore } from '../runtime/agent-health.store.js';
 import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
+import type {
+  AgentRuntime,
+  AgentRuntimeFollowupInput,
+  AgentRuntimeInput,
+  AgentRuntimeResult,
+} from '../providers/contract.js';
 import {
   AbortableRuntime,
   ActivityBeforeFinishRuntime,
@@ -22,6 +29,41 @@ import {
   silentLogger,
   waitForInboxItemRemoved,
 } from './helpers/runtime-worker.js';
+
+class ProgressThenWaitRuntime implements AgentRuntime {
+  readonly kind = 'progress-then-wait';
+  readonly calls: AgentRuntimeInput[] = [];
+  completed = 0;
+  private readonly resolvers: Array<() => void> = [];
+
+  async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
+    this.calls.push(input);
+    await input.effects.recordToolStarted({
+      providerToolId: 'tool-progress',
+      providerToolName: 'Bash',
+      tool: 'claude.Bash',
+    });
+    await new Promise<void>((resolve) => {
+      this.resolvers.push(resolve);
+    });
+    this.completed += 1;
+    return { text: `completed ${input.itemId}` };
+  }
+
+  async appendToActiveRun(_input: AgentRuntimeFollowupInput): Promise<{ accepted: boolean }> {
+    return { accepted: false };
+  }
+
+  async close(): Promise<void> {
+    while (this.resolvers.length > 0) this.resolvers.shift()?.();
+  }
+
+  finishNext(): void {
+    const resolve = this.resolvers.shift();
+    assert.ok(resolve, 'Expected an active runtime call');
+    resolve();
+  }
+}
 
 test('runtime worker passes cached Slack identity into the standing prompt', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-slack-identity-test-'));
@@ -160,6 +202,57 @@ test('runtime worker records generic provider errors as unhealthy', async () => 
     const health = await new AgentHealthStore({ animaHome: stateDir }).get('scout');
     assert.equal(health?.state, 'unhealthy');
     assert.equal(health?.reason, 'provider_error');
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker clears provider failure after real provider progress before completion', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-provider-progress-health-test-'));
+  const runtime = new ProgressThenWaitRuntime();
+  const coordinator = { agentId: 'scout', stateDir };
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const healthStore = new AgentHealthStore({ animaHome: stateDir });
+      const healthService = new AgentHealthService(healthStore);
+      await healthService.writeProviderFailure({
+        agentId: 'scout',
+        reason: 'provider_auth_failed',
+        updatedAt: '2026-07-06T15:54:00.000Z',
+      });
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        queue: queueFor('scout'),
+        pollIntervalMs: 10_000,
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+      const decision = await enqueueInbox(
+        makeSlackEvent({
+          channelId: 'D-user',
+          eventId: 'evt-provider-progress',
+          teamId: 'T-demo',
+          text: 'recover after login',
+          ts: '1770000012.000001',
+          userId: 'U1',
+        }),
+        coordinator,
+      );
+
+      const drain = worker.drainOnce();
+      await waitFor(() => runtime.calls.length === 1);
+      await waitFor(async () => {
+        const health = await healthStore.get('scout');
+        return health?.state === 'healthy' && health.reason === undefined;
+      });
+      assert.equal((await queueFor('scout').find(decision.ctx.item.id))?.handling.status, 'running');
+
+      runtime.finishNext();
+      assert.equal(await drain, 1);
     });
   } finally {
     await worker?.close();
