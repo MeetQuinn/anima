@@ -222,7 +222,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   if (normalized === 'ls') return tool_('Listed', pickString(payload, ['target']));
   if (normalized === 'webfetch' || normalized === 'fetchurl') return tool_('Fetched', pickString(payload, ['target']));
   if (normalized === 'websearch' || normalized === 'searchweb')
-    return tool_('Searched', pickString(payload, ['target', 'query']));
+    return tool_('Searched', webSearchTarget(payload));
   if (normalized === 'todowrite' || normalized === 'settodolist') return tool_('Updated todos');
   if (normalized === 'toolsearch') return tool_('Searched tools', pickString(payload, ['target']));
 
@@ -583,6 +583,34 @@ function skillActivityRow(payload: Record<string, unknown>): ActivityRow {
   return tool_('Ran skill', target.target, target.targetFull ? full : undefined);
 }
 
+function webSearchTarget(payload: Record<string, unknown>): string {
+  const direct = pickString(payload, ['target', 'query']);
+  if (direct) return direct;
+  const action = recordField(payload, 'action');
+  if (!action) return '';
+  const query = pickString(action, ['query']);
+  if (query) return singleLine(query);
+  const queries = action['queries'];
+  if (Array.isArray(queries)) {
+    const joined = queries
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .slice(0, 3)
+      .map(singleLine)
+      .join(' / ');
+    if (joined) return joined;
+  }
+  const url = pickString(action, ['url']);
+  const pattern = pickString(action, ['pattern']);
+  if (pattern && url) return `${pattern} in ${url}`;
+  return url || pattern;
+}
+
+function recordField(payload: Record<string, unknown>, key: string): Record<string, unknown> | undefined {
+  const value = payload[key];
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
 function outboundFailureRow(
   input: { effect?: string | undefined; tool?: string | undefined },
   error: string,
@@ -829,6 +857,10 @@ function formatCount(value: number): string {
 
 function truncate(text: string, max: number): string {
   return text.length <= max ? text : text.slice(0, max).trimEnd() + '…';
+}
+
+function singleLine(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
 }
 
 // Condense a tool-failure error into a short reason for the target tail.
