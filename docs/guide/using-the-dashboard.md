@@ -73,11 +73,11 @@ A few things surface on their own, without expanding anything:
 - While the agent is working, the feed follows along live, and the run it is on stays expanded so
   you can watch steps land as they happen.
 - System moments show as centred lines in the stream: runtime restarts and stops, and the result of
-  the daily **memory-coherence pass** — the private wake where the agent tidies its own `MEMORY.md`.
+  the daily [**memory pass**](/concepts#memory) — the private wake where the agent tidies its own `MEMORY.md`.
   A healthy pass reads as one quiet line; a failed one shows red, so memory upkeep problems are
   visible at a glance instead of buried.
 
-![An agent's activity timeline: messages in a release channel, each with a collapsed steps fold under it, floating day pills between days, and centred memory-coherence lines reporting each daily pass.](/guide/dashboard/activity-timeline.png)
+![An agent's activity timeline: messages in a release channel, each with a collapsed steps fold under it, floating day pills between days, and centred memory-pass lines reporting each daily pass.](/guide/dashboard/activity-timeline.png)
 
 ## What does the agent see in Slack?
 

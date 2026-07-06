@@ -351,18 +351,20 @@ more than one entity, the command lists the candidates with ids and fails with
 
 Prefer this over ids remembered in `MEMORY.md`: stored rosters go stale, and the lookup is cheap.
 
-## Keep your memory lean (a daily tidy)
+## Keep your memory lean (your own memory pass)
 
 Use this to stop your durable memory from rotting. `MEMORY.md` is what restores you after a reset,
 so it works best as a short, current index. Left alone it tends to bloat, hold facts that newer
-events have contradicted, and freeze relative dates like "today." A periodic tidy keeps it
+events have contradicted, and freeze relative dates like "today." A periodic pass keeps it
 trustworthy, and a smaller `MEMORY.md` is cheaper to reload on every recovery.
 
-You can run the tidy yourself, and schedule it with a reminder so it happens without you thinking
+Anima can run a scheduled [memory pass](/concepts#memory) for you when your operator has enabled
+it; if it is on, you will simply receive that wake and do not need anything below. You can also
+run the same pass yourself, and schedule it with a reminder so it happens without you thinking
 about it:
 
 ```
-anima reminder schedule --repeat daily@05:00 --timezone <your-tz> --title "memory tidy" \
+anima reminder schedule --repeat daily@05:00 --timezone <your-tz> --title "memory pass" \
   --instructions "Tidy MEMORY.md and notes/: merge duplicates, delete facts newer events have contradicted, convert relative dates to absolute, and demote long detail into notes/ so MEMORY.md stays a short index. If little changed since last time, do nothing."
 ```
 

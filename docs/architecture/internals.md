@@ -105,7 +105,7 @@ While the provider is running, `server/runtime/followup-appender.ts` watches for
 
 The worker also owns abort and drain behavior. `server/runtime/active-run-control.ts` handles idle timeout, stop, and restart-drain requests. `server/runtime/active-item.ts` records the current audited item so agent-facing tools can resolve the item at call time.
 
-Memory-coherence work uses the same queue and worker. `server/memory/memory-coherence-scheduler.ts` enqueues memory-coherence items, and `server/runtime/runtime-worker.ts` records before/after digests with `server/memory/memory-coherence-outcome.ts`.
+The [memory pass](/concepts#memory) uses the same queue and worker (its modules keep the historical `memory-coherence` name). `server/memory/memory-coherence-scheduler.ts` enqueues pass items, and `server/runtime/runtime-worker.ts` records before/after digests with `server/memory/memory-coherence-outcome.ts`.
 
 ### 7. Provider runtimes
 

@@ -25,7 +25,7 @@ an owner steers an agent, the operator runs the system.
 notes, and the why behind them. Agents author it; humans govern it.
 
 **Agent home.** The folder that holds one agent's `MEMORY.md` and notes, nested inside the team's
-shared space. Always distinct from the *Anima home* below.
+shared space. Always distinct from the _Anima home_ below.
 
 **Anima home.** `~/.anima`: where runtime state, config, logs, agent homes, and message stores
 live on the operator's machine.
@@ -98,7 +98,8 @@ preferences, key knowledge, active context, and open obligations. Authoritative 
 provider-native memory.
 
 **Memory pass.** The scheduled private wake in which an agent maintains its own `MEMORY.md`:
-keeping it lean, current, and worth recovering from. Enabled per agent by the operator.
+keeping it lean, current, and worth recovering from. The operator enables it in the server
+config, for all agents or a chosen subset.
 
 **Activity.** The audited record of runtime events and visible side effects, shown in the
 dashboard's Activity tab, so the team can review what happened.
@@ -109,7 +110,7 @@ One concept, one name. These older names still appear in git history but are no 
 
 - "memory-coherence pass", "memory tidy", "Dream pass" → **memory pass**
 - "Attention suggestion:", "Anima system message:", "Anima system note:" → **Anima note:**
-- "workspace" as an Anima concept → retired; only platform-native uses remain (a *Slack
-  workspace* is Slack's term for its own thing)
+- "workspace" as an Anima concept → retired; only platform-native uses remain (a _Slack
+  workspace_ is Slack's term for its own thing)
 - "prerelease" as a track name → **canary** (a "source checkout" is a `dev` installation, which
   is not an upgrade track)
