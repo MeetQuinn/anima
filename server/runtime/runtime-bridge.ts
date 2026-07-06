@@ -39,6 +39,7 @@ export class AgentRuntimeBridge {
   async runInput(input: {
     context: RuntimeItemContext;
     onActivity?: () => void;
+    onProviderProgress?: () => void;
     profile: AnimaRuntimeProfile;
     retryNotice?: string;
     session?: Session;
@@ -50,7 +51,7 @@ export class AgentRuntimeBridge {
     const prompt = buildCodeAgentDeliveryPrompt(input.context.item, promptContext);
     return {
       cwd: input.context.homePath,
-      effects: this.effects(input.context, input.onActivity),
+      effects: this.effects(input.context, input.onActivity, input.onProviderProgress),
       env: runtimeEnv(input.context, this.runtime.env),
       onActivity: input.onActivity,
       prompt: input.retryNotice ? `${prompt}\n\n${input.retryNotice}` : prompt,
@@ -106,16 +107,24 @@ export class AgentRuntimeBridge {
     return { reminder };
   }
 
-  private effects(context: RuntimeItemContext, onActivity?: () => void): AgentRuntimeEffects {
+  private effects(
+    context: RuntimeItemContext,
+    onActivity?: () => void,
+    onProviderProgress?: () => void,
+  ): AgentRuntimeEffects {
     const target: RuntimeActivityTarget = {
       agentId: context.agentId,
       itemId: context.item.id,
     };
     const noteActivity = () => onActivity?.();
+    const noteProviderProgress = () => {
+      noteActivity();
+      onProviderProgress?.();
+    };
     return {
       persistProviderSession: (session) => persistProviderSession(context, this.runtime.kind, session),
       recordAgentText: (text, payload) => {
-        noteActivity();
+        noteProviderProgress();
         return recordAgentText(target, this.runtime.kind, text, payload);
       },
       recordEvent: (payload) => {
@@ -135,7 +144,7 @@ export class AgentRuntimeBridge {
         await recordRuntimeToolFailed(target, payload);
       },
       async recordToolStarted(payload) {
-        noteActivity();
+        noteProviderProgress();
         await recordRuntimeToolStarted(target, payload);
       },
     };

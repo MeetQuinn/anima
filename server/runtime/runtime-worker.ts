@@ -28,7 +28,7 @@ import {
 import { startActiveRunControl, type ActiveRunHandle } from './active-run-control.js';
 import { appendQueuedFollowupsUntilFinished } from './followup-appender.js';
 import { recordFinalRuntimeFailure, runProviderWithCrashRetries } from './provider-runner.js';
-import { defaultAgentHealthService } from './agent-health.service.js';
+import { defaultAgentHealthService, isProviderFailureReason } from './agent-health.service.js';
 import type { AgentRuntimeHandleSnapshot } from '../../shared/snapshot.js';
 
 // Executor for one agent: claims queued inbox items, runs the provider runtime,
@@ -230,12 +230,32 @@ export class AgentRuntimeWorker {
         await this.recordRestartResumeActivity(context);
       }
       const runContext = context;
+      let providerProgressHealthClearStarted = false;
+      const clearProviderFailureOnProviderProgress = () => {
+        if (providerProgressHealthClearStarted) return;
+        providerProgressHealthClearStarted = true;
+        void (async () => {
+          const current = await defaultAgentHealthService.get(this.options.agentId);
+          if (!isProviderFailureReason(current?.reason)) return;
+          await defaultAgentHealthService.writeHealth({
+            agentId: this.options.agentId,
+            clearProviderFailure: true,
+            runtime: this.health(),
+            state: 'healthy',
+            updatedAt: nowIso(),
+          });
+        })().catch((error: unknown) => {
+          providerProgressHealthClearStarted = false;
+          this.logger.error(`Runtime worker provider-progress health clear failed for item ${item.id}: ${errorMessage(error)}`);
+        });
+      };
       const result = await runProviderWithCrashRetries({
         agentId: this.options.agentId,
         agentRuntime: this.options.agentRuntime,
         buildInput: (retryNotice) => this.runtimeBridge.runInput({
           context: runContext,
           onActivity: () => handle.noteActivity(),
+          onProviderProgress: clearProviderFailureOnProviderProgress,
           profile: {
             displayName: agentConfig.profile?.displayName ?? this.options.agentId,
             ...(agentConfig.profile?.role ? { role: agentConfig.profile.role } : {}),
