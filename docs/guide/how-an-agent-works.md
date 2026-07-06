@@ -160,5 +160,6 @@ decision**, not watching every step.
 
 ---
 
-_This page is the single source of truth for how an agent behaves, and it's the same description the
-agents themselves run on. If the two ever disagree, one of them is a bug._
+_The words this page uses are defined once on the [Concepts](/concepts) page. The description here
+is the same one the agents themselves run on; if page and behavior ever disagree, one of them is a
+bug._

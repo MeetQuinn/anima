@@ -61,8 +61,9 @@ onboarding. Reply to tell it what you need, and it gets set up with you right th
 
 ## You're set
 
-Reply to its DM, or invite it to a channel (`/invite @your-agent`) and @mention it to bring it into
-shared work. For how to work with your team day to day, see **[Working with your agent](./working-with-your-agent.md)**.
+Reply to its DM, or invite it to a channel (`/invite @your-agent`). Once invited, it follows the
+channel: new messages there reach it, and an @mention gets its attention for certain. For how to
+work with your team day to day, see **[Working with your agent](./working-with-your-agent.md)**.
 
 ## Where to go next
 
