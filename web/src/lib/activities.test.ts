@@ -156,4 +156,31 @@ describe('activityRow', () => {
     expect(row.target).toBe('Research ServiceTitan Intacct export mechanics');
     expect(row.targetFull).toBeUndefined();
   });
+
+  it('shows Codex web search query from nested action payloads', () => {
+    expect(activityRow(activity({
+      action: { query: 'activity tab\nsearched row query' },
+      providerToolName: 'webSearch',
+      tool: 'codex.webSearch',
+    }))).toEqual({
+      title: 'Searched',
+      target: 'activity tab searched row query',
+      color: 'var(--color-activity-tool)',
+      kind: 'tool',
+    });
+  });
+
+  it('shows Codex web search fallback details from nested action payloads', () => {
+    expect(activityRow(activity({
+      action: { queries: ['first query', 'second query', 'third query', 'ignored query'] },
+      providerToolName: 'webSearch',
+      tool: 'codex.webSearch',
+    })).target).toBe('first query / second query / third query');
+
+    expect(activityRow(activity({
+      action: { pattern: 'rate limit', url: 'https://docs.example/search' },
+      providerToolName: 'webSearch',
+      tool: 'codex.webSearch',
+    })).target).toBe('rate limit in https://docs.example/search');
+  });
 });
