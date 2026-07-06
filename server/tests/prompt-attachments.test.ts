@@ -526,7 +526,7 @@ test('buildAnimaRuntimeProfile keeps live memory guidance focused on cheap recov
   assert.match(text, /Keep `Active Context` current/);
   assert.match(text, /decisions that would be costly to lose if the context reset/);
   assert.match(text, /Do not turn live work into a memory-cleanup project/);
-  assert.match(text, /periodic Dream\/consolidation pass/);
+  assert.match(text, /periodic memory pass/);
   assert.match(text, /demotes durable detail to `notes\/`/);
   assert.doesNotMatch(text, /an index, not a corpus/);
   assert.doesNotMatch(text, /section grows past a short paragraph/);
