@@ -410,6 +410,7 @@ test('codex-cli records subagent delegation from session response items when app
     await withAnimaHome(stateDir, async () => {
       const codexHome = join(stateDir, 'codex-home');
       const sessionDir = join(codexHome, 'sessions', '2026', '06', '03');
+      const releaseTurnFile = join(stateDir, 'release-turn');
       await mkdir(sessionDir, { recursive: true });
       await writeFile(
         join(sessionDir, 'rollout-2026-06-03T07-13-00-codex-parent-session.jsonl'),
@@ -464,6 +465,7 @@ test('codex-cli records subagent delegation from session response items when app
         fakeCodex,
         [
           '#!/usr/bin/env node',
+          "import { existsSync } from 'node:fs';",
           "import readline from 'node:readline';",
           "const rl = readline.createInterface({ input: process.stdin });",
           "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
@@ -491,8 +493,15 @@ test('codex-cli records subagent delegation from session response items when app
           "    send({ id: msg.id, result: { turn: { id: 'turn-session-file', status: 'inProgress', items: [], itemsView: 'full', error: null, startedAt: 1, completedAt: null, durationMs: null } } });",
           "    send({ method: 'item/started', params: { threadId: 'codex-parent-session', turnId: 'turn-session-file', item: { id: 'ws_from_session', type: 'webSearch' } } });",
           "    send({ method: 'item/completed', params: { threadId: 'codex-parent-session', turnId: 'turn-session-file', item: { id: 'ws_from_session', type: 'webSearch', status: 'completed' } } });",
-          "    send({ method: 'item/agentMessage/delta', params: { threadId: 'codex-parent-session', turnId: 'turn-session-file', itemId: 'item-parent', delta: 'parent handled' } });",
-          "    send({ method: 'turn/completed', params: { threadId: 'codex-parent-session', turn: { id: 'turn-session-file', status: 'completed', model: 'gpt-5.5', items: [], itemsView: 'full', error: null, startedAt: 1, completedAt: 2, durationMs: 1000 } } });",
+          "    const finish = () => {",
+          "      send({ method: 'item/agentMessage/delta', params: { threadId: 'codex-parent-session', turnId: 'turn-session-file', itemId: 'item-parent', delta: 'parent handled' } });",
+          "      send({ method: 'turn/completed', params: { threadId: 'codex-parent-session', turn: { id: 'turn-session-file', status: 'completed', model: 'gpt-5.5', items: [], itemsView: 'full', error: null, startedAt: 1, completedAt: 2, durationMs: 1000 } } });",
+          "    };",
+          "    const wait = () => {",
+          "      if (!process.env.RELEASE_TURN_FILE || existsSync(process.env.RELEASE_TURN_FILE)) { finish(); return; }",
+          "      setTimeout(wait, 10);",
+          "    };",
+          "    wait();",
           "  }",
           "});",
           '',
@@ -511,13 +520,19 @@ test('codex-cli records subagent delegation from session response items when app
         { agentId: 'anima', stateDir },
       );
       runtime = createAgentRuntime({
-        env: runtimeTestEnv(stateDir, { CODEX_HOME: codexHome }),
+        env: runtimeTestEnv(stateDir, { CODEX_HOME: codexHome, RELEASE_TURN_FILE: releaseTurnFile }),
         kind: 'codex-cli',
         model: 'gpt-test',
         reasoningEffort: 'xhigh',
       });
 
-      assert.equal((await runtime.run(await runtimeInput(runtime, ctx, await loadState()))).text, 'parent handled');
+      const runPromise = runtime.run(await runtimeInput(runtime, ctx, await loadState()));
+      await waitFor(async () => {
+        const activities = await activitiesForInboxItemWindow('anima', ctx.item.id);
+        return activities.some((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'ws_from_session' && activity.payload?.['target'] === 'https://docs.slack.dev/reference/methods/search.query/');
+      });
+      await writeFile(releaseTurnFile, 'done', 'utf8');
+      assert.equal((await runPromise).text, 'parent handled');
       await waitFor(async () =>
         {
           const activities = await activitiesForInboxItemWindow('anima', ctx.item.id);
