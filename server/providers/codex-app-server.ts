@@ -305,6 +305,12 @@ export class CodexAppServerController {
         this.activeProviderToolIds.delete(providerToolId);
         this.resolveQuiescentWaitersIfReady();
       }
+      if (item && stringField(item, 'type') === 'webSearch') {
+        const turnId = stringParam(message.params, 'turnId') ?? this.currentTurn?.turnId;
+        if (turnId && providerToolId && !this.recordedWebSearchDetails.has(providerToolId)) {
+          void this.recordSessionFileDetails(turn.input, turnId).catch(() => undefined);
+        }
+      }
       return;
     }
     if (message.method === 'thread/tokenUsage/updated') {
