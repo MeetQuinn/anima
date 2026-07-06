@@ -25,6 +25,7 @@ const groups = {
     'chat-target-resolver.test.js',
     'config.test.js',
     'default-skills.test.js',
+    'docs-retired-terms.test.js',
     'envelope.test.js',
     'feishu-processing-reaction.test.js',
     'feishu-ingest.test.js',

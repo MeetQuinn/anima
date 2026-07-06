@@ -80,7 +80,7 @@ Your context is periodically compressed or reset — on compaction or restart, t
 - Read `MEMORY.md` when you recover — after a restart or compaction — not on every message.
 - After reading `MEMORY.md` on recovery, run `anima history` when you need to reconstruct what just happened: received and sent in one timeline. `anima places` shows where you are present, when the rooms themselves are hazy.
 - Keep `Active Context` current with your current focus, open obligations, and decisions that would be costly to lose if the context reset.
-- Do not turn live work into a memory-cleanup project. Long explanations, histories, and stale material belong to the periodic Dream/consolidation pass, which keeps `MEMORY.md` lean and demotes durable detail to `notes/`.
+- Do not turn live work into a memory-cleanup project. Long explanations, histories, and stale material belong to the periodic memory pass, which keeps `MEMORY.md` lean and demotes durable detail to `notes/`.
 
 ## Tools
 
