@@ -32,21 +32,43 @@ const CURRENT_TEAM_KEY = 'anima.currentTeamId';
 // hop, avoiding a param-drop + re-sync race with AgentReconciler.
 export const TEAM_PARAM = 'team';
 
+// The team fallback is persisted in sessionStorage, NOT localStorage, so it is
+// scoped to a single tab. localStorage is shared across every tab of the same
+// origin: with two tabs open on different teams, each tab's sync effect below
+// writes its own team into one shared key, so the value ping-pongs. Then any
+// navigation that drops `?team=` (clicking an agent/KB/home) makes a tab fall
+// back to `paramTeam ?? stored` and read whatever the OTHER tab last wrote —
+// silently jumping to the other team. sessionStorage is per browsing context,
+// so each tab only ever reads back its own last team. The `?team=` URL param
+// stays the shareable source of truth (it always wins over the fallback); only
+// the "remember my team" seed becomes tab-local. Cost: a brand-new tab with no
+// param starts on the default team instead of inheriting another tab's — the
+// correct tradeoff for a per-tab working context.
 function readStoredTeam(): string | null {
   try {
-    return localStorage.getItem(CURRENT_TEAM_KEY);
+    return sessionStorage.getItem(CURRENT_TEAM_KEY);
   } catch {
     return null;
+  }
+}
+
+function writeStoredTeam(id: string): void {
+  try {
+    sessionStorage.setItem(CURRENT_TEAM_KEY, id);
+  } catch {
+    // Storage unavailable (private mode / quota) — the URL param still carries
+    // the team for this tab's session, which is enough.
   }
 }
 
 // Working context = which team the sidebar is scoped to (its agents + KBs, and
 // where "+ add agent" / "+ add KB" land). Source of truth is the `?team=` URL
 // query param, so the current team is shareable/bookmarkable and every consumer
-// of this hook reads the same value (no per-instance desync). localStorage is a
-// persistence fallback: it seeds the resolved team when the URL has no param
-// (fresh load / a navigation that dropped it), and a sync effect writes the
-// param back so the URL stays canonical.
+// of this hook reads the same value (no per-instance desync). sessionStorage is
+// a per-tab persistence fallback: it seeds the resolved team when the URL has no
+// param (fresh load / a navigation that dropped it), and a sync effect writes
+// the param back so the URL stays canonical. See readStoredTeam for why this is
+// sessionStorage (tab-local) and not localStorage (shared, cross-tab bleed).
 //
 // Query param over a path segment on purpose: the team is a cross-cutting view
 // lens layered on any route, not a container in the resource hierarchy (an agent
@@ -91,22 +113,13 @@ export function useCurrentTeam(teams: TeamConfig[]): {
   //     a browser whose last team was Y).
   useEffect(() => {
     if (teams.length === 0) return;
-    try {
-      localStorage.setItem(CURRENT_TEAM_KEY, currentTeamId);
-    } catch {
-      // Storage unavailable (private mode / quota) — the URL param still carries the team.
-    }
+    writeStoredTeam(currentTeamId);
     if (paramTeam !== currentTeamId) writeParam(currentTeamId);
   }, [teams.length, paramTeam, currentTeamId, writeParam]);
 
   const setCurrentTeamId = useCallback(
     (id: string) => {
-      try {
-        localStorage.setItem(CURRENT_TEAM_KEY, id);
-      } catch {
-        // Storage unavailable (private mode / quota) — the URL param still holds
-        // the choice for this session, which is enough.
-      }
+      writeStoredTeam(id);
       writeParam(id);
     },
     [writeParam],
