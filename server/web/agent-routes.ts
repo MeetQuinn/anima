@@ -19,6 +19,7 @@ import {
 } from '../../shared/agent-config.js';
 import { registerAgentFeishuRoutes } from './agent-feishu-routes.js';
 import { registerAgentFileRoutes } from './agent-file-routes.js';
+import { registerAgentHomeFileRoutes } from './agent-home-file-routes.js';
 import { registerAgentSlackRoutes } from './agent-slack-routes.js';
 import { HttpError, queryParam } from './http.js';
 
@@ -207,4 +208,5 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
   );
 
   registerAgentFileRoutes(fastify);
+  registerAgentHomeFileRoutes(fastify);
 }
