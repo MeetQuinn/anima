@@ -6,16 +6,21 @@
 
 export {
   AGENT_TABS,
+  AGENT_FILES_SEGMENT,
   DEFAULT_TAB,
   buildPath,
   buildKbPath,
   buildKbRawPath,
+  buildAgentFilePath,
+  buildAgentFileRawPath,
   parseLocation,
   parseKbPath,
+  parseAgentFilePath,
   reconcileLocation,
 } from '@shared/url-routes';
 export type {
   AgentTab,
+  AgentFileLocation,
   ReconcileSnapshot,
   UrlLocation,
   KbLocation,

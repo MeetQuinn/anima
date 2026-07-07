@@ -1,18 +1,19 @@
-import { MessageSquare, Hash, Bell, User } from 'lucide-react';
+import { MessageSquare, FileText, Hash, Bell, User } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { parseLocation, AGENT_TABS, DEFAULT_TAB, type AgentTab } from '@/lib/url-state';
 
 const NAV: { id: AgentTab; label: string; Icon: React.ElementType }[] = [
   { id: 'activity', label: 'Activity', Icon: MessageSquare },
+  { id: 'files', label: 'Files', Icon: FileText },
   { id: 'channels', label: 'Channels', Icon: Hash },
   { id: 'reminders', label: 'Reminders', Icon: Bell },
   { id: 'profile', label: 'Profile', Icon: User },
 ];
 
 /**
- * Fixed bottom nav shown on Screen 2 (agent detail) only. Three tabs:
- * Activity / Reminders / Profile. Kb is now a section on Screen 1
- * (the nav list) — it is no longer a bottom tab. Returns null on Screen 1.
+ * Fixed bottom nav shown on Screen 2 (agent detail) only:
+ * Activity / Files / Channels / Reminders / Profile. Kb is a section on
+ * Screen 1 (the nav list), not a bottom tab. Returns null on Screen 1.
  */
 export default function MobileBottomNav() {
   const { pathname } = useLocation();

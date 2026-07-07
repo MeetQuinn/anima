@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { buildKbRawPath } from '@/lib/url-state';
 import { resolveKbHref, resolveRawSrc, resolveSrcset, sourceMatchesLight } from './kb-links';
+
+// resolveRawSrc/resolveSrcset now take an injected raw-path builder (so the same
+// helpers serve the agent Files surface); the KB builder reproduces the prior
+// `/kb/raw/<id>/…` behavior these assertions pin.
+const kbRaw = (filePath: string) => buildKbRawPath('kb1', filePath);
 
 describe('KB link resolution', () => {
   it('resolves relative KB hrefs against the current file path', () => {
@@ -22,20 +28,20 @@ describe('KB link resolution', () => {
   });
 
   it('resolves raw asset src values while leaving external, anchor, and root paths untouched', () => {
-    expect(resolveRawSrc('../img/a b.png', 'kb1', 'docs/guide.md')).toBe('/kb/raw/kb1/img/a%2520b.png');
-    expect(resolveRawSrc('https://example.com/a.png', 'kb1', 'docs/guide.md')).toBe('https://example.com/a.png');
-    expect(resolveRawSrc('#icon', 'kb1', 'docs/guide.md')).toBe('#icon');
-    expect(resolveRawSrc('/static/a.png', 'kb1', 'docs/guide.md')).toBe('/static/a.png');
+    expect(resolveRawSrc('../img/a b.png', kbRaw, 'docs/guide.md')).toBe('/kb/raw/kb1/img/a%2520b.png');
+    expect(resolveRawSrc('https://example.com/a.png', kbRaw, 'docs/guide.md')).toBe('https://example.com/a.png');
+    expect(resolveRawSrc('#icon', kbRaw, 'docs/guide.md')).toBe('#icon');
+    expect(resolveRawSrc('/static/a.png', kbRaw, 'docs/guide.md')).toBe('/static/a.png');
   });
 
   it('resolves every URL candidate in a srcset string or array', () => {
-    expect(resolveSrcset('img/a.png 1x, ../b.png 2x', 'kb1', 'docs/guide.md')).toBe(
+    expect(resolveSrcset('img/a.png 1x, ../b.png 2x', kbRaw, 'docs/guide.md')).toBe(
       '/kb/raw/kb1/docs/img/a.png 1x, /kb/raw/kb1/b.png 2x',
     );
-    expect(resolveSrcset(['img/a.png 1x', '../b.png 2x'], 'kb1', 'docs/guide.md')).toBe(
+    expect(resolveSrcset(['img/a.png 1x', '../b.png 2x'], kbRaw, 'docs/guide.md')).toBe(
       '/kb/raw/kb1/docs/img/a.png 1x, /kb/raw/kb1/b.png 2x',
     );
-    expect(resolveSrcset(undefined, 'kb1', 'docs/guide.md')).toBeUndefined();
+    expect(resolveSrcset(undefined, kbRaw, 'docs/guide.md')).toBeUndefined();
   });
 
   it('matches light media rules and delegates other queries to matchMedia', () => {

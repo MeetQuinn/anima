@@ -45,6 +45,13 @@ export const router = createBrowserRouter([
             lazy: () => import('./views/agents/activity').then((m) => ({ Component: m.default })),
           },
           {
+            // Files tab. The splat carries the deep file path
+            // (`/agents/:id/files/<path...>`); the bare `files` (empty splat)
+            // renders the home root with no file open.
+            path: 'files/*',
+            lazy: () => import('./views/agents/files').then((m) => ({ Component: m.default })),
+          },
+          {
             path: 'channels',
             lazy: () => import('./views/agents/channels').then((m) => ({ Component: m.default })),
           },

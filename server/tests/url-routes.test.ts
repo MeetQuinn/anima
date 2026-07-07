@@ -10,6 +10,9 @@ import {
   parseLocation,
   parseKbPath,
   reconcileLocation,
+  buildAgentFilePath,
+  buildAgentFileRawPath,
+  parseAgentFilePath,
   type ReconcileSnapshot,
 } from '../../shared/url-routes.js';
 
@@ -40,6 +43,77 @@ test('parseLocation: non-agents prefix or extra segments → reset to nulls', ()
   assert.deepEqual(parseLocation('/settings'), { agentId: null, tab: null });
   assert.deepEqual(parseLocation('/agents'), { agentId: null, tab: null });
   assert.deepEqual(parseLocation('/agents/nora/activity/extra'), { agentId: null, tab: null });
+});
+
+// ---------------------------------------------------------------------------
+// Files tab: parseLocation treats any files-prefixed path as the tab, at any
+// depth (the file path is the view's concern); non-files 4+ segment paths still
+// reset. Build/parse round-trip pins the encode ↔ decode contract.
+// ---------------------------------------------------------------------------
+
+test('parseLocation: `/agents/<id>/files` (bare) → files tab', () => {
+  assert.deepEqual(parseLocation('/agents/nora/files'), { agentId: 'nora', tab: 'files' });
+});
+
+test('parseLocation: deep `/agents/<id>/files/<path>` still resolves to the files tab', () => {
+  assert.deepEqual(parseLocation('/agents/nora/files/notes/a.md'), {
+    agentId: 'nora',
+    tab: 'files',
+  });
+  // A percent-encoded deep segment does not change the tab resolution.
+  assert.deepEqual(parseLocation('/agents/nora/files/notes/a%20b.md'), {
+    agentId: 'nora',
+    tab: 'files',
+  });
+});
+
+test('parseLocation: a non-files 4-segment path still resets to nulls', () => {
+  assert.deepEqual(parseLocation('/agents/nora/channels/extra'), { agentId: null, tab: null });
+});
+
+test('parseAgentFilePath: non-files paths return null (caller falls back to tab routing)', () => {
+  assert.equal(parseAgentFilePath('/'), null);
+  assert.equal(parseAgentFilePath('/agents/nora/activity'), null);
+  assert.equal(parseAgentFilePath('/settings'), null);
+});
+
+test('parseAgentFilePath: bare files path opens the root with no file', () => {
+  assert.deepEqual(parseAgentFilePath('/agents/nora/files'), {
+    agentId: 'nora',
+    filePath: null,
+  });
+});
+
+test('parseAgentFilePath: percent-encoded deep segments are decoded', () => {
+  assert.deepEqual(parseAgentFilePath('/agents/nora/files/notes/a%20b.md'), {
+    agentId: 'nora',
+    filePath: 'notes/a b.md',
+  });
+});
+
+test('buildAgentFilePath ↔ parseAgentFilePath round-trip (incl. a percent-encoded segment)', () => {
+  const cases: Array<{ agentId: string; filePath: string | null; expected: string }> = [
+    { agentId: 'nora', filePath: null, expected: '/agents/nora/files' },
+    { agentId: 'nora', filePath: 'MEMORY.md', expected: '/agents/nora/files/MEMORY.md' },
+    { agentId: 'nora', filePath: 'notes/plan.md', expected: '/agents/nora/files/notes/plan.md' },
+    { agentId: 'nora', filePath: 'notes/a b.md', expected: '/agents/nora/files/notes/a%20b.md' },
+  ];
+  for (const { agentId, filePath, expected } of cases) {
+    const path = buildAgentFilePath(agentId, filePath);
+    assert.equal(path, expected);
+    assert.deepEqual(parseAgentFilePath(path), { agentId, filePath });
+  }
+});
+
+test('buildAgentFileRawPath: emits the home raw route with per-segment encoding', () => {
+  assert.equal(
+    buildAgentFileRawPath('nora', 'notes/diagram.png'),
+    '/api/agents/nora/home/raw/notes/diagram.png',
+  );
+  assert.equal(
+    buildAgentFileRawPath('nora', 'notes/a b.png'),
+    '/api/agents/nora/home/raw/notes/a%20b.png',
+  );
 });
 
 // ---------------------------------------------------------------------------

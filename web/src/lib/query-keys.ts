@@ -32,6 +32,10 @@ export const queryKeys = {
   kbFile: (id: string, filePath: string) => ['kb-file', id, filePath] as const,
   kbBrowse: (path: string) => ['kb-browse', path] as const,
   agentSkills: (agentId: string) => ['agent-skills', agentId] as const,
+  // Agent home Files tab: the manifest (flat entry list) and one file's payload.
+  agentHomeFiles: (agentId: string) => ['agent-home-files', agentId] as const,
+  agentHomeFile: (agentId: string, filePath: string) =>
+    ['agent-home-file', agentId, filePath] as const,
   providerAvailability: () => ['provider-availability'] as const,
   providerUsage: () => ['provider-usage'] as const,
   health: () => ['health'] as const,
