@@ -5,10 +5,15 @@
 
 import { agentHasConnectedTransport } from './agent-transports.js';
 
-export type AgentTab = 'activity' | 'channels' | 'profile' | 'reminders';
+export type AgentTab = 'activity' | 'files' | 'channels' | 'profile' | 'reminders';
 
-export const AGENT_TABS: readonly AgentTab[] = ['activity', 'channels', 'profile', 'reminders'] as const;
+export const AGENT_TABS: readonly AgentTab[] = ['activity', 'files', 'channels', 'profile', 'reminders'] as const;
 export const DEFAULT_TAB: AgentTab = 'activity';
+
+// The Files tab is the one agent tab whose URL carries a deep path
+// (`/agents/<id>/files/<path...>`), so its segment is matched specially in
+// parseLocation and it never round-trips through the fixed-segment tab check.
+export const AGENT_FILES_SEGMENT = 'files';
 
 export interface UrlLocation {
   agentId: string | null;
@@ -29,6 +34,10 @@ export function parseLocation(pathname: string): UrlLocation {
   const agentId = segments[1];
   if (!agentId) return { agentId: null, tab: null };
   if (segments.length === 2) return { agentId, tab: null };
+  // Files is the one tab whose URL carries a deep file path, so it can have 4+
+  // segments — match any files-prefixed path to the tab regardless of depth
+  // (the file path itself is the view's concern, not the tab reconciler's).
+  if (segments[2] === AGENT_FILES_SEGMENT) return { agentId, tab: 'files' };
   if (segments.length === 3) {
     const candidate = segments[2];
     if (candidate && (AGENT_TABS as readonly string[]).includes(candidate)) {
@@ -36,7 +45,7 @@ export function parseLocation(pathname: string): UrlLocation {
     }
     return { agentId, tab: null };
   }
-  // 4+ segments → unknown shape, treat as bare root.
+  // 4+ segments on a non-files tab → unknown shape, treat as bare root.
   return { agentId: null, tab: null };
 }
 
@@ -44,6 +53,56 @@ export function buildPath(loc: { agentId: string | null; tab: AgentTab | null })
   if (!loc.agentId) return '/';
   if (!loc.tab) return `/agents/${loc.agentId}`;
   return `/agents/${loc.agentId}/${loc.tab}`;
+}
+
+// --- Agent home files surface ----------------------------------------
+//
+// The Files tab renders an agent's home directory. Browse URLs live under the
+// agent's own path so they sit beside the other agent tabs:
+//   /agents/<id>/files                 → home root (list, no file open)
+//   /agents/<id>/files/<path...>       → a specific file, deep-linkable
+//
+// The backend serves from a `home` namespace — the bare `/agents/:id/files/:x`
+// API path is already taken by cached Slack attachments:
+//   GET /api/agents/<id>/home/files         → manifest { root, entries, truncated }
+//   GET /api/agents/<id>/home/files/<path>  → KbFile-shaped file payload
+//   GET /api/agents/<id>/home/raw/<path>    → raw bytes (img src / open-raw)
+
+export interface AgentFileLocation {
+  agentId: string;
+  filePath: string | null; // home-relative POSIX, or null when only the root is open
+}
+
+/**
+ * Parse an agent Files browse path into `{ agentId, filePath }`, or `null` for
+ * any non-files path (so the caller falls back to tab routing).
+ */
+export function parseAgentFilePath(pathname: string): AgentFileLocation | null {
+  const segments = pathname.split('/').filter(Boolean);
+  if (segments[0] !== 'agents') return null;
+  const agentId = segments[1];
+  if (!agentId) return null;
+  if (segments[2] !== AGENT_FILES_SEGMENT) return null;
+  const filePath = segments.slice(3).map(safeDecode).join('/');
+  return { agentId: safeDecode(agentId), filePath: filePath || null };
+}
+
+export function buildAgentFilePath(agentId: string, filePath: string | null): string {
+  const base = `/agents/${encodeURIComponent(agentId)}/${AGENT_FILES_SEGMENT}`;
+  if (!filePath) return base;
+  const file = filePath.split('/').map(encodeURIComponent).join('/');
+  return `${base}/${file}`;
+}
+
+/**
+ * Build the backend raw-bytes URL for an agent home file (img src / iframe /
+ * open-raw target). Per-segment encoding keeps `/` literal, matching the
+ * server's decode of the `<path>` tail. Mirrors `buildKbRawPath`'s shape.
+ */
+export function buildAgentFileRawPath(agentId: string, filePath: string): string {
+  const id = encodeURIComponent(agentId);
+  const file = filePath.split('/').map(encodeURIComponent).join('/');
+  return `/api/agents/${id}/home/raw/${file}`;
 }
 
 // --- Kb surface ------------------------------------------------------

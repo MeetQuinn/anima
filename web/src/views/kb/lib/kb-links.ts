@@ -1,5 +1,3 @@
-import { buildKbRawPath } from '@/lib/url-state';
-
 export function resolveKbHref(
   href: string,
   currentFilePath: string,
@@ -32,12 +30,16 @@ export type HastElement = {
  * to the KB raw-bytes endpoint, matching what the Markdown `img` component does.
  * Absolute URLs, anchors, and root-absolute paths are left untouched.
  */
-export function resolveRawSrc(src: string, kbId: string, currentFilePath: string): string {
+export function resolveRawSrc(
+  src: string,
+  rawPath: (filePath: string) => string,
+  currentFilePath: string,
+): string {
   if (!src || /^[a-z][a-z\d+\-.]*:/i.test(src) || src.startsWith('#') || src.startsWith('/')) {
     return src;
   }
   const resolved = resolveKbHref(src, currentFilePath);
-  return resolved ? buildKbRawPath(kbId, resolved.path) : src;
+  return resolved ? rawPath(resolved.path) : src;
 }
 
 /**
@@ -62,7 +64,7 @@ export function sourceMatchesLight(media: unknown): boolean {
 /** Resolve every candidate URL inside a srcset (hast may store it as an array). */
 export function resolveSrcset(
   srcset: unknown,
-  kbId: string,
+  rawPath: (filePath: string) => string,
   currentFilePath: string,
 ): string | undefined {
   const raw = Array.isArray(srcset) ? srcset.join(', ') : typeof srcset === 'string' ? srcset : '';
@@ -73,7 +75,7 @@ export function resolveSrcset(
     .filter(Boolean)
     .map((candidate) => {
       const [url, ...descriptor] = candidate.split(/\s+/);
-      return [resolveRawSrc(url, kbId, currentFilePath), ...descriptor].join(' ').trim();
+      return [resolveRawSrc(url, rawPath, currentFilePath), ...descriptor].join(' ').trim();
     })
     .join(', ');
 }

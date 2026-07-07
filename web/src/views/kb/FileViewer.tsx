@@ -122,12 +122,29 @@ const sanitizeSchema = {
   },
 };
 
-function makeKbLinkComponent(
-  kbId: string,
+// URL builders the renderer needs, injected so the same component serves both
+// the KB surface (default) and the agent-home Files tab. `rawPath` maps a
+// surface-relative file path to its raw-bytes endpoint (img / iframe / open-raw);
+// `browsePath` maps it to the in-app SPA route for relative-link navigation.
+export interface FileLinks {
+  rawPath: (filePath: string) => string;
+  browsePath: (filePath: string) => string;
+}
+
+// The subset of KbFile the renderer actually reads. Both a real KbFile and the
+// agent-home file payload (KbFile minus kbId) satisfy this structurally, so the
+// renderer stays surface-agnostic.
+export type RenderableFile = Pick<
+  KbFile,
+  'name' | 'kind' | 'size' | 'language' | 'content' | 'truncated'
+>;
+
+function makeLinkComponent(
+  links: FileLinks,
   currentFilePath: string,
   navigate: ReturnType<typeof useNavigate>,
 ) {
-  return function KbLink({
+  return function FileLink({
     href,
     children,
     ...rest
@@ -140,12 +157,12 @@ function makeKbLinkComponent(
     if (/^[a-z][a-z\d+\-.]*:/i.test(href)) {
       return <a href={href} target="_blank" rel="noreferrer" {...rest}>{children}</a>;
     }
-    // Relative path → resolve and navigate within the KB
+    // Relative path → resolve and navigate within the same surface
     const resolved = resolveKbHref(href, currentFilePath);
     if (!resolved) {
       return <a href={href} target="_blank" rel="noreferrer" {...rest}>{children}</a>;
     }
-    const to = buildKbPath({ id: kbId, filePath: resolved.path }) + resolved.hash;
+    const to = links.browsePath(resolved.path) + resolved.hash;
     return (
       <a
         href={to}
@@ -167,14 +184,19 @@ export function FileContent({
   file,
   loading,
   error,
+  links: linksProp,
   mode: modeProp,
   onModeChange,
 }: {
   id: string;
   filePath: string;
-  file: KbFile | undefined;
+  file: RenderableFile | undefined;
   loading: boolean;
   error: Error | null;
+  // URL builders for the surface. Omitted → KB defaults derived from `id`
+  // (kbId). The agent Files tab passes home-file builders instead, so the same
+  // renderer serves both surfaces with no behavioral drift.
+  links?: FileLinks;
   // When the parent owns the Preview/Code toggle (so it can live in the page
   // header alongside the other file controls), it passes a controlled mode +
   // handler and FileContent suppresses its own inline toggle bar. Left
@@ -182,8 +204,16 @@ export function FileContent({
   mode?: ViewMode;
   onModeChange?: (mode: ViewMode) => void;
 }) {
-  const rawUrl = buildKbRawPath(id, filePath);
   const navigate = useNavigate();
+  const links = useMemo<FileLinks>(
+    () =>
+      linksProp ?? {
+        rawPath: (p: string) => buildKbRawPath(id, p),
+        browsePath: (p: string) => buildKbPath({ id, filePath: p }),
+      },
+    [linksProp, id],
+  );
+  const rawUrl = links.rawPath(filePath);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { entries: frontmatter, body: markdownBody } = useMemo(() => {
     if (file?.kind !== 'markdown' || !file.content) return { entries: null, body: '' };
@@ -268,14 +298,14 @@ export function FileContent({
   // all links on every parent re-render while the file content stays the same).
   const markdownComponents = useMemo(
     () => ({
-      a: makeKbLinkComponent(id, filePath, navigate),
+      a: makeLinkComponent(links, filePath, navigate),
       ...makeHeadingComponents(headingIdsByLine),
       img: ({ src, alt }: React.ComponentPropsWithoutRef<'img'>) => {
         let resolvedSrc = src ?? '';
         if (resolvedSrc && !/^[a-z][a-z\d+\-.]*:/i.test(resolvedSrc) && !resolvedSrc.startsWith('#')) {
           const resolved = resolveKbHref(resolvedSrc, filePath);
           if (resolved) {
-            resolvedSrc = buildKbRawPath(id, resolved.path);
+            resolvedSrc = links.rawPath(resolved.path);
           }
         }
         return <ImageLightbox src={resolvedSrc} alt={alt ?? ''} />;
@@ -294,12 +324,12 @@ export function FileContent({
           if (child.type !== 'element') continue;
           const p = child.properties ?? {};
           if (child.tagName === 'source' && !chosenSrc && sourceMatchesLight(p.media)) {
-            const srcset = resolveSrcset(p.srcSet ?? p.srcset, id, filePath);
+            const srcset = resolveSrcset(p.srcSet ?? p.srcset, links.rawPath, filePath);
             const first = srcset ? srcset.split(',')[0]?.trim().split(/\s+/)[0] : '';
             if (first) chosenSrc = first;
           } else if (child.tagName === 'img' && !fallback) {
             fallback = {
-              src: resolveRawSrc(typeof p.src === 'string' ? p.src : '', id, filePath),
+              src: resolveRawSrc(typeof p.src === 'string' ? p.src : '', links.rawPath, filePath),
               alt: typeof p.alt === 'string' ? p.alt : '',
               width: p.width != null ? String(p.width) : undefined,
             };
@@ -400,7 +430,7 @@ export function FileContent({
         );
       },
     }),
-    [headingIdsByLine, id, filePath, navigate],
+    [headingIdsByLine, links, filePath, navigate],
   );
 
   if (error) {

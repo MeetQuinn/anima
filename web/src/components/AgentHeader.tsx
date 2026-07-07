@@ -11,6 +11,7 @@ import { useAgents, useAgentStatuses } from '@/hooks/useAgentDirectory';
 
 const TABS: { id: AgentTab; label: string }[] = [
   { id: 'activity', label: 'Activity' },
+  { id: 'files', label: 'Files' },
   { id: 'channels', label: 'Channels' },
   { id: 'profile', label: 'Profile' },
   { id: 'reminders', label: 'Reminders' },
