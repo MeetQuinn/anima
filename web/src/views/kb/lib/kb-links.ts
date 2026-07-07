@@ -27,8 +27,10 @@ export type HastElement = {
 
 /**
  * Resolve a relative asset reference (raw HTML `<img src>` / `<source srcset>`)
- * to the KB raw-bytes endpoint, matching what the Markdown `img` component does.
- * Absolute URLs, anchors, and root-absolute paths are left untouched.
+ * through the injected `rawPath` builder, matching what the Markdown `img`
+ * component does. The builder decides the raw-bytes endpoint (KB or agent-home),
+ * so this stays surface-agnostic. Absolute URLs, anchors, and root-absolute
+ * paths are left untouched.
  */
 export function resolveRawSrc(
   src: string,

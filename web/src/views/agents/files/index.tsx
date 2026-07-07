@@ -89,7 +89,13 @@ function AgentFilesContent({
   const navigate = useNavigate();
   const treeRef = useRef<HTMLDivElement>(null);
 
-  const [expanded, setExpanded] = useState<Set<string>>(() => ancestorsOf(filePath));
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    const init = ancestorsOf(filePath);
+    // No deep link: open notes/ by default so any note is two clicks (tab →
+    // note). Harmless if the dir is absent — TreeRow only expands what exists.
+    if (!filePath) init.add('notes');
+    return init;
+  });
   const [filterQuery, setFilterQuery] = useState('');
 
   const {
@@ -102,14 +108,28 @@ function AgentFilesContent({
     refetchInterval: refetchIntervals.kbContent,
   });
 
+  // Desktop default view: when nothing is deep-linked, land the operator on
+  // MEMORY.md (what the agent knows) instead of a placeholder — one click into
+  // the tab reaches rendered memory. The URL stays at bare /files so deep-link
+  // semantics are untouched; mobile stays list-first (the right panel is hidden
+  // until a real selection). Falls back to the placeholder when MEMORY.md is
+  // absent.
+  const memoryDefault = useMemo(() => {
+    if (!manifest) return null;
+    return manifest.entries.some((e) => e.kind === 'file' && e.path === 'MEMORY.md')
+      ? 'MEMORY.md'
+      : null;
+  }, [manifest]);
+  const previewPath = filePath ?? memoryDefault;
+
   const {
     data: file,
     error: fileError,
     isLoading: fileLoading,
   } = useQuery({
-    queryKey: queryKeys.agentHomeFile(agentId, filePath ?? ''),
-    queryFn: () => fetchAgentHomeFile(agentId, filePath!),
-    enabled: !!filePath,
+    queryKey: queryKeys.agentHomeFile(agentId, previewPath ?? ''),
+    queryFn: () => fetchAgentHomeFile(agentId, previewPath!),
+    enabled: !!previewPath,
     refetchInterval: refetchIntervals.kbContent,
   });
 
@@ -323,9 +343,11 @@ function AgentFilesContent({
           mobileShowRight ? 'flex-1' : 'hidden md:flex md:flex-1',
         ].join(' ')}
       >
-        {filePath ? (
+        {previewPath ? (
           <div className="flex h-full min-h-0 w-full flex-col">
-            {/* Mobile file toolbar — back to the list, plus the filename. */}
+            {/* Mobile file toolbar — back to the list, plus the filename. Only
+                reachable on a real selection (filePath); the default preview is
+                desktop-only, where this bar is hidden. */}
             <div className="flex min-h-[44px] shrink-0 items-center gap-2 border-b border-border-soft px-4 md:hidden">
               <button
                 onClick={() => navigate(buildAgentFilePath(agentId, null))}
@@ -336,19 +358,19 @@ function AgentFilesContent({
                 <span className="font-sans text-[13px]">Files</span>
               </button>
               <span className="min-w-0 flex-1 truncate font-sans text-[13px] font-medium text-text-muted">
-                {filePath.split('/').pop()}
+                {previewPath.split('/').pop()}
               </span>
             </div>
             {/* Desktop file path bar. */}
             <div className="hidden min-h-[44px] shrink-0 items-center border-b border-border-soft px-5 md:flex">
-              <span className="truncate font-mono text-[11px] text-text-subtle" title={filePath}>
-                {filePath}
+              <span className="truncate font-mono text-[11px] text-text-subtle" title={previewPath}>
+                {previewPath}
               </span>
             </div>
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <FileContent
                 id={agentId}
-                filePath={filePath}
+                filePath={previewPath}
                 file={file}
                 loading={fileLoading}
                 error={
@@ -366,9 +388,11 @@ function AgentFilesContent({
           <div className="hidden h-full flex-col items-start justify-start p-8 md:flex">
             <div className="font-serif text-[20px] font-semibold text-text">Files</div>
             <div className="mt-3 font-sans text-[13px] text-text-muted">
-              {isEmpty
-                ? "This agent's home is empty."
-                : 'Select a file from the list to view it.'}
+              {!manifest && !manifestError
+                ? 'Loading…'
+                : isEmpty
+                  ? "This agent's home is empty."
+                  : 'Select a file from the list to view it.'}
             </div>
           </div>
         )}
