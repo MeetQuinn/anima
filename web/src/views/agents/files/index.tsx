@@ -101,7 +101,6 @@ function AgentFilesContent({
   const {
     data: manifest,
     error: manifestError,
-    isLoading: manifestLoading,
   } = useQuery({
     queryKey: queryKeys.agentHomeFiles(agentId),
     queryFn: () => fetchAgentHomeManifest(agentId),
@@ -216,40 +215,25 @@ function AgentFilesContent({
     [expanded, filterQuery, toggleDir, selectFile],
   );
 
-  const root = manifest?.root ?? '';
   const isEmpty = !!manifest && manifest.entries.length === 0;
   // On mobile the file panel only slides in once a file is selected.
   const mobileShowRight = !!filePath;
 
   return (
-    <div className="flex min-h-0 flex-1">
+    // h-full (not flex-1): the agent-detail Outlet parent is a bounded block,
+    // not a flex container, so flex-1 has nothing to resolve against and the
+    // panels grow content-tall instead of scrolling. Matches the Activity and
+    // Channels tab roots (flex h-full overflow-hidden).
+    <div className="flex h-full overflow-hidden">
       {/* --------------------------------------------------------------- */}
-      {/* Left panel: home header line + filter + tree */}
+      {/* Left panel: filter + tree */}
       {/* --------------------------------------------------------------- */}
       <nav
         className={[
-          'flex w-full shrink-0 flex-col bg-surface-raised/40 md:w-72',
+          'flex min-h-0 w-full shrink-0 flex-col bg-surface-raised/40 md:w-72',
           mobileShowRight ? 'hidden md:flex' : 'flex',
         ].join(' ')}
       >
-        {/* "Files in this agent's home" — ties the tab back to the agent-home
-            concept, with the resolved root path visible (Iris/totoday naming). */}
-        <div className="shrink-0 border-b border-border-soft px-4 py-2.5">
-          <div className="font-sans text-[11px] font-medium uppercase tracking-[0.1em] text-text-subtle">
-            Files in this agent's home
-          </div>
-          <div
-            className="mt-0.5 truncate font-mono text-[11px] text-text-muted"
-            title={root}
-          >
-            {manifestLoading && !root ? (
-              <span className="inline-block h-[1em] w-40 animate-pulse rounded bg-surface-elevated align-middle" />
-            ) : (
-              root || '—'
-            )}
-          </div>
-        </div>
-
         {/* Filter input */}
         <div className="flex min-h-[44px] shrink-0 items-center border-b border-border-soft px-3">
           <div className="flex w-full items-center gap-1.5 rounded-md border border-border-soft bg-surface-elevated/40 px-2 py-1.5">
