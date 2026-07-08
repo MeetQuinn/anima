@@ -442,9 +442,14 @@ function threadMetaOf(item: ActivityFeedItem): { messageTs?: string; threadTs?: 
   if (item.kind === 'message-in') {
     return { messageTs: item.message.messageTs, threadTs: item.message.threadTs };
   }
-  if (item.kind === 'message-out' || item.kind === 'file-out' || item.kind === 'reaction-out') {
+  if (item.kind === 'message-out' || item.kind === 'file-out') {
     return { messageTs: item.messageTs, threadTs: item.threadTs };
   }
+  // reaction-out carries the *target* message's ts as messageTs. A reaction is
+  // never a thread parent or reply, so it must yield no thread metadata -
+  // otherwise it would claim a duplicate DOM id at the target ts and could
+  // hijack a degraded back-ref (pointing at "Reaction added…" instead of the
+  // real parent). Fall through to no metadata.
   return {};
 }
 

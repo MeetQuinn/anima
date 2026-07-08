@@ -108,4 +108,32 @@ describe('buildChannelThreadContext', () => {
     const ctx = buildChannelThreadContext([rec({ text: 'no ts' })], base);
     expect(ctx.parentByTs.size).toBe(0);
   });
+
+  it('excludes reactions so they cannot masquerade as a thread parent or reply', () => {
+    // A reaction carries the *target* message's ts as messageTs (and may carry
+    // a threadTs). Without the kind==='reaction' guard it would overwrite the
+    // real parent at ts 100 with "Reaction added…" and miscount ts 50 as a
+    // reply target.
+    const ctx = buildChannelThreadContext(
+      [
+        rec({ direction: 'out', messageTs: '100', text: 'the real parent post' }),
+        rec({
+          kind: 'reaction',
+          direction: 'out',
+          messageTs: '100',
+          threadTs: '50',
+          text: 'Reaction added: tada',
+        }),
+        rec({ messageTs: '101', threadTs: '100', text: 'the one real reply' }),
+      ],
+      base,
+    );
+    // real parent survives, not overwritten by the reaction's snippet
+    expect(ctx.parentByTs.get('100')).toEqual({ author: 'Nora', snippet: 'the real parent post' });
+    // only genuine messages are parents (100 + the reply row 101); no phantom
+    expect([...ctx.parentByTs.keys()].sort()).toEqual(['100', '101']);
+    // the reaction's threadTs (50) is not counted; only the real reply to 100
+    expect(ctx.replyCountByTs.get('50')).toBeUndefined();
+    expect(ctx.replyCountByTs.get('100')).toBe(1);
+  });
 });

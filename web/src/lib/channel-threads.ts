@@ -56,6 +56,11 @@ export function buildChannelThreadContext(
   const parentByTs = new Map<string, ThreadParentInfo>();
   const replyCountByTs = new Map<string, number>();
   for (const record of entries) {
+    // Reactions carry the *target* message's ts as messageTs (and may carry a
+    // threadTs), but a reaction is neither a thread parent nor a reply. Skip
+    // them entirely so a reaction can't overwrite the real parent at that ts
+    // (hijacking the back-ref snippet) or be miscounted as a reply.
+    if (record.kind === 'reaction') continue;
     const ts = record.messageTs?.trim();
     if (ts) {
       const author =
