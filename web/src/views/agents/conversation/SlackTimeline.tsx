@@ -558,9 +558,16 @@ export function MessageGroupRow({
                 {...(threadContext && meta.messageTs ? { id: threadDomId(meta.messageTs) } : {})}
                 title={dateTimeFull(item.timestamp)}
                 className={[
-                  'flex flex-col gap-1 rounded-sm transition-colors duration-500',
+                  'flex flex-col gap-1',
+                  // Thread-only classes: `rounded-sm transition-colors duration-500`
+                  // exist solely for the Channels flash target, so gate them behind
+                  // threadContext. With no context the class string is exactly the
+                  // prior `flex flex-col gap-1` — Activity stays literally identical.
+                  threadContext ? 'rounded-sm transition-colors duration-500' : '',
                   reply ? 'border-l-2 border-border-soft/70 pl-2.5' : '',
-                ].join(' ')}
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
               >
                 {reply && meta.threadTs && (
                   <ThreadBackRef threadTs={meta.threadTs} parent={parent} />
