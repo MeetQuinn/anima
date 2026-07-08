@@ -9,11 +9,13 @@ import { Button } from './ui/button';
 import AgentActionsMenu from './AgentActionsMenu';
 import { useAgents, useAgentStatuses } from '@/hooks/useAgentDirectory';
 
+// Order by lived usage (totoday's call): Activity → Channels → Profile → Files
+// → Reminders. Keep this array in lockstep with MobileBottomNav's NAV.
 const TABS: { id: AgentTab; label: string }[] = [
   { id: 'activity', label: 'Activity' },
-  { id: 'files', label: 'Files' },
   { id: 'channels', label: 'Channels' },
   { id: 'profile', label: 'Profile' },
+  { id: 'files', label: 'Files' },
   { id: 'reminders', label: 'Reminders' },
 ];
 
