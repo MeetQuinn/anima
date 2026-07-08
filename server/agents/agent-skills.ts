@@ -94,8 +94,13 @@ async function globalSkillSources(
   }
 
   if (agent.provider.kind === "claude-code") {
+    // Claude Code only loads ~/.claude/skills (+ user plugins); it never reads
+    // the ~/.agents/skills common pool. Anima auto-symlinks the default skills
+    // it needs (see ensureDefaultSkills) into ~/.claude/skills, and any others
+    // must be linked there to load. Listing ~/.agents/skills as an active
+    // "Common" source therefore misrepresents un-loaded pool skills as active,
+    // so it is intentionally excluded here.
     return [
-      { kind: "common", label: "Common", path: roots.agentsSkills },
       { kind: "provider", label: "Claude Code", path: roots.claudeSkills },
       ...(await claudeUserPluginSources(roots)),
     ];
@@ -124,11 +129,13 @@ function localSkillSources(
     ];
   }
   if (agent.provider.kind === "claude-code") {
+    // Same as the global case: a Claude agent loads its per-project skills from
+    // <agentHome>/.claude/skills, not <agentHome>/.agents/skills, so only the
+    // former is an active local source.
     return [
-      common,
       {
         kind: "local",
-        label: "Agent Claude Code",
+        label: "Agent",
         path: join(agentHome, ".claude", "skills"),
       },
     ];

@@ -87,6 +87,18 @@ test("claude skills follow global symlinks and include only user-scope installed
       "../../.agents/skills/frontend-design",
       join(root, ".claude", "skills", "frontend-design"),
     );
+    // A common-pool skill that is NOT symlinked into ~/.claude/skills. Claude
+    // Code does not load it, so it must not appear in the Profile's globals.
+    await writeSkill(join(root, ".agents", "skills", "pool-only"), {
+      description: "Common pool skill not linked into .claude/skills",
+      name: "pool-only",
+    });
+    // A per-agent common-pool skill, likewise not linked into the agent's
+    // <home>/.claude/skills, so it must not appear as an active local skill.
+    await writeSkill(join(agentHome, ".agents", "skills", "agent-pool-only"), {
+      description: "Agent common-pool skill, not linked",
+      name: "agent-pool-only",
+    });
 
     const userPluginRoot = join(
       root,
@@ -148,13 +160,26 @@ test("claude skills follow global symlinks and include only user-scope installed
       homeDir: root,
     });
 
+    // frontend-design loads because it is symlinked into ~/.claude/skills, so
+    // it surfaces under the "Claude Code" source (not the un-scanned common
+    // pool). The un-linked pool skill is absent.
     assert.deepEqual(
       skills.global.map((skill) => `${skill.sourceLabel}:${skill.name}`).sort(),
-      ["Common:frontend-design", "glm-plan-usage:usage-query-skill"],
+      ["Claude Code:frontend-design", "glm-plan-usage:usage-query-skill"],
     );
     assert.equal(
       skills.global.filter((skill) => skill.name === "frontend-design").length,
       1,
+    );
+    // ~/.agents/skills is not a Claude source: an un-linked pool skill never
+    // appears, and the common pool is not listed as a global source at all.
+    assert.equal(
+      skills.global.some((skill) => skill.name === "pool-only"),
+      false,
+    );
+    assert.equal(
+      skills.globalSources?.some((source) => source.label === "Common"),
+      false,
     );
     assert.equal(
       skills.global.some((skill) => skill.name === "algorithmic-art"),
@@ -165,6 +190,8 @@ test("claude skills follow global symlinks and include only user-scope installed
         ?.kind,
       "provider",
     );
+    // Local skills likewise come only from <home>/.claude/skills; the agent's
+    // un-linked .agents/skills pool skill is excluded.
     assert.deepEqual(
       skills.local.map((skill) => skill.name),
       ["agent-runbook"],
