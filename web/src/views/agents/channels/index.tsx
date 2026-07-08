@@ -5,6 +5,7 @@ import { BellOff, ChevronLeft, Loader2 } from 'lucide-react';
 import { fetchAgentChannels, fetchAgentMessages } from '@/api/agents';
 import { buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
+import { buildChannelThreadContext } from '@/lib/channel-threads';
 import { dateKey, formatRelativeShort } from '@/lib/format';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useAgents } from '@/hooks/useAgentDirectory';
@@ -189,6 +190,15 @@ function ConversationPane({
 
   const items = buildMessageFeed({ entries }).filter(isMessageItem);
 
+  // Thread legibility: a parent lookup (for a reply's "↳ re:" back-reference)
+  // and a reply count per thread-starter (the quiet "N replies" scent), derived
+  // from the loaded records. See channel-threads.ts for the exactness rationale.
+  const threadContext = buildChannelThreadContext(entries, {
+    agentName: agentAuthor.name,
+    channelKind: channel.kind,
+    ...(channel.name ? { channelName: channel.name } : {}),
+  });
+
   const byDayMap = new Map<string, ActivityFeedItem[]>();
   for (const item of items) {
     const k = dateKey(item.timestamp);
@@ -258,7 +268,12 @@ function ConversationPane({
               <DayDivider iso={dayItems[0]!.timestamp} />
               {groupByAuthor(dayItems, (item) => authorFor(item, channel, agentAuthor)).map(
                 (group, gi) => (
-                  <MessageGroupRow key={`${day}::${gi}`} group={group} agentId={agentId} />
+                  <MessageGroupRow
+                    key={`${day}::${gi}`}
+                    group={group}
+                    agentId={agentId}
+                    threadContext={threadContext}
+                  />
                 ),
               )}
             </div>

@@ -1,4 +1,13 @@
-import { Bell, Lightbulb, MessageSquareQuote, SmilePlus, UserPlus, type LucideIcon } from 'lucide-react';
+import {
+  Bell,
+  CornerDownRight,
+  Lightbulb,
+  MessageSquareQuote,
+  MessageSquareReply,
+  SmilePlus,
+  UserPlus,
+  type LucideIcon,
+} from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { renderMrkdwn } from '@/lib/mrkdwn';
 import { emojiGlyph } from '@/lib/emoji';
@@ -400,7 +409,116 @@ export function SystemEventRow({
   );
 }
 
-export function MessageGroupRow({ group, agentId }: { group: MessageGroup; agentId: string }) {
+// ---------------------------------------------------------------------------
+// Thread legibility (Channels axis only)
+//
+// The Channels detail is a calm flat chronological log, so a reply can render
+// far below its parent. `threadContext` lets a reply show a back-reference to
+// its parent ("↳ re: <author> · snippet", click-to-scroll) and a thread-starter
+// show a quiet "N replies" scent — just enough legibility to answer "is this a
+// reply, and to what?" without turning the surface into a threaded UI. Activity
+// passes NO context, so its rendering is byte-identical (no decoration reads).
+// ---------------------------------------------------------------------------
+
+export interface ThreadParentInfo {
+  author: string;
+  snippet: string; // '' for a text-less (file/system) parent → render author-only
+}
+
+export interface ThreadContext {
+  // parent messageTs → author + snippet, for a reply's back-reference.
+  parentByTs: Map<string, ThreadParentInfo>;
+  // thread-starter messageTs → count of loaded replies (only entries with > 0).
+  replyCountByTs: Map<string, number>;
+  // Whether the reply counts are exact. Under contiguous newest-first paging a
+  // visible parent's replies (always newer than the parent) are necessarily
+  // within the loaded window, so the count is exact. If a future paging model
+  // breaks contiguity, set this false and the badge renders "N+" (never lets an
+  // approximate count read as authoritative).
+  countsExact: boolean;
+}
+
+function threadMetaOf(item: ActivityFeedItem): { messageTs?: string; threadTs?: string } {
+  if (item.kind === 'message-in') {
+    return { messageTs: item.message.messageTs, threadTs: item.message.threadTs };
+  }
+  if (item.kind === 'message-out' || item.kind === 'file-out' || item.kind === 'reaction-out') {
+    return { messageTs: item.messageTs, threadTs: item.threadTs };
+  }
+  return {};
+}
+
+// A reply is a message whose threadTs points at a *different* message (the
+// parent). A thread parent carries threadTs absent or === its own messageTs.
+function isReplyMeta(meta: { messageTs?: string; threadTs?: string }): boolean {
+  return !!meta.threadTs && meta.threadTs !== meta.messageTs;
+}
+
+export function threadDomId(messageTs: string): string {
+  return `chan-msg-${messageTs}`;
+}
+
+function flashThreadTarget(threadTs: string) {
+  const el = document.getElementById(threadDomId(threadTs));
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  // Soft arrival flash: the wrapper has transition-colors, so adding then
+  // removing a faint accent wash fades in and out gently.
+  el.classList.add('bg-accent/10');
+  window.setTimeout(() => el.classList.remove('bg-accent/10'), 1200);
+}
+
+// The clickable back-reference on a reply. Degrades to plain, non-interactive
+// muted text when the parent is outside the loaded window (never a dead click,
+// and never *looks* clickable).
+function ThreadBackRef({ threadTs, parent }: { threadTs: string; parent?: ThreadParentInfo }) {
+  if (!parent) {
+    return (
+      <div className="flex items-center gap-1 font-sans text-[11px] text-text-subtle">
+        <CornerDownRight className="h-3 w-3 shrink-0 text-text-subtle/60" aria-hidden />
+        <span>reply in thread</span>
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => flashThreadTarget(threadTs)}
+      aria-label={`Jump to the message this replies to, by ${parent.author}`}
+      className="group/threadref flex min-w-0 items-center gap-1 self-start rounded-sm font-sans text-[11px] text-text-subtle transition-colors hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+    >
+      <CornerDownRight
+        className="h-3 w-3 shrink-0 text-text-subtle/60 transition-colors group-hover/threadref:text-accent"
+        aria-hidden
+      />
+      <span className="min-w-0 truncate">
+        re: <span className="font-medium text-text-muted">{parent.author}</span>
+        {parent.snippet && <span> · “{parent.snippet}”</span>}
+      </span>
+    </button>
+  );
+}
+
+// Quiet forward-scent on a thread-starter: announces threads exist at all.
+function ReplyCountBadge({ count, exact }: { count: number; exact: boolean }) {
+  const noun = exact && count === 1 ? 'reply' : 'replies';
+  return (
+    <span className="inline-flex items-center gap-1 self-start font-sans text-[11px] text-text-subtle">
+      <MessageSquareReply className="h-3 w-3 shrink-0 text-text-subtle/60" aria-hidden />
+      {exact ? count : `${count}+`} {noun}
+    </span>
+  );
+}
+
+export function MessageGroupRow({
+  group,
+  agentId,
+  threadContext,
+}: {
+  group: MessageGroup;
+  agentId: string;
+  threadContext?: ThreadContext;
+}) {
   return (
     <div className="flex gap-2.5 px-1 py-1.5">
       <MsgAvatar author={group.author} />
@@ -418,17 +536,42 @@ export function MessageGroupRow({ group, agentId }: { group: MessageGroup; agent
           {group.surface && <GroupSurfaceChip chip={group.surface} agentId={agentId} />}
         </div>
         <div className="mt-0.5 flex flex-col gap-1">
-          {group.items.map(({ item, key }) => (
+          {group.items.map(({ item, key }) => {
+            // Thread decoration (Channels only). meta is empty for Activity (no
+            // context) and for system rows, so both fall through untouched.
+            const meta = threadContext ? threadMetaOf(item) : {};
+            const reply = isReplyMeta(meta);
+            const parent =
+              reply && meta.threadTs ? threadContext!.parentByTs.get(meta.threadTs) : undefined;
+            const replyCount =
+              threadContext && meta.messageTs
+                ? threadContext.replyCountByTs.get(meta.messageTs) ?? 0
+                : 0;
             // Wrap each message in a title-bearing div so hovering any row (not
             // just the group's header time) surfaces its own full date + time.
-            // The inner flex-col gap-1 mirrors the prior layout exactly: before,
-            // MessageBody's fragment parts were direct gap-1 siblings of the
-            // column; now they're gap-1 siblings inside the wrapper, so spacing
-            // is unchanged.
-            <div key={key} title={dateTimeFull(item.timestamp)} className="flex flex-col gap-1">
-              <MessageBody item={item} agentId={agentId} />
-            </div>
-          ))}
+            // The inner flex-col gap-1 mirrors the prior layout: MessageBody's
+            // fragment parts stay gap-1 siblings. A reply gets a shallow muted
+            // left rule + the back-ref; a thread-starter gets the reply badge.
+            return (
+              <div
+                key={key}
+                {...(threadContext && meta.messageTs ? { id: threadDomId(meta.messageTs) } : {})}
+                title={dateTimeFull(item.timestamp)}
+                className={[
+                  'flex flex-col gap-1 rounded-sm transition-colors duration-500',
+                  reply ? 'border-l-2 border-border-soft/70 pl-2.5' : '',
+                ].join(' ')}
+              >
+                {reply && meta.threadTs && (
+                  <ThreadBackRef threadTs={meta.threadTs} parent={parent} />
+                )}
+                <MessageBody item={item} agentId={agentId} />
+                {replyCount > 0 && (
+                  <ReplyCountBadge count={replyCount} exact={threadContext!.countsExact} />
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

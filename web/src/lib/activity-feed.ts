@@ -123,6 +123,12 @@ export type ActivityFeedItem =
       timestamp: string;
       surface: SurfaceChip;
       isEdit: boolean;
+      // Slack ts + parent-thread ts, surfaced for the Channels thread-legibility
+      // decoration (message-in reads these off `message` directly). Set only by
+      // `buildMessageFeed` (the Channels path, where the record is in scope);
+      // the Activity path leaves them undefined and never reads them.
+      messageTs?: string;
+      threadTs?: string;
     }
   | {
       kind: 'file-out';
@@ -131,6 +137,8 @@ export type ActivityFeedItem =
       permalink?: string;
       timestamp: string;
       surface: SurfaceChip;
+      messageTs?: string;
+      threadTs?: string;
     }
   | {
       // React is outbound voice but a lighter weight than message/file — it
@@ -143,6 +151,8 @@ export type ActivityFeedItem =
       noop: boolean;
       timestamp: string;
       surface: SurfaceChip;
+      messageTs?: string;
+      threadTs?: string;
     }
   | { kind: 'step'; activity: ActivityRecord; timestamp: string; subagentStreams?: SubagentStream[] }
   | {
@@ -417,6 +427,8 @@ export function buildMessageFeed(messagePage: AgentMessageHistoryPage): Activity
         timestamp: message.timestamp,
         surface: surfaceChipForOutboundMessage(message),
         isEdit: message.isEdit === true,
+        ...(message.messageTs ? { messageTs: message.messageTs } : {}),
+        ...(message.threadTs ? { threadTs: message.threadTs } : {}),
       });
       continue;
     }
@@ -436,6 +448,8 @@ export function buildMessageFeed(messagePage: AgentMessageHistoryPage): Activity
         ...(message.permalink ? { permalink: message.permalink } : {}),
         timestamp: message.timestamp,
         surface: surfaceChipForOutboundMessage(message),
+        ...(message.messageTs ? { messageTs: message.messageTs } : {}),
+        ...(message.threadTs ? { threadTs: message.threadTs } : {}),
       });
       continue;
     }
@@ -447,6 +461,8 @@ export function buildMessageFeed(messagePage: AgentMessageHistoryPage): Activity
         noop: message.reaction?.noop === true,
         timestamp: message.timestamp,
         surface: surfaceChipForOutboundMessage(message),
+        ...(message.messageTs ? { messageTs: message.messageTs } : {}),
+        ...(message.threadTs ? { threadTs: message.threadTs } : {}),
       });
     }
   }
