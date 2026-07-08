@@ -8,8 +8,18 @@ import { buildAgentFilePath, buildAgentFileRawPath } from '@/lib/url-state';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import type { KbTreeNode } from '@shared/kb';
 import { TreeRow, ancestorsOf, matchesFilter } from '../../kb/FileTree';
-import { FileContent } from '../../kb/FileViewer';
-import type { FileLinks } from '../../kb/FileViewer';
+import {
+  FileContent,
+  FileBreadcrumb,
+  FileOverflowMenu,
+  TocButton,
+  ViewModeToggle,
+  extractToc,
+  lineFromHash,
+  loadSessionViewMode,
+  saveSessionViewMode,
+} from '../../kb/FileViewer';
+import type { FileLinks, ViewMode } from '../../kb/FileViewer';
 
 // ---------------------------------------------------------------------------
 // Flat manifest → nested tree
@@ -148,6 +158,26 @@ function AgentFilesContent({
     }),
     [agentId],
   );
+
+  // TOC entries for the previewed markdown file — feeds the header outline
+  // (TocButton). Non-markdown / empty content → no outline button.
+  const toc = useMemo(
+    () => (file?.kind === 'markdown' && file.content ? extractToc(file.content) : []),
+    [file],
+  );
+
+  // Preview/Code mode lifted to the page so the single toggle lives in the file
+  // header alongside Open raw / outline (matching the KB file view) instead of a
+  // second strip inside the viewer. Land in Code when deep-linked to a `#L<n>`
+  // source line; otherwise honour the session's last choice.
+  const [viewMode, setViewMode] = useState<ViewMode>(() =>
+    lineFromHash(window.location.hash) ? 'code' : loadSessionViewMode(),
+  );
+  const changeViewMode = useCallback((next: ViewMode) => {
+    setViewMode(next);
+    saveSessionViewMode(next);
+  }, []);
+  const isMarkdown = file?.kind === 'markdown';
 
   // Open the tree to the deep-linked file so a refreshed/shared URL lands with
   // its branch expanded. Deferred a tick (matching the KB tree) so the merge
@@ -344,12 +374,37 @@ function AgentFilesContent({
               <span className="min-w-0 flex-1 truncate font-sans text-[13px] font-medium text-text-muted">
                 {previewPath.split('/').pop()}
               </span>
+              {isMarkdown && !fileLoading && (
+                <ViewModeToggle mode={viewMode} onChange={changeViewMode} />
+              )}
+              <FileOverflowMenu
+                id={agentId}
+                filePath={previewPath}
+                size={file && !fileLoading ? file.size : undefined}
+                rawUrl={links.rawPath(previewPath)}
+                downloadUrl={null}
+              />
+              <TocButton entries={toc} />
             </div>
-            {/* Desktop file path bar. */}
-            <div className="hidden min-h-[44px] shrink-0 items-center border-b border-border-soft px-5 md:flex">
-              <span className="truncate font-mono text-[11px] text-text-subtle" title={previewPath}>
-                {previewPath}
-              </span>
+            {/* Desktop file header — breadcrumb (location) on the left, action
+                cluster on the right: [Preview|Code] [⋯ Copy path / Open raw]
+                [outline]. Mirrors the KB file view; Download is deferred (no home
+                download endpoint yet) so the overflow menu omits it. */}
+            <div className="hidden min-h-[44px] shrink-0 items-center gap-2 border-b border-border-soft px-5 md:flex">
+              <FileBreadcrumb filePath={previewPath} />
+              <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
+                {isMarkdown && !fileLoading && (
+                  <ViewModeToggle mode={viewMode} onChange={changeViewMode} />
+                )}
+                <FileOverflowMenu
+                  id={agentId}
+                  filePath={previewPath}
+                  size={file && !fileLoading ? file.size : undefined}
+                  rawUrl={links.rawPath(previewPath)}
+                  downloadUrl={null}
+                />
+                <TocButton entries={toc} />
+              </div>
             </div>
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <FileContent
@@ -365,6 +420,8 @@ function AgentFilesContent({
                       : null
                 }
                 links={links}
+                mode={viewMode}
+                onModeChange={changeViewMode}
               />
             </div>
           </div>

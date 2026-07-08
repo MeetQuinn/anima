@@ -114,10 +114,19 @@ export function FileOverflowMenu({
   id,
   filePath,
   size,
+  rawUrl: rawUrlProp,
+  downloadUrl: downloadUrlProp,
 }: {
   id: string;
   filePath: string;
   size?: number;
+  // Injectable raw-bytes URL so the same menu serves the KB (default, derived
+  // from `id`) and the agent-home Files tab (its home-file raw endpoint).
+  rawUrl?: string;
+  // Download target. Omitted → KB default derived from `id`. Pass `null` to hide
+  // the Download item entirely — the agent Files surface has no download
+  // endpoint yet, so it defers that action (Copy path + Open raw carry the value).
+  downloadUrl?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -141,7 +150,8 @@ export function FileOverflowMenu({
     };
   }, []);
 
-  const rawUrl = buildKbRawPath(id, filePath);
+  const rawUrl = rawUrlProp ?? buildKbRawPath(id, filePath);
+  const downloadUrl = downloadUrlProp === undefined ? kbDownloadUrl(id, filePath) : downloadUrlProp;
   const handleCopy = useCallback(() => {
     copyTextToClipboard(filePath)
       .then(() => {
@@ -195,16 +205,18 @@ export function FileOverflowMenu({
             <ExternalLink className="h-3.5 w-3.5 shrink-0" />
             Open raw
           </a>
-          <a
-            role="menuitem"
-            href={kbDownloadUrl(id, filePath)}
-            download
-            onClick={() => setOpen(false)}
-            className={itemClass}
-          >
-            <Download className="h-3.5 w-3.5 shrink-0" />
-            Download
-          </a>
+          {downloadUrl && (
+            <a
+              role="menuitem"
+              href={downloadUrl}
+              download
+              onClick={() => setOpen(false)}
+              className={itemClass}
+            >
+              <Download className="h-3.5 w-3.5 shrink-0" />
+              Download
+            </a>
+          )}
         </div>
       )}
     </div>
