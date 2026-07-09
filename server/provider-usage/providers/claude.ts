@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { userInfo } from 'node:os';
 import { promisify } from 'node:util';
 
 import type { ProviderUsageExtra, ProviderUsageRow, ProviderUsageWindow } from '../../../shared/provider-usage.js';
@@ -6,6 +7,7 @@ import { bearer, fetchJson } from '../http.js';
 import { available, unavailable, usageError } from '../result.js';
 import {
   clampPercent,
+  expiresSoon,
   homePath,
   numberValue,
   readJsonFile,
@@ -13,17 +15,24 @@ import {
   resetAtFromValue,
   stringValue,
   windowFromUsedPercent,
+  writeJsonFile,
 } from './common.js';
 
 const execFileAsync = promisify(execFile);
 const CLAUDE_USAGE_API = 'https://api.anthropic.com/api/oauth/usage';
+const CLAUDE_REFRESH_TOKEN_API = 'https://platform.claude.com/v1/oauth/token';
+const CLAUDE_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const CLAUDE_CREDENTIALS_PATH = ['.claude', '.credentials.json'];
 const CLAUDE_KEYCHAIN_SERVICE = 'Claude Code-credentials';
 const CLAUDE_OAUTH_BETA_HEADER = 'oauth-2025-04-20';
 
 interface ClaudeCredentials {
   accessToken: string;
+  expiresAt?: number;
+  payload: Record<string, unknown>;
   rateLimitTier?: string;
+  refreshToken?: string;
+  source: { kind: 'file'; path: string } | { account: string; kind: 'keychain' };
   subscriptionType?: string;
 }
 
@@ -33,17 +42,28 @@ export async function fetchClaudeUsage(): Promise<Omit<ProviderUsageRow, 'checke
     return unavailable(usageError('not_configured', 'Claude Code OAuth token not found. Run `claude` to authenticate.'));
   }
 
-  const result = await fetchJson({
-    headers: {
-      Accept: 'application/json',
-      Authorization: bearer(credentials.accessToken),
-      'Content-Type': 'application/json',
-      'anthropic-beta': CLAUDE_OAUTH_BETA_HEADER,
-    },
-    url: CLAUDE_USAGE_API,
-  });
+  let activeCredentials = credentials;
+  if (expiresSoon(activeCredentials.expiresAt) && activeCredentials.refreshToken) {
+    const refreshed = await refreshClaudeCredentials(activeCredentials);
+    if (refreshed.error) return unavailable(refreshed.error);
+    activeCredentials = refreshed.credentials;
+  }
+
+  let result = await fetchClaudeUsageWithToken(activeCredentials.accessToken);
+  if (result.error?.type === 'unauthorized' && activeCredentials.refreshToken) {
+    const latestCredentials = await readClaudeCredentials();
+    if (latestCredentials && latestCredentials.accessToken !== activeCredentials.accessToken) {
+      activeCredentials = latestCredentials;
+    } else {
+      const refreshed = await refreshClaudeCredentials(activeCredentials);
+      if (refreshed.error) return unavailable(refreshed.error);
+      activeCredentials = refreshed.credentials;
+    }
+    result = await fetchClaudeUsageWithToken(activeCredentials.accessToken);
+  }
+
   if (result.error) return unavailable(result.error);
-  const parsed = parseClaudeUsageResponse(result.data, credentials);
+  const parsed = parseClaudeUsageResponse(result.data, activeCredentials);
   if (parsed.error) return unavailable(parsed.error);
   return available(parsed.windows, parsed.extras);
 }
@@ -84,7 +104,8 @@ export function parseClaudeUsageResponse(
 }
 
 async function readClaudeCredentials(): Promise<ClaudeCredentials | undefined> {
-  const fileCredentials = extractClaudeCredentials(await readJsonFile(homePath(...CLAUDE_CREDENTIALS_PATH)));
+  const filePath = homePath(...CLAUDE_CREDENTIALS_PATH);
+  const fileCredentials = extractClaudeCredentials(await readJsonFile(filePath), { kind: 'file', path: filePath });
   if (fileCredentials) return fileCredentials;
   if (process.platform !== 'darwin') return undefined;
   try {
@@ -93,21 +114,116 @@ async function readClaudeCredentials(): Promise<ClaudeCredentials | undefined> {
       ['find-generic-password', '-s', CLAUDE_KEYCHAIN_SERVICE, '-w'],
       { encoding: 'utf8', timeout: 5_000 },
     );
-    return extractClaudeCredentials(parseJsonOrHex(stdout));
+    return extractClaudeCredentials(parseJsonOrHex(stdout), { account: userInfo().username, kind: 'keychain' });
   } catch {
     return undefined;
   }
 }
 
-function extractClaudeCredentials(value: unknown): ClaudeCredentials | undefined {
+function extractClaudeCredentials(value: unknown, source: ClaudeCredentials['source']): ClaudeCredentials | undefined {
+  const payload = record(value);
   const oauth = record(record(value)?.claudeAiOauth);
   const accessToken = stringValue(oauth?.accessToken);
-  if (!accessToken) return undefined;
+  if (!payload || !accessToken) return undefined;
   return {
     accessToken: accessToken.toLowerCase().startsWith('bearer ') ? accessToken.slice(7).trim() : accessToken,
+    expiresAt: numberValue(oauth?.expiresAt) ?? numberValue(oauth?.expires_at),
+    payload,
     rateLimitTier: stringValue(oauth?.rateLimitTier) ?? stringValue(oauth?.rate_limit_tier),
+    refreshToken: stringValue(oauth?.refreshToken) ?? stringValue(oauth?.refresh_token),
+    source,
     subscriptionType: stringValue(oauth?.subscriptionType) ?? stringValue(oauth?.subscription_type),
   };
+}
+
+async function fetchClaudeUsageWithToken(token: string): ReturnType<typeof fetchJson> {
+  return fetchJson({
+    headers: {
+      Accept: 'application/json',
+      Authorization: bearer(token),
+      'Content-Type': 'application/json',
+      'anthropic-beta': CLAUDE_OAUTH_BETA_HEADER,
+    },
+    url: CLAUDE_USAGE_API,
+  });
+}
+
+async function refreshClaudeCredentials(
+  credentials: ClaudeCredentials,
+): Promise<{ credentials: ClaudeCredentials; error?: never } | { credentials?: never; error: NonNullable<Awaited<ReturnType<typeof fetchJson>>['error']> }> {
+  if (!credentials.refreshToken) {
+    return { error: usageError('unauthorized', 'Claude Code refresh token not found. Run `claude` to authenticate again.') };
+  }
+
+  const result = await fetchJson({
+    body: JSON.stringify({
+      client_id: CLAUDE_CLIENT_ID,
+      grant_type: 'refresh_token',
+      refresh_token: credentials.refreshToken,
+    }),
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'anthropic-beta': CLAUDE_OAUTH_BETA_HEADER,
+    },
+    method: 'POST',
+    url: CLAUDE_REFRESH_TOKEN_API,
+  });
+  if (result.error) return { error: result.error };
+
+  const response = record(result.data);
+  const accessToken = stringValue(response?.access_token);
+  if (!accessToken) {
+    return { error: usageError('parse_error', 'Claude Code refresh response did not include an access token.') };
+  }
+
+  const nowMs = Date.now();
+  const expiresIn = numberValue(response?.expires_in);
+  const refreshTokenExpiresIn = numberValue(response?.refresh_token_expires_in);
+  const oauth = {
+    ...record(credentials.payload.claudeAiOauth),
+    accessToken,
+    ...(stringValue(response?.refresh_token) ? { refreshToken: stringValue(response?.refresh_token) } : {}),
+    ...(expiresIn !== undefined ? { expiresAt: nowMs + expiresIn * 1000 } : {}),
+    ...(refreshTokenExpiresIn !== undefined ? { refreshTokenExpiresAt: nowMs + refreshTokenExpiresIn * 1000 } : {}),
+    ...(Array.isArray(response?.scope) ? { scopes: response.scope } : {}),
+  };
+  const payload = {
+    ...credentials.payload,
+    claudeAiOauth: oauth,
+  };
+
+  try {
+    await writeClaudeCredentials(credentials.source, payload);
+  } catch {
+    return { error: usageError('unknown', 'Claude Code token refreshed but could not be saved. Check Claude credential storage permissions.') };
+  }
+  const refreshed = extractClaudeCredentials(payload, credentials.source);
+  return refreshed
+    ? { credentials: refreshed }
+    : { error: usageError('parse_error', 'Claude Code refreshed credentials could not be parsed.') };
+}
+
+async function writeClaudeCredentials(source: ClaudeCredentials['source'], payload: Record<string, unknown>): Promise<void> {
+  if (source.kind === 'file') {
+    await writeJsonFile(source.path, payload);
+    return;
+  }
+
+  await execFileAsync(
+    'security',
+    [
+      'add-generic-password',
+      '-a',
+      source.account,
+      '-s',
+      CLAUDE_KEYCHAIN_SERVICE,
+      '-w',
+      JSON.stringify(payload),
+      '-U',
+    ],
+    { timeout: 5_000 },
+  );
 }
 
 function parseJsonOrHex(text: string): unknown {
