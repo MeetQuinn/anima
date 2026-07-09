@@ -277,6 +277,36 @@ test('claude-code catalog includes Fable without changing the default model', ()
   assert.equal(entry?.defaultModel, 'opus');
 });
 
+test('codex-cli catalog includes GPT-5.6 models without changing the default model', () => {
+  const entry = providerCatalogEntry('codex-cli');
+  assert.deepEqual(entry?.models, [
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+    'gpt-5.5',
+    'gpt-5.4',
+    'gpt-5.4-mini',
+    'gpt-5.3-codex',
+    'gpt-5.3-codex-spark',
+    'gpt-5.2',
+    'gpt-5.2-codex',
+  ]);
+  assert.equal(entry?.defaultModel, 'gpt-5.5');
+
+  assert.equal(
+    AgentCreateRequest.parse({
+      name: 'Codex',
+      homePath: 'agents/codex',
+      role: 'general purpose',
+      provider: {
+        kind: 'codex-cli',
+        model: 'gpt-5.6-luna',
+      },
+    }).provider.model,
+    'gpt-5.6-luna',
+  );
+});
+
 test('provider turn and child idle timeouts default for all providers', async () => {
   for (const provider of [
     { kind: 'claude-code', model: 'opus' },
