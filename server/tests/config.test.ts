@@ -172,7 +172,7 @@ test('config loader resolves homePath relative to the anima home', async () => {
         id: 'anima',
         provider: {
           kind: 'codex-cli',
-          model: 'gpt-5.2-codex',
+          model: 'gpt-5.5',
           reasoningEffort: 'high',
         },
         slack: {
@@ -187,7 +187,7 @@ test('config loader resolves homePath relative to the anima home', async () => {
       const agent = await agentService('anima').getConfig();
       assert.equal(agent.homePath, 'agents/anima');
       assert.equal(agent.provider?.kind, 'codex-cli');
-      assert.equal(agent.provider.model, 'gpt-5.2-codex');
+      assert.equal(agent.provider.model, 'gpt-5.5');
       assert.equal(agent.provider.idleTimeoutMs, PROVIDER_IDLE_TIMEOUT_MS_DEFAULT);
       assert.ok('reasoningEffort' in agent.provider);
       assert.equal(agent.provider.reasoningEffort, 'high');
@@ -208,7 +208,7 @@ test('config loader reads legacy runtime key as provider config', async () => {
         runtime: {
           env: { LEGACY_PROVIDER_SECRET: 'kept' },
           kind: 'codex-cli',
-          model: 'gpt-5.2-codex',
+          model: 'gpt-5.5',
           reasoningEffort: 'high',
         },
         homePath: 'agents/legacy',
@@ -218,7 +218,7 @@ test('config loader reads legacy runtime key as provider config', async () => {
     await withAnimaHome(configDir, async () => {
       const agent = await agentService('legacy').getConfig();
       assert.equal(agent.provider.kind, 'codex-cli');
-      assert.equal(agent.provider.model, 'gpt-5.2-codex');
+      assert.equal(agent.provider.model, 'gpt-5.5');
       assert.equal(agent.provider.env?.['LEGACY_PROVIDER_SECRET'], 'kept');
       assert.equal(agent.provider.idleTimeoutMs, PROVIDER_IDLE_TIMEOUT_MS_DEFAULT);
       assert.ok('reasoningEffort' in agent.provider);
@@ -277,19 +277,13 @@ test('claude-code catalog includes Fable without changing the default model', ()
   assert.equal(entry?.defaultModel, 'opus');
 });
 
-test('codex-cli catalog includes GPT-5.6 models without changing the default model', () => {
+test('codex-cli catalog includes current GPT-5.6 and GPT-5.5 models only', () => {
   const entry = providerCatalogEntry('codex-cli');
   assert.deepEqual(entry?.models, [
     'gpt-5.6-sol',
     'gpt-5.6-terra',
     'gpt-5.6-luna',
     'gpt-5.5',
-    'gpt-5.4',
-    'gpt-5.4-mini',
-    'gpt-5.3-codex',
-    'gpt-5.3-codex-spark',
-    'gpt-5.2',
-    'gpt-5.2-codex',
   ]);
   assert.equal(entry?.defaultModel, 'gpt-5.5');
 
@@ -566,7 +560,7 @@ test('agent provider model-only patch keeps current session', async () => {
         id: 'anima',
         provider: {
           kind: 'codex-cli',
-          model: 'gpt-5.4',
+          model: 'gpt-5.6-luna',
           reasoningEffort: 'low',
         },
         homePath: 'agents/anima',

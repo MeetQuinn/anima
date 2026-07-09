@@ -18,7 +18,7 @@ export function defaultAgentConfig(id: string) {
     provider: {
       env: { CODEX_SECRET: 'runtime-secret-value' },
       kind: 'codex-cli',
-      model: 'gpt-5.2-codex',
+      model: 'gpt-5.5',
       reasoningEffort: 'high',
     },
     slack: { appToken: 'xapp-secret-value', botToken: 'xoxb-secret-value' },
