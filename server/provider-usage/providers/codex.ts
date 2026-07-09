@@ -1,24 +1,59 @@
 import type { ProviderUsageExtra, ProviderUsageRow, ProviderUsageWindow } from '../../../shared/provider-usage.js';
 import { bearer, fetchJson } from '../http.js';
 import { available, unavailable, usageError } from '../result.js';
-import { homePath, numberValue, readJsonFile, record, stringValue, windowFromUsedPercent } from './common.js';
+import {
+  homePath,
+  jwtExpiresSoon,
+  numberValue,
+  readJsonFile,
+  record,
+  stringValue,
+  windowFromUsedPercent,
+  writeJsonFile,
+} from './common.js';
 
 const CODEX_USAGE_API = 'https://chatgpt.com/backend-api/wham/usage';
+const CODEX_REFRESH_TOKEN_API = 'https://auth.openai.com/oauth/token';
+const CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const CODEX_AUTH_PATH = ['.codex', 'auth.json'];
 const CODEX_HEADERS = {
   Accept: 'application/json',
   'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
 };
 
+interface CodexCredentials {
+  accessToken: string;
+  auth: Record<string, unknown>;
+  path: string;
+  refreshToken?: string;
+}
+
 export async function fetchCodexUsage(): Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>> {
-  const token = await readCodexToken();
-  if (!token) {
+  const credentials = await readCodexCredentials();
+  if (!credentials) {
     return unavailable(usageError('not_configured', 'Codex login token not found. Run `codex login` to authenticate.'));
   }
-  const result = await fetchJson({
-    headers: { ...CODEX_HEADERS, Authorization: bearer(token) },
-    url: CODEX_USAGE_API,
-  });
+
+  let activeCredentials = credentials;
+  if (jwtExpiresSoon(activeCredentials.accessToken) && activeCredentials.refreshToken) {
+    const refreshed = await refreshCodexCredentials(activeCredentials);
+    if (refreshed.error) return unavailable(refreshed.error);
+    activeCredentials = refreshed.credentials;
+  }
+
+  let result = await fetchCodexUsageWithToken(activeCredentials.accessToken);
+  if (result.error?.type === 'unauthorized' && activeCredentials.refreshToken) {
+    const latestCredentials = await readCodexCredentials();
+    if (latestCredentials && latestCredentials.accessToken !== activeCredentials.accessToken) {
+      activeCredentials = latestCredentials;
+    } else {
+      const refreshed = await refreshCodexCredentials(activeCredentials);
+      if (refreshed.error) return unavailable(refreshed.error);
+      activeCredentials = refreshed.credentials;
+    }
+    result = await fetchCodexUsageWithToken(activeCredentials.accessToken);
+  }
+
   if (result.error) return unavailable(result.error);
   const parsed = parseCodexUsageResponse(result.data);
   if (parsed.error) return unavailable(parsed.error);
@@ -57,9 +92,76 @@ export function parseCodexUsageResponse(
   return { extras, windows };
 }
 
-async function readCodexToken(): Promise<string | undefined> {
-  const auth = record(await readJsonFile(homePath(...CODEX_AUTH_PATH)));
-  return stringValue(record(auth?.tokens)?.access_token);
+async function readCodexCredentials(): Promise<CodexCredentials | undefined> {
+  const path = homePath(...CODEX_AUTH_PATH);
+  const auth = record(await readJsonFile(path));
+  const tokens = record(auth?.tokens);
+  const accessToken = stringValue(tokens?.access_token);
+  if (!auth || !accessToken) return undefined;
+  return {
+    accessToken,
+    auth,
+    path,
+    refreshToken: stringValue(tokens?.refresh_token),
+  };
+}
+
+async function fetchCodexUsageWithToken(token: string): ReturnType<typeof fetchJson> {
+  return fetchJson({
+    headers: { ...CODEX_HEADERS, Authorization: bearer(token) },
+    url: CODEX_USAGE_API,
+  });
+}
+
+async function refreshCodexCredentials(
+  credentials: CodexCredentials,
+): Promise<{ credentials: CodexCredentials; error?: never } | { credentials?: never; error: NonNullable<Awaited<ReturnType<typeof fetchJson>>['error']> }> {
+  if (!credentials.refreshToken) {
+    return { error: usageError('unauthorized', 'Codex refresh token not found. Run `codex login` to authenticate again.') };
+  }
+
+  const result = await fetchJson({
+    body: JSON.stringify({
+      client_id: process.env.CODEX_APP_SERVER_LOGIN_CLIENT_ID?.trim() || CODEX_CLIENT_ID,
+      grant_type: 'refresh_token',
+      refresh_token: credentials.refreshToken,
+    }),
+    headers: { ...CODEX_HEADERS, 'Content-Type': 'application/json' },
+    method: 'POST',
+    url: process.env.CODEX_REFRESH_TOKEN_URL_OVERRIDE?.trim() || CODEX_REFRESH_TOKEN_API,
+  });
+  if (result.error) return { error: result.error };
+
+  const response = record(result.data);
+  const accessToken = stringValue(response?.access_token);
+  if (!accessToken) {
+    return { error: usageError('parse_error', 'Codex refresh response did not include an access token.') };
+  }
+
+  const tokens = {
+    ...record(credentials.auth.tokens),
+    access_token: accessToken,
+    ...(stringValue(response?.id_token) ? { id_token: stringValue(response?.id_token) } : {}),
+    ...(stringValue(response?.refresh_token) ? { refresh_token: stringValue(response?.refresh_token) } : {}),
+  };
+  const auth = {
+    ...credentials.auth,
+    tokens,
+    last_refresh: new Date().toISOString(),
+  };
+  try {
+    await writeJsonFile(credentials.path, auth);
+  } catch {
+    return { error: usageError('unknown', 'Codex token refreshed but could not be saved. Check ~/.codex/auth.json permissions.') };
+  }
+  return {
+    credentials: {
+      accessToken,
+      auth,
+      path: credentials.path,
+      refreshToken: stringValue(tokens.refresh_token),
+    },
+  };
 }
 
 function codexWindow(label: string, value: Record<string, unknown> | undefined): ProviderUsageWindow | undefined {

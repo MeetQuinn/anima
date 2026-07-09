@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { ProviderUsageService } from '../provider-usage/provider-usage.service.js';
 import { providerUsageNetworkErrorMessage } from '../provider-usage/http.js';
-import { parseClaudeUsageResponse } from '../provider-usage/providers/claude.js';
-import { parseCodexUsageResponse } from '../provider-usage/providers/codex.js';
+import { fetchClaudeUsage, parseClaudeUsageResponse } from '../provider-usage/providers/claude.js';
+import { fetchCodexUsage, parseCodexUsageResponse } from '../provider-usage/providers/codex.js';
 import { fetchKimiUsage, parseKimiUsageResponse } from '../provider-usage/providers/kimi.js';
 
 test('Claude usage parser returns remaining windows and extra usage', () => {
@@ -127,6 +127,178 @@ test('Kimi usage reads Kimi Code credentials before legacy migrated credentials'
   }
 });
 
+test('Codex usage refreshes an expired access token before fetching usage', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-codex-usage-home-'));
+  await mkdir(join(home, '.codex'), { recursive: true });
+  const authPath = join(home, '.codex', 'auth.json');
+  await writeFile(
+    authPath,
+    JSON.stringify({
+      auth_mode: 'chatgpt',
+      tokens: {
+        access_token: jwtWithExp(Math.floor(Date.now() / 1000) - 60),
+        id_token: 'old-id-token',
+        refresh_token: 'old-codex-refresh',
+      },
+    }),
+    'utf8',
+  );
+
+  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
+  const originalFetch = globalThis.fetch;
+  const authorizations: string[] = [];
+  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
+  globalThis.fetch = (async (url, init) => {
+    if (String(url) === 'https://auth.openai.com/oauth/token') {
+      assert.deepEqual(JSON.parse(String(init?.body)), {
+        client_id: 'app_EMoamEEZ73f0CkXaXp7hrann',
+        grant_type: 'refresh_token',
+        refresh_token: 'old-codex-refresh',
+      });
+      return jsonResponse({
+        access_token: 'fresh-codex-access',
+        id_token: 'fresh-id-token',
+        refresh_token: 'fresh-codex-refresh',
+      });
+    }
+    authorizations.push(String((init?.headers as Record<string, string> | undefined)?.Authorization ?? ''));
+    return jsonResponse(codexUsagePayload());
+  }) as typeof fetch;
+
+  try {
+    const result = await fetchCodexUsage();
+    assert.equal(result.status, 'available');
+    assert.deepEqual(authorizations, ['Bearer fresh-codex-access']);
+    const stored = JSON.parse(await readFile(authPath, 'utf8')) as { last_refresh?: string; tokens: Record<string, string> };
+    assert.equal(stored.tokens.access_token, 'fresh-codex-access');
+    assert.equal(stored.tokens.refresh_token, 'fresh-codex-refresh');
+    assert.equal(stored.tokens.id_token, 'fresh-id-token');
+    assert.ok(stored.last_refresh);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
+  }
+});
+
+test('Kimi usage refreshes and retries once after a usage 401', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-kimi-refresh-home-'));
+  await mkdir(join(home, '.kimi-code', 'credentials'), { recursive: true });
+  await writeFile(join(home, '.kimi-code', 'device_id'), 'test-device-id', 'utf8');
+  const credentialPath = join(home, '.kimi-code', 'credentials', 'kimi-code.json');
+  await writeFile(
+    credentialPath,
+    JSON.stringify({
+      access_token: 'stale-kimi-access',
+      expires_at: Math.floor(Date.now() / 1000) + 600,
+      refresh_token: 'old-kimi-refresh',
+      scope: 'kimi-code',
+      token_type: 'Bearer',
+    }),
+    'utf8',
+  );
+
+  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
+  const originalShareDir = process.env.KIMI_SHARE_DIR;
+  const originalFetch = globalThis.fetch;
+  const authorizations: string[] = [];
+  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
+  delete process.env.KIMI_SHARE_DIR;
+  globalThis.fetch = (async (url, init) => {
+    if (String(url) === 'https://auth.kimi.com/api/oauth/token') {
+      const body = new URLSearchParams(String(init?.body));
+      assert.equal(body.get('client_id'), '17e5f671-d194-4dfb-9706-5516cb48c098');
+      assert.equal(body.get('grant_type'), 'refresh_token');
+      assert.equal(body.get('refresh_token'), 'old-kimi-refresh');
+      assert.equal((init?.headers as Record<string, string>)['X-Msh-Device-Id'], 'test-device-id');
+      return jsonResponse({
+        access_token: 'fresh-kimi-access',
+        expires_in: 900,
+        refresh_token: 'fresh-kimi-refresh',
+        scope: 'kimi-code',
+        token_type: 'Bearer',
+      });
+    }
+    authorizations.push(String((init?.headers as Record<string, string> | undefined)?.Authorization ?? ''));
+    if (authorizations.length === 1) return jsonResponse({ error: 'expired' }, 401);
+    return jsonResponse({ usage: { limit: 100, remaining: 75 }, limits: [] });
+  }) as typeof fetch;
+
+  try {
+    const result = await fetchKimiUsage();
+    assert.equal(result.status, 'available');
+    assert.deepEqual(authorizations, ['Bearer stale-kimi-access', 'Bearer fresh-kimi-access']);
+    const stored = JSON.parse(await readFile(credentialPath, 'utf8')) as Record<string, unknown>;
+    assert.equal(stored.access_token, 'fresh-kimi-access');
+    assert.equal(stored.refresh_token, 'fresh-kimi-refresh');
+    assert.equal(stored.expires_in, 900);
+    assert.equal(typeof stored.expires_at, 'number');
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
+    restoreEnv('KIMI_SHARE_DIR', originalShareDir);
+  }
+});
+
+test('Claude usage refreshes expired file credentials before fetching usage', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-claude-refresh-home-'));
+  await mkdir(join(home, '.claude'), { recursive: true });
+  const credentialPath = join(home, '.claude', '.credentials.json');
+  await writeFile(
+    credentialPath,
+    JSON.stringify({
+      claudeAiOauth: {
+        accessToken: 'expired-claude-access',
+        expiresAt: Date.now() - 60_000,
+        rateLimitTier: 'claude_max',
+        refreshToken: 'old-claude-refresh',
+        subscriptionType: 'max',
+      },
+    }),
+    'utf8',
+  );
+
+  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
+  const originalFetch = globalThis.fetch;
+  const authorizations: string[] = [];
+  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
+  globalThis.fetch = (async (url, init) => {
+    if (String(url) === 'https://platform.claude.com/v1/oauth/token') {
+      assert.deepEqual(JSON.parse(String(init?.body)), {
+        client_id: '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
+        grant_type: 'refresh_token',
+        refresh_token: 'old-claude-refresh',
+      });
+      assert.equal((init?.headers as Record<string, string>)['anthropic-beta'], 'oauth-2025-04-20');
+      return jsonResponse({
+        access_token: 'fresh-claude-access',
+        expires_in: 3600,
+        refresh_token: 'fresh-claude-refresh',
+        refresh_token_expires_in: 2_592_000,
+      });
+    }
+    authorizations.push(String((init?.headers as Record<string, string> | undefined)?.Authorization ?? ''));
+    return jsonResponse({
+      five_hour: { utilization: 7 },
+      limits: [],
+      seven_day: { utilization: 4 },
+    });
+  }) as typeof fetch;
+
+  try {
+    const result = await fetchClaudeUsage();
+    assert.equal(result.status, 'available');
+    assert.deepEqual(authorizations, ['Bearer fresh-claude-access']);
+    const stored = JSON.parse(await readFile(credentialPath, 'utf8')) as { claudeAiOauth: Record<string, unknown> };
+    assert.equal(stored.claudeAiOauth.accessToken, 'fresh-claude-access');
+    assert.equal(stored.claudeAiOauth.refreshToken, 'fresh-claude-refresh');
+    assert.equal(typeof stored.claudeAiOauth.expiresAt, 'number');
+    assert.equal(typeof stored.claudeAiOauth.refreshTokenExpiresAt, 'number');
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
+  }
+});
+
 test('provider usage network errors are classified without raw fetch wording', () => {
   const abortError = new Error('This operation was aborted');
   abortError.name = 'AbortError';
@@ -205,4 +377,38 @@ function restoreEnv(key: string, value: string | undefined): void {
   } else {
     process.env[key] = value;
   }
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    headers: { 'content-type': 'application/json' },
+    status,
+  });
+}
+
+function codexUsagePayload(): unknown {
+  return {
+    credits: { balance: '0', has_credits: false, unlimited: false },
+    plan_type: 'pro',
+    rate_limit: {
+      primary_window: { limit_window_seconds: 18000, reset_after_seconds: 60, used_percent: 8 },
+      secondary_window: { limit_window_seconds: 604800, reset_after_seconds: 120, used_percent: 56 },
+    },
+  };
+}
+
+function jwtWithExp(exp: number): string {
+  return [
+    base64UrlJson({ alg: 'none', typ: 'JWT' }),
+    base64UrlJson({ exp }),
+    'signature',
+  ].join('.');
+}
+
+function base64UrlJson(value: unknown): string {
+  return Buffer.from(JSON.stringify(value))
+    .toString('base64')
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replace(/=+$/, '');
 }
