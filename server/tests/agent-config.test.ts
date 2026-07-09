@@ -61,17 +61,17 @@ test('agent config update writes editable fields and UI redacts secrets', async 
       assert.equal(JSON.stringify(before).includes('secret-value'), false);
       assert.equal(JSON.stringify(before).includes('xoxb-secret'), false);
 
-      await milo.updateProvider({ model: 'gpt-5.4' });
+      await milo.updateProvider({ model: 'gpt-5.6-luna' });
       const updated = await milo.updateProfile({ displayName: 'New Name', role: 'New role' });
 
       assert.equal(updated.profile?.displayName, 'New Name');
-      assert.equal(updated.provider?.model, 'gpt-5.4');
+      assert.equal(updated.provider?.model, 'gpt-5.6-luna');
 
       const agent = await readRawAgentFile(configDir, 'milo');
       assert.equal(agent.profile?.displayName, 'New Name');
       assert.equal(agent.profile?.role, 'New role');
       assert.equal('description' in (agent.profile ?? {}), false);
-      assert.equal(agent.provider?.model, 'gpt-5.4');
+      assert.equal(agent.provider?.model, 'gpt-5.6-luna');
       assert.equal('runtime' in agent, false);
       assert.equal(agent.homePath, 'agents/milo');
     });

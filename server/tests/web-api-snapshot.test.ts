@@ -73,7 +73,7 @@ test('web snapshot summarizes state without exposing secrets', async () => {
       assert.deepEqual(sessionRecord.latestProviderStats, animaSession?.latestProviderStats);
       assert.deepEqual(Object.keys(agentConfig.provider?.env ?? {}), ['CODEX_SECRET']);
       assert.equal(agentConfig.provider?.env?.['CODEX_SECRET'], '');
-      assert.equal(agentConfig.provider?.model, 'gpt-5.2-codex');
+      assert.equal(agentConfig.provider?.model, 'gpt-5.5');
       assert.ok(agentConfig.provider && 'reasoningEffort' in agentConfig.provider);
       assert.equal(agentConfig.provider.reasoningEffort, 'high');
       assert.equal(agentConfig.slack?.appToken, '');
