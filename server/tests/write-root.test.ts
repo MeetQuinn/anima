@@ -206,44 +206,26 @@ test('a descendant whose name begins with dots is inside the root, not outside i
 // walks straight through - which is exactly this defect: an operator's `rm`
 // racing a late flush.
 //
-// Only the race distinguishes the two implementations; with the root present
-// they behave identically. So race it, many times, with the delete scheduled to
-// land inside the walk. The assertion is one-sided and therefore never flaky:
-// a losing schedule simply means the write succeeded, and we assert only that
-// the root was never *recreated*.
-test('a root deleted mid-walk is never recreated by the walk', async () => {
-  const parent = await tempHome();
-  let resurrections = 0;
-  let raced = 0;
-
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    const home = join(parent, `race-${attempt}`);
-    await mkdir(home, { recursive: true });
-    const target = join(home, 'a', 'b', 'c', 'd', 'e', 'deep.json');
-
-    // Land the delete somewhere inside the segment walk.
-    const deleting = (async () => {
-      await new Promise((resolve) => setImmediate(resolve));
-      await rm(home, { force: true, recursive: true });
-    })();
-
-    let threw = false;
-    try {
-      await ensureParentDirectory(target, home);
-    } catch {
-      threw = true;
-    }
-    await deleting;
-
-    if (threw) raced += 1;
-    // Whatever the interleaving, the deleted root must not be back.
-    if (await exists(home)) resurrections += 1;
-    await rm(home, { force: true, recursive: true });
-  }
-
-  assert.equal(resurrections, 0, 'a mid-walk delete must never be undone by the writer');
-  assert.ok(raced > 0, 'the schedule must actually interleave, or this test proves nothing');
-});
+// There is deliberately NO black-box race test here, and that is a finding.
+//
+// The old guard and this one differ only *inside* the window between the root
+// check and the recursive mkdir. I tried three ways to open that window from
+// outside and measured every one of them:
+//
+//   - delete scheduled with setImmediate: passed locally, never interleaved on
+//     CI (its own "did we actually race?" assertion caught that).
+//   - delete triggered causally off the walk's first mkdir, 120 segments deep,
+//     25 attempts: the watcher fired 19 times and the walk threw 0 times. The
+//     rm never finished before the walk did.
+//   - the same, against the OLD guard: it "failed", but only on the runs where
+//     the watcher never fired and the root was therefore never deleted. A
+//     vacuous failure, not a caught resurrection.
+//
+// A test that never establishes the condition it names does not pin it, however
+// green or red it happens to come out. That is the {ok:true} stub again, wearing
+// a race's clothes. So the race is pinned where it is actually decidable: by the
+// invariant below. No recursive mkdir exists inside the root, so there is no
+// window to lose - not a narrower window, none.
 
 // The structural claim behind BLOCKER 1's fix, stated directly: inside the root
 // the walk creates one segment at a time and never with `recursive: true`, so no
