@@ -40,6 +40,21 @@ const READABLE_SLACK_USER_ID_PATTERN = /(^|[^A-Za-z0-9._%+`<@-])@(U[A-Z0-9]+)/g;
 const READABLE_SLACK_USER_MENTION_PATTERN = /(^|[^A-Za-z0-9._%+`<@-])@([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?)/g;
 const READABLE_SLACK_CHANNEL_MENTION_PATTERN = /(^|[^A-Za-z0-9._/`<#-])#([A-Za-z][A-Za-z0-9_-]*)/g;
 
+/**
+ * The house definition of "not a human", over any Slack user shape that carries
+ * the two flags.
+ *
+ * Slack marks classic bot users with `is_bot` and Slack-app users with
+ * `is_app_user`, and an app can present as either depending on how it was
+ * installed. Both mean the same thing to us - there is no person behind the
+ * account - so no caller should test only one. Structural parameter type: the
+ * three call sites hold three different user shapes (`SlackUserInfo`,
+ * `SlackDirectoryUser`, and the raw ask target) that agree on these fields.
+ */
+export function isBotSlackUser(user: { isAppUser?: boolean; isBot?: boolean }): boolean {
+  return Boolean(user.isBot || user.isAppUser);
+}
+
 export function extractSlackUserMentionIds(text: string): string[] {
   const ids = new Set<string>();
   for (const match of text.matchAll(SLACK_USER_MENTION_PATTERN)) {

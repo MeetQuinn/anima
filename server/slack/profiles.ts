@@ -8,6 +8,7 @@ import {
   channelLabel,
   extractSlackChannelMentionIds,
   extractSlackUserMentionIds,
+  isBotSlackUser,
   replaceSlackChannelMentions,
   replaceSlackUserMentions,
   slackMentionLabel,
@@ -21,6 +22,8 @@ export interface SlackUserProfile {
   avatarUrl?: string;
   displayName?: string;
   handle?: string;
+  /** True for bot and Slack-app senders. Absent means human, or not yet resolved. */
+  isBot?: boolean;
   realName?: string;
   timezone?: {
     label?: string;
@@ -45,6 +48,7 @@ export class SlackProfileResolver {
         ...(user.avatarUrl ? { avatarUrl: user.avatarUrl } : {}),
         displayName: user.displayName ?? user.realName ?? user.name ?? input.userId,
         ...(user.name ? { handle: user.name } : {}),
+        ...(isBotSlackUser(user) ? { isBot: true } : {}),
         ...(user.realName ? { realName: user.realName } : {}),
         ...(user.timezone ? { timezone: user.timezone } : {}),
       };

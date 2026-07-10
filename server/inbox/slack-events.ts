@@ -130,7 +130,10 @@ function slackInboxActor(userId: string, profile: SlackUserProfile | undefined):
   const actor: SlackInboxActor = { userId };
   if (profile?.displayName) actor.displayName = profile.displayName;
   if (profile?.handle) actor.handle = profile.handle;
+  if (profile?.isBot) actor.isBot = true;
   if (profile?.realName) actor.realName = profile.realName;
+  // Recorded even for bots. The envelope declines to render it (see
+  // delivery-prompt.ts); the ledger stays faithful to what Slack reported.
   if (profile?.timezone) actor.timezone = profile.timezone;
   return actor;
 }
