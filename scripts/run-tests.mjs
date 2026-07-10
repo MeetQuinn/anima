@@ -68,6 +68,7 @@ const groups = {
     'subscriptions.test.js',
     'system-service.test.js',
     'url-routes.test.js',
+    'write-root.test.js',
   ],
   api: [
     'client-error-routes.test.js',

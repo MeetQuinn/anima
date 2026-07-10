@@ -1,5 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
+
+import { ensureParentDirectory } from './write-root.js';
 
 const LOCK_WAIT_MS = 25;
 const LOCK_STALE_MS = 5 * 60 * 1000;
@@ -11,9 +13,13 @@ interface LockOwner {
 
 const inProcessLocks = new Map<string, Promise<void>>();
 
-export async function withFileLock<T>(targetPath: string, operation: () => Promise<T>): Promise<T> {
+export async function withFileLock<T>(
+  targetPath: string,
+  writeRoot: string,
+  operation: () => Promise<T>,
+): Promise<T> {
   return chainInProcess(targetPath, async () => {
-    await mkdir(dirname(targetPath), { recursive: true });
+    await ensureParentDirectory(targetPath, writeRoot);
     const lockDir = `${targetPath}.lock`;
     await acquireLock(lockDir);
     try {

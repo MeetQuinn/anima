@@ -1,8 +1,9 @@
-import { appendFile, mkdir, open, readFile, readdir, rename, unlink, type FileHandle } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { appendFile, open, readFile, readdir, rename, unlink, type FileHandle } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 
 import { cacheDelete, cacheHit, cacheSet, isMissingFile, statOrNull } from './json-file.js';
 import { withFileLock } from './lock.js';
+import { currentWriteRoot, ensureParentDirectory } from './write-root.js';
 
 export const DEFAULT_JSONL_ROTATE_BYTES = 10 * 1024 * 1024;
 
@@ -19,29 +20,35 @@ export interface JsonlRotationOptions {
 }
 
 export class JsonlAppendLog<T> {
+  /** Captured once; never re-derived at write time. See storage/write-root.ts. */
+  private readonly writeRoot: string;
+
   constructor(
     readonly path: string,
     private readonly rotation: JsonlRotationOptions = {},
-  ) {}
+    writeRoot: string = currentWriteRoot(),
+  ) {
+    this.writeRoot = writeRoot;
+  }
 
   async append(record: T): Promise<void> {
-    await withFileLock(this.path, async () => {
+    await withFileLock(this.path, this.writeRoot, async () => {
       await this.rotateIfNeeded();
-      await mkdir(dirname(this.path), { recursive: true });
+      await ensureParentDirectory(this.path, this.writeRoot);
       await appendFile(this.path, `${JSON.stringify(record)}\n`, 'utf8');
       cacheDelete(this.path);
     });
   }
 
   async appendIf(record: T, shouldAppend: (records: T[]) => boolean): Promise<{ appended: boolean }> {
-    return withFileLock(this.path, async () => {
+    return withFileLock(this.path, this.writeRoot, async () => {
       const records = await this.readAllFromDisk();
       if (!shouldAppend(records)) {
         await this.refreshCache(records);
         return { appended: false };
       }
       await this.rotateIfNeeded();
-      await mkdir(dirname(this.path), { recursive: true });
+      await ensureParentDirectory(this.path, this.writeRoot);
       await appendFile(this.path, `${JSON.stringify(record)}\n`, 'utf8');
       await this.refreshCache([...records, record]);
       return { appended: true };
@@ -53,11 +60,11 @@ export class JsonlAppendLog<T> {
     shouldAppend: (recentRecords: T[]) => boolean,
     recentLimit: number,
   ): Promise<{ appended: boolean }> {
-    return withFileLock(this.path, async () => {
+    return withFileLock(this.path, this.writeRoot, async () => {
       const recentRecords = await this.readTailFromDisk(recentLimit);
       if (!shouldAppend(recentRecords)) return { appended: false };
       await this.rotateIfNeeded();
-      await mkdir(dirname(this.path), { recursive: true });
+      await ensureParentDirectory(this.path, this.writeRoot);
       await appendFile(this.path, `${JSON.stringify(record)}\n`, 'utf8');
       cacheDelete(this.path);
       return { appended: true };
@@ -66,7 +73,7 @@ export class JsonlAppendLog<T> {
 
   async appendManyByKey(records: T[], keyOf: (record: T) => string): Promise<{ appended: number }> {
     if (records.length === 0) return { appended: 0 };
-    return withFileLock(this.path, async () => {
+    return withFileLock(this.path, this.writeRoot, async () => {
       const current = await this.readAllFromDisk();
       const seen = new Set(current.map(keyOf));
       const missing: T[] = [];
@@ -81,7 +88,7 @@ export class JsonlAppendLog<T> {
         return { appended: 0 };
       }
       await this.rotateIfNeeded();
-      await mkdir(dirname(this.path), { recursive: true });
+      await ensureParentDirectory(this.path, this.writeRoot);
       await appendFile(this.path, `${missing.map((record) => JSON.stringify(record)).join('\n')}\n`, 'utf8');
       await this.refreshCache([...current, ...missing]);
       return { appended: missing.length };
@@ -263,7 +270,7 @@ export class JsonlAppendLog<T> {
     const fileStat = await statOrNull(this.path);
     if (!fileStat || fileStat.size < Number(maxBytes)) return;
     const archivePath = await this.nextArchivePath();
-    await mkdir(dirname(archivePath), { recursive: true });
+    await ensureParentDirectory(archivePath, this.writeRoot);
     await rename(this.path, archivePath);
     cacheDelete(this.path);
     cacheDelete(archivePath);

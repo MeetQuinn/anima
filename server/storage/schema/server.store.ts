@@ -40,6 +40,10 @@ export class ServerConfigStore {
     empty: () => ({}),
     parse: ServerConfig.parse,
     path: () => join(this.animaHome ?? resolveAnimaHome(), 'config.json'),
+    // Same authority as path(). Deriving the root separately would let a store
+    // built with an explicit home protect the ambient one instead, and then
+    // recreate its own home as an "outside" path.
+    writeRoot: () => this.animaHome ?? resolveAnimaHome(),
   });
 
   read(): Promise<ServerConfig> {

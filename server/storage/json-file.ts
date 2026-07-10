@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 import { withFileLock } from './lock.js';
+import { currentWriteRoot, ensureParentDirectory } from './write-root.js';
 
 interface CacheEntry {
   mtimeMs: number;
@@ -37,10 +38,21 @@ export function cacheDelete(path: string): void {
 }
 
 export class JsonFile<T> {
+  /**
+   * The write root as it stood when this store was created. Captured once, on
+   * purpose: the root must not be re-derived at write time, because
+   * `resolveAnimaHome()` picks a different directory once the current one is
+   * deleted. See storage/write-root.ts.
+   */
+  private readonly writeRoot: string;
+
   constructor(
     readonly path: string,
     private readonly empty: () => T,
-  ) {}
+    writeRoot: string = currentWriteRoot(),
+  ) {
+    this.writeRoot = writeRoot;
+  }
 
   async read(): Promise<T> {
     const fileStat = await statOrNull(this.path);
@@ -56,18 +68,18 @@ export class JsonFile<T> {
   }
 
   async write(value: T): Promise<void> {
-    await withFileLock(this.path, async () => {
-      await writeAtomic(this.path, value);
+    await withFileLock(this.path, this.writeRoot, async () => {
+      await writeAtomic(this.path, value, this.writeRoot);
       await this.refreshCache(value);
     });
   }
 
   async update(op: (current: T) => T | Promise<T>): Promise<T> {
-    return withFileLock(this.path, async () => {
+    return withFileLock(this.path, this.writeRoot, async () => {
       const current = await this.readUnlocked();
       const next = await op(current);
       if (next === current) return next;
-      await writeAtomic(this.path, next);
+      await writeAtomic(this.path, next, this.writeRoot);
       await this.refreshCache(next);
       return next;
     });
@@ -92,8 +104,11 @@ export class JsonFile<T> {
   }
 }
 
-async function writeAtomic(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
+// Defense in depth. Every public caller reaches withFileLock's guard first, so
+// this one is unreachable as the operative check today. It is here for a future
+// caller that writes outside the lock.
+async function writeAtomic(path: string, value: unknown, writeRoot: string): Promise<void> {
+  await ensureParentDirectory(path, writeRoot);
   const tempPath = join(dirname(path), `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
   try {
     await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
