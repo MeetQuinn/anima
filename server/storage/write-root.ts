@@ -113,7 +113,14 @@ export async function ensureParentDirectory(path: string, root: string): Promise
  * Create the write root deliberately. Called by the acts that genuinely
  * provision - runtime startup, and the CLI commands that write config - so that
  * every later write can assert the root rather than manufacture it.
+ *
+ * Takes the root explicitly, from the same authority as the caller's stores. A
+ * caller that holds an explicit home (`RuntimeHost` with `deps.animaHome`) must
+ * pass it: provisioning the *ambient* root instead would create a directory
+ * nothing writes to, while the caller's own stores correctly refuse to write to
+ * the home that was never created. Defaults to the ambient root, which is right
+ * for callers that have no other authority.
  */
-export async function ensureAnimaHome(): Promise<void> {
-  await mkdir(currentWriteRoot(), { recursive: true });
+export async function ensureAnimaHome(root: string = currentWriteRoot()): Promise<void> {
+  await mkdir(resolve(root), { recursive: true });
 }

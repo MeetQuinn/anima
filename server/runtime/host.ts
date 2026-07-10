@@ -156,7 +156,11 @@ export class RuntimeHost {
   async start(): Promise<void> {
     // Create the home deliberately, once. Every later write asserts this root
     // rather than manufacturing it (see storage/write-root.ts).
-    await ensureAnimaHome();
+    //
+    // `this.animaHome`, not the ambient root: this host's stores are all built
+    // with that authority, and provisioning a different directory would leave
+    // them refusing to write to a home nobody created.
+    await ensureAnimaHome(this.animaHome);
     await this.restartCommands.ensureDirectory();
     await this.health.ensureDirectory();
     this.syncRestartCommandWatcher();

@@ -10,6 +10,7 @@ import { AgentRestartCommandStore } from '../runtime/agent-restart-command.store
 import { JsonFile } from '../storage/json-file.js';
 import { JsonStore } from '../storage/json-store.js';
 import { JsonlAppendLog } from '../storage/jsonl-log.js';
+import { RuntimeHost } from '../runtime/host.js';
 import { ServerConfigStore } from '../storage/schema/server.store.js';
 import { ensureAnimaHome, ensureParentDirectory } from '../storage/write-root.js';
 
@@ -279,6 +280,69 @@ test('AgentRestartCommandStore refuses to resurrect its home across operations',
 
   await assert.rejects(() => store.request('a1'), /does not exist/);
   assert.equal(await exists(home), false, 'the restart store must not rebuild the home');
+});
+
+// Milo's second re-gate finding. RuntimeHost captures deps.animaHome and hands
+// that authority to every store it owns, but start() provisioned the *ambient*
+// root. With an explicit home X and an ambient home Y, startup created Y and
+// then the X-rooted stores correctly refused to write to an X nobody made. The
+// same cross-authority hole, one layer above the stores.
+test('startup provisions the home the host was given, not the ambient one', async () => {
+  const parent = await tempHome();
+  const explicitHome = join(parent, 'host-home'); // X: absent, must be created
+  const ambient = join(parent, '.anima'); // Y: absent, must stay absent
+
+  // The ambient root has to be a real, nameable directory or the assertion below
+  // is vacuous: with no .anima present, resolveAnimaHome() falls back to
+  // ~/.anima, and "the ambient root was not created" is then trivially true of
+  // `parent/.anima` no matter what the code did. (It also means a regression
+  // would mkdir the developer's real home.)
+  const previousEnv = process.env.ANIMA_HOME;
+  process.env.ANIMA_HOME = ambient;
+  try {
+    await ensureAnimaHome(explicitHome);
+    assert.ok(await exists(explicitHome), 'the explicit home is created');
+    assert.equal(await exists(ambient), false, 'the ambient home is left untouched');
+
+    // And the stores built with that authority can now write into it.
+    const store = new AgentHealthStore({ animaHome: explicitHome });
+    await store.update('a1', () => healthSummary);
+    assert.ok(await exists(store.path()), 'a store rooted at the provisioned home writes');
+    assert.equal(await exists(ambient), false, 'still nothing at the ambient root');
+  } finally {
+    if (previousEnv === undefined) delete process.env.ANIMA_HOME;
+    else process.env.ANIMA_HOME = previousEnv;
+  }
+});
+
+// The test above pins ensureAnimaHome(root). It would still pass if start() kept
+// calling the parameterless form, so it does not pin the caller. This one drives
+// the real RuntimeHost.start() and fails if start() provisions the ambient root.
+test('RuntimeHost.start() creates its own explicit home and no other', async () => {
+  const parent = await tempHome();
+  const explicitHome = join(parent, 'host-home');
+  const ambient = join(parent, '.anima');
+
+  const previousEnv = process.env.ANIMA_HOME;
+  process.env.ANIMA_HOME = ambient; // a real ambient root, so its creation is detectable
+  const host = new RuntimeHost({}, {
+    animaHome: explicitHome,
+    loadAgents: async () => [],
+    logger: { error: () => {}, log: () => {} },
+    startAgent: async () => {
+      throw new Error('no agents in this fixture');
+    },
+    validateAgent: async () => {},
+  });
+  try {
+    await host.start();
+    assert.ok(await exists(explicitHome), 'start() provisions the home the host was given');
+    assert.equal(await exists(ambient), false, 'start() must not provision the ambient root');
+  } finally {
+    await host.stop();
+    if (previousEnv === undefined) delete process.env.ANIMA_HOME;
+    else process.env.ANIMA_HOME = previousEnv;
+  }
 });
 
 // Found while auditing every JsonStore construction for the same shape: this one
