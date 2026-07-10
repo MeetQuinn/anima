@@ -262,6 +262,72 @@ test('SlackProfileResolver delegates to the directory replica for timezone metad
   }
 });
 
+// `is_bot` and `is_app_user` are two ways Slack says the same thing, and an app
+// can present as either. Each flag alone must mark the profile as a bot, or the
+// envelope would still claim a timezone for whichever half we forgot.
+for (const flags of [
+  { label: 'is_bot', user: { is_bot: true } },
+  { label: 'is_app_user', user: { is_app_user: true } },
+  { label: 'both', user: { is_app_user: true, is_bot: true } },
+]) {
+  test(`SlackProfileResolver marks ${flags.label} senders as bots`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-profile-bot-'));
+    const previousHome = process.env.ANIMA_HOME;
+    process.env.ANIMA_HOME = stateDir;
+    try {
+      const client = fakeSlackApi({
+        users: {
+          info: async () => ({
+            ok: true,
+            user: {
+              id: 'U9',
+              name: 'milo',
+              profile: { display_name: 'Milo' },
+              tz: 'Asia/Shanghai',
+              tz_offset: 28800,
+              ...flags.user,
+            },
+          }),
+        },
+      });
+
+      const profile = await new SlackProfileResolver().user({ client, teamId: 'T123', userId: 'U9' });
+
+      assert.equal(profile?.isBot, true);
+      // The timezone is still resolved and recorded; only the envelope drops it.
+      assert.equal(profile?.timezone?.name, 'Asia/Shanghai');
+    } finally {
+      if (previousHome === undefined) delete process.env.ANIMA_HOME;
+      else process.env.ANIMA_HOME = previousHome;
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
+
+test('SlackProfileResolver leaves isBot absent for human senders', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-profile-human-'));
+  const previousHome = process.env.ANIMA_HOME;
+  process.env.ANIMA_HOME = stateDir;
+  try {
+    const client = fakeSlackApi({
+      users: {
+        info: async () => ({
+          ok: true,
+          user: { id: 'U1', name: 'alice', profile: { display_name: 'Alice' }, tz: 'Asia/Shanghai' },
+        }),
+      },
+    });
+
+    const profile = await new SlackProfileResolver().user({ client, teamId: 'T123', userId: 'U1' });
+
+    assert.equal(profile?.isBot, undefined);
+  } finally {
+    if (previousHome === undefined) delete process.env.ANIMA_HOME;
+    else process.env.ANIMA_HOME = previousHome;
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('Slack workspace directory errors surface to callers', async () => {
   const client = fakeSlackApi({
     users: {

@@ -322,6 +322,12 @@ function messageEnvelope(event: SlackInboxItem): string {
   const surface = slackSurfaceForEvent(event);
   const { actor } = event;
   const displayRef = slackSurfaceDisplayRef(surface);
+  // An agent has no timezone, and the envelope should not claim one. Slack
+  // reports a `tz` for bot accounts anyway - inherited from the workspace, not
+  // from anyone's morning - so rendering it invites a reader to reason about
+  // what time it is "for" a sender that is not anywhere. Humans keep both keys.
+  // The UTC `time=` key is always present and is what any recipient should use.
+  const localTime = actor?.isBot ? undefined : actor?.timezone;
   return renderEnvelope([
     { key: 'channel', value: displayRef },
     { key: 'channel_id', value: displayRef === surface.channelId ? undefined : surface.channelId },
@@ -330,8 +336,8 @@ function messageEnvelope(event: SlackInboxItem): string {
     { key: 'wake', value: event.wakeReason },
     { key: 'time', value: envelopeTime(event.receivedAt) },
     { key: 'user_id', value: actor?.userId },
-    { key: 'user_local_time', value: actor?.timezone ? formatUserLocalTime(event.receivedAt, actor.timezone) : undefined },
-    { key: 'user_tz', value: actor?.timezone?.name },
+    { key: 'user_local_time', value: localTime ? formatUserLocalTime(event.receivedAt, localTime) : undefined },
+    { key: 'user_tz', value: localTime?.name },
   ]);
 }
 

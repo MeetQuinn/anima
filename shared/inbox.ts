@@ -28,6 +28,10 @@ export type InboxItemHandling = z.infer<typeof InboxItemHandling>;
 export const SlackInboxActor = z.object({
   displayName: z.string().optional(),
   handle: z.string().optional(),
+  // Optional, and absent means human. Actors persisted before this field existed
+  // parse as human and keep the timezone they already had in their envelope;
+  // only newly-resolved bot senders lose it.
+  isBot: z.boolean().optional(),
   realName: z.string().optional(),
   timezone: z.object({
     label: z.string().optional(),

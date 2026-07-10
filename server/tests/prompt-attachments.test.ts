@@ -190,6 +190,53 @@ test('buildCodeAgentDeliveryPrompt includes triggering user local time when time
   assert.match(text, /user_local_time=2026-05-20T07:59:30\+08:00 user_tz=Asia\/Shanghai/);
 });
 
+// An agent has no timezone, and the envelope should not claim one. Slack still
+// reports a `tz` on bot accounts (inherited from the workspace), so the actor
+// carries it and the envelope declines to render it - the assertions below must
+// therefore start from an actor that HAS a timezone, or they pin nothing.
+const shanghai = {
+  label: 'China Standard Time',
+  name: 'Asia/Shanghai',
+  offsetSeconds: 28800,
+};
+
+function envelopeForActor(actorPatch: Record<string, unknown>): string {
+  const event = makeSlackEvent({
+    channelId: 'D-user',
+    teamId: 'T-demo',
+    text: 'good morning',
+    timestamp: '2026-05-19T23:59:30.000Z',
+    ts: '1779235170.792609',
+    userId: 'U1',
+  });
+  event.actor = { ...event.actor, ...actorPatch };
+  return buildCodeAgentDeliveryPrompt(event);
+}
+
+test('buildCodeAgentDeliveryPrompt omits user_local_time and user_tz for bot senders', () => {
+  const text = envelopeForActor({ isBot: true, timezone: shanghai });
+
+  assert.doesNotMatch(text, /user_local_time=/);
+  assert.doesNotMatch(text, /user_tz=/);
+  // The UTC clock is never dropped: it is what any recipient should reason from.
+  assert.match(text, /time=2026-05-19T23:59:30Z/);
+  assert.match(text, /user_id=U1/);
+});
+
+test('buildCodeAgentDeliveryPrompt keeps user_local_time and user_tz for human senders', () => {
+  const text = envelopeForActor({ timezone: shanghai });
+
+  assert.match(text, /user_local_time=2026-05-20T07:59:30\+08:00 user_tz=Asia\/Shanghai/);
+});
+
+test('buildCodeAgentDeliveryPrompt treats an actor persisted before isBot existed as human', () => {
+  // Old ledger rows have no `isBot` field at all. They must keep the timezone
+  // they already rendered, not silently lose it on upgrade.
+  const text = envelopeForActor({ timezone: shanghai });
+
+  assert.match(text, /user_tz=Asia\/Shanghai/);
+});
+
 test('buildCodeAgentDeliveryPrompt renders scheduled reminders as the current event', () => {
   const event = makeReminderInboxItem({
       reminderId: 'reminder-test',

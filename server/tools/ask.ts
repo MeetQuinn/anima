@@ -14,6 +14,7 @@ import {
   ensureThreadSubscriptionForSentMessage,
   recordOutboundEngagement,
 } from '../inbox/subscription.service.js';
+import { isBotSlackUser } from '../slack/slack.helper.js';
 import { SlackWorkspaceDirectoryService } from '../slack/workspace-directory.service.js';
 import type { InteractiveAskOption, InteractiveAskRecord } from '../storage/schema/interactive-ask.store.js';
 import { resolveSlackChannelArgument, type ResolvedSlackChannel } from './slack-channel-resolver.js';
@@ -251,7 +252,7 @@ function assertHumanAskTarget(
 ): void {
   if (!user) return;
   if (user.deleted) throw new Error(`Cannot ask ${label}: that Slack user is deleted`);
-  if (user.isBot || user.isAppUser) {
+  if (isBotSlackUser(user)) {
     throw new Error(`Cannot ask ${label}: anima ask is for human Slack users, not bots`);
   }
 }

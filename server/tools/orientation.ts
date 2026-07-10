@@ -18,6 +18,7 @@ import {
 } from '../inbox/subscription.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import {
+  isBotSlackUser,
   normalizeSlackHandle,
   slackUserHandleCandidates,
 } from '../slack/slack.helper.js';
@@ -502,7 +503,7 @@ function slackUserWhois(user: SlackUserInfo, agents: AgentConfig[]): WhoisResult
       ...(local.profile.role ? { role: { source: 'agent_config', text: local.profile.role } } : {}),
     };
   }
-  const isBot = Boolean(user.isBot || user.isAppUser);
+  const isBot = isBotSlackUser(user);
   return {
     handle: user.name,
     id,

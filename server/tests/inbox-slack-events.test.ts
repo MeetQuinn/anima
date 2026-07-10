@@ -27,6 +27,49 @@ test('normalizes Slack DM messages into private primary-session events', () => {
   assert.equal(event.messageTs, '1770000010.000001');
 });
 
+// The two ends of the bot-envelope change are pinned elsewhere: the resolver
+// derives `isBot`, and the envelope drops the timezone when it sees one. This
+// pins the wire between them - without it, deleting the `isBot` line from
+// `slackInboxActor` breaks the feature and reds nothing.
+test('carries isBot from the resolved profile onto the inbox actor', () => {
+  const event = normalizeSlackMessage({
+    envelope: { team_id: 'T123' },
+    event: {
+      channel: 'C123',
+      text: 'ping',
+      ts: '1770000010.000001',
+      type: 'message',
+      user: 'U9',
+    },
+    userProfile: {
+      displayName: 'Milo',
+      isBot: true,
+      timezone: { name: 'Asia/Shanghai', offsetSeconds: 28800 },
+    },
+  });
+
+  assert.equal(event.actor?.isBot, true);
+  // The timezone still reaches the ledger; only the envelope declines to render it.
+  assert.equal(event.actor?.timezone?.name, 'Asia/Shanghai');
+});
+
+test('leaves isBot absent on the inbox actor for human senders', () => {
+  const event = normalizeSlackMessage({
+    envelope: { team_id: 'T123' },
+    event: {
+      channel: 'C123',
+      text: 'ping',
+      ts: '1770000010.000001',
+      type: 'message',
+      user: 'U1',
+    },
+    userProfile: { displayName: 'Alice', timezone: { name: 'Asia/Shanghai' } },
+  });
+
+  assert.equal(event.actor?.isBot, undefined);
+  assert.equal(event.actor?.timezone?.name, 'Asia/Shanghai');
+});
+
 test('normalizes Slack thread messages with reply routing metadata', () => {
   const event = normalizeSlackMessage({
     envelope: { team_id: 'T123' },
