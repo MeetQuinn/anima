@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import type { WebClient } from '@slack/web-api';
 
 import { SlackProfileResolver } from '../slack/profiles.js';
+import { ResilientSocketModeReceiver } from '../slack/resilient-socket-mode-receiver.js';
 import { SlackWorkspaceDirectoryService } from '../slack/workspace-directory.service.js';
 import { resolveSlackChannelArgument } from '../tools/slack-channel-resolver.js';
 import { mentionWarningsForTarget, slackTextForPostMessage } from '../tools/slack-message-mentions.js';
@@ -271,6 +272,43 @@ test('Slack workspace directory errors surface to callers', async () => {
   });
 
   await assert.rejects(() => new SlackWorkspaceDirectoryService({ client }).getUserByHandle('alice'), /not_in_channel/);
+});
+
+test('Slack Socket Mode retries a disconnect without an unhandled rejection', async () => {
+  const receiver = new ResilientSocketModeReceiver({
+    appToken: 'xapp-test',
+    reconnectDelayMs: 1,
+    reconnectMaxDelayMs: 1,
+    runtimeLogger: { error() {}, log() {}, warn() {} },
+  });
+  let reconnectAttempts = 0;
+  let noteReconnected!: () => void;
+  const reconnected = new Promise<void>((resolve) => {
+    noteReconnected = resolve;
+  });
+  const unhandled: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
+  receiver.client.start = () => {
+    reconnectAttempts += 1;
+    if (reconnectAttempts === 1 || reconnectAttempts === 3) return Promise.reject(undefined);
+    if (reconnectAttempts === 4) noteReconnected();
+    return Promise.resolve({ ok: true });
+  };
+
+  process.on('unhandledRejection', onUnhandledRejection);
+  try {
+    const response = await receiver.start();
+    assert.equal(response.ok, true);
+    receiver.client.emit('disconnected');
+    await reconnected;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.removeListener('unhandledRejection', onUnhandledRejection);
+    await receiver.stop();
+  }
+
+  assert.equal(reconnectAttempts, 4);
 });
 
 type FakeSlackClient = {

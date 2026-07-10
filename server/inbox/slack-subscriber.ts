@@ -7,6 +7,7 @@ import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import { interactiveAskServiceForAgent } from '../asks/interactive-ask.service.js';
 import { errorMessage, slackMessageEventId } from '../ids.js';
 import { createSlackWebClient } from '../slack/client.js';
+import { ResilientSocketModeReceiver } from '../slack/resilient-socket-mode-receiver.js';
 import {
   SlackShortcutService,
   userIdFromShortcutBody,
@@ -69,10 +70,14 @@ export class SlackInboxSubscriber {
   }
 
   private createApp(): App {
-    const app = new App({
+    const receiver = new ResilientSocketModeReceiver({
       appToken: this.options.appToken,
+      logLevel: LogLevel.INFO,
+    });
+    const app = new App({
       ignoreSelf: true,
       logLevel: LogLevel.INFO,
+      receiver,
       socketMode: true,
       token: this.options.botToken,
     });
