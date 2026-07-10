@@ -12,7 +12,7 @@ import { JsonStore } from '../storage/json-store.js';
 import { JsonlAppendLog } from '../storage/jsonl-log.js';
 import { RuntimeHost } from '../runtime/host.js';
 import { ServerConfigStore } from '../storage/schema/server.store.js';
-import { ensureAnimaHome, ensureParentDirectory } from '../storage/write-root.js';
+import { ensureAnimaHome, ensureDirectoryUnderRoot, ensureParentDirectory } from '../storage/write-root.js';
 
 const scratch: string[] = [];
 
@@ -284,9 +284,11 @@ test('AgentRestartCommandStore refuses to resurrect its home across operations',
 
 // Milo's second re-gate finding. RuntimeHost captures deps.animaHome and hands
 // that authority to every store it owns, but start() provisioned the *ambient*
-// root. With an explicit home X and an ambient home Y, startup created Y and
-// then the X-rooted stores correctly refused to write to an X nobody made. The
-// same cross-authority hole, one layer above the stores.
+// root. The measured symptom was not a startup failure: ensureAnimaHome() made
+// ambient home Y, and then a store's recursive ensureDirectory() quietly made
+// explicit home X a moment later. Two homes on disk, no error, and startup
+// still claiming it had provisioned deliberately. The same cross-authority hole
+// as below, one layer above the stores.
 test('startup provisions the home the host was given, not the ambient one', async () => {
   const parent = await tempHome();
   const explicitHome = join(parent, 'host-home'); // X: absent, must be created
@@ -367,6 +369,37 @@ test('store ensureDirectory() creates beneath the root but never the root itself
   await health.ensureDirectory();
   await restart.ensureDirectory();
   assert.ok(await exists(join(home, 'run')), 'run/ is created beneath a live root');
+});
+
+// Milo's third re-gate finding, and a regression I introduced with the helper.
+// `mkdir` reports EEXIST for a regular file exactly as it does for a directory.
+// Swallowing every EEXIST made the walk report success with a file sitting where
+// a directory belongs - and on the *final* segment nothing downstream ever looks
+// again, so ensureDirectory() returned happily. The recursive mkdir it replaced
+// threw. A helper whose whole contract is "ensure a directory" must not.
+test('the walk refuses a file where a directory belongs', async () => {
+  const home = await tempHome();
+
+  // Final segment: the case with no later operation to catch it.
+  await writeFile(join(home, 'run'), 'not a directory', 'utf8');
+  await assert.rejects(
+    () => ensureDirectoryUnderRoot(join(home, 'run'), home),
+    /not a directory/,
+    'a file at the final segment must fail loudly, not report success',
+  );
+
+  // Intermediate segment: previously surfaced later as ENOTDIR, now at the segment.
+  await assert.rejects(() => ensureDirectoryUnderRoot(join(home, 'run', 'deep'), home), /not a directory/);
+
+  // And the stores that share the helper inherit the loud failure.
+  await assert.rejects(() => new AgentHealthStore({ animaHome: home }).ensureDirectory(), /not a directory/);
+  await assert.rejects(() => new AgentRestartCommandStore({ animaHome: home }).ensureDirectory(), /not a directory/);
+
+  // A real directory there is still fine, and still idempotent.
+  await rm(join(home, 'run'), { force: true });
+  await ensureDirectoryUnderRoot(join(home, 'run'), home);
+  await ensureDirectoryUnderRoot(join(home, 'run'), home);
+  assert.ok(await exists(join(home, 'run')), 'an existing directory is accepted twice');
 });
 
 // Found while auditing every JsonStore construction for the same shape: this one

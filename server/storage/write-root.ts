@@ -27,6 +27,22 @@ function rootIsGone(root: string, target: string): Error {
 }
 
 /**
+ * A non-directory occupies a path the walk needs as a directory.
+ *
+ * `mkdir(existingFile)` fails with EEXIST, exactly as `mkdir(existingDir)` does.
+ * Treating every EEXIST as "already there, carry on" would let the walk report
+ * success with a regular file sitting where a directory belongs - and on the
+ * *final* segment nothing downstream ever notices, so `ensureDirectory()` would
+ * return happily and the failure would surface later, at some unrelated write.
+ * The recursive `mkdir` this replaced threw here; so do we.
+ */
+function notADirectory(path: string): Error {
+  const error = new Error(`Refusing to use ${path} as a directory: it exists and is not a directory.`);
+  Object.assign(error, { code: 'ENOTDIR', path });
+  return error;
+}
+
+/**
  * True when `path` is `root` itself or a descendant of it.
  *
  * Segment semantics, not string-prefix semantics. `relative()` returning
@@ -114,7 +130,13 @@ export async function ensureDirectoryUnderRoot(directory: string, root: string):
       await mkdir(current); // non-recursive: cannot create `current`'s parent
     } catch (error) {
       const code = errorCode(error);
-      if (code === 'EEXIST') continue;
+      // EEXIST says "something is already here", not "a directory is already
+      // here". A regular file yields EEXIST too, and on the last segment no
+      // later call would ever notice.
+      if (code === 'EEXIST') {
+        if (await isDirectory(current)) continue;
+        throw notADirectory(current);
+      }
       // The parent of `current` is missing, which - walking down from the root -
       // means the root (or a segment we just made) was removed underneath us.
       if (code === 'ENOENT') throw rootIsGone(writeRoot, target);
