@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { slackMessagePreviewsFromAttachments } from '../slack/message-previews.js';
+import { slackVisibleMessageText } from '../slack/message-text.js';
 import { slackTranscriptOutput } from '../tools/slack-transcript.js';
 import { slackMessageContentForText } from '../tools/slack-message-format.js';
 
@@ -17,6 +18,67 @@ test('Slack markdown block content enforces body and fallback limits', () => {
     () => slackMessageContentForText('X'.repeat(12_001)),
     /message is too long for Slack markdown block: 12001 characters, Slack allows 12000; send a file instead/,
   );
+});
+
+test('Slack visible message text restores complete rich text and tables from blocks', () => {
+  const text = slackVisibleMessageText({
+    blocks: [
+      {
+        elements: [{
+          elements: [
+            { type: 'user', user_id: 'UB0B1' },
+            { text: ' finished ', type: 'text' },
+            { style: { bold: true }, text: 'S1', type: 'text' },
+            { text: '\n\nFiles', type: 'text' },
+          ],
+          type: 'rich_text_section',
+        }, {
+          elements: [
+            { elements: [{ style: { code: true }, text: 'one.go', type: 'text' }], type: 'rich_text_section' },
+          ],
+          indent: 0,
+          style: 'bullet',
+          type: 'rich_text_list',
+        }],
+        type: 'rich_text',
+      },
+      {
+        rows: [
+          [richTextCell('Contract'), richTextCell('Code')],
+          [richTextCell('Conservation'), richTextCell('placed | superseded')],
+        ],
+        type: 'table',
+      },
+      {
+        elements: [{
+          elements: [{ text: 'The complete ending survives.', type: 'text' }],
+          type: 'rich_text_section',
+        }],
+        type: 'rich_text',
+      },
+    ],
+    text: '<@UB0B1> finished **S1** …',
+  });
+
+  assert.equal(text, [
+    '<@UB0B1> finished **S1**\n\nFiles\n- `one.go`',
+    '| Contract | Code |\n| --- | --- |\n| Conservation | placed \\| superseded |',
+    'The complete ending survives.',
+  ].join('\n\n'));
+});
+
+test('Slack visible message text keeps fallback text when blocks contain app controls', () => {
+  assert.equal(slackVisibleMessageText({
+    blocks: [{ elements: [{ type: 'button', value: 'approve' }], type: 'actions' }],
+    text: 'Approval requested',
+  }), 'Approval requested');
+});
+
+test('Slack visible message text reads a realtime markdown block verbatim', () => {
+  assert.equal(slackVisibleMessageText({
+    blocks: [{ text: 'Complete markdown body after the fallback cutoff.', type: 'markdown' }],
+    text: 'Complete markdown body…',
+  }), 'Complete markdown body after the fallback cutoff.');
 });
 
 test('Slack message unfurl attachments normalize into explicit previews', () => {
@@ -47,6 +109,13 @@ test('Slack message unfurl attachments normalize into explicit previews', () => 
     text: 'Private note preview',
   }]);
 });
+
+function richTextCell(text: string): object {
+  return {
+    elements: [{ elements: [{ text, type: 'text' }], type: 'rich_text_section' }],
+    type: 'rich_text',
+  };
+}
 
 test('Slack transcript output includes message preview annotations without reading the target channel', () => {
   const output = slackTranscriptOutput(
