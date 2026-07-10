@@ -11,9 +11,14 @@ available yet, it's called out under [Known gaps](#known-gaps).
 
 ## Sources
 
-Ten modules write to the activity log. This is the complete set, not a sample:
+Fourteen modules import the activity service. Ten write to the log, four only read
+it. **These two tables are the claim**, and `server/tests/activity-emitters.test.ts`
+parses them out of this file and compares them against a set re-derived from the
+sources. There is no third list: edit a table, or the test reds.
 
-| emitter                                         | writes                            |
+#### Emitters
+
+| module                                          | writes                            |
 | ----------------------------------------------- | --------------------------------- |
 | `server/agents/agent.service.ts`                | agent lifecycle                   |
 | `server/asks/interactive-ask.service.ts`        | `anima ask` prompts and answers   |
@@ -26,27 +31,45 @@ Ten modules write to the activity log. This is the complete set, not a sample:
 | `server/slack-interactions/shortcut.service.ts` | Slack shortcut invocations        |
 | `server/tools/tool-context.ts`                  | tool steps                        |
 
-Display: `web/src/lib/activities.ts`, `web/src/lib/activity-feed.ts`,
-`web/src/views/agents/activity/*`.
+#### Readers
 
-**Verified by** `server/tests/activity-emitters.test.ts`, which re-derives this set
-from the sources and fails when it changes. **Re-derive it yourself:**
+| module                                            | reads                          |
+| ------------------------------------------------- | ------------------------------ |
+| `server/diagnostics/agent-diagnostics.service.ts` | `readLastN` for health output  |
+| `server/memory/memory-coherence-scheduler.ts`     | `readNewestUntil` to find work |
+| `server/runtime/item-activities.ts`               | `readAll` to rebuild an item   |
+| `server/web/agent-routes.ts`                      | `listActivityFeed` for the tab |
+
+`server/inbox/subscription.service.ts` writes and does not read; its `.list()` call
+belongs to `SubscriptionStore`. Display: `web/src/lib/activities.ts`,
+`web/src/lib/activity-feed.ts`, `web/src/views/agents/activity/*`.
+
+**Re-derive the emitter table yourself:**
 
 ```sh
-# every module importing the activity service, by SPECIFIER, that also writes
-grep -rlE "from '[^']*activities/activity\.service\.js'" --include='*.ts' server \
+# modules importing the activity service, by SPECIFIER, that also write
+grep -rlE "from ['\"][^'\"]*activities/activity\.service\.js['\"]" --include='*.ts' server \
   | grep -v '/tests/' | grep -v 'activities/activity.service.ts' \
-  | xargs grep -lE '\.record\(|ActivityRecorder' | sort
+  | xargs grep -lE 'activityServiceForAgent\([^)]*\)[[:space:]]*\.[[:space:]]*record\(|: (ActivityRecorder|ActivityService)' \
+  | sort
 ```
 
-Match the **module specifier**, never the imported name. `server/reminders/` records
-through a `ReminderActivityRecorder` and never mentions `activityServiceForAgent`, so
-a grep for that symbol silently misses it. Importing the service to _read_ it
-(`server/web/agent-routes.ts`, `server/runtime/item-activities.ts`,
-`server/diagnostics/*`, `server/memory/memory-coherence-scheduler.ts`) is not
-emitting; the test pins that split too.
+Three traps this encodes, each of which produced a wrong answer before it was written
+down.
 
-Adding emitter #11 turns the test red. Add it here in the same commit.
+**Match the module specifier, never the imported name.** `server/reminders/` records
+through a `ReminderActivityRecorder` and never mentions `activityServiceForAgent`, so
+a symbol grep silently misses it.
+
+**Bind a call to its receiver.** A bare `.record(` or `.list(` matches any object in
+the file: `SubscriptionStore.list()` reads as an activity read, and
+`saveAsk(record: InteractiveAskRecord)` reads as a write.
+
+**The service arrives three ways** - called directly, injected as an `ActivityService`,
+or injected as an `ActivityRecorder`. A check that knows only the first two reports
+`server/asks/interactive-ask.service.ts` as neither reader nor writer.
+
+Adding emitter #11 turns the test red. Add it to the table in the same commit.
 
 ## What the Activity tab is
 
