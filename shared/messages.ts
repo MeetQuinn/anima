@@ -38,12 +38,21 @@ export interface AgentMessagePreview {
   authorName?: string;
   authorSubname?: string;
   channelId?: string;
+  files?: AgentMessagePreviewFile[];
   fromUrl?: string;
   isPrivate?: boolean;
   messageTs?: string;
   platform: 'slack';
   text: string;
   type: 'message_unfurl';
+}
+
+export interface AgentMessagePreviewFile {
+  id: string;
+  mimetype: string;
+  name: string;
+  permalink?: string;
+  sizeBytes: number;
 }
 
 export interface AgentMessageRecord {

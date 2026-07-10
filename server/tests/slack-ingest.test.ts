@@ -265,6 +265,15 @@ test('buildSlackInboxItem keeps Slack-provided unfurl previews without any messa
         attachments: [{
           author_name: 'Iris',
           channel_id: 'C0PRIVATE1',
+          files: [{
+            id: 'F-unfurled-html',
+            mimetype: 'text/plain',
+            name: 'curriculum.html',
+            permalink: 'https://demo.slack.com/files/U-author/F-unfurled-html/curriculum.html',
+            size: 35578,
+            url_private: 'https://files.slack.com/private/F-unfurled-html',
+            url_private_download: 'https://files.slack.com/private/F-unfurled-html/download',
+          }],
           from_url: link,
           is_msg_unfurl: true,
           private_channel_prompt: true,
@@ -284,11 +293,19 @@ test('buildSlackInboxItem keeps Slack-provided unfurl previews without any messa
     assert.deepEqual(item.previews, [{
       authorName: 'Iris',
       channelId: 'C0PRIVATE1',
+      files: [{
+        id: 'F-unfurled-html',
+        mimetype: 'text/plain',
+        name: 'curriculum.html',
+        permalink: 'https://demo.slack.com/files/U-author/F-unfurled-html/curriculum.html',
+        sizeBytes: 35578,
+      }],
       fromUrl: link,
       isPrivate: true,
       messageTs: '1770000100.000001',
       text: 'Preview delivered by Slack',
     }]);
+    assert.equal(Object.hasOwn(item.previews?.[0]?.files?.[0] ?? {}, 'urlPrivate'), false);
     // Privacy boundary: the unfurl came with the event, so nothing is fetched —
     // in particular never the linked private channel.
     assert.deepEqual(calls.history, []);

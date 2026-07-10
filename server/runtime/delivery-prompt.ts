@@ -398,15 +398,19 @@ function formatSlackMessagePreviews(previews: SlackInboxItem['previews']): strin
       preview.messageTs ? `message_ts=${escapeAttr(preview.messageTs)}` : '',
       preview.fromUrl ? `url=${escapeAttr(preview.fromUrl)}` : '',
     ].filter(Boolean).join(' ');
-    return `<preview ${attrs}>\n${preview.text}\n</preview>`;
+    const files = preview.files?.length
+      ? '\n<files>\n' + preview.files.map(formatAttachedFile).join('\n') + '\n</files>'
+      : '';
+    return `<preview ${attrs}>\n${preview.text}${files}\n</preview>`;
   });
   return '<slack_message_previews>\n' + rendered.join('\n') + '\n</slack_message_previews>';
 }
 
-function formatAttachedFile(file: InboxFileMeta): string {
+function formatAttachedFile(file: InboxFileMeta & { permalink?: string }): string {
   const errorAttr = file.downloadError ? ` error=${escapeAttr(file.downloadError)}` : '';
+  const permalinkAttr = file.permalink ? ` permalink=${escapeAttr(file.permalink)}` : '';
 
-  return `<file id=${escapeAttr(file.id)} name=${escapeAttr(file.name)} mimetype=${escapeAttr(file.mimetype)} size_bytes=${escapeAttr(String(file.sizeBytes))}${errorAttr} />`;
+  return `<file id=${escapeAttr(file.id)} name=${escapeAttr(file.name)} mimetype=${escapeAttr(file.mimetype)} size_bytes=${escapeAttr(String(file.sizeBytes))}${permalinkAttr}${errorAttr} />`;
 }
 
 function normalizeHandle(handle: string | undefined): string | undefined {

@@ -422,6 +422,13 @@ test('buildCodeAgentDeliveryPrompt includes Slack message previews carried by un
     previews: [{
       authorName: 'Iris',
       channelId: 'D-private',
+      files: [{
+        id: 'F-unfurled-html',
+        mimetype: 'text/html',
+        name: 'curriculum.html',
+        permalink: 'https://example.slack.com/files/U-author/F-unfurled-html/curriculum.html',
+        sizeBytes: 35578,
+      }],
       fromUrl: 'https://example.slack.com/archives/D-private/p1770000100000001',
       isPrivate: true,
       messageTs: '1770000100.000001',
@@ -438,6 +445,9 @@ test('buildCodeAgentDeliveryPrompt includes Slack message previews carried by un
   assert.match(text, /<slack_message_previews>/);
   assert.match(text, /source="slack_unfurl" private_preview="true" author="Iris" channel_id="D-private"/);
   assert.match(text, /Preview delivered by Slack/);
+  assert.match(text, /<file id="F-unfurled-html" name="curriculum\.html" mimetype="text\/html"/);
+  assert.match(text, /permalink="https:\/\/example\.slack\.com\/files\/U-author\/F-unfurled-html\/curriculum\.html"/);
+  assert.doesNotMatch(text, /url_private|files\.slack\.com\/private/);
 });
 
 test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack targets', () => {
