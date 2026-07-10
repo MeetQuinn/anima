@@ -1,4 +1,3 @@
-import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -7,6 +6,7 @@ import { z } from 'zod';
 import { resolveAnimaHome } from '../anima-home.js';
 import { nowIso } from '../ids.js';
 import { JsonStore } from '../storage/json-store.js';
+import { ensureDirectoryUnderRoot } from '../storage/write-root.js';
 
 const RESTART_COMMANDS_FILE = 'agent-restart-requests.json';
 
@@ -50,7 +50,9 @@ export class AgentRestartCommandStore {
   }
 
   async ensureDirectory(): Promise<void> {
-    await mkdir(this.directory(), { recursive: true });
+    // Beneath the root only. A recursive mkdir here would make this store a
+    // second provisioner of the runtime root - see storage/write-root.ts.
+    await ensureDirectoryUnderRoot(this.directory(), this.animaHome());
   }
 
   async request(agentId: string): Promise<AgentRestartCommand> {

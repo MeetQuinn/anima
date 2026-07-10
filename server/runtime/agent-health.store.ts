@@ -1,10 +1,10 @@
-import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { z } from 'zod';
 
 import { resolveAnimaHome } from '../anima-home.js';
 import { JsonStore } from '../storage/json-store.js';
+import { ensureDirectoryUnderRoot } from '../storage/write-root.js';
 import type {
   AgentHealthReason,
   AgentHealthState,
@@ -121,7 +121,9 @@ export class AgentHealthStore {
   }
 
   async ensureDirectory(): Promise<void> {
-    await mkdir(this.directory(), { recursive: true });
+    // Beneath the root only. A recursive mkdir here would make this store a
+    // second provisioner of the runtime root - see storage/write-root.ts.
+    await ensureDirectoryUnderRoot(this.directory(), this.animaHome());
   }
 
   async get(agentId: string): Promise<AgentRuntimeHealthSummary | undefined> {

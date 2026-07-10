@@ -75,19 +75,33 @@ export function currentWriteRoot(): string {
  * recursive behavior.
  */
 export async function ensureParentDirectory(path: string, root: string): Promise<void> {
-  const target = resolve(path);
-  const writeRoot = resolve(root);
-  const parent = dirname(target);
+  await ensureDirectoryUnderRoot(dirname(resolve(path)), root);
+}
 
-  if (!isUnderRoot(writeRoot, parent)) {
-    await mkdir(parent, { recursive: true });
+/**
+ * Create `directory` and any missing ancestors *below* `root`, never `root`.
+ *
+ * The same walk `ensureParentDirectory` uses, exposed for the callers that
+ * create a directory rather than a file's parent - `AgentHealthStore` and
+ * `AgentRestartCommandStore` provisioning `<home>/run`. Those used a recursive
+ * mkdir, which made them a second, accidental provisioner of the runtime root:
+ * startup could create the *ambient* home and then have `ensureDirectory()`
+ * silently manufacture the real one. Deliberate provisioning belongs to
+ * `ensureAnimaHome`, and to nothing else.
+ */
+export async function ensureDirectoryUnderRoot(directory: string, root: string): Promise<void> {
+  const target = resolve(directory);
+  const writeRoot = resolve(root);
+
+  if (!isUnderRoot(writeRoot, target)) {
+    await mkdir(target, { recursive: true });
     return;
   }
 
-  const rel = relative(writeRoot, parent);
+  const rel = relative(writeRoot, target);
   const segments = rel === '' ? [] : rel.split(sep);
 
-  // parent === root: nothing to create. The root must already exist.
+  // target === root: nothing to create. The root must already exist.
   if (segments.length === 0) {
     if (!(await isDirectory(writeRoot))) throw rootIsGone(writeRoot, target);
     return;

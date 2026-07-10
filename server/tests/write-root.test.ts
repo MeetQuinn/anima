@@ -345,6 +345,30 @@ test('RuntimeHost.start() creates its own explicit home and no other', async () 
   }
 });
 
+// Milo measured the real symptom of the mismatch: startup provisioned the
+// ambient root, and then `ensureDirectory()` - a recursive mkdir of <home>/run -
+// quietly manufactured the runtime root a moment later. Both homes ended up on
+// disk and nothing failed. Deliberate provisioning belongs to ensureAnimaHome
+// and to nothing else, so these stores must not be able to create a root.
+test('store ensureDirectory() creates beneath the root but never the root itself', async () => {
+  const parent = await tempHome();
+  const home = join(parent, 'runtime-home'); // never created
+
+  const health = new AgentHealthStore({ animaHome: home });
+  await assert.rejects(() => health.ensureDirectory(), /does not exist/);
+  assert.equal(await exists(home), false, 'the health store must not provision the root');
+
+  const restart = new AgentRestartCommandStore({ animaHome: home });
+  await assert.rejects(() => restart.ensureDirectory(), /does not exist/);
+  assert.equal(await exists(home), false, 'the restart store must not provision the root');
+
+  // With the root provisioned deliberately, both create their run/ directory.
+  await ensureAnimaHome(home);
+  await health.ensureDirectory();
+  await restart.ensureDirectory();
+  assert.ok(await exists(join(home, 'run')), 'run/ is created beneath a live root');
+});
+
 // Found while auditing every JsonStore construction for the same shape: this one
 // was not in the gate findings. It writes config.json, directly under the home.
 test('ServerConfigStore refuses to resurrect its home across operations', async () => {

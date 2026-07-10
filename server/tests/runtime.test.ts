@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test, { before, mock } from 'node:test';
+import test, { after, before, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { makeSlackEvent } from './helpers/slack.js';
@@ -26,16 +26,22 @@ import type { Activity } from '../../shared/activity.js';
 import type { InboxItem } from '../../shared/inbox.js';
 import { sleep } from './helpers/harness.js';
 
-// Several RuntimeHost tests share this literal home and reach the health store
-// through reconcileOnce(), which - unlike start() - does not provision. They
-// used to work because the first health write recursively created the home for
-// them. Writes no longer do that (#461), so the home is created here, once,
-// deliberately. It passed locally before this hook only because an earlier run
-// had left /tmp/anima-home lying around: existence is not evidence of
-// provisioning, which is the whole point of the change.
-const SHARED_TEST_HOME = '/tmp/anima-home';
+// Several RuntimeHost tests reach the health and restart stores through
+// reconcileOnce(), which - unlike start() - does not provision. They used to
+// work because the first write recursively created the home for them. Writes no
+// longer do that (#461), so the fixture provisions its own home, deliberately.
+//
+// A fresh mkdtemp per run, removed after: the literal /tmp/anima-home these
+// tests used to share was never created and never cleaned, so a run inherited
+// whatever health and restart state the previous run had left in it, and passed
+// locally for the same reason the bug existed - a directory that was there
+// because something had once written to it.
+let testHome: string;
 before(async () => {
-  await mkdir(SHARED_TEST_HOME, { recursive: true });
+  testHome = await mkdtemp(join(tmpdir(), 'anima-runtime-host-home-'));
+});
+after(async () => {
+  await rm(testHome, { force: true, recursive: true });
 });
 
 test('child process completion preserves exit details when stream effects fail', async () => {
@@ -153,7 +159,7 @@ test('runtime host idles with zero agents and starts a newly runnable agent once
   const started: string[] = [];
   const stopped: string[] = [];
   const host = new RuntimeHost({}, {
-    animaHome: '/tmp/anima-home',
+    animaHome: testHome,
     loadAgents: async () => agents,
     logger: silentLogger,
     startAgent: async (agent) => {
@@ -181,7 +187,7 @@ test('runtime host reconciles memory coherence scheduler after agent reconciliat
   const agents = [runtimeHostAgent('aria', { connected: true })];
   const scheduled: string[][] = [];
   const host = new RuntimeHost({}, {
-    animaHome: '/tmp/anima-home',
+    animaHome: testHome,
     loadAgents: async () => agents,
     logger: silentLogger,
     memoryCoherenceScheduler: {
@@ -202,7 +208,7 @@ test('runtime host reconciles memory coherence scheduler after agent reconciliat
 test('runtime host contains memory coherence scheduler failures', async () => {
   const errors: string[] = [];
   const host = new RuntimeHost({}, {
-    animaHome: '/tmp/anima-home',
+    animaHome: testHome,
     loadAgents: async () => [runtimeHostAgent('aria', { connected: true })],
     logger: {
       error(message) {
@@ -231,7 +237,7 @@ test('runtime host starts after Slack connection and reloads idle agents after c
   const started: string[] = [];
   const stopped: string[] = [];
   const host = new RuntimeHost({}, {
-    animaHome: '/tmp/anima-home',
+    animaHome: testHome,
     loadAgents: async () => [scout],
     logger: silentLogger,
     startAgent: async (agent) => {
@@ -276,7 +282,7 @@ test('runtime host refreshes Slack display info before starting an agent', async
   const synced: string[] = [];
   const stopped: string[] = [];
   const host = new RuntimeHost({}, {
-    animaHome: '/tmp/anima-home',
+    animaHome: testHome,
     loadAgents: async () => [scout],
     logger: silentLogger,
     startAgent: async (agent) => {
@@ -313,7 +319,7 @@ test('runtime host does not block startup when Slack display-info refresh fails'
   const errors: string[] = [];
   const started: string[] = [];
   const host = new RuntimeHost({}, {
-    animaHome: '/tmp/anima-home',
+    animaHome: testHome,
     loadAgents: async () => [runtimeHostAgent('scout', { connected: true })],
     logger: {
       error(message) {
@@ -343,7 +349,7 @@ test('runtime host starts Feishu-connected agents without Slack tokens', async (
   const started: string[] = [];
   const stopped: string[] = [];
   const host = new RuntimeHost({}, {
-    animaHome: '/tmp/anima-home',
+    animaHome: testHome,
     loadAgents: async () => [scout],
     logger: silentLogger,
     startAgent: async (agent) => {
@@ -374,7 +380,7 @@ test('managed provider env injects Feishu credentials and tenant token when conn
     verificationToken: '',
   };
 
-  const env = await managedProviderEnvForAgent(scout, '/tmp/anima-home', 'xoxb-test', {
+  const env = await managedProviderEnvForAgent(scout, testHome, 'xoxb-test', {
     async fetchFeishuTenantAccessToken(config) {
       assert.equal(config.appId, 'cli_test');
       assert.equal(config.appSecret, 'feishu-secret');
@@ -385,7 +391,7 @@ test('managed provider env injects Feishu credentials and tenant token when conn
     },
   });
 
-  assert.equal(env.ANIMA_HOME, '/tmp/anima-home');
+  assert.equal(env.ANIMA_HOME, testHome);
   assert.equal(env.SLACK_BOT_TOKEN, 'xoxb-test');
   assert.equal(env.FEISHU_API_BASE_URL, 'https://open.feishu.cn/open-apis');
   assert.equal(env.FEISHU_APP_ID, 'cli_test');
@@ -397,14 +403,14 @@ test('managed provider env injects Feishu credentials and tenant token when conn
 
 test('managed provider env omits Slack tokens when no Slack bot token is configured', async () => {
   const scout = runtimeHostAgent('scout', { connected: false, feishuConnected: true });
-  const env = await managedProviderEnvForAgent(scout, '/tmp/anima-home', undefined, {
+  const env = await managedProviderEnvForAgent(scout, testHome, undefined, {
     async fetchFeishuTenantAccessToken() {
       return { tenantAccessToken: 't-tenant' };
     },
   });
 
-  assert.equal(env.ANIMA_HOME, '/tmp/anima-home');
-  assert.equal(env.ANIMA_RUNTIME_HOME, '/tmp/anima-home');
+  assert.equal(env.ANIMA_HOME, testHome);
+  assert.equal(env.ANIMA_RUNTIME_HOME, testHome);
   assert.equal(env.SLACK_BOT_TOKEN, undefined);
   assert.equal(env.ANIMA_SLACK_BOT_TOKEN, undefined);
   assert.equal(env.FEISHU_TENANT_ACCESS_TOKEN, 't-tenant');
@@ -416,7 +422,7 @@ test('runtime host defers config reload until the running agent is idle', async 
   const started: string[] = [];
   const stopped: string[] = [];
   const host = new RuntimeHost({}, {
-    animaHome: '/tmp/anima-home',
+    animaHome: testHome,
     loadAgents: async () => [scout],
     logger: silentLogger,
     startAgent: async (agent) => {
@@ -450,7 +456,7 @@ test('runtime host bounds idle config reload shutdown with a force timeout', asy
   const stopped: string[] = [];
   const stopOptions: Array<Parameters<RunningAgentHandle['stop']>[0]> = [];
   const host = new RuntimeHost({}, {
-    animaHome: '/tmp/anima-home',
+    animaHome: testHome,
     forceRestartTimeoutMs: 123,
     loadAgents: async () => [scout],
     logger: silentLogger,
@@ -503,7 +509,7 @@ test('runtime host stops a running agent after it becomes disabled', async () =>
   let scout = runtimeHostAgent('scout', { connected: true });
   const stopped: string[] = [];
   const host = new RuntimeHost({}, {
-    animaHome: '/tmp/anima-home',
+    animaHome: testHome,
     loadAgents: async () => [scout],
     logger: silentLogger,
     startAgent: async (agent) => stopHandle(agent.id, stopped),
