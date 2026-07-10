@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 import { withFileLock } from './lock.js';
+import { ensureParentDirectory } from './write-root.js';
 
 interface CacheEntry {
   mtimeMs: number;
@@ -93,7 +94,7 @@ export class JsonFile<T> {
 }
 
 async function writeAtomic(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
+  await ensureParentDirectory(path);
   const tempPath = join(dirname(path), `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
   try {
     await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');

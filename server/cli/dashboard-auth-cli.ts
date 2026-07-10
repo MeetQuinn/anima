@@ -3,6 +3,7 @@ import type { Command } from 'commander';
 import { withAnimaHome } from '../anima-home.js';
 import { defaultDashboardAuthService } from '../settings/dashboard-auth.service.js';
 import { resolveManagedAnimaHome } from '../runtime-management/managed-runtime.js';
+import { ensureAnimaHome } from '../storage/write-root.js';
 
 interface DashboardAuthCliOptions {
   passwordStdin?: boolean;
@@ -34,6 +35,10 @@ export function registerDashboardAuthCommand(program: Command, options: { manage
       if (!commandOptions.passwordStdin) throw new Error('--password-stdin is required');
       const password = await readPasswordFromStdin();
       await withDashboardAuthHome(options, async () => {
+        // Configuring auth on a machine that has never run the server is a
+        // legitimate first act, so provision the home deliberately here. Writes
+        // themselves never create it (see storage/write-root.ts).
+        await ensureAnimaHome();
         const result = await defaultDashboardAuthService.setPassword(password, {
           sessionTtlHours: commandOptions.sessionTtlHours,
         });
@@ -47,6 +52,7 @@ export function registerDashboardAuthCommand(program: Command, options: { manage
     .description('Disable dashboard password protection')
     .action(async () => {
       await withDashboardAuthHome(options, async () => {
+        await ensureAnimaHome();
         await defaultDashboardAuthService.disable();
         console.log('dashboardAuth: disabled');
       });

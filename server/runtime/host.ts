@@ -48,6 +48,7 @@ import type {
   AgentHealthReason,
   AgentRuntimeHandleSnapshot,
 } from '../../shared/snapshot.js';
+import { ensureAnimaHome } from '../storage/write-root.js';
 
 export interface RuntimeHostOptions {
   agent?: string;
@@ -153,6 +154,9 @@ export class RuntimeHost {
   }
 
   async start(): Promise<void> {
+    // Create the home deliberately, once. Every later write asserts this root
+    // rather than manufacturing it (see storage/write-root.ts).
+    await ensureAnimaHome();
     await this.restartCommands.ensureDirectory();
     await this.health.ensureDirectory();
     this.syncRestartCommandWatcher();
