@@ -113,8 +113,12 @@ async function survey() {
     const src = await readFile(file, 'utf8');
     if (!SERVICE_SPECIFIER.test(src)) continue;
     importers.push(rel);
+    // Exclusive: a module that writes is an emitter even if it also reads. The doc's
+    // Readers table is the reader-ONLY set, so "ten write, four only read" is a true
+    // partition. A mixed module belongs in Emitters alone; classifying it as a reader
+    // too would let it satisfy the Readers table while still emitting silently.
     if (writes(src)) emitters.push(rel);
-    if (reads(src)) readers.push(rel);
+    else if (reads(src)) readers.push(rel);
   }
   return { importers: importers.sort(), emitters: emitters.sort(), readers: readers.sort() };
 }
@@ -149,9 +153,12 @@ test('every emitter in docs/activity-events.md is real, and every real emitter i
   const doc = await readFile(DOC, 'utf8');
   const claimed = tableRows(doc, 'Emitters');
 
-  // Positive control: a broken scan finds nothing and would otherwise pass silently.
-  assert.ok(emitters.length >= 10, `scan found only ${emitters.length} emitters; the specifier regex has stopped matching`);
-  assert.ok(claimed.length >= 10, `parsed only ${claimed.length} rows from the doc table; the parser has stopped matching`);
+  // Positive controls: a broken scan or parser finds nothing and would otherwise pass
+  // silently. They assert non-emptiness only. The COUNT lives in exactly one place, the
+  // doc table (the claim); the deep equality below carries every real add or remove. A
+  // hardcoded floor here would be a third cardinality cache, drifting from the doc.
+  assert.ok(emitters.length > 0, 'scan found no emitters; the specifier regex has stopped matching');
+  assert.ok(claimed.length > 0, 'parsed no rows from the doc table; the parser has stopped matching');
 
   assert.deepEqual(
     emitters,
