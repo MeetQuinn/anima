@@ -5,8 +5,12 @@ import { join } from 'node:path';
 import { after, test } from 'node:test';
 
 import { withAnimaHome } from '../anima-home.js';
+import { AgentHealthStore } from '../runtime/agent-health.store.js';
+import { AgentRestartCommandStore } from '../runtime/agent-restart-command.store.js';
 import { JsonFile } from '../storage/json-file.js';
+import { JsonStore } from '../storage/json-store.js';
 import { JsonlAppendLog } from '../storage/jsonl-log.js';
+import { ServerConfigStore } from '../storage/schema/server.store.js';
 import { ensureAnimaHome, ensureParentDirectory } from '../storage/write-root.js';
 
 const scratch: string[] = [];
@@ -237,6 +241,123 @@ test('the in-root walk never uses a recursive mkdir', async () => {
   const walk = source.slice(source.indexOf('let current = writeRoot;'), source.indexOf('export async function ensureAnimaHome'));
   assert.ok(walk.length > 0, 'located the in-root walk');
   assert.equal(walk.includes('recursive: true'), false, 'the in-root walk must not contain a recursive mkdir');
+});
+
+// --- Milo's re-gate finding on ba72e43e. Capturing the root inside JsonFile put
+// --- it one layer too low: JsonStore built a new JsonFile per operation, so the
+// --- capture lasted exactly one call and every write re-derived the root. The
+// --- production wrappers all go through JsonStore, so the guard was live only
+// --- for code that held a JsonFile directly - which nothing does.
+
+const healthSummary = { agentId: 'a1', state: 'healthy' as const, updatedAt: new Date(0).toISOString() };
+
+test('AgentHealthStore refuses to resurrect its home across operations', async () => {
+  const parent = await tempHome();
+  const home = join(parent, '.anima');
+  await mkdir(join(home, 'run'), { recursive: true });
+
+  const store = new AgentHealthStore({ animaHome: home });
+  await store.update('a1', () => healthSummary);
+  assert.ok(await exists(store.path()), 'precondition: the first update wrote the snapshot file');
+
+  await rm(home, { force: true, recursive: true });
+
+  await assert.rejects(() => store.update('a1', () => healthSummary), /does not exist/);
+  assert.equal(await exists(home), false, 'the health store must not rebuild the home');
+});
+
+test('AgentRestartCommandStore refuses to resurrect its home across operations', async () => {
+  const parent = await tempHome();
+  const home = join(parent, '.anima');
+  await mkdir(join(home, 'run'), { recursive: true });
+
+  const store = new AgentRestartCommandStore({ animaHome: home });
+  await store.request('a1');
+  assert.ok(await exists(store.path()), 'precondition: the first request wrote the file');
+
+  await rm(home, { force: true, recursive: true });
+
+  await assert.rejects(() => store.request('a1'), /does not exist/);
+  assert.equal(await exists(home), false, 'the restart store must not rebuild the home');
+});
+
+// Found while auditing every JsonStore construction for the same shape: this one
+// was not in the gate findings. It writes config.json, directly under the home.
+test('ServerConfigStore refuses to resurrect its home across operations', async () => {
+  const parent = await tempHome();
+  const home = join(parent, '.anima');
+  await mkdir(home, { recursive: true });
+
+  const store = new ServerConfigStore(home);
+  await store.write({});
+  assert.ok(await exists(join(home, 'config.json')), 'precondition: the first write created config.json');
+
+  await rm(home, { force: true, recursive: true });
+
+  await assert.rejects(() => store.write({}), /does not exist/);
+  assert.equal(await exists(home), false, 'the config store must not rebuild the home');
+});
+
+// The shared mechanism behind the rows above: one JsonFile per path, for the
+// life of the store, so the root is captured once rather than per operation.
+test('JsonStore captures the ambient write root once per path, not per operation', async () => {
+  const parent = await tempHome();
+  const home = join(parent, '.anima');
+  await mkdir(home, { recursive: true });
+
+  const previousCwd = process.cwd();
+  const previousEnv = process.env.ANIMA_HOME;
+  delete process.env.ANIMA_HOME;
+  process.chdir(parent);
+  try {
+    const path = join(home, 'run', 'x.json');
+    const store = new JsonStore<{ n: number }>({
+      empty: () => ({ n: 0 }),
+      parse: (value) => value as { n: number },
+      path: () => path,
+    });
+    await store.write({ n: 1 });
+
+    await rm(home, { force: true, recursive: true });
+
+    await assert.rejects(() => store.write({ n: 2 }), /does not exist/);
+    assert.equal(await exists(home), false, 'the deleted local home must stay deleted');
+  } finally {
+    process.chdir(previousCwd);
+    if (previousEnv === undefined) delete process.env.ANIMA_HOME;
+    else process.env.ANIMA_HOME = previousEnv;
+  }
+});
+
+// A store told its home explicitly must protect *that* home, even while a
+// perfectly healthy ambient root exists somewhere else. Capturing the ambient
+// root here would classify the store's own target as "outside the root" and
+// recreate it recursively - the resurrection, reached by the opposite door.
+test('an explicit animaHome is the protected root, not the ambient one', async () => {
+  const parent = await tempHome();
+  const ambient = join(parent, '.anima'); // alive for the whole test
+  const explicitHome = join(parent, 'explicit-home');
+  await mkdir(ambient, { recursive: true });
+  await mkdir(join(explicitHome, 'run'), { recursive: true });
+
+  const previousCwd = process.cwd();
+  const previousEnv = process.env.ANIMA_HOME;
+  delete process.env.ANIMA_HOME;
+  process.chdir(parent);
+  try {
+    const store = new AgentHealthStore({ animaHome: explicitHome });
+    await store.update('a1', () => healthSummary);
+
+    await rm(explicitHome, { force: true, recursive: true });
+
+    await assert.rejects(() => store.update('a1', () => healthSummary), /does not exist/);
+    assert.equal(await exists(explicitHome), false, 'the store must protect the home it was given');
+    assert.ok(await exists(ambient), 'the ambient root is untouched either way');
+  } finally {
+    process.chdir(previousCwd);
+    if (previousEnv === undefined) delete process.env.ANIMA_HOME;
+    else process.env.ANIMA_HOME = previousEnv;
+  }
 });
 
 test('a deep descendant chain is created segment by segment under a live root', async () => {

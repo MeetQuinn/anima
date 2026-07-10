@@ -31,6 +31,9 @@ export class AgentRestartCommandStore {
       empty: () => ({ requests: {} }),
       parse: (value) => AgentRestartCommandStoreSchema.parse(value),
       path: () => this.path(),
+      // Same authority as path(): both derive from this store's home, so the
+      // guard always protects the root the target actually lives under.
+      writeRoot: () => this.animaHome(),
     });
   }
 

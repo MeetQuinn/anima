@@ -102,6 +102,9 @@ export class AgentHealthStore {
       empty: () => ({ snapshots: {} }),
       parse: (value) => AgentHealthStoreSchema.parse(value),
       path: () => this.path(),
+      // Same authority as path(): both derive from this store's home, so the
+      // guard always protects the root the target actually lives under.
+      writeRoot: () => this.animaHome(),
     });
   }
 
