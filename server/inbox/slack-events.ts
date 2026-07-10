@@ -1,6 +1,7 @@
 import { nowIso, slackMessageEventId, slackSurfaceId } from '../ids.js';
 import { normalizeSlackEventFiles, slackTsToIso, type SlackRawFile } from '../slack/slack.helper.js';
 import { slackMessagePreviewsFromAttachments } from '../slack/message-previews.js';
+import { slackVisibleMessageText } from '../slack/message-text.js';
 import type { SlackInboxActor, SlackInboxItem } from '../../shared/inbox.js';
 import type { SlackUserProfile } from '../slack/profiles.js';
 
@@ -20,6 +21,7 @@ export interface SlackMessageEnvelope {
 
 export interface SlackRawMessageEvent {
   attachments?: unknown[];
+  blocks?: unknown;
   bot_id?: string;
   channel?: string;
   channel_type?: string;
@@ -87,7 +89,7 @@ export function normalizeSlackMessage(input: {
     channelId,
     messageTs: ts,
     actor: slackInboxActor(input.event.user, input.userProfile),
-    text: input.text ?? input.event.text,
+    text: input.text ?? slackVisibleMessageText(input.event) ?? input.event.text,
   };
   if (input.attentionSuggestion) result.attentionSuggestion = input.attentionSuggestion;
   if (input.channelName) result.channelName = input.channelName;

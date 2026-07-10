@@ -8,6 +8,7 @@ import {
   waitForSlackMessagePreviewAttachments,
 } from '../slack/message-previews.js';
 import { SlackProfileResolver } from '../slack/profiles.js';
+import { slackVisibleMessageText } from '../slack/message-text.js';
 import type { SlackInboxItem } from '../../shared/inbox.js';
 import {
   normalizeSlackMessage,
@@ -43,7 +44,11 @@ export async function buildSlackInboxItem(input: SlackIngestInput): Promise<Slac
 export async function buildSlackInboxItemWithLatePreview(input: SlackIngestInput): Promise<SlackInboxBuildResult> {
   const warn = input.warn ?? ((message: string) => console.warn(message));
   const profiles = input.profiles ?? new SlackProfileResolver();
-  const { client, event } = input;
+  const client = input.client;
+  const visibleText = slackVisibleMessageText(input.event) ?? input.event.text;
+  const event = visibleText === input.event.text
+    ? input.event
+    : { ...input.event, text: visibleText };
   const teamId = slackEventTeamId(input.envelope, event);
 
   const [userProfile, channelProfile, text, permalink, attachments] = await Promise.all([

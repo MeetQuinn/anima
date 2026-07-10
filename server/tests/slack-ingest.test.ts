@@ -141,6 +141,57 @@ test('buildSlackInboxItem enriches profile, channel, mentions, permalink, and fi
   });
 });
 
+test('buildSlackInboxItem uses the complete visible block body instead of truncated fallback text', async () => {
+  await withIngestHome(async () => {
+    const calls = emptyCalls();
+    const item = await buildSlackInboxItem({
+      client: fakeIngestClient({ calls }),
+      envelope: { team_id: 'T-ingest' },
+      event: {
+        blocks: [
+          {
+            elements: [{
+              elements: [
+                { type: 'user', user_id: 'UB0B1' },
+                { text: ' contract evidence', type: 'text' },
+              ],
+              type: 'rich_text_section',
+            }],
+            type: 'rich_text',
+          },
+          {
+            rows: [
+              [richTextCell('Contract'), richTextCell('Code')],
+              [richTextCell('Conservation'), richTextCell('validateConservation')],
+            ],
+            type: 'table',
+          },
+          {
+            elements: [{
+              elements: [{ text: 'Full implementation tradeoff after the fallback cutoff.', type: 'text' }],
+              type: 'rich_text_section',
+            }],
+            type: 'rich_text',
+          },
+        ],
+        channel: 'C-team',
+        channel_type: 'channel',
+        text: '<@UB0B1> contract evidence…',
+        ts: '1770000012.000001',
+        type: 'message',
+        user: 'UALICE1',
+      },
+      warn: () => {},
+    });
+
+    assert.match(item.text, /^@bob contract evidence/);
+    assert.match(item.text, /\| Contract \| Code \|/);
+    assert.match(item.text, /Full implementation tradeoff after the fallback cutoff\.$/);
+    assert.doesNotMatch(item.text, /evidence…$/);
+    assert.ok(calls.usersInfo.includes('UB0B1'));
+  });
+});
+
 test('buildSlackInboxItem makes the same Slack API calls for a mention without depending on order', async () => {
   await withIngestHome(async () => {
     const calls = emptyCalls();
@@ -168,6 +219,13 @@ test('buildSlackInboxItem makes the same Slack API calls for a mention without d
     ]));
   });
 });
+
+function richTextCell(text: string): object {
+  return {
+    elements: [{ elements: [{ text, type: 'text' }], type: 'rich_text_section' }],
+    type: 'rich_text',
+  };
+}
 
 test('buildSlackInboxItem degrades to raw ids when every Slack lookup fails', async () => {
   await withIngestHome(async () => {
