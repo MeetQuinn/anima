@@ -5,6 +5,7 @@ import { BellOff, ChevronLeft, Loader2 } from 'lucide-react';
 import { fetchAgentChannels, fetchAgentMessages } from '@/api/agents';
 import { buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
+import { initialOf } from '@/lib/avatars';
 import { buildChannelThreadContext } from '@/lib/channel-threads';
 import { dateKey, formatRelativeShort } from '@/lib/format';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
@@ -12,7 +13,6 @@ import { useAgents } from '@/hooks/useAgentDirectory';
 import { useNow } from '@/hooks/useNow';
 import {
   groupByAuthor,
-  initialOf,
   inboundAuthorName,
   inboundSlackUserId,
   isMessageItem,
