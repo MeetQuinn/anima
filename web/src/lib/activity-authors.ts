@@ -1,6 +1,6 @@
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
+import { initialOf } from '@/lib/avatars';
 import {
-  initialOf,
   inboundAuthorName,
   inboundSlackUserId,
   type Author,

@@ -50,10 +50,6 @@ export interface Author {
   isAgent: boolean;
 }
 
-export function initialOf(name: string): string {
-  return name.trim().slice(0, 1).toUpperCase() || '?';
-}
-
 export function isMessageItem(item: ActivityFeedItem): boolean {
   return (
     item.kind === 'message-in' ||

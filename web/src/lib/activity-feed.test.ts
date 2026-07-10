@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildActivityFeed, buildMessageFeed } from './activity-feed';
+import { buildActivityFeed, buildMessageFeed, type ActivityFeedItem } from './activity-feed';
 import type { AgentActivityFeedPage } from '@shared/activity';
 import type { AgentMessageHistoryPage, AgentMessageRecord } from '@shared/messages';
 
@@ -186,6 +186,53 @@ describe('buildActivityFeed', () => {
         timestamp: '2026-07-04T14:00:04.000Z',
       },
     ]);
+  });
+
+  // `step` is the only union member carrying `activity`; narrowing keeps the
+  // assertion honest about which rows survived the collapse.
+  const webSearchSteps = (items: ActivityFeedItem[]): string[] =>
+    items
+      .filter((item) => item.kind === 'step')
+      .map((item) => item.activity.activityId)
+      .filter((id) => id.startsWith('actv_ws_'));
+
+  // Newer Codex app-server builds emit `item/started` for a webSearch before the
+  // query is known, then a detailed row with the same providerToolId once
+  // `web_search_end` lands. Two rows, one search. buildActivityFeed drops the
+  // blank one - but only when a detailed sibling actually exists.
+  it('collapses a blank Codex webSearch row into its detailed sibling', () => {
+    const blank = activityEvent('actv_ws_blank', 'tool.call.started', {
+      providerToolId: 'ws_1',
+      providerToolName: 'webSearch',
+    }, '2026-07-04T14:00:00.000Z');
+    const detailed = activityEvent('actv_ws_detailed', 'tool.call.started', {
+      providerToolId: 'ws_1',
+      providerToolName: 'webSearch',
+      query: 'anima runtime health',
+    }, '2026-07-04T14:00:01.000Z');
+
+    const page: AgentActivityFeedPage = { events: [blank, detailed], nextCursor: null };
+    const searches = webSearchSteps(buildActivityFeed(page));
+
+    expect(searches).toEqual(['actv_ws_detailed']);
+  });
+
+  it('keeps a blank Codex webSearch row when no detailed sibling arrives', () => {
+    const blank = activityEvent('actv_ws_blank', 'tool.call.started', {
+      providerToolId: 'ws_1',
+      providerToolName: 'webSearch',
+    });
+    // Same shape, different search: its providerToolId must not rescue the blank one.
+    const otherDetailed = activityEvent('actv_ws_other', 'tool.call.started', {
+      providerToolId: 'ws_2',
+      providerToolName: 'webSearch',
+      query: 'unrelated',
+    }, '2026-07-04T14:00:01.000Z');
+
+    const page: AgentActivityFeedPage = { events: [blank, otherDetailed], nextCursor: null };
+    const searches = webSearchSteps(buildActivityFeed(page));
+
+    expect(searches).toEqual(['actv_ws_blank', 'actv_ws_other']);
   });
 
   it('projects child-loop outbound effects exactly', () => {
