@@ -71,6 +71,10 @@ For the code-level map, see `docs/architecture/internals.md`.
 
 Branch from `main`.
 
+Repository development and tests require Node.js 24 or newer; `.nvmrc` pins the
+CI major. The published installer/runtime remains compatible with Node.js 20+ as
+documented in the README.
+
 Keep PRs to one concern. If a change crosses layers, state why in the PR.
 
 A useful PR description states the boundary touched, the invariants that matter, and the verification commands run.
