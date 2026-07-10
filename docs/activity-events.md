@@ -9,10 +9,67 @@ and what each row shows**.
 It describes current behavior, not a wishlist. Where a field genuinely isn't
 available yet, it's called out under [Known gaps](#known-gaps).
 
-Sources: emitters in `server/runtime/*`, `server/providers/*-events.ts`,
-`server/tools/*`, `server/reminders/*`, `server/inbox/subscription.service.ts`; display in
-`web/src/lib/activities.ts`, `web/src/lib/activity-feed.ts`,
-`web/src/views/agents/activity/*`.
+## Sources
+
+Fourteen modules import the activity service. Ten write to the log, four only read
+it. **These two tables are the claim**, and `server/tests/activity-emitters.test.ts`
+parses them out of this file and compares them against a set re-derived from the
+sources. There is no third list: edit a table, or the test reds.
+
+#### Emitters
+
+| module                                          | writes                            |
+| ----------------------------------------------- | --------------------------------- |
+| `server/agents/agent.service.ts`                | agent lifecycle                   |
+| `server/asks/interactive-ask.service.ts`        | `anima ask` prompts and answers   |
+| `server/inbox/attention-suggestion-activity.ts` | attention suggestions             |
+| `server/inbox/slack-subscriber.ts`              | subscription changes from Slack   |
+| `server/inbox/subscription.service.ts`          | subscription changes from the CLI |
+| `server/memory/memory-coherence-outcome.ts`     | memory pass outcomes              |
+| `server/reminders/reminder.activity.ts`         | reminder schedule, fire, cancel   |
+| `server/runtime/activity.ts`                    | turns, messages, provider events  |
+| `server/slack-interactions/shortcut.service.ts` | Slack shortcut invocations        |
+| `server/tools/tool-context.ts`                  | tool steps                        |
+
+#### Readers
+
+| module                                            | reads                          |
+| ------------------------------------------------- | ------------------------------ |
+| `server/diagnostics/agent-diagnostics.service.ts` | `readLastN` for health output  |
+| `server/memory/memory-coherence-scheduler.ts`     | `readNewestUntil` to find work |
+| `server/runtime/item-activities.ts`               | `readAll` to rebuild an item   |
+| `server/web/agent-routes.ts`                      | `listActivityFeed` for the tab |
+
+`server/inbox/subscription.service.ts` writes and does not read; its `.list()` call
+belongs to `SubscriptionStore`. Display: `web/src/lib/activities.ts`,
+`web/src/lib/activity-feed.ts`, `web/src/views/agents/activity/*`.
+
+**Re-derive the emitter table yourself:**
+
+```sh
+# modules importing the activity service, by SPECIFIER, that also write
+grep -rlE "from ['\"][^'\"]*activities/activity\.service\.js['\"]" --include='*.ts' server \
+  | grep -v '/tests/' | grep -v 'activities/activity.service.ts' \
+  | xargs grep -lE 'activityServiceForAgent\([^)]*\)[[:space:]]*\.[[:space:]]*record\(|: (ActivityRecorder|ActivityService)' \
+  | sort
+```
+
+Three traps this encodes, each of which produced a wrong answer before it was written
+down.
+
+**Match the module specifier, never the imported name.** `server/reminders/` records
+through a `ReminderActivityRecorder` and never mentions `activityServiceForAgent`, so
+a symbol grep silently misses it.
+
+**Bind a call to its receiver.** A bare `.record(` or `.list(` matches any object in
+the file: `SubscriptionStore.list()` reads as an activity read, and
+`saveAsk(record: InteractiveAskRecord)` reads as a write.
+
+**The service arrives three ways** - called directly, injected as an `ActivityService`,
+or injected as an `ActivityRecorder`. A check that knows only the first two reports
+`server/asks/interactive-ask.service.ts` as neither reader nor writer.
+
+Adding emitter #11 turns the test red. Add it to the table in the same commit.
 
 ## What the Activity tab is
 

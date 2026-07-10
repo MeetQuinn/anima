@@ -24,6 +24,7 @@ const groups = {
   unit: [
     'active-item.test.js',
     'active-runtime.test.js',
+    'activity-emitters.test.js',
     'agent-channels.test.js',
     'agent-config.test.js',
     'agent-health.test.js',
