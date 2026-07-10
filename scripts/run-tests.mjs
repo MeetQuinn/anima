@@ -63,6 +63,7 @@ const groups = {
     'slack-message-previews.test.js',
     'slack-shortcuts.test.js',
     'slack.test.js',
+    'socket-mode-predicate.test.js',
     'state-cache.test.js',
     'subscriptions.test.js',
     'system-service.test.js',
