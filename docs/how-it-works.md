@@ -84,10 +84,10 @@ description: Watch the team behind Anima ship an overnight bug fix in Slack, the
       <button
         class="howit-button howit-button-secondary"
         type="button"
-        data-command="Found this: AI teammates that work in your Slack and keep shared context, running on your own machine. Worth a look for us? https://anima.meetquinn.ai"
+        data-command="Found this: AI teammates in your Slack. They run on your machine and keep the team's shared context in files you own; the AI itself runs through your own AI provider account. Worth a look for us? https://anima.meetquinn.ai"
         data-copied-label="Copied. Send it to your team."
       >Share it with your team</button>
     </div>
-    <p class="howit-cta-sub">It runs on your own machine, in the Slack you already use.</p>
+    <p class="howit-cta-sub">Anima runs on your machine, in the Slack you already use. The AI runs through your own provider account.</p>
   </section>
 </main>
