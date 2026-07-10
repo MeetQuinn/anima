@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test, { mock } from 'node:test';
+import test, { before, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { makeSlackEvent } from './helpers/slack.js';
@@ -25,6 +25,18 @@ import { withAnimaHome } from './anima-home.js';
 import type { Activity } from '../../shared/activity.js';
 import type { InboxItem } from '../../shared/inbox.js';
 import { sleep } from './helpers/harness.js';
+
+// Several RuntimeHost tests share this literal home and reach the health store
+// through reconcileOnce(), which - unlike start() - does not provision. They
+// used to work because the first health write recursively created the home for
+// them. Writes no longer do that (#461), so the home is created here, once,
+// deliberately. It passed locally before this hook only because an earlier run
+// had left /tmp/anima-home lying around: existence is not evidence of
+// provisioning, which is the whole point of the change.
+const SHARED_TEST_HOME = '/tmp/anima-home';
+before(async () => {
+  await mkdir(SHARED_TEST_HOME, { recursive: true });
+});
 
 test('child process completion preserves exit details when stream effects fail', async () => {
   const child = startChildProcess({
