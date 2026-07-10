@@ -41,7 +41,10 @@ async function probe(make: () => unknown) {
   let attempts = 0;
   (receiver.client as { start: () => Promise<unknown> }).start = async () => {
     attempts += 1;
-    if (attempts === 1) return { ok: true };
+    // The real SDK fulfills `undefined` after a successful hello, despite its
+    // declared AppsConnectionsOpenResponse return type. Stub the world, not our
+    // idea of it: a `{ ok: true }` stub is what let the .423 outage ship green.
+    if (attempts === 1) return undefined;
     throw make();
   };
   await receiver.start();
@@ -107,8 +110,11 @@ test('stop() during an in-flight connect leaves no live socket', async () => {
   let release!: () => void;
   (receiver.client as { start: () => Promise<unknown> }).start = async () => {
     attempts += 1;
-    if (attempts === 1) return { ok: true };
-    return new Promise((resolve) => { release = () => resolve({ ok: true }); });
+    // The real SDK fulfills `undefined` after a successful hello, despite its
+    // declared AppsConnectionsOpenResponse return type. Stub the world, not our
+    // idea of it: a `{ ok: true }` stub is what let the .423 outage ship green.
+    if (attempts === 1) return undefined;
+    return new Promise((resolve) => { release = () => resolve(undefined); });
   };
   await receiver.start();
   receiver.client.emit('disconnected');
@@ -143,7 +149,10 @@ async function delaysFor(random: () => number, windowMs = 220): Promise<number[]
   let attempts = 0;
   (receiver.client as { start: () => Promise<unknown> }).start = async () => {
     attempts += 1;
-    if (attempts === 1) return { ok: true };
+    // The real SDK fulfills `undefined` after a successful hello, despite its
+    // declared AppsConnectionsOpenResponse return type. Stub the world, not our
+    // idea of it: a `{ ok: true }` stub is what let the .423 outage ship green.
+    if (attempts === 1) return undefined;
     throw new Error('transient');
   };
   await receiver.start();
@@ -194,4 +203,35 @@ test('a fatal error during initial start() is loud and rejects', async () => {
     errors.some((m) => /failed permanently/i.test(m)),
     `startup give-up must be loud, saw: ${JSON.stringify(errors)}`,
   );
+});
+
+// The class boundary. `start()` is declared Promise<AppsConnectionsOpenResponse>
+// (Bolt's signature, un-widenable in an override) but genuinely resolves the
+// SDK's `undefined` on success. Nothing may branch on that value's truthiness.
+// A comment rots in one refactor; this goes red instead.
+test('start() resolves undefined, and the receiver is still connected (no truthiness gate)', async () => {
+  const receiver = new ResilientSocketModeReceiver({
+    appToken: 'xapp-test',
+    reconnectDelayMs: 2,
+    runtimeLogger: { log() {}, warn() {}, error() {} },
+  });
+  (receiver.client as { disconnect: () => Promise<void> }).disconnect = async () => {};
+  let starts = 0;
+  (receiver.client as { start: () => Promise<unknown> }).start = async () => {
+    starts += 1;
+    return undefined;
+  };
+
+  const result = await receiver.start();
+  assert.equal(result, undefined, 'start() must surface the SDK\'s undefined, not invent a payload');
+  assert.equal(starts, 1);
+
+  // The only observable proof that `undefined` was treated as CONNECTED rather
+  // than as "stopped": the receiver now reconnects on a disconnect, which
+  // onDisconnected only does when `started` is true.
+  receiver.client.emit('disconnected');
+  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(starts > 1, `an undefined success must mark the receiver started; saw ${starts} start() calls`);
+
+  await receiver.stop();
 });
