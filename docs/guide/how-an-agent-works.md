@@ -42,7 +42,7 @@ It helps to see the whole loop once. When you send the agent a message:
 4. **It replies in Slack.** When it has something for you, it posts back to the same channel or DM where
    you asked. The work is recorded, so you can review what it did.
 
-All of this runs on your own machine. For the moving parts and a diagram, see
+Anima, your agent, and its memory run on your own machine. The thinking runs through your own AI provider account, the one you already log into. For the moving parts and a diagram, see
 **[the architecture overview](../architecture/overview.md)**.
 
 ## How it remembers

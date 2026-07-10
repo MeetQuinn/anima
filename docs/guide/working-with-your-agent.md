@@ -5,7 +5,7 @@ the opposite. It is a teammate in the chat your team already uses. Tell it what 
 works from there, replying right in the channel or DM. If you can send a message, you can work with it. Nothing
 for your team to install, nothing to learn.
 
-> You talk in the chat. The work runs on your machine. Your agent lives in both, and remembers.
+> You talk in the chat. The work runs on your machine, and the thinking runs through your own AI provider account. Your agent lives in both, and remembers.
 
 Here's what your agent can do, and how to work with it day to day.
 
