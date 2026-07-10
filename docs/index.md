@@ -198,7 +198,7 @@ pageClass: landing-home
       <button
         class="landing-button landing-button-secondary landing-handoff-copy"
         type="button"
-        data-command="Found this: AI teammates that work in your Slack and keep shared context, running on your own machine. Worth a look for us? https://anima.meetquinn.ai"
+        data-command="Found this: AI teammates in your Slack. They run on your machine and keep the team's shared context in files you own; the AI itself runs through your own AI provider account. Worth a look for us? https://anima.meetquinn.ai"
         data-copied-label="Copied. Send it to your team."
       >Share it with your team</button>
     </div>
