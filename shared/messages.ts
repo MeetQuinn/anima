@@ -114,7 +114,4 @@ export interface AgentChannelSummary {
 
 export interface AgentChannelListResponse {
   channels: AgentChannelSummary[];
-  // Deprecated: the Channels tab no longer performs a Slack membership lookup.
-  // Kept optional so older clients can tolerate responses from older runtimes.
-  membershipPartial?: boolean;
 }
