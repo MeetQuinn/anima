@@ -83,6 +83,18 @@ test('SDK auto-reconnect stays disabled (a ws close surfaces as disconnected)', 
   assert.equal(sawDisconnected, true, 'close must emit disconnected, not trigger SDK auto-reconnect');
 });
 
+test('an undefined start() fulfillment is connected, not stopped', async () => {
+  const receiver = new ResilientSocketModeReceiver({
+    appToken: 'xapp-test',
+    runtimeLogger: { log() {}, warn() {}, error() {} },
+  });
+  (receiver.client as { disconnect: () => Promise<void> }).disconnect = async () => {};
+  (receiver.client as { start: () => Promise<unknown> }).start = async () => undefined;
+
+  assert.equal(await receiver.start(), undefined);
+  await receiver.stop();
+});
+
 test('stop() during an in-flight connect leaves no live socket', async () => {
   let disconnects = 0;
   const receiver = new ResilientSocketModeReceiver({

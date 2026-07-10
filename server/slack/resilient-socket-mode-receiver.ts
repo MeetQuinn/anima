@@ -44,10 +44,10 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
 
   override async start(): Promise<AppsConnectionsOpenResponse> {
     this.stopping = false;
-    const response = await this.connectUntilStopped();
-    if (!response) throw new Error('Slack Socket Mode startup stopped before connecting');
+    const connected = await this.connectUntilStopped();
+    if (!connected) throw new Error('Slack Socket Mode startup stopped before connecting');
     this.started = true;
-    return response;
+    return connected.response;
   }
 
   override async stop(): Promise<void> {
@@ -77,8 +77,8 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
 
   private async reconnectAfterDisconnect(): Promise<void> {
     try {
-      const response = await this.connectUntilStopped();
-      if (response && !this.stopping) {
+      const connected = await this.connectUntilStopped();
+      if (connected && !this.stopping) {
         this.runtimeLogger.log('Slack Socket Mode reconnected.');
       }
     } catch (error) {
@@ -86,12 +86,14 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
     }
   }
 
-  private async connectUntilStopped(): Promise<AppsConnectionsOpenResponse | undefined> {
+  private async connectUntilStopped(): Promise<{ response: AppsConnectionsOpenResponse } | undefined> {
     let failures = 0;
     while (!this.stopping) {
       try {
         const response = await this.client.start();
-        if (!this.stopping) return response;
+        // The SDK resolves undefined after a real successful hello despite its
+        // declared AppsConnectionsOpenResponse return type.
+        if (!this.stopping) return { response };
         await this.disconnectClient();
         return undefined;
       } catch (error) {
