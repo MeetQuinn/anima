@@ -273,6 +273,7 @@ function slackPreviewMessage(preview: NonNullable<SlackInboxItem['previews']>[nu
     ...(preview.authorName ? { authorName: preview.authorName } : {}),
     ...(preview.authorSubname ? { authorSubname: preview.authorSubname } : {}),
     ...(preview.channelId ? { channelId: preview.channelId } : {}),
+    ...(preview.files?.length ? { files: preview.files.map((file) => ({ ...file })) } : {}),
     ...(preview.fromUrl ? { fromUrl: preview.fromUrl } : {}),
     ...(preview.isPrivate ? { isPrivate: true } : {}),
     ...(preview.messageTs ? { messageTs: preview.messageTs } : {}),

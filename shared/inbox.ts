@@ -56,11 +56,18 @@ export type InboxFileMeta = z.infer<typeof InboxFileMeta>;
 export const SlackFileMeta = InboxFileMeta;
 export type SlackFileMeta = InboxFileMeta;
 
+export const SlackMessagePreviewFile = InboxFileMeta.extend({
+  permalink: z.string().optional(),
+});
+
+export type SlackMessagePreviewFile = z.infer<typeof SlackMessagePreviewFile>;
+
 export const SlackMessagePreview = z.object({
   authorId: z.string().optional(),
   authorName: z.string().optional(),
   authorSubname: z.string().optional(),
   channelId: z.string().optional(),
+  files: z.array(SlackMessagePreviewFile).optional(),
   fromUrl: z.string().optional(),
   isPrivate: z.boolean().optional(),
   messageTs: z.string().optional(),

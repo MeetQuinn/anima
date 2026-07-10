@@ -1,7 +1,8 @@
 import type { WebClient } from '@slack/web-api';
 
 import { errorMessage } from '../ids.js';
-import type { SlackMessagePreview } from '../../shared/inbox.js';
+import type { SlackMessagePreview, SlackMessagePreviewFile } from '../../shared/inbox.js';
+import { slackFileFromRaw, type SlackRawFile } from './slack.helper.js';
 
 // Slack message previews come exclusively from unfurl attachments Slack itself
 // delivers on the containing message. Nothing in this module reads the linked
@@ -37,6 +38,7 @@ export function slackMessagePreviewsFromAttachments(rawAttachments: unknown): Sl
     const authorId = stringField(attachment, 'author_id');
     const authorName = stringField(attachment, 'author_name');
     const authorSubname = stringField(attachment, 'author_subname');
+    const files = slackMessagePreviewFiles(attachment['files']);
     const messageTs = stringField(attachment, 'ts');
     const preview: SlackMessagePreview = {
       text,
@@ -44,6 +46,7 @@ export function slackMessagePreviewsFromAttachments(rawAttachments: unknown): Sl
       ...(authorName ? { authorName } : {}),
       ...(authorSubname ? { authorSubname } : {}),
       ...(channelId ? { channelId } : {}),
+      ...(files.length ? { files } : {}),
       ...(fromUrl ? { fromUrl } : {}),
       ...(attachment['private_channel_prompt'] === true ? { isPrivate: true } : {}),
       ...(messageTs ? { messageTs } : {}),
@@ -60,6 +63,25 @@ export function slackMessagePreviewsFromAttachments(rawAttachments: unknown): Sl
   }
 
   return previews;
+}
+
+function slackMessagePreviewFiles(rawFiles: unknown): SlackMessagePreviewFile[] {
+  if (!Array.isArray(rawFiles)) return [];
+  const files: SlackMessagePreviewFile[] = [];
+  const seen = new Set<string>();
+  for (const raw of rawFiles) {
+    if (!raw || typeof raw !== 'object') continue;
+    const record = raw as Record<string, unknown>;
+    const file = slackFileFromRaw(record as SlackRawFile);
+    if (!file || seen.has(file.id)) continue;
+    seen.add(file.id);
+    // The file id is enough for `anima file fetch`; never persist Slack's
+    // token-authenticated download URL in the inbox or provider prompt.
+    const { urlPrivate: _, ...meta } = file;
+    const permalink = stringField(record, 'permalink');
+    files.push({ ...meta, ...(permalink ? { permalink } : {}) });
+  }
+  return files;
 }
 
 const SLACK_MESSAGE_PREVIEW_RETRY_DELAYS_MS = [2_000, 5_000] as const;

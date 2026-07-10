@@ -28,6 +28,7 @@ export interface SlackRawFile {
   mimetype?: string;
   filetype?: string;
   size?: number;
+  permalink?: string;
   url_private?: string;
   url_private_download?: string;
 }
