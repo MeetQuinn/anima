@@ -13,9 +13,13 @@ interface LockOwner {
 
 const inProcessLocks = new Map<string, Promise<void>>();
 
-export async function withFileLock<T>(targetPath: string, operation: () => Promise<T>): Promise<T> {
+export async function withFileLock<T>(
+  targetPath: string,
+  writeRoot: string,
+  operation: () => Promise<T>,
+): Promise<T> {
   return chainInProcess(targetPath, async () => {
-    await ensureParentDirectory(targetPath);
+    await ensureParentDirectory(targetPath, writeRoot);
     const lockDir = `${targetPath}.lock`;
     await acquireLock(lockDir);
     try {
