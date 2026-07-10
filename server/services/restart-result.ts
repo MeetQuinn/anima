@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+import { errorMessage } from '../ids.js';
 import {
   LastServicesRestart,
   ServicesRestartSucceededResult,
@@ -109,8 +110,4 @@ function isErrno(error: unknown, code: string): boolean {
       && 'code' in error
       && (error as { code?: unknown }).code === code,
   );
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
