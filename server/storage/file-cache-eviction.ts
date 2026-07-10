@@ -2,6 +2,7 @@ import { readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { resolveAnimaHome } from '../anima-home.js';
+import { errorMessage } from '../ids.js';
 
 // Platform file caches are reconstructable, so keep each platform under 1 GiB.
 export const PLATFORM_FILE_CACHE_MAX_BYTES = 1024 * 1024 * 1024;
@@ -137,8 +138,4 @@ async function scanFileCacheEntry(entryDir: string): Promise<FileCacheEntry> {
   }
 
   return { mtimeMs, path: entryDir, sizeBytes };
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

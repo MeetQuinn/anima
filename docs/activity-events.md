@@ -10,7 +10,7 @@ It describes current behavior, not a wishlist. Where a field genuinely isn't
 available yet, it's called out under [Known gaps](#known-gaps).
 
 Sources: emitters in `server/runtime/*`, `server/providers/*-events.ts`,
-`server/tools/*`, `server/reminders/*`, `server/subscriptions/*`; display in
+`server/tools/*`, `server/reminders/*`, `server/inbox/subscription.service.ts`; display in
 `web/src/lib/activities.ts`, `web/src/lib/activity-feed.ts`,
 `web/src/views/agents/activity/*`.
 
