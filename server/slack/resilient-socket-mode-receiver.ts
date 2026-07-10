@@ -14,6 +14,10 @@ interface ResilientSocketModeReceiverOptions extends SocketModeReceiverOptions {
   runtimeLogger?: Pick<Console, 'error' | 'log' | 'warn'>;
 }
 
+type SocketConnectOutcome =
+  | { kind: 'connected'; response: AppsConnectionsOpenResponse }
+  | { kind: 'stopped' };
+
 // Slack's built-in reconnect path drops a rejected Promise when shutdown races
 // a reconnect. Own the retry loop so every connection attempt is observed.
 export class ResilientSocketModeReceiver extends SocketModeReceiver {
@@ -44,10 +48,10 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
 
   override async start(): Promise<AppsConnectionsOpenResponse> {
     this.stopping = false;
-    const connected = await this.connectUntilStopped();
-    if (!connected) throw new Error('Slack Socket Mode startup stopped before connecting');
+    const outcome = await this.connectUntilStopped();
+    if (outcome.kind === 'stopped') throw new Error('Slack Socket Mode startup stopped before connecting');
     this.started = true;
-    return connected.response;
+    return outcome.response;
   }
 
   override async stop(): Promise<void> {
@@ -77,8 +81,8 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
 
   private async reconnectAfterDisconnect(): Promise<void> {
     try {
-      const connected = await this.connectUntilStopped();
-      if (connected && !this.stopping) {
+      const outcome = await this.connectUntilStopped();
+      if (outcome.kind === 'connected' && !this.stopping) {
         this.runtimeLogger.log('Slack Socket Mode reconnected.');
       }
     } catch (error) {
@@ -86,18 +90,18 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
     }
   }
 
-  private async connectUntilStopped(): Promise<{ response: AppsConnectionsOpenResponse } | undefined> {
+  private async connectUntilStopped(): Promise<SocketConnectOutcome> {
     let failures = 0;
     while (!this.stopping) {
       try {
         const response = await this.client.start();
         // The SDK resolves undefined after a real successful hello despite its
         // declared AppsConnectionsOpenResponse return type.
-        if (!this.stopping) return { response };
+        if (!this.stopping) return { kind: 'connected', response };
         await this.disconnectClient();
-        return undefined;
+        return { kind: 'stopped' };
       } catch (error) {
-        if (this.stopping) return undefined;
+        if (this.stopping) return { kind: 'stopped' };
         if (fatalSocketStartError(error)) {
           this.runtimeLogger.error(`Slack Socket Mode connection failed permanently: ${errorMessage(error)}`);
           throw error;
@@ -113,10 +117,10 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
           `Slack Socket Mode connection failed; retrying in ${delayMs}ms: ${errorMessage(error)}`,
         );
         await this.waitForRetry(delayMs);
-        if (this.stopping) return undefined;
+        if (this.stopping) return { kind: 'stopped' };
       }
     }
-    return undefined;
+    return { kind: 'stopped' };
   }
 
   private waitForRetry(delayMs: number): Promise<void> {
