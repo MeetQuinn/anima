@@ -9,10 +9,44 @@ and what each row shows**.
 It describes current behavior, not a wishlist. Where a field genuinely isn't
 available yet, it's called out under [Known gaps](#known-gaps).
 
-Sources: emitters in `server/runtime/*`, `server/providers/*-events.ts`,
-`server/tools/*`, `server/reminders/*`, `server/inbox/subscription.service.ts`; display in
-`web/src/lib/activities.ts`, `web/src/lib/activity-feed.ts`,
+## Sources
+
+Ten modules write to the activity log. This is the complete set, not a sample:
+
+| emitter                                         | writes                            |
+| ----------------------------------------------- | --------------------------------- |
+| `server/agents/agent.service.ts`                | agent lifecycle                   |
+| `server/asks/interactive-ask.service.ts`        | `anima ask` prompts and answers   |
+| `server/inbox/attention-suggestion-activity.ts` | attention suggestions             |
+| `server/inbox/slack-subscriber.ts`              | subscription changes from Slack   |
+| `server/inbox/subscription.service.ts`          | subscription changes from the CLI |
+| `server/memory/memory-coherence-outcome.ts`     | memory pass outcomes              |
+| `server/reminders/reminder.activity.ts`         | reminder schedule, fire, cancel   |
+| `server/runtime/activity.ts`                    | turns, messages, provider events  |
+| `server/slack-interactions/shortcut.service.ts` | Slack shortcut invocations        |
+| `server/tools/tool-context.ts`                  | tool steps                        |
+
+Display: `web/src/lib/activities.ts`, `web/src/lib/activity-feed.ts`,
 `web/src/views/agents/activity/*`.
+
+**Verified by** `server/tests/activity-emitters.test.ts`, which re-derives this set
+from the sources and fails when it changes. **Re-derive it yourself:**
+
+```sh
+# every module importing the activity service, by SPECIFIER, that also writes
+grep -rlE "from '[^']*activities/activity\.service\.js'" --include='*.ts' server \
+  | grep -v '/tests/' | grep -v 'activities/activity.service.ts' \
+  | xargs grep -lE '\.record\(|ActivityRecorder' | sort
+```
+
+Match the **module specifier**, never the imported name. `server/reminders/` records
+through a `ReminderActivityRecorder` and never mentions `activityServiceForAgent`, so
+a grep for that symbol silently misses it. Importing the service to _read_ it
+(`server/web/agent-routes.ts`, `server/runtime/item-activities.ts`,
+`server/diagnostics/*`, `server/memory/memory-coherence-scheduler.ts`) is not
+emitting; the test pins that split too.
+
+Adding emitter #11 turns the test red. Add it here in the same commit.
 
 ## What the Activity tab is
 
