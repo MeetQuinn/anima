@@ -2,9 +2,19 @@
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 
 const distTestsDir = 'dist/server/tests';
 const sourceTestsDir = 'server/tests';
+const minimumNodeMajor = 24;
+
+const currentNodeMajor = Number.parseInt(process.versions.node.split('.')[0] ?? '', 10);
+if (!Number.isFinite(currentNodeMajor) || currentNodeMajor < minimumNodeMajor) {
+  throw new Error(
+    `Anima repository tests require Node.js ${minimumNodeMajor} or newer; ` +
+    `current runtime is ${process.version}. Use the version pinned in .nvmrc.`,
+  );
+}
 
 const quarantine = [
   // No quarantined tests.
@@ -67,6 +77,7 @@ const groups = {
     'state-cache.test.js',
     'subscriptions.test.js',
     'system-service.test.js',
+    'test-runner.test.js',
     'url-routes.test.js',
     'write-root.test.js',
   ],
@@ -96,63 +107,133 @@ const groups = {
   quarantine,
 };
 
-auditTierMembership();
-
 groups.fast = [...groups.unit, ...groups.api];
 groups.all = [...groups.unit, ...groups.api, ...groups.runtime].sort();
 
-const timeouts = {
-  unit: 30_000,
-  api: 30_000,
-  fast: 45_000,
-  runtime: 120_000,
-  all: 150_000,
+const timeoutProfiles = {
+  unit: { perTestMs: 30_000, suiteBaseMs: 30_000, suitePerFileMs: 2_000 },
+  api: { perTestMs: 30_000, suiteBaseMs: 30_000, suitePerFileMs: 5_000 },
+  fast: { perTestMs: 45_000, suiteBaseMs: 45_000 },
+  runtime: { perTestMs: 60_000, suiteBaseMs: 60_000, suitePerFileMs: 15_000 },
+  all: { perTestMs: 60_000, suiteBaseMs: 60_000 },
 };
 
-const group = process.argv[2] ?? 'fast';
-const tests = groups[group];
-if (!tests) {
-  console.error(`Unknown test group "${group}". Expected one of: ${Object.keys(groups).join(', ')}`);
-  process.exit(2);
+const fallbackTimeoutProfile = {
+  perTestMs: 60_000,
+  suiteBaseMs: 60_000,
+  suitePerFileMs: 5_000,
+};
+
+export function testTimeoutsFor(group, testFiles) {
+  const profile = timeoutProfiles[group] ?? fallbackTimeoutProfile;
+  const suiteGrowthMs = group === 'fast' || group === 'all'
+    ? testFiles.reduce((total, file) => total + compositeTierFileBudgetMs(group, file), 0)
+    : testFiles.length * profile.suitePerFileMs;
+  const derivedSuiteMs = profile.suiteBaseMs + suiteGrowthMs;
+  return {
+    perTestMs: profile.perTestMs,
+    // Let Node's named per-test timeout fire and flush before the process-tree
+    // watchdog becomes eligible. The suite limit also grows with serial files.
+    suiteMs: Math.max(derivedSuiteMs, profile.perTestMs + 30_000),
+  };
 }
 
-const timeoutMs = timeouts[group] ?? 60_000;
-const args = [
-  '--test',
-  `--test-timeout=${timeoutMs}`,
-  '--test-concurrency=1',
-  ...tests.map((name) => join(distTestsDir, name)),
-];
-
-console.log(`Running ${group} tests (${tests.length} files, timeout ${Math.round(timeoutMs / 1000)}s)`);
-const child = spawn(process.execPath, args, {
-  detached: process.platform !== 'win32',
-  stdio: 'inherit',
-});
-
-let didTimeout = false;
-const timer = setTimeout(() => {
-  didTimeout = true;
-  console.error(`\n${group} tests exceeded ${Math.round(timeoutMs / 1000)}s; terminating test process tree.`);
-  killChildTree(child, 'SIGTERM');
-  setTimeout(() => killChildTree(child, 'SIGKILL'), 2_000).unref();
-}, timeoutMs).unref();
-
-child.on('exit', (code, signal) => {
-  clearTimeout(timer);
-  if (didTimeout) process.exit(124);
-  if (signal) {
-    console.error(`Test runner exited from signal ${signal}`);
-    process.exit(1);
+export function runTestFiles({ group, testPaths, perTestMs, suiteMs }) {
+  if (!Number.isFinite(perTestMs) || perTestMs <= 0) {
+    throw new Error(`perTestMs must be positive; received ${perTestMs}`);
   }
-  process.exit(code ?? 1);
-});
+  if (!Number.isFinite(suiteMs) || suiteMs <= perTestMs) {
+    throw new Error(
+      `suiteMs must exceed perTestMs so Node can report a named test timeout first; ` +
+      `received suiteMs=${suiteMs}, perTestMs=${perTestMs}`,
+    );
+  }
 
-child.on('error', (error) => {
-  clearTimeout(timer);
-  console.error(error);
-  process.exit(1);
-});
+  const args = [
+    '--test',
+    `--test-timeout=${perTestMs}`,
+    '--test-concurrency=1',
+    ...testPaths,
+  ];
+
+  console.log(
+    `Running ${group} tests (${testPaths.length} files, ` +
+    `per-test ${formatSeconds(perTestMs)}, suite ${formatSeconds(suiteMs)})`,
+  );
+  const child = spawn(process.execPath, args, {
+    detached: process.platform !== 'win32',
+    stdio: 'inherit',
+  });
+
+  return new Promise((resolve) => {
+    let didTimeout = false;
+    let forceKillTimer;
+    const timer = setTimeout(() => {
+      didTimeout = true;
+      console.error(
+        `\n${group} tests exceeded suite budget ${formatSeconds(suiteMs)}; ` +
+        'terminating test process tree.',
+      );
+      killChildTree(child, 'SIGTERM');
+      forceKillTimer = setTimeout(() => killChildTree(child, 'SIGKILL'), 2_000);
+      forceKillTimer.unref();
+    }, suiteMs);
+    timer.unref();
+
+    child.on('exit', (code, signal) => {
+      clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+      if (didTimeout) {
+        resolve(124);
+        return;
+      }
+      if (signal) {
+        console.error(`Test runner exited from signal ${signal}`);
+        resolve(1);
+        return;
+      }
+      resolve(code ?? 1);
+    });
+
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+      console.error(error);
+      resolve(1);
+    });
+  });
+}
+
+async function main() {
+  auditTierMembership();
+
+  const group = process.argv[2] ?? 'fast';
+  const tests = groups[group];
+  if (!tests) {
+    console.error(`Unknown test group "${group}". Expected one of: ${Object.keys(groups).join(', ')}`);
+    return 2;
+  }
+
+  const { perTestMs, suiteMs } = testTimeoutsFor(group, tests);
+  return runTestFiles({
+    group,
+    perTestMs,
+    suiteMs,
+    testPaths: tests.map((name) => join(distTestsDir, name)),
+  });
+}
+
+function compositeTierFileBudgetMs(group, file) {
+  const owners = group === 'fast' ? ['unit', 'api'] : ['unit', 'api', 'runtime'];
+  for (const owner of owners) {
+    if (groups[owner].includes(file)) return timeoutProfiles[owner].suitePerFileMs;
+  }
+  throw new Error(`Cannot derive ${group}-tier timeout budget for unknown test file: ${file}`);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = await main();
+}
 
 function auditTierMembership() {
   const sourceTests = readdirSync(sourceTestsDir)
@@ -205,4 +286,8 @@ function killChildTree(childProcess, signal) {
   } catch (error) {
     if (error?.code !== 'ESRCH') throw error;
   }
+}
+
+function formatSeconds(timeoutMs) {
+  return timeoutMs < 1_000 ? `${timeoutMs}ms` : `${Math.round(timeoutMs / 1000)}s`;
 }
