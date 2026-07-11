@@ -12,6 +12,7 @@ import {
   updateAgentProvider,
 } from '@/api/agents';
 import { fetchProviderAvailability, fetchWorkspacePlatform } from '@/api/system';
+import { queryClient } from '@/query-client';
 import { queryKeys } from '@/lib/query-keys';
 import { useAgentStatuses } from '@/hooks/useAgentDirectory';
 import { useNow } from '@/hooks/useNow';
@@ -228,6 +229,12 @@ export default function Profile() {
     // Label-only: home is untouched, so no idle-apply notice is needed.
     await assignAgentTeam(agentId, nextTeamId);
     refreshAgentData(agentId);
+    // The dangling-team warning shown below this field derives from the teams
+    // query, which refreshAgentData does not touch. Invalidate it so following
+    // the warning's own instruction ("reassign it above to repair") clears the
+    // warning immediately, instead of leaving a false one at the action site
+    // until an unrelated teams refetch (window focus, etc.).
+    queryClient.invalidateQueries({ queryKey: queryKeys.teams() });
   }
 
   async function commitProviderEnv(env: Record<string, string | null>) {
