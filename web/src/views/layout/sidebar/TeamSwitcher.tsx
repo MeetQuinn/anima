@@ -68,16 +68,16 @@ export function TeamSwitcher({
           {label}
         </span>
         {/* Caret sits right next to the name (not at the far edge, where the
-            sidebar-collapse control lives). Rests faint in single-team mode,
-            brightens on hover, and rotates when the menu is open. */}
+            sidebar-collapse control lives). Hidden at rest so the header reads
+            as clean text; reveals on hover or keyboard focus of the trigger,
+            and brightens + rotates when the menu is open. Keeps its w-4 box
+            even when invisible so the label never shifts. */}
         <ChevronDown
           className={[
             'h-4 w-4 shrink-0 text-text-on-spine-muted transition-all duration-150',
             open
               ? 'rotate-180 opacity-100'
-              : grouped
-                ? 'opacity-70'
-                : 'opacity-30 group-hover:opacity-70',
+              : 'opacity-0 group-hover:opacity-70 group-focus-visible:opacity-70',
           ].join(' ')}
         />
       </button>
