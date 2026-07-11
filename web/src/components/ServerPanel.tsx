@@ -96,7 +96,9 @@ export default function ServerPanel({ onClose }: Props) {
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
         {/* ── Panel header ── */}
-        <div className="flex h-10 shrink-0 items-center justify-between border-b border-border-soft px-3">
+        {/* Mobile full-screen pages share the home header height (h-14 / 56px);
+            the desktop modal keeps its compact h-10 chrome. */}
+        <div className="flex h-14 shrink-0 items-center justify-between border-b border-border-soft px-3 md:h-10">
           <span className="caps text-text">Server</span>
           <button
             onClick={onClose}

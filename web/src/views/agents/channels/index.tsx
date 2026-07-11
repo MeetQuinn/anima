@@ -220,16 +220,18 @@ function ConversationPane({
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-surface">
-      {/* Detail header. Fixed h-11 so it lines up exactly with the master-list
-          header across panes, regardless of DM avatar / muted-pill content. */}
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border-soft px-4 md:px-6">
+      {/* Detail header. Fixed h-11 on desktop so it lines up exactly with the
+          master-list header across panes, regardless of DM avatar / muted-pill
+          content. Mobile shows one pane at a time, so it takes the taller h-12
+          instead: the back button gets a full 44px touch target. */}
+      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border-soft px-4 md:h-11 md:px-6">
         <button
           type="button"
           onClick={onBack}
-          className="-ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-surface-raised/60 hover:text-text md:hidden"
+          className="-ml-2 flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-surface-raised/60 hover:text-text md:hidden"
           aria-label="Back to channel list"
         >
-          <ChevronLeft className="h-4 w-4" aria-hidden />
+          <ChevronLeft className="h-5 w-5" aria-hidden />
         </button>
         {channel.kind === 'dm' && <DmAvatar channel={channel} size="md" />}
         <span className="min-w-0 flex-1 truncate font-sans text-[13px] font-medium text-text">
@@ -351,7 +353,9 @@ export default function Channels() {
           selected ? 'hidden md:flex' : 'flex',
         ].join(' ')}
       >
-        <div className="flex h-11 shrink-0 items-center border-b border-border-soft px-4">
+        {/* h-12 on mobile / h-11 on desktop, mirroring the detail header so the
+            two panes stay height-aligned on both surfaces. */}
+        <div className="flex h-12 shrink-0 items-center border-b border-border-soft px-4 md:h-11">
           <span className="chrome text-[11px] font-medium uppercase tracking-[0.12em] text-text-muted">
             Channels &amp; DMs
           </span>
