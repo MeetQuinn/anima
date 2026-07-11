@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { after, before, mock } from 'node:test';
@@ -25,6 +25,8 @@ import { withAnimaHome } from './anima-home.js';
 import type { Activity } from '../../shared/activity.js';
 import type { InboxItem } from '../../shared/inbox.js';
 import { sleep } from './helpers/harness.js';
+import { SecretHandoffPendingStore } from '../env/secret-handoff-store.js';
+import { createHandoffKeyPair, createHandoffRequest } from '../../shared/secret-handoff.js';
 
 // Several RuntimeHost tests reach the health and restart stores through
 // reconcileOnce(), which - unlike start() - does not provision. They used to
@@ -100,6 +102,39 @@ test('first-class anima CLI command detection covers plain agent-facing tools', 
   assert.equal(isFirstClassAnimaCliCommand('anima subscription mute --channel C123'), true);
   assert.equal(isFirstClassAnimaCliCommand('anima message send --channel C123'), true);
   assert.equal(isFirstClassAnimaCliCommand('cd ~/anima && ANIMA_AGENT_ID=scout anima ask --question "Pick"'), false);
+});
+
+test('runtime host startup reconciliation deletes expired handoff private keys', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-handoff-cleanup-'));
+  try {
+    const keys = createHandoffKeyPair();
+    const pending = new SecretHandoffPendingStore('alpha', stateDir);
+    const request = createHandoffRequest({
+      recipientAgentId: 'alpha',
+      targetKey: 'SERVICE_TOKEN',
+      purpose: 'Expired runtime cleanup fixture',
+      sender: { kind: 'agent', agentId: 'bravo' },
+      now: new Date(Date.now() - 2 * 60 * 60 * 1000),
+      expiresAt: new Date(Date.now() - 60 * 60 * 1000),
+      publicKey: keys.publicKey,
+    });
+    await pending.create(request, keys.privateKey);
+    const path = pending.pendingPath(request.requestId);
+    assert.equal((await stat(path)).isFile(), true);
+
+    const host = new RuntimeHost({}, {
+      animaHome: stateDir,
+      ensureDefaultSkills: async () => {},
+      loadAgents: async () => [runtimeHostAgent('alpha', { connected: false, enabled: false })],
+      logger: silentLogger,
+      validateAgent: async () => {},
+    });
+    await host.reconcileOnce();
+
+    await assert.rejects(() => stat(path), /ENOENT/);
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 test('recordRuntimeEvent skips runtime stats updates for noise events', async () => {

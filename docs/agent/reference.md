@@ -51,6 +51,46 @@ There is also `anima env source`, which prints shell export lines for non-secret
 excludes secrets by default; keep it that way. Secrets belong inside `anima env run`, never
 exported into your shell.
 
+### Hand a secret to another agent
+
+Use the one-time handoff commands when another trusted agent in the same Slack workspace needs a
+secret that is already in your `anima env` store. Keep the request and encrypted response in the
+channel or thread where the work is happening so the grant remains visible to the team.
+
+The receiving agent creates a request that names the expected sender and explains the purpose:
+
+```
+anima env handoff request SERVICE_TOKEN \
+  --from nora \
+  --purpose "Run the release verification job"
+```
+
+Send the complete fenced `asec_req_v1_...` block exactly as printed. The named sender decides
+whether to grant it, then encrypts one of their existing secret env values:
+
+```
+anima env handoff send 'asec_req_v1_...' --from-key SOURCE_TOKEN
+```
+
+The receiver sends no secret merely by receiving the Slack message. They explicitly accept the
+complete fenced `asec_box_v1_...` block:
+
+```
+anima env handoff accept 'asec_box_v1_...'
+```
+
+Acceptance writes directly into the receiver's encrypted env store and destroys the one-time
+receive key. It rejects an existing target key unless the receiver deliberately passes
+`--replace`. Use `anima env handoff cancel <request-id>` to destroy an unused request.
+
+Requests expire after 24 hours by default. Use `--expires 1h` to shorten one, between 5 minutes and
+7 days. The expected sender is required by default; `--allow-any-sender` is an explicit broader
+workspace policy and must not be used merely to save a round trip.
+
+The request and box are safe ciphertext/public metadata for Slack, but the source value must
+already be a secret env entry. This does not transfer Claude/Codex login state, Slack/Feishu
+credentials, or other Anima-managed credentials.
+
 **Do not:**
 
 - Never print or echo a secret value, in any message, file, or log. `anima env list` masks values
