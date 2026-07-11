@@ -139,16 +139,19 @@ export type RenderableFile = Pick<
   'name' | 'kind' | 'size' | 'language' | 'content' | 'truncated'
 >;
 
-function makeLinkComponent(
-  links: FileLinks,
-  currentFilePath: string,
-  navigate: ReturnType<typeof useNavigate>,
-) {
+function makeLinkComponent(links: FileLinks, currentFilePath: string) {
   return function FileLink({
     href,
     children,
     ...rest
   }: React.ComponentPropsWithoutRef<'a'>) {
+    // useNavigate lives HERE, not threaded in from FileContent: its identity
+    // changes with every router location update, and a changed argument would
+    // recreate the markdownComponents memo. A components-prop change makes
+    // ReactMarkdown REMOUNT the whole rendered tree - detaching a deep-link
+    // scroll target mid-flight and orphaning captured heading nodes (#493
+    // gate). Inside the component it is just a hook read; identity stays put.
+    const navigate = useNavigate();
     // In-page anchor (TOC, heading references)
     if (!href || href.startsWith('#')) {
       return <a href={href} {...rest}>{children}</a>;
@@ -204,7 +207,6 @@ export function FileContent({
   mode?: ViewMode;
   onModeChange?: (mode: ViewMode) => void;
 }) {
-  const navigate = useNavigate();
   const links = useMemo<FileLinks>(
     () =>
       linksProp ?? {
@@ -219,12 +221,24 @@ export function FileContent({
     if (file?.kind !== 'markdown' || !file.content) return { entries: null, body: '' };
     return parseFrontmatter(file.content);
   }, [file]);
-  // Map TOC heading ids by line against the same body ReactMarkdown renders
-  // (frontmatter-stripped), so node line numbers line up after the fence is cut.
-  const headingIdsByLine = useMemo(() => {
-    if (file?.kind !== 'markdown' || !markdownBody) return new Map<number, string>();
-    return new Map(extractToc(markdownBody).map((entry) => [entry.line, entry.id]));
+  // TOC of the rendered body: keys heading ids by line for the heading
+  // components, and feeds the wide-screen "On this page" rail.
+  const tocEntries = useMemo(() => {
+    if (file?.kind !== 'markdown' || !markdownBody) return [];
+    return extractToc(markdownBody);
   }, [file, markdownBody]);
+  const headingIdsByLine = useMemo(
+    () => new Map(tocEntries.map((entry) => [entry.line, entry.id])),
+    [tocEntries],
+  );
+  // Which heading the reader is at, for the rail's active highlight. Driven by
+  // the same scroll handler that keeps the URL hash aligned.
+  const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null);
+  // The rail earns its space only on docs long enough to need scanning.
+  const showTocRail = tocEntries.length >= 3;
+  const minTocDepth = tocEntries.length
+    ? Math.min(...tocEntries.map((entry) => entry.depth))
+    : 1;
 
   // Preview / Code toggle for Markdown. Land in Code mode when deep-linked to a
   // `#L<n>` source line; otherwise honour the session's last choice.
@@ -246,18 +260,39 @@ export function FileContent({
   );
   const showAsCode = file?.kind === 'markdown' && mode === 'code';
 
-  // Scroll to hash target after markdown renders.
+  // A programmatic smooth scroll in flight (deep-link landing or TOC click).
+  // While set, the scroll-sync effect must not rewrite the hash or the rail
+  // highlight from intermediate positions - otherwise the mid-flight sync
+  // replaces the target hash, and any effect re-run (file identity settling,
+  // query refetch) re-reads the stolen hash and re-targets the wrong heading.
+  // Cleared on arrival, or by the deadline in case the scroll gets aborted.
+  const pendingScrollRef = useRef<{ id: string; until: number } | null>(null);
+  const beginProgrammaticScroll = useCallback((id: string) => {
+    pendingScrollRef.current = { id, until: Date.now() + 2000 };
+  }, []);
+
+  // Scroll to hash target after markdown renders. This effect OWNS the
+  // incoming deep link: it seeds the rail highlight and lands the scroll. The
+  // scroll-driven sync below must never geometry-seed over it - a fresh load
+  // sits at scrollTop 0, so a geometry seed would rewrite a valid deep link
+  // to the first heading before this scroll fires (#493 gate, Milo).
   useEffect(() => {
     if (file?.kind !== 'markdown' || mode !== 'preview') return;
     const hash = window.location.hash.slice(1);
     if (!hash) return;
     const el = document.getElementById(hash);
     if (el) {
-      // Small delay to let ReactMarkdown finish rendering.
-      const t = setTimeout(() => el.scrollIntoView({ behavior: 'smooth' }), 100);
+      beginProgrammaticScroll(hash);
+      // Small delay to let ReactMarkdown finish rendering. The rail highlight
+      // seeds here too (not synchronously) so the effect never cascades a
+      // render; 100ms later the scroll starts anyway.
+      const t = setTimeout(() => {
+        if (tocEntries.some((entry) => entry.id === hash)) setActiveHeadingId(hash);
+        el.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
       return () => clearTimeout(t);
     }
-  }, [file, mode]);
+  }, [file, mode, tocEntries, beginProgrammaticScroll]);
 
   // Keep the hash aligned with the heading closest to the top of the markdown
   // scroller. This preserves shareable anchors while reading long KB docs.
@@ -266,27 +301,52 @@ export function FileContent({
     const scroller = scrollRef.current;
     if (!scroller) return;
     const root: HTMLDivElement = scroller;
-    const headings = Array.from(
-      root.querySelectorAll<HTMLElement>('h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]'),
-    );
-    if (headings.length === 0) return;
+    // Query per sync, not once at arm time: a captured NodeList goes stale if
+    // ReactMarkdown remounts its tree (all rects read 0 for detached nodes,
+    // which made "active" resolve to the LAST heading - #493 gate).
+    const headingsOf = () =>
+      Array.from(
+        root.querySelectorAll<HTMLElement>('h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]'),
+      );
 
     let frame = 0;
-    function syncHash() {
+    function syncHash(writeHash: boolean) {
       frame = 0;
+      const headings = headingsOf();
+      if (headings.length === 0) return;
       const edge = root.getBoundingClientRect().top + 24;
       let active = headings[0];
       for (const heading of headings) {
         if (heading.getBoundingClientRect().top <= edge) active = heading;
         else break;
       }
-      if (active?.id) replaceLocationHash(active.id);
+      if (!active?.id) return;
+      const pending = pendingScrollRef.current;
+      if (pending && Date.now() < pending.until) {
+        // A programmatic scroll owns the hash until it lands on its target.
+        if (active.id !== pending.id) return;
+        pendingScrollRef.current = null;
+      } else {
+        pendingScrollRef.current = null;
+      }
+      if (writeHash) replaceLocationHash(active.id);
+      setActiveHeadingId(active.id);
     }
     function onScroll() {
       if (frame) return;
-      frame = window.requestAnimationFrame(syncHash);
+      frame = window.requestAnimationFrame(() => syncHash(true));
     }
 
+    // Seed the rail highlight for the current position, then follow
+    // scrolling. The seed only paints the rail - it never writes the URL, so
+    // an incoming hash survives: a heading hash is landed by the deep-link
+    // effect above, and an unknown hash (stale slug, non-heading anchor) is
+    // simply preserved instead of being rewritten to the first heading.
+    // Scroll-driven passes DO write, keeping the anchor shareable mid-read.
+    const incoming = window.location.hash.slice(1);
+    if (!incoming || !headingsOf().some((heading) => heading.id === incoming)) {
+      frame = window.requestAnimationFrame(() => syncHash(false));
+    }
     root.addEventListener('scroll', onScroll, { passive: true });
     return () => {
       root.removeEventListener('scroll', onScroll);
@@ -298,7 +358,7 @@ export function FileContent({
   // all links on every parent re-render while the file content stays the same).
   const markdownComponents = useMemo(
     () => ({
-      a: makeLinkComponent(links, filePath, navigate),
+      a: makeLinkComponent(links, filePath),
       ...makeHeadingComponents(headingIdsByLine),
       img: ({ src, alt }: React.ComponentPropsWithoutRef<'img'>) => {
         let resolvedSrc = src ?? '';
@@ -430,7 +490,7 @@ export function FileContent({
         );
       },
     }),
-    [headingIdsByLine, links, filePath, navigate],
+    [headingIdsByLine, links, filePath],
   );
 
   if (error) {
@@ -533,25 +593,81 @@ export function FileContent({
           // Raw source includes frontmatter, matching what GitHub shows.
           <CodeView body={file.content} language="markdown" />
         ) : (
-          <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-            {/* Rendered outside .md-prose so the metadata table keeps its own
-                styling instead of inheriting the Markdown code-block / table look. */}
-            {frontmatter && <FrontmatterTable entries={frontmatter} />}
-            <div className="md-prose">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
-                rehypePlugins={[
-                  rehypeRaw,
-                  rehypeGithubAlerts,
-                  [rehypeSanitize, sanitizeSchema],
-                  // KaTeX last: it renders trusted markup from the (already
-                  // sanitized) LaTeX text, so its output bypasses sanitize.
-                  rehypeKatex,
-                ]}
-                components={markdownComponents}
-              >
-                {markdownBody}
-              </ReactMarkdown>
+          <div
+            ref={scrollRef}
+            className="@container min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-10 md:py-10"
+          >
+            {/* Reading measure: rendered Markdown is a document, so the column
+                caps near 72ch and centers in the panel instead of stretching to
+                the viewer's width - unbounded lines were hitting 160+ characters
+                on wide screens. Code view stays full-width (source, not prose).
+                When the panel itself is wide enough (container query - the tree
+                is resizable, so viewport width says nothing), the reclaimed
+                space carries an "On this page" rail for long docs. */}
+            <div
+              className={[
+                'mx-auto flex w-full max-w-[740px] gap-12',
+                showTocRail ? '@min-[1068px]:max-w-[988px]' : '',
+              ].join(' ')}
+            >
+              <div className="w-full min-w-0 max-w-[740px] flex-1">
+                {/* Rendered outside .md-prose so the metadata table keeps its own
+                    styling instead of inheriting the Markdown code-block / table look. */}
+                {frontmatter && <FrontmatterTable entries={frontmatter} />}
+                <div className="md-prose">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
+                    rehypePlugins={[
+                      rehypeRaw,
+                      rehypeGithubAlerts,
+                      [rehypeSanitize, sanitizeSchema],
+                      // KaTeX last: it renders trusted markup from the (already
+                      // sanitized) LaTeX text, so its output bypasses sanitize.
+                      rehypeKatex,
+                    ]}
+                    components={markdownComponents}
+                  >
+                    {markdownBody}
+                  </ReactMarkdown>
+                </div>
+              </div>
+              {showTocRail && (
+                <nav
+                  aria-label="On this page"
+                  className="sticky top-2 hidden w-[200px] shrink-0 self-start @min-[1068px]:block"
+                >
+                  <div className="chrome mb-3 text-[10px] uppercase tracking-[0.14em] text-text-muted">
+                    On this page
+                  </div>
+                  <ul className="space-y-1.5 border-l border-border-soft pl-3">
+                    {tocEntries.map((entry) => (
+                      <li key={`${entry.id}-${entry.line}`}>
+                        <a
+                          href={`#${entry.id}`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            beginProgrammaticScroll(entry.id);
+                            document
+                              .getElementById(entry.id)
+                              ?.scrollIntoView({ behavior: 'smooth' });
+                            replaceLocationHash(entry.id);
+                            setActiveHeadingId(entry.id);
+                          }}
+                          className={[
+                            'block truncate font-sans text-[12px] leading-snug transition-colors',
+                            activeHeadingId === entry.id
+                              ? 'text-accent'
+                              : 'text-text-muted hover:text-text',
+                          ].join(' ')}
+                          style={{ paddingLeft: `${(entry.depth - minTocDepth) * 12}px` }}
+                        >
+                          {entry.text}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </nav>
+              )}
             </div>
           </div>
         )}

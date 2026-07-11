@@ -370,8 +370,22 @@ body::before {
    declared here, scoped under `.md-prose`. Mirrors the paper/ink palette. */
 .md-prose {
   color: var(--color-text);
-  font-size: 16px;
-  line-height: 1.7;
+  /* Sans reading body (totoday's pick over a Fraunces body, 07-11): the KB is
+     technical documentation, and Fraunces' high stroke contrast reads grey in
+     running text - the "somehow hard to read" report. Headings keep Fraunces
+     via --font-display, so the editorial identity lives in the display sizes.
+     The CJK step is explicit: without it, CJK glyphs fall through to the
+     platform default (Songti SC / SimSun via generic keyword), whose hairline
+     strokes are worse still at text sizes. */
+  font-family:
+    'Albert Sans Variable', 'Albert Sans',
+    'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Microsoft YaHei',
+    ui-sans-serif, system-ui, sans-serif;
+  /* 17px/1.75: long-form body size. 16px was UI-density carried into a reading
+     surface; at the 740px measure it also ran ~90 Latin chars a line. 1.75
+     gives mixed CJK/Latin lines room - CJK wants more leading than Latin. */
+  font-size: 17px;
+  line-height: 1.75;
   overflow-wrap: break-word;
 }
 .md-prose > :first-child {
@@ -439,7 +453,9 @@ body::before {
   padding: 0.2em 1em;
   border-left: 3px solid var(--color-border-strong);
   color: var(--color-text-muted);
-  font-style: italic;
+  /* No italic: CJK has no italic forms, so browsers synthesize an oblique
+     slant - a whole slanted Chinese intro paragraph is what "looks off" on
+     mixed-language docs. The border + muted ink already mark the quote. */
 }
 /* GitHub-style alerts ( > [!NOTE] / [!TIP] / [!IMPORTANT] / [!WARNING] / [!CAUTION] ).
    Tagged by the rehypeGithubAlerts transform; the React blockquote component

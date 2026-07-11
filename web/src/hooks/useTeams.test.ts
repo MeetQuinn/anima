@@ -1,5 +1,5 @@
 import { createElement, type ReactNode } from 'react';
-import { MemoryRouter } from 'react-router-dom';
+import { BrowserRouter, MemoryRouter } from 'react-router-dom';
 import { renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -48,6 +48,27 @@ function wrapperAt(url: string) {
 function render(url: string) {
   return renderHook(() => useCurrentTeam(TEAMS), { wrapper: wrapperAt(url) });
 }
+
+describe('useCurrentTeam URL canonicalization', () => {
+  it('preserves the location hash when writing ?team= at boot (#493 deep-link)', () => {
+    // A fresh deep link (/kb/...#heading) reaches the boot canonicalization
+    // BEFORE the file body loads. Writing ?team= must not drop the hash —
+    // setSearchParams did, which destroyed heading deep links (#493 gate).
+    // BrowserRouter (not MemoryRouter) so the hook's window.location reads and
+    // the router's history writes hit the same URL, as in the real app.
+    window.history.replaceState(null, '', '/kb/kb/roadmap.md#axis-h-humans');
+
+    renderHook(() => useCurrentTeam(TEAMS), {
+      wrapper: ({ children }: { children: ReactNode }) =>
+        createElement(BrowserRouter, null, children),
+    });
+
+    expect(window.location.search).toBe('?team=alpha');
+    expect(window.location.hash).toBe('#axis-h-humans');
+
+    window.history.replaceState(null, '', '/');
+  });
+});
 
 describe('useCurrentTeam persistence', () => {
   it('persists the resolved team to sessionStorage, never localStorage', () => {

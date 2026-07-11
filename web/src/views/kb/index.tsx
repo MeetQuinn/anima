@@ -147,13 +147,30 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
     navigate(buildKbPath({ id, filePath: resumeTarget }), { replace: true });
   }, [resumeTarget, id, navigate]);
 
-  // TOC entries for the currently selected markdown file — used by TocButton in the header.
-  const toc = useMemo(() => {
-    if (!file || file.kind !== 'markdown' || !file.content) return [];
-    return extractToc(file.content);
-  }, [file]);
+  // The document the right panel is actually showing: the selected file, or
+  // the README default at the KB root. Header controls (breadcrumb,
+  // Preview/Code, overflow, TOC) key off this so the root README gets the same
+  // single-bar chrome as any opened file, instead of stacking its own path bar
+  // and toggle strip above the content.
+  const showingReadme = !filePath && !treeLoading && !resumeTarget && !!readmePath;
+  const shownPath = filePath ?? (showingReadme ? readmePath : null);
+  const shownFile = filePath ? file : showingReadme ? readmeFile : undefined;
+  const shownLoading = filePath ? fileLoading : readmeLoading;
+  const rawShownError = filePath ? fileError : showingReadme ? readmeError : null;
+  const shownError =
+    rawShownError instanceof Error
+      ? rawShownError
+      : rawShownError
+        ? new Error(String(rawShownError))
+        : null;
 
-  // Preview/Code view-mode for the selected markdown file, lifted to the page
+  // TOC entries for the shown markdown document — used by TocButton in the header.
+  const toc = useMemo(() => {
+    if (!shownFile || shownFile.kind !== 'markdown' || !shownFile.content) return [];
+    return extractToc(shownFile.content);
+  }, [shownFile]);
+
+  // Preview/Code view-mode for the shown markdown document, lifted to the page
   // so the single toggle can live in the header alongside the other file
   // controls (instead of a second strip inside the viewer). Land in Code when
   // deep-linked to a `#L<n>` source line; otherwise honour the session choice.
@@ -164,7 +181,7 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
     setViewMode(next);
     saveSessionViewMode(next);
   }, []);
-  const isMarkdown = file?.kind === 'markdown';
+  const isMarkdown = shownFile?.kind === 'markdown';
 
   // ---------------------------------------------------------------------------
   // Effects
@@ -348,24 +365,26 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
 
         {/* File breadcrumb — left-aligned next to the KB title (desktop). A
             breadcrumb reads as location, so it belongs on the left as the
-            continuation of the title path; the action controls stay right. */}
-        {filePath && (
+            continuation of the title path; the action controls stay right.
+            The README default shows its own path here too — same chrome
+            whether the doc was opened or is the root landing. */}
+        {shownPath && (
           <div className="hidden md:flex min-w-0 items-center gap-1.5">
             <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-subtle/40" />
-            <FileBreadcrumb filePath={filePath} />
+            <FileBreadcrumb filePath={shownPath} />
           </div>
         )}
 
         {/* Right-side action controls — desktop only: [Preview|Code] [⋯] [TOC]. */}
-        {filePath && (
+        {shownPath && (
           <div className="ml-auto hidden md:flex shrink-0 items-center gap-2 pl-2">
-            {isMarkdown && !fileLoading && (
+            {isMarkdown && !shownLoading && (
               <ViewModeToggle mode={viewMode} onChange={changeViewMode} />
             )}
             <FileOverflowMenu
               id={id}
-              filePath={filePath}
-              size={file && !fileLoading ? file.size : undefined}
+              filePath={shownPath}
+              size={shownFile && !shownLoading ? shownFile.size : undefined}
             />
             <TocButton entries={toc} />
           </div>
@@ -393,9 +412,11 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
           ].join(' ')}
           style={{ '--kb-tree-width': `${treeWidth}px` } as React.CSSProperties}
         >
-          {/* Filter input — pinned above the file tree */}
-          <div className="flex shrink-0 items-center border-b border-border-soft px-3 min-h-[44px]">
-            <div className="flex items-center gap-1.5 rounded-md border border-border-soft bg-surface-elevated/40 px-2 py-1.5 w-full">
+          {/* Filter input — pinned above the file tree. Bare row (icon +
+              input) on the panel's own hairline; the boxed border-in-a-border
+              treatment read as double chrome. */}
+          <div className="flex shrink-0 items-center border-b border-border-soft px-4 min-h-[44px]">
+            <div className="flex items-center gap-2 w-full">
               <Search className="h-3 w-3 shrink-0 text-text-subtle" />
               <input
                 ref={filterInputRef}
@@ -488,38 +509,44 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
             mobileShowRight ? 'flex-1' : 'hidden md:flex md:flex-1',
           ].join(' ')}
         >
-          {filePath ? (
-            <div className="flex h-full flex-col">
-              {/* Mobile file toolbar — the "‹ Files" back button already gives
-                  location context, so drop the full path and show just the
-                  filename plus the Preview/Code toggle and overflow/TOC. */}
-              <div className="flex min-h-[44px] shrink-0 items-center gap-2 border-b border-border-soft px-4 md:hidden">
-                <span className="min-w-0 flex-1 truncate font-sans text-[13px] font-medium text-text-muted">
-                  {filePath.split('/').pop()}
-                </span>
-                {isMarkdown && !fileLoading && (
-                  <ViewModeToggle mode={viewMode} onChange={changeViewMode} />
-                )}
-                <FileOverflowMenu
-                  id={id}
-                  filePath={filePath}
-                  size={file && !fileLoading ? file.size : undefined}
-                />
-                <TocButton entries={toc} />
-              </div>
+          {shownPath ? (
+            /* One render path for every document the panel shows - an opened
+               file or the root README default. The page header carries the
+               breadcrumb and controls for both, so the doc arrives with
+               identical chrome either way and cannot drift into a second
+               chrome variant again. w-full matters: at the KB root the parent
+               section is itself a flex container, and the @container scroller
+               inside would otherwise collapse this content-sized item to
+               min-content width. */
+            <div className="flex h-full w-full flex-col">
+              {/* Mobile file toolbar — only when a file is explicitly open
+                  (the README default never shows on mobile, which keeps its
+                  file-list-first flow). The "‹ Files" back button already
+                  gives location context, so drop the full path and show just
+                  the filename plus the Preview/Code toggle and overflow/TOC. */}
+              {filePath && (
+                <div className="flex min-h-[44px] shrink-0 items-center gap-2 border-b border-border-soft px-4 md:hidden">
+                  <span className="min-w-0 flex-1 truncate font-sans text-[13px] font-medium text-text-muted">
+                    {filePath.split('/').pop()}
+                  </span>
+                  {isMarkdown && !shownLoading && (
+                    <ViewModeToggle mode={viewMode} onChange={changeViewMode} />
+                  )}
+                  <FileOverflowMenu
+                    id={id}
+                    filePath={filePath}
+                    size={shownFile && !shownLoading ? shownFile.size : undefined}
+                  />
+                  <TocButton entries={toc} />
+                </div>
+              )}
               <div className="min-h-0 flex-1 overflow-hidden flex flex-col">
                 <FileContent
                   id={id}
-                  filePath={filePath}
-                  file={file}
-                  loading={fileLoading}
-                  error={
-                    fileError instanceof Error
-                      ? fileError
-                      : fileError
-                        ? new Error(String(fileError))
-                        : null
-                  }
+                  filePath={shownPath}
+                  file={shownFile}
+                  loading={shownLoading}
+                  error={shownError}
                   mode={viewMode}
                   onModeChange={changeViewMode}
                 />
@@ -530,32 +557,6 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
                README so it doesn't flash before the resume redirect fires. */
             <div className="flex h-full flex-col items-start justify-start p-8">
               <div className="font-sans text-[13px] text-text-subtle">Loading files…</div>
-            </div>
-          ) : readmePath ? (
-            /* README default */
-            <div className="flex h-full flex-col">
-              <div className="flex shrink-0 items-center gap-2 border-b border-border-soft px-5 min-h-[44px]">
-                <span className="font-mono text-[11px] text-text-subtle truncate">{readmePath}</span>
-              </div>
-              <div className="min-h-0 flex-1 overflow-hidden flex flex-col">
-                {readmeLoading ? (
-                  <div className="p-6 font-sans text-[13px] text-text-subtle">Loading…</div>
-                ) : readmeError ? (
-                  <div className="p-6 font-sans text-[13px] text-health-error">
-                    Could not load README: {readmeError instanceof Error ? readmeError.message : String(readmeError)}
-                  </div>
-                ) : readmeFile ? (
-                  <FileContent
-                    id={id}
-                    filePath={readmePath}
-                    file={readmeFile}
-                    loading={false}
-                    error={null}
-                  />
-                ) : (
-                  <div className="p-6 font-sans text-[13px] text-text-subtle">README not found.</div>
-                )}
-              </div>
             </div>
           ) : (
             /* Minimal fallback when no README exists */
