@@ -27,7 +27,6 @@ import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { outcomeLine } from './outcome-line.js';
 
 export const HANDOFF_PAGE_ORIGIN = 'https://handoff.meetanima.online';
-const HANDOFF_PAGE_ORIGIN_ENV = 'ANIMA_HUMAN_HANDOFF_PAGE_ORIGIN';
 
 const SharedFlags = z.object({
   agent: z.string().optional(),
@@ -143,7 +142,7 @@ async function runHandoffRequest(opts: RequestOptions): Promise<void> {
       'Choose exactly one sender policy: --from <agent>, --allow-any-sender, or --from-human',
     );
   }
-  const pageOrigin = opts.fromHuman ? humanHandoffPageOrigin() : undefined;
+  const pageOrigin = opts.fromHuman ? HANDOFF_PAGE_ORIGIN : undefined;
   const expiryMs = opts.expires
     ? parseExpiry(opts.expires)
     : DEFAULT_HANDOFF_EXPIRY_MS;
@@ -173,19 +172,6 @@ async function runHandoffRequest(opts: RequestOptions): Promise<void> {
     ]),
   );
   console.log(formatRequestForSlack(request, code, pageOrigin));
-}
-
-function humanHandoffPageOrigin(): string {
-  const configured = process.env[HANDOFF_PAGE_ORIGIN_ENV]?.replace(/\/+$/, '');
-  if (!configured) {
-    throw new Error(
-      'Human secret handoff is not enabled until the secure page deployment is verified',
-    );
-  }
-  if (configured !== HANDOFF_PAGE_ORIGIN) {
-    throw new Error('Human secret handoff page origin is not trusted by this build');
-  }
-  return configured;
 }
 
 async function requestSender(
