@@ -382,7 +382,7 @@ test('env handoff CLI creates a browser-only human request with bound workspace 
 
     const enabledEnv = {
       ...env,
-      ANIMA_HUMAN_HANDOFF_PAGE_ORIGIN: 'https://handoff.anima.meetquinn.ai',
+      ANIMA_HUMAN_HANDOFF_PAGE_ORIGIN: 'https://handoff.getanima.live',
     };
     const result = await runNode([
       cliPath,
@@ -400,7 +400,7 @@ test('env handoff CLI creates a browser-only human request with bound workspace 
     assert.match(result.stdout, /Slack and the Anima handoff page never receive the plaintext/);
     assert.match(
       result.stdout,
-      /<https:\/\/handoff\.anima\.meetquinn\.ai\/#asec_req_v1_[A-Za-z0-9_-]+\|Securely provide secret>/,
+      /<https:\/\/handoff\.getanima\.live\/#asec_req_v1_[A-Za-z0-9_-]+\|Securely provide secret>/,
     );
     assert.ok(result.stdout.length < 12_000);
 

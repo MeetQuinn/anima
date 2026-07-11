@@ -3,7 +3,7 @@
 This package builds the browser-only human secret handoff page to
 `dist/handoff/`. It is intentionally separate from the dashboard and docs apps.
 
-Deployment requirements for `handoff.anima.meetquinn.ai`:
+Deployment requirements for `handoff.getanima.live`:
 
 - Serve `dist/handoff/` as a static site on its own origin.
 - Honor the committed `public/_headers` file. A host that ignores those headers
