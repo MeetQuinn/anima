@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Repeat } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { useNavigate } from 'react-router-dom';
 import { fetchAgentReminders } from '@/api/agents';
@@ -8,6 +8,18 @@ import { queryKeys } from '@/lib/query-keys';
 import { formatRelativeShort } from '@/lib/format';
 import { useNow } from '@/hooks/useNow';
 import type { Reminder, ReminderSchedule } from '@shared/reminder';
+
+// ── Reminders as a ledger ─────────────────────────────────────────────────────
+//
+// Task #99 shape: Active is the page's subject - a handful of live rows that
+// read like the Profile Setup ledger. Past is an archive, not content: rows
+// collapse to one quiet line (cancelled ones dimmed, statuses as bare caps
+// text instead of boxed chips), and the list shows a recent window with a
+// Show-all disclosure. Real pools run 1-3 active against 40-60 past, so the
+// old flat render made the tab read as a wall of dead reminders.
+
+/** How many past reminders show before the Show-all disclosure. */
+const PAST_PREVIEW = 12;
 
 function describeSchedule(schedule: ReminderSchedule, nextDueAt?: string): string {
   if (schedule.kind === 'once') {
@@ -33,57 +45,63 @@ function describeSchedule(schedule: ReminderSchedule, nextDueAt?: string): strin
 }
 
 function ExpandedDetail({
+  agentId,
   reminder,
   onViewStream,
 }: {
+  agentId: string;
   reminder: Reminder;
   onViewStream: () => void;
 }) {
+  const navigate = useNavigate();
   return (
-    <div className="space-y-4 rounded-sm border border-border-soft bg-surface-raised p-4">
-      <div>
-        <div className="caps text-text-muted">Instructions</div>
-        <div className="font-serif mt-1.5 whitespace-pre-wrap break-words text-[14px] leading-[1.6] text-text">
-          {reminder.instructions}
-        </div>
+    <div className="space-y-3 border-l-2 border-border-soft pl-4">
+      <div className="font-serif whitespace-pre-wrap break-words text-[14px] leading-[1.6] text-text">
+        {reminder.instructions}
       </div>
-      <div className="font-sans grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] tracking-wide text-text-muted">
-        <div>
-          <span className="text-text-subtle">Fired</span>{' '}
-          <span className="font-mono ml-1">{reminder.firedCount}</span>
-        </div>
+      <div className="font-sans flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px] tracking-wide text-text-muted">
+        <span>
+          Fired <span className="font-mono">{reminder.firedCount}</span>
+          {reminder.firedCount === 1 ? ' time' : ' times'}
+        </span>
         {reminder.lastFiredAt && (
-          <div className="col-span-2">
-            <span className="text-text-subtle">Last fired</span>{' '}
-            {new Date(reminder.lastFiredAt).toLocaleString()}
-          </div>
-        )}
-        {reminder.provenance && (
-          <div className="col-span-2">
-            <span className="text-text-subtle">Provenance</span>{' '}
-            <span className="font-mono">
-              {reminder.provenance.channelId} / {reminder.provenance.messageTs}
+          <>
+            <span aria-hidden className="text-text-subtle">
+              ·
             </span>
-          </div>
+            <span>last {new Date(reminder.lastFiredAt).toLocaleString()}</span>
+          </>
         )}
       </div>
-      {reminder.lastFiredAt && (
-        <button
-          onClick={onViewStream}
-          className="chrome text-[11px] uppercase tracking-[0.12em] text-text-muted underline decoration-border-soft underline-offset-4 hover:text-accent hover:decoration-accent"
-        >
-          View activity stream →
-        </button>
-      )}
+      <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
+        {reminder.provenance && (
+          <button
+            onClick={() => navigate(`/agents/${agentId}/channels?c=${reminder.provenance!.channelId}`)}
+            className="chrome text-[11px] uppercase tracking-[0.12em] text-text-muted underline decoration-border-soft underline-offset-4 hover:text-accent hover:decoration-accent"
+          >
+            View conversation →
+          </button>
+        )}
+        {reminder.lastFiredAt && (
+          <button
+            onClick={onViewStream}
+            className="chrome text-[11px] uppercase tracking-[0.12em] text-text-muted underline decoration-border-soft underline-offset-4 hover:text-accent hover:decoration-accent"
+          >
+            View activity stream →
+          </button>
+        )}
+      </div>
     </div>
   );
 }
 
 function ActiveRow({
+  agentId,
   reminder,
   now,
   onViewStream,
 }: {
+  agentId: string;
   reminder: Reminder;
   now: Date;
   onViewStream: () => void;
@@ -96,21 +114,29 @@ function ActiveRow({
     <div className="border-b border-border-soft last:border-b-0">
       <button
         onClick={() => setExpanded((e) => !e)}
+        aria-expanded={expanded}
         className="grid w-full grid-cols-[1fr_auto] items-start gap-3 px-1 py-3.5 text-left hover:bg-surface-elevated/40"
       >
         <div className="min-w-0">
           <div className="font-serif text-[15px] leading-snug text-text">{reminder.title}</div>
           <div className="font-sans mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px] tracking-wide text-text-muted">
+            {isRecurring && (
+              <Repeat aria-label="Recurring" className="h-3 w-3 self-center text-text-subtle" />
+            )}
             <span>{describeSchedule(reminder.schedule, reminder.nextDueAt)}</span>
             {nextDue && (
               <>
-                <span className="text-text-subtle">·</span>
+                <span aria-hidden className="text-text-subtle">
+                  ·
+                </span>
                 <span>next {formatRelativeShort(nextDue, now)}</span>
               </>
             )}
             {isRecurring && reminder.lastFiredAt && (
               <>
-                <span className="text-text-subtle">·</span>
+                <span aria-hidden className="text-text-subtle">
+                  ·
+                </span>
                 <span>last fired {formatRelativeShort(reminder.lastFiredAt, now)}</span>
               </>
             )}
@@ -122,7 +148,7 @@ function ActiveRow({
       </button>
       {expanded && (
         <div className="px-1 pb-4">
-          <ExpandedDetail reminder={reminder} onViewStream={onViewStream} />
+          <ExpandedDetail agentId={agentId} reminder={reminder} onViewStream={onViewStream} />
         </div>
       )}
     </div>
@@ -130,40 +156,52 @@ function ActiveRow({
 }
 
 function PastRow({
+  agentId,
   reminder,
   now,
   onViewStream,
 }: {
+  agentId: string;
   reminder: Reminder;
   now: Date;
   onViewStream: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const cancelled = reminder.status === 'cancelled';
   const when = reminder.cancelledAt ?? reminder.lastFiredAt ?? reminder.updatedAt;
 
   return (
-    <div className="border-b border-border-soft last:border-b-0">
+    <div className="border-b border-border-soft/60 last:border-b-0">
       <button
         onClick={() => setExpanded((e) => !e)}
-        className="grid w-full grid-cols-[1fr_auto] items-start gap-3 px-1 py-3.5 text-left hover:bg-surface-elevated/40"
+        aria-expanded={expanded}
+        className="flex w-full items-baseline gap-2.5 px-1 py-2 text-left hover:bg-surface-elevated/40"
       >
-        <div className="min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-          <span className="font-serif text-[15px] leading-snug text-text">{reminder.title}</span>
-          {/* text-text (not muted) to ensure ≥WCAG AA contrast at 10px */}
-          <span className="chrome shrink-0 rounded-sm border border-border-soft bg-surface-elevated px-1.5 py-0.5 text-[10px] uppercase tracking-[0.1em] text-text">
-            {reminder.status}
-          </span>
-          <span className="font-sans text-[11px] tracking-wide text-text-muted">
-            {formatRelativeShort(when, now)}
-          </span>
-        </div>
+        <span
+          className={`min-w-0 flex-1 truncate font-serif text-[14px] leading-snug ${
+            cancelled ? 'text-text-muted' : 'text-text'
+          }`}
+        >
+          {reminder.title}
+        </span>
+        {/* Bare caps, no chip box: the archive should not out-shout Active. */}
+        <span
+          className={`chrome shrink-0 text-[10px] uppercase tracking-[0.1em] ${
+            cancelled ? 'text-text-subtle' : 'text-text-muted'
+          }`}
+        >
+          {reminder.status}
+        </span>
+        <span className="font-sans shrink-0 text-[11px] tracking-wide text-text-subtle">
+          {formatRelativeShort(when, now)}
+        </span>
         <ChevronRight
-          className={`mt-1.5 h-3.5 w-3.5 shrink-0 text-text-subtle transition-transform ${expanded ? 'rotate-90' : ''}`}
+          className={`h-3 w-3 shrink-0 self-center text-text-subtle/70 transition-transform ${expanded ? 'rotate-90' : ''}`}
         />
       </button>
       {expanded && (
-        <div className="px-1 pb-4">
-          <ExpandedDetail reminder={reminder} onViewStream={onViewStream} />
+        <div className="px-1 pb-4 pt-1">
+          <ExpandedDetail agentId={agentId} reminder={reminder} onViewStream={onViewStream} />
         </div>
       )}
     </div>
@@ -186,6 +224,10 @@ export default function Reminders() {
   const containerRef = useRef<HTMLDivElement>(null);
   const { agentId } = useParams<{ agentId: string }>();
   const navigate = useNavigate();
+  // Keyed by agent so switching agents re-collapses the archive without an
+  // effect: the disclosure is only open for the agent it was opened on.
+  const [showAllFor, setShowAllFor] = useState<string | null>(null);
+  const showAllPast = showAllFor != null && showAllFor === agentId;
 
   // Reset scroll to top when switching agents.
   useEffect(() => {
@@ -217,6 +259,9 @@ export default function Reminders() {
 
   if (!agentId) return null;
 
+  const visiblePast = showAllPast ? past : past.slice(0, PAST_PREVIEW);
+  const hiddenPast = past.length - PAST_PREVIEW;
+
   return (
     <div
       ref={containerRef}
@@ -239,6 +284,7 @@ export default function Reminders() {
               {active.map((r) => (
                 <ActiveRow
                   key={r.reminderId}
+                  agentId={agentId}
                   reminder={r}
                   now={now}
                   onViewStream={() => navigate(`/agents/${agentId}/activity`)}
@@ -251,16 +297,27 @@ export default function Reminders() {
         {past.length > 0 && (
           <section className="mt-10">
             <SectionHeader title="Past" count={past.length} />
-            <div className="divide-y divide-border-soft border-b border-border-soft">
-              {past.map((r) => (
+            <div className="divide-y divide-border-soft/60 border-b border-border-soft/60">
+              {visiblePast.map((r) => (
                 <PastRow
                   key={r.reminderId}
+                  agentId={agentId}
                   reminder={r}
                   now={now}
                   onViewStream={() => navigate(`/agents/${agentId}/activity`)}
                 />
               ))}
             </div>
+            {hiddenPast > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowAllFor(showAllPast ? null : agentId)}
+                aria-expanded={showAllPast}
+                className="mt-3 font-sans text-[11px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted hover:decoration-text-muted/40"
+              >
+                {showAllPast ? 'Show fewer' : `Show all ${past.length}`}
+              </button>
+            )}
           </section>
         )}
       </div>
