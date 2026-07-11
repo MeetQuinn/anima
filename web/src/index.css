@@ -98,7 +98,7 @@
   --font-cjk: 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Microsoft YaHei';
   --font-sans: 'Albert Sans Variable', 'Albert Sans', var(--font-cjk), ui-sans-serif, system-ui, sans-serif;
   --font-serif: 'Fraunces Variable', 'Fraunces', 'Iowan Old Style', Georgia, var(--font-cjk), serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, var(--font-cjk), monospace;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', Menlo, Consolas, var(--font-cjk), ui-monospace, monospace;
   --font-display: var(--font-serif);
 
   /* Shadows — warm, not cool grey. Subtle lift, not Material elevation. */
