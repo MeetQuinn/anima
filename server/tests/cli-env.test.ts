@@ -349,41 +349,6 @@ test('env handoff CLI creates a browser-only human request with bound workspace 
       'utf8',
     );
 
-    const disabled = await runNode([
-      cliPath,
-      'env',
-      'handoff',
-      'request',
-      'SERVICE_TOKEN',
-      '--purpose',
-      'Run the deployment verification job',
-      '--from-human',
-    ], { env });
-    assert.equal(disabled.status, 1);
-    assert.match(disabled.stderr, /not enabled until the secure page deployment is verified/);
-    assert.doesNotMatch(disabled.stderr + disabled.stdout, /handoff\.meetanima\.online/);
-    await assert.rejects(stat(join(agentDir, 'env', 'handoff')), { code: 'ENOENT' });
-
-    const untrusted = await runNode([
-      cliPath,
-      'env',
-      'handoff',
-      'request',
-      'SERVICE_TOKEN',
-      '--purpose',
-      'Reject an untrusted browser origin',
-      '--from-human',
-    ], {
-      env: { ...env, ANIMA_HUMAN_HANDOFF_PAGE_ORIGIN: 'https://example.com' },
-    });
-    assert.equal(untrusted.status, 1);
-    assert.match(untrusted.stderr, /origin is not trusted by this build/);
-    assert.doesNotMatch(untrusted.stderr + untrusted.stdout, /example\.com/);
-
-    const enabledEnv = {
-      ...env,
-      ANIMA_HUMAN_HANDOFF_PAGE_ORIGIN: 'https://handoff.meetanima.online',
-    };
     const result = await runNode([
       cliPath,
       'env',
@@ -393,7 +358,7 @@ test('env handoff CLI creates a browser-only human request with bound workspace 
       '--purpose',
       'Run the deployment verification job',
       '--from-human',
-    ], { env: enabledEnv });
+    ], { env });
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.match(result.stdout, /Destination: milo's local encrypted env/);
     assert.match(result.stdout, /Workspace: Anima Team/);
@@ -412,18 +377,34 @@ test('env handoff CLI creates a browser-only human request with bound workspace 
     assert.equal(request.workspaceName, 'Anima Team');
     assert.equal(request.purpose, 'Run the deployment verification job');
 
+    const staleOverride = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'request',
+      'STALE_ORIGIN_TOKEN',
+      '--purpose',
+      'Ignore a retired deployment gate',
+      '--from-human',
+    ], {
+      env: { ...env, ANIMA_HUMAN_HANDOFF_PAGE_ORIGIN: 'https://example.com' },
+    });
+    assert.equal(staleOverride.status, 0, staleOverride.stderr || staleOverride.stdout);
+    assert.match(staleOverride.stdout, /https:\/\/handoff\.meetanima\.online\/#asec_req_v1_/);
+    assert.doesNotMatch(staleOverride.stderr + staleOverride.stdout, /example\.com/);
+
     const conflicting = await runNode([
       cliPath,
       'env',
       'handoff',
       'request',
-      'OTHER_TOKEN',
+      'CONFLICTING_POLICY_TOKEN',
       '--purpose',
       'Reject ambiguous sender policy',
       '--from-human',
       '--from',
       'nora',
-    ], { env: enabledEnv });
+    ], { env });
     assert.equal(conflicting.status, 1);
     assert.match(conflicting.stderr, /Choose exactly one sender policy/);
   } finally {
