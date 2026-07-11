@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, FolderTree, GripVertical, Pencil, Plus, Server } from 'lucide-react';
+import { Check, ChevronDown, FolderTree, Gauge, GripVertical, Pencil, Plus, Server } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DndContext, closestCenter } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -12,6 +12,7 @@ import { useSidebarOrder } from '@/hooks/useSidebarOrder';
 import { useCurrentTeam, useTeams } from '@/hooks/useTeams';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import ServerPanel from '@/components/ServerPanel';
+import UsagePanel from '@/components/UsagePanel';
 import type { AgentRuntimeHealthSummary } from '@shared/snapshot';
 import { AgentCreateModal, AddKbModal } from './Sidebar';
 import { CreateTeamModal, EditTeamModal } from './sidebar/TeamModals';
@@ -91,6 +92,7 @@ export default function MobileNavScreen({
   const [showCreateTeamModal, setShowCreateTeamModal] = useState(false);
   const [editTeam, setEditTeam] = useState<TeamConfig | null>(null);
   const [serverPanelOpen, setServerPanelOpen] = useState(false);
+  const [usagePanelOpen, setUsagePanelOpen] = useState(false);
   const multiTeam = teams.length > 1;
   const currentTeam = teams.find((t) => t.id === currentTeamId) ?? teams[0];
   // Resting indicator — accent dot on the Server footer when a system update is
@@ -394,11 +396,22 @@ export default function MobileNavScreen({
         </div>
       </div>
 
-      {/* Server entry — pinned footer */}
+      {/* Usage + Server entries — pinned footer. Usage on top (the frequently
+          checked one); Server (restart/version/home) at the very edge. */}
       <div
         className="shrink-0 border-t border-border-soft px-2 pb-2 pt-1"
         style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 0.5rem)' }}
       >
+        <button
+          onClick={() => setUsagePanelOpen(true)}
+          title="Provider usage"
+          className="flex min-h-[44px] w-full items-center gap-2.5 rounded-sm px-3 py-2 text-left transition-colors hover:bg-surface-elevated/60"
+        >
+          <Gauge className="h-4 w-4 shrink-0 text-text-muted" />
+          <span className="font-serif text-[15px] font-medium leading-tight text-text-muted">
+            Usage
+          </span>
+        </button>
         <button
           onClick={() => setServerPanelOpen(true)}
           title={updateAvailable ? 'Server — update available' : 'Server status & restart'}
@@ -436,6 +449,7 @@ export default function MobileNavScreen({
         />
       )}
       {serverPanelOpen && <ServerPanel onClose={() => setServerPanelOpen(false)} />}
+      {usagePanelOpen && <UsagePanel onClose={() => setUsagePanelOpen(false)} />}
 
       {showCreateTeamModal && (
         <CreateTeamModal
