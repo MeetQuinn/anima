@@ -2,6 +2,7 @@ import type { ProviderUsageExtra, ProviderUsageRow, ProviderUsageWindow } from '
 import { bearer, fetchJson } from '../http.js';
 import { available, unavailable, usageError } from '../result.js';
 import {
+  decodeJwtPayload,
   homePath,
   jwtExpiresSoon,
   numberValue,
@@ -22,6 +23,7 @@ const CODEX_HEADERS = {
 };
 
 interface CodexCredentials {
+  account?: string;
   accessToken: string;
   auth: Record<string, unknown>;
   path: string;
@@ -37,7 +39,7 @@ export async function fetchCodexUsage(): Promise<Omit<ProviderUsageRow, 'checked
   let activeCredentials = credentials;
   if (jwtExpiresSoon(activeCredentials.accessToken) && activeCredentials.refreshToken) {
     const refreshed = await refreshCodexCredentials(activeCredentials);
-    if (refreshed.error) return unavailable(refreshed.error);
+    if (refreshed.error) return unavailable(refreshed.error, activeCredentials.account);
     activeCredentials = refreshed.credentials;
   }
 
@@ -48,16 +50,16 @@ export async function fetchCodexUsage(): Promise<Omit<ProviderUsageRow, 'checked
       activeCredentials = latestCredentials;
     } else {
       const refreshed = await refreshCodexCredentials(activeCredentials);
-      if (refreshed.error) return unavailable(refreshed.error);
+      if (refreshed.error) return unavailable(refreshed.error, activeCredentials.account);
       activeCredentials = refreshed.credentials;
     }
     result = await fetchCodexUsageWithToken(activeCredentials.accessToken);
   }
 
-  if (result.error) return unavailable(result.error);
+  if (result.error) return unavailable(result.error, activeCredentials.account);
   const parsed = parseCodexUsageResponse(result.data);
-  if (parsed.error) return unavailable(parsed.error);
-  return available(parsed.windows, parsed.extras);
+  if (parsed.error) return unavailable(parsed.error, activeCredentials.account);
+  return available(parsed.windows, parsed.extras, activeCredentials.account);
 }
 
 export function parseCodexUsageResponse(
@@ -98,12 +100,19 @@ async function readCodexCredentials(): Promise<CodexCredentials | undefined> {
   const tokens = record(auth?.tokens);
   const accessToken = stringValue(tokens?.access_token);
   if (!auth || !accessToken) return undefined;
+  const account = codexAccount(tokens);
   return {
+    ...(account ? { account } : {}),
     accessToken,
     auth,
     path,
     refreshToken: stringValue(tokens?.refresh_token),
   };
+}
+
+function codexAccount(tokens: Record<string, unknown> | undefined): string | undefined {
+  const claims = record(decodeJwtPayload(stringValue(tokens?.id_token) ?? ''));
+  return stringValue(claims?.email) ?? stringValue(tokens?.account_id);
 }
 
 async function fetchCodexUsageWithToken(token: string): ReturnType<typeof fetchJson> {
@@ -154,8 +163,10 @@ async function refreshCodexCredentials(
   } catch {
     return { error: usageError('unknown', 'Codex token refreshed but could not be saved. Check ~/.codex/auth.json permissions.') };
   }
+  const account = codexAccount(record(tokens)) ?? credentials.account;
   return {
     credentials: {
+      ...(account ? { account } : {}),
       accessToken,
       auth,
       path: credentials.path,

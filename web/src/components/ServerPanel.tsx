@@ -142,15 +142,22 @@ function ProviderBlock({
     <div className={isAvailable ? '' : 'opacity-50'}>
       {/* Name + best-effort badge */}
       <div className="mb-2 flex items-start justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate font-sans text-[12px] font-medium text-text">{row.label}</span>
-          {row.source === 'private-api' && (
-            <span
-              className="rounded border border-text-subtle/20 px-1 font-mono text-[9px] text-text-subtle"
-              title="Data scraped from private API — best-effort"
-            >
-              ≈
-            </span>
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate font-sans text-[12px] font-medium text-text">{row.label}</span>
+            {row.source === 'private-api' && (
+              <span
+                className="rounded border border-text-subtle/20 px-1 font-mono text-[9px] text-text-subtle"
+                title="Data scraped from private API — best-effort"
+              >
+                ≈
+              </span>
+            )}
+          </div>
+          {row.account && (
+            <div className="truncate font-mono text-[10px] text-text-subtle" title={row.account}>
+              {row.account}
+            </div>
           )}
         </div>
         {onRefresh && (

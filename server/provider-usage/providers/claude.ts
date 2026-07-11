@@ -27,6 +27,7 @@ const CLAUDE_KEYCHAIN_SERVICE = 'Claude Code-credentials';
 const CLAUDE_OAUTH_BETA_HEADER = 'oauth-2025-04-20';
 
 interface ClaudeCredentials {
+  account?: string;
   accessToken: string;
   expiresAt?: number;
   payload: Record<string, unknown>;
@@ -45,7 +46,7 @@ export async function fetchClaudeUsage(): Promise<Omit<ProviderUsageRow, 'checke
   let activeCredentials = credentials;
   if (expiresSoon(activeCredentials.expiresAt) && activeCredentials.refreshToken) {
     const refreshed = await refreshClaudeCredentials(activeCredentials);
-    if (refreshed.error) return unavailable(refreshed.error);
+    if (refreshed.error) return unavailable(refreshed.error, activeCredentials.account);
     activeCredentials = refreshed.credentials;
   }
 
@@ -56,16 +57,16 @@ export async function fetchClaudeUsage(): Promise<Omit<ProviderUsageRow, 'checke
       activeCredentials = latestCredentials;
     } else {
       const refreshed = await refreshClaudeCredentials(activeCredentials);
-      if (refreshed.error) return unavailable(refreshed.error);
+      if (refreshed.error) return unavailable(refreshed.error, activeCredentials.account);
       activeCredentials = refreshed.credentials;
     }
     result = await fetchClaudeUsageWithToken(activeCredentials.accessToken);
   }
 
-  if (result.error) return unavailable(result.error);
+  if (result.error) return unavailable(result.error, activeCredentials.account);
   const parsed = parseClaudeUsageResponse(result.data, activeCredentials);
-  if (parsed.error) return unavailable(parsed.error);
-  return available(parsed.windows, parsed.extras);
+  if (parsed.error) return unavailable(parsed.error, activeCredentials.account);
+  return available(parsed.windows, parsed.extras, activeCredentials.account);
 }
 
 export function parseClaudeUsageResponse(
@@ -104,8 +105,9 @@ export function parseClaudeUsageResponse(
 }
 
 async function readClaudeCredentials(): Promise<ClaudeCredentials | undefined> {
+  const account = await readClaudeAccount();
   const filePath = homePath(...CLAUDE_CREDENTIALS_PATH);
-  const fileCredentials = extractClaudeCredentials(await readJsonFile(filePath), { kind: 'file', path: filePath });
+  const fileCredentials = extractClaudeCredentials(await readJsonFile(filePath), { kind: 'file', path: filePath }, account);
   if (fileCredentials) return fileCredentials;
   if (process.platform !== 'darwin') return undefined;
   try {
@@ -114,18 +116,29 @@ async function readClaudeCredentials(): Promise<ClaudeCredentials | undefined> {
       ['find-generic-password', '-s', CLAUDE_KEYCHAIN_SERVICE, '-w'],
       { encoding: 'utf8', timeout: 5_000 },
     );
-    return extractClaudeCredentials(parseJsonOrHex(stdout), { account: userInfo().username, kind: 'keychain' });
+    return extractClaudeCredentials(parseJsonOrHex(stdout), { account: userInfo().username, kind: 'keychain' }, account);
   } catch {
     return undefined;
   }
 }
 
-function extractClaudeCredentials(value: unknown, source: ClaudeCredentials['source']): ClaudeCredentials | undefined {
+async function readClaudeAccount(): Promise<string | undefined> {
+  const config = record(await readJsonFile(homePath('.claude.json')));
+  const account = record(config?.oauthAccount);
+  return stringValue(account?.emailAddress) ?? stringValue(account?.displayName);
+}
+
+function extractClaudeCredentials(
+  value: unknown,
+  source: ClaudeCredentials['source'],
+  account?: string,
+): ClaudeCredentials | undefined {
   const payload = record(value);
   const oauth = record(record(value)?.claudeAiOauth);
   const accessToken = stringValue(oauth?.accessToken);
   if (!payload || !accessToken) return undefined;
   return {
+    ...(account ? { account } : {}),
     accessToken: accessToken.toLowerCase().startsWith('bearer ') ? accessToken.slice(7).trim() : accessToken,
     expiresAt: numberValue(oauth?.expiresAt) ?? numberValue(oauth?.expires_at),
     payload,
@@ -198,7 +211,7 @@ async function refreshClaudeCredentials(
   } catch {
     return { error: usageError('unknown', 'Claude Code token refreshed but could not be saved. Check Claude credential storage permissions.') };
   }
-  const refreshed = extractClaudeCredentials(payload, credentials.source);
+  const refreshed = extractClaudeCredentials(payload, credentials.source, credentials.account);
   return refreshed
     ? { credentials: refreshed }
     : { error: usageError('parse_error', 'Claude Code refreshed credentials could not be parsed.') };

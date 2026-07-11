@@ -7,6 +7,7 @@ import { bearer, fetchJson } from '../http.js';
 import { available, unavailable, usageError } from '../result.js';
 import {
   clampPercent,
+  decodeJwtPayload,
   expiresSoon,
   homePath,
   numberValue,
@@ -27,6 +28,7 @@ const KIMI_LEGACY_CREDENTIALS_PATH = ['.kimi', 'credentials', 'kimi-code.json'];
 const KIMI_OPENCODE_AUTH_PATH = ['.local', 'share', 'opencode', 'auth.json'];
 
 interface KimiCredentials {
+  account?: string;
   accessToken: string;
   path?: string;
   raw?: Record<string, unknown>;
@@ -42,7 +44,7 @@ export async function fetchKimiUsage(): Promise<Omit<ProviderUsageRow, 'checkedA
   let activeCredentials = credentials;
   if (activeCredentials.path && expiresSoon(activeCredentials.raw?.expires_at) && activeCredentials.refreshToken) {
     const refreshed = await refreshKimiCredentials(activeCredentials);
-    if (refreshed.error) return unavailable(refreshed.error);
+    if (refreshed.error) return unavailable(refreshed.error, activeCredentials.account);
     activeCredentials = refreshed.credentials;
   }
 
@@ -53,21 +55,21 @@ export async function fetchKimiUsage(): Promise<Omit<ProviderUsageRow, 'checkedA
       activeCredentials = latestCredentials;
     } else if (activeCredentials.path) {
       const refreshed = await refreshKimiCredentials(activeCredentials);
-      if (refreshed.error) return unavailable(refreshed.error);
+      if (refreshed.error) return unavailable(refreshed.error, activeCredentials.account);
       activeCredentials = refreshed.credentials;
     }
     result = await fetchKimiUsageWithToken(activeCredentials.accessToken);
   }
 
-  if (result.error) return unavailable(result.error);
+  if (result.error) return unavailable(result.error, activeCredentials.account);
   const parsed = parseKimiUsageResponse(result.data);
-  if (parsed.error) return unavailable(parsed.error);
-  return available(parsed.windows, parsed.extras);
+  if (parsed.error) return unavailable(parsed.error, activeCredentials.account);
+  return available(parsed.windows, parsed.extras, parsed.account ?? activeCredentials.account);
 }
 
 export function parseKimiUsageResponse(
   data: unknown,
-): { error?: ReturnType<typeof usageError>; extras: ProviderUsageExtra[]; windows: ProviderUsageWindow[] } {
+): { account?: string; error?: ReturnType<typeof usageError>; extras: ProviderUsageExtra[]; windows: ProviderUsageWindow[] } {
   const root = record(data);
   if (!root) return { error: usageError('parse_error', 'Kimi usage response is not an object'), extras: [], windows: [] };
 
@@ -93,7 +95,8 @@ export function parseKimiUsageResponse(
   if (subType) extras.push({ label: 'Plan', balance: subType });
   const totalQuota = numberValue(root.totalQuota);
   if (totalQuota !== undefined) extras.push({ label: 'Total Quota', limit: totalQuota });
-  return { extras, windows };
+  const account = stringValue(record(root.user)?.userId);
+  return { ...(account ? { account } : {}), extras, windows };
 }
 
 async function readKimiCredentials(): Promise<KimiCredentials | undefined> {
@@ -101,7 +104,9 @@ async function readKimiCredentials(): Promise<KimiCredentials | undefined> {
     const native = record(await readJsonFile(path));
     const nativeToken = stringValue(native?.access_token);
     if (nativeToken) {
+      const account = kimiAccount(nativeToken);
       return {
+        ...(account ? { account } : {}),
         accessToken: nativeToken,
         path,
         raw: native,
@@ -112,7 +117,14 @@ async function readKimiCredentials(): Promise<KimiCredentials | undefined> {
   const opencode = record(await readJsonFile(homePath(...KIMI_OPENCODE_AUTH_PATH)));
   const opencodeToken = stringValue(record(opencode?.['kimi-for-coding'])?.key)
     ?? stringValue(record(opencode?.['kimi-for-coding'])?.access);
-  return opencodeToken ? { accessToken: opencodeToken } : undefined;
+  if (!opencodeToken) return undefined;
+  const account = kimiAccount(opencodeToken);
+  return { ...(account ? { account } : {}), accessToken: opencodeToken };
+}
+
+function kimiAccount(accessToken: string): string | undefined {
+  const claims = record(decodeJwtPayload(accessToken));
+  return stringValue(claims?.email) ?? stringValue(claims?.user_id) ?? stringValue(claims?.sub);
 }
 
 function kimiCredentialPaths(): string[] {
@@ -176,8 +188,10 @@ async function refreshKimiCredentials(
   } catch {
     return { error: usageError('unknown', 'Kimi token refreshed but could not be saved. Check Kimi credential file permissions.') };
   }
+  const account = kimiAccount(accessToken) ?? credentials.account;
   return {
     credentials: {
+      ...(account ? { account } : {}),
       accessToken,
       path: credentials.path,
       raw,

@@ -7,8 +7,12 @@ export function usageError(type: ProviderUsageError['type'], message: string): P
   return { message, type };
 }
 
-export function unavailable(error: ProviderUsageError): Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'> {
+export function unavailable(
+  error: ProviderUsageError,
+  account?: string,
+): Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'> {
   return {
+    ...(account ? { account } : {}),
     error,
     extras: [],
     status: 'unavailable',
@@ -19,8 +23,10 @@ export function unavailable(error: ProviderUsageError): Omit<ProviderUsageRow, '
 export function available(
   windows: ProviderUsageRow['windows'],
   extras: ProviderUsageRow['extras'] = [],
+  account?: string,
 ): Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'> {
   return {
+    ...(account ? { account } : {}),
     extras,
     status: 'available',
     windows,

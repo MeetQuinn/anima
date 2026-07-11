@@ -78,9 +78,11 @@ test('Kimi usage parser returns top-level and short-window limits', () => {
       },
     ],
     usage: { limit: 100, remaining: 99, resetTime: '2026-06-01T00:00:00.000Z', used: 1 },
+    user: { userId: 'kimi-user-1' },
   });
 
   assert.equal(parsed.error, undefined);
+  assert.equal(parsed.account, 'kimi-user-1');
   assert.deepEqual(parsed.windows.map(({ label, remainingPercent, usedPercent }) => [label, remainingPercent, usedPercent]), [
     ['5h', 99, 1],
     ['Weekly', 99, 1],
@@ -110,7 +112,7 @@ test('Kimi usage reads Kimi Code credentials before legacy migrated credentials'
   delete process.env.KIMI_SHARE_DIR;
   globalThis.fetch = (async (_url, init) => {
     authorizations.push(String((init?.headers as Record<string, string> | undefined)?.Authorization ?? ''));
-    return new Response(JSON.stringify({ usage: { limit: 100, remaining: 75 }, limits: [] }), {
+    return new Response(JSON.stringify({ usage: { limit: 100, remaining: 75 }, limits: [], user: { userId: 'kimi-user-2' } }), {
       headers: { 'content-type': 'application/json' },
       status: 200,
     });
@@ -119,6 +121,7 @@ test('Kimi usage reads Kimi Code credentials before legacy migrated credentials'
   try {
     const result = await fetchKimiUsage();
     assert.equal(result.status, 'available');
+    assert.equal(result.account, 'kimi-user-2');
     assert.deepEqual(authorizations, ['Bearer new-kimi-code-token']);
   } finally {
     globalThis.fetch = originalFetch;
@@ -137,7 +140,7 @@ test('Codex usage refreshes an expired access token before fetching usage', asyn
       auth_mode: 'chatgpt',
       tokens: {
         access_token: jwtWithExp(Math.floor(Date.now() / 1000) - 60),
-        id_token: 'old-id-token',
+        id_token: jwtWithClaims({ email: 'old@example.com' }),
         refresh_token: 'old-codex-refresh',
       },
     }),
@@ -157,7 +160,7 @@ test('Codex usage refreshes an expired access token before fetching usage', asyn
       });
       return jsonResponse({
         access_token: 'fresh-codex-access',
-        id_token: 'fresh-id-token',
+        id_token: jwtWithClaims({ email: 'fresh@example.com' }),
         refresh_token: 'fresh-codex-refresh',
       });
     }
@@ -168,11 +171,12 @@ test('Codex usage refreshes an expired access token before fetching usage', asyn
   try {
     const result = await fetchCodexUsage();
     assert.equal(result.status, 'available');
+    assert.equal(result.account, 'fresh@example.com');
     assert.deepEqual(authorizations, ['Bearer fresh-codex-access']);
     const stored = JSON.parse(await readFile(authPath, 'utf8')) as { last_refresh?: string; tokens: Record<string, string> };
     assert.equal(stored.tokens.access_token, 'fresh-codex-access');
     assert.equal(stored.tokens.refresh_token, 'fresh-codex-refresh');
-    assert.equal(stored.tokens.id_token, 'fresh-id-token');
+    assert.equal(stored.tokens.id_token, jwtWithClaims({ email: 'fresh@example.com' }));
     assert.ok(stored.last_refresh);
   } finally {
     globalThis.fetch = originalFetch;
@@ -242,6 +246,11 @@ test('Kimi usage refreshes and retries once after a usage 401', async () => {
 test('Claude usage refreshes expired file credentials before fetching usage', async () => {
   const home = await mkdtemp(join(tmpdir(), 'anima-claude-refresh-home-'));
   await mkdir(join(home, '.claude'), { recursive: true });
+  await writeFile(
+    join(home, '.claude.json'),
+    JSON.stringify({ oauthAccount: { emailAddress: 'claude@example.com' } }),
+    'utf8',
+  );
   const credentialPath = join(home, '.claude', '.credentials.json');
   await writeFile(
     credentialPath,
@@ -287,6 +296,7 @@ test('Claude usage refreshes expired file credentials before fetching usage', as
   try {
     const result = await fetchClaudeUsage();
     assert.equal(result.status, 'available');
+    assert.equal(result.account, 'claude@example.com');
     assert.deepEqual(authorizations, ['Bearer fresh-claude-access']);
     const stored = JSON.parse(await readFile(credentialPath, 'utf8')) as { claudeAiOauth: Record<string, unknown> };
     assert.equal(stored.claudeAiOauth.accessToken, 'fresh-claude-access');
@@ -398,9 +408,13 @@ function codexUsagePayload(): unknown {
 }
 
 function jwtWithExp(exp: number): string {
+  return jwtWithClaims({ exp });
+}
+
+function jwtWithClaims(claims: Record<string, unknown>): string {
   return [
     base64UrlJson({ alg: 'none', typ: 'JWT' }),
-    base64UrlJson({ exp }),
+    base64UrlJson(claims),
     'signature',
   ].join('.');
 }
