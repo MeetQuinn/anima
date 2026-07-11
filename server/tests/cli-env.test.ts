@@ -361,7 +361,7 @@ test('env handoff CLI creates a browser-only human request with bound workspace 
     ], { env });
     assert.equal(disabled.status, 1);
     assert.match(disabled.stderr, /not enabled until the secure page deployment is verified/);
-    assert.doesNotMatch(disabled.stderr + disabled.stdout, /handoff\.anima\.meetquinn\.ai/);
+    assert.doesNotMatch(disabled.stderr + disabled.stdout, /handoff\.getanima\.live/);
     await assert.rejects(stat(join(agentDir, 'env', 'handoff')), { code: 'ENOENT' });
 
     const untrusted = await runNode([
