@@ -17,6 +17,14 @@ export function providerCrashRetryNote(): string {
   ].join('\n');
 }
 
+export function providerSessionRecoveryNote(): string {
+  return [
+    'Anima note: the previous provider session was corrupted, so Anima archived it and started a fresh session for this same item.',
+    'Continue the original task from the current files, conversation, and connected chat state.',
+    'Do not repeat completed external side effects such as chat messages, file sends, or file edits; check `anima outbox` for what already went out, and inspect files/state, before redoing anything.',
+  ].join('\n');
+}
+
 export function slackChannelAttentionNote(channelId: string): string {
   const command = `anima subscription mute --channel ${channelId}`;
   return `Anima note: you've been reading channel ${channelId} without posting. If it is not relevant, mute it with \`${command}\`.`;

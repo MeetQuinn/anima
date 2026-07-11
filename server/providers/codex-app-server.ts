@@ -26,6 +26,7 @@ import { truncateForActivity } from '../activities/format.js';
 import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
 import { LineBuffer } from './line-buffer.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
+import type { ProviderSessionCorruptionReason } from './session-corruption.js';
 
 interface CodexThread {
   id: string;
@@ -71,6 +72,8 @@ export class CodexAppServerController {
   private readonly recordedWebSearchDetails = new Set<string>();
   private readonly quiescentWaiters = new QuiescentWaiterSet();
   private currentTurn?: ActiveCodexTurn;
+  private sessionCorruptionReported = false;
+  private stderrTail = '';
   private sessionFilePath?: string;
   threadId = '';
   readonly completion: Promise<{ stdout: string; stderr: string }>;
@@ -78,6 +81,7 @@ export class CodexAppServerController {
   constructor(
     private readonly child: RunningChildProcess,
     private readonly runtimeKind: string,
+    private readonly onSessionCorruption?: (reason: ProviderSessionCorruptionReason) => void,
   ) {
     this.completion = child.completion.then(
       (result) => {
@@ -105,6 +109,8 @@ export class CodexAppServerController {
 
   attachRun(input: AgentRuntimeInput): void {
     this.activeInput = input;
+    this.sessionCorruptionReported = false;
+    this.stderrTail = '';
   }
 
   detachRun(input: AgentRuntimeInput): void {
@@ -218,6 +224,14 @@ export class CodexAppServerController {
     if (!input) return;
     input.onActivity?.();
     await input.effects.recordOutput('stderr', chunk);
+    // Fresh sessions have no stored transcript to archive, even if the provider
+    // happens to print the same diagnostic text.
+    if (!input.providerSession || this.sessionCorruptionReported) return;
+    this.stderrTail = `${this.stderrTail}${chunk}`.slice(-2_048);
+    if (!codexMissingToolOutputMessage(this.stderrTail)) return;
+    this.sessionCorruptionReported = true;
+    this.onSessionCorruption?.('missing_tool_output');
+    this.child.kill('SIGTERM');
   }
 
   private async acceptLine(line: string): Promise<void> {
@@ -460,6 +474,10 @@ export class CodexAppServerController {
     }
     return codexThreadMetadataFromResumeResponse(result);
   }
+}
+
+function codexMissingToolOutputMessage(text: string): boolean {
+  return /Custom tool call output is missing for call id:\s*call_[A-Za-z0-9_-]+/i.test(text);
 }
 
 async function readCodexSessionFile(

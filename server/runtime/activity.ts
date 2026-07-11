@@ -63,6 +63,19 @@ export async function recordRuntimeEvent(
   }
 }
 
+export async function recordSessionRotationActivity(
+  target: RuntimeActivityTarget,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  await activityServiceForAgent(target.agentId).record({
+    type: 'anima.session.rotate',
+    payload: {
+      ...(target.itemId ? { itemId: target.itemId } : {}),
+      ...payload,
+    },
+  });
+}
+
 function shouldPersistRuntimeEvent(payload: Record<string, unknown> | undefined): boolean {
   const eventType = stringField(payload, 'eventType');
   if (!eventType) return true;

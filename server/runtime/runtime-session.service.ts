@@ -6,6 +6,7 @@ import { AgentUsageStore, type AgentUsage } from '../storage/schema/agent-usage.
 import {
   SessionStore,
   currentProviderSessionStartedAt,
+  type ArchivedProviderSession,
   type ProviderSession,
   type Session,
 } from '../storage/schema/session.store.js';
@@ -15,6 +16,11 @@ import { codexAutoCompactTokenLimitFor } from '../providers/codex.js';
 import type { ProviderSessionRecord } from '../providers/contract.js';
 
 export type { ProviderSession, Session };
+
+export interface RecoveredProviderSession {
+  archived: ArchivedProviderSession;
+  session: Session;
+}
 
 export class RuntimeSessionService {
   constructor(
@@ -73,6 +79,45 @@ export class RuntimeSessionService {
       return updatedSession;
     });
     return updatedSession;
+  }
+
+  async archiveCorruptProviderSession(
+    kind: string,
+    providerSessionId: string,
+    note: string,
+  ): Promise<RecoveredProviderSession | undefined> {
+    const archivedAt = nowIso();
+    let recovered: RecoveredProviderSession | undefined;
+    await this.sessionStore.update((session) => {
+      if (session?.current?.kind !== kind || session.current.id !== providerSessionId) {
+        return undefined;
+      }
+      const archived: ArchivedProviderSession = {
+        ...session.current,
+        archivedAt,
+        archivedBy: 'recovery',
+        note,
+      };
+      const {
+        current: _current,
+        latestProviderStats: _latestProviderStats,
+        ...rest
+      } = session;
+      const updated: Session = {
+        ...rest,
+        archived: [
+          archived,
+          ...(session.archived ?? []).filter((candidate) =>
+            candidate.kind !== archived.kind || candidate.id !== archived.id
+          ),
+        ],
+        currentStartedAt: archivedAt,
+        updatedAt: archivedAt,
+      };
+      recovered = { archived, session: updated };
+      return updated;
+    });
+    return recovered;
   }
 
   async updateRuntimeStats(
