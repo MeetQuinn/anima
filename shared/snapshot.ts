@@ -8,7 +8,7 @@ export interface ProviderSessionRecord {
 
 export interface ArchivedProviderSessionRecord extends ProviderSessionRecord {
   archivedAt: string;
-  archivedBy: 'operator';
+  archivedBy: 'operator' | 'recovery';
   kind: string;
   note?: string;
 }

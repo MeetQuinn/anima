@@ -15,7 +15,7 @@ export type ProviderSession = z.infer<typeof ProviderSession>;
 
 export const ArchivedProviderSession = ProviderSession.extend({
   archivedAt: z.string(),
-  archivedBy: z.literal('operator'),
+  archivedBy: z.enum(['operator', 'recovery']),
   note: z.string().optional(),
 });
 

@@ -2,9 +2,16 @@ import { errorMessage, nowIso } from '../ids.js';
 import { recordRuntimeActivity, recordRuntimeEvent } from './activity.js';
 import { defaultAgentHealthService } from './agent-health.service.js';
 import { runtimeErrorPayload } from '../activities/format.js';
-import { buildProviderCrashRetryDeliveryPrompt } from './delivery-prompt.js';
+import {
+  buildProviderCrashRetryDeliveryPrompt,
+  buildProviderSessionRecoveryDeliveryPrompt,
+} from './delivery-prompt.js';
 import { providerFailureHealthReason, providerFailureReasonFromError } from '../providers/provider-failure.js';
 import type { AgentRuntime, AgentRuntimeInput, AgentRuntimeResult } from '../providers/contract.js';
+import {
+  isProviderSessionCorruptionError,
+  type ProviderSessionCorruptionError,
+} from '../providers/session-corruption.js';
 
 const PROVIDER_CRASH_MAX_RETRIES = 3;
 const PROVIDER_CRASH_RETRY_BACKOFF_MS = 500;
@@ -15,20 +22,35 @@ export async function runProviderWithCrashRetries(input: {
   buildInput: (retryNotice?: string) => Promise<AgentRuntimeInput>;
   itemId?: string;
   onFinalFailureRecorded?: () => void;
+  recoverCorruptSession?: (error: ProviderSessionCorruptionError) => Promise<boolean>;
   signal: AbortSignal;
 }): Promise<AgentRuntimeResult> {
   let retryCount = 0;
+  // Transcript repair is independent of the ordinary process-crash retry budget.
+  let sessionRecoveryAttempted = false;
+  let retryNotice: string | undefined;
   let previousError: unknown;
   for (;;) {
     try {
-      return await input.agentRuntime.run(await input.buildInput(retryNoticeFor({
-        itemId: input.itemId,
-        previousError,
-        retryCount,
-      })));
+      return await input.agentRuntime.run(await input.buildInput(retryNotice));
     } catch (error) {
       previousError = error;
       if (input.signal.aborted) throw error;
+      if (
+        isProviderSessionCorruptionError(error)
+        && !sessionRecoveryAttempted
+        && input.recoverCorruptSession
+      ) {
+        sessionRecoveryAttempted = true;
+        await input.agentRuntime.close?.();
+        if (await input.recoverCorruptSession(error)) {
+          retryNotice = buildProviderSessionRecoveryDeliveryPrompt({
+            itemId: input.itemId,
+            time: nowIso(),
+          });
+          continue;
+        }
+      }
       if (!isProviderCrashError(error) || retryCount >= PROVIDER_CRASH_MAX_RETRIES) {
         await recordFinalRuntimeFailure({
           agentId: input.agentId,
@@ -43,6 +65,11 @@ export async function runProviderWithCrashRetries(input: {
       }
 
       retryCount += 1;
+      retryNotice = retryNoticeFor({
+        itemId: input.itemId,
+        previousError,
+        retryCount,
+      });
       const retryAfterMs = PROVIDER_CRASH_RETRY_BACKOFF_MS * retryCount;
       await recordRuntimeEvent(
         { agentId: input.agentId, ...(input.itemId ? { itemId: input.itemId } : {}) },

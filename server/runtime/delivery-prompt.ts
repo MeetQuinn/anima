@@ -27,6 +27,7 @@ import {
 import type { Reminder } from '../../shared/reminder.js';
 import {
   providerCrashRetryNote,
+  providerSessionRecoveryNote,
   RUNTIME_RESTART_CONTINUATION_NOTE,
 } from './delivery-notes.js';
 
@@ -315,6 +316,22 @@ export function buildProviderCrashRetryDeliveryPrompt(input: {
     `Previous error: ${input.previousError}`,
     '',
     providerCrashRetryNote(),
+  ].join('\n');
+}
+
+export function buildProviderSessionRecoveryDeliveryPrompt(input: {
+  itemId?: string;
+  time: string;
+}): string {
+  return [
+    'Provider session recovery:',
+    '',
+    renderEnvelope([
+      { key: 'item', value: input.itemId },
+      { key: 'time', value: envelopeTime(input.time) },
+    ]),
+    '',
+    providerSessionRecoveryNote(),
   ].join('\n');
 }
 

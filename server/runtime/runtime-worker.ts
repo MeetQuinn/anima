@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { AgentRuntime } from '../providers/contract.js';
+import type { ProviderSessionCorruptionError } from '../providers/session-corruption.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { errorMessage, nowIso } from '../ids.js';
 import { PROVIDER_IDLE_TIMEOUT_MS_DEFAULT } from '../../shared/agent-config.js';
@@ -24,11 +25,13 @@ import { clearActiveRuntimeItem, setActiveRuntimeItem } from './active-item.js';
 import {
   recordRuntimeAborted,
   recordRuntimeEvent,
+  recordSessionRotationActivity,
 } from './activity.js';
 import { startActiveRunControl, type ActiveRunHandle } from './active-run-control.js';
 import { appendQueuedFollowupsUntilFinished } from './followup-appender.js';
 import { recordFinalRuntimeFailure, runProviderWithCrashRetries } from './provider-runner.js';
 import { defaultAgentHealthService, isProviderFailureReason } from './agent-health.service.js';
+import { runtimeSessionServiceForAgent } from './runtime-session.service.js';
 import type { AgentRuntimeHandleSnapshot } from '../../shared/snapshot.js';
 
 // Executor for one agent: claims queued inbox items, runs the provider runtime,
@@ -274,6 +277,12 @@ export class AgentRuntimeWorker {
         onFinalFailureRecorded: () => {
           runtimeFailureRecorded = true;
         },
+        recoverCorruptSession: (error) => this.recoverCorruptProviderSession(
+          runContext,
+          handle,
+          item.id,
+          error,
+        ),
         signal: itemAbort.signal,
       });
       itemAbort.abort('completed');
@@ -381,6 +390,38 @@ export class AgentRuntimeWorker {
         message: 'Resumed after restart',
       },
     );
+  }
+
+  private async recoverCorruptProviderSession(
+    context: RuntimeItemContext,
+    handle: ActiveRunHandle,
+    itemId: string,
+    error: ProviderSessionCorruptionError,
+  ): Promise<boolean> {
+    const note = `Automatic recovery after ${error.reason.replaceAll('_', ' ')}`;
+    const recovered = await runtimeSessionServiceForAgent(this.options.agentId)
+      .archiveCorruptProviderSession(
+        this.options.agentRuntime.kind,
+        error.providerSessionId,
+        note,
+      );
+    if (!recovered) return false;
+
+    context.session = recovered.session;
+    await this.queue.requeueAppendedTo(itemId);
+    handle.appendedFollowups.length = 0;
+    await recordSessionRotationActivity({
+      agentId: this.options.agentId,
+      itemId,
+    }, {
+      archivedAt: recovered.archived.archivedAt,
+      archivedCount: 1,
+      archivedProviderSessions: [recovered.archived],
+      automatic: true,
+      note,
+      reason: error.reason,
+    });
+    return true;
   }
 
   private async recordMemoryCoherenceCompleted(

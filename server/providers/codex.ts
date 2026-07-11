@@ -8,6 +8,10 @@ import {
   type AgentRuntimeResult,
   type CodexCliAgentProviderConfig,
 } from './contract.js';
+import {
+  ProviderSessionCorruptionError,
+  type ProviderSessionCorruptionReason,
+} from './session-corruption.js';
 
 const CODEX_COMMAND = 'codex';
 export const CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV = 'ANIMA_CODEX_AUTO_COMPACT_TOKEN_LIMIT';
@@ -34,6 +38,8 @@ export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerC
   readonly env: Record<string, string> | undefined;
   readonly kind = 'codex-cli';
   private readonly config: CodexCliAgentProviderConfig;
+  private pendingSessionCorruption?: ProviderSessionCorruptionReason;
+  private resumedProviderSessionId?: string;
 
   constructor(config: CodexCliAgentProviderConfig) {
     super({ providerChildIdleTimeoutMs: config.providerChildIdleTimeoutMs });
@@ -42,32 +48,43 @@ export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerC
   }
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
-    return this.runTurnLifecycle(input, {
-      beforeFinishRun: () => this.slot.get()?.detachRun(input),
-      label: 'Codex',
-      startedPayload: {
-        command: CODEX_COMMAND,
-        transport: 'app-server',
-      },
-      turn: async () => {
-        if (!input.providerSession && this.slot.get()?.threadId) {
-          await this.slot.reset();
-        }
-        const controller = this.ensureController(input);
-        controller.attachRun(input);
-        const thread = await controller.ensureThread(input, this.threadParams(input));
-        await input.effects.persistProviderSession({
-          id: thread.id,
-          updatedAt: nowIso(),
-        });
+    this.resumedProviderSessionId = input.providerSession?.id;
+    this.pendingSessionCorruption = undefined;
+    try {
+      return await this.runTurnLifecycle(input, {
+        beforeFinishRun: () => this.slot.get()?.detachRun(input),
+        label: 'Codex',
+        startedPayload: {
+          command: CODEX_COMMAND,
+          transport: 'app-server',
+        },
+        turn: async () => {
+          try {
+            if (!input.providerSession && this.slot.get()?.threadId) {
+              await this.slot.reset();
+            }
+            const controller = this.ensureController(input);
+            controller.attachRun(input);
+            const thread = await controller.ensureThread(input, this.threadParams(input));
+            await input.effects.persistProviderSession({
+              id: thread.id,
+              updatedAt: nowIso(),
+            });
 
-        const result = await controller.startTurn({
-          input: [codexTextInput(input.prompt)],
-          threadId: thread.id,
-        }, input, (text) => input.effects.recordAgentText(text));
-        return { text: result.trim() };
-      },
-    });
+            const result = await controller.startTurn({
+              input: [codexTextInput(input.prompt)],
+              threadId: thread.id,
+            }, input, (text) => input.effects.recordAgentText(text));
+            return { text: result.trim() };
+          } catch (error) {
+            throw this.sessionCorruptionError(error) ?? error;
+          }
+        },
+      });
+    } finally {
+      this.pendingSessionCorruption = undefined;
+      this.resumedProviderSessionId = undefined;
+    }
   }
 
   async appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<AgentRuntimeFollowupResult> {
@@ -84,7 +101,10 @@ export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerC
         threadId: controller.threadId,
       });
     } catch (error) {
-      if (isCodexTurnSteerDesyncError(error)) await this.slot.reset();
+      if (isCodexTurnSteerDesyncError(error)) {
+        this.markSessionCorruption('turn_desync');
+        await this.slot.reset();
+      }
       throw error;
     }
     return { accepted: true, text: `appended to ${turnId}` };
@@ -100,8 +120,25 @@ export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerC
         label: 'Codex app-server runtime',
       },
       input,
-      (child) => new CodexAppServerController(child, this.kind),
+      (child) => new CodexAppServerController(
+        child,
+        this.kind,
+        (reason) => this.markSessionCorruption(reason),
+      ),
     );
+  }
+
+  private markSessionCorruption(reason: ProviderSessionCorruptionReason): void {
+    if (!this.resumedProviderSessionId || this.pendingSessionCorruption) return;
+    this.pendingSessionCorruption = reason;
+  }
+
+  private sessionCorruptionError(error: unknown): ProviderSessionCorruptionError | undefined {
+    const providerSessionId = this.resumedProviderSessionId;
+    if (!providerSessionId) return undefined;
+    const reason = this.pendingSessionCorruption
+      ?? (codexMissingToolOutputMessage(error) ? 'missing_tool_output' : undefined);
+    return reason ? new ProviderSessionCorruptionError(providerSessionId, reason, error) : undefined;
   }
 
   private threadParams(input: AgentRuntimeInput): Record<string, unknown> {
@@ -165,4 +202,9 @@ function codexTextInput(text: string): Record<string, unknown> {
 function isCodexTurnSteerDesyncError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /expected active turn id/i.test(message) || /no active turn to steer/i.test(message);
+}
+
+function codexMissingToolOutputMessage(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Custom tool call output is missing for call id:\s*call_[A-Za-z0-9_-]+/i.test(message);
 }

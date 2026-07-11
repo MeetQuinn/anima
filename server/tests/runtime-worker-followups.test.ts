@@ -447,7 +447,7 @@ test('runtime worker retries follow-ups quietly until the provider turn is ready
     );
 
     await waitFor(() => runtime.attempts >= 2);
-    assert.equal((await queueFor('scout').find(second.ctx.item.id))?.handling.status, 'queued');
+    await waitForInboxItemStatus('scout', second.ctx.item.id, 'queued');
     assert.equal(
       allActivities(await loadState()).some((activity) =>
         activity.type === 'runtime.followup_failed' || activity.type === 'runtime.pending'),

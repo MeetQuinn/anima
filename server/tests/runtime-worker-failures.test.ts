@@ -12,6 +12,8 @@ import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
 import { AgentHealthService } from '../runtime/agent-health.service.js';
 import { AgentHealthStore } from '../runtime/agent-health.store.js';
 import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
+import { runtimeSessionServiceForAgent } from '../runtime/runtime-session.service.js';
+import { ProviderSessionCorruptionError } from '../providers/session-corruption.js';
 import type {
   AgentRuntime,
   AgentRuntimeFollowupInput,
@@ -27,6 +29,7 @@ import {
   enqueueInbox,
   queueFor,
   silentLogger,
+  waitForInboxItemAppendedTo,
   waitForInboxItemRemoved,
 } from './helpers/runtime-worker.js';
 
@@ -62,6 +65,100 @@ class ProgressThenWaitRuntime implements AgentRuntime {
     const resolve = this.resolvers.shift();
     assert.ok(resolve, 'Expected an active runtime call');
     resolve();
+  }
+}
+
+class CorruptSessionThenSuccessRuntime implements AgentRuntime {
+  readonly kind = 'codex-cli';
+  readonly calls: AgentRuntimeInput[] = [];
+  closeCalls = 0;
+
+  constructor(private readonly corruptionsBeforeSuccess: number) {}
+
+  async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
+    this.calls.push(input);
+    if (this.calls.length <= this.corruptionsBeforeSuccess) {
+      throw new ProviderSessionCorruptionError(
+        'codex-thread-corrupt',
+        'missing_tool_output',
+        new Error('Custom tool call output is missing for call id: call_corrupt'),
+      );
+    }
+    await input.effects.persistProviderSession({
+      id: 'codex-thread-fresh',
+      updatedAt: '2026-07-11T19:30:00.000Z',
+    });
+    return { text: 'recovered on a fresh session' };
+  }
+
+  async appendToActiveRun(_input: AgentRuntimeFollowupInput): Promise<{ accepted: boolean }> {
+    return { accepted: false };
+  }
+
+  async close(): Promise<void> {
+    this.closeCalls += 1;
+  }
+}
+
+class CorruptAfterFollowupRuntime implements AgentRuntime {
+  readonly kind = 'codex-cli';
+  readonly calls: AgentRuntimeInput[] = [];
+  readonly followups: AgentRuntimeFollowupInput[] = [];
+  private active = false;
+  private firstReject?: (error: unknown) => void;
+  private freshResolve?: (result: AgentRuntimeResult) => void;
+
+  async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
+    this.calls.push(input);
+    this.active = true;
+    if (this.calls.length === 1) {
+      return new Promise((_, reject) => {
+        this.firstReject = reject;
+      });
+    }
+    await input.effects.persistProviderSession({
+      id: 'codex-thread-fresh',
+      updatedAt: '2026-07-11T19:30:00.000Z',
+    });
+    return new Promise((resolve) => {
+      this.freshResolve = resolve;
+    });
+  }
+
+  async appendToActiveRun(
+    input: AgentRuntimeFollowupInput,
+  ): Promise<{ accepted: boolean; retryable?: boolean; text?: string }> {
+    if (!this.active) return { accepted: false, retryable: true };
+    this.followups.push(input);
+    return { accepted: true, text: `appended ${input.itemId}` };
+  }
+
+  async close(): Promise<void> {
+    this.active = false;
+    this.firstReject?.(new Error('closed'));
+    this.firstReject = undefined;
+    this.freshResolve?.({ text: 'closed' });
+    this.freshResolve = undefined;
+  }
+
+  corruptFirstRun(): void {
+    const reject = this.firstReject;
+    assert.ok(reject, 'Expected the resumed run to be active');
+    this.active = false;
+    this.firstReject = undefined;
+    reject(new ProviderSessionCorruptionError(
+      'codex-thread-corrupt',
+      'turn_desync',
+      new Error('expected active turn id turn-old but found turn-new'),
+    ));
+  }
+
+  finishFreshRun(): void {
+    const resolve = this.freshResolve;
+    assert.ok(resolve, 'Expected the fresh run to be active');
+    this.active = false;
+    this.freshResolve = undefined;
+    resolve({ text: 'recovered with follow-up replayed' });
   }
 }
 
@@ -432,16 +529,198 @@ test('runtime worker retries provider process crashes and continues same item', 
       }),
       coordinator,
     );
+    await runtimeSessionServiceForAgent('scout').persistProviderSession('codex-cli', {
+      id: 'codex-thread-healthy',
+      updatedAt: '2026-07-11T19:20:00.000Z',
+    });
     const drain = worker.drainOnce();
     assert.equal(await drain, 1);
 
     assert.equal(await queueFor('scout').find(decision.ctx.item.id), undefined);
     assert.equal(runtime.calls.length, 2);
+    assert.equal(runtime.calls[0]?.providerSession?.id, 'codex-thread-healthy');
+    assert.equal(runtime.calls[1]?.providerSession?.id, 'codex-thread-healthy');
     assert.match(runtime.calls[1]?.prompt ?? '', /previous provider process crashed/);
     assert.match(runtime.calls[1]?.prompt ?? '', /Do not repeat completed external side effects/);
     const activities = allActivities(await loadState());
     assert.ok(activities.some((activity) => activity.type === 'runtime.event' && activity.payload?.['eventType'] === 'provider.crash.retry'));
     assert.equal(activities.some((activity) => activity.type === 'runtime.failed'), false);
+    const session = await runtimeSessionServiceForAgent('scout').upsertPrimarySession();
+    assert.equal(session.current?.id, 'codex-thread-healthy');
+    assert.equal(session.archived, undefined);
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker archives a confirmed corrupt session and retries the same item fresh once', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-session-recovery-test-'));
+  const runtime = new CorruptSessionThenSuccessRuntime(1);
+  const coordinator = { agentId: 'scout', stateDir };
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        queue: queueFor('scout'),
+        pollIntervalMs: 10_000,
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+      const decision = await enqueueInbox(
+        makeSlackEvent({
+          channelId: 'D-user',
+          eventId: 'evt-session-recovery',
+          teamId: 'T-demo',
+          text: 'recover this item',
+          ts: '1770000010.000001',
+          userId: 'U1',
+        }),
+        coordinator,
+      );
+      await runtimeSessionServiceForAgent('scout').persistProviderSession('codex-cli', {
+        id: 'codex-thread-corrupt',
+        updatedAt: '2026-07-11T19:20:00.000Z',
+      });
+
+      assert.equal(await worker.drainOnce(), 1);
+      assert.equal(await queueFor('scout').find(decision.ctx.item.id), undefined);
+      assert.equal(runtime.calls.length, 2);
+      assert.equal(runtime.closeCalls, 1);
+      assert.equal(runtime.calls[0]?.providerSession?.id, 'codex-thread-corrupt');
+      assert.equal(runtime.calls[1]?.providerSession, undefined);
+      assert.match(runtime.calls[1]?.prompt ?? '', /Provider session recovery:/);
+      assert.match(runtime.calls[1]?.prompt ?? '', /Do not repeat completed external side effects/);
+
+      const session = await runtimeSessionServiceForAgent('scout').upsertPrimarySession();
+      assert.equal(session.current?.id, 'codex-thread-fresh');
+      assert.equal(session.archived?.length, 1);
+      assert.equal(session.archived?.[0]?.id, 'codex-thread-corrupt');
+      assert.equal(session.archived?.[0]?.archivedBy, 'recovery');
+      const activities = allActivities(await loadState());
+      const rotation = activities.find((activity) => activity.type === 'anima.session.rotate');
+      assert.equal(rotation?.payload?.['automatic'], true);
+      assert.equal(rotation?.payload?.['reason'], 'missing_tool_output');
+      assert.equal(rotation?.payload?.['itemId'], decision.ctx.item.id);
+      assert.equal(activities.some((activity) => activity.type === 'runtime.failed'), false);
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker never rotates twice for the same corrupt-session item', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-session-recovery-once-test-'));
+  const runtime = new CorruptSessionThenSuccessRuntime(2);
+  const coordinator = { agentId: 'scout', stateDir };
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        queue: queueFor('scout'),
+        pollIntervalMs: 10_000,
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+      const decision = await enqueueInbox(
+        makeSlackEvent({
+          channelId: 'D-user',
+          eventId: 'evt-session-recovery-once',
+          teamId: 'T-demo',
+          text: 'do not loop',
+          ts: '1770000010.000002',
+          userId: 'U1',
+        }),
+        coordinator,
+      );
+      await runtimeSessionServiceForAgent('scout').persistProviderSession('codex-cli', {
+        id: 'codex-thread-corrupt',
+        updatedAt: '2026-07-11T19:20:00.000Z',
+      });
+
+      assert.equal(await worker.drainOnce(), 1);
+      assert.equal(runtime.calls.length, 2);
+      assert.equal(runtime.closeCalls, 1);
+      assert.equal(await queueFor('scout').find(decision.ctx.item.id), undefined);
+      const session = await runtimeSessionServiceForAgent('scout').upsertPrimarySession();
+      assert.equal(session.current, undefined);
+      assert.equal(session.archived?.length, 1);
+      const activities = allActivities(await loadState());
+      assert.equal(
+        activities.filter((activity) => activity.type === 'anima.session.rotate').length,
+        1,
+      );
+      assert.ok(activities.some((activity) => activity.type === 'runtime.failed'));
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker requeues follow-ups accepted by the corrupt turn and appends them to the fresh turn', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-session-recovery-followup-test-'));
+  const runtime = new CorruptAfterFollowupRuntime();
+  const coordinator = { agentId: 'scout', stateDir };
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        queue: queueFor('scout'),
+        pollIntervalMs: 10_000,
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+      const primary = await enqueueInbox(
+        makeSlackEvent({
+          channelId: 'D-user',
+          eventId: 'evt-session-recovery-primary',
+          teamId: 'T-demo',
+          text: 'primary item',
+          ts: '1770000010.000001',
+          userId: 'U1',
+        }),
+        coordinator,
+      );
+      await runtimeSessionServiceForAgent('scout').persistProviderSession('codex-cli', {
+        id: 'codex-thread-corrupt',
+        updatedAt: '2026-07-11T19:20:00.000Z',
+      });
+
+      const drain = worker.drainOnce();
+      await waitFor(() => runtime.calls.length === 1);
+      const followup = await enqueueInbox(
+        makeSlackEvent({
+          channelId: 'D-user',
+          eventId: 'evt-session-recovery-followup',
+          teamId: 'T-demo',
+          text: 'follow-up that must survive',
+          ts: '1770000010.000002',
+          userId: 'U1',
+        }),
+        coordinator,
+      );
+      await waitForInboxItemAppendedTo('scout', followup.ctx.item.id, primary.ctx.item.id);
+      assert.equal(runtime.followups.length, 1);
+
+      runtime.corruptFirstRun();
+      await waitFor(() => runtime.calls.length === 2);
+      await waitFor(() => runtime.followups.length === 2);
+      assert.match(runtime.followups[0]?.prompt ?? '', /follow-up that must survive/);
+      assert.match(runtime.followups[1]?.prompt ?? '', /follow-up that must survive/);
+      runtime.finishFreshRun();
+
+      assert.equal(await drain, 1);
+      assert.equal(await queueFor('scout').find(primary.ctx.item.id), undefined);
+      assert.equal(await queueFor('scout').find(followup.ctx.item.id), undefined);
     });
   } finally {
     await worker?.close();

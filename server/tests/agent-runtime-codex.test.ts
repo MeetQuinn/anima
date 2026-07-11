@@ -21,6 +21,10 @@ import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { withAnimaHome } from './anima-home.js';
 import { runtimeInput, runtimeFollowupInput, assertFollowupPrompt, providerSessionStartedPayload, runtimeTestEnv } from './helpers/agent-runtime.js';
+import { runtimeSessionServiceForAgent } from '../runtime/runtime-session.service.js';
+import {
+  isProviderSessionCorruptionError,
+} from '../providers/session-corruption.js';
 
 test('codex-cli app-server launch allows managed provider env into tool shells', () => {
   const include = codexToolEnvIncludeList({
@@ -474,7 +478,8 @@ test('codex-cli resets app-server when follow-up steer sees a different active t
           "    return;",
           "  }",
           "  if (msg.method === 'initialized') return;",
-          "  if (msg.method === 'thread/start') {",
+          "  if (msg.method === 'thread/resume') {",
+          "    if (msg.params.threadId !== 'codex-thread-mismatch') process.exit(45);",
           "    send({ id: msg.id, result: { thread: { id: 'codex-thread-mismatch', cwd: process.cwd(), cliVersion: 'test' } } });",
           "    return;",
           "  }",
@@ -509,6 +514,10 @@ test('codex-cli resets app-server when follow-up steer sees a different active t
         }),
         { agentId: 'anima', stateDir },
       );
+      await runtimeSessionServiceForAgent('anima').persistProviderSession('codex-cli', {
+        id: 'codex-thread-mismatch',
+        updatedAt: '2026-07-11T19:22:00.000Z',
+      });
 
       runtime = createAgentRuntime({
         env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
@@ -520,7 +529,147 @@ test('codex-cli resets app-server when follow-up steer sees a different active t
         runtime.appendToActiveRun(await runtimeFollowupInput(runtime, firstCtx, secondCtx, await loadState())),
         /expected active turn id `turn-old` but found `turn-new`/,
       );
-      await assert.rejects(withTimeout(runPromise, 1_000), /Codex app-server runtime terminated by SIGTERM/);
+      await assert.rejects(withTimeout(runPromise, 1_000), (error: unknown) => {
+        assert.ok(isProviderSessionCorruptionError(error));
+        assert.equal(error.providerSessionId, 'codex-thread-mismatch');
+        assert.equal(error.reason, 'turn_desync');
+        return true;
+      });
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('codex-cli detects a missing tool output from resumed-session stderr across chunks', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const fakeCodex = join(stateDir, 'codex');
+      await writeFile(
+        fakeCodex,
+        [
+          '#!/usr/bin/env node',
+          "import readline from 'node:readline';",
+          "const rl = readline.createInterface({ input: process.stdin });",
+          "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
+          "rl.on('line', (line) => {",
+          "  const msg = JSON.parse(line);",
+          "  if (msg.method === 'initialize') {",
+          "    send({ id: msg.id, result: { userAgent: 'fake-codex' } });",
+          "    return;",
+          "  }",
+          "  if (msg.method === 'initialized') return;",
+          "  if (msg.method === 'thread/resume') {",
+          "    if (msg.params.threadId !== 'codex-thread-corrupt') process.exit(45);",
+          "    send({ id: msg.id, result: { thread: { id: 'codex-thread-corrupt', cwd: process.cwd(), cliVersion: 'test' } } });",
+          "    return;",
+          "  }",
+          "  if (msg.method === 'turn/start') {",
+          "    send({ id: msg.id, result: { turn: { id: 'turn-corrupt', status: 'inProgress', items: [], itemsView: 'full', error: null, startedAt: 1, completedAt: null, durationMs: null } } });",
+          "    process.stderr.write('Custom tool call output is miss');",
+          "    setTimeout(() => process.stderr.write('ing for call id: call_Q5BzZiqgNTO59QB9xAVmX0Gc\\n'), 10);",
+          "  }",
+          "});",
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      await chmod(fakeCodex, 0o755);
+
+      const ctx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-codex-corrupt',
+          teamId: 'T-demo',
+          text: 'resume corrupt session',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+      await runtimeSessionServiceForAgent('anima').persistProviderSession('codex-cli', {
+        id: 'codex-thread-corrupt',
+        updatedAt: '2026-07-11T19:22:00.000Z',
+      });
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir),
+        kind: 'codex-cli',
+      });
+
+      await assert.rejects(
+        withTimeout(runtime.run(await runtimeInput(runtime, ctx, await loadState())), 1_000),
+        (error: unknown) => {
+          assert.ok(isProviderSessionCorruptionError(error));
+          assert.equal(error.providerSessionId, 'codex-thread-corrupt');
+          assert.equal(error.reason, 'missing_tool_output');
+          return true;
+        },
+      );
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('codex-cli does not classify missing-output text from a fresh session as stored transcript corruption', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const fakeCodex = join(stateDir, 'codex');
+      await writeFile(
+        fakeCodex,
+        [
+          '#!/usr/bin/env node',
+          "import readline from 'node:readline';",
+          "const rl = readline.createInterface({ input: process.stdin });",
+          "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
+          "rl.on('line', (line) => {",
+          "  const msg = JSON.parse(line);",
+          "  if (msg.method === 'initialize') {",
+          "    send({ id: msg.id, result: { userAgent: 'fake-codex' } });",
+          "    return;",
+          "  }",
+          "  if (msg.method === 'initialized') return;",
+          "  if (msg.method === 'thread/start') {",
+          "    send({ id: msg.id, result: { thread: { id: 'codex-thread-fresh', cwd: process.cwd(), cliVersion: 'test' } } });",
+          "    return;",
+          "  }",
+          "  if (msg.method === 'turn/start') {",
+          "    send({ id: msg.id, result: { turn: { id: 'turn-fresh', status: 'inProgress', items: [], itemsView: 'full', error: null, startedAt: 1, completedAt: null, durationMs: null } } });",
+          "    process.stderr.write('Custom tool call output is missing for call id: call_log_only\\n');",
+          "    setTimeout(() => {",
+          "      send({ method: 'item/agentMessage/delta', params: { threadId: 'codex-thread-fresh', turnId: 'turn-fresh', itemId: 'item-fresh', delta: 'fresh handled' } });",
+          "      send({ method: 'turn/completed', params: { threadId: 'codex-thread-fresh', turn: { id: 'turn-fresh', status: 'completed', items: [], itemsView: 'full', error: null, startedAt: 1, completedAt: 2, durationMs: 1000 } } });",
+          "    }, 50);",
+          "  }",
+          "});",
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      await chmod(fakeCodex, 0o755);
+
+      const ctx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-codex-fresh',
+          teamId: 'T-demo',
+          text: 'start fresh',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir),
+        kind: 'codex-cli',
+      });
+
+      assert.equal(
+        (await withTimeout(runtime.run(await runtimeInput(runtime, ctx, await loadState())), 1_000)).text,
+        'fresh handled',
+      );
     });
   } finally {
     await runtime?.close?.();
