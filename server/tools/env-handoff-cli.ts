@@ -26,7 +26,7 @@ import { resolveAgentIdFrom } from '../cli/shared.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { outcomeLine } from './outcome-line.js';
 
-export const HANDOFF_PAGE_ORIGIN = 'https://handoff.anima.meetquinn.ai';
+export const HANDOFF_PAGE_ORIGIN = 'https://handoff.meetanima.online';
 const HANDOFF_PAGE_ORIGIN_ENV = 'ANIMA_HUMAN_HANDOFF_PAGE_ORIGIN';
 
 const SharedFlags = z.object({
