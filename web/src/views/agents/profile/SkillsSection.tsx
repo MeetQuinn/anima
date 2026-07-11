@@ -1,36 +1,148 @@
-import { Bot, ChevronRight, Globe } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { useState } from 'react';
+import { ChevronDown, FileText } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { fetchAgentSkills } from '@/api/agents';
+import { buildAgentFilePath } from '@/lib/url-state';
 import { queryKeys } from '@/lib/query-keys';
 import type { SkillSourceSummary, SkillSummary } from '@shared/skills';
 
+// ── Skills as a ledger ────────────────────────────────────────────────────────
+//
+// Cut-2 shape (task #98): skills read like the Setup ledger above them - quiet
+// one-line rows, not description cards. Each row is a disclosure (name +
+// truncated trigger line collapsed; full description, source path, and - for
+// the agent's own skills - an Open in Files link when expanded). The agent's
+// own skills lead: they are the identity-relevant ones; the shared pool is
+// reference material. Counts ride the group eyebrows so scale is legible
+// before you scroll (a Codex pool can be 45 across three sources).
+
+/** Home-relative path for a skill dir, or null when it lives outside home. */
+function homeRelativePath(homePath: string, sourcePath?: string): string | null {
+  if (!homePath || !sourcePath) return null;
+  const prefix = homePath.endsWith('/') ? homePath : `${homePath}/`;
+  return sourcePath.startsWith(prefix) ? sourcePath.slice(prefix.length) : null;
+}
+
 // ---------------------------------------------------------------------------
-// Single skill row
+// Single skill row: collapsed one-liner, expandable in place
 // ---------------------------------------------------------------------------
 
 function SkillRow({
-  showSourceBadge = true,
+  agentId,
+  homePath,
   skill,
 }: {
-  showSourceBadge?: boolean;
+  agentId: string;
+  homePath: string;
   skill: SkillSummary;
 }) {
+  const [open, setOpen] = useState(false);
+  const relative = homeRelativePath(homePath, skill.sourcePath);
+  const fileHref = relative ? buildAgentFilePath(agentId, `${relative}/SKILL.md`) : null;
   return (
-    <div className="py-2.5">
-      <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1 font-serif text-[14px] leading-snug text-text">
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="group flex w-full items-baseline gap-2.5 py-2 text-left"
+      >
+        <span className="shrink-0 font-serif text-[14px] leading-snug text-text">
           {skill.name}
+        </span>
+        <span className="min-w-0 flex-1 truncate font-sans text-[12px] text-text-subtle transition-colors group-hover:text-text-muted">
+          {open ? '' : skill.description}
+        </span>
+        <ChevronDown
+          className={`h-3 w-3 shrink-0 self-center text-text-subtle/50 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {open && (
+        <div className="space-y-2 pb-3 pr-6">
+          {skill.description && (
+            <p className="max-w-prose font-sans text-[12px] leading-relaxed text-text-muted">
+              {skill.description}
+            </p>
+          )}
+          {skill.sourcePath && (
+            <div className="break-all font-mono text-[11px] text-text-subtle/60">
+              {skill.sourcePath}
+            </div>
+          )}
+          {fileHref && (
+            <Link
+              to={fileHref}
+              className="inline-flex items-center gap-1 font-sans text-[11px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted hover:decoration-text-muted/40"
+            >
+              <FileText className="h-3 w-3" />
+              Open in Files
+            </Link>
+          )}
         </div>
-        {showSourceBadge && skill.sourceLabel && (
-          <span className="shrink-0 rounded-full border border-border-soft px-1.5 py-0.5 font-mono text-[10px] leading-none text-text-subtle">
-            {skill.sourceLabel}
-          </span>
-        )}
-      </div>
-      {skill.description && (
-        <div className="mt-0.5 line-clamp-2 font-sans text-[12px] leading-relaxed text-text-muted">
-          {skill.description}
+      )}
+    </div>
+  );
+}
+
+function SkillLedger({
+  agentId,
+  homePath,
+  skills,
+}: {
+  agentId: string;
+  homePath: string;
+  skills: SkillSummary[];
+}) {
+  return (
+    <div className="divide-y divide-border-soft/60">
+      {skills.map((skill) => (
+        <SkillRow
+          key={`${skill.sourcePath ?? ''}:${skill.dirName}`}
+          agentId={agentId}
+          homePath={homePath}
+          skill={skill}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Source subgroup (only when a group spans several sources, e.g. Codex's
+// Common / Built-in / Bundled). Big reference piles start collapsed.
+// ---------------------------------------------------------------------------
+
+function SourceGroup({
+  agentId,
+  homePath,
+  source,
+}: {
+  agentId: string;
+  homePath: string;
+  source: SkillSourceSummary;
+}) {
+  const [open, setOpen] = useState(
+    source.kind === 'common' || source.kind === 'local' || source.kind === 'provider',
+  );
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-baseline gap-2 py-1.5 text-left"
+        title={source.path}
+      >
+        <ChevronDown
+          className={`h-3 w-3 shrink-0 self-center text-text-subtle/50 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+        <span className="font-sans text-[12px] font-medium text-text-muted">{source.label}</span>
+        <span className="font-mono text-[11px] text-text-subtle/70">{source.skills.length}</span>
+      </button>
+      {open && (
+        <div className="ml-5">
+          <SkillLedger agentId={agentId} homePath={homePath} skills={source.skills} />
         </div>
       )}
     </div>
@@ -38,101 +150,59 @@ function SkillRow({
 }
 
 // ---------------------------------------------------------------------------
-// Skill group (global / local)
+// Group: eyebrow label + count, then a flat ledger or source subgroups
 // ---------------------------------------------------------------------------
 
 function SkillGroup({
+  agentId,
+  emptyHint,
+  homePath,
   label,
-  icon: Icon,
   path,
   skills,
   sources,
 }: {
+  agentId: string;
+  /** Shown under the empty state so it reads as an invitation, not a dead end. */
+  emptyHint?: string;
+  homePath: string;
   label: string;
-  icon: LucideIcon;
   path: string;
   skills: SkillSummary[];
   sources?: SkillSourceSummary[];
 }) {
   const visibleSources = sources?.filter((source) => source.skills.length > 0) ?? [];
-  const sourceSummary =
-    visibleSources.length > 0
-      ? `${skills.length} skills across ${visibleSources.length} ${visibleSources.length === 1 ? 'source' : 'sources'}`
-      : path;
   return (
     <div>
-      {/* Label row */}
-      <div className="mb-1 flex items-center gap-1.5">
-        <Icon className="h-3 w-3 shrink-0 text-text-subtle" />
-        <span className="caps text-text-subtle">{label}</span>
-      </div>
-      {/* Path subtitle */}
       <div
-        className="mb-2 font-mono text-[11px] text-text-subtle/60 leading-snug truncate"
+        className="chrome mb-1 flex items-baseline gap-1.5 text-[10px] uppercase tracking-[0.1em] text-text-subtle"
         title={path}
       >
-        {sourceSummary}
+        <span>{label}</span>
+        <span className="normal-case tracking-normal text-text-subtle/60">· {skills.length}</span>
       </div>
-      {/* Skill list or empty state */}
       {skills.length === 0 ? (
-        <p className="font-serif italic text-[13px] text-text-subtle">None</p>
-      ) : visibleSources.length > 0 ? (
-        <div className="space-y-2.5">
+        <div className="py-1">
+          <p className="font-serif text-[13px] italic text-text-subtle">None yet</p>
+          {emptyHint && (
+            <p className="mt-1 break-all font-mono text-[11px] text-text-subtle/50">{emptyHint}</p>
+          )}
+        </div>
+      ) : visibleSources.length > 1 ? (
+        <div className="space-y-1">
           {visibleSources.map((source) => (
             <SourceGroup
               key={`${source.kind}:${source.path}`}
+              agentId={agentId}
+              homePath={homePath}
               source={source}
             />
           ))}
         </div>
       ) : (
-        <div className="divide-y divide-border-soft/60">
-          {skills.map((skill) => (
-            <SkillRow key={`${skill.sourcePath ?? path}:${skill.dirName}`} skill={skill} />
-          ))}
-        </div>
+        <SkillLedger agentId={agentId} homePath={homePath} skills={skills} />
       )}
     </div>
-  );
-}
-
-function SourceGroup({ source }: { source: SkillSourceSummary }) {
-  const defaultOpen =
-    source.kind === 'common' ||
-    source.kind === 'local' ||
-    source.kind === 'provider';
-  const skillCount = `${source.skills.length} ${source.skills.length === 1 ? 'skill' : 'skills'}`;
-
-  return (
-    <details
-      className="group border-b border-border-soft/60 pb-1 last:border-b-0"
-      open={defaultOpen}
-    >
-      <summary className="flex cursor-pointer list-none items-center gap-2 py-1.5">
-        <ChevronRight className="h-3 w-3 shrink-0 text-text-subtle/60 transition-transform group-open:rotate-90" />
-        <span className="rounded-full border border-border-soft px-1.5 py-0.5 font-mono text-[10px] leading-none text-text-subtle">
-          {source.label}
-        </span>
-        <span className="font-mono text-[10px] leading-none text-text-subtle/60">
-          {skillCount}
-        </span>
-        <span
-          className="min-w-0 flex-1 truncate font-mono text-[10px] leading-none text-text-subtle/45"
-          title={source.path}
-        >
-          {source.path}
-        </span>
-      </summary>
-      <div className="ml-5 divide-y divide-border-soft/60">
-        {source.skills.map((skill) => (
-          <SkillRow
-            key={`${skill.sourcePath ?? source.path}:${skill.dirName}`}
-            showSourceBadge={false}
-            skill={skill}
-          />
-        ))}
-      </div>
-    </details>
   );
 }
 
@@ -140,7 +210,7 @@ function SourceGroup({ source }: { source: SkillSourceSummary }) {
 // Section
 // ---------------------------------------------------------------------------
 
-export function SkillsSection({ agentId }: { agentId: string }) {
+export function SkillsSection({ agentId, homePath }: { agentId: string; homePath: string }) {
   const { data, isLoading } = useQuery({
     queryKey: queryKeys.agentSkills(agentId),
     queryFn: () => fetchAgentSkills(agentId),
@@ -160,20 +230,23 @@ export function SkillsSection({ agentId }: { agentId: string }) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-7">
       <SkillGroup
-        label="Global skills"
-        icon={Globe}
-        path={data.globalPath}
-        skills={data.global}
-        sources={data.globalSources}
-      />
-      <SkillGroup
-        label="This agent's skills"
-        icon={Bot}
+        agentId={agentId}
+        label="This agent"
         path={data.localPath}
         skills={data.local}
         sources={data.localSources}
+        homePath={homePath}
+        emptyHint={data.localPath}
+      />
+      <SkillGroup
+        agentId={agentId}
+        label="Shared"
+        path={data.globalPath}
+        skills={data.global}
+        sources={data.globalSources}
+        homePath={homePath}
       />
     </div>
   );
