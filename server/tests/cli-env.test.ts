@@ -361,7 +361,7 @@ test('env handoff CLI creates a browser-only human request with bound workspace 
     ], { env });
     assert.equal(disabled.status, 1);
     assert.match(disabled.stderr, /not enabled until the secure page deployment is verified/);
-    assert.doesNotMatch(disabled.stderr + disabled.stdout, /handoff\.getanima\.live/);
+    assert.doesNotMatch(disabled.stderr + disabled.stdout, /handoff\.meetanima\.online/);
     await assert.rejects(stat(join(agentDir, 'env', 'handoff')), { code: 'ENOENT' });
 
     const untrusted = await runNode([
@@ -382,7 +382,7 @@ test('env handoff CLI creates a browser-only human request with bound workspace 
 
     const enabledEnv = {
       ...env,
-      ANIMA_HUMAN_HANDOFF_PAGE_ORIGIN: 'https://handoff.getanima.live',
+      ANIMA_HUMAN_HANDOFF_PAGE_ORIGIN: 'https://handoff.meetanima.online',
     };
     const result = await runNode([
       cliPath,
@@ -400,7 +400,7 @@ test('env handoff CLI creates a browser-only human request with bound workspace 
     assert.match(result.stdout, /Slack and the Anima handoff page never receive the plaintext/);
     assert.match(
       result.stdout,
-      /<https:\/\/handoff\.getanima\.live\/#asec_req_v1_[A-Za-z0-9_-]+\|Securely provide secret>/,
+      /<https:\/\/handoff\.meetanima\.online\/#asec_req_v1_[A-Za-z0-9_-]+\|Securely provide secret>/,
     );
     assert.ok(result.stdout.length < 12_000);
 
