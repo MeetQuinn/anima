@@ -29,7 +29,7 @@ import {
   ProviderEnvRow,
   ConfirmRestartModal,
 } from './AgentFields';
-import { useTeams } from '@/hooks/useTeams';
+import { useTeams, useTeamWarnings } from '@/hooks/useTeams';
 import { assignAgentTeam } from '@/api/teams';
 import { DEFAULT_TEAM_ID } from '@shared/server-settings';
 import { SessionSection } from './SessionStats';
@@ -81,6 +81,10 @@ export default function Profile() {
     queryFn: fetchWorkspacePlatform,
   });
   const teams = useTeams();
+  // Repairable team-reference warning for THIS agent (its teamId names a team
+  // that no longer exists). Surfaced here, next to the Team field, rather than
+  // in the sidebar — it belongs on the agent it concerns.
+  const teamWarning = useTeamWarnings().find((w) => w.agentId === agentId);
   const { data: providerAvailability = null } = useQuery({
     queryKey: queryKeys.providerAvailability(),
     queryFn: fetchProviderAvailability,
@@ -285,6 +289,16 @@ export default function Profile() {
             value={agent.teamId ?? DEFAULT_TEAM_ID}
             onCommit={commitTeam}
           />
+          {teamWarning && (
+            <div className="relative py-3 pl-5" role="status">
+              <span aria-hidden className="absolute left-0 top-3 bottom-3 w-px bg-health-warn/60" />
+              <span className="font-serif text-[13px] leading-snug text-text-muted">
+                This agent references team{' '}
+                <span className="font-mono text-text">"{teamWarning.teamId}"</span>, which no longer
+                exists. It is running under the default team - reassign it above to repair.
+              </span>
+            </div>
+          )}
           <ProviderInlineRow
             kind={agent.provider.kind}
             model={agent.provider.model ?? ''}

@@ -241,6 +241,51 @@ body::before {
   animation: anima-fade-in 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
+/* Working-agent presence pulse — the sidebar's only motion. A running agent's
+   status dot gently breathes (core) and emits a soft, slow halo, so "who is
+   working right now" reads at a glance. Idle/other states stay static. */
+@keyframes anima-dot-core {
+  0%,
+  100% {
+    transform: scale(0.9);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+}
+@keyframes anima-dot-halo {
+  0% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  70%,
+  100% {
+    transform: scale(3);
+    opacity: 0;
+  }
+}
+.anima-dot-core {
+  transform-origin: center;
+  animation: anima-dot-core 2.2s ease-in-out infinite;
+}
+.anima-dot-halo {
+  transform-origin: center;
+  animation: anima-dot-halo 2.2s ease-out infinite;
+}
+/* Honor reduced-motion: hold the dot steady, drop the halo entirely. */
+@media (prefers-reduced-motion: reduce) {
+  .anima-dot-core {
+    animation: none;
+    transform: none;
+    opacity: 1;
+  }
+  .anima-dot-halo {
+    display: none;
+  }
+}
+
 /* Day divider — a single hairline + small-caps date, editorial rhythm. */
 .editorial-rule {
   border: 0;
