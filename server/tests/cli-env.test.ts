@@ -105,6 +105,221 @@ test('env CLI rejects cross-file duplicates and reserved runtime keys', async ()
   }
 });
 
+test('env handoff CLI transfers a secret once, preserves sender policy, and requires explicit replace', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-env-handoff-test-'));
+  const envFor = (agentId: string) => ({ ...process.env, ANIMA_AGENT_ID: agentId, ANIMA_HOME: stateDir });
+  const specimen = 'handoff-secret-specimen';
+  try {
+    const seed = await runNode([cliPath, 'env', 'set', 'SOURCE_TOKEN', '--secret'], {
+      env: envFor('nora'),
+      input: `${specimen}\n`,
+    });
+    assert.equal(seed.status, 0, seed.stderr || seed.stdout);
+
+    const request = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'request',
+      'SERVICE_TOKEN',
+      '--purpose',
+      'Run the release verification job',
+      '--from',
+      'nora',
+    ], { env: envFor('milo') });
+    assert.equal(request.status, 0, request.stderr || request.stdout);
+    const requestCode = extractHandoffCode(request.stdout, 'asec_req_v1_');
+    assert.doesNotMatch(request.stdout, new RegExp(specimen));
+    assert.match(request.stdout, /Purpose: Run the release verification job/);
+    assert.match(request.stdout, /Sender: `nora`/);
+    assert.match(request.stdout, /Expires: <t:\d+:f>/);
+
+    const pendingFiles = join(stateDir, 'agents', 'milo', 'env', 'handoff');
+    assert.equal((await stat(pendingFiles)).mode & 0o777, 0o700);
+    const pendingFile = join(pendingFiles, `${request.stdout.match(/id=([A-Za-z0-9_-]{22})/)?.[1]}.json`);
+    assert.equal((await stat(pendingFile)).mode & 0o777, 0o600);
+    assert.doesNotMatch(await readFile(pendingFile, 'utf8'), new RegExp(specimen));
+
+    const wrongSender = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'send',
+      requestCode,
+      '--from-key',
+      'SOURCE_TOKEN',
+    ], { env: envFor('aria') });
+    assert.equal(wrongSender.status, 1);
+    assert.match(wrongSender.stderr, /expects sender nora/);
+
+    const send = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'send',
+      requestCode,
+      '--from-key',
+      'SOURCE_TOKEN',
+    ], { env: envFor('nora') });
+    assert.equal(send.status, 0, send.stderr || send.stdout);
+    const boxCode = extractHandoffCode(send.stdout, 'asec_box_v1_');
+    assert.doesNotMatch(send.stdout, new RegExp(specimen));
+
+    const accept = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'accept',
+      boxCode,
+    ], { env: envFor('milo') });
+    assert.equal(accept.status, 0, accept.stderr || accept.stdout);
+    assert.match(accept.stdout, /handoff accepted successfully/);
+    assert.match(accept.stdout, /key=SERVICE_TOKEN/);
+    assert.doesNotMatch(accept.stdout, new RegExp(specimen));
+
+    const reveal = await runNode([
+      cliPath,
+      'env',
+      'run',
+      '--keys',
+      'SERVICE_TOKEN',
+      '--',
+      process.execPath,
+      '-e',
+      'process.stdout.write(process.env.SERVICE_TOKEN || "")',
+    ], { env: envFor('milo') });
+    assert.equal(reveal.stdout, specimen);
+    const replay = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'accept',
+      boxCode,
+    ], { env: envFor('milo') });
+    assert.equal(replay.status, 1);
+    assert.match(replay.stderr, /not found/);
+
+    const replaceRequest = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'request',
+      'SERVICE_TOKEN',
+      '--purpose',
+      'Rotate the release verification credential',
+      '--from',
+      'nora',
+    ], { env: envFor('milo') });
+    const replaceRequestCode = extractHandoffCode(replaceRequest.stdout, 'asec_req_v1_');
+    const replaceSend = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'send',
+      replaceRequestCode,
+      '--from-key',
+      'SOURCE_TOKEN',
+    ], { env: envFor('nora') });
+    const replaceBox = extractHandoffCode(replaceSend.stdout, 'asec_box_v1_');
+    const rejectExisting = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'accept',
+      replaceBox,
+    ], { env: envFor('milo') });
+    assert.equal(rejectExisting.status, 1);
+    assert.match(rejectExisting.stderr, /Pass --replace/);
+    const replace = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'accept',
+      replaceBox,
+      '--replace',
+    ], { env: envFor('milo') });
+    assert.equal(replace.status, 0, replace.stderr || replace.stdout);
+
+    const invalidPolicy = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'request',
+      'OTHER_TOKEN',
+      '--purpose',
+      'Invalid broad request',
+    ], { env: envFor('milo') });
+    assert.equal(invalidPolicy.status, 1);
+    assert.match(invalidPolicy.stderr, /Choose exactly one sender policy/);
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('env handoff CLI bounds expiry and destroys cancelled receive keys', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-env-cancel-handoff-test-'));
+  const env = { ...process.env, ANIMA_AGENT_ID: 'milo', ANIMA_HOME: stateDir };
+  try {
+    const request = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'request',
+      'SERVICE_TOKEN',
+      '--purpose',
+      'Configure the release verification service',
+      '--from',
+      'nora',
+      '--expires',
+      '24h',
+    ], { env });
+    assert.equal(request.status, 0, request.stderr || request.stdout);
+    assert.match(request.stdout, /asec_req_v1_/);
+    assert.match(request.stdout, /sender=nora/);
+    const requestId = request.stdout.match(/id=([A-Za-z0-9_-]{22})/)?.[1];
+    assert.ok(requestId);
+
+    const cancel = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'cancel',
+      requestId,
+    ], { env });
+    assert.equal(cancel.status, 0, cancel.stderr || cancel.stdout);
+    assert.match(cancel.stdout, /handoff cancelled successfully/);
+    const replayCancel = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'cancel',
+      requestId,
+    ], { env });
+    assert.equal(replayCancel.status, 1);
+    assert.match(replayCancel.stderr, /not found/);
+
+    for (const expiry of ['4m', '8d', '1.5h', 'tomorrow']) {
+      const invalid = await runNode([
+        cliPath,
+        'env',
+        'handoff',
+        'request',
+        'OTHER_TOKEN',
+        '--purpose',
+        'Reject invalid expiry',
+        '--from',
+        'nora',
+        '--expires',
+        expiry,
+      ], { env });
+      assert.equal(invalid.status, 1, `${expiry}: ${invalid.stderr || invalid.stdout}`);
+      assert.match(invalid.stderr, /Expiry must/);
+    }
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('env CLI reads dotenv values literally without command substitution', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-env-literal-test-'));
   const env = { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir };
@@ -155,4 +370,10 @@ async function runNode(
   child.stdin.end(options.input);
   const [status] = (await once(child, 'exit')) as [number | null];
   return { status, stderr, stdout };
+}
+
+function extractHandoffCode(output: string, prefix: string): string {
+  const match = output.match(new RegExp(`${prefix}[A-Za-z0-9_-]+`));
+  assert.ok(match, `Expected ${prefix} code in output: ${output}`);
+  return match[0];
 }

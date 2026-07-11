@@ -69,6 +69,7 @@ const groups = {
     'runtime-host-config-watch.test.js',
     'runtime.test.js',
     'runtime-upgrade.test.js',
+    'secret-handoff.test.js',
     'slack-files.test.js',
     'slack-ingest.test.js',
     'slack-message-previews.test.js',

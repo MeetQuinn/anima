@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { AgentEnvStore, maskEnvSecret, type AgentEnvKind } from '../env/agent-env-store.js';
 import { resolveAgentIdFrom } from '../cli/shared.js';
 import { cleanServiceEnv } from '../services/env.js';
+import { registerEnvHandoffCommands } from './env-handoff-cli.js';
 import { outcomeLine } from './outcome-line.js';
 
 const SharedFlags = z.object({
@@ -40,6 +41,8 @@ type EnvSourceOptions = z.infer<typeof EnvSourceSchema>;
 
 export function registerEnvCommands(program: Command): void {
   const env = program.command('env').description('Manage per-agent command-scoped environment values.');
+
+  registerEnvHandoffCommands(env);
 
   env
     .command('set <key> [value]')

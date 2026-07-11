@@ -10,6 +10,7 @@ import {
 } from '../agents/agent-config-ops.js';
 import { ensureDefaultSkills } from '../agents/default-skills.js';
 import { resolveAnimaHome } from '../anima-home.js';
+import { SecretHandoffPendingStore } from '../env/secret-handoff-store.js';
 import { errorMessage, nowIso } from '../ids.js';
 import { WakeQueueService, wakeQueueServiceForAgent, type InboxItem } from '../inbox/wake-queue.service.js';
 import { MemoryCoherenceScheduler } from '../memory/memory-coherence-scheduler.js';
@@ -94,6 +95,7 @@ const DEFAULT_HEALTH_INTERVAL_MS = 5_000;
 const DEFAULT_AGENT_START_TIMEOUT_MS = 30_000;
 const CONFIG_WATCH_DEBOUNCE_MS = 150;
 const AGENT_RESTART_FORCE_KILL_AFTER_MS = 5_000;
+const HANDOFF_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
 
 export async function startRuntimeHost(opts: RuntimeHostOptions = {}): Promise<void> {
   const host = new RuntimeHost(opts);
@@ -126,6 +128,7 @@ export class RuntimeHost {
   private restartCommandWatcher?: FSWatcher;
   private configWatchDebounce?: NodeJS.Timeout;
   private bootHealthInitialized = false;
+  private lastHandoffCleanupAt = 0;
 
   constructor(
     private readonly opts: RuntimeHostOptions = {},
@@ -227,6 +230,7 @@ export class RuntimeHost {
 
   private async reconcileAgents(): Promise<void> {
     const agents = await this.loadAgents(this.opts);
+    await this.cleanupExpiredHandoffs(agents);
     await this.initializeBootHealth(agents);
     this.syncConfigWatchers(agents.map((agent) => agent.id));
     const pendingRestartAgentIds = new Set(await this.restartCommands.pendingAgentIds());
@@ -270,6 +274,21 @@ export class RuntimeHost {
     if (!this.opts.agent) await this.stopMissingAgents(seenAgentIds);
     await this.reconcileMemoryCoherence(agents);
     await this.publishKnownHealthSnapshots();
+  }
+
+  private async cleanupExpiredHandoffs(agents: AgentConfig[]): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastHandoffCleanupAt < HANDOFF_CLEANUP_INTERVAL_MS) return;
+    this.lastHandoffCleanupAt = now;
+    const results = await Promise.allSettled(
+      agents.map((agent) => new SecretHandoffPendingStore(agent.id, this.animaHome).cleanupExpired()),
+    );
+    for (const [index, result] of results.entries()) {
+      if (result.status === 'fulfilled') continue;
+      this.logger.error(
+        `Agent ${agents[index]?.id ?? 'unknown'} handoff cleanup failed: ${errorMessage(result.reason)}`,
+      );
+    }
   }
 
   private managedAgent(agent: AgentConfig): ManagedAgent {

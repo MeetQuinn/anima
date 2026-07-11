@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile } from 'node:fs/promises';
+import { chmod, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -7,7 +7,9 @@ import { decrypt } from 'eciesjs';
 
 import { ANIMA_MANAGED_PROVIDER_ENV_KEYS } from '../../shared/agent-config.js';
 import { resolveAnimaHome } from '../anima-home.js';
+import { withFileLock } from '../storage/lock.js';
 import { AGENT_ID } from '../storage/schema/agent.store.js';
+import { currentWriteRoot, ensureDirectoryUnderRoot } from '../storage/write-root.js';
 
 export type AgentEnvKind = 'plain' | 'secret';
 
@@ -43,13 +45,23 @@ const DANGEROUS_ENV_KEYS = new Set([
   'ZDOTDIR',
 ]);
 
-export function agentEnvDir(agentId: string): string {
-  assertAgentId(agentId);
-  return join(resolveAnimaHome(), 'agents', agentId, 'env');
+export class AgentEnvExistsError extends Error {
+  constructor(readonly key: string, readonly kind: AgentEnvKind) {
+    super(`${key} already exists as a ${kind} env value`);
+    this.name = 'AgentEnvExistsError';
+  }
 }
 
-export function agentEnvPaths(agentId: string): { dir: string; plain: string; secret: string; keys: string } {
-  const dir = agentEnvDir(agentId);
+export function agentEnvDir(agentId: string, animaHome: string = resolveAnimaHome()): string {
+  assertAgentId(agentId);
+  return join(animaHome, 'agents', agentId, 'env');
+}
+
+export function agentEnvPaths(
+  agentId: string,
+  animaHome: string = resolveAnimaHome(),
+): { dir: string; plain: string; secret: string; keys: string } {
+  const dir = agentEnvDir(agentId, animaHome);
   return {
     dir,
     keys: join(dir, '.env.keys'),
@@ -59,8 +71,15 @@ export function agentEnvPaths(agentId: string): { dir: string; plain: string; se
 }
 
 export class AgentEnvStore {
-  constructor(private readonly agentId: string) {
+  private readonly animaHome: string;
+  private readonly paths: ReturnType<typeof agentEnvPaths>;
+  private readonly lockPath: string;
+
+  constructor(agentId: string, animaHome: string = currentWriteRoot()) {
     assertAgentId(agentId);
+    this.animaHome = animaHome;
+    this.paths = agentEnvPaths(agentId, animaHome);
+    this.lockPath = join(this.paths.dir, '.env-store');
   }
 
   async list(): Promise<AgentEnvRecord[]> {
@@ -72,11 +91,10 @@ export class AgentEnvStore {
   }
 
   async load(): Promise<AgentEnvSnapshot> {
-    const paths = agentEnvPaths(this.agentId);
     const [plainSrc, secretSrc, keysSrc] = await Promise.all([
-      readTextIfExists(paths.plain),
-      readTextIfExists(paths.secret),
-      readTextIfExists(paths.keys),
+      readTextIfExists(this.paths.plain),
+      readTextIfExists(this.paths.secret),
+      readTextIfExists(this.paths.keys),
     ]);
 
     const plain = parseDotenv(plainSrc);
@@ -91,42 +109,46 @@ export class AgentEnvStore {
     return { plain, secret };
   }
 
-  async set(key: string, value: string, kind: AgentEnvKind): Promise<void> {
+  async set(
+    key: string,
+    value: string,
+    kind: AgentEnvKind,
+    options: { replace?: boolean } = {},
+  ): Promise<void> {
     assertEnvKeyAllowed(key);
-    const current = await this.load();
-    if (kind === 'plain' && current.secret[key] !== undefined) {
-      throw new Error(`${key} already exists as a secret env value`);
-    }
-    if (kind === 'secret' && current.plain[key] !== undefined) {
-      throw new Error(`${key} already exists as a plain env value`);
-    }
+    await ensureDirectoryUnderRoot(this.paths.dir, this.animaHome);
+    await chmodIfExists(this.paths.dir, PERMISSION_DIR);
+    await withFileLock(this.lockPath, this.animaHome, async () => {
+      const current = await this.load();
+      const otherKind: AgentEnvKind = kind === 'plain' ? 'secret' : 'plain';
+      if (current[otherKind][key] !== undefined) throw new AgentEnvExistsError(key, otherKind);
+      if (!options.replace && current[kind][key] !== undefined) {
+        throw new AgentEnvExistsError(key, kind);
+      }
 
-    const paths = agentEnvPaths(this.agentId);
-    await mkdir(paths.dir, { mode: PERMISSION_DIR, recursive: true });
-    await chmodIfExists(paths.dir, PERMISSION_DIR);
+      if (kind === 'plain') {
+        dotenvx.set(key, value, {
+          encrypt: false,
+          noArmor: true,
+          path: this.paths.plain,
+          plain: true,
+          quiet: true,
+        } as Parameters<typeof dotenvx.set>[2] & { quiet: boolean });
+        await chmodIfExists(this.paths.plain, PERMISSION_PRIVATE);
+        return;
+      }
 
-    if (kind === 'plain') {
       dotenvx.set(key, value, {
-        encrypt: false,
+        envKeysFile: this.paths.keys,
         noArmor: true,
-        path: paths.plain,
-        plain: true,
+        path: this.paths.secret,
         quiet: true,
       } as Parameters<typeof dotenvx.set>[2] & { quiet: boolean });
-      await chmodIfExists(paths.plain, PERMISSION_PRIVATE);
-      return;
-    }
-
-    dotenvx.set(key, value, {
-      envKeysFile: paths.keys,
-      noArmor: true,
-      path: paths.secret,
-      quiet: true,
-    } as Parameters<typeof dotenvx.set>[2] & { quiet: boolean });
-    await Promise.all([
-      chmodIfExists(paths.secret, PERMISSION_PRIVATE),
-      chmodIfExists(paths.keys, PERMISSION_PRIVATE),
-    ]);
+      await Promise.all([
+        chmodIfExists(this.paths.secret, PERMISSION_PRIVATE),
+        chmodIfExists(this.paths.keys, PERMISSION_PRIVATE),
+      ]);
+    });
   }
 
   async valuesFor(keys: string[] | undefined): Promise<Record<string, string>> {
