@@ -111,7 +111,9 @@ export default function MobileNavScreen({
   const statusByAgentId = new Map(statuses.map((status) => [status.agentId, status]));
 
   return (
-    <div className="flex h-dvh flex-col bg-page md:hidden">
+    // `spine-shelf` remaps the spine tokens to the sunken-paper palette (see
+    // index.css): full-screen dark spine read as a page of chrome on mobile.
+    <div className="spine-shelf flex h-dvh flex-col bg-page md:hidden">
       {/* Sticky header — tap to switch teams or create one. At N=1 it shows the
           Anima wordmark with a faint caret (still tappable, so "New team" is
           reachable on mobile); at N>=2 it shows the current team name and the
@@ -149,10 +151,12 @@ export default function MobileNavScreen({
               role="presentation"
             />
             {/* Floating card mirrors the desktop TeamSwitcher menu, with 44px
-                touch rows and an always-visible edit pencil (no hover here). */}
+                touch rows and an always-visible edit pencil (no hover here).
+                On the shelf tone the card is lifted paper (raised bg, warm
+                shadow) rather than the desktop menu's dark elevation. */}
             <div
               role="menu"
-              className="absolute left-2.5 right-2.5 top-[60px] z-30 origin-top overflow-hidden rounded-xl border border-white/10 bg-spine-elevated p-1.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.6)] ring-1 ring-black/10 animate-in fade-in slide-in-from-top-1 duration-150"
+              className="absolute left-2.5 right-2.5 top-[60px] z-30 origin-top overflow-hidden rounded-xl border border-border-soft bg-surface-raised p-1.5 shadow-deep ring-1 ring-black/5 animate-in fade-in slide-in-from-top-1 duration-150"
             >
               {/* Team list (only when there is more than one team to switch between). */}
               {multiTeam && (
@@ -164,7 +168,7 @@ export default function MobileNavScreen({
                         key={team.id}
                         className={[
                           'relative flex items-center rounded-lg transition-colors',
-                          active ? 'bg-white/[0.07]' : 'hover:bg-white/[0.05]',
+                          active ? 'bg-surface-elevated' : 'hover:bg-surface-hover/60',
                         ].join(' ')}
                       >
                         <button
@@ -201,14 +205,14 @@ export default function MobileNavScreen({
                             setEditTeam(team);
                             setShowTeamMenu(false);
                           }}
-                          className="mr-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-on-spine-muted hover:bg-white/10 hover:text-text-on-spine"
+                          className="mr-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-on-spine-muted hover:bg-surface-hover hover:text-text-on-spine"
                         >
                           <Pencil className="h-3.5 w-3.5" />
                         </button>
                       </div>
                     );
                   })}
-                  <div className="mx-2 my-1 h-px bg-white/10" />
+                  <div className="mx-2 my-1 h-px bg-border-soft" />
                 </>
               )}
               <button
@@ -218,7 +222,7 @@ export default function MobileNavScreen({
                   setShowCreateTeamModal(true);
                   setShowTeamMenu(false);
                 }}
-                className="flex min-h-[44px] w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-white/[0.05]"
+                className="flex min-h-[44px] w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-surface-hover/60"
               >
                 <Plus className="h-4 w-4 shrink-0 text-accent" />
                 <span className="truncate font-sans text-[14px] font-medium leading-tight text-text-on-spine">

@@ -173,6 +173,24 @@ h2 {
   letter-spacing: 0.01em;
 }
 
+/* Shelf tone — remaps the spine tokens to a sunken-paper palette within its
+   subtree. Applied by MobileNavScreen only: on desktop the dark spine is a
+   frame around bright paper, but rendered full-screen on mobile it read as a
+   page of chrome (totoday, 07-11). The shelf sits one step below the paper
+   content pages (surface-elevated vs surface), so opening an agent or KB
+   still lifts onto brighter paper. Components inside keep using the spine
+   tokens untouched; only the values change here. Text remaps to the ink ramp
+   with two derived mid-steps tuned for the lighter ground. */
+.spine-shelf {
+  --color-page: var(--color-surface-elevated); /* #efeae0 — shelf ground */
+  --color-spine-border: #d3cbb6; /* hairlines; between border-soft and -strong */
+  --color-spine-elevated: #e3dbc8; /* selected / pressed rows */
+  --color-text-on-spine: var(--color-text);
+  --color-text-on-spine-muted: #6b6353; /* between text-muted and text-subtle */
+  --color-text-on-spine-subtle: #98907e;
+  --color-avatar-ring-spine: rgb(0 0 0 / 0.1);
+}
+
 /* Caps register — day dividers, section eyebrows. Fraunces wonk small-caps. */
 .caps {
   font-family: var(--font-display);
