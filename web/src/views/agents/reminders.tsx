@@ -76,7 +76,11 @@ function ExpandedDetail({
       <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
         {reminder.provenance && (
           <button
-            onClick={() => navigate(`/agents/${agentId}/channels?c=${reminder.provenance!.channelId}`)}
+            onClick={() =>
+              navigate(
+                `/agents/${agentId}/channels?c=${encodeURIComponent(reminder.provenance!.channelId)}`,
+              )
+            }
             className="chrome text-[11px] uppercase tracking-[0.12em] text-text-muted underline decoration-border-soft underline-offset-4 hover:text-accent hover:decoration-accent"
           >
             View conversation →
@@ -184,15 +188,15 @@ function PastRow({
         >
           {reminder.title}
         </span>
-        {/* Bare caps, no chip box: the archive should not out-shout Active. */}
-        <span
-          className={`chrome shrink-0 text-[10px] uppercase tracking-[0.1em] ${
-            cancelled ? 'text-text-subtle' : 'text-text-muted'
-          }`}
-        >
+        {/* Bare caps, no chip box: the archive should not out-shout Active.
+            Both status and timestamp stay at text-text-muted (6.67:1 on the
+            surface): text-text-subtle measures 3.43:1, under the 4.5:1 AA
+            floor for normal text, and 10px caps is not "large text". The
+            cancelled/fired distinction lives in the dimmed title instead. */}
+        <span className="chrome shrink-0 text-[10px] uppercase tracking-[0.1em] text-text-muted">
           {reminder.status}
         </span>
-        <span className="font-sans shrink-0 text-[11px] tracking-wide text-text-subtle">
+        <span className="font-sans shrink-0 text-[11px] tracking-wide text-text-muted">
           {formatRelativeShort(when, now)}
         </span>
         <ChevronRight
