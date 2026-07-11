@@ -275,6 +275,64 @@ describe('useStickToBottom', () => {
     expect(gap(container)).toBe(0); // followed to the new bottom
   });
 
+  // --- Touch gestures (the mobile "scroll up doesn't take" bug) --------------
+  // touchstart arms intent ONCE per gesture; a drag's first scroll events land
+  // inside BOTTOM_THRESHOLD where the re-stick branch consumes it. The fix
+  // re-arms on any upward scrollTop movement while stuck, so slow drags and
+  // momentum flicks (which deliver no touch events at all) flip to reading.
+
+  it('touch: a slow upward drag flips to reading even after the threshold branch consumed the touchstart intent', () => {
+    const { container, view } = setup({ settling: false });
+    flush(1); // stuck; bottom = scrollTop 500 (1000 - 500)
+    expect(view.result.current.stuck).toBe(true);
+
+    fire(container, 'touchstart');
+    // First drag tick stays inside the 80px re-stick zone: the else-branch
+    // consumes the touchstart intent here (this is where the old code lost it).
+    container.scrollTop = 460; // gap 40
+    fire(container, 'scroll');
+    expect(view.result.current.stuck).toBe(true);
+
+    // Drag continues past the threshold with NO further touch events.
+    container.scrollTop = 380; // gap 120
+    fire(container, 'scroll');
+    expect(view.result.current.stuck).toBe(false); // reading
+
+    // Live-agent growth must not yank the reader back to the bottom.
+    growTo(container, 1400);
+    expect(container.scrollTop).toBe(380);
+  });
+
+  it('touch: a momentum fling (no touch events after lift-off) flips to reading and is not yanked', () => {
+    const { container, view } = setup({ settling: false });
+    flush(1); // stuck at bottom (scrollTop 500)
+
+    fire(container, 'touchstart');
+    container.scrollTop = 470; // gap 30 -> intent consumed by re-stick branch
+    fire(container, 'scroll');
+    // Finger lifts; momentum scrolling continues with scroll events only.
+    container.scrollTop = 420; // gap 80, still inside threshold
+    fire(container, 'scroll');
+    container.scrollTop = 250; // gap 250, well past it
+    fire(container, 'scroll');
+    expect(view.result.current.stuck).toBe(false); // reading
+
+    growTo(container, 1600);
+    expect(container.scrollTop).toBe(250); // reader stays put
+  });
+
+  it("the hook's own bottom pins never read as user intent", () => {
+    const { container, view } = setup({ settling: false });
+    flush(1); // stuck
+    // Growth pins to the new bottom (scrollTop increases); the browser fires a
+    // scroll event for that write. It must not arm intent or leave stuck.
+    growTo(container, 1400);
+    fire(container, 'scroll');
+    expect(view.result.current.stuck).toBe(true);
+    growTo(container, 1800);
+    expect(gap(container)).toBe(0); // still following the bottom
+  });
+
   it('onReachTop fires when the user scrolls near the top', () => {
     const { container, onReachTop } = setup({ settling: false });
     flush(1);
