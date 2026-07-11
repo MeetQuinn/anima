@@ -121,9 +121,11 @@ export function TeamSwitcher({
                     </button>
                     {/* Current-team mark. Small and quiet on purpose — the elevated row
                         already carries the "you are here" signal; the tick just confirms it.
-                        Fades out on hover so the edit affordance can take the same slot. */}
+                        Fades out whenever a row control owns the slot: on hover, and on
+                        keyboard focus-within (the edit button reveals via focus-visible, so
+                        the check must clear it or the two overlap for keyboard users). */}
                     {active && (
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-accent/80 transition-opacity duration-100 group-hover/team:opacity-0">
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-accent/80 transition-opacity duration-100 group-hover/team:opacity-0 group-focus-within/team:opacity-0">
                         <Check className="h-3.5 w-3.5" />
                       </span>
                     )}
