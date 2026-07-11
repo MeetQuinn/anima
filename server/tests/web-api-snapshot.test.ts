@@ -12,6 +12,7 @@ import { makeSlackEvent } from './helpers/slack.js';
 import { ingestEvent } from './helpers/inbox.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { recordRuntimeActivity, recordRuntimeEvent } from '../runtime/activity.js';
+import { CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV } from '../providers/codex.js';
 import { AgentHealthStore } from '../runtime/agent-health.store.js';
 import { AgentHealthService } from '../runtime/agent-health.service.js';
 import { setActiveRuntimeItem } from '../runtime/active-item.js';
@@ -25,6 +26,7 @@ test('web snapshot summarizes state without exposing secrets', async () => {
   try {
     await writeAgentConfigs(stateDir);
     await withAnimaHome(stateDir, async () => {
+      const runtimeEnv = { [CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV]: '180000' };
       const ctx = await ingestEvent(
         makeSlackEvent({
           channelId: 'D-demo',
@@ -48,13 +50,13 @@ test('web snapshot summarizes state without exposing secrets', async () => {
         },
         type: 'tool.call.completed',
       });
-      await recordRuntimeEvent({ agentId: 'anima', itemId: ctx.item.id }, 'codex-cli', undefined, {
+      await recordRuntimeEvent({ agentId: 'anima', itemId: ctx.item.id }, 'codex-cli', runtimeEnv, {
         contextWindow: 200000,
         currentContextTokens: 1300,
         eventType: 'codex.context.stats',
         runtimeKind: 'codex-cli',
       });
-      await recordRuntimeEvent({ agentId: 'anima' }, 'codex-cli', undefined, {
+      await recordRuntimeEvent({ agentId: 'anima' }, 'codex-cli', runtimeEnv, {
         contextWindow: 200000,
         eventType: 'codex.session.stats',
         inputTokens: 1200,
@@ -81,7 +83,7 @@ test('web snapshot summarizes state without exposing secrets', async () => {
       assert.equal(agentConfig.slack?.connected, true);
       assert.deepEqual(animaSession?.latestProviderStats, {
         activityId: animaSession?.latestProviderStats?.activityId,
-        autoCompactWindow: 240000,
+        autoCompactWindow: 180000,
         contextWindow: 200000,
         createdAt: animaSession?.latestProviderStats?.createdAt,
         currentContextTokens: 1300,

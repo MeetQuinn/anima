@@ -73,8 +73,79 @@ test('codex-cli auto-compact limit defaults safely and accepts an explicit provi
   );
 });
 
+test('codex-cli rejects an invalid auto-compact override before requesting a thread', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'codex-invalid-auto-compact-calls.jsonl');
+      const fakeCodex = join(stateDir, 'codex');
+      await writeFile(callsPath, '', 'utf8');
+      await writeFile(
+        fakeCodex,
+        [
+          '#!/usr/bin/env node',
+          "import { appendFileSync } from 'node:fs';",
+          "import readline from 'node:readline';",
+          "const rl = readline.createInterface({ input: process.stdin });",
+          "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
+          "rl.on('line', (line) => {",
+          "  const msg = JSON.parse(line);",
+          "  appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + '\\n');",
+          "  if (msg.method === 'initialize') {",
+          "    process.exit(88);",
+          "  }",
+          "  if (msg.method === 'initialized') return;",
+          "  if (msg.method === 'thread/start') {",
+          "    send({ id: msg.id, result: { thread: { id: 'unexpected-thread', cwd: process.cwd(), cliVersion: 'test' } } });",
+          "    return;",
+          "  }",
+          "  if (msg.method === 'turn/start') {",
+          "    send({ id: msg.id, result: { turn: { id: 'unexpected-turn', status: 'inProgress', items: [], itemsView: 'full', error: null, startedAt: 1, completedAt: null, durationMs: null } } });",
+          "    setTimeout(() => {",
+          "      send({ method: 'item/agentMessage/delta', params: { threadId: 'unexpected-thread', turnId: 'unexpected-turn', itemId: 'unexpected-item', delta: 'unexpected success' } });",
+          "      send({ method: 'turn/completed', params: { threadId: 'unexpected-thread', turn: { id: 'unexpected-turn', status: 'completed', items: [], itemsView: 'full', error: null, startedAt: 1, completedAt: 2, durationMs: 1000 } } });",
+          "    }, 10);",
+          "  }",
+          "});",
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      await chmod(fakeCodex, 0o755);
+
+      const ctx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-anima',
+          teamId: 'T-demo',
+          text: 'invalid auto-compact override',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, {
+          CALLS_PATH: callsPath,
+          [CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV]: 'invalid',
+        }),
+        kind: 'codex-cli',
+      });
+
+      await assert.rejects(
+        runtime.run(await runtimeInput(runtime, ctx, await loadState())),
+        /ANIMA_CODEX_AUTO_COMPACT_TOKEN_LIMIT must be a positive integer/,
+      );
+      assert.equal(await readFile(callsPath, 'utf8'), '');
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('codex-cli app-server transport starts a turn and appends subscription follow-up input', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  const autoCompactTokenLimit = 180000;
   let runtime: AgentRuntime | undefined;
   try {
     await withAnimaHome(stateDir, async () => {
@@ -88,7 +159,6 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
         "import readline from 'node:readline';",
         "const rl = readline.createInterface({ input: process.stdin });",
         "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
-        "let turnCount = 0;",
         "rl.on('line', (line) => {",
         "  const msg = JSON.parse(line);",
         "  appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + '\\n');",
@@ -101,7 +171,7 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
         "    if (msg.params.approvalPolicy !== 'never') process.exit(30);",
         "    if (msg.params.sandbox !== 'danger-full-access') process.exit(31);",
         "    if (msg.params.model !== 'gpt-test') process.exit(32);",
-        `    if (msg.params.config.model_auto_compact_token_limit !== ${CODEX_DEFAULT_AUTO_COMPACT_TOKEN_LIMIT}) process.exit(320);`,
+        `    if (msg.params.config.model_auto_compact_token_limit !== ${autoCompactTokenLimit}) process.exit(320);`,
         `    if (msg.params.config.model_auto_compact_token_limit_scope !== '${CODEX_AUTO_COMPACT_TOKEN_LIMIT_SCOPE}') process.exit(321);`,
         "    if (msg.params.config.model_reasoning_effort !== 'xhigh') process.exit(33);",
         "    if (msg.params.config.model_reasoning_summary !== 'auto') process.exit(330);",
@@ -111,6 +181,19 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
         "    return;",
         "  }",
         "  if (msg.method === 'thread/resume') {",
+        "    if (msg.params.threadId === 'codex-thread-1') {",
+        "      if (msg.params.approvalPolicy !== 'never') process.exit(361);",
+        "      if (msg.params.sandbox !== 'danger-full-access') process.exit(362);",
+        "      if (msg.params.model !== 'gpt-test') process.exit(363);",
+        `      if (msg.params.config.model_auto_compact_token_limit !== ${autoCompactTokenLimit}) process.exit(364);`,
+        `      if (msg.params.config.model_auto_compact_token_limit_scope !== '${CODEX_AUTO_COMPACT_TOKEN_LIMIT_SCOPE}') process.exit(365);`,
+        "      if (msg.params.config.model_reasoning_effort !== 'xhigh') process.exit(366);",
+        "      if (msg.params.config.model_reasoning_summary !== 'auto') process.exit(367);",
+        "      if (typeof msg.params.cwd !== 'string' || msg.params.cwd.length === 0) process.exit(368);",
+        "      if (!msg.params.developerInstructions.includes('You are Anima, general-purpose Anima agent.')) process.exit(369);",
+        "      send({ id: msg.id, result: { thread: { id: 'codex-thread-1', cwd: msg.params.cwd, cliVersion: 'test' } } });",
+        "      return;",
+        "    }",
         "    if (msg.params.threadId !== 'codex-child-raw') process.exit(36);",
         "    send({ id: msg.id, result: { thread: { id: 'codex-child-raw', agentNickname: 'Rawson', agentRole: 'explorer' }, model: 'gpt-5.5', modelProvider: 'openai' } });",
         "    return;",
@@ -121,19 +204,17 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
         "    return;",
         "  }",
         "  if (msg.method === 'turn/start') {",
-        "    turnCount += 1;",
         "    const prompt = msg.params.input[0].text;",
         "    if (prompt.includes('You are Anima, general-purpose Anima agent.')) process.exit(37);",
         "    if (!prompt.includes('New Slack message:')) process.exit(38);",
         "    if ('cwd' in msg.params || 'model' in msg.params || 'effort' in msg.params) process.exit(39);",
-        "    if (turnCount === 1) {",
-        "      if (prompt.includes('fresh session after rotate')) {",
+        "    if (prompt.includes('fresh session after rotate')) {",
         "        send({ id: msg.id, result: { turn: { id: 'turn-fresh', status: 'inProgress', items: [], itemsView: 'full', error: null, startedAt: 5, completedAt: null, durationMs: null } } });",
         "        send({ method: 'item/agentMessage/delta', params: { threadId: 'codex-thread-1', turnId: 'turn-fresh', itemId: 'item-fresh', delta: 'handled fresh' } });",
         "        send({ method: 'turn/completed', params: { threadId: 'codex-thread-1', turn: { id: 'turn-fresh', status: 'completed', items: [], itemsView: 'full', error: null, startedAt: 5, completedAt: 6, durationMs: 1000 } } });",
         "        return;",
-        "      }",
-        "      if (!prompt.includes('first message')) process.exit(40);",
+        "    }",
+        "    if (prompt.includes('first message')) {",
         "      send({ id: msg.id, result: { turn: { id: 'turn-1', status: 'inProgress', items: [], itemsView: 'full', error: null, startedAt: 1, completedAt: null, durationMs: null } } });",
         "      process.stdout.write('not-json from codex app-server\\n' + JSON.stringify({ method: 'item/started', params: { threadId: 'codex-thread-1', turnId: 'turn-1', item: { id: 'cmd-1', type: 'commandExecution', command: \"/bin/zsh -lc \\'sed -n 1,20p server/providers/codex.ts\\'\" } } }) + '\\n');",
         "      send({ method: 'item/completed', params: { threadId: 'codex-thread-1', turnId: 'turn-1', item: { id: 'cmd-1', type: 'commandExecution', command: \"/bin/zsh -lc 'sed -n 1,20p server/providers/codex.ts'\", exitCode: 0, aggregatedOutput: 'ok' } } });",
@@ -206,7 +287,10 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
     );
 
     runtime = createAgentRuntime({
-      env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+      env: runtimeTestEnv(stateDir, {
+        CALLS_PATH: callsPath,
+        [CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV]: String(autoCompactTokenLimit),
+      }),
       kind: 'codex-cli',
       model: 'gpt-test',
       reasoningEffort: 'xhigh',
@@ -311,13 +395,23 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
       }),
       config,
     );
+    await runtime.close?.();
+    runtime = createAgentRuntime({
+      env: runtimeTestEnv(stateDir, {
+        CALLS_PATH: callsPath,
+        [CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV]: String(autoCompactTokenLimit),
+      }),
+      kind: 'codex-cli',
+      model: 'gpt-test',
+      reasoningEffort: 'xhigh',
+    });
     assert.equal((await runtime.run(await runtimeInput(runtime, thirdCtx, await loadState()))).text, 'handled third');
     const finalCalls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string });
-    assert.equal(finalCalls.filter((call) => call.method === 'initialize').length, 1);
+    assert.equal(finalCalls.filter((call) => call.method === 'initialize').length, 2);
     assert.equal(finalCalls.filter((call) => call.method === 'thread/start').length, 1);
     assert.deepEqual(
       finalCalls.filter((call) => call.method === 'thread/resume').map((call) => (call as { params?: Record<string, unknown> }).params?.['threadId']),
-      ['codex-child-raw'],
+      ['codex-child-raw', 'codex-thread-1'],
     );
     assert.deepEqual(
       finalCalls.filter((call) => call.method === 'thread/unsubscribe').map((call) => (call as { params?: Record<string, unknown> }).params?.['threadId']),
@@ -339,11 +433,11 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
     assert.deepEqual(await providerSessionStartedPayload(fourthCtx.item.id), { kind: 'codex-cli', resumed: false });
     assert.ok(postRotateState.sessions.anima?.archived?.some((session) => session.kind === 'codex-cli' && session.id === 'codex-thread-1'));
     const postRotateCalls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string });
-    assert.equal(postRotateCalls.filter((call) => call.method === 'initialize').length, 2);
+    assert.equal(postRotateCalls.filter((call) => call.method === 'initialize').length, 3);
     assert.equal(postRotateCalls.filter((call) => call.method === 'thread/start').length, 2);
     assert.deepEqual(
       postRotateCalls.filter((call) => call.method === 'thread/resume').map((call) => (call as { params?: Record<string, unknown> }).params?.['threadId']),
-      ['codex-child-raw'],
+      ['codex-child-raw', 'codex-thread-1'],
     );
     });
   } finally {
