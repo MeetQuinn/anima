@@ -115,6 +115,16 @@ export function useStickToBottom({
   // bottom flips to `reading`. Gated on gesture (not a derived not-at-bottom)
   // because a prepend momentarily reads as not-at-bottom before the RO re-pins.
   const userIntentRef = useRef(false);
+  // Last scrollTop seen by the scroll listener, to detect upward movement.
+  // While `stuck`, the hook itself only ever writes downward (bottom pins and
+  // prepend restores both increase scrollTop), so an observed decrease is the
+  // user. This matters on touch: `touchstart` fires once per gesture, the
+  // drag's first scroll events land inside BOTTOM_THRESHOLD where the re-stick
+  // branch consumes the intent, and the rest of the drag - plus all of a
+  // momentum fling, which delivers no touch events at all - then reads as
+  // intentless, so the next content growth yanked the reader back to the
+  // bottom. Wheel never hit this because every tick re-arms intent.
+  const lastScrollTopRef = useRef(0);
   // Whether a real ResizeObserver is driving growth (else the fallback runs).
   const roActiveRef = useRef(false);
 
@@ -164,6 +174,13 @@ export function useStickToBottom({
     const handleScroll = () => {
       const gap = bottomGap(el);
       const m = modeRef.current;
+      // Upward movement while stuck is always the user (see lastScrollTopRef):
+      // re-arm intent on every event so slow drags and momentum flicks flip to
+      // reading once they cross the threshold, exactly like repeated wheel-ups.
+      if (m === 'stuck' && el.scrollTop < lastScrollTopRef.current) {
+        userIntentRef.current = true;
+      }
+      lastScrollTopRef.current = el.scrollTop;
       if (m === 'reading') {
         // Returned to the bottom -> resume following.
         if (gap <= BOTTOM_THRESHOLD) {
@@ -292,6 +309,7 @@ export function useStickToBottom({
     const el = containerRef.current;
     prevHeightRef.current = el ? el.scrollHeight : 0;
     if (el) scrollToBottom(el);
+    lastScrollTopRef.current = el ? el.scrollTop : 0;
   }, [feedKey, containerRef]);
 
   // --- Reveal: tied to observed bottom stability. ---------------------------
