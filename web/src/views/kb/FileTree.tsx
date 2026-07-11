@@ -120,7 +120,7 @@ export function TreeRow({
           data-type="dir"
           style={depthStyle}
           title={isTruncated ? node.name : undefined}
-          className="tree-row group flex w-full items-center gap-1.5 py-1.5 pr-2 text-left font-sans text-[15px] text-text-muted hover:bg-surface-elevated/60 md:py-1 md:text-[14px]"
+          className="tree-row group flex w-full items-center gap-1.5 py-2 pr-2 text-left font-sans text-[15px] text-text-muted hover:bg-surface-elevated/60 md:py-1.5 md:text-[14px]"
         >
           {/* Chevron alone marks a dir - the folder glyph doubled it and made
               every row carry two icons, which read as IDE chrome rather than
@@ -161,7 +161,7 @@ export function TreeRow({
       style={depthStyle}
       title={isTruncated ? node.name : undefined}
       className={[
-        'tree-row group flex w-full items-center gap-1.5 py-1.5 pr-2 text-left font-sans text-[15px] transition-colors md:py-1 md:text-[14px]',
+        'tree-row group flex w-full items-center gap-1.5 py-2 pr-2 text-left font-sans text-[15px] transition-colors md:py-1.5 md:text-[14px]',
         active
           ? 'bg-accent/10 text-accent font-medium'
           : 'text-text-muted hover:bg-surface-elevated/60',

@@ -139,16 +139,19 @@ export type RenderableFile = Pick<
   'name' | 'kind' | 'size' | 'language' | 'content' | 'truncated'
 >;
 
-function makeLinkComponent(
-  links: FileLinks,
-  currentFilePath: string,
-  navigate: ReturnType<typeof useNavigate>,
-) {
+function makeLinkComponent(links: FileLinks, currentFilePath: string) {
   return function FileLink({
     href,
     children,
     ...rest
   }: React.ComponentPropsWithoutRef<'a'>) {
+    // useNavigate lives HERE, not threaded in from FileContent: its identity
+    // changes with every router location update, and a changed argument would
+    // recreate the markdownComponents memo. A components-prop change makes
+    // ReactMarkdown REMOUNT the whole rendered tree - detaching a deep-link
+    // scroll target mid-flight and orphaning captured heading nodes (#493
+    // gate). Inside the component it is just a hook read; identity stays put.
+    const navigate = useNavigate();
     // In-page anchor (TOC, heading references)
     if (!href || href.startsWith('#')) {
       return <a href={href} {...rest}>{children}</a>;
@@ -204,7 +207,6 @@ export function FileContent({
   mode?: ViewMode;
   onModeChange?: (mode: ViewMode) => void;
 }) {
-  const navigate = useNavigate();
   const links = useMemo<FileLinks>(
     () =>
       linksProp ?? {
@@ -258,18 +260,39 @@ export function FileContent({
   );
   const showAsCode = file?.kind === 'markdown' && mode === 'code';
 
-  // Scroll to hash target after markdown renders.
+  // A programmatic smooth scroll in flight (deep-link landing or TOC click).
+  // While set, the scroll-sync effect must not rewrite the hash or the rail
+  // highlight from intermediate positions - otherwise the mid-flight sync
+  // replaces the target hash, and any effect re-run (file identity settling,
+  // query refetch) re-reads the stolen hash and re-targets the wrong heading.
+  // Cleared on arrival, or by the deadline in case the scroll gets aborted.
+  const pendingScrollRef = useRef<{ id: string; until: number } | null>(null);
+  const beginProgrammaticScroll = useCallback((id: string) => {
+    pendingScrollRef.current = { id, until: Date.now() + 2000 };
+  }, []);
+
+  // Scroll to hash target after markdown renders. This effect OWNS the
+  // incoming deep link: it seeds the rail highlight and lands the scroll. The
+  // scroll-driven sync below must never geometry-seed over it - a fresh load
+  // sits at scrollTop 0, so a geometry seed would rewrite a valid deep link
+  // to the first heading before this scroll fires (#493 gate, Milo).
   useEffect(() => {
     if (file?.kind !== 'markdown' || mode !== 'preview') return;
     const hash = window.location.hash.slice(1);
     if (!hash) return;
     const el = document.getElementById(hash);
     if (el) {
-      // Small delay to let ReactMarkdown finish rendering.
-      const t = setTimeout(() => el.scrollIntoView({ behavior: 'smooth' }), 100);
+      beginProgrammaticScroll(hash);
+      // Small delay to let ReactMarkdown finish rendering. The rail highlight
+      // seeds here too (not synchronously) so the effect never cascades a
+      // render; 100ms later the scroll starts anyway.
+      const t = setTimeout(() => {
+        if (tocEntries.some((entry) => entry.id === hash)) setActiveHeadingId(hash);
+        el.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
       return () => clearTimeout(t);
     }
-  }, [file, mode]);
+  }, [file, mode, tocEntries, beginProgrammaticScroll]);
 
   // Keep the hash aligned with the heading closest to the top of the markdown
   // scroller. This preserves shareable anchors while reading long KB docs.
@@ -278,33 +301,52 @@ export function FileContent({
     const scroller = scrollRef.current;
     if (!scroller) return;
     const root: HTMLDivElement = scroller;
-    const headings = Array.from(
-      root.querySelectorAll<HTMLElement>('h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]'),
-    );
-    if (headings.length === 0) return;
+    // Query per sync, not once at arm time: a captured NodeList goes stale if
+    // ReactMarkdown remounts its tree (all rects read 0 for detached nodes,
+    // which made "active" resolve to the LAST heading - #493 gate).
+    const headingsOf = () =>
+      Array.from(
+        root.querySelectorAll<HTMLElement>('h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]'),
+      );
 
     let frame = 0;
-    function syncHash() {
+    function syncHash(writeHash: boolean) {
       frame = 0;
+      const headings = headingsOf();
+      if (headings.length === 0) return;
       const edge = root.getBoundingClientRect().top + 24;
       let active = headings[0];
       for (const heading of headings) {
         if (heading.getBoundingClientRect().top <= edge) active = heading;
         else break;
       }
-      if (active?.id) {
-        replaceLocationHash(active.id);
-        setActiveHeadingId(active.id);
+      if (!active?.id) return;
+      const pending = pendingScrollRef.current;
+      if (pending && Date.now() < pending.until) {
+        // A programmatic scroll owns the hash until it lands on its target.
+        if (active.id !== pending.id) return;
+        pendingScrollRef.current = null;
+      } else {
+        pendingScrollRef.current = null;
       }
+      if (writeHash) replaceLocationHash(active.id);
+      setActiveHeadingId(active.id);
     }
     function onScroll() {
       if (frame) return;
-      frame = window.requestAnimationFrame(syncHash);
+      frame = window.requestAnimationFrame(() => syncHash(true));
     }
 
-    // Seed the rail highlight for the current position (deep links land
-    // mid-document), then follow scrolling.
-    frame = window.requestAnimationFrame(syncHash);
+    // Seed the rail highlight for the current position, then follow
+    // scrolling. The seed only paints the rail - it never writes the URL, so
+    // an incoming hash survives: a heading hash is landed by the deep-link
+    // effect above, and an unknown hash (stale slug, non-heading anchor) is
+    // simply preserved instead of being rewritten to the first heading.
+    // Scroll-driven passes DO write, keeping the anchor shareable mid-read.
+    const incoming = window.location.hash.slice(1);
+    if (!incoming || !headingsOf().some((heading) => heading.id === incoming)) {
+      frame = window.requestAnimationFrame(() => syncHash(false));
+    }
     root.addEventListener('scroll', onScroll, { passive: true });
     return () => {
       root.removeEventListener('scroll', onScroll);
@@ -316,7 +358,7 @@ export function FileContent({
   // all links on every parent re-render while the file content stays the same).
   const markdownComponents = useMemo(
     () => ({
-      a: makeLinkComponent(links, filePath, navigate),
+      a: makeLinkComponent(links, filePath),
       ...makeHeadingComponents(headingIdsByLine),
       img: ({ src, alt }: React.ComponentPropsWithoutRef<'img'>) => {
         let resolvedSrc = src ?? '';
@@ -448,7 +490,7 @@ export function FileContent({
         );
       },
     }),
-    [headingIdsByLine, links, filePath, navigate],
+    [headingIdsByLine, links, filePath],
   );
 
   if (error) {
@@ -604,6 +646,7 @@ export function FileContent({
                           href={`#${entry.id}`}
                           onClick={(e) => {
                             e.preventDefault();
+                            beginProgrammaticScroll(entry.id);
                             document
                               .getElementById(entry.id)
                               ?.scrollIntoView({ behavior: 'smooth' });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { fetchTeams } from '@/api/teams';
 import { queryKeys } from '@/lib/query-keys';
@@ -83,7 +83,8 @@ export function useCurrentTeam(teams: TeamConfig[]): {
   currentTeam: TeamConfig | undefined;
   setCurrentTeamId: (id: string) => void;
 } {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const paramTeam = searchParams.get(TEAM_PARAM);
 
   // Resolve precedence: valid URL param → valid stored team → first/default.
@@ -95,16 +96,20 @@ export function useCurrentTeam(teams: TeamConfig[]): {
 
   const writeParam = useCallback(
     (id: string) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          next.set(TEAM_PARAM, id);
-          return next;
-        },
+      const next = new URLSearchParams(window.location.search);
+      next.set(TEAM_PARAM, id);
+      // Not setSearchParams: it drops location.hash. This runs at boot to
+      // canonicalize `?team=`, and on a fresh deep link (/kb/...#heading)
+      // teams resolve before the file body, so the incoming hash was being
+      // destroyed before the viewer could land it (#493 gate blocker).
+      // window.location is read at call time - the hash may have been written
+      // by history.replaceState (scroll sync), which the router never sees.
+      navigate(
+        { search: next.toString(), hash: window.location.hash },
         { replace: true },
       );
     },
-    [setSearchParams],
+    [navigate],
   );
 
   // Keep the URL canonical once teams have loaded, and keep localStorage tracking the
