@@ -219,12 +219,24 @@ export function FileContent({
     if (file?.kind !== 'markdown' || !file.content) return { entries: null, body: '' };
     return parseFrontmatter(file.content);
   }, [file]);
-  // Map TOC heading ids by line against the same body ReactMarkdown renders
-  // (frontmatter-stripped), so node line numbers line up after the fence is cut.
-  const headingIdsByLine = useMemo(() => {
-    if (file?.kind !== 'markdown' || !markdownBody) return new Map<number, string>();
-    return new Map(extractToc(markdownBody).map((entry) => [entry.line, entry.id]));
+  // TOC of the rendered body: keys heading ids by line for the heading
+  // components, and feeds the wide-screen "On this page" rail.
+  const tocEntries = useMemo(() => {
+    if (file?.kind !== 'markdown' || !markdownBody) return [];
+    return extractToc(markdownBody);
   }, [file, markdownBody]);
+  const headingIdsByLine = useMemo(
+    () => new Map(tocEntries.map((entry) => [entry.line, entry.id])),
+    [tocEntries],
+  );
+  // Which heading the reader is at, for the rail's active highlight. Driven by
+  // the same scroll handler that keeps the URL hash aligned.
+  const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null);
+  // The rail earns its space only on docs long enough to need scanning.
+  const showTocRail = tocEntries.length >= 3;
+  const minTocDepth = tocEntries.length
+    ? Math.min(...tocEntries.map((entry) => entry.depth))
+    : 1;
 
   // Preview / Code toggle for Markdown. Land in Code mode when deep-linked to a
   // `#L<n>` source line; otherwise honour the session's last choice.
@@ -280,13 +292,19 @@ export function FileContent({
         if (heading.getBoundingClientRect().top <= edge) active = heading;
         else break;
       }
-      if (active?.id) replaceLocationHash(active.id);
+      if (active?.id) {
+        replaceLocationHash(active.id);
+        setActiveHeadingId(active.id);
+      }
     }
     function onScroll() {
       if (frame) return;
       frame = window.requestAnimationFrame(syncHash);
     }
 
+    // Seed the rail highlight for the current position (deep links land
+    // mid-document), then follow scrolling.
+    frame = window.requestAnimationFrame(syncHash);
     root.addEventListener('scroll', onScroll, { passive: true });
     return () => {
       root.removeEventListener('scroll', onScroll);
@@ -533,25 +551,80 @@ export function FileContent({
           // Raw source includes frontmatter, matching what GitHub shows.
           <CodeView body={file.content} language="markdown" />
         ) : (
-          <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-            {/* Rendered outside .md-prose so the metadata table keeps its own
-                styling instead of inheriting the Markdown code-block / table look. */}
-            {frontmatter && <FrontmatterTable entries={frontmatter} />}
-            <div className="md-prose">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
-                rehypePlugins={[
-                  rehypeRaw,
-                  rehypeGithubAlerts,
-                  [rehypeSanitize, sanitizeSchema],
-                  // KaTeX last: it renders trusted markup from the (already
-                  // sanitized) LaTeX text, so its output bypasses sanitize.
-                  rehypeKatex,
-                ]}
-                components={markdownComponents}
-              >
-                {markdownBody}
-              </ReactMarkdown>
+          <div
+            ref={scrollRef}
+            className="@container min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-10 md:py-10"
+          >
+            {/* Reading measure: rendered Markdown is a document, so the column
+                caps near 72ch and centers in the panel instead of stretching to
+                the viewer's width - unbounded lines were hitting 160+ characters
+                on wide screens. Code view stays full-width (source, not prose).
+                When the panel itself is wide enough (container query - the tree
+                is resizable, so viewport width says nothing), the reclaimed
+                space carries an "On this page" rail for long docs. */}
+            <div
+              className={[
+                'mx-auto flex w-full max-w-[740px] gap-12',
+                showTocRail ? '@min-[1068px]:max-w-[988px]' : '',
+              ].join(' ')}
+            >
+              <div className="w-full min-w-0 max-w-[740px] flex-1">
+                {/* Rendered outside .md-prose so the metadata table keeps its own
+                    styling instead of inheriting the Markdown code-block / table look. */}
+                {frontmatter && <FrontmatterTable entries={frontmatter} />}
+                <div className="md-prose">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
+                    rehypePlugins={[
+                      rehypeRaw,
+                      rehypeGithubAlerts,
+                      [rehypeSanitize, sanitizeSchema],
+                      // KaTeX last: it renders trusted markup from the (already
+                      // sanitized) LaTeX text, so its output bypasses sanitize.
+                      rehypeKatex,
+                    ]}
+                    components={markdownComponents}
+                  >
+                    {markdownBody}
+                  </ReactMarkdown>
+                </div>
+              </div>
+              {showTocRail && (
+                <nav
+                  aria-label="On this page"
+                  className="sticky top-2 hidden w-[200px] shrink-0 self-start @min-[1068px]:block"
+                >
+                  <div className="chrome mb-3 text-[10px] uppercase tracking-[0.14em] text-text-muted">
+                    On this page
+                  </div>
+                  <ul className="space-y-1.5 border-l border-border-soft pl-3">
+                    {tocEntries.map((entry) => (
+                      <li key={`${entry.id}-${entry.line}`}>
+                        <a
+                          href={`#${entry.id}`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            document
+                              .getElementById(entry.id)
+                              ?.scrollIntoView({ behavior: 'smooth' });
+                            replaceLocationHash(entry.id);
+                            setActiveHeadingId(entry.id);
+                          }}
+                          className={[
+                            'block truncate font-sans text-[12px] leading-snug transition-colors',
+                            activeHeadingId === entry.id
+                              ? 'text-accent'
+                              : 'text-text-muted hover:text-text',
+                          ].join(' ')}
+                          style={{ paddingLeft: `${(entry.depth - minTocDepth) * 12}px` }}
+                        >
+                          {entry.text}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </nav>
+              )}
             </div>
           </div>
         )}

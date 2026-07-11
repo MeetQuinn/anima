@@ -5,8 +5,6 @@ import {
   FileCode,
   FileJson,
   FileText,
-  FolderClosed,
-  FolderOpen,
   Image as ImageIcon,
   Globe,
 } from 'lucide-react';
@@ -124,15 +122,14 @@ export function TreeRow({
           title={isTruncated ? node.name : undefined}
           className="tree-row group flex w-full items-center gap-1.5 py-1.5 pr-2 text-left font-sans text-[15px] text-text-muted hover:bg-surface-elevated/60 md:py-1 md:text-[14px]"
         >
+          {/* Chevron alone marks a dir - the folder glyph doubled it and made
+              every row carry two icons, which read as IDE chrome rather than
+              an index. Files keep their kind icon (real information, and the
+              agent Files tab shares this tree over mixed-kind homes). */}
           {isOpen ? (
             <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
           ) : (
             <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
-          )}
-          {isOpen ? (
-            <FolderOpen className="h-3.5 w-3.5 shrink-0 text-text-subtle" />
-          ) : (
-            <FolderClosed className="h-3.5 w-3.5 shrink-0 text-text-subtle" />
           )}
           <span ref={nameRef} className="truncate">{node.name}</span>
         </button>
@@ -170,7 +167,6 @@ export function TreeRow({
           : 'text-text-muted hover:bg-surface-elevated/60',
       ].join(' ')}
     >
-      <span className="h-3.5 w-3.5 shrink-0" aria-hidden />
       <KindIcon kind={kbFileKind(node.name)} className={iconClass} />
       <span ref={nameRef} className="truncate">
         <HighlightMatch text={node.name} query={filterQuery ?? ''} />
