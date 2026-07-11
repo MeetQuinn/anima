@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:handoff": "vite --config handoff.vite.config.ts",
     "build": "tsc -b && vite build",
+    "build:handoff": "tsc -b && vite build --config handoff.vite.config.ts && node ../scripts/check-handoff-build.mjs",
     "type-check": "tsc -b --force --pretty false",
     "lint": "eslint .",
     "format": "prettier --write src/",

@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+
+import { parseHandoffRequest } from '../../shared/secret-handoff.js';
 
 const cliPath = resolve('dist/server/cli/anima.js');
 
@@ -315,6 +317,115 @@ test('env handoff CLI bounds expiry and destroys cancelled receive keys', async 
       assert.equal(invalid.status, 1, `${expiry}: ${invalid.stderr || invalid.stdout}`);
       assert.match(invalid.stderr, /Expiry must/);
     }
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('env handoff CLI creates a browser-only human request with bound workspace metadata', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-human-handoff-test-'));
+  const agentDir = join(stateDir, 'agents', 'milo');
+  const homePath = join(stateDir, 'home');
+  const env = { ...process.env, ANIMA_AGENT_ID: 'milo', ANIMA_HOME: stateDir };
+  try {
+    await Promise.all([
+      mkdir(agentDir, { recursive: true }),
+      mkdir(homePath, { recursive: true }),
+    ]);
+    await writeFile(
+      join(agentDir, 'config.json'),
+      `${JSON.stringify({
+        id: 'milo',
+        homePath,
+        provider: { kind: 'codex-cli', model: 'gpt-5.5' },
+        slack: {
+          appToken: 'xapp-test',
+          botToken: 'xoxb-test',
+          connected: true,
+          teamId: 'T01234567',
+          workspaceName: 'Anima Team',
+        },
+      }, null, 2)}\n`,
+      'utf8',
+    );
+
+    const disabled = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'request',
+      'SERVICE_TOKEN',
+      '--purpose',
+      'Run the deployment verification job',
+      '--from-human',
+    ], { env });
+    assert.equal(disabled.status, 1);
+    assert.match(disabled.stderr, /not enabled until the secure page deployment is verified/);
+    assert.doesNotMatch(disabled.stderr + disabled.stdout, /handoff\.anima\.meetquinn\.ai/);
+    await assert.rejects(stat(join(agentDir, 'env', 'handoff')), { code: 'ENOENT' });
+
+    const untrusted = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'request',
+      'SERVICE_TOKEN',
+      '--purpose',
+      'Reject an untrusted browser origin',
+      '--from-human',
+    ], {
+      env: { ...env, ANIMA_HUMAN_HANDOFF_PAGE_ORIGIN: 'https://example.com' },
+    });
+    assert.equal(untrusted.status, 1);
+    assert.match(untrusted.stderr, /origin is not trusted by this build/);
+    assert.doesNotMatch(untrusted.stderr + untrusted.stdout, /example\.com/);
+
+    const enabledEnv = {
+      ...env,
+      ANIMA_HUMAN_HANDOFF_PAGE_ORIGIN: 'https://handoff.anima.meetquinn.ai',
+    };
+    const result = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'request',
+      'SERVICE_TOKEN',
+      '--purpose',
+      'Run the deployment verification job',
+      '--from-human',
+    ], { env: enabledEnv });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /Destination: milo's local encrypted env/);
+    assert.match(result.stdout, /Workspace: Anima Team/);
+    assert.match(result.stdout, /Slack and the Anima handoff page never receive the plaintext/);
+    assert.match(
+      result.stdout,
+      /<https:\/\/handoff\.anima\.meetquinn\.ai\/#asec_req_v1_[A-Za-z0-9_-]+\|Securely provide secret>/,
+    );
+    assert.ok(result.stdout.length < 12_000);
+
+    const code = extractHandoffCode(result.stdout, 'asec_req_v1_');
+    const request = parseHandoffRequest(code);
+    assert.equal(request.senderKind, 'human');
+    if (request.senderKind !== 'human') return;
+    assert.equal(request.workspaceId, 'T01234567');
+    assert.equal(request.workspaceName, 'Anima Team');
+    assert.equal(request.purpose, 'Run the deployment verification job');
+
+    const conflicting = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'request',
+      'OTHER_TOKEN',
+      '--purpose',
+      'Reject ambiguous sender policy',
+      '--from-human',
+      '--from',
+      'nora',
+    ], { env: enabledEnv });
+    assert.equal(conflicting.status, 1);
+    assert.match(conflicting.stderr, /Choose exactly one sender policy/);
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }

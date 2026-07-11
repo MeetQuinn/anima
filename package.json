@@ -42,7 +42,7 @@
     "examples/"
   ],
   "scripts": {
-    "build": "rm -rf packages/animactl/dist && pnpm --dir server build && pnpm build:ui && node scripts/prepare-animactl-package.mjs",
+    "build": "rm -rf packages/animactl/dist && pnpm --dir server build && pnpm build:ui && pnpm build:handoff && node scripts/prepare-animactl-package.mjs",
     "build:server": "pnpm --dir server build",
     "docs:prepare": "node scripts/prepare-docs-public.mjs",
     "docs:build": "pnpm docs:prepare && vitepress build docs",
@@ -52,6 +52,7 @@
     "lint": "pnpm --dir web lint",
     "type-check": "pnpm --dir server type-check && pnpm --dir web type-check",
     "build:ui": "cd web && pnpm build",
+    "build:handoff": "pnpm --dir web build:handoff",
     "pack:check": "pnpm build && node scripts/check-animactl-package.mjs --pack-smoke",
     "animactl:package-check": "node scripts/check-animactl-package.mjs",
     "animactl:package-smoke": "node scripts/check-animactl-package.mjs --pack-smoke",

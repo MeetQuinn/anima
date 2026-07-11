@@ -36,7 +36,12 @@ export type HandoffRequest =
       expectedSenderAgentId: string;
     })
   | (HandoffRequestBase & {
-      senderKind: 'any-workspace-agent' | 'human';
+      senderKind: 'any-workspace-agent';
+    })
+  | (HandoffRequestBase & {
+      senderKind: 'human';
+      workspaceId: string;
+      workspaceName: string;
     });
 
 export interface HandoffBox {
@@ -79,7 +84,8 @@ export interface CreateHandoffRequestInput {
   purpose: string;
   sender:
     | { kind: 'agent'; agentId: string }
-    | { kind: 'any-workspace-agent' | 'human' };
+    | { kind: 'any-workspace-agent' }
+    | { kind: 'human'; workspaceId: string; workspaceName: string };
   expiresAt: Date;
   now?: Date;
   requestId?: string;
@@ -127,7 +133,14 @@ export function createHandoffRequest(
           senderKind: 'agent',
           expectedSenderAgentId: input.sender.agentId,
         }
-      : { ...base, senderKind: input.sender.kind };
+      : input.sender.kind === 'human'
+        ? {
+            ...base,
+            senderKind: 'human',
+            workspaceId: input.sender.workspaceId,
+            workspaceName: input.sender.workspaceName,
+          }
+        : { ...base, senderKind: input.sender.kind };
   return validateRequest(request);
 }
 
@@ -342,7 +355,9 @@ function validateRequest(value: unknown): HandoffRequest {
   const expectedKeys =
     senderKind === 'agent'
       ? [...commonKeys, 'expectedSenderAgentId']
-      : commonKeys;
+      : senderKind === 'human'
+        ? [...commonKeys, 'workspaceId', 'workspaceName']
+        : commonKeys;
   assertExactKeys(object, expectedKeys, 'handoff request');
   if (object.v !== 1) throw new Error('Unsupported handoff request version');
   if (!['agent', 'any-workspace-agent', 'human'].includes(senderKind)) {
@@ -389,7 +404,15 @@ function validateRequest(value: unknown): HandoffRequest {
     assertAgentId(expectedSenderAgentId, 'expected sender agent id');
     return { ...base, senderKind, expectedSenderAgentId };
   }
-  if (senderKind === 'any-workspace-agent' || senderKind === 'human') {
+  if (senderKind === 'human') {
+    const workspaceId = requiredString(object, 'workspaceId');
+    const workspaceName = requiredString(object, 'workspaceName');
+    if (workspaceId.length > 100 || workspaceName.length > 200) {
+      throw new Error('Handoff workspace metadata is too long');
+    }
+    return { ...base, senderKind, workspaceId, workspaceName };
+  }
+  if (senderKind === 'any-workspace-agent') {
     return { ...base, senderKind };
   }
   throw new Error('Handoff request sender kind is invalid');
@@ -460,30 +483,46 @@ function validatePayload(value: unknown): HandoffSecretPayload {
 }
 
 function canonicalRequest(request: HandoffRequest): Record<string, unknown> {
-  return request.senderKind === 'agent'
-    ? {
-        v: 1,
-        requestId: request.requestId,
-        recipientAgentId: request.recipientAgentId,
-        senderKind: request.senderKind,
-        expectedSenderAgentId: request.expectedSenderAgentId,
-        targetKey: request.targetKey,
-        purpose: request.purpose,
-        publicKey: request.publicKey,
-        createdAt: request.createdAt,
-        expiresAt: request.expiresAt,
-      }
-    : {
-        v: 1,
-        requestId: request.requestId,
-        recipientAgentId: request.recipientAgentId,
-        senderKind: request.senderKind,
-        targetKey: request.targetKey,
-        purpose: request.purpose,
-        publicKey: request.publicKey,
-        createdAt: request.createdAt,
-        expiresAt: request.expiresAt,
-      };
+  if (request.senderKind === 'agent') {
+    return {
+      v: 1,
+      requestId: request.requestId,
+      recipientAgentId: request.recipientAgentId,
+      senderKind: request.senderKind,
+      expectedSenderAgentId: request.expectedSenderAgentId,
+      targetKey: request.targetKey,
+      purpose: request.purpose,
+      publicKey: request.publicKey,
+      createdAt: request.createdAt,
+      expiresAt: request.expiresAt,
+    };
+  }
+  if (request.senderKind === 'human') {
+    return {
+      v: 1,
+      requestId: request.requestId,
+      recipientAgentId: request.recipientAgentId,
+      senderKind: request.senderKind,
+      workspaceId: request.workspaceId,
+      workspaceName: request.workspaceName,
+      targetKey: request.targetKey,
+      purpose: request.purpose,
+      publicKey: request.publicKey,
+      createdAt: request.createdAt,
+      expiresAt: request.expiresAt,
+    };
+  }
+  return {
+    v: 1,
+    requestId: request.requestId,
+    recipientAgentId: request.recipientAgentId,
+    senderKind: request.senderKind,
+    targetKey: request.targetKey,
+    purpose: request.purpose,
+    publicKey: request.publicKey,
+    createdAt: request.createdAt,
+    expiresAt: request.expiresAt,
+  };
 }
 
 function canonicalBox(box: HandoffBox): Record<string, unknown> {
