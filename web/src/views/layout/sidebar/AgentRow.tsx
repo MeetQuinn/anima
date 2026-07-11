@@ -37,6 +37,7 @@ export function AgentRow({
   onClick,
   optionId,
   focused = false,
+  touch = false,
 }: {
   agent: AgentConfig;
   index: number;
@@ -49,6 +50,10 @@ export function AgentRow({
   // ARIA option and `focused` reflects the keyboard cursor. Omitted elsewhere.
   optionId?: string;
   focused?: boolean;
+  // Touch surfaces (MobileNavScreen) get taller rows, slightly larger type, and
+  // left padding that clears the always-visible drag grip. Colors are shared:
+  // both surfaces sit on the dark spine.
+  touch?: boolean;
 }) {
   const color = agentColor(index);
   const displayName = agentDisplayName(agent);
@@ -87,7 +92,8 @@ export function AgentRow({
         // stop); rows are reachable by arrows, not Tab. Mouse clicks still work.
         {...(optionId ? { tabIndex: -1 } : {})}
         className={[
-          'flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-3 py-2.5 text-left focus-visible:outline-none',
+          'flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-left focus-visible:outline-none',
+          touch ? 'min-h-[44px] py-3 pl-6 pr-3' : 'px-3 py-2.5',
           // Inside the listbox the keyboard cursor ring (driven by `focused` on
           // the row container) is the single highlight; the button must not add
           // its own focus-visible ring, which would otherwise linger on a
@@ -121,7 +127,8 @@ export function AgentRow({
           <div className="flex min-w-0 items-center gap-1.5">
             <span
               className={[
-                'min-w-0 flex-1 truncate font-serif text-[14px] leading-tight',
+                'min-w-0 flex-1 truncate font-serif leading-tight',
+                touch ? 'text-[15px]' : 'text-[14px]',
                 active ? 'font-semibold' : 'font-medium',
                 !enabled || notConnected
                   ? 'text-text-on-spine-subtle'

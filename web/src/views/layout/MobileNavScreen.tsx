@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, FolderTree, Gauge, GripVertical, Pencil, Plus, Server } from 'lucide-react';
+import { Check, ChevronDown, Gauge, GripVertical, Pencil, Plus, Server } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DndContext, closestCenter } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -13,34 +13,13 @@ import { useCurrentTeam, useTeams } from '@/hooks/useTeams';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import ServerPanel from '@/components/ServerPanel';
 import UsagePanel from '@/components/UsagePanel';
-import type { AgentRuntimeHealthSummary } from '@shared/snapshot';
 import { AgentCreateModal, AddKbModal } from './Sidebar';
+import { AgentRow } from './sidebar/AgentRow';
+import { KbRow, isKbActive } from './sidebar/KbRow';
 import { CreateTeamModal, EditTeamModal } from './sidebar/TeamModals';
 import type { TeamConfig } from '@/api/teams';
-import { agentColor, initialOf } from '@/lib/avatars';
-import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
-import {
-  agentHasConnectedTransport,
-} from '@shared/agent-transports';
 
 const MOBILE_SCROLL_KEY = 'mobile-nav-scroll';
-
-// Single colored dot helpers — mirrors the desktop sidebar logic.
-function mobileDotColor(health: AgentRuntimeHealthSummary | undefined, isRunning: boolean): string {
-  if (!health || health.state === 'unknown' || health.state === 'starting' || health.state === 'degraded') {
-    return 'var(--color-health-idle)';
-  }
-  if (health.state === 'unhealthy') return 'var(--color-health-error)';
-  return isRunning ? 'var(--color-health-warn)' : 'var(--color-health-ok)';
-}
-
-function mobileDotTitle(health: AgentRuntimeHealthSummary | undefined, isRunning: boolean): string {
-  if (!health || health.state === 'unknown') return 'health unavailable';
-  if (health.state === 'starting') return 'starting';
-  if (health.state === 'degraded') return 'retrying';
-  if (health.state === 'unhealthy') return 'needs attention';
-  return isRunning ? 'working' : 'idle';
-}
 
 // ---------------------------------------------------------------------------
 // MobileSortableItem — drag wrapper for mobile rows.
@@ -58,7 +37,7 @@ function MobileSortableItem({ id, children }: { id: string; children: React.Reac
     >
       <GripVertical
         aria-hidden
-        className="pointer-events-none absolute left-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-subtle opacity-35"
+        className="pointer-events-none absolute left-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-on-spine-subtle opacity-35"
       />
       {children}
     </div>
@@ -68,9 +47,11 @@ function MobileSortableItem({ id, children }: { id: string; children: React.Reac
 // ---------------------------------------------------------------------------
 // MobileNavScreen — Screen 1 of the mobile layout.
 //
-// Mirrors the desktop sidebar: Knowledge Base entries first, then all agents,
-// both respecting the saved sidebar order and supporting drag-to-reorder.
-// Scroll position is preserved in sessionStorage.
+// The desktop sidebar rendered as a full page: same dark spine, same rows.
+// KB entries first, then all agents, both respecting the saved sidebar order
+// and supporting drag-to-reorder. Rows are the shared sidebar components
+// (AgentRow / KbRow) in their `touch` size, so desktop restyles carry over
+// here for free. Scroll position is preserved in sessionStorage.
 // ---------------------------------------------------------------------------
 export default function MobileNavScreen({
   onSelectAgent,
@@ -130,30 +111,30 @@ export default function MobileNavScreen({
   const statusByAgentId = new Map(statuses.map((status) => [status.agentId, status]));
 
   return (
-    <div className="flex h-dvh flex-col bg-surface md:hidden">
+    <div className="flex h-dvh flex-col bg-page md:hidden">
       {/* Sticky header — tap to switch teams or create one. At N=1 it shows the
           Anima wordmark with a faint caret (still tappable, so "New team" is
           reachable on mobile); at N>=2 it shows the current team name and the
           menu lists teams to switch/edit. */}
       <div
-        className="relative flex h-14 shrink-0 items-center border-b border-border-soft bg-surface"
+        className="relative flex h-14 shrink-0 items-center border-b border-spine-border bg-page"
         style={{ position: 'sticky', top: 0, zIndex: 10 }}
       >
         <button
           type="button"
           onClick={() => setShowTeamMenu((v) => !v)}
-          className="flex h-full w-full items-center gap-2.5 px-5 text-left transition-colors hover:bg-surface-elevated/60"
+          className="flex h-full w-full items-center gap-2.5 px-5 text-left transition-colors hover:bg-spine-elevated/60"
           aria-haspopup="menu"
           aria-expanded={showTeamMenu}
           title={multiTeam ? `Team: ${currentTeam?.name ?? 'Anima'}` : 'Anima'}
         >
           <AnimaIcon className="h-4 w-4 shrink-0 text-accent" />
-          <span className="display min-w-0 truncate text-[18px] font-semibold tracking-tight text-text">
+          <span className="display min-w-0 truncate text-[18px] font-semibold tracking-tight text-text-on-spine">
             {multiTeam ? currentTeam?.name ?? 'Anima' : 'Anima'}
           </span>
           <ChevronDown
             className={[
-              'h-4 w-4 shrink-0 text-text-muted transition-all duration-150',
+              'h-4 w-4 shrink-0 text-text-on-spine-muted transition-all duration-150',
               showTeamMenu ? 'rotate-180 opacity-100' : multiTeam ? 'opacity-70' : 'opacity-30',
             ].join(' ')}
           />
@@ -167,51 +148,69 @@ export default function MobileNavScreen({
               onClick={() => setShowTeamMenu(false)}
               role="presentation"
             />
+            {/* Floating card mirrors the desktop TeamSwitcher menu, with 44px
+                touch rows and an always-visible edit pencil (no hover here). */}
             <div
               role="menu"
-              className="absolute left-3 right-3 top-[52px] z-30 overflow-hidden rounded-sm border border-border bg-surface-elevated py-1 shadow-deep"
+              className="absolute left-2.5 right-2.5 top-[60px] z-30 origin-top overflow-hidden rounded-xl border border-white/10 bg-spine-elevated p-1.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.6)] ring-1 ring-black/10 animate-in fade-in slide-in-from-top-1 duration-150"
             >
               {/* Team list (only when there is more than one team to switch between). */}
-              {multiTeam &&
-                teams.map((team) => {
-                  const active = team.id === currentTeam?.id;
-                  return (
-                    <div key={team.id} className="flex items-center">
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setCurrentTeamId(team.id);
-                          setShowTeamMenu(false);
-                        }}
-                        className="flex min-h-[44px] min-w-0 flex-1 items-center gap-2 px-3 text-left font-sans text-[14px] text-text hover:bg-surface"
+              {multiTeam && (
+                <>
+                  {teams.map((team) => {
+                    const active = team.id === currentTeam?.id;
+                    return (
+                      <div
+                        key={team.id}
+                        className={[
+                          'relative flex items-center rounded-lg transition-colors',
+                          active ? 'bg-white/[0.07]' : 'hover:bg-white/[0.05]',
+                        ].join(' ')}
                       >
-                        <Check
-                          className={[
-                            'h-3.5 w-3.5 shrink-0',
-                            active ? 'text-accent' : 'text-transparent',
-                          ].join(' ')}
-                        />
-                        <span className="truncate">{team.name}</span>
-                      </button>
-                      {/* Edit (rename / change home). Always visible on touch (no hover);
-                          stops propagation so it never also switches the team. */}
-                      <button
-                        type="button"
-                        aria-label={`Edit ${team.name}`}
-                        title={`Edit ${team.name}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditTeam(team);
-                          setShowTeamMenu(false);
-                        }}
-                        className="mr-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-sm text-text-muted hover:bg-surface hover:text-text"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  );
-                })}
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setCurrentTeamId(team.id);
+                            setShowTeamMenu(false);
+                          }}
+                          className="flex min-h-[44px] min-w-0 flex-1 items-center gap-2 rounded-lg py-2.5 pl-3 pr-2 text-left"
+                        >
+                          <span
+                            className={[
+                              'min-w-0 truncate font-sans text-[14px] leading-tight',
+                              active
+                                ? 'font-semibold text-text-on-spine'
+                                : 'font-medium text-text-on-spine/90',
+                            ].join(' ')}
+                          >
+                            {team.name}
+                          </span>
+                          {active && (
+                            <Check className="h-3.5 w-3.5 shrink-0 text-accent/80" />
+                          )}
+                        </button>
+                        {/* Edit (rename / change home). Always visible on touch (no hover);
+                            stops propagation so it never also switches the team. */}
+                        <button
+                          type="button"
+                          aria-label={`Edit ${team.name}`}
+                          title={`Edit ${team.name}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditTeam(team);
+                            setShowTeamMenu(false);
+                          }}
+                          className="mr-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-on-spine-muted hover:bg-white/10 hover:text-text-on-spine"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                  <div className="mx-2 my-1 h-px bg-white/10" />
+                </>
+              )}
               <button
                 type="button"
                 role="menuitem"
@@ -219,10 +218,12 @@ export default function MobileNavScreen({
                   setShowCreateTeamModal(true);
                   setShowTeamMenu(false);
                 }}
-                className="flex min-h-[44px] w-full items-center gap-2 px-3 text-left font-sans text-[14px] font-medium text-text hover:bg-surface"
+                className="flex min-h-[44px] w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-white/[0.05]"
               >
-                <Plus className="h-3.5 w-3.5 shrink-0 text-accent" />
-                <span>New team</span>
+                <Plus className="h-4 w-4 shrink-0 text-accent" />
+                <span className="truncate font-sans text-[14px] font-medium leading-tight text-text-on-spine">
+                  New team
+                </span>
               </button>
             </div>
           </>
@@ -233,52 +234,39 @@ export default function MobileNavScreen({
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3">
         {/* Knowledge Base section */}
         <div className="mb-4">
-          <div className="mb-2 flex items-center gap-1.5 px-3">
-            <span className="caps text-text-muted">Knowledge Base</span>
-            <span className="font-mono text-[10px] text-text-muted">{orderedKbs.length}</span>
-            <button
-              onClick={() => setShowAddKbModal(true)}
-              className="ml-auto flex min-h-[44px] min-w-[44px] items-center justify-end rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text"
-              aria-label="Add Knowledge Base"
-              title="Add Knowledge Base"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
+          <div className="mb-2 flex items-center justify-between pl-3">
+            <span className="caps text-text-on-spine-subtle">Knowledge Base</span>
+            <div className="flex items-center gap-1.5">
+              <span className="font-mono text-[10px] tabular-nums text-text-on-spine-subtle/70">
+                {orderedKbs.length}
+              </span>
+              <button
+                onClick={() => setShowAddKbModal(true)}
+                className="flex h-11 w-11 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine"
+                aria-label="Add Knowledge Base"
+                title="Add Knowledge Base"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={reorderKbs}>
             <SortableContext items={orderedKbs.map((kb) => kb.id)} strategy={verticalListSortingStrategy}>
               <div className="space-y-0.5">
-                {orderedKbs.map((kb) => {
-                  const active = location.pathname.startsWith(`/kb/${kb.id}`);
-                  return (
-                    <MobileSortableItem key={kb.id} id={kb.id}>
-                      <button
-                        onClick={() => handleSelectKb(kb.id)}
-                        className={[
-                          'relative flex min-h-[44px] w-full items-center gap-2.5 rounded-sm py-3 pl-6 pr-3 text-left transition-colors',
-                          active ? 'bg-surface-elevated' : 'hover:bg-surface-elevated/60',
-                        ].join(' ')}
-                      >
-                        {active && (
-                          <span aria-hidden className="absolute left-0 top-2 bottom-2 w-px bg-accent" />
-                        )}
-                        <FolderTree className="h-4 w-4 shrink-0 text-text-muted" />
-                        <span
-                          className={[
-                            'truncate font-serif text-[15px] leading-tight text-text',
-                            active ? 'font-semibold' : 'font-medium',
-                          ].join(' ')}
-                        >
-                          {kb.label}
-                        </span>
-                      </button>
-                    </MobileSortableItem>
-                  );
-                })}
+                {orderedKbs.map((kb) => (
+                  <MobileSortableItem key={kb.id} id={kb.id}>
+                    <KbRow
+                      kb={kb}
+                      active={isKbActive(location.pathname, kb.id)}
+                      onClick={() => handleSelectKb(kb.id)}
+                      touch
+                    />
+                  </MobileSortableItem>
+                ))}
                 {orderedKbs.length === 0 && (
                   <button
                     onClick={() => setShowAddKbModal(true)}
-                    className="flex items-center gap-1.5 px-2 font-sans text-[11px] text-text-muted hover:text-text"
+                    className="flex items-center gap-1.5 px-2 font-sans text-[11px] text-text-on-spine-subtle hover:text-text-on-spine"
                   >
                     <Plus className="h-3 w-3" />
                     Add Knowledge Base
@@ -291,100 +279,46 @@ export default function MobileNavScreen({
 
         {/* Agents section */}
         <div>
-          <div className="mb-2 flex items-center gap-1.5 px-3">
-            <span className="caps text-text-muted">Agents</span>
-            <span className="font-mono text-[10px] text-text-muted">{orderedAgents.length}</span>
-            <button
-              onClick={() => setShowAddAgentModal(true)}
-              className="ml-auto flex min-h-[44px] min-w-[44px] items-center justify-end rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text"
-              aria-label="Add agent"
-              title="Add agent"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
+          <div className="mb-2 flex items-center justify-between pl-3">
+            <span className="caps text-text-on-spine-subtle">Agents</span>
+            <div className="flex items-center gap-1.5">
+              <span className="font-mono text-[10px] tabular-nums text-text-on-spine-subtle/70">
+                {orderedAgents.length}
+              </span>
+              <button
+                onClick={() => setShowAddAgentModal(true)}
+                className="flex h-11 w-11 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine"
+                aria-label="Add agent"
+                title="Add agent"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={reorderAgents}>
             <SortableContext items={orderedAgents.map((a) => a.id)} strategy={verticalListSortingStrategy}>
               <div className="space-y-0.5">
                 {orderedAgents.map((agent) => {
-                  const color = agentColor(agentIndexMap.get(agent.id) ?? 0);
-                  const name = agentDisplayName(agent);
-                  const avatarUrl = agentAvatarUrl(agent);
-                  const initial = initialOf(name);
-                  const isRunning = runningIds.has(agent.id);
-                  const enabled = agent.enabled !== false;
-                  const notConnected = enabled && !agentHasConnectedTransport(agent);
                   const status = statusByAgentId.get(agent.id);
-                  const isSelected = agent.id === lastSelectedId;
-                  const showRuntimeHealth = enabled && !notConnected;
-                  const showRightMeta = !enabled || showRuntimeHealth;
-
                   return (
                     <MobileSortableItem key={agent.id} id={agent.id}>
-                      <button
+                      <AgentRow
+                        agent={agent}
+                        index={agentIndexMap.get(agent.id) ?? 0}
+                        active={agent.id === lastSelectedId}
+                        isRunning={runningIds.has(agent.id)}
+                        enabled={agent.enabled !== false}
+                        {...(status ? { status } : {})}
                         onClick={() => handleSelectAgent(agent.id)}
-                        className={[
-                          'relative flex min-h-[44px] w-full items-center gap-2.5 rounded-sm py-3 pl-6 pr-3 text-left transition-colors',
-                          isSelected ? 'bg-surface-elevated' : 'hover:bg-surface-elevated/60',
-                        ].join(' ')}
-                      >
-                        {isSelected && (
-                          <span aria-hidden className="absolute left-0 top-2 bottom-2 w-0.5 bg-accent" />
-                        )}
-                        {avatarUrl ? (
-                          <img
-                            src={avatarUrl}
-                            alt=""
-                            className="h-6 w-6 shrink-0 rounded-lg object-cover ring-1 ring-border-soft"
-                            style={{ opacity: enabled ? 1 : 0.45 }}
-                          />
-                        ) : (
-                          <span
-                            className="font-sans flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold text-white ring-1 ring-border-soft"
-                            style={{ background: color, opacity: enabled ? 1 : 0.45 }}
-                          >
-                            {initial}
-                          </span>
-                        )}
-                        <span className="min-w-0 flex-1">
-                          <span
-                            className={[
-                              'block truncate font-serif text-[15px] font-medium leading-tight',
-                              enabled ? 'text-text' : 'text-text-muted',
-                            ].join(' ')}
-                          >
-                            {name}
-                          </span>
-                          {notConnected && (
-                            <span className="font-sans mt-0.5 block text-[10px] leading-tight text-health-warn/80">
-                              Not connected
-                            </span>
-                          )}
-                        </span>
-                        {showRightMeta && (
-                          <span className="ml-auto flex shrink-0 items-center gap-1.5">
-                            {!enabled ? (
-                              <span className="font-sans shrink-0 rounded-sm border border-text-muted/30 px-1 py-0.5 text-[9px] uppercase tracking-[0.08em] text-text-muted">
-                                Off
-                              </span>
-                            ) : showRuntimeHealth ? (
-                              <span
-                                aria-hidden
-                                className="h-2 w-2 shrink-0 rounded-full"
-                                title={mobileDotTitle(status?.health, isRunning)}
-                                style={{ background: mobileDotColor(status?.health, isRunning) }}
-                              />
-                            ) : null}
-                          </span>
-                        )}
-                      </button>
+                        touch
+                      />
                     </MobileSortableItem>
                   );
                 })}
                 {orderedAgents.length === 0 && (
                   <button
                     onClick={() => setShowAddAgentModal(true)}
-                    className="flex items-center gap-1.5 px-2 font-sans text-[11px] text-text-muted hover:text-text"
+                    className="flex items-center gap-1.5 px-2 font-sans text-[11px] text-text-on-spine-subtle hover:text-text-on-spine"
                   >
                     <Plus className="h-3 w-3" />
                     Add agent
@@ -396,35 +330,31 @@ export default function MobileNavScreen({
         </div>
       </div>
 
-      {/* Usage + Server entries — pinned footer. Usage on top (the frequently
-          checked one); Server (restart/version/home) at the very edge. */}
+      {/* Usage + Server — pinned footer, one row split in half so it stays
+          shallow. Usage left (the frequently checked one), Server right. */}
       <div
-        className="shrink-0 border-t border-border-soft px-2 pb-2 pt-1"
-        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 0.5rem)' }}
+        className="flex shrink-0 gap-1 border-t border-spine-border px-2 pt-1"
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 0.25rem)' }}
       >
         <button
           onClick={() => setUsagePanelOpen(true)}
           title="Provider usage"
-          className="flex min-h-[44px] w-full items-center gap-2.5 rounded-sm px-3 py-2 text-left transition-colors hover:bg-surface-elevated/60"
+          className="chrome flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-sm px-2.5 text-[11px] uppercase tracking-[0.1em] text-text-on-spine-muted transition-colors hover:bg-spine-elevated hover:text-text-on-spine"
         >
-          <Gauge className="h-4 w-4 shrink-0 text-text-muted" />
-          <span className="font-serif text-[15px] font-medium leading-tight text-text-muted">
-            Usage
-          </span>
+          <Gauge className="h-3.5 w-3.5" />
+          <span>Usage</span>
         </button>
         <button
           onClick={() => setServerPanelOpen(true)}
           title={updateAvailable ? 'Server — update available' : 'Server status & restart'}
-          className="flex min-h-[44px] w-full items-center gap-2.5 rounded-sm px-3 py-2 text-left transition-colors hover:bg-surface-elevated/60"
+          className="chrome flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-sm px-2.5 text-[11px] uppercase tracking-[0.1em] text-text-on-spine-muted transition-colors hover:bg-spine-elevated hover:text-text-on-spine"
         >
-          <Server className="h-4 w-4 shrink-0 text-text-muted" />
-          <span className="font-serif text-[15px] font-medium leading-tight text-text-muted">
-            Server
-          </span>
+          <Server className="h-3.5 w-3.5" />
+          <span>Server</span>
           {updateAvailable && (
             <span
               aria-hidden
-              className="ml-auto h-1.5 w-1.5 rounded-full bg-accent"
+              className="h-1.5 w-1.5 rounded-full bg-accent"
               title="Update available"
             />
           )}
