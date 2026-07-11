@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronLeft, FolderTree, MoreHorizontal, Plus, Server } from 'lucide-react';
+import { ChevronLeft, FolderTree, Gauge, MoreHorizontal, Plus, Server } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -14,6 +14,7 @@ import { parseLocation } from '@/lib/url-state';
 import { useLocation, useNavigate } from 'react-router-dom';
 import AnimaIcon from '@/components/AnimaIcon';
 import ServerPanel from '@/components/ServerPanel';
+import UsagePanel from '@/components/UsagePanel';
 import { removeKb, renameKb } from '@/api/kb';
 import { queryClient } from '@/query-client';
 import { queryKeys } from '@/lib/query-keys';
@@ -161,8 +162,9 @@ export default function Sidebar({
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
 
-  // Server panel
+  // Server + Usage panels
   const [serverPanelOpen, setServerPanelOpen] = useState(false);
+  const [usagePanelOpen, setUsagePanelOpen] = useState(false);
   // Resting indicator — a subtle accent dot on the Server trigger when a system
   // update is available. Reuses the panel's query (deduped by key), so no extra
   // request; the dot disappears once the user opens the panel and upgrades.
@@ -360,8 +362,15 @@ export default function Sidebar({
             {orderedAgents.map(renderCollapsedAgent)}
           </div>
 
-          {/* Footer — server only */}
-          <div className="shrink-0 border-t border-spine-border py-1.5 flex justify-center">
+          {/* Footer — Usage above Server (usage is the frequently-checked one) */}
+          <div className="shrink-0 border-t border-spine-border py-1.5 flex flex-col items-center gap-1">
+            <button
+              onClick={() => setUsagePanelOpen((v) => !v)}
+              title="Provider usage"
+              className="flex h-8 w-8 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            >
+              <Gauge className="h-3.5 w-3.5" />
+            </button>
             <button
               data-server-panel-trigger
               onClick={() => setServerPanelOpen((v) => !v)}
@@ -559,7 +568,18 @@ export default function Sidebar({
             </div>
           </div>
 
-          <div className="border-t border-spine-border p-2">
+          {/* Footer — Usage above Server: usage is the frequently-checked entry,
+              server (restart/version/home) is the occasional one, so it sits at
+              the very edge. Both rest visible; entries are not hover-chrome. */}
+          <div className="border-t border-spine-border p-2 space-y-0.5">
+            <button
+              onClick={() => setUsagePanelOpen((v) => !v)}
+              className="chrome flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-2.5 text-left text-[11px] uppercase tracking-[0.1em] text-text-on-spine-muted transition-colors hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              title="Provider usage"
+            >
+              <Gauge className="h-3.5 w-3.5" />
+              <span>Usage</span>
+            </button>
             <button
               data-server-panel-trigger
               onClick={() => setServerPanelOpen((v) => !v)}
@@ -659,6 +679,7 @@ export default function Sidebar({
       )}
 
       {serverPanelOpen && <ServerPanel onClose={() => setServerPanelOpen(false)} />}
+      {usagePanelOpen && <UsagePanel onClose={() => setUsagePanelOpen(false)} />}
     </>
   );
 }
