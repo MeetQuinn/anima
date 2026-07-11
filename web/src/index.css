@@ -89,9 +89,16 @@
   /* Type — Fraunces is the voice; Albert Sans is the chrome; Plex Mono is
      the audit/transcript register. Use `font-mono` for IDs, timestamps,
      envelope fields, file paths — anywhere the data is the content. */
-  --font-sans: 'Albert Sans Variable', 'Albert Sans', ui-sans-serif, system-ui, sans-serif;
-  --font-serif: 'Fraunces Variable', 'Fraunces', 'Iowan Old Style', Georgia, serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  /* Every chain names its CJK fallbacks explicitly. Without them, CJK glyphs
+     fall through the generic keyword to the platform default - on serif chains
+     that is Songti SC / SimSun, whose hairline strokes read grey at text sizes
+     (the KB "somehow hard to read" report, #493). There is no usable CJK serif
+     at UI sizes, so ALL chains fall to sans CJK (PingFang first): serif Latin +
+     sans CJK is the standard mixed-script pairing. */
+  --font-cjk: 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Microsoft YaHei';
+  --font-sans: 'Albert Sans Variable', 'Albert Sans', var(--font-cjk), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: 'Fraunces Variable', 'Fraunces', 'Iowan Old Style', Georgia, var(--font-cjk), serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', Menlo, Consolas, var(--font-cjk), ui-monospace, monospace;
   --font-display: var(--font-serif);
 
   /* Shadows — warm, not cool grey. Subtle lift, not Material elevation. */
@@ -374,13 +381,8 @@ body::before {
      technical documentation, and Fraunces' high stroke contrast reads grey in
      running text - the "somehow hard to read" report. Headings keep Fraunces
      via --font-display, so the editorial identity lives in the display sizes.
-     The CJK step is explicit: without it, CJK glyphs fall through to the
-     platform default (Songti SC / SimSun via generic keyword), whose hairline
-     strokes are worse still at text sizes. */
-  font-family:
-    'Albert Sans Variable', 'Albert Sans',
-    'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Microsoft YaHei',
-    ui-sans-serif, system-ui, sans-serif;
+     The token carries the explicit CJK fallback chain. */
+  font-family: var(--font-sans);
   /* 17px/1.75: long-form body size. 16px was UI-density carried into a reading
      surface; at the 740px measure it also ran ~90 Latin chars a line. 1.75
      gives mixed CJK/Latin lines room - CJK wants more leading than Latin. */
