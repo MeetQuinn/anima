@@ -60,6 +60,11 @@ export function AgentRow({
   const notConnected = enabled && !agentHasConnectedTransport(agent);
   const showRuntimeHealth = enabled && !notConnected;
   const hasRightMeta = !enabled || showRuntimeHealth;
+  const dotBg = sidebarDotColor(status?.health, isRunning);
+  const dotTitle = sidebarDotTitle(status?.health, isRunning);
+  // Active row: the avatar picks up a faint accent ring (in addition to the
+  // rounded-cap accent bar) so selection reads without shouting.
+  const avatarRing = active ? 'ring-accent/40' : 'ring-avatar-ring-spine';
   return (
     <div
       {...(optionId ? { id: optionId, role: 'option', 'aria-selected': active } : {})}
@@ -74,7 +79,7 @@ export function AgentRow({
         // cursor. Showing it for `focused` gives instant feedback as you arrow
         // (the active bg/bar commit lags ~120ms behind the cursor), replacing
         // the full inset ring that read as too loud on the dark spine.
-        <span aria-hidden className="absolute left-0 top-1.5 bottom-1.5 w-0.5 bg-accent" />
+        <span aria-hidden className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-accent" />
       )}
       <button
         onClick={onClick}
@@ -95,14 +100,16 @@ export function AgentRow({
             src={avatarUrl}
             alt=""
             className={[
-              'h-8 w-8 shrink-0 rounded-lg object-cover ring-1 ring-avatar-ring-spine',
+              'h-8 w-8 shrink-0 rounded-lg object-cover ring-1',
+              avatarRing,
               !enabled ? 'opacity-40 grayscale' : notConnected ? 'opacity-40 grayscale' : '',
             ].join(' ')}
           />
         ) : (
           <span
             className={[
-              'font-sans flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold text-white ring-1 ring-avatar-ring-spine',
+              'font-sans flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold text-white ring-1',
+              avatarRing,
               !enabled || notConnected ? 'opacity-40' : '',
             ].join(' ')}
             style={{ background: color }}
@@ -136,13 +143,22 @@ export function AgentRow({
                 ) : showRuntimeHealth ? (
                   // Single colored dot — color encodes all health states.
                   // Labels and reason text live in the activity strip; the dot
-                  // is the sidebar's only ambient signal.
-                  <span
-                    aria-hidden
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    title={sidebarDotTitle(status?.health, isRunning)}
-                    style={{ background: sidebarDotColor(status?.health, isRunning) }}
-                  />
+                  // is the sidebar's only ambient signal. A working (running)
+                  // agent's dot breathes with a soft halo so live work reads at
+                  // a glance; every other state holds still.
+                  isRunning ? (
+                    <span aria-hidden className="relative flex h-2 w-2 shrink-0 items-center justify-center" title={dotTitle}>
+                      <span className="anima-dot-halo absolute h-2 w-2 rounded-full" style={{ background: dotBg }} />
+                      <span className="anima-dot-core relative h-2 w-2 rounded-full" style={{ background: dotBg }} />
+                    </span>
+                  ) : (
+                    <span
+                      aria-hidden
+                      className="h-2 w-2 shrink-0 rounded-full"
+                      title={dotTitle}
+                      style={{ background: dotBg }}
+                    />
+                  )
                 ) : null}
               </span>
             )}

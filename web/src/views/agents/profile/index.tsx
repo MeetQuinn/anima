@@ -12,6 +12,7 @@ import {
   updateAgentProvider,
 } from '@/api/agents';
 import { fetchProviderAvailability, fetchWorkspacePlatform } from '@/api/system';
+import { queryClient } from '@/query-client';
 import { queryKeys } from '@/lib/query-keys';
 import { useAgentStatuses } from '@/hooks/useAgentDirectory';
 import { useNow } from '@/hooks/useNow';
@@ -29,7 +30,7 @@ import {
   ProviderEnvRow,
   ConfirmRestartModal,
 } from './AgentFields';
-import { useTeams } from '@/hooks/useTeams';
+import { useTeams, useTeamWarnings } from '@/hooks/useTeams';
 import { assignAgentTeam } from '@/api/teams';
 import { DEFAULT_TEAM_ID } from '@shared/server-settings';
 import { SessionSection } from './SessionStats';
@@ -81,6 +82,10 @@ export default function Profile() {
     queryFn: fetchWorkspacePlatform,
   });
   const teams = useTeams();
+  // Repairable team-reference warning for THIS agent (its teamId names a team
+  // that no longer exists). Surfaced here, next to the Team field, rather than
+  // in the sidebar — it belongs on the agent it concerns.
+  const teamWarning = useTeamWarnings().find((w) => w.agentId === agentId);
   const { data: providerAvailability = null } = useQuery({
     queryKey: queryKeys.providerAvailability(),
     queryFn: fetchProviderAvailability,
@@ -224,6 +229,12 @@ export default function Profile() {
     // Label-only: home is untouched, so no idle-apply notice is needed.
     await assignAgentTeam(agentId, nextTeamId);
     refreshAgentData(agentId);
+    // The dangling-team warning shown below this field derives from the teams
+    // query, which refreshAgentData does not touch. Invalidate it so following
+    // the warning's own instruction ("reassign it above to repair") clears the
+    // warning immediately, instead of leaving a false one at the action site
+    // until an unrelated teams refetch (window focus, etc.).
+    queryClient.invalidateQueries({ queryKey: queryKeys.teams() });
   }
 
   async function commitProviderEnv(env: Record<string, string | null>) {
@@ -285,6 +296,16 @@ export default function Profile() {
             value={agent.teamId ?? DEFAULT_TEAM_ID}
             onCommit={commitTeam}
           />
+          {teamWarning && (
+            <div className="relative py-3 pl-5" role="status">
+              <span aria-hidden className="absolute left-0 top-3 bottom-3 w-px bg-health-warn/60" />
+              <span className="font-serif text-[13px] leading-snug text-text-muted">
+                This agent references team{' '}
+                <span className="font-mono text-text">"{teamWarning.teamId}"</span>, which no longer
+                exists. It is running under the default team - reassign it above to repair.
+              </span>
+            </div>
+          )}
           <ProviderInlineRow
             kind={agent.provider.kind}
             model={agent.provider.model ?? ''}

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, ChevronLeft, FolderTree, MoreHorizontal, Plus, Server } from 'lucide-react';
+import { ChevronLeft, FolderTree, MoreHorizontal, Plus, Server } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -19,9 +19,8 @@ import { queryClient } from '@/query-client';
 import { queryKeys } from '@/lib/query-keys';
 import { useAgentStatuses } from '@/hooks/useAgentDirectory';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
-import { useCurrentTeam, useTeams, useTeamWarnings, TEAM_PARAM } from '@/hooks/useTeams';
+import { useCurrentTeam, useTeams, TEAM_PARAM } from '@/hooks/useTeams';
 import type { TeamConfig } from '@/api/teams';
-import type { AgentTeamWarning } from '@/api/teams';
 import { TeamSwitcher } from './sidebar/TeamSwitcher';
 import { CreateTeamModal, EditTeamModal } from './sidebar/TeamModals';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
@@ -129,10 +128,6 @@ export default function Sidebar({
     reorderAgents,
     reorderKbs,
   } = useSidebarOrder(currentTeamId);
-  // Repairable team-reference warnings (agent teamId names a team that no longer exists).
-  // The agent still degrades into the default team; this only adds a repair cue.
-  const teamWarnings = useTeamWarnings();
-  const agentNameById = new Map(orderedAgents.map((a) => [a.id, agentDisplayName(a)]));
   // The sidebar shows only the current team, so arrow-key nav follows that flat list.
   const visibleAgentIds = orderedAgents.map((a) => a.id);
   // Arrow up/down to move through agents (selection follows focus, debounced
@@ -298,38 +293,11 @@ export default function Sidebar({
     );
   };
 
-  // A small, repairable warning cue for agents whose teamId no longer resolves. Not a global
-  // banner: it renders inline where the agent was folded (its effective team group, or the
-  // flat list at N=1), names the dangling id, and points at the fix.
-  const renderTeamWarnings = (scoped: AgentTeamWarning[]) => {
-    if (scoped.length === 0) return null;
-    return (
-      <div className="mt-1 space-y-1">
-        {scoped.map((w) => (
-          <div
-            key={w.agentId}
-            className="flex items-start gap-1.5 rounded-sm bg-health-warn/10 px-2 py-1"
-            role="status"
-          >
-            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-health-warn" />
-            <span className="font-serif text-[11px] leading-snug text-text-on-spine-muted">
-              <span className="font-semibold text-text-on-spine">
-                {agentNameById.get(w.agentId) ?? w.agentId}
-              </span>{' '}
-              references team <span className="font-mono">"{w.teamId}"</span>, which no longer
-              exists. Reassign it to repair.
-            </span>
-          </div>
-        ))}
-      </div>
-    );
-  };
-
   return (
     <>
       <aside
         className={[
-          'relative hidden md:flex h-dvh shrink-0 flex-col overflow-hidden border-r border-spine-border bg-page',
+          'group/aside relative hidden md:flex h-dvh shrink-0 flex-col overflow-hidden border-r border-spine-border bg-page',
           'transition-[width] duration-200 ease-out',
           collapsed ? 'w-[68px]' : 'w-64',
         ].join(' ')}
@@ -411,11 +379,13 @@ export default function Sidebar({
           </div>
         </div>
 
-        {/* Collapse chevron — floats over the expanded content */}
+        {/* Collapse chevron — floats over the expanded content. Rests hidden so
+            the header reads clean (its own caret is the only chevron at rest);
+            reveals on sidebar hover, and on keyboard focus so it stays reachable. */}
         {!collapsed && (
           <button
             onClick={onToggle}
-            className="absolute right-3 top-3.5 z-10 flex h-6 w-6 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            className="absolute right-3 top-3.5 z-10 flex h-6 w-6 items-center justify-center rounded-sm text-text-on-spine-muted opacity-0 transition-opacity duration-150 hover:bg-spine-elevated hover:text-text-on-spine focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent group-hover/aside:opacity-100"
             title="Collapse sidebar"
           >
             <ChevronLeft className="h-4 w-4" />
@@ -452,20 +422,20 @@ export default function Sidebar({
             {/* Knowledge Base section */}
             <div className="mb-4">
               <div className="mb-2 flex items-center justify-between pl-3">
+                <span className="caps text-text-on-spine-subtle">Knowledge Base</span>
                 <div className="flex items-center gap-1.5">
-                  <span className="caps text-text-on-spine-subtle">Knowledge Base</span>
-                  <span className="font-mono text-[10px] text-text-on-spine-subtle">
+                  <span className="font-mono text-[10px] tabular-nums text-text-on-spine-subtle/70">
                     {orderedKbs.length}
                   </span>
+                  <button
+                    onClick={() => setShowAddModal(true)}
+                    className="flex h-7 w-7 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                    title="Add Knowledge Base"
+                    aria-label="Add Knowledge Base"
+                  >
+                    <Plus className="h-3 w-3" />
+                  </button>
                 </div>
-                <button
-                  onClick={() => setShowAddModal(true)}
-                  className="flex h-7 w-7 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-                  title="Add Knowledge Base"
-                  aria-label="Add Knowledge Base"
-                >
-                  <Plus className="h-3 w-3" />
-                </button>
               </div>
 
               <div className="space-y-0.5">
@@ -484,21 +454,25 @@ export default function Sidebar({
                         <SortableItem key={kb.id} id={kb.id}>
                           <div
                             className={[
-                              'group relative flex min-h-[44px] w-full items-center rounded-sm transition-colors',
+                              'group relative flex w-full items-center rounded-sm transition-colors',
                               active ? 'bg-spine-elevated' : 'hover:bg-spine-elevated/60',
                             ].join(' ')}
                           >
                             {active && (
                               <span
                                 aria-hidden
-                                className="absolute left-0 top-1.5 bottom-1.5 w-px bg-accent"
+                                className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-accent"
                               />
                             )}
                             <button
                               onClick={() => navigate(`/kb/${kb.id}`)}
-                              className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-inset"
+                              className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-inset"
                             >
-                              <FolderTree className="h-4 w-4 shrink-0 text-text-on-spine-muted" />
+                              {/* Icon tile matches the agent-row avatar footprint (h-8 w-8)
+                                  so KB and agent rows read as one family and align in height. */}
+                              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.05] ring-1 ring-white/[0.06]">
+                                <FolderTree className="h-4 w-4 text-text-on-spine-muted" />
+                              </span>
                               <span
                                 className={[
                                   'truncate font-serif text-[14px] leading-tight text-text-on-spine',
@@ -537,20 +511,20 @@ export default function Sidebar({
 
             {/* Agents section */}
             <div className="mb-3 flex items-center justify-between pl-3">
+              <span className="caps text-text-on-spine-subtle">Agents</span>
               <div className="flex items-center gap-1.5">
-                <span className="caps text-text-on-spine-subtle">Agents</span>
-                <span className="font-mono text-[10px] text-text-on-spine-subtle">
+                <span className="font-mono text-[10px] tabular-nums text-text-on-spine-subtle/70">
                   {orderedAgents.length}
                 </span>
+                <button
+                  onClick={() => setShowAddAgentModal(true)}
+                  className="flex h-7 w-7 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  title="Add agent"
+                  aria-label="Add agent"
+                >
+                  <Plus className="h-3 w-3" />
+                </button>
               </div>
-              <button
-                onClick={() => setShowAddAgentModal(true)}
-                className="flex h-7 w-7 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-                title="Add agent"
-                aria-label="Add agent"
-              >
-                <Plus className="h-3 w-3" />
-              </button>
             </div>
             <div
               className="rounded-sm focus-visible:outline-none"
@@ -579,9 +553,6 @@ export default function Sidebar({
                       <Plus className="h-3 w-3" />
                       Add agent
                     </button>
-                  )}
-                  {renderTeamWarnings(
-                    teamWarnings.filter((w) => w.effectiveTeamId === currentTeamId),
                   )}
                 </div>
               </DndContext>
