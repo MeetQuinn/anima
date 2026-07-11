@@ -23,7 +23,11 @@ import {
 } from '../env/agent-env-store.js';
 import { SecretHandoffPendingStore } from '../env/secret-handoff-store.js';
 import { resolveAgentIdFrom } from '../cli/shared.js';
+import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { outcomeLine } from './outcome-line.js';
+
+export const HANDOFF_PAGE_ORIGIN = 'https://handoff.anima.meetquinn.ai';
+const HANDOFF_PAGE_ORIGIN_ENV = 'ANIMA_HUMAN_HANDOFF_PAGE_ORIGIN';
 
 const SharedFlags = z.object({
   agent: z.string().optional(),
@@ -34,6 +38,7 @@ const RequestSchema = SharedFlags.extend({
   purpose: z.string().min(1).max(500),
   from: z.string().optional(),
   allowAnySender: z.boolean().default(false),
+  fromHuman: z.boolean().default(false),
   expires: z.string().optional(),
 });
 
@@ -75,6 +80,10 @@ export function registerEnvHandoffCommands(env: Command): void {
     .option(
       '--allow-any-sender',
       'allow any trusted agent in the workspace to send',
+    )
+    .option(
+      '--from-human',
+      'let a human encrypt the value in the Anima Secure Handoff page',
     )
     .option('--expires <duration>', 'expiry from now (5m to 7d; default 24h)')
     .action(async (key: string, _, command) => {
@@ -126,19 +135,20 @@ async function runHandoffRequest(opts: RequestOptions): Promise<void> {
   const agentId = resolveHandoffAgentId(opts.agent);
   assertEnvKeyAllowed(opts.key);
   const senderChoices =
-    Number(Boolean(opts.from)) + Number(opts.allowAnySender);
+    Number(Boolean(opts.from)) +
+    Number(opts.allowAnySender) +
+    Number(opts.fromHuman);
   if (senderChoices !== 1) {
     throw new Error(
-      'Choose exactly one sender policy: --from <agent> or --allow-any-sender',
+      'Choose exactly one sender policy: --from <agent>, --allow-any-sender, or --from-human',
     );
   }
+  const pageOrigin = opts.fromHuman ? humanHandoffPageOrigin() : undefined;
   const expiryMs = opts.expires
     ? parseExpiry(opts.expires)
     : DEFAULT_HANDOFF_EXPIRY_MS;
   const keys = createHandoffKeyPair();
-  const sender = opts.from
-    ? { kind: 'agent' as const, agentId: opts.from }
-    : { kind: 'any-workspace-agent' as const };
+  const sender = await requestSender(opts, agentId);
   const request = createHandoffRequest({
     recipientAgentId: agentId,
     targetKey: opts.key,
@@ -152,7 +162,9 @@ async function runHandoffRequest(opts: RequestOptions): Promise<void> {
   const senderLabel =
     request.senderKind === 'agent'
       ? request.expectedSenderAgentId
-      : request.senderKind;
+      : request.senderKind === 'human'
+        ? `human in ${request.workspaceName}`
+        : request.senderKind;
   console.log(
     outcomeLine('handoff request created', [
       ['id', request.requestId],
@@ -160,16 +172,79 @@ async function runHandoffRequest(opts: RequestOptions): Promise<void> {
       ['sender', senderLabel],
     ]),
   );
-  console.log(
-    [
+  console.log(formatRequestForSlack(request, code, pageOrigin));
+}
+
+function humanHandoffPageOrigin(): string {
+  const configured = process.env[HANDOFF_PAGE_ORIGIN_ENV]?.replace(/\/+$/, '');
+  if (!configured) {
+    throw new Error(
+      'Human secret handoff is not enabled until the secure page deployment is verified',
+    );
+  }
+  if (configured !== HANDOFF_PAGE_ORIGIN) {
+    throw new Error('Human secret handoff page origin is not trusted by this build');
+  }
+  return configured;
+}
+
+async function requestSender(
+  opts: RequestOptions,
+  agentId: string,
+): Promise<
+  | { kind: 'agent'; agentId: string }
+  | { kind: 'any-workspace-agent' }
+  | { kind: 'human'; workspaceId: string; workspaceName: string }
+> {
+  if (opts.from) return { kind: 'agent', agentId: opts.from };
+  if (opts.allowAnySender) return { kind: 'any-workspace-agent' };
+  const agent = await defaultAgentRegistryService
+    .serviceFor(agentId)
+    .getConfig();
+  if (
+    !agent.slack.connected ||
+    !agent.slack.teamId ||
+    !agent.slack.workspaceName
+  ) {
+    throw new Error(
+      `Agent ${agentId} needs a connected Slack workspace before requesting a human handoff`,
+    );
+  }
+  return {
+    kind: 'human',
+    workspaceId: agent.slack.teamId,
+    workspaceName: agent.slack.workspaceName,
+  };
+}
+
+function formatRequestForSlack(
+  request: ReturnType<typeof createHandoffRequest>,
+  code: string,
+  pageOrigin?: string,
+): string {
+  const expires = `<t:${Math.floor(Date.parse(request.expiresAt) / 1000)}:f>`;
+  if (request.senderKind === 'human') {
+    if (!pageOrigin) throw new Error('Human secret handoff page is not enabled');
+    const pageUrl = `${pageOrigin}/#${code}`;
+    return [
       `${request.recipientAgentId} requests \`${request.targetKey}\``,
       `Purpose: ${escapeSlackText(request.purpose)}`,
-      `Sender: ${request.senderKind === 'agent' ? `\`${request.expectedSenderAgentId}\`` : 'any trusted workspace agent (explicit open request)'}`,
-      `Expires: <t:${Math.floor(Date.parse(request.expiresAt) / 1000)}:f>`,
+      `Destination: ${request.recipientAgentId}'s local encrypted env`,
+      'Slack and the Anima handoff page never receive the plaintext',
+      `Workspace: ${escapeSlackText(request.workspaceName)}`,
+      `Expires: ${expires}`,
       '',
-      formatHandoffRequestForSlack(code),
-    ].join('\n'),
-  );
+      `<${pageUrl}|Securely provide secret>`,
+    ].join('\n');
+  }
+  return [
+    `${request.recipientAgentId} requests \`${request.targetKey}\``,
+    `Purpose: ${escapeSlackText(request.purpose)}`,
+    `Sender: ${request.senderKind === 'agent' ? `\`${request.expectedSenderAgentId}\`` : 'any trusted workspace agent (explicit open request)'}`,
+    `Expires: ${expires}`,
+    '',
+    formatHandoffRequestForSlack(code),
+  ].join('\n');
 }
 
 async function runHandoffSend(opts: SendOptions): Promise<void> {

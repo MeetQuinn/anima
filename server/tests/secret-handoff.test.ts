@@ -83,6 +83,36 @@ test('secret handoff binds the sender and every canonical request field through 
   );
 });
 
+test('human handoff binds displayed Slack workspace metadata through the request digest', async () => {
+  const keys = createHandoffKeyPair();
+  const request = createHandoffRequest({
+    recipientAgentId: 'milo',
+    targetKey: 'SERVICE_TOKEN',
+    purpose: 'Human workspace binding',
+    sender: {
+      kind: 'human',
+      workspaceId: 'T01234567',
+      workspaceName: 'Anima Team',
+    },
+    expiresAt: future(),
+    publicKey: keys.publicKey,
+  });
+  assert.deepEqual(parseHandoffRequest(encodeHandoffRequest(request)), request);
+
+  const changedWorkspace = {
+    ...request,
+    workspaceName: 'Impostor Workspace',
+  };
+  const box = await encryptHandoffSecret(changedWorkspace, {
+    sender: { kind: 'human' },
+    value: 'secret',
+  });
+  await assert.rejects(
+    () => decryptHandoffSecret(request, keys.privateKey, box),
+    /request digest does not match/,
+  );
+});
+
 test('secret handoff rejects tampering, expiration, and non-canonical request fields', async () => {
   const keys = createHandoffKeyPair();
   const request = createHandoffRequest({
@@ -115,7 +145,11 @@ test('secret handoff rejects tampering, expiration, and non-canonical request fi
     recipientAgentId: 'milo',
     targetKey: 'SERVICE_TOKEN',
     purpose: 'Expired request',
-    sender: { kind: 'human' },
+    sender: {
+      kind: 'human',
+      workspaceId: 'T-DEMO',
+      workspaceName: 'Demo Workspace',
+    },
     now: new Date(Date.now() - 2 * 60 * 60 * 1000),
     expiresAt: new Date(Date.now() - 60 * 60 * 1000),
     publicKey: keys.publicKey,
@@ -149,7 +183,11 @@ test('maximum secret stays below the committed Slack payload boundary', async ()
     recipientAgentId: 'milo',
     targetKey: 'SERVICE_TOKEN',
     purpose: 'Exercise the maximum supported secret size',
-    sender: { kind: 'human' },
+    sender: {
+      kind: 'human',
+      workspaceId: 'T-DEMO',
+      workspaceName: 'Demo Workspace',
+    },
     expiresAt: future(),
     publicKey: keys.publicKey,
   });
@@ -263,7 +301,11 @@ test('pending handoff lock admits one concurrent accept and retains uncertain ou
       recipientAgentId: 'milo',
       targetKey: 'SECOND_TOKEN',
       purpose: 'Exercise uncertain result',
-      sender: { kind: 'human' },
+      sender: {
+        kind: 'human',
+        workspaceId: 'T-DEMO',
+        workspaceName: 'Demo Workspace',
+      },
       expiresAt: future(),
       publicKey: secondKeys.publicKey,
     });
