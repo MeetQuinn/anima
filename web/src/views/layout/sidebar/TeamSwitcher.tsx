@@ -12,6 +12,10 @@ import type { TeamConfig } from '@/api/teams';
 // N>=2 (grouped): shows the current working-team name + a caret. The menu
 //   lists every team (click = set working context, never a visibility filter)
 //   and the "+ New team" action.
+//
+// The menu is a floating card: soft-rounded, lifted on a real drop shadow. The
+// current team reads from a faint elevated row (not the checkmark alone); a
+// per-row edit affordance reveals on hover.
 // ---------------------------------------------------------------------------
 export function TeamSwitcher({
   teams,
@@ -81,7 +85,7 @@ export function TeamSwitcher({
       {open && (
         <div
           role="menu"
-          className="absolute left-3 right-3 top-[52px] z-30 overflow-hidden rounded-sm border border-white/20 bg-spine-elevated py-1 shadow-deep ring-1 ring-black/20"
+          className="absolute left-2.5 right-2.5 top-[60px] z-30 origin-top overflow-hidden rounded-xl border border-white/10 bg-spine-elevated p-1.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.6)] ring-1 ring-black/10 animate-in fade-in slide-in-from-top-1 duration-150"
         >
           {grouped && (
             <>
@@ -90,7 +94,10 @@ export function TeamSwitcher({
                 return (
                   <div
                     key={team.id}
-                    className="group/team flex items-center hover:bg-white/5"
+                    className={[
+                      'group/team relative flex items-center rounded-lg transition-colors',
+                      active ? 'bg-white/[0.07]' : 'hover:bg-white/[0.05]',
+                    ].join(' ')}
                   >
                     <button
                       type="button"
@@ -99,16 +106,27 @@ export function TeamSwitcher({
                         onSelectTeam(team.id);
                         setOpen(false);
                       }}
-                      className="flex min-w-0 flex-1 items-center gap-2 py-2 pl-3 text-left font-sans text-[13px] text-text-on-spine"
+                      className="flex min-w-0 flex-1 items-center rounded-lg py-2.5 pl-3 pr-9 text-left"
                     >
-                      <Check
+                      <span
                         className={[
-                          'h-3.5 w-3.5 shrink-0',
-                          active ? 'text-accent' : 'text-transparent',
+                          'truncate font-sans text-[13.5px] leading-tight',
+                          active
+                            ? 'font-semibold text-text-on-spine'
+                            : 'font-medium text-text-on-spine/90',
                         ].join(' ')}
-                      />
-                      <span className="truncate">{team.name}</span>
+                      >
+                        {team.name}
+                      </span>
                     </button>
+                    {/* Current-team mark. Small and quiet on purpose — the elevated row
+                        already carries the "you are here" signal; the tick just confirms it.
+                        Fades out on hover so the edit affordance can take the same slot. */}
+                    {active && (
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-accent/80 transition-opacity duration-100 group-hover/team:opacity-0">
+                        <Check className="h-3.5 w-3.5" />
+                      </span>
+                    )}
                     {/* Edit (rename / change home). Reveals on row hover; keyboard users
                         reach it by tab. Stops propagation so it never also selects the team. */}
                     <button
@@ -120,13 +138,14 @@ export function TeamSwitcher({
                         onEditTeam(team);
                         setOpen(false);
                       }}
-                      className="mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-on-spine-muted opacity-0 transition-opacity hover:bg-white/10 hover:text-text-on-spine focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent group-hover/team:opacity-100"
+                      className="absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-text-on-spine-muted opacity-0 transition-opacity duration-100 hover:bg-white/10 hover:text-text-on-spine focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent group-hover/team:opacity-100"
                     >
-                      <Pencil className="h-3 w-3" />
+                      <Pencil className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 );
               })}
+              <div className="mx-2 my-1 h-px bg-white/10" />
             </>
           )}
           <button
@@ -136,10 +155,12 @@ export function TeamSwitcher({
               onNewTeam();
               setOpen(false);
             }}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left font-sans text-[13px] font-medium text-text-on-spine hover:bg-white/5"
+            className="group/new flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-white/[0.05]"
           >
-            <Plus className="h-3.5 w-3.5 shrink-0 text-accent" />
-            <span>New team</span>
+            <Plus className="h-4 w-4 shrink-0 text-accent" />
+            <span className="truncate font-sans text-[13.5px] font-medium leading-tight text-text-on-spine">
+              New team
+            </span>
           </button>
         </div>
       )}
