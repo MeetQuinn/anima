@@ -462,6 +462,7 @@ export default function Profile() {
                   <button
                     type="button"
                     onClick={() => setFeishuDetailsOpen((open) => !open)}
+                    aria-expanded={feishuDetailsOpen}
                     className="inline-flex items-center gap-1 font-sans text-[11px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted hover:decoration-text-muted/40"
                   >
                     <ChevronDown
