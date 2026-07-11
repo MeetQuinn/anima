@@ -39,7 +39,7 @@ const FILE: RenderableFile = {
   name: 'roadmap.md',
   kind: 'markdown',
   size: DOC.length,
-  language: null,
+  language: undefined,
   content: DOC,
   truncated: false,
 };
