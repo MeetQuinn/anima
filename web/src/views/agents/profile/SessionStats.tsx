@@ -1,5 +1,4 @@
 import { formatTokens, formatUptime, shortIso } from '@/lib/format';
-import { Field, ReadonlyValue } from './Primitives';
 import type { AgentSessionSummary, ProviderSessionStatsSummary } from '@shared/snapshot';
 
 // Context occupancy gauge — % to compact (claude) or % full (codex).
@@ -72,6 +71,19 @@ export function ContextOccupancy({ stats }: { stats?: ProviderSessionStatsSummar
 
 // ── This Session block ───────────────────────────────────────────────────────
 
+// Eyebrow label for one vital in the strip.
+function VitalLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="chrome mb-1.5 text-[10px] uppercase tracking-[0.1em] text-text-subtle">
+      {children}
+    </div>
+  );
+}
+
+// Session vitals as one horizontal strip (wraps on narrow screens): the
+// context gauge is the star, compactions and uptime read alongside it.
+// These are the most-glanced facts on the page, so they sit high - right
+// under the Setup ledger, above the transport sections.
 export function SessionSection({
   stats,
   session,
@@ -83,24 +95,26 @@ export function SessionSection({
 }) {
   const startedAt = session?.currentStartedAt ?? session?.createdAt;
   return (
-    <div className="divide-y divide-border-soft">
-      <Field label="Context">
+    <div className="flex flex-wrap items-start gap-x-10 gap-y-4 py-1">
+      <div className="min-w-0">
+        <VitalLabel>Context</VitalLabel>
         <ContextOccupancy stats={stats} />
-      </Field>
-      <Field label="Compactions">
-        <ReadonlyValue
-          value={
-            stats?.sessionCompactionCount !== undefined
-              ? String(stats.sessionCompactionCount)
-              : undefined
-          }
-          mono
-        />
-      </Field>
-      <Field label="Started">
+      </div>
+      <div>
+        <VitalLabel>Compactions</VitalLabel>
+        {stats?.sessionCompactionCount !== undefined ? (
+          <span className="font-mono text-[15px] leading-none text-text">
+            {stats.sessionCompactionCount}
+          </span>
+        ) : (
+          <span className="font-serif italic text-[14px] text-text-subtle">—</span>
+        )}
+      </div>
+      <div>
+        <VitalLabel>Started</VitalLabel>
         {startedAt ? (
           <div className="min-w-0">
-            <span className="font-serif text-[15px] text-text">
+            <span className="font-serif text-[15px] leading-none text-text">
               {shortIso(startedAt)}
             </span>
             <span className="font-sans ml-2 text-[11px] tracking-wide text-text-subtle">
@@ -108,9 +122,9 @@ export function SessionSection({
             </span>
           </div>
         ) : (
-          <ReadonlyValue />
+          <span className="font-serif italic text-[14px] text-text-subtle">—</span>
         )}
-      </Field>
+      </div>
     </div>
   );
 }
