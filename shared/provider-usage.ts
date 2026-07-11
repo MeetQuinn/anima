@@ -38,6 +38,7 @@ export const ProviderUsageError = z.object({
 export type ProviderUsageError = z.infer<typeof ProviderUsageError>;
 
 export const ProviderUsageRow = z.object({
+  account: z.string().max(320).optional(),
   checkedAt: z.string(),
   error: ProviderUsageError.optional(),
   extras: z.array(ProviderUsageExtra),
