@@ -16,6 +16,7 @@ const FOLLOWUP_POLL_MS = 100;
 
 type RuntimeFollowupDecision =
   | { status: 'appended'; text?: string }
+  | { status: 'not_ready' }
   | { status: 'rejected' }
   | { error: string; status: 'failed' };
 
@@ -77,6 +78,11 @@ async function tryOneFollowupItem(
     if (followup.status === 'appended') {
       await recordFollowupAppendSuccess(input, context, followup.text);
       appended = true;
+      return;
+    }
+    if (followup.status === 'not_ready') {
+      await input.queue.requeue(item.id);
+      await sleep(FOLLOWUP_POLL_MS, input.itemDone);
       return;
     }
     await recordFollowupAppendSkip(input, item, followup);
@@ -158,7 +164,7 @@ async function appendRuntimeFollowup(input: {
       activeContext: input.activeContext,
       context: input.context,
     }));
-    if (!result.accepted) return { status: 'rejected' };
+    if (!result.accepted) return { status: result.retryable ? 'not_ready' : 'rejected' };
     await recordRuntimeFollowupAppended(
       { agentId: input.context.agentId },
       {

@@ -16,6 +16,7 @@ import {
   FailingFollowupRuntime,
   FOLLOWUP_NOTE_PREFIX,
   FollowupRuntime,
+  NotReadyFollowupRuntime,
   RejectingFollowupRuntime,
   countOccurrences,
   enqueueInbox,
@@ -393,6 +394,71 @@ test('runtime worker records pending when follow-up append is rejected', async (
     await waitFor(() => runtime.calls.length === 2);
     runtime.finishNext();
     assert.equal(await drain, 2);
+    assert.equal(await queueFor('scout').find(second.ctx.item.id), undefined);
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker retries follow-ups quietly until the provider turn is ready', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-worker-followup-not-ready-test-'));
+  const runtime = new NotReadyFollowupRuntime();
+  const coordinator = ({
+    agentId: 'scout',
+    stateDir,
+  });
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+    worker = new AgentRuntimeWorker({
+      agentId: 'scout',
+      agentRuntime: runtime,
+      queue: queueFor('scout'),
+      pollIntervalMs: 10_000,
+      stateDir,
+      workerId: 'test-worker',
+    }, silentLogger);
+    await enqueueInbox(
+      makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-not-ready-first',
+        teamId: 'T-demo',
+        text: 'first',
+        ts: '1770000010.000001',
+        userId: 'U1',
+      }),
+      coordinator,
+    );
+    const drain = worker.drainOnce();
+    await waitFor(() => runtime.calls.length === 1);
+
+    const second = await enqueueInbox(
+      makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-not-ready-second',
+        teamId: 'T-demo',
+        text: 'second',
+        ts: '1770000011.000001',
+        userId: 'U1',
+      }),
+      coordinator,
+    );
+
+    await waitFor(() => runtime.attempts >= 2);
+    assert.equal((await queueFor('scout').find(second.ctx.item.id))?.handling.status, 'queued');
+    assert.equal(
+      allActivities(await loadState()).some((activity) =>
+        activity.type === 'runtime.followup_failed' || activity.type === 'runtime.pending'),
+      false,
+    );
+
+    runtime.ready = true;
+    await waitFor(() => runtime.followups.length === 1);
+    await waitForInboxItemAppendedTo('scout', second.ctx.item.id, runtime.calls[0]?.itemId ?? '');
+    runtime.finishNext();
+    assert.equal(await drain, 1);
     assert.equal(await queueFor('scout').find(second.ctx.item.id), undefined);
     });
   } finally {
