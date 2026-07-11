@@ -171,10 +171,9 @@ export class CodexAppServerController {
     }
   }
 
-  async waitForActiveTurnId(): Promise<string> {
+  activeTurnId(): Promise<string> | undefined {
     const turn = this.currentTurn;
-    if (!turn) throw new Error('Codex runtime has no active turn');
-    return turn.ready.promise;
+    return turn?.ready.promise;
   }
 
   waitForQuiescent(signal?: AbortSignal): Promise<void> {

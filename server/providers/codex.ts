@@ -73,8 +73,10 @@ export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerC
   async appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<AgentRuntimeFollowupResult> {
     if (!this.activeRun.accepts(input)) return { accepted: false };
     const controller = this.slot.get();
-    if (!controller) return { accepted: false };
-    const turnId = await controller.waitForActiveTurnId();
+    if (!controller) return { accepted: false, retryable: true };
+    const activeTurnId = controller.activeTurnId();
+    if (!activeTurnId) return { accepted: false, retryable: true };
+    const turnId = await activeTurnId;
     try {
       await controller.request('turn/steer', {
         expectedTurnId: turnId,

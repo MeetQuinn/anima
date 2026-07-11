@@ -177,7 +177,7 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
         "    if (msg.params.config.model_reasoning_summary !== 'auto') process.exit(330);",
         "    if (!msg.params.developerInstructions.includes('You are Anima, general-purpose Anima agent.')) process.exit(34);",
         "    if (!msg.params.developerInstructions.includes('anima message send <target flags>')) process.exit(35);",
-        "    send({ id: msg.id, result: { thread: { id: 'codex-thread-1', cwd: process.cwd(), cliVersion: 'test' } } });",
+        "    setTimeout(() => send({ id: msg.id, result: { thread: { id: 'codex-thread-1', cwd: process.cwd(), cliVersion: 'test' } } }), 100);",
         "    return;",
         "  }",
         "  if (msg.method === 'thread/resume') {",
@@ -296,12 +296,17 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
       reasoningEffort: 'xhigh',
     });
     const runPromise = runtime.run(await runtimeInput(runtime, firstCtx, await loadState()));
+    await waitFor(async () => (await readFile(callsPath, 'utf8')).includes('"method":"thread/start"'));
+    const beforeTurnReady = await runtime.appendToActiveRun(
+      await runtimeFollowupInput(runtime, firstCtx, secondCtx, await loadState()),
+    );
     await waitFor(async () => (await readFile(callsPath, 'utf8')).includes('"method":"turn/start"'));
     assert.deepEqual(
       await runtime.appendToActiveRun(await runtimeFollowupInput(runtime, firstCtx, secondCtx, await loadState())),
       { accepted: true, text: 'appended to turn-1' },
     );
     assert.equal((await runPromise).text, 'handled first + appended second');
+    assert.deepEqual(beforeTurnReady, { accepted: false, retryable: true });
     await waitFor(async () =>
       (await activitiesForInboxItemWindow('anima', firstCtx.item.id))
         .some((activity) => activity.type === 'agent.text' && activity.payload?.['subRunId'] === 'codex-child-raw'),

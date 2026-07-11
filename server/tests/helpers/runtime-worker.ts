@@ -246,6 +246,19 @@ export class RejectingFollowupRuntime extends ControlledRuntime {
   }
 }
 
+export class NotReadyFollowupRuntime extends ControlledRuntime {
+  readonly followups: AgentRuntimeFollowupInput[] = [];
+  attempts = 0;
+  ready = false;
+
+  async appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<{ accepted: boolean; retryable?: boolean; text?: string }> {
+    this.attempts += 1;
+    if (!this.ready) return { accepted: false, retryable: true };
+    this.followups.push(input);
+    return { accepted: true, text: `appended ${input.itemId}` };
+  }
+}
+
 export async function waitForInboxItemStatus(
   agentId: string,
   itemId: string,

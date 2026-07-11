@@ -64,6 +64,7 @@ export interface AgentRuntimeFollowupInput {
 
 export interface AgentRuntimeFollowupResult {
   accepted: boolean;
+  retryable?: boolean;
   text?: string;
 }
 
