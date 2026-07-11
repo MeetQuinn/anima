@@ -576,7 +576,7 @@ export default function Profile() {
 
         {/* ── SKILLS ────────────────────────────────────────────────────────── */}
         <Section title="Skills">
-          <SkillsSection agentId={agentId} />
+          <SkillsSection agentId={agentId} homePath={agent.homePath ?? ''} />
         </Section>
       </div>
 
