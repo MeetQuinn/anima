@@ -5,7 +5,14 @@ import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentRuntime } from '../providers/factory.js';
-import { codexAppServerArgs, codexToolEnvIncludeList } from '../providers/codex.js';
+import {
+  CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV,
+  CODEX_AUTO_COMPACT_TOKEN_LIMIT_SCOPE,
+  CODEX_DEFAULT_AUTO_COMPACT_TOKEN_LIMIT,
+  codexAppServerArgs,
+  codexAutoCompactTokenLimitFor,
+  codexToolEnvIncludeList,
+} from '../providers/codex.js';
 import type { AgentRuntime } from '../providers/contract.js';
 import { makeSlackEvent } from './helpers/slack.js';
 import { ingestEvent } from './helpers/inbox.js';
@@ -49,6 +56,23 @@ test('codex-cli app-server launch allows managed provider env into tool shells',
   assert.equal(args.at(-1), 'stdio://');
 });
 
+test('codex-cli auto-compact limit defaults safely and accepts an explicit provider env override', () => {
+  assert.equal(codexAutoCompactTokenLimitFor(undefined), CODEX_DEFAULT_AUTO_COMPACT_TOKEN_LIMIT);
+  assert.equal(codexAutoCompactTokenLimitFor({}), CODEX_DEFAULT_AUTO_COMPACT_TOKEN_LIMIT);
+  assert.equal(
+    codexAutoCompactTokenLimitFor({ [CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV]: '180000' }),
+    180000,
+  );
+  assert.throws(
+    () => codexAutoCompactTokenLimitFor({ [CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV]: '0' }),
+    /must be a positive integer/,
+  );
+  assert.throws(
+    () => codexAutoCompactTokenLimitFor({ [CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV]: 'invalid' }),
+    /must be a positive integer/,
+  );
+});
+
 test('codex-cli app-server transport starts a turn and appends subscription follow-up input', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
   let runtime: AgentRuntime | undefined;
@@ -77,6 +101,8 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
         "    if (msg.params.approvalPolicy !== 'never') process.exit(30);",
         "    if (msg.params.sandbox !== 'danger-full-access') process.exit(31);",
         "    if (msg.params.model !== 'gpt-test') process.exit(32);",
+        `    if (msg.params.config.model_auto_compact_token_limit !== ${CODEX_DEFAULT_AUTO_COMPACT_TOKEN_LIMIT}) process.exit(320);`,
+        `    if (msg.params.config.model_auto_compact_token_limit_scope !== '${CODEX_AUTO_COMPACT_TOKEN_LIMIT_SCOPE}') process.exit(321);`,
         "    if (msg.params.config.model_reasoning_effort !== 'xhigh') process.exit(33);",
         "    if (msg.params.config.model_reasoning_summary !== 'auto') process.exit(330);",
         "    if (!msg.params.developerInstructions.includes('You are Anima, general-purpose Anima agent.')) process.exit(34);",

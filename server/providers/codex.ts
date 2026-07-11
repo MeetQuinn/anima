@@ -10,6 +10,9 @@ import {
 } from './contract.js';
 
 const CODEX_COMMAND = 'codex';
+export const CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV = 'ANIMA_CODEX_AUTO_COMPACT_TOKEN_LIMIT';
+export const CODEX_DEFAULT_AUTO_COMPACT_TOKEN_LIMIT = 240000;
+export const CODEX_AUTO_COMPACT_TOKEN_LIMIT_SCOPE = 'total';
 const CODEX_TOOL_ENV_BASE_INCLUDE = [
   'COLORTERM',
   'HOME',
@@ -101,6 +104,8 @@ export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerC
 
   private threadParams(input: AgentRuntimeInput): Record<string, unknown> {
     const config = {
+      model_auto_compact_token_limit: codexAutoCompactTokenLimitFor(this.env),
+      model_auto_compact_token_limit_scope: CODEX_AUTO_COMPACT_TOKEN_LIMIT_SCOPE,
       ...(this.config.reasoningEffort ? { model_reasoning_effort: this.config.reasoningEffort } : {}),
       model_reasoning_summary: this.config.reasoningSummary ?? 'auto',
     };
@@ -113,6 +118,21 @@ export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerC
       config,
     };
   }
+}
+
+export function codexAutoCompactTokenLimitFor(
+  env: Record<string, string> | undefined,
+): number {
+  const configured = env?.[CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV];
+  if (configured === undefined) return CODEX_DEFAULT_AUTO_COMPACT_TOKEN_LIMIT;
+  if (!/^\d+$/.test(configured)) {
+    throw new Error(`${CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV} must be a positive integer`);
+  }
+  const value = Number(configured);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV} must be a positive integer`);
+  }
+  return value;
 }
 
 export function codexAppServerArgs(env: Record<string, string> | undefined): string[] {

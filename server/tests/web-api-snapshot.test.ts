@@ -81,6 +81,7 @@ test('web snapshot summarizes state without exposing secrets', async () => {
       assert.equal(agentConfig.slack?.connected, true);
       assert.deepEqual(animaSession?.latestProviderStats, {
         activityId: animaSession?.latestProviderStats?.activityId,
+        autoCompactWindow: 240000,
         contextWindow: 200000,
         createdAt: animaSession?.latestProviderStats?.createdAt,
         currentContextTokens: 1300,
@@ -442,6 +443,7 @@ test('web snapshot scopes current-session metrics to the latest rotation boundar
       assert.equal(animaSessionRotated?.currentStartedAt, rotatedAt);
       assert.deepEqual(animaSessionRotated?.latestProviderStats, {
         activityId: animaSessionRotated?.latestProviderStats?.activityId,
+        autoCompactWindow: 240000,
         contextWindow: 200000,
         createdAt: animaSessionRotated?.latestProviderStats?.createdAt,
         currentContextTokens: 2000,

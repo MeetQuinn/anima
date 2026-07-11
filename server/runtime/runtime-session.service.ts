@@ -11,6 +11,7 @@ import {
 } from '../storage/schema/session.store.js';
 import { activitiesForInboxItemWindow } from './item-activities.js';
 import { claudeAutoCompactWindowFor } from '../providers/claude-launch.js';
+import { codexAutoCompactTokenLimitFor } from '../providers/codex.js';
 import type { ProviderSessionRecord } from '../providers/contract.js';
 
 export type { ProviderSession, Session };
@@ -236,7 +237,7 @@ function mergeContextStats(
   return providerStatsSummary({
     ...(current ?? {}),
     activityId: keepProviderStatsStamp ? current?.activityId : activity.activityId,
-    autoCompactWindow: claudeAutoCompactWindowFor(runtimeKind, runtimeEnv),
+    autoCompactWindow: providerAutoCompactWindowFor(runtimeKind, runtimeEnv),
     createdAt: keepProviderStatsStamp ? current?.createdAt : activity.createdAt,
     runtimeKind: stringField(payload, 'runtimeKind') ?? current?.runtimeKind ?? runtimeKind,
     contextWindow: numberField(payload, 'contextWindow') ?? current?.contextWindow,
@@ -254,7 +255,7 @@ function mergeCompactionStats(
   return providerStatsSummary({
     ...(current ?? {}),
     activityId: keepProviderStatsStamp ? current?.activityId : activity.activityId,
-    autoCompactWindow: claudeAutoCompactWindowFor(runtimeKind, runtimeEnv),
+    autoCompactWindow: providerAutoCompactWindowFor(runtimeKind, runtimeEnv),
     createdAt: keepProviderStatsStamp ? current?.createdAt : activity.createdAt,
     runtimeKind: stringField(activity.payload, 'runtimeKind') ?? current?.runtimeKind ?? runtimeKind,
     sessionCompactionCount: (current?.sessionCompactionCount ?? 0) + 1,
@@ -269,7 +270,7 @@ function providerSessionStatsSummary(
 ): ProviderSessionStatsSummary {
   const summary = providerStatsSummary({
     activityId: activity.activityId,
-    autoCompactWindow: claudeAutoCompactWindowFor(runtimeKind, runtimeEnv),
+    autoCompactWindow: providerAutoCompactWindowFor(runtimeKind, runtimeEnv),
     cacheCreationInputTokens: numberField(payload, 'cacheCreationInputTokens'),
     cacheReadInputTokens: numberField(payload, 'cacheReadInputTokens'),
     contextWindow: numberField(payload, 'contextWindow'),
@@ -285,6 +286,14 @@ function providerSessionStatsSummary(
   });
   const usedTokens = providerUsedTokens(summary);
   return usedTokens !== undefined ? { ...summary, usedTokens } : summary;
+}
+
+function providerAutoCompactWindowFor(
+  runtimeKind: string,
+  runtimeEnv: Record<string, string> | undefined,
+): number | undefined {
+  if (runtimeKind === 'codex-cli') return codexAutoCompactTokenLimitFor(runtimeEnv);
+  return claudeAutoCompactWindowFor(runtimeKind, runtimeEnv);
 }
 
 function providerStatsSummary(value: Record<string, unknown>): ProviderSessionStatsSummary {
