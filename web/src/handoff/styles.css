@@ -68,7 +68,7 @@ textarea:focus-visible {
   height: 38px;
   place-items: center;
   border: 1px solid #181817;
-  color: #de3f1d;
+  color: #c73517;
   font-family: Georgia, 'Times New Roman', serif;
   font-size: 23px;
   line-height: 1;
@@ -137,7 +137,7 @@ textarea:focus-visible {
 }
 
 .eyebrow {
-  color: #de3f1d;
+  color: #c73517;
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -184,7 +184,7 @@ h2,
 }
 
 .ledger-row dt {
-  color: #777870;
+  color: #6d6e66;
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
@@ -200,14 +200,14 @@ h2,
 .ledger-note {
   display: block;
   margin-top: 4px;
-  color: #777870;
+  color: #6d6e66;
   font-size: 12px;
 }
 
 .authenticity-note {
   margin-top: 28px;
   padding: 17px 18px 17px 20px;
-  border-left: 3px solid #de3f1d;
+  border-left: 3px solid #c73517;
   background: #f7f3f0;
   color: #55564f;
   font-size: 13px;
@@ -312,7 +312,7 @@ h2,
 }
 
 .primary-action:hover {
-  background: #de3f1d;
+  background: #c73517;
 }
 
 .primary-action:active {
@@ -360,7 +360,7 @@ h2,
 
 .fingerprint-note {
   margin-top: 10px;
-  color: #777870;
+  color: #6d6e66;
   font-size: 11px;
   line-height: 1.5;
 }
@@ -390,14 +390,14 @@ h2,
   margin: 28px 0 0;
   padding-top: 20px;
   border-top: 1px solid #dedfd9;
-  color: #777870;
+  color: #6d6e66;
   font-size: 13px;
 }
 
 .site-footer {
   min-height: 78px;
   border-top: 1px solid #dedfd9;
-  color: #777870;
+  color: #6d6e66;
   font-size: 11px;
 }
 

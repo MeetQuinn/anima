@@ -22,6 +22,8 @@ const forbidden = [
   /\bfetch\s*\(/,
   /\bXMLHttpRequest\b/,
   /\bWebSocket\b/,
+  /\bRTCPeerConnection\b/,
+  /\bsendBeacon\b/,
   /\blocalStorage\b/,
   /\bsessionStorage\b/,
   /\bindexedDB\b/,
@@ -46,6 +48,13 @@ for (const directive of [
 ]) {
   if (!headers.includes(directive)) {
     throw new Error(`handoff headers are missing ${directive}`);
+  }
+}
+
+const indexHtml = await readFile(join(root, "index.html"), "utf8");
+for (const directive of ["default-src 'none'", "connect-src 'none'"]) {
+  if (!indexHtml.includes(directive)) {
+    throw new Error(`handoff index meta CSP is missing ${directive}`);
   }
 }
 
