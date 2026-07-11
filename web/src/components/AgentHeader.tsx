@@ -42,7 +42,6 @@ export default function AgentHeader() {
   const color = agentColor(idx);
   const displayName = agentDisplayName(agent);
   const avatarUrl = agentAvatarUrl(agent);
-  const role = agent.profile?.role;
   const initial = initialOf(displayName);
   const status = agentStatuses.find((s) => s.agentId === agent.id);
   const currentItemId = status?.currentItemId;
@@ -80,17 +79,13 @@ export default function AgentHeader() {
             {initial}
           </span>
         )}
+        {/* Avatar + name, no role sentence - the header anchors "who am I
+            looking at" on every tab, while the role sentence lives on the
+            Profile hero (the page that owns identity). Carrying it in both
+            places made the header and the hero read as the same card twice. */}
         <span className="display truncate text-[20px] font-semibold leading-tight text-text">
           {displayName}
         </span>
-        {role && (
-          <span
-            className="font-sans truncate text-[12px] tracking-wide text-text-muted"
-            title={role}
-          >
-            {role}
-          </span>
-        )}
         <div className="ml-auto flex items-center gap-1">
           {currentItemId && (
             <>

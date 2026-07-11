@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { ExternalLink, MessageCircle, RotateCcw, X } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
+import { ChevronDown, ExternalLink, RotateCcw, X } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import {
   fetchAgent,
@@ -19,17 +19,16 @@ import { useNow } from '@/hooks/useNow';
 
 import { providerCatalog } from '@shared/provider-catalog';
 import { useParams } from 'react-router-dom';
-import { agentDisplayName } from '@/lib/agent-avatar';
 import { formatRelative, shortIso } from '@/lib/format';
 import { EditAffordance, Field, ReadonlyValue, Section, extractError } from './Primitives';
 import {
-  InlineTextRow,
   HomeRow,
   TeamRow,
   ProviderInlineRow,
   ProviderEnvRow,
   ConfirmRestartModal,
 } from './AgentFields';
+import { ProfileHero } from './ProfileHero';
 import { useTeams, useTeamWarnings } from '@/hooks/useTeams';
 import { assignAgentTeam } from '@/api/teams';
 import { DEFAULT_TEAM_ID } from '@shared/server-settings';
@@ -107,6 +106,9 @@ export default function Profile() {
 
   // Owner picker (reset when agent changes via key prop on OwnerPickerForm).
   const [ownerPickerOpen, setOwnerPickerOpen] = useState(false);
+
+  // Feishu ledger-row details expand (App/Bot IDs, credentials note).
+  const [feishuDetailsOpen, setFeishuDetailsOpen] = useState(false);
 
   // Provider-bound changes are applied by the agent host without bouncing other agents.
   const [pendingRestart, setPendingRestart] = useState<PendingRestart | null>(null);
@@ -276,20 +278,53 @@ export default function Profile() {
           </div>
         )}
 
-        {/* ── TOP BLOCK ─────────────────────────────────────────────────────── */}
+        {/* ── IDENTITY ──────────────────────────────────────────────────────── */}
+        {/* Large avatar + editable name/role + the lifecycle line. The meta
+            facts (read-only, rarely acted on) ride inside the hero as one
+            muted line instead of three ledger rows - hover the dates for
+            full timestamps. */}
+        <ProfileHero
+          agent={agent}
+          onCommitName={(next) => commitProfile({ displayName: next })}
+          onCommitRole={(next) => commitProfile({ role: next })}
+        >
+        <div className="flex flex-col gap-y-1 font-sans text-[12px] tracking-wide text-text-subtle md:flex-row md:flex-wrap md:items-center md:gap-x-2">
+          {[
+            createdAt ? (
+              <span key="created" title={new Date(createdAt).toLocaleString()}>
+                Created {shortIso(createdAt)}
+              </span>
+            ) : null,
+            session?.updatedAt ? (
+              <span key="active" title={new Date(session.updatedAt).toLocaleString()}>
+                Last active {formatRelative(session.updatedAt, now)}
+              </span>
+            ) : null,
+            transportConnected ? (
+              <span key="archived">
+                {sessionsArchived} session{sessionsArchived === 1 ? '' : 's'} archived
+              </span>
+            ) : null,
+          ]
+            .filter((node): node is ReactElement => node !== null)
+            .map((node, i) => (
+              <span key={node.key} className="flex items-center gap-x-2">
+                {/* Dot separators only when the facts run inline; stacked on
+                    small screens a leading dot reads as a stray bullet. */}
+                {i > 0 && (
+                  <span aria-hidden className="hidden md:inline">
+                    ·
+                  </span>
+                )}
+                {node}
+              </span>
+            ))}
+        </div>
+        </ProfileHero>
+
+        {/* ── SETUP ─────────────────────────────────────────────────────────── */}
+        <Section title="Setup">
         <div className="divide-y divide-border-soft">
-          <InlineTextRow
-            label="Name"
-            value={agent.profile?.displayName ?? ''}
-            placeholder="Unnamed"
-            onCommit={(next) => commitProfile({ displayName: next })}
-          />
-          <InlineTextRow
-            label="Role"
-            value={agent.profile?.role ?? ''}
-            placeholder="No role"
-            onCommit={(next) => commitProfile({ role: next })}
-          />
           <HomeRow value={agent.homePath ?? ''} onCommit={commitHomePath} />
           <TeamRow
             teams={teams}
@@ -318,34 +353,6 @@ export default function Profile() {
             onRequestSave={(kind, model, effort) => setPendingRestart({ kind, model, effort })}
           />
           <ProviderEnvRow env={agent.provider.env} onCommit={commitProviderEnv} />
-
-          {/* Lifetime facts */}
-          <Field label="Created">
-            {createdAt ? (
-              <span
-                className="font-serif text-[15px] text-text"
-                title={new Date(createdAt).toLocaleString()}
-              >
-                {shortIso(createdAt)}
-              </span>
-            ) : (
-              <ReadonlyValue />
-            )}
-          </Field>
-          {/* Last active — overall last activity (survives session rotation),
-              distinct from the current-session "Latest activity" once shown here. */}
-          <Field label="Last active">
-            {session?.updatedAt ? (
-              <span
-                className="font-serif text-[15px] text-text"
-                title={new Date(session.updatedAt).toLocaleString()}
-              >
-                {formatRelative(session.updatedAt, now)}
-              </span>
-            ) : (
-              <ReadonlyValue />
-            )}
-          </Field>
           <Field label="Owner">
             {agent.owner ? (
               (() => {
@@ -393,8 +400,120 @@ export default function Profile() {
             )}
           </Field>
 
-          {/* Owner picker modal */}
-          {ownerPickerOpen && slackConnected && (
+          {/* Slack connection as a ledger row, same language as the rest of
+              Setup - a connection is configuration, not a person, so it gets
+              no card and no face. The connect stepper (below) still gets its
+              own section when nothing is connected yet. */}
+          {slackConnected && (
+            <Field label="Slack">
+              <div className="flex min-w-0 items-center gap-3">
+                {/* No "Connected" chip - a row in the Setup ledger only exists
+                    when the connection does; the label would restate the row.
+                    Baseline-aligned: the handle and workspace run at different
+                    sizes, so centering the boxes made them look off-kilter. */}
+                <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+                  <span className="font-serif text-[15px] text-text">@{agent.id}</span>
+                  {agent.slack.workspaceName && (
+                    <>
+                      <span aria-hidden className="font-sans text-[13px] text-text-subtle">
+                        ·
+                      </span>
+                      <span className="font-sans text-[13px] text-text-muted">
+                        {agent.slack.workspaceName}
+                      </span>
+                    </>
+                  )}
+                </div>
+                <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                  {agent.slack.appId && (
+                    <a
+                      href={`https://api.slack.com/apps/${agent.slack.appId}/general`}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Slack App Settings"
+                      className="flex h-7 w-7 items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-surface-elevated hover:opacity-100"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  )}
+                  <button
+                    onClick={() => void handleSyncAvatar()}
+                    disabled={syncingAvatar}
+                    title="Sync avatar from Slack"
+                    className="flex h-7 w-7 items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-surface-elevated hover:opacity-100 disabled:opacity-20"
+                  >
+                    <RotateCcw className={`h-3.5 w-3.5 ${syncingAvatar ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+              </div>
+            </Field>
+          )}
+
+          {/* Feishu connection, same ledger-row language as Slack. The App/Bot
+              IDs and credentials note fold behind a Details toggle - present
+              when needed, silent otherwise. */}
+          {feishuConnected && (
+            <Field label="Feishu">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+                  <span className="break-all font-mono text-[13px] text-text">
+                    {agent.feishu.appId || '—'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setFeishuDetailsOpen((open) => !open)}
+                    aria-expanded={feishuDetailsOpen}
+                    className="inline-flex items-center gap-1 font-sans text-[11px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted hover:decoration-text-muted/40"
+                  >
+                    <ChevronDown
+                      className={`h-3 w-3 transition-transform ${feishuDetailsOpen ? 'rotate-180' : ''}`}
+                    />
+                    {feishuDetailsOpen ? 'Hide details' : 'Details'}
+                  </button>
+                </div>
+                <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                  <button
+                    onClick={() => void handleSyncFeishuAvatar()}
+                    disabled={syncingFeishuAvatar}
+                    title="Sync avatar from Feishu"
+                    className="flex h-7 w-7 items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-surface-elevated hover:opacity-100 disabled:opacity-20"
+                  >
+                    <RotateCcw
+                      className={`h-3.5 w-3.5 ${syncingFeishuAvatar ? 'animate-spin' : ''}`}
+                    />
+                  </button>
+                </div>
+              </div>
+              {feishuDetailsOpen && (
+                <div className="mt-3 space-y-3">
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <FeishuMeta label="Bot Open ID" value={agent.feishu.botOpenId} />
+                    <FeishuMeta label="Credentials" value="Configured" />
+                    <FeishuMeta label="Delivery" value="Long-lived connection" />
+                  </div>
+                  <p className="font-sans text-[12px] leading-relaxed text-text-muted">
+                    Feishu credentials are stored in the agent config and injected by Anima at
+                    runtime. Secret values are hidden in the dashboard.
+                  </p>
+                </div>
+              )}
+            </Field>
+          )}
+        </div>
+        {slackConnected && (
+          <div className="mt-4">
+            <SlackManifestUpdateCard agentId={agentId} />
+          </div>
+        )}
+        {feishuConnected && (
+          <div className="mt-4">
+            <FeishuScopeStatusCard agentId={agentId} />
+          </div>
+        )}
+        </Section>
+
+        {/* Owner picker modal */}
+        {ownerPickerOpen && slackConnected && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-page/70 backdrop-blur-sm">
               <div className="relative w-full max-w-md rounded-sm border border-border-soft bg-surface shadow-deep">
                 <div className="flex items-center justify-between border-b border-border-soft px-5 py-4">
@@ -423,147 +542,35 @@ export default function Profile() {
                 </div>
               </div>
             </div>
-          )}
-          {transportConnected && (
-            <Field label="Sessions archived">
-              <ReadonlyValue value={String(sessionsArchived)} mono />
-            </Field>
-          )}
-        </div>
-
-        {/* ── SLACK ─────────────────────────────────────────────────────────── */}
-        {showSlackSetup && (
-          <Section title="Slack">
-            {slackConnected ? (
-              <div className="space-y-3">
-                <div className="flex items-center gap-3 overflow-hidden rounded-sm border border-border-soft bg-surface-elevated px-4 py-3">
-                  {agent.slack.avatarUrl ? (
-                    <img
-                      src={agent.slack.avatarUrl}
-                      alt=""
-                      className="h-9 w-9 shrink-0 rounded-lg object-cover ring-1 ring-border-soft"
-                    />
-                  ) : (
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted font-serif text-[17px] font-semibold text-text-muted ring-1 ring-border-soft">
-                      {agentDisplayName(agent).charAt(0).toUpperCase()}
-                    </span>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <div className="font-serif text-[15px] font-semibold leading-snug text-text">
-                      @{agent.id}
-                    </div>
-                    {agent.slack.workspaceName && (
-                      <div className="font-sans mt-0.5 text-[13px] text-text-muted">
-                        {agent.slack.workspaceName}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 items-center gap-0.5">
-                    {agent.slack.appId && (
-                      <a
-                        href={`https://api.slack.com/apps/${agent.slack.appId}/general`}
-                        target="_blank"
-                        rel="noreferrer"
-                        title="Slack App Settings"
-                        className="flex h-7 w-7 items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-page hover:opacity-100"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </a>
-                    )}
-                    <button
-                      onClick={() => void handleSyncAvatar()}
-                      disabled={syncingAvatar}
-                      title="Sync avatar from Slack"
-                      className="flex h-7 w-7 items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-page hover:opacity-100 disabled:opacity-20"
-                    >
-                      <RotateCcw className={`h-3.5 w-3.5 ${syncingAvatar ? 'animate-spin' : ''}`} />
-                    </button>
-                  </div>
-                </div>
-                <SlackManifestUpdateCard agentId={agentId} />
-              </div>
-            ) : (
-              <SlackConnectStepper agentId={agentId} onConnect={() => refreshAgentData(agentId)} />
-            )}
-          </Section>
-        )}
-
-        {/* ── FEISHU ────────────────────────────────────────────────────────── */}
-        {showFeishuSetup && (
-          <Section title="Feishu">
-            {feishuConnected ? (
-              <div className="space-y-3">
-                <div className="rounded-sm border border-border-soft bg-surface-elevated px-4 py-3">
-                  <div className="flex items-start gap-3">
-                    {agent.feishu.avatarUrl ? (
-                      <img
-                        src={agent.feishu.avatarUrl}
-                        alt=""
-                        className="h-9 w-9 shrink-0 rounded-lg object-cover ring-1 ring-border-soft"
-                      />
-                    ) : (
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent ring-1 ring-border-soft">
-                        <MessageCircle className="h-4 w-4" />
-                      </span>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-serif text-[15px] font-semibold leading-snug text-text">
-                              Feishu
-                            </span>
-                            <span className="font-sans rounded-sm border border-health-ok/30 bg-health-ok-soft px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-health-ok">
-                              Connected
-                            </span>
-                          </div>
-                          {agent.feishu.avatarUrl && (
-                            <div className="font-sans mt-0.5 text-[13px] text-text-muted">
-                              Synced from your Feishu app
-                            </div>
-                          )}
-                        </div>
-                        <button
-                          onClick={() => void handleSyncFeishuAvatar()}
-                          disabled={syncingFeishuAvatar}
-                          title="Sync avatar from Feishu"
-                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-page hover:opacity-100 disabled:opacity-20"
-                        >
-                          <RotateCcw
-                            className={`h-3.5 w-3.5 ${syncingFeishuAvatar ? 'animate-spin' : ''}`}
-                          />
-                        </button>
-                      </div>
-                      <div className="mt-2 grid gap-2 text-[12px] md:grid-cols-2">
-                        <FeishuMeta label="App ID" value={agent.feishu.appId} />
-                        <FeishuMeta label="Bot Open ID" value={agent.feishu.botOpenId} />
-                        <FeishuMeta label="Credentials" value="Configured" />
-                        <FeishuMeta label="Delivery" value="Long-lived connection" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <p className="font-sans text-[12px] leading-relaxed text-text-muted">
-                  Feishu credentials are stored in the agent config and injected by Anima at
-                  runtime. Secret values are hidden in the dashboard.
-                </p>
-                <FeishuScopeStatusCard agentId={agentId} />
-              </div>
-            ) : (
-              <FeishuConnectStepper
-                key={agentId}
-                agentId={agentId}
-                agentName={agent.profile.displayName}
-                onConnect={() => refreshAgentData(agentId)}
-              />
-            )}
-          </Section>
         )}
 
         {/* ── THIS SESSION ──────────────────────────────────────────────────── */}
+        {/* Vitals sit right under Setup: the most-glanced facts on the page
+            shouldn't hide below the transport plumbing. */}
         {transportConnected && (
           <Section title="This session">
             <SessionSection stats={stats} session={session ?? undefined} now={now} />
+          </Section>
+        )}
+
+        {/* ── SLACK (connect flow only - the connected state lives as a Setup
+            row above) ─────────────────────────────────────────────────────── */}
+        {showSlackSetup && !slackConnected && (
+          <Section title="Slack">
+            <SlackConnectStepper agentId={agentId} onConnect={() => refreshAgentData(agentId)} />
+          </Section>
+        )}
+
+        {/* ── FEISHU (connect flow only - the connected state lives as a Setup
+            row above) ─────────────────────────────────────────────────────── */}
+        {showFeishuSetup && !feishuConnected && (
+          <Section title="Feishu">
+            <FeishuConnectStepper
+              key={agentId}
+              agentId={agentId}
+              agentName={agent.profile.displayName}
+              onConnect={() => refreshAgentData(agentId)}
+            />
           </Section>
         )}
 
