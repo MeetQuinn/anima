@@ -1,189 +1,192 @@
+---
+title: Architecture overview
+description: See how one Anima host runs multiple durable agents, where state lives, what crosses external boundaries, and how work recovers after failure.
+pageClass: architecture-overview
+---
+
 # Architecture overview
 
-Anima's architecture starts with one agent and one loop:
+Anima runs a team of durable AI agents on one machine you control. Each agent has its own chat identity, work queue, runtime context, provider session, activity trail, and home. Slack or Feishu is where the team talks to those agents. Claude Code, Codex, Kimi, or another supported provider does the model work under accounts available on that machine.
 
-**Slack message -> agent inbox -> one agent turn -> agent outbox -> Slack reply.**
+There is no hosted Anima backend, database, or vector store in the middle. Anima is local infrastructure, but it is not an offline system: messages still cross Slack or Feishu, provider turns still go to the provider you selected, and connected tools can reach the services they are configured to use.
 
-That loop is why Anima feels like a teammate in Slack instead of a private terminal session. The
-agent has a durable Slack identity, a continuous working context, and a clear boundary for what it
-receives and what it sends.
+## The system in one picture
 
-## The shape
-
-<div class="architecture-map" aria-label="Your team works in Slack, Anima runs on one machine you control, and the provider runs AI work under your account.">
-  <div class="architecture-card architecture-card-slack">
-    <span>Shared surface</span>
-    <strong>Your team in Slack</strong>
-    <p>Channels, DMs, and threads where people talk to the agent and see its replies.</p>
+<div class="system-map" role="img" aria-label="Slack and Feishu send messages into one locally controlled Anima host. Each agent has its own transport, durable queue, worker, provider session, activity trail, and home. A separate local operator plane configures and inspects the runtime. Provider accounts, repositories, and connected tools remain external systems.">
+  <div class="system-map-boundaries">
+    <div class="system-map-boundary system-map-team">
+      <span>Team surface</span>
+      <strong>Slack / Feishu</strong>
+      <p>Messages, files, threads, and visible agent actions</p>
+    </div>
+    <div class="system-map-boundary system-map-provider">
+      <span>AI engine</span>
+      <strong>Your provider accounts</strong>
+      <p>Claude Code, Codex, Kimi, and their own data policies</p>
+    </div>
   </div>
-  <div class="architecture-flow" aria-hidden="true">
-    <span>messages in</span>
-    <strong>↓</strong>
-    <span>replies out</span>
+  <div class="system-map-connectors" aria-hidden="true">
+    <span>events in · actions out</span>
+    <span>turns · tool protocol</span>
   </div>
-  <div class="architecture-card architecture-card-anima">
-    <span>Local runtime</span>
-    <strong>Anima on one machine</strong>
-    <p>Slack connection, agent inbox, agent outbox, durable state, and local activity trail.</p>
+  <div class="system-map-host">
+    <div class="system-map-host-heading">
+      <span>One machine you control</span>
+      <strong>Anima host</strong>
+    </div>
+    <div class="system-map-runtime" aria-label="Runtime plane">
+      <span>Transport</span>
+      <i aria-hidden="true">→</i>
+      <span>Attention</span>
+      <i aria-hidden="true">→</i>
+      <span>Durable queue</span>
+      <i aria-hidden="true">→</i>
+      <span>Worker + provider runtime</span>
+    </div>
+    <div class="system-map-agents">
+      <div>
+        <strong>Agent A</strong>
+        <span>identity · queue · session · activity · home</span>
+      </div>
+      <div>
+        <strong>Agent B</strong>
+        <span>identity · queue · session · activity · home</span>
+      </div>
+      <div>
+        <strong>Agent C</strong>
+        <span>identity · queue · session · activity · home</span>
+      </div>
+    </div>
+    <div class="system-map-local">
+      <div>
+        <strong>Runtime state</strong>
+        <span><code>ANIMA_HOME</code>: config, queues, sessions, activity</span>
+      </div>
+      <div>
+        <strong>Team and agent files</strong>
+        <span>knowledge bases, <code>MEMORY.md</code>, notes, work</span>
+      </div>
+    </div>
+    <div class="system-map-operator">
+      <strong>Operator plane</strong>
+      <span>local dashboard · API · CLI</span>
+      <span>configure · inspect · restart · upgrade</span>
+    </div>
   </div>
-  <div class="architecture-flow" aria-hidden="true">
-    <span>agent turn</span>
-    <strong>↓</strong>
-    <span>result</span>
-  </div>
-  <div class="architecture-card architecture-card-provider">
-    <span>AI engine</span>
-    <strong>Your provider account</strong>
-    <p>Claude Code, Codex, Kimi, or another supported provider runs the work.</p>
+  <div class="system-map-tools">
+    <span>Shared repositories and connected tools remain their own trust boundaries.</span>
   </div>
 </div>
 
-One machine runs Anima for the team. Slack stays the shared surface. The provider does the AI work
-under your account. Anima is the local layer between them.
+The picture has two important boundaries. First, one host can run many agents, but each agent has its own runtime lane. Second, the operator plane controls and inspects those lanes without sitting in the data path of every turn.
 
-## The one-agent loop
+## One host, many agents
 
-<div class="agent-loop-diagram" aria-label="A Slack message goes into the agent inbox, the agent runs one turn through the provider, then the agent outbox sends the result back to Slack.">
-  <div class="agent-loop-node agent-loop-slack">
-    <strong>Slack</strong>
-    <span>DM, mention, or followed thread</span>
-  </div>
-  <div class="agent-loop-arrow" aria-hidden="true">↓</div>
-  <div class="agent-loop-node agent-loop-inbox">
-    <strong>Agent inbox</strong>
-    <span>What reached the agent, where it came from, and why it wakes up</span>
-  </div>
-  <div class="agent-loop-arrow" aria-hidden="true">↓</div>
-  <div class="agent-loop-node agent-loop-turn">
-    <strong>One agent turn</strong>
-    <span>The provider runs the work under your account</span>
-  </div>
-  <div class="agent-loop-arrow" aria-hidden="true">↓</div>
-  <div class="agent-loop-node agent-loop-outbox">
-    <strong>Agent outbox</strong>
-    <span>Messages, files, reactions, and asks the agent sends through Anima</span>
-  </div>
-  <div class="agent-loop-arrow" aria-hidden="true">↓</div>
-  <div class="agent-loop-node agent-loop-slack">
-    <strong>Slack</strong>
-    <span>The result returns to the same DM, channel, or thread</span>
-  </div>
-</div>
+An Anima installation is a host for a team, not a separate installation for every teammate. The host loads the configured agents and starts or stops each one independently.
 
-The useful mental model is simple:
+Some resources are machine-level:
 
-- **Inbox** is what the agent receives. It includes the Slack message, who sent it, where it came
-  from, and the reason Anima is waking the agent.
-- **One agent turn** is the work. The agent reads the inbox item with its existing context and uses
-  the coding tool you connected, such as Claude Code, Codex, or Kimi.
-- **Outbox** is what reaches the team. A reply, file, reaction, or question is not visible until it
-  goes out through Anima.
+- the Anima runtime and local operator services;
+- installed provider binaries;
+- provider credential stores when the provider keeps them at machine or user scope;
+- the default team knowledge base and any deliberately shared repositories.
 
-The dashboard's activity view is built from this boundary: what came in, what the agent did through
-Anima, and what went back out.
+Other resources belong to one agent:
 
-## Where it runs
+- its Slack or Feishu identity and transport configuration;
+- its subscriptions, inbox queue, reminders, asks, and activity trail;
+- its provider runtime and persisted session metadata;
+- its home directory, including `MEMORY.md`, notes, and working files.
 
-Anima runs on one machine you control. That machine keeps the local runtime, the agent's durable
-state, and the local activity trail. Your teammates do not each install Anima. They work with the
-agent from Slack.
+Agents do not gain hidden access to one another's context merely because they share a host. They coordinate through visible team messages, shared files, and repositories, just as people do. Shared machine resources are still a real trust boundary. For example, a machine-level provider upgrade can affect every agent using that provider even though their queues and sessions remain separate.
 
-```text
-Your machine
-  Anima runtime
-  Agent state
-  Local activity trail
+## How a message becomes work
 
-Your team
-  Slack channels, DMs, and threads
+Slack and Feishu use different platform adapters, then enter the same runtime shape.
 
-Your provider account
-  Claude Code, Codex, Kimi, or another supported provider
-```
+1. **A transport receives an event.** The event is normalized into Anima's inbox format with its sender, conversation, thread, files, and platform metadata.
+2. **Attention rules decide whether the agent should wake.** DMs, mentions, and followed conversations can qualify. Deduplication prevents the same platform event from becoming two work items.
+3. **The item enters a durable per-agent queue.** Enqueueing is separate from running. A runtime restart does not require the original platform event to be delivered again.
+4. **The agent worker claims one item.** Each agent drains its own primary work serially. Follow-up messages can join a compatible active provider turn instead of opening unrelated concurrent work.
+5. **The provider runtime runs the turn.** It starts or resumes the configured provider session as needed and gives the provider the inbox item, agent context, and allowed tools.
+6. **The agent takes explicit team actions.** Messages, file transfers, reactions, and bounded questions sent through Anima return to the relevant Slack or Feishu conversation.
+7. **Anima records its side of the boundary.** Queue transitions, provider runtime events, and Anima-mediated actions become local activity records for diagnosis and review.
 
-This split matters. Slack is where people talk and see the results. The provider is the coding agent
-you connect, such as Claude Code, Codex, or Kimi; it runs the AI work under your account. Anima is the
-local teammate layer that connects Slack and the provider, keeps the agent continuous, and records the
-Anima-mediated work for review.
+The outbox is a precise boundary, not a claim that Anima observes every effect. Plain provider output is not automatically a chat reply. A team-visible message or file must be sent through an Anima action. The provider may also edit files, run commands, push to GitHub, or use other configured tools. Those effects belong to the corresponding filesystem, repository, or tool and are not made transactional by the outbox.
 
-The agent state on your machine is the part that makes the agent durable: its configuration, local
-history, sessions, preferences, and activity trail.
+For the human-facing rules about mentions, followed threads, and agent replies, see [How an agent works](../guide/how-an-agent-works.md).
 
-## How a message reaches the agent
+## Runtime plane and operator plane
 
-Anima stays connected to Slack for each agent's Slack app. When a Slack event arrives, Anima decides
-whether it belongs in that agent's inbox.
+Anima separates the machinery that performs work from the machinery used to operate it.
 
-A message reaches the agent when:
+### Runtime plane
 
-- it is a DM to the agent;
-- it @mentions the agent;
-- it appears in a channel or thread the agent follows and has not muted.
+The runtime plane owns chat connections, attention decisions, durable queues, workers, provider sessions, follow-up handling, and activity recording. It is the path a real message follows.
 
-An agent follows a thread after it is @mentioned there, or after it has already replied there. It keeps
-following that thread until it mutes it; there is no short time window you need to beat.
+### Operator plane
 
-If the message qualifies, Anima records an inbox item and wakes the agent. If it does not qualify,
-the agent is not asked to spend a turn on it.
+The operator plane is the local dashboard, API, and CLI. It reads runtime state and performs explicit management actions such as editing agent configuration, checking provider health and usage, requesting a restart, or upgrading the installed runtime and supported provider CLIs.
 
-This is how Anima can feel present in Slack without requiring the agent to speak all the time. It can
-receive context broadly, then choose when to act.
+The dashboard binds to `127.0.0.1` by default. It is a control surface, not a hosted dependency and not a relay for every agent turn. Because the web service and runtime service are separate, a dashboard failure does not by itself erase queues or agent homes, and a healthy runtime can continue operating without the UI being open.
 
-## What happens during one turn
+## Two kinds of local state
 
-An agent turn is one pass through the connected coding agent. Anima hands over the inbox item with the
-agent's existing session context. The provider does the AI work under your account, then the agent
-decides whether to send something back through Anima.
+Anima keeps runtime state and agent files separate because they have different jobs and recovery rules.
 
-During the turn, the agent can:
+### `ANIMA_HOME`: runtime state
 
-- read the message and the surrounding delivery context;
-- use its continuous session context;
-- call Anima tools, the Slack-facing actions Anima exposes, when it needs to reply, react, send a file,
-  or ask for a decision;
-- use other configured tools when the agent's role and provider support them.
+The selected Anima home stores host and agent configuration plus operational records such as queues, message ledgers, provider session metadata, subscriptions, reminders, asks, activity logs, health, and reconstructable caches. It is the state the runtime needs to resume operating.
 
-Some turns are quick replies. Others take longer because the provider is reading files, running tasks,
-or preparing a larger answer. The important boundary stays the same: the work is not visible to your
-team until the agent sends an outbox action.
+### Agent home: durable working context
 
-Plain text the agent produces internally is not a Slack reply. The team only sees an action when the
-agent sends it through the outbox.
+Each agent also has a home path. That is where `MEMORY.md`, notes, skills, and ordinary work files live. A provider context reset does not make those files disappear. The recovering agent reads its maintained memory and the relevant files to take over correctly.
 
-## How the outbox keeps the boundary clear
+The distinction matters operationally. Deleting a queue is not the same as deleting an agent's work. Moving an agent home is not the same as moving `ANIMA_HOME`. Backups, permissions, and incident diagnosis should name which side they cover.
 
-The outbox is the agent's outward boundary. It is where the agent turns private work into visible team
-actions.
+## Recovery and failure boundaries
 
-Outbox actions include:
+Anima persists enough state to recover work, but it does not promise a distributed transaction across chat platforms, providers, filesystems, and external tools.
 
-- posting a message back to the same Slack DM, channel, or thread;
-- sending a file;
-- adding a reaction;
-- asking a bounded question in Slack, such as approve or reject.
+| Failure                           | What remains                                                                         | What happens next                                                                                                                                                      |
+| --------------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dashboard stops                   | Runtime state, queues, agent homes, and the runtime service                          | Agents can continue if the runtime and external connections are healthy; the UI can be restarted separately.                                                           |
+| Runtime restarts                  | Queued items, ledgers, sessions, subscriptions, reminders, activity, and agent homes | The host reloads agents, recovers stale running work, and resumes queue draining. Provider processes are started or resumed as needed.                                 |
+| Provider process or session fails | Queue records, local activity, agent files, and persisted session metadata           | The item is retried only under bounded recovery rules or becomes a visible failure. A corrupt resumed session can be archived and replaced instead of retried forever. |
+| Slack or Feishu is unavailable    | Local state and already queued work                                                  | New platform events and outbound actions wait on restored connectivity. Anima cannot receive messages the platform never delivers.                                     |
+| Host machine is offline           | Files already persisted on that machine                                              | No agent receives or responds until the machine and services return.                                                                                                   |
 
-Those Anima-mediated actions are recorded to the local activity trail, along with runtime events. The
-point is reviewability: you can see what the agent received and what it sent through Anima without
-watching every internal step.
+Queue recovery protects Anima's work records. It cannot roll back an external command that already ran, a Git push that already completed, or a message already accepted by a chat platform. Integrations that need stronger idempotency must provide it at their own boundary.
 
-## Data boundaries
+The activity trail follows the same honesty rule. It is an append-only record of Anima-mediated runtime and tool events. It is useful for review and diagnosis, but it is not a recording of every provider thought or every side effect in every external system.
 
-Anima does not add an Anima cloud to the loop.
+## Trust and data boundaries
 
-- **Slack remains your team's conversation system.** Messages and replies are still Slack messages.
-- **The AI work runs through the provider account you connect.** That provider sees the turns it is
-  asked to run.
-- **Anima state stays on the machine running Anima.** Agent state, local config, logs, and the
-  activity trail live in the selected Anima home on that machine.
+| Boundary                         | What crosses it                                                                                                                                |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Host machine                     | Anima configuration and runtime records; agent memories, notes, and work files; installed provider binaries and locally available credentials. |
+| Slack or Feishu                  | Team messages, files, interaction payloads, and the outbound actions agents explicitly send through that platform.                             |
+| AI provider                      | The turn context and tool protocol required by the configured provider. Provider data handling follows that provider account and product.      |
+| Repositories and connected tools | Files, commands, API calls, and credentials that the provider or agent is allowed to use. These are outside Anima's chat outbox boundary.      |
+| Anima-hosted cloud               | None. Anima does not require a hosted Anima backend, database, or vector store.                                                                |
 
-That means local control does not remove Slack or provider egress. Slack and the provider are real
-parts of the loop. The promise is that Anima itself is not a hosted service in the middle.
+Running locally gives the operator custody of Anima's runtime state and agent homes. It does not remove Slack, Feishu, provider, repository, or tool egress. A technical evaluation should include each of those systems and the permissions granted to them. See [Security and data boundaries](../security-and-data.md) for the full evaluation checklist.
 
-## What to remember
+## What to evaluate
 
-- One controlled machine runs Anima for the team.
-- Slack is the shared surface.
-- The inbox decides what reaches the agent.
-- One provider turn does the work.
-- The outbox is the only way work becomes visible to the team.
-- The local activity trail lets you review the work that went through Anima.
+For a team champion deciding whether Anima fits, the architectural questions are concrete:
+
+- Is there a machine the team can keep available and administer?
+- Are Slack or Feishu and the chosen provider acceptable external trust boundaries?
+- Which provider credentials and repositories are shared at machine scope, and which are isolated per agent?
+- Are `ANIMA_HOME` and agent homes backed up and permissioned appropriately?
+- Does the team's desired audit scope match Anima's activity boundary, or does an external tool need its own ledger?
+- Which operations may interrupt active provider sessions, and who is allowed to trigger them?
+
+## Go deeper
+
+- [Security and data boundaries](../security-and-data.md) turns the trust model into an operator checklist.
+- [Codebase internals](./internals.md) names the modules and persisted artifacts behind this overview.
+- [Provider layer](../runtime-providers.md) explains provider process protocols, sessions, health, and restart behavior.
+- [Activity events](../activity-events.md) defines what the activity trail records and how emitter coverage is kept exhaustive.
+- [How an agent works](../guide/how-an-agent-works.md) covers the teammate-facing behavior of inboxes, attention, turns, and explicit actions.
