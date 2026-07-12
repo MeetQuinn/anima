@@ -77,7 +77,7 @@ The **Setup** ledger then shows the operational configuration:
 - **Home**: the folder that owns the agent's memory, notes, and local files.
 - **Team**: the current team assignment, including repair when a saved team no longer exists.
 - **Provider**: provider, model, and reasoning settings.
-- **Provider env**: provider-specific environment values.
+- **Launch env**: provider-specific environment values.
 - **Owner**: the human responsible for the agent. Ownership is not an access-control boundary.
 - **Slack** and **Feishu**: connected identities, setup state, and any manifest or permission work.
 
