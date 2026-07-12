@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { docsUrl, parseGrokModelsOutput, SystemService } from '../services/system.service.js';
 
@@ -56,6 +59,42 @@ test('Grok model availability is runtime-checked and timestamped', async () => {
     },
   );
   assert.equal(result.providers.find((provider) => provider.kind === 'codex-cli')?.present, false);
+});
+
+test('provider availability disables Grok auto-update during its presence probe', async () => {
+  const binDir = await mkdtemp(join(tmpdir(), 'anima-grok-presence-'));
+  const argvPath = join(binDir, 'argv.txt');
+  const grokPath = join(binDir, 'grok');
+  const previousPath = process.env.PATH;
+  const previousArgvPath = process.env.GROK_ARGV_PATH;
+  try {
+    await writeFile(
+      grokPath,
+      [
+        '#!/bin/sh',
+        'if [ "$2" = "--version" ]; then',
+        '  printf "%s\\n" "$@" > "$GROK_ARGV_PATH"',
+        '  exit 0',
+        'fi',
+        'exit 1',
+      ].join('\n'),
+      'utf8',
+    );
+    await chmod(grokPath, 0o755);
+    process.env.PATH = binDir;
+    process.env.GROK_ARGV_PATH = argvPath;
+
+    const result = await new SystemService().providerAvailability();
+
+    assert.equal(result.providers.find((provider) => provider.kind === 'grok-cli')?.present, true);
+    assert.equal(await readFile(argvPath, 'utf8'), '--no-auto-update\n--version\n');
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    if (previousArgvPath === undefined) delete process.env.GROK_ARGV_PATH;
+    else process.env.GROK_ARGV_PATH = previousArgvPath;
+    await rm(binDir, { force: true, recursive: true });
+  }
 });
 
 test('Grok model availability reports not checked when the live catalog fails', async () => {

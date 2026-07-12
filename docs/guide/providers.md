@@ -24,7 +24,7 @@ Run the verification command from the same host user and service environment tha
 
 ## How onboarding detects readiness
 
-The create-agent flow checks whether `claude`, `codex`, and `kimi` resolve on `PATH`.
+The create-agent flow checks whether `claude`, `codex`, `kimi`, and `grok` resolve on `PATH`.
 
 - Missing providers are disabled.
 - If one available provider exists, onboarding can select it automatically.

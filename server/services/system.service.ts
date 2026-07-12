@@ -23,7 +23,7 @@ export interface PreparedServicesRestart {
 
 export interface SystemServiceOptions {
   animactlScript?: string;
-  commandPresent?: (command: string) => Promise<boolean>;
+  commandPresent?: (command: string, args: string[]) => Promise<boolean>;
   commit?: Promise<string | undefined> | string;
   now?: () => Date;
   providerModels?: (command: string) => Promise<{ defaultModel: string; models: string[] }>;
@@ -38,7 +38,7 @@ export class SystemServiceError extends Error {}
 
 export class SystemService {
   private readonly animactlScript: string;
-  private readonly commandPresent: (command: string) => Promise<boolean>;
+  private readonly commandPresent: (command: string, args: string[]) => Promise<boolean>;
   private readonly commit: Promise<string | undefined>;
   private readonly now: () => Date;
   private readonly providerModels: (command: string) => Promise<{ defaultModel: string; models: string[] }>;
@@ -65,7 +65,7 @@ export class SystemService {
     return {
       providers: await Promise.all(
         PROVIDER_CATALOG.map(async (entry) => {
-          const present = await this.commandPresent(entry.command);
+          const present = await this.commandPresent(entry.command, providerPresenceArgs(entry.kind));
           if (!present || !entry.dynamicModels)
             return {
               kind: entry.kind,
@@ -237,9 +237,13 @@ export function docsUrl(track: 'dev' | 'canary' | 'stable'): string {
   return 'https://anima.meetquinn.ai/';
 }
 
-function commandPresent(command: string): Promise<boolean> {
+function providerPresenceArgs(kind: (typeof PROVIDER_CATALOG)[number]['kind']): string[] {
+  return kind === 'grok-cli' ? ['--no-auto-update', '--version'] : ['--version'];
+}
+
+function commandPresent(command: string, args: string[]): Promise<boolean> {
   return new Promise((resolvePresent) => {
-    const child = execFile(command, ['--version'], { encoding: 'utf8', timeout: 2_000 }, (error) => {
+    const child = execFile(command, args, { encoding: 'utf8', timeout: 2_000 }, (error) => {
       resolvePresent(!error);
     });
     child.stdin?.end();
