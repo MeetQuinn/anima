@@ -113,6 +113,7 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
         { accepted: true, text: 'queued for Kimi ACP session' },
       );
       assert.equal((await withTimeout(runPromise, 1_000)).text, 'handled first + appended');
+      assert.equal(runtime.health?.().child?.version, '0.9.0');
 
       const state = await loadState();
       const sessionId = state.sessions.anima?.current?.id;

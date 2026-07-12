@@ -167,7 +167,7 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
         "  const msg = JSON.parse(line);",
         "  appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + '\\n');",
         "  if (msg.method === 'initialize') {",
-        "    send({ id: msg.id, result: { userAgent: 'fake-codex' } });",
+        "    send({ id: msg.id, result: { userAgent: 'fake-codex/0.145.0' } });",
         "    return;",
         "  }",
         "  if (msg.method === 'initialized') return;",
@@ -301,6 +301,7 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
     });
     const runPromise = runtime.run(await runtimeInput(runtime, firstCtx, await loadState()));
     await waitFor(async () => (await readFile(callsPath, 'utf8')).includes('"method":"thread/start"'));
+    assert.equal(runtime.health?.().child?.version, '0.145.0');
     const beforeTurnReady = await runtime.appendToActiveRun(
       await runtimeFollowupInput(runtime, firstCtx, secondCtx, await loadState()),
     );

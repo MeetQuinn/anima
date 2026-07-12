@@ -1,10 +1,18 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
-import { RefreshCw, X } from 'lucide-react';
-import { fetchProviderUsage, fetchProviderUsageProvider } from '@/api/system';
+import { ArrowUp, ChevronDown, Copy, RefreshCw, X } from 'lucide-react';
+import {
+  applyProviderCliUpdate,
+  checkProviderClis,
+  fetchProviderUsage,
+  fetchProviderUsageProvider,
+} from '@/api/system';
 import { queryKeys } from '@/lib/query-keys';
 import { useNow } from '@/hooks/useNow';
+import { useConfirm } from '@/hooks/useConfirm';
+import { useProviderCliStatus } from '@/hooks/useProviderCliStatus';
+import type { ProviderCliRow } from '@shared/provider-cli';
 import type {
   ProviderUsageKind,
   ProviderUsageResponse,
@@ -107,6 +115,26 @@ function splitExtras(extras: ProviderUsageExtra[]): {
   };
 }
 
+function installSourceLabel(source: ProviderCliRow['installSource']): string {
+  if (source === 'claude-native') return 'Native';
+  if (source === 'codex-npm-global') return 'Global npm';
+  if (source === 'kimi-native') return 'Native';
+  return 'Unknown source';
+}
+
+function managementStatus(row: ProviderCliRow): string {
+  if (row.operation.provider === row.provider && row.operation.status === 'running') return 'Installing';
+  if (row.operation.provider === row.provider && row.operation.status === 'failed') return 'Update failed';
+  if (row.state === 'not_installed') return 'Not installed';
+  if (row.state === 'error') return 'Version check failed';
+  if (row.state === 'available') return `Update available${row.latestVersion ? ` ${row.latestVersion}` : ''}`;
+  if (row.state === 'manual' && row.updateAvailable) return `Update available${row.latestVersion ? ` ${row.latestVersion}` : ''}`;
+  if (row.state === 'unknown') return 'Manual only';
+  if (row.state === 'not_checked') return 'Not checked';
+  if (row.operation.provider === row.provider && row.operation.status === 'succeeded') return 'Installed';
+  return 'Up to date';
+}
+
 // ---------------------------------------------------------------------------
 // Brand marks — official simple-icons path data (24×24 viewBox), vendored so
 // the glyphs cost no dependency. Kinds without a usable mark fall back to a
@@ -181,27 +209,39 @@ function WindowMeter({ w, now }: { w: ProviderUsageWindow; now: Date }) {
 }
 
 function ProviderUnit({
+  globallyLocked = false,
+  management,
   isRefreshing = false,
   now,
+  onApply,
+  onCopyCommand,
   onRefresh,
-  row,
+  usage,
 }: {
+  globallyLocked?: boolean;
+  management: ProviderCliRow;
   isRefreshing?: boolean;
   now: Date;
+  onApply: () => void;
+  onCopyCommand: () => void;
   onRefresh?: () => void;
-  row: ProviderUsageRow;
+  usage?: ProviderUsageRow;
 }) {
-  const isAvailable = row.status === 'available';
-  const errorMessage = providerUsageErrorMessage(row);
-  const { plan, rest } = splitExtras(row.extras);
+  const isAvailable = usage?.status === 'available';
+  const errorMessage = usage ? providerUsageErrorMessage(usage) : null;
+  const { plan, rest } = splitExtras(usage?.extras ?? []);
+  const operation = management.operation.provider === management.provider ? management.operation : undefined;
+  const runningAgents = management.agents.filter((agent) => agent.runningVersion);
+  const canApply = management.updateAvailable && management.updateMode === 'managed';
+  const updateLocked = globallyLocked || management.operation.status === 'running';
   return (
-    <div className={isAvailable ? '' : 'opacity-50'}>
+    <div>
       <div className="mb-3 flex items-center gap-2.5">
-        <BrandIcon provider={row.provider} label={row.label} />
+        <BrandIcon provider={management.provider} label={management.label} />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
             <span className="truncate font-serif text-[15px] font-semibold text-text">
-              {row.label}
+              {management.label}
             </span>
             {plan && (
               <span className="shrink-0 rounded-full border border-border-soft px-1.5 py-px font-sans text-[9px] font-medium uppercase tracking-wider text-text-subtle">
@@ -209,29 +249,123 @@ function ProviderUnit({
               </span>
             )}
           </div>
-          {row.account && (
-            <div className="truncate font-mono text-[10px] text-text-subtle" title={row.account}>
-              {row.account}
+          {usage?.account && (
+            <div className="truncate font-mono text-[10px] text-text-subtle" title={usage.account}>
+              {usage.account}
             </div>
           )}
         </div>
+        {canApply && (
+          <button
+            type="button"
+            onClick={onApply}
+            disabled={updateLocked}
+            className="flex h-7 items-center gap-1 rounded-sm bg-accent px-2 font-sans text-[10px] font-semibold text-white hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <ArrowUp className="h-3 w-3" />
+            Update
+          </button>
+        )}
         {onRefresh && (
           <button
             type="button"
             onClick={onRefresh}
             disabled={isRefreshing}
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40"
-            aria-label={`Refresh ${row.label} usage`}
-            title={`Refresh ${row.label}`}
+            aria-label={`Refresh ${management.label}`}
+            title={`Refresh ${management.label}`}
           >
             <RefreshCw className={`h-3 w-3 ${isRefreshing ? 'animate-spin' : ''}`} />
           </button>
         )}
       </div>
 
-      {isAvailable ? (
-        <div className="space-y-3 pl-[38px]">
-          {row.windows.map((w, i) => (
+      <div className="mb-4 space-y-2 pl-[38px]">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <span className="font-mono text-[13px] font-medium text-text">
+            {management.installedVersion ? `v${management.installedVersion}` : 'Not installed'}
+          </span>
+          {management.binaryPath && (
+            <span className="font-sans text-[10px] uppercase tracking-[0.08em] text-text-subtle">
+              {installSourceLabel(management.installSource)}
+            </span>
+          )}
+          <span
+            className={[
+              'font-sans text-[11px]',
+              management.state === 'available' || (management.state === 'manual' && management.updateAvailable)
+                ? 'text-health-warn'
+                : operation?.status === 'failed'
+                  ? 'text-health-error'
+                  : 'text-text-muted',
+            ].join(' ')}
+          >
+            {operation?.status === 'running' ? 'Installing…' : managementStatus(management)}
+          </span>
+        </div>
+        {management.binaryPath && (
+          <div className="truncate font-mono text-[10px] text-text-subtle" title={management.binaryPath}>
+            {management.binaryPath}
+          </div>
+        )}
+        {management.autoUpdatesEnabled !== undefined && (
+          <div className="font-sans text-[10px] text-text-subtle">
+            Auto-update {management.autoUpdatesEnabled ? 'on' : 'off'}
+            {management.autoUpdateChannel ? ` · ${management.autoUpdateChannel}` : ''}
+          </div>
+        )}
+        {management.sourceDetail && management.updateMode !== 'managed' && (
+          <p className="font-sans text-[11px] leading-relaxed text-text-muted">{management.sourceDetail}</p>
+        )}
+        {management.checkError && (
+          <p className="font-sans text-[11px] leading-relaxed text-health-error">{management.checkError.message}</p>
+        )}
+        {operation?.status === 'failed' && operation.error && (
+          <p className="font-sans text-[11px] leading-relaxed text-health-error">{operation.error}</p>
+        )}
+        {operation?.status === 'succeeded' && runningAgents.some((agent) => agent.runningVersion !== management.installedVersion) && (
+          <p className="font-sans text-[11px] leading-relaxed text-text-muted">
+            New sessions use v{management.installedVersion}. Existing sessions keep their current version until restart.
+          </p>
+        )}
+        {management.manualCommand && management.updateAvailable && management.updateMode === 'manual' && (
+          <button
+            type="button"
+            onClick={onCopyCommand}
+            className="flex max-w-full items-center gap-1.5 text-left font-mono text-[10px] text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            title="Copy update command"
+          >
+            <Copy className="h-3 w-3 shrink-0" />
+            <span className="truncate">{management.manualCommand}</span>
+          </button>
+        )}
+        {management.agents.length > 0 && (
+          <details className="group">
+            <summary className="flex cursor-pointer list-none items-center gap-1 font-sans text-[10px] text-text-subtle hover:text-text-muted">
+              <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
+              {management.agents.length}{' '}
+              {management.agents.length === 1
+                ? 'agent uses'
+                : 'agents use'}{' '}
+              this provider
+            </summary>
+            <div className="mt-1.5 space-y-1 border-l border-border-soft pl-3">
+              {management.agents.map((agent) => (
+                <div key={agent.id} className="flex min-w-0 items-baseline justify-between gap-3">
+                  <span className="truncate font-sans text-[11px] text-text-muted">{agent.name}</span>
+                  <span className="shrink-0 font-mono text-[10px] text-text-subtle">
+                    {agent.runningVersion ? `running v${agent.runningVersion}` : agent.enabled ? 'next session' : 'disabled'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+      </div>
+
+      {isAvailable && usage ? (
+        <div className="space-y-3 border-t border-border-soft pt-3 pl-[38px]">
+          {usage.windows.map((w, i) => (
             <WindowMeter key={i} w={w} now={now} />
           ))}
           {rest.length > 0 && (
@@ -246,13 +380,13 @@ function ProviderUnit({
           )}
         </div>
       ) : (
-        <div className="space-y-0.5 pl-[38px]">
+        <div className="space-y-0.5 border-t border-border-soft pt-3 pl-[38px] opacity-60">
           <span className="font-sans text-[12px] text-text-muted">
-            {row.error?.type === 'not_configured'
+            {!usage || usage.error?.type === 'not_configured'
               ? 'Not configured'
-              : row.error?.type === 'unauthorized'
+              : usage.error?.type === 'unauthorized'
                 ? 'Auth expired'
-                : row.error?.type === 'network_error'
+                : usage.error?.type === 'network_error'
                   ? 'Unreachable'
                   : 'Unavailable'}
           </span>
@@ -284,19 +418,11 @@ function UsageSkeleton() {
 // UsagePanel
 // ---------------------------------------------------------------------------
 
-/**
- * Usage panel — provider rate-limit windows and account extras, one unit per
- * configured provider. Split out of the Server panel (see #server-usage-split):
- * usage is the dynamic, frequently-checked surface, so it loads eagerly and
- * owns the sidebar-footer Usage entry; the Server panel keeps the static
- * server-identity facts.
- *
- * Mobile:   full-screen, z-50, bg-surface, safe-area bottom inset, no backdrop.
- * Desktop:  centered dialog, max-w-xl, Esc/click-out to close.
- */
 export default function UsagePanel({ onClose }: Props) {
   const [refreshingProvider, setRefreshingProvider] = useState<ProviderUsageKind | null>(null);
   const queryClient = useQueryClient();
+  const { confirm, modal } = useConfirm();
+  const { data: cliData, isLoading: cliLoading, isFetching: cliFetching } = useProviderCliStatus();
 
   const {
     data: usageData,
@@ -330,7 +456,11 @@ export default function UsagePanel({ onClose }: Props) {
     if (refreshingProvider) return;
     setRefreshingProvider(provider);
     try {
-      const row = await fetchProviderUsageProvider(provider);
+      const [row, status] = await Promise.all([
+        fetchProviderUsageProvider(provider),
+        checkProviderClis(provider),
+      ]);
+      queryClient.setQueryData(queryKeys.providerCliStatus(), status);
       queryClient.setQueryData<ProviderUsageResponse>(queryKeys.providerUsage(), (current) => {
         const providers = current?.providers ?? [];
         const found = providers.some((candidate) => candidate.provider === row.provider);
@@ -345,17 +475,57 @@ export default function UsagePanel({ onClose }: Props) {
     }
   }
 
-  const visible = usageData?.providers.filter((r) => r.error?.type !== 'not_configured') ?? [];
+  async function refreshAll(): Promise<void> {
+    const [, status] = await Promise.all([refetchUsage(), checkProviderClis()]);
+    queryClient.setQueryData(queryKeys.providerCliStatus(), status);
+  }
 
-  return createPortal(
-    <div className="fixed inset-0 z-50">
+  function requestApply(row: ProviderCliRow): void {
+    const enabledAgents = row.agents.filter((agent) => agent.enabled);
+    confirm({
+      title: `Update ${row.label}?`,
+      description: (
+        <div className="space-y-2">
+          <p>
+            Update the machine-wide {row.label} binary from v{row.installedVersion} to v{row.latestVersion}.
+            {' '}This affects {enabledAgents.length} {enabledAgents.length === 1 ? 'agent' : 'agents'}:
+            {' '}{enabledAgents.map((agent) => agent.name).join(', ') || 'none'}.
+          </p>
+          <p>
+            Running work is not interrupted. New versions take effect when each provider session next restarts.
+            Login credentials and provider configuration are not changed.
+          </p>
+        </div>
+      ),
+      variant: 'warn',
+      confirmVariant: 'default',
+      confirmLabel: 'Update provider',
+      busyLabel: 'Installing…',
+      onConfirm: async () => {
+        await applyProviderCliUpdate(row.provider);
+        await queryClient.invalidateQueries({ queryKey: queryKeys.providerCliStatus() });
+      },
+    });
+  }
+
+  const usageByProvider = new Map(usageData?.providers.map((row) => [row.provider, row]) ?? []);
+  const visible = cliData?.providers ?? [];
+  const checkedAt = [usageCheckedAt, ...visible.map((row) => row.checkedAt)]
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1);
+  const fetching = usageFetching || cliFetching;
+
+  return (
+    <Fragment>
+      {createPortal(<div className="fixed inset-0 z-50">
       {/* Desktop backdrop — click to close */}
       <div className="hidden md:block fixed inset-0 bg-page/70 backdrop-blur-sm" onClick={onClose} />
 
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Usage"
+        aria-label="Providers"
         className={[
           'relative flex h-full w-full flex-col bg-surface',
           'md:absolute md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2',
@@ -367,26 +537,26 @@ export default function UsagePanel({ onClose }: Props) {
         {/* Mobile full-screen pages share the home header height (h-14 / 56px);
             the desktop modal keeps its compact h-10 chrome. */}
         <div className="flex h-14 shrink-0 items-center justify-between border-b border-border-soft px-3 md:h-10">
-          <span className="caps text-text">Usage</span>
+          <span className="caps text-text">Providers</span>
           <div className="flex items-center gap-2">
-            {usageCheckedAt && (
+            {checkedAt && (
               <span className="font-sans text-[10px] text-text-subtle">
-                updated {formatAgo(usageCheckedAt, now)}
+                checked {formatAgo(checkedAt, now)}
               </span>
             )}
             <button
-              onClick={() => refetchUsage()}
-              disabled={usageFetching}
+              onClick={() => void refreshAll()}
+              disabled={fetching}
               className="flex h-7 w-7 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40"
-              aria-label="Refresh provider usage"
+              aria-label="Refresh providers"
               title="Refresh"
             >
-              <RefreshCw className={`h-3.5 w-3.5 ${usageFetching ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`h-3.5 w-3.5 ${fetching ? 'animate-spin' : ''}`} />
             </button>
             <button
               onClick={onClose}
               className="flex h-7 w-7 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              aria-label="Close usage panel"
+              aria-label="Close providers panel"
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -395,7 +565,7 @@ export default function UsagePanel({ onClose }: Props) {
 
         {/* ── Body ── */}
         <div className="flex-1 overflow-y-auto px-4 py-5 md:px-6">
-          {usageLoading ? (
+          {usageLoading || cliLoading ? (
             <div className="space-y-6">
               <UsageSkeleton />
               <UsageSkeleton />
@@ -405,22 +575,29 @@ export default function UsagePanel({ onClose }: Props) {
               {visible.map((row, i) => (
                 <div key={row.provider} className={i === 0 ? 'pb-6' : 'py-6 last:pb-1'}>
                   <ProviderUnit
+                    globallyLocked={cliData?.upgradeLocked}
+                    management={row}
                     isRefreshing={refreshingProvider === row.provider}
                     now={now}
+                    onApply={() => requestApply(row)}
+                    onCopyCommand={() => {
+                      if (row.manualCommand) void navigator.clipboard.writeText(row.manualCommand);
+                    }}
                     onRefresh={() => void refreshOneProvider(row.provider)}
-                    row={row}
+                    usage={usageByProvider.get(row.provider)}
                   />
                 </div>
               ))}
             </div>
           ) : (
             <p className="font-serif italic text-[13px] text-text-subtle">
-              No providers configured.
+              No provider CLIs found.
             </p>
           )}
         </div>
       </div>
-    </div>,
-    document.body,
+    </div>, document.body)}
+      {modal}
+    </Fragment>
   );
 }

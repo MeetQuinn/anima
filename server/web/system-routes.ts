@@ -8,6 +8,11 @@ import { defaultServerSettingsService } from '../settings/settings.service.js';
 import { defaultSystemService, SystemServiceError } from '../services/system.service.js';
 import { defaultProviderUsageService } from '../provider-usage/provider-usage.service.js';
 import {
+  defaultProviderCliService,
+  ProviderCliConflictError,
+  ProviderCliUnavailableError,
+} from '../provider-cli/provider-cli.service.js';
+import {
   defaultRuntimeUpgradeService,
   RuntimeUpgradeConflictError,
   RuntimeUpgradeUnavailableError,
@@ -46,6 +51,24 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
     const parsed = ProviderUsageKind.safeParse((request.params as { provider?: unknown }).provider);
     if (!parsed.success) return reply.status(400).send({ error: 'Invalid provider usage provider' });
     return defaultProviderUsageService.get(parsed.data);
+  });
+  fastify.get('/api/provider-cli-status', async () => defaultProviderCliService.status());
+  fastify.post('/api/provider-cli-status/check', async () => defaultProviderCliService.checkNow());
+  fastify.post('/api/provider-cli-status/:provider/check', async (request, reply) => {
+    const parsed = ProviderUsageKind.safeParse((request.params as { provider?: unknown }).provider);
+    if (!parsed.success) return reply.status(400).send({ error: 'Invalid provider CLI provider' });
+    return defaultProviderCliService.checkNow(parsed.data);
+  });
+  fastify.post('/api/provider-cli-status/:provider/apply', async (request, reply) => {
+    const parsed = ProviderUsageKind.safeParse((request.params as { provider?: unknown }).provider);
+    if (!parsed.success) return reply.status(400).send({ error: 'Invalid provider CLI provider' });
+    try {
+      return await defaultProviderCliService.apply(parsed.data);
+    } catch (error) {
+      if (error instanceof ProviderCliConflictError) throw new HttpError(409, error.message);
+      if (error instanceof ProviderCliUnavailableError) throw new HttpError(503, error.message);
+      throw error;
+    }
   });
   fastify.get('/api/system-update', async () => defaultRuntimeUpgradeService.status());
   fastify.post('/api/system-update/check', async () => defaultRuntimeUpgradeService.checkNow());

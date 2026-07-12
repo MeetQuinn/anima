@@ -1,6 +1,7 @@
 import { apiRequest, jsonInit } from './client';
 import type { ProviderAvailability } from '@shared/provider-catalog';
 import type { ProviderUsageKind, ProviderUsageResponse, ProviderUsageRow } from '@shared/provider-usage';
+import type { ProviderCliApplyResponse, ProviderCliStatusResponse } from '@shared/provider-cli';
 import type { ServerInfo } from '@shared/server-info';
 import type { SidebarOrder, WorkspacePlatform } from '@shared/server-settings';
 import type {
@@ -51,6 +52,24 @@ export async function fetchProviderUsage(): Promise<ProviderUsageResponse> {
 
 export async function fetchProviderUsageProvider(provider: ProviderUsageKind): Promise<ProviderUsageRow> {
   return apiRequest(`/api/provider-usage/${encodeURIComponent(provider)}`);
+}
+
+export async function fetchProviderCliStatus(): Promise<ProviderCliStatusResponse> {
+  return apiRequest('/api/provider-cli-status');
+}
+
+export async function checkProviderClis(provider?: ProviderUsageKind): Promise<ProviderCliStatusResponse> {
+  const path = provider
+    ? `/api/provider-cli-status/${encodeURIComponent(provider)}/check`
+    : '/api/provider-cli-status/check';
+  return apiRequest(path, jsonInit('POST'));
+}
+
+export async function applyProviderCliUpdate(provider: ProviderUsageKind): Promise<ProviderCliApplyResponse> {
+  return apiRequest(
+    `/api/provider-cli-status/${encodeURIComponent(provider)}/apply`,
+    jsonInit('POST'),
+  );
 }
 
 export async function fetchServerInfo(): Promise<ServerInfo> {

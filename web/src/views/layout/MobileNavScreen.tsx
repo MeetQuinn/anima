@@ -11,6 +11,7 @@ import { useAgentStatuses } from '@/hooks/useAgentDirectory';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
 import { useCurrentTeam, useTeams } from '@/hooks/useTeams';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
+import { useProviderCliStatus } from '@/hooks/useProviderCliStatus';
 import ServerPanel from '@/components/ServerPanel';
 import UsagePanel from '@/components/UsagePanel';
 import { AgentCreateModal, AddKbModal } from './Sidebar';
@@ -82,6 +83,8 @@ export default function MobileNavScreen({
   // resting hint that an update exists. Reuses the panel's deduped query (no extra
   // request); clears once the user upgrades.
   const updateAvailable = useUpdateAvailable();
+  const { data: providerCliStatus } = useProviderCliStatus();
+  const providerUpdateAvailable = providerCliStatus?.providers.some((row) => row.updateAvailable) ?? false;
   // Restore scroll position when returning from detail screen.
   useEffect(() => {
     const saved = sessionStorage.getItem(MOBILE_SCROLL_KEY);
@@ -334,19 +337,21 @@ export default function MobileNavScreen({
         </div>
       </div>
 
-      {/* Usage + Server — pinned footer, one row split in half so it stays
-          shallow. Usage left (the frequently checked one), Server right. */}
+      {/* Providers + Server — pinned footer, one row split in half. */}
       <div
         className="flex shrink-0 gap-1 border-t border-spine-border px-2 pt-1"
         style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 0.25rem)' }}
       >
         <button
           onClick={() => setUsagePanelOpen(true)}
-          title="Provider usage"
+          title={providerUpdateAvailable ? 'Providers — update available' : 'Providers'}
           className="chrome flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-sm px-2.5 text-[11px] uppercase tracking-[0.1em] text-text-on-spine-muted transition-colors hover:bg-spine-elevated hover:text-text-on-spine"
         >
           <Gauge className="h-3.5 w-3.5" />
-          <span>Usage</span>
+          <span>Providers</span>
+          {providerUpdateAvailable && (
+            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-accent" />
+          )}
         </button>
         <button
           onClick={() => setServerPanelOpen(true)}

@@ -119,10 +119,20 @@ export class CodexAppServerController {
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
-    await this.request('initialize', {
+    const result = asRecord(await this.request('initialize', {
       capabilities: { experimentalApi: true },
       clientInfo: { name: 'anima', title: 'Anima', version: '0.1.0' },
-    });
+    }));
+    const userAgent = stringField(result, 'userAgent');
+    const version = codexVersionFromUserAgent(userAgent);
+    if (version) {
+      this.child.setVersion(version);
+      await this.activeInput?.effects.recordEvent({
+        eventType: 'codex.system.init',
+        runtimeKind: this.runtimeKind,
+        version,
+      });
+    }
     this.notify('initialized');
     this.initialized = true;
   }
@@ -474,6 +484,10 @@ export class CodexAppServerController {
     }
     return codexThreadMetadataFromResumeResponse(result);
   }
+}
+
+function codexVersionFromUserAgent(userAgent: string | undefined): string | undefined {
+  return userAgent?.match(/\/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\b/)?.[1];
 }
 
 function codexMissingToolOutputMessage(text: string): boolean {
