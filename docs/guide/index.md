@@ -12,13 +12,22 @@ Start with the outcome you need. You do not need to read the documentation in or
   <a href="/guide/quickstart">
     <span>New installation</span>
     <strong>Run your first agent</strong>
-    <p>Install Anima, connect a provider and Slack, create an agent, and receive its first DM.</p>
+    <p>Install Anima, connect a provider and Slack or Feishu, create an agent, and receive its first message.</p>
   </a>
   <a href="/architecture/overview">
     <span>Technical evaluation</span>
     <strong>Understand the architecture</strong>
     <p>See the host model, state boundaries, external systems, and recovery behavior.</p>
   </a>
+</div>
+
+## Set up Anima
+
+<div class="docs-link-list">
+  <a href="/guide/quickstart"><strong>Quickstart</strong><span>Install the runtime and carry one agent through its first conversation.</span></a>
+  <a href="/guide/providers"><strong>Provider setup</strong><span>Install and authenticate the provider CLIs Anima runs on this host.</span></a>
+  <a href="/guide/connect-slack"><strong>Connect Slack</strong><span>Create the generated app, install it, and validate its two-token connection.</span></a>
+  <a href="/guide/connect-feishu"><strong>Connect Feishu</strong><span>Create or connect an app, publish permissions, and verify access.</span></a>
 </div>
 
 ## Work with agents
