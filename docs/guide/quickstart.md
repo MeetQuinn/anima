@@ -39,7 +39,7 @@ Enter:
 - a **role** that states what the agent owns; and
 - the **provider**, model, and reasoning level it should use.
 
-Anima checks the host for the provider executables on `PATH`. A missing provider cannot be selected. The default agent home is shown under **Home**; leave it unchanged for the first agent unless you already have a team directory plan.
+Anima checks the host for the provider executables on `PATH`. A missing provider cannot be selected. The default agent home is shown under **Where it lives**; leave it unchanged for the first agent unless you already have a team directory plan.
 
 Select **Create agent**. The agent now exists locally but cannot receive team messages until its chat app is connected.
 
