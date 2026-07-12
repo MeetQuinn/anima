@@ -360,6 +360,9 @@ Current process model:
   Cancellation sends `session/cancel` before Anima tears down the child.
 - If the child exits mid-turn, the worker records `provider.crash.retry` and retries the same inbox
   item. The persisted session is loaded again; the interrupted prompt is not assumed durable.
+  Follow-ups already accepted for that item are retained across child replacement and reach the
+  fresh child before their durable rows complete. Cancellation closes the in-memory queue before
+  `session/cancel`, so no later prompt begins after a stop.
 
 Model and context authority:
 

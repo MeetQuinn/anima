@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -18,7 +18,13 @@ import {
 } from './helpers/agent-runtime.js';
 import { waitFor, withTimeout } from './helpers/harness.js';
 import { ingestEvent } from './helpers/inbox.js';
-import { enqueueInbox, queueFor, silentLogger } from './helpers/runtime-worker.js';
+import {
+  enqueueInbox,
+  queueFor,
+  silentLogger,
+  waitForInboxItemAppendedTo,
+  waitForInboxItemRemoved,
+} from './helpers/runtime-worker.js';
 import { makeSlackEvent } from './helpers/slack.js';
 import { allActivities, loadState } from './helpers/state.js';
 
@@ -296,8 +302,16 @@ test('grok-cli child loss retries the same inbox item and reloads the persisted 
     await withAnimaHome(stateDir, async () => {
       const callsPath = join(stateDir, 'calls.jsonl');
       const attemptsPath = join(stateDir, 'attempts.txt');
+      const crashPath = join(stateDir, 'crash-now');
+      const primaryReadyPath = join(stateDir, 'primary-ready');
+      const homePath = join(stateDir, 'agent-home');
+      await mkdir(homePath, { recursive: true });
+      const expectedCwd = await realpath(homePath);
       await installFakeGrok(stateDir, [
         "const fs = require('fs');",
+        "fs.appendFileSync(process.env.CALLS_PATH, JSON.stringify({ cwd: process.cwd() }) + '\\n');",
+        "const launchAttempt = Number(fs.existsSync(process.env.ATTEMPTS_PATH) ? fs.readFileSync(process.env.ATTEMPTS_PATH, 'utf8') : '0') + 1;",
+        "fs.writeFileSync(process.env.ATTEMPTS_PATH, String(launchAttempt));",
         "process.stdin.setEncoding('utf8');",
         "let buffer = '';",
         "function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }",
@@ -313,9 +327,15 @@ test('grok-cli child loss retries the same inbox item and reloads the persisted 
         "    if (msg.method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, _meta: { agentVersion: '0.2.93', modelState: { currentModelId: 'grok-4.5', availableModels: [] } } } });",
         "    if (msg.method === 'session/load') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'grok-session-retry' } });",
         "    if (msg.method === 'session/prompt') {",
-        "      const attempt = Number(fs.existsSync(process.env.ATTEMPTS_PATH) ? fs.readFileSync(process.env.ATTEMPTS_PATH, 'utf8') : '0') + 1;",
-        '      fs.writeFileSync(process.env.ATTEMPTS_PATH, String(attempt));',
-        '      if (attempt === 1) process.exit(51);',
+        "      if (launchAttempt === 1) {",
+        "        fs.writeFileSync(process.env.PRIMARY_READY_PATH, 'ready');",
+        "        const crashTimer = setInterval(() => {",
+        "          if (!fs.existsSync(process.env.CRASH_PATH)) return;",
+        "          clearInterval(crashTimer);",
+        "          process.exit(51);",
+        "        }, 10);",
+        "        continue;",
+        "      }",
         "      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'retry succeeded' } });",
         "      send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn', _meta: { modelId: 'grok-4.5', totalTokens: 20 } } });",
         '    }',
@@ -326,6 +346,8 @@ test('grok-cli child loss retries the same inbox item and reloads the persisted 
         env: runtimeTestEnv(stateDir, {
           ATTEMPTS_PATH: attemptsPath,
           CALLS_PATH: callsPath,
+          CRASH_PATH: crashPath,
+          PRIMARY_READY_PATH: primaryReadyPath,
         }),
         kind: 'grok-cli',
         model: 'grok-4.5',
@@ -334,6 +356,7 @@ test('grok-cli child loss retries the same inbox item and reloads the persisted 
         {
           agentId: 'anima',
           agentRuntime: runtime,
+          homePath,
           pollIntervalMs: 10_000,
           queue: queueFor('anima'),
           stateDir,
@@ -350,21 +373,48 @@ test('grok-cli child loss retries the same inbox item and reloads the persisted 
           ts: '1771000030.000001',
           userId: 'U1',
         }),
-        { agentId: 'anima', stateDir },
+        { agentId: 'anima', homePath, stateDir },
       );
       await runtimeSessionServiceForAgent('anima').persistProviderSession('grok-cli', {
         id: 'grok-session-retry',
         updatedAt: '2026-07-13T00:00:00.000Z',
       });
-      assert.equal(await worker.drainOnce(), 1);
+      const drain = worker.drainOnce();
+      await waitFor(() => readFile(primaryReadyPath, 'utf8').then((value) => value === 'ready'));
+      const followup = await enqueueInbox(
+        makeSlackEvent({
+          channelId: 'D-grok',
+          eventId: 'evt-grok-retry-followup',
+          teamId: 'T-demo',
+          text: 'Preserve this accepted follow-up.',
+          ts: '1771000030.000002',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', homePath, stateDir },
+      );
+      await waitForInboxItemAppendedTo('anima', followup.ctx.item.id, decision.ctx.item.id);
+      await writeFile(crashPath, 'crash', 'utf8');
+
+      assert.equal(await drain, 1);
       assert.equal(await queueFor('anima').find(decision.ctx.item.id), undefined);
-      assert.equal(await readFile(attemptsPath, 'utf8'), '2');
+      assert.equal(await queueFor('anima').find(followup.ctx.item.id), undefined);
+      const activities = allActivities(await loadState());
+      assert.deepEqual(
+        activities.filter((activity) => activity.type === 'runtime.failed'),
+        [],
+        'provider retry settled as failure before the fake completed',
+      );
       const calls = await readJsonLines(callsPath);
+      assert.equal(await readFile(attemptsPath, 'utf8'), '2');
+      assert.deepEqual(
+        calls.filter((call) => typeof call['cwd'] === 'string').map((call) => call['cwd']),
+        [expectedCwd, expectedCwd],
+      );
       assert.equal(calls.filter((call) => call['method'] === 'session/load').length, 2);
       const prompts = calls.filter((call) => call['method'] === 'session/prompt');
-      assert.equal(prompts.length, 2);
+      assert.equal(prompts.length, 3);
       assert.match(promptText(prompts[1]), /previous provider process crashed/i);
-      const activities = allActivities(await loadState());
+      assert.match(promptText(prompts[2]), /Preserve this accepted follow-up/);
       assert.ok(
         activities.some(
           (activity) => activity.type === 'runtime.event' && activity.payload?.['eventType'] === 'provider.crash.retry',
@@ -372,6 +422,108 @@ test('grok-cli child loss retries the same inbox item and reloads the persisted 
       );
       assert.equal(
         activities.some((activity) => activity.type === 'runtime.failed'),
+        false,
+      );
+      assert.equal(
+        activities.some((activity) => activity.payload?.['reason'] === 'followup_rejected'),
+        false,
+      );
+    });
+  } finally {
+    await worker?.close();
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('grok-cli abort never starts a queued follow-up after session/cancel', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-grok-cancel-followup-'));
+  let runtime: AgentRuntime | undefined;
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      const homePath = join(stateDir, 'agent-home');
+      await mkdir(homePath, { recursive: true });
+      await installFakeGrok(stateDir, [
+        "const fs = require('fs');",
+        "process.stdin.setEncoding('utf8');",
+        "let buffer = '';",
+        "let promptId;",
+        "function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }",
+        "process.stdin.on('data', (chunk) => {",
+        "  buffer += chunk;",
+        "  const lines = buffer.split(/\\r?\\n/);",
+        "  buffer = lines.pop() || '';",
+        "  for (const line of lines) {",
+        "    if (!line.trim()) continue;",
+        "    const msg = JSON.parse(line);",
+        "    fs.appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + '\\n');",
+        "    if (msg.method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, _meta: { agentVersion: '0.2.93', modelState: { currentModelId: 'grok-4.5', availableModels: [] } } } });",
+        "    if (msg.method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'grok-session-cancel-followup' } });",
+        "    if (msg.method === 'session/prompt') promptId = msg.id;",
+        "    if (msg.method === 'session/cancel') send({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'cancelled' } });",
+        "  }",
+        "});",
+      ]);
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'grok-cli',
+        model: 'grok-4.5',
+      });
+      worker = new AgentRuntimeWorker(
+        {
+          agentId: 'anima',
+          agentRuntime: runtime,
+          homePath,
+          idleTimeoutMs: 60_000,
+          pollIntervalMs: 10_000,
+          queue: queueFor('anima'),
+          stateDir,
+          workerId: 'grok-cancel-followup-worker',
+        },
+        silentLogger,
+      );
+      const primary = await enqueueInbox(
+        makeSlackEvent({
+          channelId: 'D-grok',
+          eventId: 'evt-grok-cancel-followup-primary',
+          teamId: 'T-demo',
+          text: 'Start a cancellable Grok item.',
+          ts: '1771000040.000001',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', homePath, stateDir },
+      );
+      const drain = worker.drainOnce();
+      await waitFor(() => readFile(callsPath, 'utf8').then((value) => value.includes('session/prompt')));
+      const followup = await enqueueInbox(
+        makeSlackEvent({
+          channelId: 'D-grok',
+          eventId: 'evt-grok-cancel-followup-secondary',
+          teamId: 'T-demo',
+          text: 'Do not start this after cancellation.',
+          ts: '1771000040.000002',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', homePath, stateDir },
+      );
+      await waitForInboxItemAppendedTo('anima', followup.ctx.item.id, primary.ctx.item.id);
+      await queueFor('anima').requestStop(primary.ctx.item.id);
+      await waitForInboxItemRemoved('anima', primary.ctx.item.id, 5_000);
+      await waitForInboxItemRemoved('anima', followup.ctx.item.id, 5_000);
+      await drain;
+
+      const calls = await readJsonLines(callsPath);
+      const methods = calls.filter((call) => typeof call['method'] === 'string').map((call) => call['method']);
+      assert.deepEqual(methods, ['initialize', 'session/new', 'session/prompt', 'session/cancel']);
+      const activities = allActivities(await loadState());
+      assert.equal(
+        activities.find((activity) => activity.type === 'runtime.aborted')?.payload?.['reason'],
+        'user_stop',
+      );
+      assert.equal(
+        activities.some((activity) => activity.payload?.['reason'] === 'followup_rejected'),
         false,
       );
     });

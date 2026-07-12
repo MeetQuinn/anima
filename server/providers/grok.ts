@@ -33,6 +33,8 @@ export class GrokCliAgentRuntime extends ControllerAgentRuntime<GrokAcpControlle
   readonly env: Record<string, string> | undefined;
   readonly kind = GROK_RUNTIME_KIND;
   private readonly config: GrokCliAgentProviderConfig;
+  // Keep accepted prompts outside the child controller so same-item crash retry can replay them.
+  private retainedFollowups?: { itemId: string; prompts: string[] };
 
   constructor(config: GrokCliAgentProviderConfig) {
     super({ providerChildIdleTimeoutMs: config.providerChildIdleTimeoutMs });
@@ -57,7 +59,11 @@ export class GrokCliAgentRuntime extends ControllerAgentRuntime<GrokAcpControlle
           id: controller.sessionId,
           updatedAt: nowIso(),
         });
-        const text = await controller.startTurn(input, grokPrimaryPrompt(input));
+        const text = await controller.startTurn(
+          input,
+          grokPrimaryPrompt(input),
+          this.followupsForItem(input.itemId),
+        );
         if (input.signal?.aborted) {
           throw new Error(`Grok turn cancelled: ${String(input.signal.reason ?? 'aborted')}`);
         }
@@ -72,6 +78,13 @@ export class GrokCliAgentRuntime extends ControllerAgentRuntime<GrokAcpControlle
     if (!controller) return { accepted: false };
     if (!controller.appendPrompt(input.prompt)) return { accepted: false };
     return { accepted: true, text: 'queued for Grok ACP session' };
+  }
+
+  private followupsForItem(itemId: string): string[] {
+    if (this.retainedFollowups?.itemId !== itemId) {
+      this.retainedFollowups = { itemId, prompts: [] };
+    }
+    return this.retainedFollowups.prompts;
   }
 
   private async ensureController(input: AgentRuntimeInput): Promise<GrokAcpController> {
@@ -183,12 +196,12 @@ class GrokAcpController {
     await this.initialized;
   }
 
-  async startTurn(input: AgentRuntimeInput, prompt: string): Promise<string> {
+  async startTurn(input: AgentRuntimeInput, prompt: string, followups: string[]): Promise<string> {
     if (this.currentTurn) throw new Error('Grok ACP runtime already has an active turn');
     const result = new Promise<string>((resolve, reject) => {
       this.currentTurn = {
         acceptingFollowups: true,
-        followups: [],
+        followups,
         input,
         reject,
         resolve,
@@ -203,7 +216,10 @@ class GrokAcpController {
   }
 
   async cancelActiveTurn(): Promise<void> {
-    if (!this.currentTurn || !this.sessionId) return;
+    const turn = this.currentTurn;
+    if (!turn || !this.sessionId) return;
+    turn.acceptingFollowups = false;
+    turn.followups.length = 0;
     this.notify('session/cancel', { sessionId: this.sessionId });
     const completion = this.turnCompletion;
     if (!completion) return;
@@ -301,10 +317,10 @@ class GrokAcpController {
   private async runTurnQueue(firstPrompt: string): Promise<void> {
     const turn = this.currentTurn;
     if (!turn) return;
-    let prompt: string | undefined = firstPrompt;
-    while (prompt !== undefined) {
-      await this.runOnePrompt(turn, prompt);
-      prompt = turn.followups.shift();
+    await this.runOnePrompt(turn, firstPrompt);
+    while (!turn.input.signal?.aborted && turn.followups.length > 0) {
+      await this.runOnePrompt(turn, turn.followups[0]!);
+      turn.followups.shift();
     }
     turn.acceptingFollowups = false;
     await this.finishCurrentTurn();
