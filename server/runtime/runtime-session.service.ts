@@ -48,17 +48,14 @@ export class RuntimeSessionService {
     return updated ?? existing;
   }
 
-  async persistProviderSession(
-    kind: string,
-    session: ProviderSessionRecord,
-  ): Promise<Session | undefined> {
+  async persistProviderSession(kind: string, session: ProviderSessionRecord): Promise<Session | undefined> {
     let updatedSession: Session | undefined;
     await this.sessionStore.update((stateSession) => {
       if (!stateSession) return undefined;
       const archivedProviderSessions = stateSession.archived ?? [];
       if (
-        archivedProviderSessions.some((archivedSession) =>
-          archivedSession.kind === kind && archivedSession.id === session.id
+        archivedProviderSessions.some(
+          (archivedSession) => archivedSession.kind === kind && archivedSession.id === session.id,
         )
       ) {
         updatedSession = stateSession;
@@ -98,17 +95,13 @@ export class RuntimeSessionService {
         archivedBy: 'recovery',
         note,
       };
-      const {
-        current: _current,
-        latestProviderStats: _latestProviderStats,
-        ...rest
-      } = session;
+      const { current: _current, latestProviderStats: _latestProviderStats, ...rest } = session;
       const updated: Session = {
         ...rest,
         archived: [
           archived,
-          ...(session.archived ?? []).filter((candidate) =>
-            candidate.kind !== archived.kind || candidate.id !== archived.id
+          ...(session.archived ?? []).filter(
+            (candidate) => candidate.kind !== archived.kind || candidate.id !== archived.id,
           ),
         ],
         currentStartedAt: archivedAt,
@@ -195,11 +188,17 @@ export function runtimeSessionServiceForAgent(agentId: string): RuntimeSessionSe
 }
 
 export function tokenDeltaForActivities(activities: Activity[]): number | undefined {
-  const sessionStats = latestActivity(activities, (eventType) => eventType === 'claude.session.stats' || eventType === 'codex.session.stats');
+  const sessionStats = latestActivity(
+    activities,
+    (eventType) => eventType === 'claude.session.stats' || eventType === 'codex.session.stats',
+  );
   if (sessionStats) return tokenDeltaFromPayload(sessionStats.payload);
 
-  const kimiStats = latestActivity(activities, (eventType) => eventType === 'kimi.context.stats');
-  return kimiStats ? tokenDeltaFromPayload(kimiStats.payload) : undefined;
+  const acpStats = latestActivity(
+    activities,
+    (eventType) => eventType === 'grok.context.stats' || eventType === 'kimi.context.stats',
+  );
+  return acpStats ? tokenDeltaFromPayload(acpStats.payload) : undefined;
 }
 
 function latestActivity(
@@ -260,8 +259,9 @@ function mergeSessionStats(
   payload: Record<string, unknown>,
 ): ProviderSessionStatsSummary {
   const summary = providerSessionStatsSummary(activity, runtimeKind, runtimeEnv, payload);
+  const eventType = stringField(payload, 'eventType');
   const usedTokens =
-    stringField(payload, 'eventType') === 'kimi.context.stats' ? undefined : summary.usedTokens;
+    eventType === 'grok.context.stats' || eventType === 'kimi.context.stats' ? undefined : summary.usedTokens;
   return providerStatsSummary({
     ...summary,
     contextWindow: summary.contextWindow ?? current?.contextWindow,
@@ -345,14 +345,28 @@ function providerStatsSummary(value: Record<string, unknown>): ProviderSessionSt
   return compact(value) as unknown as ProviderSessionStatsSummary;
 }
 
-function providerSessionStatsPayload(payload: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+function providerSessionStatsPayload(
+  payload: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
   const eventType = stringField(payload, 'eventType');
-  return eventType === 'claude.session.stats' || eventType === 'codex.session.stats' || eventType === 'kimi.context.stats' ? payload : undefined;
+  return eventType === 'claude.session.stats' ||
+    eventType === 'codex.session.stats' ||
+    eventType === 'grok.context.stats' ||
+    eventType === 'kimi.context.stats'
+    ? payload
+    : undefined;
 }
 
-function providerContextStatsPayload(payload: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+function providerContextStatsPayload(
+  payload: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
   const eventType = stringField(payload, 'eventType');
-  return eventType === 'claude.context.stats' || eventType === 'codex.context.stats' || eventType === 'kimi.context.stats' ? payload : undefined;
+  return eventType === 'claude.context.stats' ||
+    eventType === 'codex.context.stats' ||
+    eventType === 'grok.context.stats' ||
+    eventType === 'kimi.context.stats'
+    ? payload
+    : undefined;
 }
 
 function isCompletedCompactEvent(payload: Record<string, unknown> | undefined): boolean {
@@ -372,15 +386,15 @@ function providerUsedTokens(stats: ProviderSessionStatsSummary): number | undefi
 
 function hasProviderSessionStats(stats: ProviderSessionStatsSummary | undefined): boolean {
   return Boolean(
-    stats?.usedTokens !== undefined
-    || stats?.totalTokens !== undefined
-    || stats?.inputTokens !== undefined
-    || stats?.outputTokens !== undefined
-    || stats?.cacheReadInputTokens !== undefined
-    || stats?.cacheCreationInputTokens !== undefined
-    || stats?.model !== undefined
-    || stats?.serviceTier !== undefined
-    || stats?.terminalReason !== undefined,
+    stats?.usedTokens !== undefined ||
+    stats?.totalTokens !== undefined ||
+    stats?.inputTokens !== undefined ||
+    stats?.outputTokens !== undefined ||
+    stats?.cacheReadInputTokens !== undefined ||
+    stats?.cacheCreationInputTokens !== undefined ||
+    stats?.model !== undefined ||
+    stats?.serviceTier !== undefined ||
+    stats?.terminalReason !== undefined,
   );
 }
 

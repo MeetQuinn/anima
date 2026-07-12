@@ -4,10 +4,7 @@ import { z } from 'zod';
 
 import { defaultAgentHomePath } from './agent-home.js';
 import { DEFAULT_TEAM_ID } from './server-settings.js';
-import {
-  FEISHU_PROFILE_NAME_SCOPE,
-  type FeishuRecommendedScopeCapability,
-} from './feishu-recommended-scopes.js';
+import { FEISHU_PROFILE_NAME_SCOPE, type FeishuRecommendedScopeCapability } from './feishu-recommended-scopes.js';
 import {
   DEFAULT_PROVIDER_KIND,
   defaultModelForProvider,
@@ -67,95 +64,113 @@ function hashForAgentId(value: string): string {
   return hash.toString(36);
 }
 
-const AgentProviderCreateRequest = z.object({
-  kind: z.string().trim().min(1),
-  model: z.string().trim().min(1),
-  reasoningEffort: z.string().trim().min(1).optional(),
-  transport: z.string().trim().min(1).optional(),
-}).strict().superRefine((provider, ctx) => {
-  if (!isSupportedProviderKind(provider.kind)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `unsupported provider kind ${provider.kind}`,
-      path: ['kind'],
-    });
-    return;
-  }
-  if (!isSupportedProviderModel(provider.kind, provider.model)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `unsupported model for ${provider.kind}: ${provider.model}`,
-      path: ['model'],
-    });
-  }
-  if (provider.reasoningEffort && !isSupportedReasoningEffort(provider.kind, provider.reasoningEffort)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `unsupported reasoningEffort ${provider.reasoningEffort}`,
-      path: ['reasoningEffort'],
-    });
-  }
-  if (provider.transport && provider.kind !== 'claude-code') {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `unsupported transport for ${provider.kind}: ${provider.transport}`,
-      path: ['transport'],
-    });
-  }
-  if (provider.transport && !ClaudeCodeTransport.options.includes(provider.transport as ClaudeCodeTransport)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `unsupported Claude Code transport ${provider.transport}`,
-      path: ['transport'],
-    });
-  }
-});
+const AgentProviderCreateRequest = z
+  .object({
+    kind: z.string().trim().min(1),
+    model: z.string().trim().min(1),
+    reasoningEffort: z.string().trim().min(1).optional(),
+    transport: z.string().trim().min(1).optional(),
+  })
+  .strict()
+  .superRefine((provider, ctx) => {
+    if (!isSupportedProviderKind(provider.kind)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `unsupported provider kind ${provider.kind}`,
+        path: ['kind'],
+      });
+      return;
+    }
+    if (!isSupportedProviderModel(provider.kind, provider.model)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `unsupported model for ${provider.kind}: ${provider.model}`,
+        path: ['model'],
+      });
+    }
+    if (provider.reasoningEffort && !isSupportedReasoningEffort(provider.kind, provider.reasoningEffort)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `unsupported reasoningEffort ${provider.reasoningEffort}`,
+        path: ['reasoningEffort'],
+      });
+    }
+    if (provider.transport && provider.kind !== 'claude-code') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `unsupported transport for ${provider.kind}: ${provider.transport}`,
+        path: ['transport'],
+      });
+    }
+    if (provider.transport && !ClaudeCodeTransport.options.includes(provider.transport as ClaudeCodeTransport)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `unsupported Claude Code transport ${provider.transport}`,
+        path: ['transport'],
+      });
+    }
+  });
 
-const AgentProviderUpdateRequest = z.object({
-  env: z.record(z.string(), z.string().nullable()).optional(),
-  kind: z.string().trim().min(1).optional(),
-  model: z.string().trim().min(1).optional(),
-  reasoningEffort: z.string().trim().min(1).optional(),
-  transport: ClaudeCodeTransport.optional(),
-}).strict();
+const AgentProviderUpdateRequest = z
+  .object({
+    env: z.record(z.string(), z.string().nullable()).optional(),
+    kind: z.string().trim().min(1).optional(),
+    model: z.string().trim().min(1).optional(),
+    reasoningEffort: z.string().trim().min(1).optional(),
+    transport: ClaudeCodeTransport.optional(),
+  })
+  .strict();
 
-export const AgentCreateRequest = z.object({
-  name: z.string().trim().min(1).refine((name) => Boolean(agentIdFromName(name)), {
-    message: 'name must include at least one URL-safe letter or number',
-  }),
-  // Optional. When omitted, the server derives the deterministic team-aware default
-  // `$TEAM_HOME/agents/$AGENT_NAME` from `teamId`. When provided (back-compat), the explicit
-  // path is honored as before.
-  homePath: z.string().trim().min(1).optional(),
-  role: z.string().trim().min(1),
-  provider: AgentProviderCreateRequest,
-  // Optional. Defaults to the default team server-side. A non-default value must name an
-  // existing team, else create is rejected (400) — the read-path degrade-to-default is for
-  // already-persisted agents, not for new writes.
-  teamId: z.string().trim().min(1).optional(),
-}).strict();
+export const AgentCreateRequest = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .refine((name) => Boolean(agentIdFromName(name)), {
+        message: 'name must include at least one URL-safe letter or number',
+      }),
+    // Optional. When omitted, the server derives the deterministic team-aware default
+    // `$TEAM_HOME/agents/$AGENT_NAME` from `teamId`. When provided (back-compat), the explicit
+    // path is honored as before.
+    homePath: z.string().trim().min(1).optional(),
+    role: z.string().trim().min(1),
+    provider: AgentProviderCreateRequest,
+    // Optional. Defaults to the default team server-side. A non-default value must name an
+    // existing team, else create is rejected (400) — the read-path degrade-to-default is for
+    // already-persisted agents, not for new writes.
+    teamId: z.string().trim().min(1).optional(),
+  })
+  .strict();
 
 export type AgentCreateRequest = z.infer<typeof AgentCreateRequest>;
 
-export const AgentUpdateHomeRequest = z.object({
-  homePath: z.string().trim().min(1),
-}).strict();
+export const AgentUpdateHomeRequest = z
+  .object({
+    homePath: z.string().trim().min(1),
+  })
+  .strict();
 
 export type AgentUpdateHomeRequest = z.infer<typeof AgentUpdateHomeRequest>;
 
 // Label-only team reassignment. The existing home is never moved (team = a label).
-export const AgentAssignTeamRequest = z.object({
-  teamId: z.string().trim().min(1),
-}).strict();
+export const AgentAssignTeamRequest = z
+  .object({
+    teamId: z.string().trim().min(1),
+  })
+  .strict();
 
 export type AgentAssignTeamRequest = z.infer<typeof AgentAssignTeamRequest>;
 
-export const AgentUpdateProfileRequest = z.object({
-  displayName: z.string().trim().min(1).optional(),
-  role: z.string().trim().optional(),
-}).strict().refine((profile) => profile.displayName !== undefined || profile.role !== undefined, {
-  message: 'profile update requires displayName or role',
-});
+export const AgentUpdateProfileRequest = z
+  .object({
+    displayName: z.string().trim().min(1).optional(),
+    role: z.string().trim().optional(),
+  })
+  .strict()
+  .refine((profile) => profile.displayName !== undefined || profile.role !== undefined, {
+    message: 'profile update requires displayName or role',
+  });
 
 export type AgentUpdateProfileRequest = z.infer<typeof AgentUpdateProfileRequest>;
 
@@ -163,21 +178,33 @@ export const AgentUpdateProviderRequest = AgentProviderUpdateRequest;
 
 export type AgentUpdateProviderRequest = z.infer<typeof AgentUpdateProviderRequest>;
 
-export const AgentConnectSlackRequest = z.object({
-  appToken: z.string().trim().min(1).refine((value) => value.startsWith('xapp-'), {
-    message: 'appToken must start with xapp-',
-  }),
-  botToken: z.string().trim().min(1).refine((value) => value.startsWith('xoxb-'), {
-    message: 'botToken must start with xoxb-',
-  }),
-}).strict();
+export const AgentConnectSlackRequest = z
+  .object({
+    appToken: z
+      .string()
+      .trim()
+      .min(1)
+      .refine((value) => value.startsWith('xapp-'), {
+        message: 'appToken must start with xapp-',
+      }),
+    botToken: z
+      .string()
+      .trim()
+      .min(1)
+      .refine((value) => value.startsWith('xoxb-'), {
+        message: 'botToken must start with xoxb-',
+      }),
+  })
+  .strict();
 
 export type AgentConnectSlackRequest = z.infer<typeof AgentConnectSlackRequest>;
 
-export const AgentSlackValidateRequest = z.object({
-  appToken: z.string().trim().optional(),
-  botToken: z.string().trim().optional(),
-}).strict();
+export const AgentSlackValidateRequest = z
+  .object({
+    appToken: z.string().trim().optional(),
+    botToken: z.string().trim().optional(),
+  })
+  .strict();
 
 export type AgentSlackValidateRequest = z.infer<typeof AgentSlackValidateRequest>;
 
@@ -226,20 +253,24 @@ export interface AgentSlackValidateResponse {
   connection: SlackConnectionValidation;
 }
 
-export const AgentSetOwnerRequest = z.object({
-  slackUserId: z.string().trim().min(1),
-  openerNote: z.string().optional(),
-  introduce: z.boolean().optional(),
-}).strict();
+export const AgentSetOwnerRequest = z
+  .object({
+    slackUserId: z.string().trim().min(1),
+    openerNote: z.string().optional(),
+    introduce: z.boolean().optional(),
+  })
+  .strict();
 
 export type AgentSetOwnerRequest = z.infer<typeof AgentSetOwnerRequest>;
 
-export const SlackUserCandidate = z.object({
-  slackUserId: z.string(),
-  displayName: z.string(),
-  handle: z.string().optional(),
-  avatarUrl: z.string().optional(),
-}).strict();
+export const SlackUserCandidate = z
+  .object({
+    slackUserId: z.string(),
+    displayName: z.string(),
+    handle: z.string().optional(),
+    avatarUrl: z.string().optional(),
+  })
+  .strict();
 
 export type SlackUserCandidate = z.infer<typeof SlackUserCandidate>;
 
@@ -277,6 +308,16 @@ export const KimiCliAgentProviderConfig = z.object({
 
 export type KimiCliAgentProviderConfig = z.infer<typeof KimiCliAgentProviderConfig>;
 
+export const GrokCliAgentProviderConfig = z.object({
+  env: z.record(z.string(), z.string()).optional(),
+  idleTimeoutMs: z.number().optional(),
+  kind: z.literal('grok-cli'),
+  model: z.string().optional(),
+  providerChildIdleTimeoutMs: z.number().nonnegative().optional(),
+});
+
+export type GrokCliAgentProviderConfig = z.infer<typeof GrokCliAgentProviderConfig>;
+
 export const AgentProviderConfig = z.preprocess(
   (value) => {
     const input = isRecord(value) ? value : {};
@@ -304,91 +345,104 @@ export const AgentProviderConfig = z.preprocess(
   z.discriminatedUnion('kind', [
     CodexCliAgentProviderConfig,
     ClaudeCodeAgentProviderConfig,
+    GrokCliAgentProviderConfig,
     KimiCliAgentProviderConfig,
   ]),
 );
 
 export type AgentProviderConfig = z.infer<typeof AgentProviderConfig>;
 
-export const SlackConfig = z.object({
-  appId: z.string().optional(),
-  appToken: z.string().default(''),
-  avatarUrl: z.string().optional(),
-  botHandle: z.string().optional(),
-  botName: z.string().optional(),
-  // ISO timestamp of the last bot display-info (avatar/name/icon) sync, used to
-  // throttle the automatic refresh that runs while the agent handles messages.
-  botProfileSyncedAt: z.string().optional(),
-  botToken: z.string().default(''),
-  botUserId: z.string().optional(),
-  connected: z.boolean().optional(),
-  manifestVersion: z.number().int().nonnegative().default(0),
-  teamId: z.string().default(''),
-  workspaceIconUrl: z.string().default(''),
-  workspaceName: z.string().default(''),
-}).transform(({ appToken, botToken, connected: _connected, ...rest }) => ({
-  ...rest,
-  appToken,
-  botToken,
-  connected: Boolean(appToken && botToken),
-}));
+export const SlackConfig = z
+  .object({
+    appId: z.string().optional(),
+    appToken: z.string().default(''),
+    avatarUrl: z.string().optional(),
+    botHandle: z.string().optional(),
+    botName: z.string().optional(),
+    // ISO timestamp of the last bot display-info (avatar/name/icon) sync, used to
+    // throttle the automatic refresh that runs while the agent handles messages.
+    botProfileSyncedAt: z.string().optional(),
+    botToken: z.string().default(''),
+    botUserId: z.string().optional(),
+    connected: z.boolean().optional(),
+    manifestVersion: z.number().int().nonnegative().default(0),
+    teamId: z.string().default(''),
+    workspaceIconUrl: z.string().default(''),
+    workspaceName: z.string().default(''),
+  })
+  .transform(({ appToken, botToken, connected: _connected, ...rest }) => ({
+    ...rest,
+    appToken,
+    botToken,
+    connected: Boolean(appToken && botToken),
+  }));
 
 export type SlackConfig = z.infer<typeof SlackConfig>;
 
-export const FeishuConfig = z.object({
-  appId: z.string().default(''),
-  appSecret: z.string().default(''),
-  avatarUrl: z.string().optional(),
-  // ISO timestamp of the last bot display-info (avatar/name/open_id) sync,
-  // used to throttle the automatic refresh that mirrors the Feishu app icon.
-  botProfileSyncedAt: z.string().optional(),
-  botOpenId: z.string().optional(),
-  encryptKey: z.string().default(''),
-  ownerGreetingChatId: z.string().optional(),
-  ownerGreetingDeliveredAt: z.string().optional(),
-  ownerGreetingMessageId: z.string().optional(),
-  ownerGreetingPromptedAt: z.string().optional(),
-  ownerOpenId: z.string().optional(),
-  ownerTenantBrand: z.enum(['feishu', 'lark']).optional(),
-  verificationToken: z.string().default(''),
-  connected: z.boolean().optional(),
-}).transform(({ appId, appSecret, connected: _connected, ...rest }) => ({
-  ...rest,
-  appId,
-  appSecret,
-  connected: Boolean(appId && appSecret),
-}));
+export const FeishuConfig = z
+  .object({
+    appId: z.string().default(''),
+    appSecret: z.string().default(''),
+    avatarUrl: z.string().optional(),
+    // ISO timestamp of the last bot display-info (avatar/name/open_id) sync,
+    // used to throttle the automatic refresh that mirrors the Feishu app icon.
+    botProfileSyncedAt: z.string().optional(),
+    botOpenId: z.string().optional(),
+    encryptKey: z.string().default(''),
+    ownerGreetingChatId: z.string().optional(),
+    ownerGreetingDeliveredAt: z.string().optional(),
+    ownerGreetingMessageId: z.string().optional(),
+    ownerGreetingPromptedAt: z.string().optional(),
+    ownerOpenId: z.string().optional(),
+    ownerTenantBrand: z.enum(['feishu', 'lark']).optional(),
+    verificationToken: z.string().default(''),
+    connected: z.boolean().optional(),
+  })
+  .transform(({ appId, appSecret, connected: _connected, ...rest }) => ({
+    ...rest,
+    appId,
+    appSecret,
+    connected: Boolean(appId && appSecret),
+  }));
 
 export type FeishuConfig = z.infer<typeof FeishuConfig>;
 
-export const AgentConnectFeishuRequest = z.object({
-  appId: z.string().trim().min(1),
-  appSecret: z.string().trim().min(1),
-  botOpenId: z.string().trim().optional(),
-  encryptKey: z.string().trim().optional(),
-  verificationToken: z.string().trim().optional(),
-}).strict();
+export const AgentConnectFeishuRequest = z
+  .object({
+    appId: z.string().trim().min(1),
+    appSecret: z.string().trim().min(1),
+    botOpenId: z.string().trim().optional(),
+    encryptKey: z.string().trim().optional(),
+    verificationToken: z.string().trim().optional(),
+  })
+  .strict();
 
 export type AgentConnectFeishuRequest = z.infer<typeof AgentConnectFeishuRequest>;
 
-export const AgentFeishuRegisterAppRequest = z.object({
-  botName: z.string().optional(),
-}).strict();
+export const AgentFeishuRegisterAppRequest = z
+  .object({
+    botName: z.string().optional(),
+  })
+  .strict();
 
 export type AgentFeishuRegisterAppRequest = z.infer<typeof AgentFeishuRegisterAppRequest>;
 
-export const AgentFeishuRegisterAppStatus = z.object({
-  agent: z.unknown().optional(),
-  error: z.object({
-    code: z.string().optional(),
-    description: z.string().optional(),
-    message: z.string().optional(),
-  }).optional(),
-  expireIn: z.number().optional(),
-  registrationId: z.string(),
-  state: z.enum(['starting', 'waiting', 'slow_down', 'domain_switched', 'connected', 'failed']),
-  verificationUrl: z.string().optional(),
-}).strict();
+export const AgentFeishuRegisterAppStatus = z
+  .object({
+    agent: z.unknown().optional(),
+    error: z
+      .object({
+        code: z.string().optional(),
+        description: z.string().optional(),
+        message: z.string().optional(),
+      })
+      .optional(),
+    expireIn: z.number().optional(),
+    registrationId: z.string(),
+    state: z.enum(['starting', 'waiting', 'slow_down', 'domain_switched', 'connected', 'failed']),
+    verificationUrl: z.string().optional(),
+  })
+  .strict();
 
 export type AgentFeishuRegisterAppStatus = z.infer<typeof AgentFeishuRegisterAppStatus>;
 
@@ -451,18 +505,24 @@ export const AgentOwner = SlackUserCandidate.extend({
 
 export type AgentOwner = z.infer<typeof AgentOwner>;
 
-const AgentProfileInput = z.preprocess((value) => {
-  if (!isRecord(value)) return value;
-  const next = { ...value };
-  if (typeof next.role !== 'string' && typeof next.description === 'string') {
-    next.role = next.description;
-  }
-  delete next.description;
-  return next;
-}, z.object({
-  displayName: z.string().optional(),
-  role: z.string().optional(),
-}).strict().optional());
+const AgentProfileInput = z.preprocess(
+  (value) => {
+    if (!isRecord(value)) return value;
+    const next = { ...value };
+    if (typeof next.role !== 'string' && typeof next.description === 'string') {
+      next.role = next.description;
+    }
+    delete next.description;
+    return next;
+  },
+  z
+    .object({
+      displayName: z.string().optional(),
+      role: z.string().optional(),
+    })
+    .strict()
+    .optional(),
+);
 
 export const AgentProfileConfig = z.object({
   displayName: z.string(),
@@ -488,40 +548,42 @@ export function agentConfigSchema(fallbackId: string) {
       delete next.operator;
       return next;
     },
-    z.object({
-      createdAt: z.string().optional(),
-      enabled: z.boolean().optional(),
-      id: z.string().optional(),
-      profile: AgentProfileInput,
-      owner: AgentOwner.optional(),
-      provider: AgentProviderConfig.optional(),
-      feishu: FeishuConfig.optional(),
-      slack: SlackConfig.optional(),
-      homePath: z.string().optional(),
-      teamId: z.string().optional(),
-    }).transform((raw) => {
-      const id = raw.id ?? fallbackId;
-      return {
-        createdAt: raw.createdAt ?? new Date().toISOString(),
-        enabled: raw.enabled ?? true,
-        id,
-        profile: {
-          displayName: raw.profile?.displayName ?? titleFromId(id),
-          role: raw.profile?.role ?? '',
-        },
-        ...(raw.owner ? { owner: raw.owner } : {}),
-        provider: raw.provider ?? AgentProviderConfig.parse({}),
-        feishu: raw.feishu ?? FeishuConfig.parse({}),
-        slack: raw.slack ?? SlackConfig.parse({}),
-        homePath: raw.homePath ?? defaultAgentHomePath(id),
-        // Backfill: a legacy agent (no team field) or a blank teamId reads as the default
-        // team. This is the zero-touch one-default-team migration — a label only, applied on
-        // read, persisted on the next write. Referential integrity (a non-empty teamId that
-        // names no known team) is repaired at the service layer, which degrades to default
-        // and surfaces a warning rather than crashing.
-        teamId: raw.teamId && raw.teamId.trim() ? raw.teamId : DEFAULT_TEAM_ID,
-      };
-    }),
+    z
+      .object({
+        createdAt: z.string().optional(),
+        enabled: z.boolean().optional(),
+        id: z.string().optional(),
+        profile: AgentProfileInput,
+        owner: AgentOwner.optional(),
+        provider: AgentProviderConfig.optional(),
+        feishu: FeishuConfig.optional(),
+        slack: SlackConfig.optional(),
+        homePath: z.string().optional(),
+        teamId: z.string().optional(),
+      })
+      .transform((raw) => {
+        const id = raw.id ?? fallbackId;
+        return {
+          createdAt: raw.createdAt ?? new Date().toISOString(),
+          enabled: raw.enabled ?? true,
+          id,
+          profile: {
+            displayName: raw.profile?.displayName ?? titleFromId(id),
+            role: raw.profile?.role ?? '',
+          },
+          ...(raw.owner ? { owner: raw.owner } : {}),
+          provider: raw.provider ?? AgentProviderConfig.parse({}),
+          feishu: raw.feishu ?? FeishuConfig.parse({}),
+          slack: raw.slack ?? SlackConfig.parse({}),
+          homePath: raw.homePath ?? defaultAgentHomePath(id),
+          // Backfill: a legacy agent (no team field) or a blank teamId reads as the default
+          // team. This is the zero-touch one-default-team migration — a label only, applied on
+          // read, persisted on the next write. Referential integrity (a non-empty teamId that
+          // names no known team) is repaired at the service layer, which degrades to default
+          // and surfaces a warning rather than crashing.
+          teamId: raw.teamId && raw.teamId.trim() ? raw.teamId : DEFAULT_TEAM_ID,
+        };
+      }),
   );
 }
 
@@ -532,9 +594,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function titleFromId(id: string): string {
-  return id
-    .split(/[-_.]+/)
-    .filter(Boolean)
-    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
-    .join(' ') || id;
+  return (
+    id
+      .split(/[-_.]+/)
+      .filter(Boolean)
+      .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+      .join(' ') || id
+  );
 }

@@ -225,28 +225,43 @@ test('web snapshot includes Claude auto-compact threshold with provider stats', 
         }),
         { agentId: 'iris', stateDir },
       );
-      await recordRuntimeEvent({ agentId: 'iris' }, 'claude-code', {
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '123456',
-      }, {
-        currentContextTokens: 120000,
-        eventType: 'claude.context.stats',
-        runtimeKind: 'claude-code',
-      });
-      await recordRuntimeEvent({ agentId: 'iris' }, 'claude-code', {
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '123456',
-      }, {
-        cacheReadInputTokens: 210000,
-        contextWindow: 1000000,
-        eventType: 'claude.session.stats',
-        outputTokens: 1000,
-        runtimeKind: 'claude-code',
-      });
-      await recordRuntimeEvent({ agentId: 'iris' }, 'claude-code', {
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '123456',
-      }, {
-        eventType: 'claude.compact.completed',
-        runtimeKind: 'claude-code',
-      });
+      await recordRuntimeEvent(
+        { agentId: 'iris' },
+        'claude-code',
+        {
+          CLAUDE_CODE_AUTO_COMPACT_WINDOW: '123456',
+        },
+        {
+          currentContextTokens: 120000,
+          eventType: 'claude.context.stats',
+          runtimeKind: 'claude-code',
+        },
+      );
+      await recordRuntimeEvent(
+        { agentId: 'iris' },
+        'claude-code',
+        {
+          CLAUDE_CODE_AUTO_COMPACT_WINDOW: '123456',
+        },
+        {
+          cacheReadInputTokens: 210000,
+          contextWindow: 1000000,
+          eventType: 'claude.session.stats',
+          outputTokens: 1000,
+          runtimeKind: 'claude-code',
+        },
+      );
+      await recordRuntimeEvent(
+        { agentId: 'iris' },
+        'claude-code',
+        {
+          CLAUDE_CODE_AUTO_COMPACT_WINDOW: '123456',
+        },
+        {
+          eventType: 'claude.compact.completed',
+          runtimeKind: 'claude-code',
+        },
+      );
 
       const irisSession = await agentService('iris').getSession();
       assert.deepEqual(irisSession?.latestProviderStats, {
@@ -319,6 +334,61 @@ test('web snapshot includes Kimi context-window occupancy', async () => {
   }
 });
 
+test('web snapshot includes Grok actual-model and context authority', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-grok-stats-test-'));
+  try {
+    await writeAgentConfigs(stateDir, [
+      {
+        ...defaultAgentConfig('grok'),
+        provider: {
+          kind: 'grok-cli',
+          model: 'grok-4.5',
+        },
+      } as ReturnType<typeof defaultAgentConfig>,
+    ]);
+    await withAnimaHome(stateDir, async () => {
+      await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-grok',
+          teamId: 'T-demo',
+          text: 'Record Grok stats.',
+          ts: '1770000000.000004',
+          userId: 'U1',
+        }),
+        { agentId: 'grok', stateDir },
+      );
+      await recordRuntimeEvent({ agentId: 'grok' }, 'grok-cli', undefined, {
+        cacheReadInputTokens: 10,
+        contextWindow: 500000,
+        currentContextTokens: 160,
+        eventType: 'grok.context.stats',
+        inputTokens: 120,
+        model: 'grok-4.5',
+        outputTokens: 30,
+        runtimeKind: 'grok-cli',
+        totalTokens: 160,
+      });
+
+      const grokSession = await agentService('grok').getSession();
+      assert.deepEqual(grokSession?.latestProviderStats, {
+        activityId: grokSession?.latestProviderStats?.activityId,
+        cacheReadInputTokens: 10,
+        contextWindow: 500000,
+        createdAt: grokSession?.latestProviderStats?.createdAt,
+        currentContextTokens: 160,
+        inputTokens: 120,
+        model: 'grok-4.5',
+        outputTokens: 30,
+        runtimeKind: 'grok-cli',
+        totalTokens: 160,
+        usedTokens: 160,
+      });
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('web snapshot exposes persisted lifetime token usage', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-lifetime-usage-test-'));
   try {
@@ -383,40 +453,60 @@ test('web snapshot scopes current-session metrics to the latest rotation boundar
           updatedAt: '2026-05-22T04:28:00.000Z',
         },
       });
-      await recordRuntimeEvent({ agentId: 'anima' }, 'codex-cli', undefined, {
-        cacheReadInputTokens: 900,
-        eventType: 'codex.session.stats',
-        inputTokens: 100,
-        outputTokens: 1,
-        runtimeKind: 'codex-cli',
-      }, '2026-05-22T04:28:30.000Z');
-      await recordRuntimeEvent({ agentId: 'anima' }, 'codex-cli', undefined, {
-        eventType: 'codex.compact.completed',
-        runtimeKind: 'codex-cli',
-      }, '2026-05-22T04:28:31.000Z');
+      await recordRuntimeEvent(
+        { agentId: 'anima' },
+        'codex-cli',
+        undefined,
+        {
+          cacheReadInputTokens: 900,
+          eventType: 'codex.session.stats',
+          inputTokens: 100,
+          outputTokens: 1,
+          runtimeKind: 'codex-cli',
+        },
+        '2026-05-22T04:28:30.000Z',
+      );
+      await recordRuntimeEvent(
+        { agentId: 'anima' },
+        'codex-cli',
+        undefined,
+        {
+          eventType: 'codex.compact.completed',
+          runtimeKind: 'codex-cli',
+        },
+        '2026-05-22T04:28:31.000Z',
+      );
 
       const rotatedAt = '2026-05-22T04:29:56.481Z';
       const sessionPath = join(stateDir, 'agents/anima/sessions.json');
       const session = JSON.parse(await readFile(sessionPath, 'utf8')) as Record<string, unknown>;
-      await writeFile(sessionPath, `${JSON.stringify({
-        ...session,
-        archived: [
+      await writeFile(
+        sessionPath,
+        `${JSON.stringify(
           {
-            archivedAt: rotatedAt,
-            archivedBy: 'operator',
-            id: 'old-provider-session',
-            kind: 'codex-cli',
-            updatedAt: '2026-05-22T04:29:00.000Z',
+            ...session,
+            archived: [
+              {
+                archivedAt: rotatedAt,
+                archivedBy: 'operator',
+                id: 'old-provider-session',
+                kind: 'codex-cli',
+                updatedAt: '2026-05-22T04:29:00.000Z',
+              },
+            ],
+            current: {
+              id: 'new-provider-session',
+              kind: 'codex-cli',
+              updatedAt: '2026-05-22T04:31:00.000Z',
+            },
+            currentStartedAt: rotatedAt,
+            latestProviderStats: undefined,
           },
-        ],
-        current: {
-          id: 'new-provider-session',
-          kind: 'codex-cli',
-          updatedAt: '2026-05-22T04:31:00.000Z',
-        },
-        currentStartedAt: rotatedAt,
-        latestProviderStats: undefined,
-      }, null, 2)}\n`, 'utf8');
+          null,
+          2,
+        )}\n`,
+        'utf8',
+      );
 
       await ingestEvent(
         makeSlackEvent({
@@ -428,18 +518,30 @@ test('web snapshot scopes current-session metrics to the latest rotation boundar
         }),
         { agentId: 'anima', stateDir },
       );
-      await recordRuntimeEvent({ agentId: 'anima' }, 'codex-cli', undefined, {
-        contextWindow: 200000,
-        currentContextTokens: 2000,
-        eventType: 'codex.context.stats',
-        runtimeKind: 'codex-cli',
-      }, '2026-05-22T04:31:00.000Z');
-      await recordRuntimeEvent({ agentId: 'anima' }, 'codex-cli', undefined, {
-        eventType: 'codex.session.stats',
-        inputTokens: 20,
-        outputTokens: 3,
-        runtimeKind: 'codex-cli',
-      }, '2026-05-22T04:31:01.000Z');
+      await recordRuntimeEvent(
+        { agentId: 'anima' },
+        'codex-cli',
+        undefined,
+        {
+          contextWindow: 200000,
+          currentContextTokens: 2000,
+          eventType: 'codex.context.stats',
+          runtimeKind: 'codex-cli',
+        },
+        '2026-05-22T04:31:00.000Z',
+      );
+      await recordRuntimeEvent(
+        { agentId: 'anima' },
+        'codex-cli',
+        undefined,
+        {
+          eventType: 'codex.session.stats',
+          inputTokens: 20,
+          outputTokens: 3,
+          runtimeKind: 'codex-cli',
+        },
+        '2026-05-22T04:31:01.000Z',
+      );
 
       const animaSessionRotated = await agentService('anima').getSession();
       assert.equal(animaSessionRotated?.currentStartedAt, rotatedAt);
@@ -462,53 +564,56 @@ test('web snapshot scopes current-session metrics to the latest rotation boundar
 });
 
 test('lifetime token delta uses one terminal stats activity per item', () => {
-  assert.equal(tokenDeltaForActivities([
-    {
-      activityId: 'actv_1',
-      createdAt: '2026-01-01T00:00:00.000Z',
-      payload: {
-        cacheReadInputTokens: 10,
-        eventType: 'kimi.context.stats',
-        inputTokens: 20,
-        outputTokens: 5,
+  assert.equal(
+    tokenDeltaForActivities([
+      {
+        activityId: 'actv_1',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        payload: {
+          cacheReadInputTokens: 10,
+          eventType: 'kimi.context.stats',
+          inputTokens: 20,
+          outputTokens: 5,
+        },
+        type: 'runtime.event',
       },
-      type: 'runtime.event',
-    },
-    {
-      activityId: 'actv_2',
-      createdAt: '2026-01-01T00:00:01.000Z',
-      payload: {
-        cacheCreationInputTokens: 2,
-        cacheReadInputTokens: 30,
-        eventType: 'kimi.context.stats',
-        inputTokens: 40,
-        outputTokens: 6,
+      {
+        activityId: 'actv_2',
+        createdAt: '2026-01-01T00:00:01.000Z',
+        payload: {
+          cacheCreationInputTokens: 2,
+          cacheReadInputTokens: 30,
+          eventType: 'kimi.context.stats',
+          inputTokens: 40,
+          outputTokens: 6,
+        },
+        type: 'runtime.event',
       },
-      type: 'runtime.event',
-    },
-  ]), 78);
-  assert.equal(tokenDeltaForActivities([
-    {
-      activityId: 'actv_3',
-      createdAt: '2026-01-01T00:00:00.000Z',
-      payload: {
-        eventType: 'claude.session.stats',
-        inputTokens: 10,
-        outputTokens: 5,
-        totalTokens: 99,
+    ]),
+    78,
+  );
+  assert.equal(
+    tokenDeltaForActivities([
+      {
+        activityId: 'actv_3',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        payload: {
+          eventType: 'claude.session.stats',
+          inputTokens: 10,
+          outputTokens: 5,
+          totalTokens: 99,
+        },
+        type: 'runtime.event',
       },
-      type: 'runtime.event',
-    },
-  ]), 99);
+    ]),
+    99,
+  );
 });
 
 test('web snapshot includes active wake queue statuses', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-status-test-'));
   try {
-    await writeAgentConfigs(stateDir, [
-      defaultAgentConfig('anima'),
-      defaultAgentConfig('milo'),
-    ]);
+    await writeAgentConfigs(stateDir, [defaultAgentConfig('anima'), defaultAgentConfig('milo')]);
     await withAnimaHome(stateDir, async () => {
       const running = await ingestEvent(
         makeSlackEvent({
@@ -520,7 +625,10 @@ test('web snapshot includes active wake queue statuses', async () => {
         }),
         { agentId: 'milo', stateDir },
       );
-      await new WakeQueueService('milo').takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-1' });
+      await new WakeQueueService('milo').takeNextRunnable({
+        isWorkerAlive: () => true,
+        workerId: 'worker-1',
+      });
       await setActiveRuntimeItem({
         agentId: 'milo',
         startedAt: '2026-05-20T08:00:00.000Z',
@@ -573,24 +681,27 @@ test('web snapshot includes active wake queue statuses', async () => {
           queueDepth: number;
           itemCount: number;
         }>;
-        assert.deepEqual(statuses.find((s) => s.agentId === 'milo'), {
-          agentId: 'milo',
-          currentItemStartedAt: '2026-05-20T08:00:00.000Z',
-          currentItemId: running.item.id,
-          health: {
-            runtime: {
-              activeItemId: running.item.id,
-              activeItemStartedAt: '2026-05-20T08:00:00.000Z',
-              processId: process.pid,
-              providerChildExpected: false,
-              workerId: 'worker-1',
+        assert.deepEqual(
+          statuses.find((s) => s.agentId === 'milo'),
+          {
+            agentId: 'milo',
+            currentItemStartedAt: '2026-05-20T08:00:00.000Z',
+            currentItemId: running.item.id,
+            health: {
+              runtime: {
+                activeItemId: running.item.id,
+                activeItemStartedAt: '2026-05-20T08:00:00.000Z',
+                processId: process.pid,
+                providerChildExpected: false,
+                workerId: 'worker-1',
+              },
+              state: 'healthy',
+              updatedAt: '2026-05-20T08:00:01.000Z',
             },
-            state: 'healthy',
-            updatedAt: '2026-05-20T08:00:01.000Z',
+            queueDepth: 1,
+            itemCount: 2,
           },
-          queueDepth: 1,
-          itemCount: 2,
-        });
+        );
       } finally {
         server.close();
       }
@@ -605,9 +716,7 @@ test('web snapshot includes active wake queue statuses', async () => {
 test('web status marks a running item unhealthy when no live worker identity matches', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-stale-worker-test-'));
   try {
-    await writeAgentConfigs(stateDir, [
-      defaultAgentConfig('milo'),
-    ]);
+    await writeAgentConfigs(stateDir, [defaultAgentConfig('milo')]);
     await withAnimaHome(stateDir, async () => {
       const running = await ingestEvent(
         makeSlackEvent({
@@ -668,9 +777,7 @@ test('web status marks a running item unhealthy when no live worker identity mat
 test('web status does not flash stale health for a freshly claimed running item before health publish catches up', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-fresh-running-health-test-'));
   try {
-    await writeAgentConfigs(stateDir, [
-      defaultAgentConfig('milo'),
-    ]);
+    await writeAgentConfigs(stateDir, [defaultAgentConfig('milo')]);
     await withAnimaHome(stateDir, async () => {
       const running = await ingestEvent(
         makeSlackEvent({
@@ -682,7 +789,10 @@ test('web status does not flash stale health for a freshly claimed running item 
         }),
         { agentId: 'milo', stateDir },
       );
-      await new WakeQueueService('milo').takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-1' });
+      await new WakeQueueService('milo').takeNextRunnable({
+        isWorkerAlive: () => true,
+        workerId: 'worker-1',
+      });
       await setActiveRuntimeItem({
         agentId: 'milo',
         startedAt: new Date().toISOString(),
@@ -731,9 +841,7 @@ test('web status does not flash stale health for a freshly claimed running item 
 test('web status does not carry stale failed restart onto healthy agents', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-stale-restart-test-'));
   try {
-    await writeAgentConfigs(stateDir, [
-      defaultAgentConfig('milo'),
-    ]);
+    await writeAgentConfigs(stateDir, [defaultAgentConfig('milo')]);
     await withAnimaHome(stateDir, async () => {
       const healthStore = new AgentHealthService(new AgentHealthStore({ animaHome: stateDir }));
       await healthStore.writeHealth({
@@ -789,9 +897,7 @@ test('web status does not carry stale failed restart onto healthy agents', async
 test('web status surfaces provider failure health reasons', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-provider-health-test-'));
   try {
-    await writeAgentConfigs(stateDir, [
-      defaultAgentConfig('milo'),
-    ]);
+    await writeAgentConfigs(stateDir, [defaultAgentConfig('milo')]);
     await withAnimaHome(stateDir, async () => {
       await new AgentHealthService(new AgentHealthStore({ animaHome: stateDir })).writeHealth({
         agentId: 'milo',
@@ -892,15 +998,21 @@ test('agent diagnostics endpoint returns allowlisted support state without secre
         updatedAt: '2026-06-04T08:00:00.000Z',
       });
       await mkdir(join(stateDir, 'logs'), { recursive: true });
-      await writeFile(join(stateDir, 'logs', 'agent.log'), [
-        '[2026-06-04T08:01:00.000Z] Agent anima: restart requested requestId=restart-1',
-        '[2026-06-04T08:01:01.000Z] Agent anima: provider error xoxb-log-secret',
-        '[2026-06-04T08:01:02.000Z] Agent anima: failed payload {"text":"Do not leak log message body.","token":"xoxb-log-payload"}',
-        '[2026-06-04T08:01:03.000Z] Agent anima: SLACK_BOT_TOKEN=xoxb-env-secret',
-      ].join('\n'), 'utf8');
-      await writeFile(join(stateDir, 'logs', 'web.log'), [
-        '[2026-06-04T08:01:04.000Z] web: health error for dashboard',
-      ].join('\n'), 'utf8');
+      await writeFile(
+        join(stateDir, 'logs', 'agent.log'),
+        [
+          '[2026-06-04T08:01:00.000Z] Agent anima: restart requested requestId=restart-1',
+          '[2026-06-04T08:01:01.000Z] Agent anima: provider error xoxb-log-secret',
+          '[2026-06-04T08:01:02.000Z] Agent anima: failed payload {"text":"Do not leak log message body.","token":"xoxb-log-payload"}',
+          '[2026-06-04T08:01:03.000Z] Agent anima: SLACK_BOT_TOKEN=xoxb-env-secret',
+        ].join('\n'),
+        'utf8',
+      );
+      await writeFile(
+        join(stateDir, 'logs', 'web.log'),
+        ['[2026-06-04T08:01:04.000Z] web: health error for dashboard'].join('\n'),
+        'utf8',
+      );
 
       const server = await createWebServer();
       try {

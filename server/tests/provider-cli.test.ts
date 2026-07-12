@@ -1,15 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -96,8 +88,7 @@ test('Codex updates use the npm paired with the active binary and block new laun
       const service = new ProviderCliService({
         checkStore: new ProviderCliCheckStore(),
         env: { PATH: binDir },
-        fetch: async () =>
-          new Response(JSON.stringify({ version: '1.1.0' }), { status: 200 }),
+        fetch: async () => new Response(JSON.stringify({ version: '1.1.0' }), { status: 200 }),
         listAgentConfigs: async () => [],
         listStatuses: async () => [],
         operationStore: new ProviderCliOperationStore(),
@@ -105,10 +96,7 @@ test('Codex updates use the npm paired with the active binary and block new laun
       });
 
       const applying = service.apply('codex-cli');
-      await assert.rejects(
-        () => service.apply('claude-code'),
-        ProviderCliConflictError,
-      );
+      await assert.rejects(() => service.apply('claude-code'), ProviderCliConflictError);
       await installStartedPromise;
       let launchReleased = false;
       const launch = withProviderCliLaunchPermit('codex-cli', undefined, () => {
@@ -126,9 +114,7 @@ test('Codex updates use the npm paired with the active binary and block new laun
       assert.equal(launchReleased, true);
       assert.equal(
         calls.some(
-          (call) =>
-            call.command === resolvedNpmCommand &&
-            call.args.join(' ') === 'install -g @openai/codex@1.1.0',
+          (call) => call.command === resolvedNpmCommand && call.args.join(' ') === 'install -g @openai/codex@1.1.0',
         ),
         true,
       );
@@ -149,13 +135,9 @@ test('machine gates serialize upgrades and provider launches across Node process
     await assert.rejects(
       () => new ProviderCliService().apply('claude-code'),
       (error: unknown) =>
-        error instanceof ProviderCliConflictError &&
-        /already running on this machine/.test(error.message),
+        error instanceof ProviderCliConflictError && /already running on this machine/.test(error.message),
     );
-    assert.equal(
-      await tryAcquireProviderCliUpgradeLease('claude-code'),
-      undefined,
-    );
+    assert.equal(await tryAcquireProviderCliUpgradeLease('claude-code'), undefined);
   } finally {
     await upgrade.release();
   }
@@ -203,24 +185,16 @@ test('provider checks reuse validators and keep failures isolated by provider', 
         fetch: async (input, init) => {
           const url = String(input);
           const headers = new Headers(init?.headers);
-          if (round > 0)
-            conditionalHeaders.push(headers.get('if-none-match') ?? '');
-          if (round > 0 && url.includes('claude'))
-            return new Response(null, { status: 304 });
+          if (round > 0) conditionalHeaders.push(headers.get('if-none-match') ?? '');
+          if (round > 0 && url.includes('claude')) return new Response(null, { status: 304 });
           if (round > 0 && url.includes('registry.npmjs.org')) {
             return new Response('busy', {
               headers: { 'retry-after': '60' },
               status: 429,
             });
           }
-          const version = url.includes('claude')
-            ? '2.1.0'
-            : url.includes('codex')
-              ? '1.2.0'
-              : '0.24.0';
-          const body = url.includes('claude')
-            ? version
-            : JSON.stringify({ version });
+          const version = url.includes('claude') ? '2.1.0' : url.includes('codex') ? '1.2.0' : '0.24.0';
+          const body = url.includes('claude') ? version : JSON.stringify({ version });
           return new Response(body, {
             headers: { etag: `\"${version}\"` },
             status: 200,
@@ -234,20 +208,93 @@ test('provider checks reuse validators and keep failures isolated by provider', 
       const first = await service.checkNow();
       assert.deepEqual(
         first.providers.map((row) => row.latestVersion),
-        ['2.1.0', '1.2.0', '0.24.0'],
+        ['2.1.0', '1.2.0', '0.24.0', undefined],
       );
+      assert.match(first.providers[3]?.checkError?.message ?? '', /grok/i);
       round = 1;
       const second = await service.checkNow();
       assert.equal(second.providers[0]?.latestVersion, '2.1.0');
       assert.equal(second.providers[0]?.checkError, undefined);
-      assert.match(
-        second.providers[1]?.checkError?.message ?? '',
-        /429.*retry after 60/,
-      );
+      assert.match(second.providers[1]?.checkError?.message ?? '', /429.*retry after 60/);
       assert.equal(second.providers[2]?.latestVersion, '0.24.0');
+      assert.match(second.providers[3]?.checkError?.message ?? '', /grok/i);
       assert.equal(conditionalHeaders.includes('"2.1.0"'), true);
       assert.equal(conditionalHeaders.includes('"1.2.0"'), true);
       assert.equal(conditionalHeaders.includes('"0.24.0"'), true);
+    });
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('Grok native installs use their own update authority and preserve the active binary path', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-provider-cli-grok-'));
+  const grokHome = join(root, '.grok');
+  const downloads = join(grokHome, 'downloads');
+  const binDir = join(root, 'bin');
+  const nativeBinary = join(downloads, 'grok-macos-aarch64');
+  const grokCommand = join(binDir, 'grok');
+  let installedVersion = '0.2.93';
+  const calls: Array<{ args: string[]; command: string }> = [];
+  await mkdir(downloads, { recursive: true });
+  await mkdir(binDir, { recursive: true });
+  await writeFile(nativeBinary, '#!/bin/sh\nexit 0\n', 'utf8');
+  await chmod(nativeBinary, 0o755);
+  await symlink(nativeBinary, grokCommand);
+  const runCommand: ProviderCliCommandRunner = async (command, args) => {
+    calls.push({ args, command });
+    if (args.join(' ') === '--no-auto-update --version') {
+      return { stderr: '', stdout: `grok ${installedVersion} (probe)` };
+    }
+    if (args.join(' ') === 'update --check --json') {
+      return {
+        stderr: '',
+        stdout: JSON.stringify({
+          autoUpdate: false,
+          channel: 'stable',
+          currentVersion: installedVersion,
+          latestVersion: '0.2.94',
+          updateAvailable: installedVersion !== '0.2.94',
+        }),
+      };
+    }
+    if (args.join(' ') === 'update --version 0.2.94') {
+      installedVersion = '0.2.94';
+      return { stderr: '', stdout: 'updated' };
+    }
+    throw new Error(`Unexpected command: ${command} ${args.join(' ')}`);
+  };
+
+  try {
+    await withAnimaHome(root, async () => {
+      const service = new ProviderCliService({
+        checkStore: new ProviderCliCheckStore(),
+        env: { GROK_HOME: grokHome, HOME: root, PATH: binDir },
+        fetch: async () => new Response('unused', { status: 500 }),
+        listAgentConfigs: async () => [],
+        listStatuses: async () => [],
+        operationStore: new ProviderCliOperationStore(),
+        runCommand,
+      });
+      const checked = await service.checkNow('grok-cli');
+      const before = checked.providers.find((row) => row.provider === 'grok-cli');
+      assert.equal(before?.installSource, 'grok-native');
+      assert.equal(before?.updateMode, 'managed');
+      assert.equal(before?.latestVersion, '0.2.94');
+      assert.equal(before?.updateAvailable, true);
+      assert.equal(before?.autoUpdateChannel, 'stable');
+      assert.equal(before?.autoUpdatesEnabled, false);
+
+      const applied = await service.apply('grok-cli');
+      assert.equal(applied.installedVersion, '0.2.94');
+      assert.equal(
+        calls.some((call) => call.command === grokCommand && call.args.join(' ') === 'update --version 0.2.94'),
+        true,
+      );
+      assert.equal(
+        calls.some((call) => call.args.includes('login') || call.args.includes('logout')),
+        false,
+      );
     });
   } finally {
     await rm(root, { force: true, recursive: true });
@@ -271,11 +318,7 @@ test('multiple PATH installations are reported as manual and never managed', asy
         env: { PATH: `${firstBin}:${secondBin}` },
         fetch: async (input) => {
           const url = String(input);
-          const version = url.includes('claude')
-            ? '2.2.0'
-            : url.includes('codex')
-              ? '1.0.0'
-              : '0.24.0';
+          const version = url.includes('claude') ? '2.2.0' : url.includes('codex') ? '1.0.0' : '0.24.0';
           return new Response(url.includes('claude') ? version : JSON.stringify({ version }));
         },
         listAgentConfigs: async () => [],
@@ -304,14 +347,8 @@ test('provider status reports configured agents and the actual running child ver
         env: { PATH: '' },
         fetch: async (input) => {
           const url = String(input);
-          const version = url.includes('claude')
-            ? '2.2.0'
-            : url.includes('codex')
-              ? '1.0.0'
-              : '0.24.0';
-          return new Response(
-            url.includes('claude') ? version : JSON.stringify({ version }),
-          );
+          const version = url.includes('claude') ? '2.2.0' : url.includes('codex') ? '1.0.0' : '0.24.0';
+          return new Response(url.includes('claude') ? version : JSON.stringify({ version }));
         },
         listAgentConfigs: async () => [
           {
@@ -341,9 +378,7 @@ test('provider status reports configured agents and the actual running child ver
         operationStore: new ProviderCliOperationStore(),
       });
       const status = await service.checkNow();
-      const claude = status.providers.find(
-        (row) => row.provider === 'claude-code',
-      );
+      const claude = status.providers.find((row) => row.provider === 'claude-code');
       assert.deepEqual(claude?.agents, [
         {
           enabled: true,
@@ -362,8 +397,7 @@ test('provider status reports configured agents and the actual running child ver
 async function holdMachineGate(
   mode: 'install' | 'upgrade',
 ): Promise<{ release(): Promise<void>; terminate(): Promise<void> }> {
-  const moduleUrl = new URL('../provider-cli/launch-gate.js', import.meta.url)
-    .href;
+  const moduleUrl = new URL('../provider-cli/launch-gate.js', import.meta.url).href;
   const script = String.raw`
     import { once } from 'node:events';
     const [moduleUrl, mode] = process.argv.slice(1);
@@ -381,11 +415,9 @@ async function holdMachineGate(
       });
     }
   `;
-  const child = spawn(
-    process.execPath,
-    ['--input-type=module', '--eval', script, moduleUrl, mode],
-    { stdio: ['pipe', 'pipe', 'pipe'] },
-  );
+  const child = spawn(process.execPath, ['--input-type=module', '--eval', script, moduleUrl, mode], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
   child.stdout.setEncoding('utf8');
   child.stderr.setEncoding('utf8');
   let stderr = '';
@@ -395,11 +427,7 @@ async function holdMachineGate(
   try {
     await new Promise<void>((resolve, reject) => {
       const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-        reject(
-          new Error(
-            `gate holder exited before ready (${code ?? signal ?? 'unknown'}): ${stderr}`,
-          ),
-        );
+        reject(new Error(`gate holder exited before ready (${code ?? signal ?? 'unknown'}): ${stderr}`));
       };
       child.once('exit', onExit);
       child.stdout.on('data', (chunk: string) => {
@@ -419,15 +447,8 @@ async function holdMachineGate(
       if (released) return;
       released = true;
       child.stdin.end('release\n');
-      const [code, signal] = (await once(child, 'exit')) as [
-        number | null,
-        NodeJS.Signals | null,
-      ];
-      assert.equal(
-        code,
-        0,
-        `gate holder exited with ${code ?? signal ?? 'unknown'}: ${stderr}`,
-      );
+      const [code, signal] = (await once(child, 'exit')) as [number | null, NodeJS.Signals | null];
+      assert.equal(code, 0, `gate holder exited with ${code ?? signal ?? 'unknown'}: ${stderr}`);
     },
     async terminate() {
       if (released) return;
@@ -439,8 +460,7 @@ async function holdMachineGate(
 }
 
 async function assertSingleUpgradeWinner(round: number): Promise<void> {
-  const moduleUrl = new URL('../provider-cli/launch-gate.js', import.meta.url)
-    .href;
+  const moduleUrl = new URL('../provider-cli/launch-gate.js', import.meta.url).href;
   const script = String.raw`
     import { once } from 'node:events';
     const gate = await import(process.argv[1]);
@@ -455,27 +475,18 @@ async function assertSingleUpgradeWinner(round: number): Promise<void> {
     await once(process.stdin, 'data');
     await lease.release();
   `;
-  const contenders = [
-    gateContender(script, moduleUrl),
-    gateContender(script, moduleUrl),
-  ];
+  const contenders = [gateContender(script, moduleUrl), gateContender(script, moduleUrl)];
   try {
-    assert.deepEqual(
-      await Promise.all(contenders.map((contender) => contender.nextLine())),
-      ['READY', 'READY'],
-    );
+    assert.deepEqual(await Promise.all(contenders.map((contender) => contender.nextLine())), ['READY', 'READY']);
     for (const contender of contenders) contender.child.stdin.write('go\n');
-    const outcomes = await Promise.all(
-      contenders.map((contender) => contender.nextLine()),
-    );
+    const outcomes = await Promise.all(contenders.map((contender) => contender.nextLine()));
     assert.deepEqual(
       [...outcomes].sort(),
       ['ACQUIRED', 'BLOCKED'],
       `round ${round} must grant exactly one machine lease`,
     );
     for (let index = 0; index < contenders.length; index += 1) {
-      if (outcomes[index] === 'ACQUIRED')
-        contenders[index]!.child.stdin.end('release\n');
+      if (outcomes[index] === 'ACQUIRED') contenders[index]!.child.stdin.end('release\n');
     }
     await Promise.all(contenders.map((contender) => contender.exited));
   } finally {
@@ -487,16 +498,17 @@ async function assertSingleUpgradeWinner(round: number): Promise<void> {
   }
 }
 
-function gateContender(script: string, moduleUrl: string): {
+function gateContender(
+  script: string,
+  moduleUrl: string,
+): {
   child: ChildProcessWithoutNullStreams;
   exited: Promise<void>;
   nextLine(): Promise<string>;
 } {
-  const child = spawn(
-    process.execPath,
-    ['--input-type=module', '--eval', script, moduleUrl],
-    { stdio: ['pipe', 'pipe', 'pipe'] },
-  );
+  const child = spawn(process.execPath, ['--input-type=module', '--eval', script, moduleUrl], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
   let stderr = '';
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (chunk: string) => {
@@ -506,12 +518,7 @@ function gateContender(script: string, moduleUrl: string): {
   const exited = new Promise<void>((resolve, reject) => {
     child.once('exit', (code, signal) => {
       if (code === 0) resolve();
-      else
-        reject(
-          new Error(
-            `gate contender exited with ${code ?? signal ?? 'unknown'}: ${stderr}`,
-          ),
-        );
+      else reject(new Error(`gate contender exited with ${code ?? signal ?? 'unknown'}: ${stderr}`));
     });
   });
   return {
@@ -519,20 +526,12 @@ function gateContender(script: string, moduleUrl: string): {
     exited,
     async nextLine() {
       const line = await lines.next();
-      if (line.done)
-        throw new Error(`gate contender closed stdout before verdict: ${stderr}`);
+      if (line.done) throw new Error(`gate contender closed stdout before verdict: ${stderr}`);
       return line.value;
     },
   };
 }
 
-async function writeCodexPackage(
-  packageDir: string,
-  version: string,
-): Promise<void> {
-  await writeFile(
-    join(packageDir, 'package.json'),
-    JSON.stringify({ name: '@openai/codex', version }),
-    'utf8',
-  );
+async function writeCodexPackage(packageDir: string, version: string): Promise<void> {
+  await writeFile(join(packageDir, 'package.json'), JSON.stringify({ name: '@openai/codex', version }), 'utf8');
 }

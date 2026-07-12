@@ -8,11 +8,7 @@ import { promisify } from 'node:util';
 import { resolveAnimaHome } from '../anima-home.js';
 import { defaultServerSettingsService, type ServerSettingsService } from '../settings/settings.service.js';
 import { cleanServiceEnv } from './env.js';
-import {
-  readLastServicesRestart,
-  servicesRestartLogPath,
-  servicesRestartResultPath,
-} from './restart-result.js';
+import { readLastServicesRestart, servicesRestartLogPath, servicesRestartResultPath } from './restart-result.js';
 import type { ServerInfo, ServicesRestartResponse } from '../../shared/server-info.js';
 import { PROVIDER_CATALOG, type ProviderAvailability } from '../../shared/provider-catalog.js';
 
@@ -27,9 +23,10 @@ export interface PreparedServicesRestart {
 
 export interface SystemServiceOptions {
   animactlScript?: string;
-  commandPresent?: (command: string) => Promise<boolean>;
+  commandPresent?: (command: string, args: string[]) => Promise<boolean>;
   commit?: Promise<string | undefined> | string;
   now?: () => Date;
+  providerModels?: (command: string) => Promise<{ defaultModel: string; models: string[] }>;
   packageVersion?: () => Promise<string>;
   projectRoot?: string;
   restartDelayMs?: number;
@@ -41,9 +38,10 @@ export class SystemServiceError extends Error {}
 
 export class SystemService {
   private readonly animactlScript: string;
-  private readonly commandPresent: (command: string) => Promise<boolean>;
+  private readonly commandPresent: (command: string, args: string[]) => Promise<boolean>;
   private readonly commit: Promise<string | undefined>;
   private readonly now: () => Date;
+  private readonly providerModels: (command: string) => Promise<{ defaultModel: string; models: string[] }>;
   private readonly packageVersion: () => Promise<string>;
   private readonly projectRoot: string;
   private readonly restartDelayMs: number;
@@ -56,6 +54,7 @@ export class SystemService {
     this.commandPresent = options.commandPresent ?? commandPresent;
     this.commit = Promise.resolve(options.commit ?? gitShortCommit(this.projectRoot));
     this.now = options.now ?? (() => new Date());
+    this.providerModels = options.providerModels ?? grokProviderModels;
     this.packageVersion = options.packageVersion ?? (() => packageVersion(this.projectRoot));
     this.restartDelayMs = options.restartDelayMs ?? RESTART_AFTER_RESPONSE_DELAY_MS;
     this.settings = options.settings ?? defaultServerSettingsService;
@@ -64,10 +63,32 @@ export class SystemService {
 
   async providerAvailability(): Promise<{ providers: ProviderAvailability[] }> {
     return {
-      providers: await Promise.all(PROVIDER_CATALOG.map(async (entry) => ({
-        kind: entry.kind,
-        present: await this.commandPresent(entry.command),
-      }))),
+      providers: await Promise.all(
+        PROVIDER_CATALOG.map(async (entry) => {
+          const present = await this.commandPresent(entry.command, providerPresenceArgs(entry.kind));
+          if (!present || !entry.dynamicModels)
+            return {
+              kind: entry.kind,
+              present,
+            };
+          const checkedAt = this.now().toISOString();
+          try {
+            return {
+              checkedAt,
+              kind: entry.kind,
+              present,
+              ...(await this.providerModels(entry.command)),
+            };
+          } catch (error) {
+            return {
+              checkedAt,
+              kind: entry.kind,
+              modelCheckError: error instanceof Error ? error.message : String(error),
+              present,
+            };
+          }
+        }),
+      ),
     };
   }
 
@@ -113,19 +134,43 @@ export class SystemService {
         logPath,
         scheduled: true,
       },
-      spawn: () => restartServicesDetached({
-        animaHome,
-        animactlScript: this.animactlScript,
-        logPath,
-        now: this.now,
-        projectRoot: this.projectRoot,
-        resultPath,
-      }),
+      spawn: () =>
+        restartServicesDetached({
+          animaHome,
+          animactlScript: this.animactlScript,
+          logPath,
+          now: this.now,
+          projectRoot: this.projectRoot,
+          resultPath,
+        }),
     };
   }
 }
 
 export const defaultSystemService = new SystemService();
+
+export function parseGrokModelsOutput(output: string): {
+  defaultModel: string;
+  models: string[];
+} {
+  const defaultModel = output.match(/^Default model:\s*(\S+)\s*$/m)?.[1];
+  const models = [...output.matchAll(/^\s*[*-]\s+([A-Za-z0-9._/-]+)(?:\s+\(default\))?\s*$/gm)]
+    .map((match) => match[1])
+    .filter((value): value is string => Boolean(value));
+  const uniqueModels = [...new Set(models)];
+  if (!defaultModel || !uniqueModels.includes(defaultModel)) {
+    throw new Error('Grok model catalog did not report a valid default model');
+  }
+  return { defaultModel, models: uniqueModels };
+}
+
+async function grokProviderModels(command: string): Promise<{ defaultModel: string; models: string[] }> {
+  const { stdout, stderr } = await execFileAsync(command, ['--no-auto-update', 'models'], {
+    maxBuffer: 1024 * 1024,
+    timeout: 10_000,
+  });
+  return parseGrokModelsOutput(`${stdout}\n${stderr}`);
+}
 
 async function restartServicesDetached(input: {
   animaHome: string;
@@ -142,7 +187,9 @@ async function restartServicesDetached(input: {
     log = await open(input.logPath, 'a');
     await log.write(`\n[${input.now().toISOString()}] web app requested services restart\n`);
   } catch (error) {
-    console.error(`Failed to open restart log ${input.logPath}: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `Failed to open restart log ${input.logPath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   const child = spawn(
     process.execPath,
@@ -150,7 +197,11 @@ async function restartServicesDetached(input: {
     {
       cwd: input.projectRoot,
       detached: true,
-      env: { ...cleanServiceEnv(), ANIMA_HOME: input.animaHome, ANIMA_RESTART_RESULT_FILE: input.resultPath },
+      env: {
+        ...cleanServiceEnv(),
+        ANIMA_HOME: input.animaHome,
+        ANIMA_RESTART_RESULT_FILE: input.resultPath,
+      },
       stdio: log ? ['ignore', log.fd, log.fd] : 'ignore',
     },
   );
@@ -186,9 +237,13 @@ export function docsUrl(track: 'dev' | 'canary' | 'stable'): string {
   return 'https://anima.meetquinn.ai/';
 }
 
-function commandPresent(command: string): Promise<boolean> {
+function providerPresenceArgs(kind: (typeof PROVIDER_CATALOG)[number]['kind']): string[] {
+  return kind === 'grok-cli' ? ['--no-auto-update', '--version'] : ['--version'];
+}
+
+function commandPresent(command: string, args: string[]): Promise<boolean> {
   return new Promise((resolvePresent) => {
-    const child = execFile(command, ['--version'], { encoding: 'utf8', timeout: 2_000 }, (error) => {
+    const child = execFile(command, args, { encoding: 'utf8', timeout: 2_000 }, (error) => {
       resolvePresent(!error);
     });
     child.stdin?.end();

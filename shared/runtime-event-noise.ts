@@ -5,10 +5,10 @@
 // This predicate is the single source of truth for BOTH sides of the
 // activity log:
 //   - write side (server shouldPersistRuntimeEvent): noise is never persisted.
-//     One documented exception lives at that call site: `kimi.context.stats`
+//     One documented exception lives at that call site: ACP context stats
 //     is persisted because it feeds runtime session stats.
 //   - read side (web hiddenRuntimeEvent): noise is never rendered, even in
-//     "show all steps" — including any `kimi.context.stats` rows already on
+//     "show all steps" — including any ACP context stats rows already on
 //     disk from the write-side exception.
 // Before this module the two sides carried hand-synchronized copies of this
 // list; any edit here changes both persistence (disk growth) and rendering.

@@ -14,24 +14,19 @@ import {
 import { DEFAULT_AGENT_HOMES_ROOT, defaultAgentHomePath } from '@shared/agent-home';
 import {
   firstReadyProvider,
+  providerCatalogForAvailability,
+  providerModelAuthorityLabel,
   providerReady,
   providerUnavailableHint,
   providerUnavailableLabel,
   unavailableProviderHints,
 } from '@/lib/provider-availability';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import DirectoryPicker from '@/components/DirectoryPicker';
 import { slugify } from './utils';
 import { queryKeys } from '@/lib/query-keys';
 import { providerValueLabel } from '@/lib/provider-display';
-
 
 // ---------------------------------------------------------------------------
 // Add agent modal
@@ -57,24 +52,26 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
     providerCatalog().find((o) => o.kind === DEFAULT_PROVIDER_KIND)?.defaultModel ?? '',
   );
   const [effort, setEffort] = useState(DEFAULT_REASONING_EFFORT);
-  const {
-    data: providerAvailability,
-    error: providerAvailabilityError,
-  } = useQuery({ queryKey: queryKeys.providerAvailability(), queryFn: fetchProviderAvailability });
+  const { data: providerAvailability, error: providerAvailabilityError } = useQuery({
+    queryKey: queryKeys.providerAvailability(),
+    queryFn: fetchProviderAvailability,
+  });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const providerOptions = useMemo(() => providerCatalog(), []);
+  const providerOptions = useMemo(
+    () => providerCatalogForAvailability(providerCatalog(), providerAvailability),
+    [providerAvailability],
+  );
 
   const derivedId = slugify(name);
   const currentProvider = providerOptions.find((o) => o.kind === providerKind);
   const selectedProviderReady = providerReady(currentProvider, providerAvailability);
   const selectedProviderHint = providerUnavailableHint(currentProvider, providerAvailability);
+  const selectedProviderAuthority = providerModelAuthorityLabel(currentProvider, providerAvailability);
   const unavailableProviders = unavailableProviderHints(providerOptions, providerAvailability);
   // Preview path shown to the user — always computed from name + chosen/default parent.
-  const previewPath = derivedId
-    ? defaultAgentHomePath(derivedId, customParent ?? DEFAULT_AGENT_HOMES_ROOT)
-    : null;
+  const previewPath = derivedId ? defaultAgentHomePath(derivedId, customParent ?? DEFAULT_AGENT_HOMES_ROOT) : null;
 
   function handleProviderChange(next: ProviderCatalogEntry['kind']) {
     setProviderKind(next);
@@ -115,8 +112,7 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setNameTouched(true);
-    if (!derivedId || !previewPath || !role.trim() || !providerKind || !model || !selectedProviderReady)
-      return;
+    if (!derivedId || !previewPath || !role.trim() || !providerKind || !model || !selectedProviderReady) return;
     setBusy(true);
     setError(null);
     const provider = {
@@ -179,9 +175,7 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
-              <span className="font-serif text-[15px] font-semibold text-text">
-                Choose parent folder
-              </span>
+              <span className="font-serif text-[15px] font-semibold text-text">Choose parent folder</span>
             </div>
             <DirectoryPicker
               startPath={customParent || undefined}
@@ -251,10 +245,7 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
                 <div className="flex items-start gap-2 rounded-sm border border-border bg-muted/30 px-3 py-2">
                   <div className="min-w-0 flex-1">
                     {previewPath ? (
-                      <span
-                        className="block truncate font-mono text-[11px] text-text"
-                        title={previewPath}
-                      >
+                      <span className="block truncate font-mono text-[11px] text-text" title={previewPath}>
                         {previewPath}
                       </span>
                     ) : (
@@ -288,17 +279,21 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
               </div>
 
               {/* Provider + Model + Effort */}
-              <div className={[
-                'grid grid-cols-1 gap-3 sm:gap-2',
-                (currentProvider?.reasoningEfforts ?? []).length > 0 ? 'sm:grid-cols-3' : 'sm:grid-cols-2',
-              ].join(' ')}>
+              <div
+                className={[
+                  'grid grid-cols-1 gap-3 sm:gap-2',
+                  (currentProvider?.reasoningEfforts ?? []).length > 0 ? 'sm:grid-cols-3' : 'sm:grid-cols-2',
+                ].join(' ')}
+              >
                 <div>
                   <label className="mb-1 block font-sans text-[11px] uppercase tracking-wide text-text-subtle">
                     Provider
                   </label>
                   <Select
                     value={providerKind}
-                    onValueChange={(v) => { if (v) handleProviderChange(v as ProviderCatalogEntry['kind']); }}
+                    onValueChange={(v) => {
+                      if (v) handleProviderChange(v as ProviderCatalogEntry['kind']);
+                    }}
                     disabled={busy}
                   >
                     <SelectTrigger className="h-8 w-full font-sans text-[13px]">
@@ -306,12 +301,11 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
                     </SelectTrigger>
                     <SelectContent>
                       {providerOptions.map((o) => (
-                        <SelectItem
-                          key={o.kind}
-                          value={o.kind}
-                          disabled={!providerReady(o, providerAvailability)}
-                        >
-                          {o.label}{providerUnavailableLabel(o, providerAvailability) ? ` — ${providerUnavailableLabel(o, providerAvailability)}` : ''}
+                        <SelectItem key={o.kind} value={o.kind} disabled={!providerReady(o, providerAvailability)}>
+                          {o.label}
+                          {providerUnavailableLabel(o, providerAvailability)
+                            ? ` — ${providerUnavailableLabel(o, providerAvailability)}`
+                            : ''}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -321,13 +315,15 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
                       {selectedProviderHint}
                     </div>
                   )}
+                  {selectedProviderAuthority && !selectedProviderHint && (
+                    <div className="mt-1 font-sans text-[10px] leading-snug text-text-subtle">
+                      {selectedProviderAuthority}
+                    </div>
+                  )}
                   {unavailableProviders.length > 0 && (
                     <div className="mt-2 space-y-1">
                       {unavailableProviders.map((provider) => (
-                        <div
-                          key={provider.kind}
-                          className="font-sans text-[10px] leading-snug text-text-subtle"
-                        >
+                        <div key={provider.kind} className="font-sans text-[10px] leading-snug text-text-subtle">
                           <span className="font-semibold text-text-muted">{provider.label}</span>{' '}
                           <span>{provider.status}</span>
                           {' — '}
@@ -343,7 +339,9 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
                   </label>
                   <Select
                     value={model}
-                    onValueChange={(v) => { if (v) setModel(v); }}
+                    onValueChange={(v) => {
+                      if (v) setModel(v);
+                    }}
                     disabled={busy || !currentProvider || !selectedProviderReady}
                   >
                     <SelectTrigger className="h-8 w-full font-sans text-[13px]">
@@ -365,7 +363,9 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
                     </label>
                     <Select
                       value={effort}
-                      onValueChange={(v) => { if (v) setEffort(v); }}
+                      onValueChange={(v) => {
+                        if (v) setEffort(v);
+                      }}
                       disabled={busy || !selectedProviderReady}
                     >
                       <SelectTrigger className="h-8 w-full font-sans text-[13px]">
@@ -383,12 +383,13 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
                 )}
               </div>
 
-              {error && (
-                <div className="font-sans text-[12px] leading-snug text-health-error">{error}</div>
-              )}
+              {error && <div className="font-sans text-[12px] leading-snug text-health-error">{error}</div>}
               {providerAvailabilityError && (
                 <div className="font-sans text-[12px] leading-snug text-health-error">
-                  Provider check failed: {providerAvailabilityError instanceof Error ? providerAvailabilityError.message : String(providerAvailabilityError)}
+                  Provider check failed:{' '}
+                  {providerAvailabilityError instanceof Error
+                    ? providerAvailabilityError.message
+                    : String(providerAvailabilityError)}
                 </div>
               )}
 
@@ -398,14 +399,7 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
                 </Button>
                 <Button
                   type="submit"
-                  disabled={
-                    busy ||
-                    !derivedId ||
-                    !role.trim() ||
-                    !providerKind ||
-                    !model ||
-                    !selectedProviderReady
-                  }
+                  disabled={busy || !derivedId || !role.trim() || !providerKind || !model || !selectedProviderReady}
                 >
                   {busy ? 'Adding…' : 'Add agent'}
                 </Button>

@@ -8,7 +8,7 @@ interface SlotController {
 
 // Owns a provider runtime's single long-lived controller: installs it, clears
 // the reference once the child settles, and tears it down on reset. Claude,
-// Codex, and Kimi each carried a byte-identical copy of this lifecycle.
+// Codex, Grok, and Kimi share this lifecycle.
 export class ProviderControllerSlot<C extends SlotController> {
   private current?: C;
 
@@ -24,10 +24,7 @@ export class ProviderControllerSlot<C extends SlotController> {
     return controller;
   }
 
-  async reset(
-    signal: NodeJS.Signals = 'SIGTERM',
-    options: { forceAfterMs?: number } = {},
-  ): Promise<void> {
+  async reset(signal: NodeJS.Signals = 'SIGTERM', options: { forceAfterMs?: number } = {}): Promise<void> {
     const controller = this.current;
     if (!controller) return;
     this.current = undefined;

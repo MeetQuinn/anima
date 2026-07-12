@@ -34,7 +34,7 @@ This page owns Anima's public vocabulary. Other pages explain these concepts in 
 
 **Dashboard.** The local operator UI for creating and configuring agents, inspecting activity and health, managing providers, and stepping in. It binds to `127.0.0.1` by default.
 
-**Provider.** The coding-agent CLI that runs an agent's model work, currently Claude Code, Codex, or Kimi. Anima starts the installed provider under the host user account and uses that provider's own authentication and data boundary.
+**Provider.** The coding-agent CLI that runs an agent's model work, currently Claude Code, Codex, Kimi, or Grok Build. Anima starts the installed provider under the host user account and uses that provider's own authentication and data boundary.
 
 **Transport.** A connected team-messaging system, currently Slack or Feishu. Each transport receives platform events and carries explicit outbound actions back to the team.
 

@@ -33,7 +33,7 @@
   </a>
 </p>
 
-Anima is not another model. It is the local teammate runtime around Claude Code, Codex, and Kimi CLI: identity, message routing, durable context, team memory, and an audited boundary for acting in Slack.
+Anima is not another model. It is the local teammate runtime around Claude Code, Codex, Kimi CLI, and Grok Build: identity, message routing, durable context, team memory, and an audited boundary for acting in Slack.
 
 Your technical champion runs Anima once. Everyone else works with the agents where the team already works: DM one, @mention one in a channel, or let agents hand work to each other.
 
@@ -43,7 +43,7 @@ Run Anima on a Mac or Linux machine you control. Before you start, you need:
 
 - Node.js 20 or newer;
 - a Slack workspace where you can add an app; and
-- Claude Code, Codex, or Kimi CLI installed and signed in.
+- Claude Code, Codex, Kimi CLI, or Grok Build installed and signed in.
 
 ```bash
 curl -fsSL https://anima.meetquinn.ai/install.sh | sh
@@ -79,7 +79,7 @@ Your team in Slack
 Anima on one machine you control
         | identity, routing, queue, memory, activity trail
         v
-Claude Code, Codex, or Kimi CLI
+Claude Code, Codex, Kimi CLI, or Grok Build
         | your existing provider login
         v
 Your repositories and tools
@@ -93,7 +93,7 @@ For the full message path and ownership boundaries, see the [architecture overvi
 
 ## Why not just run a coding agent directly?
 
-You should. Claude Code, Codex, and Kimi provide the intelligence and developer tools Anima builds on.
+You should. Claude Code, Codex, Kimi, and Grok Build provide the intelligence and developer tools Anima builds on.
 
 Use them directly for private, one-person terminal work. Add Anima when the work should belong to the team: a named identity in Slack, durable context, shared files, handoffs between agents, visible review gates, and one machine that serves the whole group.
 
@@ -117,7 +117,7 @@ The product claim is not just that an agent can answer a prompt. It is that a te
 |                    | Supported                                     |
 | ------------------ | --------------------------------------------- |
 | **Team chat**      | Slack; Feishu is also supported               |
-| **Coding agents**  | Claude Code, Codex, Kimi CLI                  |
+| **Coding agents**  | Claude Code, Codex, Kimi CLI, Grok Build      |
 | **Host**           | macOS or Linux                                |
 | **Operator UI**    | Local dashboard at `127.0.0.1:4174`           |
 | **Team knowledge** | Plain files, with git as the governance layer |

@@ -100,8 +100,14 @@ test('managed runtime install writes package metadata', async () => {
   const rootDir = await mkdtemp(join(tmpdir(), 'anima-managed-runtime-test-'));
   try {
     const runtimeDir = join(rootDir, 'runtime', 'current');
-    assert.equal(packageSpecifier({ packageName: '@meetquinn/animactl', version: '0.1.0' }), '@meetquinn/animactl@0.1.0');
-    assert.equal(packageSpecifier({ packageName: '@meetquinn/animactl', channel: 'canary' }), '@meetquinn/animactl@canary');
+    assert.equal(
+      packageSpecifier({ packageName: '@meetquinn/animactl', version: '0.1.0' }),
+      '@meetquinn/animactl@0.1.0',
+    );
+    assert.equal(
+      packageSpecifier({ packageName: '@meetquinn/animactl', channel: 'canary' }),
+      '@meetquinn/animactl@canary',
+    );
     assert.throws(
       () => packageSpecifier({ packageName: '@meetquinn/animactl', channel: 'canary', version: '0.1.0' }),
       /Choose either --version or --channel/,
@@ -130,7 +136,9 @@ test('managed runtime install writes package metadata', async () => {
           `${JSON.stringify({ name: '@meetquinn/animactl', version: '0.1.0' }, null, 2)}\n`,
           'utf8',
         );
-        await mkdir(join(packageDir, 'dist', 'server', 'cli'), { recursive: true });
+        await mkdir(join(packageDir, 'dist', 'server', 'cli'), {
+          recursive: true,
+        });
         await writeFile(join(packageDir, 'dist', 'server', 'cli', 'animactl.js'), '', 'utf8');
         return { stdout: 'installed', stderr: '' };
       },
@@ -140,7 +148,10 @@ test('managed runtime install writes package metadata', async () => {
     assert.equal(result.metadata.version, '0.1.0');
     assert.equal(result.metadata.specifier, '@meetquinn/animactl@0.1.0');
 
-    const status = await readManagedRuntimeStatus({ packageName: '@meetquinn/animactl', runtimeDir });
+    const status = await readManagedRuntimeStatus({
+      packageName: '@meetquinn/animactl',
+      runtimeDir,
+    });
     assert.equal(status.installed, true);
     assert.equal(status.version, '0.1.0');
     assert.equal(status.metadata?.specifier, '@meetquinn/animactl@0.1.0');
@@ -233,16 +244,17 @@ test('config loader reads legacy runtime key as provider config', async () => {
 test('kimi provider does not expose or retain reasoning effort', async () => {
   assert.deepEqual(providerCatalogEntry('kimi-cli')?.reasoningEfforts, []);
   assert.throws(
-    () => AgentCreateRequest.parse({
-      name: 'Kimi',
-      homePath: 'agents/kimi',
-      role: 'general purpose',
-      provider: {
-        kind: 'kimi-cli',
-        model: 'kimi-code/kimi-for-coding',
-        reasoningEffort: 'high',
-      },
-    }),
+    () =>
+      AgentCreateRequest.parse({
+        name: 'Kimi',
+        homePath: 'agents/kimi',
+        role: 'general purpose',
+        provider: {
+          kind: 'kimi-cli',
+          model: 'kimi-code/kimi-for-coding',
+          reasoningEffort: 'high',
+        },
+      }),
     /unsupported reasoningEffort high/,
   );
 
@@ -279,12 +291,7 @@ test('claude-code catalog includes Fable without changing the default model', ()
 
 test('codex-cli catalog includes current GPT-5.6 and GPT-5.5 models only', () => {
   const entry = providerCatalogEntry('codex-cli');
-  assert.deepEqual(entry?.models, [
-    'gpt-5.6-sol',
-    'gpt-5.6-terra',
-    'gpt-5.6-luna',
-    'gpt-5.5',
-  ]);
+  assert.deepEqual(entry?.models, ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']);
   assert.equal(entry?.defaultModel, 'gpt-5.5');
 
   assert.equal(
@@ -301,10 +308,44 @@ test('codex-cli catalog includes current GPT-5.6 and GPT-5.5 models only', () =>
   );
 });
 
+test('grok-cli catalog keeps model identity runtime-authoritative', () => {
+  const entry = providerCatalogEntry('grok-cli');
+  assert.equal(entry?.dynamicModels, true);
+  assert.equal(entry?.defaultModel, '');
+  assert.deepEqual(entry?.models, []);
+  assert.deepEqual(entry?.reasoningEfforts, []);
+  assert.equal(
+    AgentCreateRequest.parse({
+      name: 'Grok',
+      homePath: 'agents/grok',
+      role: 'general purpose',
+      provider: {
+        kind: 'grok-cli',
+        model: 'grok-4.5',
+      },
+    }).provider.model,
+    'grok-4.5',
+  );
+  assert.throws(
+    () =>
+      AgentCreateRequest.parse({
+        name: 'Grok alias',
+        homePath: 'agents/grok-alias',
+        role: 'general purpose',
+        provider: {
+          kind: 'grok-cli',
+          model: 'grok-build',
+        },
+      }),
+    /unsupported model for grok-cli: grok-build/,
+  );
+});
+
 test('provider turn and child idle timeouts default for all providers', async () => {
   for (const provider of [
     { kind: 'claude-code', model: 'opus' },
     { kind: 'codex-cli', model: 'gpt-5.5' },
+    { kind: 'grok-cli', model: 'grok-4.5' },
     { kind: 'kimi-cli', model: 'kimi-code/kimi-for-coding' },
   ]) {
     const configDir = await mkdtemp(join(tmpdir(), 'anima-config-timeout-test-'));
@@ -377,13 +418,10 @@ test('removed tmux transport is rejected and leaves the provider session untouch
 
       // 'tmux' was removed from ClaudeCodeTransport; stale configs must fail loudly,
       // naming the offending field and the value it expected.
-      await assert.rejects(
-        agentService('anima').updateProvider({ transport: 'tmux' as never }),
-        (error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error);
-          return message.includes('"transport"') && message.includes('stream-json');
-        },
-      );
+      await assert.rejects(agentService('anima').updateProvider({ transport: 'tmux' as never }), (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        return message.includes('"transport"') && message.includes('stream-json');
+      });
 
       const agent = await agentService('anima').getConfig();
       assert.equal(agent.provider.kind, 'claude-code');

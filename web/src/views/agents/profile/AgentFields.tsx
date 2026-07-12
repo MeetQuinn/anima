@@ -15,6 +15,7 @@ import { ANIMA_MANAGED_PROVIDER_ENV_KEYS, type AgentProviderConfig } from '@shar
 import type { TeamConfig } from '@shared/server-settings';
 import {
   providerReady,
+  providerModelAuthorityLabel,
   providerUnavailableHint,
   providerUnavailableLabel,
 } from '@/lib/provider-availability';
@@ -105,13 +106,9 @@ export function InlineTextRow({
         <div className="flex flex-wrap items-center gap-2">
           <EditAffordance onEdit={begin}>
             {value ? (
-              <span className="block break-words font-serif text-[13px] md:text-[15px] text-text">
-                {value}
-              </span>
+              <span className="block break-words font-serif text-[13px] md:text-[15px] text-text">{value}</span>
             ) : (
-              <span className="font-serif italic text-[14px] text-text-subtle">
-                {placeholder ?? '—'}
-              </span>
+              <span className="font-serif italic text-[14px] text-text-subtle">{placeholder ?? '—'}</span>
             )}
           </EditAffordance>
           {saved && <SavedHint />}
@@ -142,10 +139,7 @@ function WorkspacePickerModal({
   }, [onClose]);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-page/70 backdrop-blur-sm"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-page/70 backdrop-blur-sm" onClick={onClose}>
       <div
         role="dialog"
         aria-modal="true"
@@ -153,15 +147,8 @@ function WorkspacePickerModal({
         className="mx-4 w-full max-w-2xl rounded-sm border border-border bg-surface p-5 shadow-deep"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-4 font-serif text-[16px] font-semibold text-text">
-          Choose home folder
-        </div>
-        <DirectoryPicker
-          startPath={startPath}
-          onChoose={onChoose}
-          onCancel={onClose}
-          confirmLabel="Choose"
-        />
+        <div className="mb-4 font-serif text-[16px] font-semibold text-text">Choose home folder</div>
+        <DirectoryPicker startPath={startPath} onChoose={onChoose} onCancel={onClose} confirmLabel="Choose" />
       </div>
     </div>
   );
@@ -171,13 +158,7 @@ function WorkspacePickerModal({
 
 // Home row — hover-reveal Change affordance.
 // Clicking opens a modal folder-picker; the agent applies the saved home when idle.
-export function HomeRow({
-  value,
-  onCommit,
-}: {
-  value: string;
-  onCommit: (next: string) => Promise<void>;
-}) {
+export function HomeRow({ value, onCommit }: { value: string; onCommit: (next: string) => Promise<void> }) {
   const [showPicker, setShowPicker] = useState(false);
   const [pendingPath, setPendingPath] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -212,20 +193,13 @@ export function HomeRow({
         {pendingPath !== null ? (
           <div className="space-y-3">
             <div>
-              <span className="block break-words font-mono text-[13px] text-text">
-                {pendingPath}
-              </span>
+              <span className="block break-words font-mono text-[13px] text-text">{pendingPath}</span>
               <span className="font-sans text-[11px] tracking-wide text-text-muted">
                 Applies automatically when this agent is idle.
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                size="xs"
-                disabled={busy}
-                onClick={() => void confirm()}
-                className="min-h-[44px]"
-              >
+              <Button size="xs" disabled={busy} onClick={() => void confirm()} className="min-h-[44px]">
                 {busy ? 'Saving…' : 'Save'}
               </Button>
               <Button
@@ -255,13 +229,9 @@ export function HomeRow({
               className="group -mx-2 -my-1 flex min-w-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-1 outline-none transition-colors hover:bg-surface-elevated focus-visible:bg-surface-elevated"
             >
               {value ? (
-                <span className="block break-words font-serif text-[13px] md:text-[15px] text-text">
-                  {value}
-                </span>
+                <span className="block break-words font-serif text-[13px] md:text-[15px] text-text">{value}</span>
               ) : (
-                <span className="font-serif italic text-[14px] text-text-subtle">
-                  Not configured
-                </span>
+                <span className="font-serif italic text-[14px] text-text-subtle">Not configured</span>
               )}
               <span className="font-sans text-[12px] text-accent opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 [@media(hover:none)]:opacity-50">
                 Change
@@ -407,12 +377,12 @@ export function ProviderInlineRow({
   const draftProviderUnavailableHint = providerAvailability
     ? providerUnavailableHint(draftProvider, providerAvailability)
     : undefined;
+  const draftProviderAuthority = providerModelAuthorityLabel(draftProvider, providerAvailability);
   const draftProviderInstalled =
     !providerAvailability || !draftProvider || providerReady(draftProvider, providerAvailability);
   const nextEffort = hasDraftEffort ? draftEffort : undefined;
   const currentEffort = hasCurrentEffort ? effort : undefined;
-  const providerDraftChanged =
-    draftKind !== kind || draftModel !== model || nextEffort !== currentEffort;
+  const providerDraftChanged = draftKind !== kind || draftModel !== model || nextEffort !== currentEffort;
   const saveBlocked = providerDraftChanged && !draftProviderInstalled;
 
   function providerSelectable(option: ProviderCatalogEntry): boolean {
@@ -518,10 +488,13 @@ export function ProviderInlineRow({
               {draftProviderUnavailableHint}
             </div>
           )}
+          {draftProviderAuthority && !draftProviderUnavailableHint && (
+            <div className="max-w-xl font-sans text-[10px] leading-snug text-text-subtle">{draftProviderAuthority}</div>
+          )}
           {kindChanged && (
             <div className="max-w-xl font-sans text-[11px] leading-snug text-text-muted">
-              Switching provider starts a fresh provider session. MEMORY.md, notes, and activity
-              history stay intact; the old provider session is archived.
+              Switching provider starts a fresh provider session. MEMORY.md, notes, and activity history stay intact;
+              the old provider session is archived.
             </div>
           )}
           <div className="flex items-center gap-2">
@@ -542,9 +515,7 @@ export function ProviderInlineRow({
               {providerKindLabel(kind, providerOptions)}
             </span>
             <span className="font-sans mx-1.5 text-[12px] text-text-subtle">·</span>
-            <span className="font-serif text-[13px] md:text-[15px] text-text">
-              {providerValueLabel(model) || '—'}
-            </span>
+            <span className="font-serif text-[13px] md:text-[15px] text-text">{providerValueLabel(model) || '—'}</span>
             {hasCurrentEffort && (
               <>
                 <span className="font-sans mx-1.5 text-[12px] text-text-subtle">·</span>
@@ -600,10 +571,7 @@ export function ProviderEnvRow({
   }
 
   function addRow() {
-    setRows((current) => [
-      ...current,
-      { id: `new-${Date.now()}-${current.length}`, key: '', value: '' },
-    ]);
+    setRows((current) => [...current, { id: `new-${Date.now()}-${current.length}`, key: '', value: '' }]);
     setError(undefined);
     setSaved(false);
   }
@@ -647,14 +615,10 @@ export function ProviderEnvRow({
             className="group -mx-2 -my-1 flex min-w-0 cursor-pointer items-baseline gap-2 rounded-sm px-2 py-1 outline-none transition-colors hover:bg-surface-elevated focus-visible:bg-surface-elevated"
           >
             <span className="font-serif text-[13px] md:text-[15px] text-text">
-              {keys.length === 0
-                ? 'None'
-                : `${keys.length} variable${keys.length === 1 ? '' : 's'}`}
+              {keys.length === 0 ? 'None' : `${keys.length} variable${keys.length === 1 ? '' : 's'}`}
             </span>
             {keys.length > 0 && (
-              <span className="max-w-sm truncate font-mono text-[12px] text-text-muted">
-                {keys.join(', ')}
-              </span>
+              <span className="max-w-sm truncate font-mono text-[12px] text-text-muted">{keys.join(', ')}</span>
             )}
             <span className="font-sans text-[12px] text-accent opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 [@media(hover:none)]:opacity-50">
               Advanced
@@ -666,9 +630,7 @@ export function ProviderEnvRow({
         <div className="space-y-3">
           <div className="space-y-2">
             {rows.length === 0 && (
-              <div className="font-serif text-[14px] italic text-text-subtle">
-                No launch environment variables.
-              </div>
+              <div className="font-serif text-[14px] italic text-text-subtle">No launch environment variables.</div>
             )}
             {rows.map((row) => (
               <div
@@ -699,8 +661,7 @@ export function ProviderEnvRow({
                   disabled={busy}
                   onClick={() => {
                     if (row.originalKey) updateRow(row.id, { deleted: !row.deleted });
-                    else
-                      setRows((current) => current.filter((candidate) => candidate.id !== row.id));
+                    else setRows((current) => current.filter((candidate) => candidate.id !== row.id));
                   }}
                 >
                   {row.deleted ? 'Keep' : 'Remove'}
@@ -714,8 +675,8 @@ export function ProviderEnvRow({
             ))}
           </div>
           <div className="font-sans text-[11px] leading-snug text-text-muted">
-            Values are write-only after save. Anima-managed keys are not saved here; PATH is
-            allowed, with Anima's bin directory prepended at launch.
+            Values are write-only after save. Anima-managed keys are not saved here; PATH is allowed, with Anima's bin
+            directory prepended at launch.
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" size="xs" variant="outline" disabled={busy} onClick={addRow}>
@@ -725,13 +686,7 @@ export function ProviderEnvRow({
               <Check />
               {busy ? 'Saving…' : 'Save'}
             </Button>
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => setOpen(false)}
-            >
+            <Button type="button" size="xs" variant="ghost" disabled={busy} onClick={() => setOpen(false)}>
               <X />
               Cancel
             </Button>
@@ -793,9 +748,7 @@ function draftRowsFor(env?: Record<string, string>): EnvDraftRow[] {
     }));
 }
 
-function envPatchFromDraft(
-  rows: EnvDraftRow[],
-): { patch: Record<string, string | null> } | { error: string } {
+function envPatchFromDraft(rows: EnvDraftRow[]): { patch: Record<string, string | null> } | { error: string } {
   const patch: Record<string, string | null> = {};
   const seen = new Set<string>();
   for (const row of rows) {
@@ -831,21 +784,13 @@ function envPatchFromDraft(
 
 // ── Provider helpers ──────────────────────────────────────────────────────────
 
-export function modelOptionsFor(
-  provider: AgentProviderConfig,
-  providerOptions: ProviderCatalogEntry[],
-): string[] {
-  const catalogModels =
-    providerOptions.find((option) => option.kind === provider.kind)?.models ?? [];
+export function modelOptionsFor(provider: AgentProviderConfig, providerOptions: ProviderCatalogEntry[]): string[] {
+  const catalogModels = providerOptions.find((option) => option.kind === provider.kind)?.models ?? [];
   return [...catalogModels, provider.model].filter((m): m is string => Boolean(m));
 }
 
-export function effortOptionsFor(
-  provider: AgentProviderConfig,
-  providerOptions: ProviderCatalogEntry[],
-): string[] {
-  const catalogEfforts =
-    providerOptions.find((option) => option.kind === provider.kind)?.reasoningEfforts ?? [];
+export function effortOptionsFor(provider: AgentProviderConfig, providerOptions: ProviderCatalogEntry[]): string[] {
+  const catalogEfforts = providerOptions.find((option) => option.kind === provider.kind)?.reasoningEfforts ?? [];
   if (catalogEfforts.length === 0) return [];
   const providerEffort = 'reasoningEffort' in provider ? provider.reasoningEffort : undefined;
   return [...catalogEfforts, providerEffort].filter((effort): effort is string => Boolean(effort));

@@ -6,6 +6,7 @@ export const ProviderCliInstallSource = z.enum([
   'claude-native',
   'codex-npm-global',
   'kimi-native',
+  'grok-native',
   'unknown',
 ]);
 export type ProviderCliInstallSource = z.infer<typeof ProviderCliInstallSource>;
@@ -35,9 +36,7 @@ export const ProviderCliUpgradeOperation = z.object({
   status: z.enum(['idle', 'running', 'succeeded', 'failed']),
   targetVersion: z.string().optional(),
 });
-export type ProviderCliUpgradeOperation = z.infer<
-  typeof ProviderCliUpgradeOperation
->;
+export type ProviderCliUpgradeOperation = z.infer<typeof ProviderCliUpgradeOperation>;
 
 export const ProviderCliRow = z.object({
   agents: z.array(ProviderCliAgentImpact),
@@ -55,15 +54,7 @@ export const ProviderCliRow = z.object({
   provider: ProviderUsageKind,
   realPath: z.string().optional(),
   sourceDetail: z.string().optional(),
-  state: z.enum([
-    'not_installed',
-    'not_checked',
-    'current',
-    'available',
-    'error',
-    'manual',
-    'unknown',
-  ]),
+  state: z.enum(['not_installed', 'not_checked', 'current', 'available', 'error', 'manual', 'unknown']),
   updateAvailable: z.boolean(),
   updateMode: z.enum(['managed', 'manual', 'unavailable']),
 });
@@ -74,9 +65,7 @@ export const ProviderCliStatusResponse = z.object({
   providers: z.array(ProviderCliRow),
   upgradeLocked: z.boolean(),
 });
-export type ProviderCliStatusResponse = z.infer<
-  typeof ProviderCliStatusResponse
->;
+export type ProviderCliStatusResponse = z.infer<typeof ProviderCliStatusResponse>;
 
 export const ProviderCliApplyResponse = z.object({
   installedVersion: z.string(),

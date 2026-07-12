@@ -36,7 +36,9 @@ test('web API serves the web app and agents API', async () => {
 
       const statusesRes = await fetch(`http://127.0.0.1:${address.port}/api/agent-statuses`);
       assert.equal(statusesRes.status, 200);
-      const statusesBody = (await statusesRes.json()) as Array<{ agentId: string }>;
+      const statusesBody = (await statusesRes.json()) as Array<{
+        agentId: string;
+      }>;
       assert.ok(Array.isArray(statusesBody));
       assert.ok(statusesBody.some((s) => s.agentId === 'anima'));
 
@@ -49,7 +51,9 @@ test('web API serves the web app and agents API', async () => {
       assert.deepEqual(await orderWrite.json(), { sidebarOrder: { agents: ['anima'], kbs: ['team'] } });
       const orderRead = await fetch(`http://127.0.0.1:${address.port}/api/sidebar-order`);
       assert.equal(orderRead.status, 200);
-      assert.deepEqual(await orderRead.json(), { sidebarOrder: { agents: ['anima'], kbs: ['team'] } });
+      assert.deepEqual(await orderRead.json(), {
+        sidebarOrder: { agents: ['anima'], kbs: ['team'] },
+      });
 
       const platformReadDefault = await fetch(`http://127.0.0.1:${address.port}/api/workspace-platform`);
       assert.equal(platformReadDefault.status, 200);
@@ -90,8 +94,15 @@ test('web API reports provider availability', async () => {
 
       const response = await fetch(`http://127.0.0.1:${address.port}/api/provider-availability`);
       assert.equal(response.status, 200);
-      const body = (await response.json()) as { providers: Array<{ authed?: unknown; kind: string; present: unknown }> };
-      assert.deepEqual(body.providers.map((provider) => provider.kind).sort(), ['claude-code', 'codex-cli', 'kimi-cli']);
+      const body = (await response.json()) as {
+        providers: Array<{ authed?: unknown; kind: string; present: unknown }>;
+      };
+      assert.deepEqual(body.providers.map((provider) => provider.kind).sort(), [
+        'claude-code',
+        'codex-cli',
+        'grok-cli',
+        'kimi-cli',
+      ]);
       for (const provider of body.providers) {
         assert.equal(typeof provider.present, 'boolean');
         assert.equal('authed' in provider, false);
@@ -198,13 +209,14 @@ test('server-info exposes blocked standalone restart results for honest UI error
       };
       assert.equal(body.lastRestart?.status, 'blocked');
       assert.equal(body.lastRestart?.reason, 'drain_timeout');
-      assert.deepEqual(body.lastRestart?.blockers?.map((blocker) => ({
-        agentId: blocker.agentId,
-        itemId: blocker.itemId,
-        status: blocker.status,
-      })), [
-        { agentId: 'runner', itemId: 'item_running', status: 'running' },
-      ]);
+      assert.deepEqual(
+        body.lastRestart?.blockers?.map((blocker) => ({
+          agentId: blocker.agentId,
+          itemId: blocker.itemId,
+          status: blocker.status,
+        })),
+        [{ agentId: 'runner', itemId: 'item_running', status: 'running' }],
+      );
       assert.equal(body.lastRestart?.logPath, join(stateDir, 'logs', 'services-restart.log'));
     } finally {
       server.close();
@@ -247,7 +259,9 @@ test('dashboard auth protects dashboard APIs and static app while leaving health
 
         const unauthenticatedAgents = await fetch(`${base}/api/agents`);
         await assertStatus(unauthenticatedAgents, 401, 'unauthenticated agents');
-        const unauthenticatedBody = (await unauthenticatedAgents.json()) as { error?: string };
+        const unauthenticatedBody = (await unauthenticatedAgents.json()) as {
+          error?: string;
+        };
         assert.equal(unauthenticatedBody.error, 'authentication_required');
 
         const unauthenticatedKbRaw = await fetch(`${base}/kb/raw/test/docs/report.html`);
@@ -271,18 +285,24 @@ test('dashboard auth protects dashboard APIs and static app while leaving health
         await assertStatus(assetLikeAppRoute, 404, 'asset-like app route');
         assert.doesNotMatch(assetLikeAppRoute.headers.get('content-type') ?? '', /text\/html/);
 
-        const badLogin = await postJson(`${base}/api/auth/login`, { password: 'wrong password' });
+        const badLogin = await postJson(`${base}/api/auth/login`, {
+          password: 'wrong password',
+        });
         await assertStatus(badLogin, 401, 'bad login');
         assert.equal(badLogin.headers.get('set-cookie')?.includes('Max-Age=0'), true);
 
-        const goodLogin = await postJson(`${base}/api/auth/login`, { password: 'correct horse battery staple' });
+        const goodLogin = await postJson(`${base}/api/auth/login`, {
+          password: 'correct horse battery staple',
+        });
         await assertStatus(goodLogin, 200, 'good login');
         const sessionCookie = goodLogin.headers.get('set-cookie')?.split(';')[0];
         assert.ok(sessionCookie?.startsWith('anima_dashboard_session='));
         if (!sessionCookie) throw new Error('Expected dashboard auth session cookie');
 
         await assertStatus(
-          await fetch(`${base}/api/agents`, { headers: { cookie: sessionCookie } }),
+          await fetch(`${base}/api/agents`, {
+            headers: { cookie: sessionCookie },
+          }),
           200,
           'authenticated agents',
         );

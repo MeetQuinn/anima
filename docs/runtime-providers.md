@@ -1,6 +1,6 @@
 # Provider Layer
 
-This document explains the layer where Anima talks to an underlying provider such as Codex CLI, Claude Code, or Kimi CLI.
+This document explains the layer where Anima talks to an underlying provider such as Codex CLI, Claude Code, Kimi CLI, or Grok Build.
 
 It intentionally does not re-explain Slack routing, reminder scheduling, inbox ingestion, or the web app. For the system map, start with [Architecture overview](architecture/overview.md).
 
@@ -52,7 +52,7 @@ export interface AgentRuntime {
 
 `close` is optional. It is for provider adapters that keep resources alive across items, such as a persistent child process. `AgentRuntimeCloseOptions` lets the caller choose the kill signal and a force-kill deadline.
 
-Controller-style adapters (Codex app-server, Claude stream-json, Kimi ACP) may keep a provider child warm after a turn so the next item can reuse the session. Once no item is active, `providerChildIdleTimeoutMs` bounds that warm child before Anima terminates it.
+Controller-style adapters (Codex app-server, Claude stream-json, Kimi ACP, and Grok ACP) may keep a provider child warm after a turn so the next item can reuse the session. Once no item is active, `providerChildIdleTimeoutMs` bounds that warm child before Anima terminates it.
 
 `health` is optional. It returns a snapshot of the adapter's child-process state (whether a child is expected, and how the live one looks) for the runtime health service.
 
@@ -163,7 +163,8 @@ They are used to resume the underlying tool's native context:
 
 - Codex: the stored id is the Codex thread id;
 - Claude: the stored id is the Claude Code session id;
-- Kimi: the stored id is the Kimi ACP session id.
+- Kimi: the stored id is the Kimi ACP session id;
+- Grok: the stored id is the Grok ACP session id.
 
 When a provider emits a new session id, the adapter calls `effects.persistProviderSession`. The sink updates Anima's primary session record.
 
@@ -344,6 +345,47 @@ Active-run follow-up:
 - accepted input is queued into the live ACP session, and `kimi.steer.consumed` records when the
   session actually takes it.
 
+## Grok Build Adapter
+
+Implementation: `server/providers/grok.ts`.
+
+Current process model:
+
+- Anima starts one persistent `grok --no-auto-update agent --no-leader --always-approve ... stdio`
+  process and speaks ACP over stdio.
+- Fresh work uses `session/new`; a stored provider session uses Grok's supported `session/load`.
+  A confirmed missing session falls back to `session/new`. Anima does not emulate unsupported fork
+  or resume-prompt operations.
+- Each item uses `session/prompt`; compatible follow-ups are queued into that same ACP session.
+  Cancellation sends `session/cancel` before Anima tears down the child.
+- If the child exits mid-turn, the worker records `provider.crash.retry` and retries the same inbox
+  item. The persisted session is loaded again; the interrupted prompt is not assumed durable.
+  Follow-ups already accepted for that item are retained across child replacement and reach the
+  fresh child before their durable rows complete. Cancellation closes the in-memory queue before
+  `session/cancel`, so no later prompt begins after a stop.
+
+Model and context authority:
+
+- The configured and reported model is the actual ID returned by Grok's model catalog or prompt
+  result. `grok-build` is a marketing alias and is not accepted as stored model identity.
+- Model availability and context-window size are read at runtime and carry a check timestamp. If
+  the CLI cannot provide the catalog, operator surfaces say **not checked** instead of using a static
+  provider enum.
+- Grok Build currently exposes no supported account-usage endpoint to this adapter, so Anima does
+  not invent account or quota data for its usage row.
+
+Install and credential boundaries:
+
+- Automated probes pass `--no-auto-update`; only an explicit Providers-panel update invokes the
+  recognized native install's own updater.
+- Unknown or shadowed installs remain manual. Anima does not log out, copy credentials, edit PATH,
+  migrate `GROK_HOME`, or install Grok Build automatically.
+
+Evaluation boundary: earlier research made Grok Build look strongest on long terminal tasks, but it
+did not establish that Grok Build beats Claude Code or Codex on Anima repository accuracy or
+documentation work. Adding the adapter does not move an existing agent or recommend a provider
+switch.
+
 ## Agent Activities
 
 Provider adapters write activities so the user can inspect what happened without reading raw provider logs.
@@ -370,7 +412,7 @@ Slack tool activities are separate. When the spawned code agent calls `anima mes
 
 ## Current Boundaries and Tradeoffs
 
-- Codex, Claude, and Kimi all keep provider continuity through a persisted provider session id and a persistent child process for the lifetime of the worker.
+- Codex, Claude, Kimi, and Grok all keep provider continuity through a persisted provider session id and a persistent child process for the lifetime of the worker.
 - Auto-compact is provider-owned. Anima observes compact events and records them; it does not perform compaction itself.
 - Active-run follow-up append is best-effort. If a provider rejects a follow-up, the item is requeued and processed after the active item.
 - An accepted follow-up item is considered absorbed by the active item. It will not have a separate provider result.
@@ -389,6 +431,6 @@ A new provider should:
 6. implement `appendToActiveRun` using the provider's real in-flight input protocol;
 7. implement `close` if it keeps a process or connection alive beyond a single item.
 
-Adapters that keep one long-lived child-process controller per runtime (the Claude stream-json, Codex, and Kimi shape) should extend `ControllerAgentRuntime` in `server/providers/provider-runtime.ts`. It owns the controller slot, active-run tracking, `close`/`health`/`requestDrain`, child spawning, and the `runtime.started`/`runtime.completed`/`runtime.failed` activity envelope; the adapter supplies only the provider protocol.
+Adapters that keep one long-lived child-process controller per runtime (the Claude stream-json, Codex, Kimi, and Grok shape) should extend `ControllerAgentRuntime` in `server/providers/provider-runtime.ts`. It owns the controller slot, active-run tracking, `close`/`health`/`requestDrain`, child spawning, and the `runtime.started`/`runtime.completed`/`runtime.failed` activity envelope; the adapter supplies only the provider protocol.
 
 The worker should not need provider-specific changes for a new adapter.

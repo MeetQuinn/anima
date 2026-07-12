@@ -79,22 +79,23 @@ export async function recordSessionRotationActivity(
 function shouldPersistRuntimeEvent(payload: Record<string, unknown> | undefined): boolean {
   const eventType = stringField(payload, 'eventType');
   if (!eventType) return true;
-  // Persist-side exception to the shared noise list: kimi context stats feed
+  // Persist-side exception to the shared noise list: ACP context stats feed
   // runtime session stats (updateRuntimeStats), so they are kept on disk even
   // though the read side never renders them.
-  if (eventType === 'kimi.context.stats') return true;
+  if (eventType === 'grok.context.stats' || eventType === 'kimi.context.stats') return true;
   return !isRuntimeEventNoise(eventType);
 }
 
 function shouldUpdateRuntimeStats(payload: Record<string, unknown> | undefined): boolean {
   const eventType = stringField(payload, 'eventType');
   return (
-    eventType === 'claude.session.stats'
-    || eventType === 'codex.session.stats'
-    || eventType === 'kimi.context.stats'
-    || eventType === 'claude.context.stats'
-    || eventType === 'codex.context.stats'
-    || eventType?.endsWith('.compact.completed') === true
+    eventType === 'claude.session.stats' ||
+    eventType === 'codex.session.stats' ||
+    eventType === 'grok.context.stats' ||
+    eventType === 'kimi.context.stats' ||
+    eventType === 'claude.context.stats' ||
+    eventType === 'codex.context.stats' ||
+    eventType?.endsWith('.compact.completed') === true
   );
 }
 

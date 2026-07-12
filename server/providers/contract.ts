@@ -2,6 +2,7 @@ import type {
   AgentProviderConfig,
   ClaudeCodeAgentProviderConfig,
   CodexCliAgentProviderConfig,
+  GrokCliAgentProviderConfig,
   KimiCliAgentProviderConfig,
 } from '../../shared/agent-config.js';
 import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
@@ -10,6 +11,7 @@ export type {
   AgentProviderConfig,
   ClaudeCodeAgentProviderConfig,
   CodexCliAgentProviderConfig,
+  GrokCliAgentProviderConfig,
   KimiCliAgentProviderConfig,
 };
 

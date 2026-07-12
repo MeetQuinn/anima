@@ -61,7 +61,7 @@ export function isNarrativeStep(activity: ActivityRecord): boolean {
     // anima.* started rows are dropped upstream in buildActivityFeed (not seen here).
     const payload = activity.payload ?? {};
     const tool = String(payload['providerToolName'] || payload['tool'] || '').toLowerCase();
-    const bare = tool.replace(/^(claude|codex|kimi)\./, '');
+    const bare = tool.replace(/^(claude|codex|grok|kimi)\./, '');
     return [
       'read',
       'readfile',
@@ -105,8 +105,7 @@ export function isNarrativeStep(activity: ActivityRecord): boolean {
   if (activity.type === 'runtime.completed') return true; // Idle closure
   if (activity.type === 'runtime.aborted') return true; // Runtime stop/restart
   if (activity.type === 'anima.session.rotate') return true;
-  if (activity.type === 'anima.subscription.add' || activity.type === 'anima.subscription.remove')
-    return true;
+  if (activity.type === 'anima.subscription.add' || activity.type === 'anima.subscription.remove') return true;
 
   // agent.text = model output text surfaced as a step (e.g. Codex plain-text
   // responses). Visible in the default conversation narrative, rendered as a
@@ -130,10 +129,7 @@ export function activityIsFailure(activity: ActivityRecord): boolean {
   if (activity.type === 'memory_coherence.outcome') {
     return activity.payload?.['outcome'] === 'failed';
   }
-  if (
-    activity.type === 'runtime.event' &&
-    String(activity.payload?.['eventType'] ?? '').endsWith('.failed')
-  )
+  if (activity.type === 'runtime.event' && String(activity.payload?.['eventType'] ?? '').endsWith('.failed'))
     return true;
   return (
     activity.type.endsWith('.failed') ||
@@ -144,10 +140,7 @@ export function activityIsFailure(activity: ActivityRecord): boolean {
 
 export function activityRow(activity: ActivityRecord): ActivityRow {
   const payload = activity.payload ?? {};
-  const tool = String(payload['providerToolName'] || payload['tool'] || '').replace(
-    /^claude\./,
-    '',
-  );
+  const tool = String(payload['providerToolName'] || payload['tool'] || '').replace(/^claude\./, '');
   const normalized = tool.toLowerCase();
 
   if (activity.type === 'memory_coherence.outcome') {
@@ -213,16 +206,15 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
 
   if (normalized === 'read' || normalized === 'readfile' || normalized === 'readmediafile')
     return tool_('Read', pickString(payload, ['target']));
-  if (normalized === 'write' || normalized === 'writefile')
-    return tool_('Wrote', pickString(payload, ['target']));
+  if (normalized === 'write' || normalized === 'writefile') return tool_('Wrote', pickString(payload, ['target']));
   if (normalized === 'edit') return tool_('Edited', pickString(payload, ['target']), pickString(payload, ['diff']));
-  if (normalized === 'multiedit') return tool_('Edited', pickString(payload, ['target']), pickString(payload, ['diff']));
+  if (normalized === 'multiedit')
+    return tool_('Edited', pickString(payload, ['target']), pickString(payload, ['diff']));
   if (normalized === 'grep') return tool_('Searched', pickString(payload, ['target']));
   if (normalized === 'glob') return tool_('Listed', pickString(payload, ['target']));
   if (normalized === 'ls') return tool_('Listed', pickString(payload, ['target']));
   if (normalized === 'webfetch' || normalized === 'fetchurl') return tool_('Fetched', pickString(payload, ['target']));
-  if (normalized === 'websearch' || normalized === 'searchweb')
-    return tool_('Searched', webSearchTarget(payload));
+  if (normalized === 'websearch' || normalized === 'searchweb') return tool_('Searched', webSearchTarget(payload));
   if (normalized === 'todowrite' || normalized === 'settodolist') return tool_('Updated todos');
   if (normalized === 'toolsearch') return tool_('Searched tools', pickString(payload, ['target']));
 
@@ -247,8 +239,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     const ch = pickString(payload, ['channelName']);
     const id = pickString(payload, ['channel']);
     const dest = ch ? `#${ch}` : id || undefined;
-    const title =
-      typeof fileCount === 'number' && fileCount !== 1 ? `Sent ${fileCount} files` : 'Sent file';
+    const title = typeof fileCount === 'number' && fileCount !== 1 ? `Sent ${fileCount} files` : 'Sent file';
     return { title, target: dest, color: COLOR_TOOL, kind: 'tool' };
   }
 
@@ -257,11 +248,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     const display = pickString(payload, ['channelDisplayName']);
     const id = pickString(payload, ['channelId', 'channel']);
     const count = payload['messageCount'];
-    const dest = ch
-      ? `#${ch.replace(/^#/, '')}`
-      : display
-        ? display
-        : id || '?';
+    const dest = ch ? `#${ch.replace(/^#/, '')}` : display ? display : id || '?';
     const slice = readSliceLabel(payload);
     const countStr = count !== undefined ? `${count} messages` : undefined;
     const target = [dest, slice, countStr].filter(Boolean).join(' · ');
@@ -276,9 +263,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   if (normalized === 'anima.reminder.schedule') {
     const name = reminderName(payload);
     const dueAt = pickString(payload, ['nextDueAt']);
-    const target = dueAt
-      ? (name ? `${name} · at ${formatTimeShort(dueAt)}` : `at ${formatTimeShort(dueAt)}`)
-      : name;
+    const target = dueAt ? (name ? `${name} · at ${formatTimeShort(dueAt)}` : `at ${formatTimeShort(dueAt)}`) : name;
     return {
       title: 'Scheduled reminder',
       target,
@@ -351,9 +336,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     const count = payload['archivedCount'];
     const note = pickString(payload, ['note']);
     const countStr =
-      typeof count === 'number'
-        ? `Archived ${count} provider session${count === 1 ? '' : 's'}`
-        : undefined;
+      typeof count === 'number' ? `Archived ${count} provider session${count === 1 ? '' : 's'}` : undefined;
     const target = [countStr, note].filter(Boolean).join(' · ') || undefined;
     return {
       title: 'Session rotated',
@@ -442,11 +425,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   if (activity.type === 'external.effect.completed') {
     if (String(payload['effect'] ?? '').toLowerCase() === 'slack.ask.post') {
       const audience = pickString(payload, ['allowedUserLabel']);
-      const title = payload['allowAnyone'] === true
-        ? 'Asked anyone'
-        : audience
-          ? `Asked ${audience}`
-          : 'Asked';
+      const title = payload['allowAnyone'] === true ? 'Asked anyone' : audience ? `Asked ${audience}` : 'Asked';
       return {
         title,
         ...truncatedTarget(askActivityTarget(payload), 220),
@@ -504,7 +483,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
 
   // Specific verb mappings for well-known tools not already handled above.
   // Strip provider prefix so codex.fileChange, kimi.StrReplaceFile etc. all match.
-  const bare = normalized.replace(/^(claude|codex|kimi|anima)\./, '');
+  const bare = normalized.replace(/^(claude|codex|grok|kimi|anima)\./, '');
   if (bare === 'filechange' || bare === 'strreplacefile') {
     return tool_('Edited', pickString(payload, ['target']), pickString(payload, ['diff']));
   }
@@ -534,9 +513,10 @@ function memoryCoherenceOutcomeRow(payload: Record<string, unknown>): ActivityRo
   const summary = pickString(payload, ['summary']);
   const failure = pickString(payload, ['failureReason']);
   const scheduled = pickString(payload, ['scheduledSlotLabel']);
-  const delay = typeof payload['delayMs'] === 'number' && payload['delayMs'] > 0
-    ? `delayed ${formatDurationMinutes(payload['delayMs'])}`
-    : '';
+  const delay =
+    typeof payload['delayMs'] === 'number' && payload['delayMs'] > 0
+      ? `delayed ${formatDurationMinutes(payload['delayMs'])}`
+      : '';
   const target = [summary || failure || scheduled, delay].filter(Boolean).join(' · ');
   if (outcome === 'failed') {
     return {
@@ -635,16 +615,12 @@ function outboundFailureRow(
   };
 }
 
-function runtimeEventRow(
-  eventType: string,
-  payload: Record<string, unknown>,
-): ActivityRow | undefined {
+function runtimeEventRow(eventType: string, payload: Record<string, unknown>): ActivityRow | undefined {
   if (eventType === 'provider.crash.retry') {
     const attempt = payload['attempt'];
     const maxRetries = payload['maxRetries'];
-    const label = typeof attempt === 'number' && typeof maxRetries === 'number'
-      ? `Retry ${attempt}/${maxRetries}`
-      : 'Retrying';
+    const label =
+      typeof attempt === 'number' && typeof maxRetries === 'number' ? `Retry ${attempt}/${maxRetries}` : 'Retrying';
     const error = pickString(payload, ['error']);
     return {
       title: 'Provider retry',
@@ -794,7 +770,7 @@ function askActivityTarget(payload: Record<string, unknown>): string {
 // disambiguation light without dragging in a full date library.
 
 function humanizeIdentifier(value: string): string {
-  const withoutPrefix = value.replace(/^(claude|codex|kimi|anima)[._-]/i, '');
+  const withoutPrefix = value.replace(/^(claude|codex|grok|kimi|anima)[._-]/i, '');
   const words = withoutPrefix
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
     .replace(/[._-]+/g, ' ')
