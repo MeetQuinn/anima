@@ -1,11 +1,6 @@
 import './styles.css';
 
-import {
-  encryptHumanTransfer,
-  localExpiry,
-  requestStateFromFragment,
-  type HumanHandoffRequest,
-} from './page';
+import { encryptSealedTransfer, handoffStateFromFragment } from './page';
 
 const appRoot = document.querySelector<HTMLElement>('#app');
 if (!appRoot) throw new Error('Handoff app root is missing');
@@ -23,14 +18,14 @@ function element<K extends keyof HTMLElementTagNameMap>(
 }
 
 function render(): void {
-  const state = requestStateFromFragment(window.location.hash);
+  const state = handoffStateFromFragment(window.location.hash);
   app.replaceChildren(siteHeader());
-  if (state.kind === 'error') {
-    app.append(errorView(state.title, state.message), siteFooter());
-    return;
-  }
-  document.title = `${state.request.targetKey} | Anima Secure Handoff`;
-  app.append(requestView(state.request), siteFooter());
+  app.append(
+    state.kind === 'ready'
+      ? encryptionView(state.publicKey)
+      : errorView(state.title, state.message),
+    siteFooter(),
+  );
 }
 
 function siteHeader(): HTMLElement {
@@ -40,125 +35,62 @@ function siteHeader(): HTMLElement {
   const names = element('div');
   names.append(
     element('p', 'brand-name', 'Anima'),
-    element('p', 'brand-product', 'Secure Handoff'),
+    element('p', 'brand-product', 'Local encryption'),
   );
   brand.append(names);
-  header.append(brand, element('p', 'origin-note', 'Browser-only encryption'));
+  header.append(brand);
   return header;
 }
 
 function siteFooter(): HTMLElement {
   const footer = element('footer', 'site-footer');
-  footer.append(
-    element('span', undefined, 'No account · no upload · no storage'),
-    element('span', undefined, 'Anima Secure Handoff v1'),
-  );
+  footer.textContent = 'No account · no upload · no storage';
   return footer;
 }
 
 function errorView(title: string, message: string): HTMLElement {
-  const main = element('main', 'error-layout');
-  const panel = element('section', 'error-panel');
+  const main = element('main', 'page-shell');
+  const panel = element('section', 'panel error-panel');
   panel.setAttribute('aria-labelledby', 'error-title');
-  const eyebrow = element('p', 'eyebrow', 'Unable to continue');
   const heading = element('h1', undefined, title);
   heading.id = 'error-title';
-  panel.append(eyebrow, heading, element('p', 'error-copy', message));
-  const boundary = element('p', 'boundary-copy');
-  boundary.textContent = 'No secret input is available for an invalid or expired request.';
-  panel.append(boundary);
+  panel.append(
+    element('p', 'eyebrow', 'Unable to continue'),
+    heading,
+    element('p', 'lede', message),
+  );
   main.append(panel);
   return main;
 }
 
-function requestView(request: HumanHandoffRequest): HTMLElement {
-  const main = element('main', 'handoff-layout');
-  const intro = element('section', 'request-summary');
-  intro.setAttribute('aria-labelledby', 'handoff-title');
-  intro.append(element('p', 'eyebrow', 'Secret requested'));
-  const heading = secretKeyHeading(request.targetKey);
+function encryptionView(publicKey: string): HTMLElement {
+  const main = element('main', 'page-shell');
+  const panel = element('section', 'panel');
+  panel.setAttribute('aria-labelledby', 'handoff-title');
+  panel.append(element('p', 'eyebrow', 'Browser-only'));
+  const heading = element('h1', undefined, 'Encrypt a secret');
   heading.id = 'handoff-title';
-  intro.append(
+  panel.append(
     heading,
     element(
       'p',
-      'request-lede',
-      `${request.recipientAgentId} is requesting this secret for a specific task. Confirm the request in Slack before continuing.`,
+      'lede',
+      'The value is encrypted in this browser. Only the matching private key can open it.',
     ),
-    requestLedger(request),
-    authenticityNote(request.recipientAgentId),
+    secretForm(publicKey),
   );
-
-  const action = element('section', 'handoff-action');
-  action.setAttribute('aria-label', 'Encrypt secret');
-  action.append(secretForm(request));
-  main.append(intro, action);
+  main.append(panel);
   return main;
 }
 
-function secretKeyHeading(key: string): HTMLHeadingElement {
-  const heading = element('h1', 'secret-key');
-  const parts = key.split('_');
-  parts.forEach((part, index) => {
-    const separator = index < parts.length - 1 ? '_' : '';
-    heading.append(document.createTextNode(`${part}${separator}`));
-    if (separator) heading.append(document.createElement('wbr'));
-  });
-  return heading;
-}
-
-function requestLedger(request: HumanHandoffRequest): HTMLElement {
-  const expiry = localExpiry(request);
-  const list = element('dl', 'request-ledger');
-  const rows: Array<[string, string, string?]> = [
-    ['Recipient', request.recipientAgentId],
-    ['Slack workspace', request.workspaceName, request.workspaceId],
-    ['Purpose', request.purpose],
-    ['Destination', `${request.recipientAgentId}'s local encrypted env`],
-    ['Expires', expiry.formatted, expiry.timezone],
-  ];
-  for (const [label, value, note] of rows) {
-    const row = element('div', 'ledger-row');
-    row.append(element('dt', undefined, label));
-    const detail = element('dd');
-    detail.append(document.createTextNode(value));
-    if (note) detail.append(element('span', 'ledger-note', note));
-    row.append(detail);
-    list.append(row);
-  }
-  return list;
-}
-
-function authenticityNote(recipientAgentId: string): HTMLElement {
-  const note = element('aside', 'authenticity-note');
-  note.append(
-    element('p', 'note-title', 'Confirm the sender in Slack'),
-    element(
-      'p',
-      undefined,
-      `This link controls who can decrypt what you enter: only ${recipientAgentId}. It does not prove who asked you to fill it. Use the originating Slack conversation as the identity check.`,
-    ),
-  );
-  return note;
-}
-
-function secretForm(request: HumanHandoffRequest): HTMLElement {
+function secretForm(publicKey: string): HTMLElement {
   const wrapper = element('div', 'form-stack');
-  const heading = element('h2', undefined, 'Encrypt in this browser');
-  wrapper.append(
-    heading,
-    element(
-      'p',
-      'local-proof',
-      'Encryption happens locally in your browser. This page does not store, send, or see your secret.',
-    ),
-  );
-
   const form = element('form', 'secret-form');
   form.noValidate = true;
   form.autocomplete = 'off';
+
   const labelRow = element('div', 'label-row');
-  const label = element('label', undefined, 'Secret value');
+  const label = element('label', undefined, 'Secret');
   label.htmlFor = 'secret-value';
   const show = element('button', 'show-control', 'Show');
   show.type = 'button';
@@ -168,53 +100,44 @@ function secretForm(request: HumanHandoffRequest): HTMLElement {
   const input = element('input', 'secret-input');
   input.id = 'secret-value';
   input.name = 'secret';
-  input.type = 'password';
   input.autocomplete = 'off';
   input.spellcheck = false;
   input.required = true;
-  input.setAttribute('aria-describedby', 'secret-boundary form-status');
+  input.type = 'password';
+  input.setAttribute('aria-describedby', 'form-status');
 
   show.addEventListener('click', () => {
-    const visible = input.type === 'text';
-    input.type = visible ? 'password' : 'text';
-    show.textContent = visible ? 'Show' : 'Hide';
-    show.setAttribute('aria-pressed', String(!visible));
+    const masked = input.type === 'password';
+    input.type = masked ? 'text' : 'password';
+    show.textContent = masked ? 'Hide' : 'Show';
+    show.setAttribute('aria-pressed', String(masked));
     input.focus();
   });
 
-  const boundary = element(
-    'p',
-    'category-boundary',
-    'This transfers an anima env secret. Provider logins (Claude/Codex) and Slack/Feishu credentials cannot be transferred here.',
-  );
-  boundary.id = 'secret-boundary';
   const status = element('p', 'form-status');
   status.id = 'form-status';
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
-  const submit = element('button', 'primary-action', `Encrypt for ${request.recipientAgentId}`);
+  const submit = element('button', 'primary-action', 'Encrypt');
   submit.type = 'submit';
 
-  form.append(labelRow, input, boundary, status, submit);
+  form.append(labelRow, input, status, submit);
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (!input.value) {
-      status.textContent = 'Enter the secret value before encrypting.';
+      status.textContent = 'Enter a value before encrypting.';
       input.focus();
       return;
     }
     submit.disabled = true;
     status.textContent = 'Encrypting locally…';
     try {
-      const transfer = await encryptHumanTransfer(request, input.value);
+      const transfer = await encryptSealedTransfer(publicKey, input.value);
       input.value = '';
-      input.type = 'password';
-      show.textContent = 'Show';
-      show.setAttribute('aria-pressed', 'false');
-      wrapper.replaceChildren(resultView(transfer.fencedBox, transfer.fingerprint));
+      wrapper.replaceChildren(resultView(transfer.fencedBox));
     } catch (error) {
       status.textContent =
-        error instanceof Error ? error.message : 'The secret could not be encrypted.';
+        error instanceof Error ? error.message : 'The value could not be encrypted.';
       submit.disabled = false;
     }
   });
@@ -223,56 +146,36 @@ function secretForm(request: HumanHandoffRequest): HTMLElement {
   return wrapper;
 }
 
-function resultView(fencedBox: string, fingerprint: string): HTMLElement {
+function resultView(fencedBox: string): HTMLElement {
   const result = element('section', 'result-view');
   result.setAttribute('aria-labelledby', 'result-title');
-  result.append(element('p', 'eyebrow success', 'Encrypted locally'));
-  const heading = element('h2', undefined, 'Return to Slack');
+  result.append(element('p', 'eyebrow success', 'Encrypted'));
+  const heading = element('h2', undefined, 'Copy the encrypted value');
   heading.id = 'result-title';
-  result.append(
-    heading,
-    element(
-      'p',
-      'result-copy',
-      'Copy the encrypted block, return to the originating Slack conversation, and paste the entire block exactly as copied.',
-    ),
-  );
+  result.append(heading, element('p', 'lede', 'Send this entire block back exactly as copied.'));
 
   const output = element('textarea', 'encrypted-output');
   output.readOnly = true;
   output.value = fencedBox;
-  output.rows = 7;
-  output.setAttribute('aria-label', 'Encrypted handoff block');
+  output.rows = 8;
+  output.setAttribute('aria-label', 'Encrypted value');
   const copyStatus = element('p', 'form-status');
   copyStatus.setAttribute('role', 'status');
   copyStatus.setAttribute('aria-live', 'polite');
-  const copy = element('button', 'primary-action', 'Copy encrypted block');
+  const copy = element('button', 'primary-action', 'Copy encrypted value');
   copy.type = 'button';
   copy.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(fencedBox);
       copy.textContent = 'Copied';
-      copyStatus.textContent =
-        'Encrypted block copied. Paste it into the originating Slack conversation.';
+      copyStatus.textContent = 'Encrypted value copied.';
     } catch {
       output.focus();
       output.select();
-      copyStatus.textContent =
-        'Clipboard access failed. The encrypted block is selected for manual copying.';
+      copyStatus.textContent = 'Clipboard access failed. The encrypted value is selected.';
     }
   });
-
-  const confirm = element('div', 'confirmation-code');
-  confirm.append(
-    element('span', undefined, 'Confirmation code'),
-    element('code', undefined, fingerprint),
-  );
-  const caution = element(
-    'p',
-    'fingerprint-note',
-    'The receiver should report the same code after accepting. This short code is only a confirmation aid for high-entropy tokens; it is not safe evidence for passwords, PINs, or other guessable values.',
-  );
-  result.append(output, copy, copyStatus, confirm, caution);
+  result.append(output, copy, copyStatus);
   return result;
 }
 

@@ -51,45 +51,44 @@ There is also `anima env source`, which prints shell export lines for non-secret
 excludes secrets by default; keep it that way. Secrets belong inside `anima env run`, never
 exported into your shell.
 
-### Hand a secret to another agent
+### Transfer a secret
 
-Use the one-time handoff commands when another trusted agent in the same Slack workspace needs a
-secret that is already in your `anima env` store. Keep the request and encrypted response in the
-channel or thread where the work is happening so the grant remains visible to the team.
+Use the same one-time public-key flow for an agent or a human. Keep the request and encrypted
+response in the channel or thread where the work is happening. In the message carrying the key,
+state what you need and why so the grant remains visible to the team.
 
-The receiving agent creates a request that names the expected sender and explains the purpose:
-
-```
-anima env handoff request SERVICE_TOKEN \
-  --from nora \
-  --purpose "Run the release verification job"
-```
-
-Send the complete fenced `asec_req_v1_...` block exactly as printed. The named sender decides
-whether to grant it, then encrypts one of their existing secret env values:
+The receiving agent creates a one-time key:
 
 ```
-anima env handoff send 'asec_req_v1_...' --from-key SOURCE_TOKEN
+anima env handoff receive
 ```
 
-The receiver sends no secret merely by receiving the Slack message. They explicitly accept the
-complete fenced `asec_box_v1_...` block:
+For another agent, send the complete fenced `asec_key_v1_...` block. The sending agent decides
+whether to grant the request, then encrypts one of their existing secret env values:
 
 ```
-anima env handoff accept 'asec_box_v1_...'
+anima env handoff send 'asec_key_v1_...' --from-key SOURCE_TOKEN
 ```
 
-Acceptance writes directly into the receiver's encrypted env store and destroys the one-time
-receive key. It rejects an existing target key unless the receiver deliberately passes
-`--replace`. Use `anima env handoff cancel <request-id>` to destroy an unused request.
+For a human, send the printed `handoff.meetanima.online` link. The page encrypts locally and
+returns the same fenced `asec_sealed_v1_...` block as the agent command.
 
-Requests expire after 24 hours by default. Use `--expires 1h` to shorten one, between 5 minutes and
-7 days. The expected sender is required by default; `--allow-any-sender` is an explicit broader
-workspace policy and must not be used merely to save a round trip.
+The key and link contain no agent, workspace, env key, purpose, or expiry. Choose the destination
+only when accepting the returned block:
 
-The request and box are safe ciphertext/public metadata for Slack, but the source value must
-already be a secret env entry. This does not transfer Claude/Codex login state, Slack/Feishu
-credentials, or other Anima-managed credentials.
+```
+anima env handoff accept 'asec_sealed_v1_...' --key SERVICE_TOKEN
+```
+
+The private key remains local, expires after 24 hours by default, and is destroyed after one
+successful acceptance. Use `--expires 1h` to choose a lifetime between 5 minutes and 7 days.
+Acceptance rejects an existing destination unless the receiver deliberately passes `--replace`.
+Use the printed `s_...` id with `anima env handoff cancel <id>` to destroy an unused receive key.
+
+Slack carries only the public key and ciphertext. Identity and purpose come from the surrounding
+conversation, not from the cryptographic box. The source value for an agent send must already be a
+secret env entry. This does not transfer Claude/Codex login state, Slack/Feishu credentials, or
+other Anima-managed credentials.
 
 **Do not:**
 

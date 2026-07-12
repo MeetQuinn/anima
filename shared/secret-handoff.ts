@@ -2,6 +2,8 @@ import { PrivateKey, decrypt, encrypt } from 'eciesjs';
 
 export const HANDOFF_REQUEST_PREFIX = 'asec_req_v1_';
 export const HANDOFF_BOX_PREFIX = 'asec_box_v1_';
+export const SEALED_HANDOFF_KEY_PREFIX = 'asec_key_v1_';
+export const SEALED_HANDOFF_BOX_PREFIX = 'asec_sealed_v1_';
 export const MAX_HANDOFF_SECRET_BYTES = 4 * 1024;
 export const MAX_HANDOFF_SLACK_PAYLOAD_CHARS = 12_000;
 export const DEFAULT_HANDOFF_EXPIRY_MS = 24 * 60 * 60 * 1000;
@@ -78,6 +80,17 @@ export interface HandoffKeyPair {
   publicKey: string;
 }
 
+export interface SealedHandoffBox {
+  v: 1;
+  publicKey: string;
+  ciphertext: string;
+}
+
+export interface SealedHandoffSecretPayload {
+  v: 1;
+  value: string;
+}
+
 export interface CreateHandoffRequestInput {
   recipientAgentId: string;
   targetKey: string;
@@ -106,10 +119,88 @@ export function createHandoffKeyPair(): HandoffKeyPair {
   };
 }
 
+export function encodeSealedHandoffPublicKey(publicKey: string): string {
+  if (!PUBLIC_KEY.test(publicKey))
+    throw new Error('Sealed handoff public key is invalid');
+  return `${SEALED_HANDOFF_KEY_PREFIX}${publicKey}`;
+}
+
+export function parseSealedHandoffPublicKey(input: string): string {
+  const code = unwrapCode(input, SEALED_HANDOFF_KEY_PREFIX);
+  const publicKey = code.slice(SEALED_HANDOFF_KEY_PREFIX.length);
+  if (!PUBLIC_KEY.test(publicKey))
+    throw new Error('Sealed handoff public key is invalid');
+  if (encodeSealedHandoffPublicKey(publicKey) !== code)
+    throw new Error('Sealed handoff public key is not canonically encoded');
+  return publicKey;
+}
+
+export async function sealedHandoffKeyId(publicKey: string): Promise<string> {
+  const canonical = parseSealedHandoffPublicKey(encodeSealedHandoffPublicKey(publicKey));
+  const digest = new Uint8Array(
+    await crypto.subtle.digest('SHA-256', encoder.encode(canonical)),
+  );
+  return `s_${base64UrlEncode(digest).slice(0, 22)}`;
+}
+
+export function encodeSealedHandoffBox(box: SealedHandoffBox): string {
+  const canonical = canonicalSealedBox(validateSealedBox(box));
+  return `${SEALED_HANDOFF_BOX_PREFIX}${base64UrlEncode(
+    encoder.encode(JSON.stringify(canonical)),
+  )}`;
+}
+
+export function parseSealedHandoffBox(input: string): SealedHandoffBox {
+  const code = unwrapCode(input, SEALED_HANDOFF_BOX_PREFIX);
+  const encoded = code.slice(SEALED_HANDOFF_BOX_PREFIX.length);
+  const parsed = parseJsonObject(base64UrlDecode(encoded), 'sealed handoff box');
+  const box = validateSealedBox(parsed);
+  if (encodeSealedHandoffBox(box) !== code)
+    throw new Error('Sealed handoff box is not canonically encoded');
+  return box;
+}
+
+export async function encryptSealedHandoffSecret(
+  publicKeyInput: string,
+  value: string,
+): Promise<string> {
+  const publicKey = parseSealedHandoffPublicKey(publicKeyInput);
+  assertSecretValue(value);
+  const payload: SealedHandoffSecretPayload = { v: 1, value };
+  const plaintext = encoder.encode(JSON.stringify(payload));
+  const code = encodeSealedHandoffBox({
+    v: 1,
+    publicKey,
+    ciphertext: base64UrlEncode(encrypt(publicKey, plaintext)),
+  });
+  assertSealedSlackPayloadSize(code);
+  return code;
+}
+
+export function decryptSealedHandoffSecret(
+  privateKey: string,
+  boxInput: string,
+): SealedHandoffSecretPayload {
+  if (!PRIVATE_KEY.test(privateKey))
+    throw new Error('Pending sealed handoff private key is invalid');
+  const box = parseSealedHandoffBox(boxInput);
+  let plaintext: Uint8Array;
+  try {
+    plaintext = decrypt(privateKey, base64UrlDecode(box.ciphertext));
+  } catch {
+    throw new Error('Sealed handoff box could not be decrypted or was tampered with');
+  }
+  return validateSealedPayload(parseJsonObject(plaintext, 'sealed handoff secret payload'));
+}
+
 export function randomHandoffRequestId(): string {
   const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return base64UrlEncode(bytes);
+  let id: string;
+  do {
+    crypto.getRandomValues(bytes);
+    id = base64UrlEncode(bytes);
+  } while (id.startsWith('-'));
+  return id;
 }
 
 export function createHandoffRequest(
@@ -252,6 +343,17 @@ export async function handoffSecretFingerprint(value: string): Promise<string> {
 
 export function formatHandoffBoxForSlack(boxCode: string): string {
   const code = unwrapCode(boxCode, HANDOFF_BOX_PREFIX);
+  const formatted = `\`\`\`\n${code}\n\`\`\``;
+  if (formatted.length >= MAX_HANDOFF_SLACK_PAYLOAD_CHARS) {
+    throw new Error(
+      `Encrypted handoff exceeds ${MAX_HANDOFF_SLACK_PAYLOAD_CHARS - 1} Slack characters`,
+    );
+  }
+  return formatted;
+}
+
+export function formatSealedHandoffBoxForSlack(boxCode: string): string {
+  const code = unwrapCode(boxCode, SEALED_HANDOFF_BOX_PREFIX);
   const formatted = `\`\`\`\n${code}\n\`\`\``;
   if (formatted.length >= MAX_HANDOFF_SLACK_PAYLOAD_CHARS) {
     throw new Error(
@@ -430,6 +532,28 @@ function validateBox(value: unknown): HandoffBox {
   return { v: 1, requestId, ciphertext };
 }
 
+function validateSealedBox(value: unknown): SealedHandoffBox {
+  const object = asObject(value, 'sealed handoff box');
+  assertExactKeys(object, ['ciphertext', 'publicKey', 'v'], 'sealed handoff box');
+  if (object.v !== 1) throw new Error('Unsupported sealed handoff box version');
+  const publicKey = requiredString(object, 'publicKey');
+  if (!PUBLIC_KEY.test(publicKey))
+    throw new Error('Sealed handoff box public key is invalid');
+  const ciphertext = requiredString(object, 'ciphertext');
+  base64UrlDecode(ciphertext);
+  return { v: 1, publicKey, ciphertext };
+}
+
+function validateSealedPayload(value: unknown): SealedHandoffSecretPayload {
+  const object = asObject(value, 'sealed handoff secret payload');
+  assertExactKeys(object, ['v', 'value'], 'sealed handoff secret payload');
+  if (object.v !== 1)
+    throw new Error('Unsupported sealed handoff secret payload version');
+  const secret = requiredString(object, 'value', true);
+  assertSecretValue(secret);
+  return { v: 1, value: secret };
+}
+
 function validatePayload(value: unknown): HandoffSecretPayload {
   const object = asObject(value, 'handoff secret payload');
   const senderKind = requiredString(object, 'senderKind');
@@ -529,6 +653,10 @@ function canonicalBox(box: HandoffBox): Record<string, unknown> {
   return { v: 1, requestId: box.requestId, ciphertext: box.ciphertext };
 }
 
+function canonicalSealedBox(box: SealedHandoffBox): Record<string, unknown> {
+  return { v: 1, publicKey: box.publicKey, ciphertext: box.ciphertext };
+}
+
 function canonicalPayload(
   payload: HandoffSecretPayload,
 ): Record<string, unknown> {
@@ -567,6 +695,10 @@ function assertSecretValue(value: string): void {
 
 function assertSlackPayloadSize(code: string): void {
   formatHandoffBoxForSlack(code);
+}
+
+function assertSealedSlackPayloadSize(code: string): void {
+  formatSealedHandoffBoxForSlack(code);
 }
 
 function unwrapCode(input: string, prefix: string): string {
