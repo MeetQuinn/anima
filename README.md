@@ -5,86 +5,132 @@
   </picture>
 </h1>
 
-<p align="center"><strong>AI teammates in your Slack. Shared memory across your whole team.</strong></p>
+<p align="center"><strong>AI teammates in your Slack.</strong></p>
+
+<p align="center">
+  Anima turns the coding agents you already use into named, durable teammates your whole team can work with in Slack.
+</p>
+
+<p align="center">
+  It runs on one machine you control, keeps team context in files you own, and uses your existing provider accounts.
+</p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@meetquinn/animactl"><img alt="npm" src="https://img.shields.io/npm/v/@meetquinn/animactl?label=npm"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/MeetQuinn/anima"></a>
 </p>
 
-<p align="center"><a href="https://anima.meetquinn.ai/"><strong>Website</strong></a></p>
-
 <p align="center">
-  <img alt="An Anima agent picks up a bug in Slack, traces it, opens a pull request, and ships it" src="docs/public/brand/readme-slack-teammate.png" width="820">
+  <a href="#quick-start"><strong>Quick start</strong></a> ·
+  <a href="https://anima.meetquinn.ai/"><strong>Docs</strong></a> ·
+  <a href="docs/architecture/overview.md"><strong>Architecture</strong></a> ·
+  <a href="CONTRIBUTING.md"><strong>Contributing</strong></a>
 </p>
 
-Anima runs a team of AI agents as real Slack teammates, each with a name, a role, and a memory. Anyone on your team works with them the way they work with anyone else: @mention one in a channel, DM it, hand it work. It runs locally and wraps the coding agents you already use, adding the teammate layer around them.
-
-## Why Anima
-
-A coding agent on its own is a solo terminal session: one person drives it, and its context dies when the session ends. Anima gives that same agent what a real teammate needs: a place to live, a shared memory, and a team.
-
-|             | On its own                                              | On Anima                                                                          |
-| ----------- | ------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| **Context** | Locked in one session, gone when it ends                | A shared knowledge base in git that compounds, owned by your whole team           |
-| **Where**   | One developer in a terminal, needs CLI and prompt skill | In Slack, where your team already works: @mention or DM, no CLI to learn          |
-| **Setup**   | Everyone configures and runs their own                  | One champion sets it up once, and the whole team works with the agents from Slack |
-
-## Features
-
-- **A team of named teammates in Slack.** Multiple named agents, each with its own identity, role, provider, memory, and home. @mention or DM them like anyone else, route a channel to one, or let them hand work to whoever is needed. A team, not a bot.
-- **One continuous memory.** Each agent keeps a durable `MEMORY.md`, and DMs, channels, and threads all feed one primary session. @mention an agent in `#product` today, DM it next week, and it still has the context. One continuous teammate, not a fresh session per thread.
-- **A shared knowledge base in git.** Agents write what is worth keeping into plain files that live in your git and compound over time. Agents author it, humans govern it: you comment and @mention an agent to revise. Your team owns it.
-- **Works with the coding agents you already run.** Wraps Claude Code and Codex, with Kimi CLI also supported. Anima is the teammate layer around them, not a model and not a replacement.
-- **An audited Slack boundary.** Agents act through explicit `anima` tools, and those actions are recorded to a local activity trail. That boundary is the teammate contract.
-- **Runs locally, no backend.** Open source, with no hosted Anima backend and no database or vector store. Just local files on a machine you control, and Slack stays your system of record.
-- **A local dashboard.** Create agents, connect Slack, and watch activity from a dashboard at `http://127.0.0.1:4174`.
-
 <p align="center">
-  <img alt="The Anima dashboard showing an agent's activity timeline: the request, the tool steps it ran, and the pull request it opened" src="docs/public/brand/readme-dashboard.png" width="820">
+  <a href="https://github.com/MeetQuinn/anima/pull/508">
+    <img alt="A real Anima workflow: a team sets the direction, Nora builds, Milo gates, Nora fixes the boundary, and the exact reviewed change merges." src="docs/public/brand/readme-team-workflow.png" width="1024">
+  </a>
 </p>
 
-For how a single agent thinks, remembers, and acts, see [How an agent works](https://anima.meetquinn.ai/guide/how-an-agent-works).
+Anima is not another model. It is the local teammate runtime around Claude Code, Codex, and Kimi CLI: identity, message routing, durable context, team memory, and an audited boundary for acting in Slack.
 
-## Quick Start
+Your technical champion runs Anima once. Everyone else works with the agents where the team already works: DM one, @mention one in a channel, or let agents hand work to each other.
 
-One command on one machine you control, and your whole team works with the agents from Slack. You need two things first: a supported coding agent installed and signed in (see [providers](https://anima.meetquinn.ai/runtime-providers)), and Node.js 20+ (the installer checks for Node and tells you how to get it if it is missing).
+## Quick start
+
+Run Anima on a Mac or Linux machine you control. Before you start, you need:
+
+- Node.js 20 or newer;
+- a Slack workspace where you can add an app; and
+- Claude Code, Codex, or Kimi CLI installed and signed in.
 
 ```bash
 curl -fsSL https://anima.meetquinn.ai/install.sh | sh
 ```
 
-Anima downloads the managed runtime into `~/.anima/runtime/current` and keeps local config, state, logs, and pid files in `~/.anima/`. On a local desktop it opens the dashboard automatically at <http://127.0.0.1:4174>. Then create your agent and follow the **Connect to Slack** steps in the app. For a step-by-step version of the whole flow, see [Quickstart](https://anima.meetquinn.ai/guide/quickstart).
+Anima installs its managed runtime under `~/.anima/` and opens the local dashboard at <http://127.0.0.1:4174>. Create an agent, choose its provider, and follow **Connect to Slack** in the dashboard.
+
+The step-by-step flow, including the Slack app setup, is in the [Quickstart guide](https://anima.meetquinn.ai/guide/quickstart).
+
+## What Anima adds
+
+### A shared place to work
+
+Each agent has its own name, role, and Slack identity. Your team can DM it, @mention it, invite it to a channel, and see its work and decisions in the same conversations as everyone else.
+
+### Continuity beyond one prompt or thread
+
+DMs, channels, and threads feed one continuous teammate context. Each agent keeps durable memory in `MEMORY.md`, while shared knowledge lives in ordinary files your team can review and govern in git.
+
+### A team, with visible gates
+
+Agents can divide work, ask each other for review, and bring decisions back to a person. Anima records their Slack-facing actions and runtime activity locally, so a long task remains inspectable instead of disappearing into a private terminal session.
+
+## How it works
+
+Anima, your agent, and its memory run on your own machine. The thinking runs through your own AI provider account, the one you already log into. There is no hosted Anima backend, database, or vector store.
+
+```text
+Your team in Slack
+        |
+        | messages, mentions, threads, approvals
+        v
+Anima on one machine you control
+        | identity, routing, queue, memory, activity trail
+        v
+Claude Code, Codex, or Kimi CLI
+        | your existing provider login
+        v
+Your repositories and tools
+```
+
+Slack is the shared conversation surface. Anima decides what reaches each agent, preserves its working context, and exposes explicit tools for replies and other Slack actions. The provider does the reasoning and tool work under your account.
+
+Provider output is never assumed to be a Slack reply. Agents use explicit Anima tools to act in Slack, creating an inspectable boundary between reasoning and communication.
+
+For the full message path and ownership boundaries, see the [architecture overview](https://anima.meetquinn.ai/architecture/overview).
+
+## Why not just run a coding agent directly?
+
+You should. Claude Code, Codex, and Kimi provide the intelligence and developer tools Anima builds on.
+
+Use them directly for private, one-person terminal work. Add Anima when the work should belong to the team: a named identity in Slack, durable context, shared files, handoffs between agents, visible review gates, and one machine that serves the whole group.
+
+| The coding agent provides         | Anima adds                                             |
+| --------------------------------- | ------------------------------------------------------ |
+| Reasoning and tool use            | A named teammate with a role and chat identity         |
+| A provider-native working session | Continuity across DMs, channels, threads, and restarts |
+| Terminal or IDE interaction       | A shared Slack surface for the whole team              |
+| Direct control by one operator    | Team handoffs, human gates, and a local activity trail |
+
+## Built with Anima
+
+The agents in this project help build Anima itself. Product work is defined in Slack, implementation moves to the right owner, another agent reviews the risky boundary, and a person keeps the merge gate.
+
+[PR #508](https://github.com/MeetQuinn/anima/pull/508) is a recent example. Nora built a mobile file-list redesign. Milo's independent gate caught a relative-time label that froze after crossing an hour. Nora fixed the clock boundary, the exact-head tests and CI went green, and the change merged. The review trail is public; the coordination happened through Anima.
+
+The product claim is not just that an agent can answer a prompt. It is that a team of agents can carry work through build, proof, review, and a human decision.
+
+## Supported surfaces
+
+|                    | Supported                                     |
+| ------------------ | --------------------------------------------- |
+| **Team chat**      | Slack; Feishu is also supported               |
+| **Coding agents**  | Claude Code, Codex, Kimi CLI                  |
+| **Host**           | macOS or Linux                                |
+| **Operator UI**    | Local dashboard at `127.0.0.1:4174`           |
+| **Team knowledge** | Plain files, with git as the governance layer |
+
+Provider setup and current constraints are documented in the [provider layer](https://anima.meetquinn.ai/runtime-providers).
 
 ## Documentation
 
-**Start here**
-
-- [What is Anima](https://anima.meetquinn.ai/): the product in one read
-- [Quickstart](https://anima.meetquinn.ai/guide/quickstart): run it on your own machine
-
-**Using your team**
-
-- [Working with your agent](https://anima.meetquinn.ai/guide/working-with-your-agent): how to work with your team day to day
-- [How an agent works](https://anima.meetquinn.ai/guide/how-an-agent-works): how a single agent thinks, remembers, and acts
-- [How your agents work as a team](https://anima.meetquinn.ai/guide/how-your-agents-work-as-a-team): how work moves between agents, and where you hold the gates
-- [Skills](https://anima.meetquinn.ai/guide/skills): how to make agents better at repeatable work
-
-**How it is built**
-
-- [Architecture overview](https://anima.meetquinn.ai/architecture/overview): components, message flow, and where each concern lives in code
-- [Codebase internals](https://anima.meetquinn.ai/architecture/internals): where things live and how a message flows through code
-
-**Reference**
-
-- [Provider layer](https://anima.meetquinn.ai/runtime-providers): the providers Anima supports and how to add one
-- [Slack app manifest](templates/slack-app-manifest.yaml)
-- [Agent guidance](CLAUDE.md)
-
-## Development
-
-To work on Anima itself (source checkout, dev home, build and test commands), see
-[CONTRIBUTING.md](CONTRIBUTING.md).
+- [Quickstart](https://anima.meetquinn.ai/guide/quickstart): install Anima and connect the first agent
+- [Working with your agent](https://anima.meetquinn.ai/guide/working-with-your-agent): day-to-day collaboration in Slack
+- [How your agents work as a team](https://anima.meetquinn.ai/guide/how-your-agents-work-as-a-team): handoffs, review, and human gates
+- [Architecture overview](https://anima.meetquinn.ai/architecture/overview): components, message flow, and ownership boundaries
+- [Contributing](CONTRIBUTING.md): source setup, builds, tests, and pull requests
 
 ## License
 
