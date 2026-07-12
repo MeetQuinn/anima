@@ -40,9 +40,7 @@ export class SealedSecretHandoffPendingStore {
     private readonly animaHome: string = currentWriteRoot(),
   ) {
     if (!AGENT_ID.test(agentId)) throw new Error('Handoff agent id is invalid');
-    // Keep the existing directory so public keys issued before protocol unification
-    // remain consumable through their bounded seven-day lifetime.
-    this.directory = join(animaHome, 'agents', agentId, 'env', 'handoff', 'human');
+    this.directory = join(animaHome, 'agents', agentId, 'env', 'handoff', 'sealed');
   }
 
   async create(

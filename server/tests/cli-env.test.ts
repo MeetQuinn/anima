@@ -143,7 +143,7 @@ test('env handoff CLI transfers one sealed secret between agents and chooses the
     assert.match(malformedKey.stderr, /public key is invalid/);
     assert.doesNotMatch(malformedKey.stderr, /MISSING_TOKEN/);
 
-    const pendingFiles = join(stateDir, 'agents', 'milo', 'env', 'handoff', 'human');
+    const pendingFiles = join(stateDir, 'agents', 'milo', 'env', 'handoff', 'sealed');
     assert.equal((await stat(pendingFiles)).mode & 0o777, 0o700);
     const pendingFile = join(
       pendingFiles,

@@ -375,8 +375,7 @@ test('pending sealed handoff is private, single-use, and chooses its env key on 
     const path = pending.pendingPath(id);
     assert.equal(
       dirname(path),
-      join(animaHome, 'agents', 'milo', 'env', 'handoff', 'human'),
-      'the legacy directory remains readable during the bounded compatibility window',
+      join(animaHome, 'agents', 'milo', 'env', 'handoff', 'sealed'),
     );
     assert.equal((await stat(dirname(path))).mode & 0o777, 0o700);
     assert.equal((await stat(path)).mode & 0o777, 0o600);
