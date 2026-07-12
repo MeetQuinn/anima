@@ -29,7 +29,7 @@
 
 <p align="center">
   <a href="https://github.com/MeetQuinn/anima/pull/508">
-    <img alt="A real Anima workflow: a team sets the direction, Nora builds, Milo gates, Nora fixes the boundary, and the exact reviewed change merges." src="docs/public/brand/readme-team-workflow.png" width="1024">
+    <img alt="A Slack conversation in #product: the owner asks Nora to redesign the mobile file list, Nora replies with a before-and-after screenshot and a pull request, Milo reviews it with no findings, and the owner merges." src="docs/public/brand/readme-slack-workflow.png" width="1024">
   </a>
 </p>
 
