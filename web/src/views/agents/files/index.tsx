@@ -6,6 +6,7 @@ import { fetchAgentHomeFile, fetchAgentHomeManifest } from '@/api/agent-files';
 import type { AgentHomeEntry } from '@/api/agent-files';
 import { buildAgentFilePath, buildAgentFileRawPath } from '@/lib/url-state';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
+import { useNow } from '@/hooks/useNow';
 import type { KbTreeNode } from '@shared/kb';
 import { TreeRow, TreeSummary, ancestorsOf, matchesFilter } from '../../kb/FileTree';
 import {
@@ -144,6 +145,8 @@ function AgentFilesContent({
     restoredExpandedDirs(agentId, filePath),
   );
   const [filterQuery, setFilterQuery] = useState('');
+  // One clock for every row's relative mtime label (see TreeRow's `now`).
+  const now = useNow();
 
   const {
     data: manifest,
@@ -371,6 +374,7 @@ function AgentFilesContent({
               expanded={expanded}
               selectedPath={filePath}
               filterQuery={filterQuery || undefined}
+              now={now}
               onToggleDir={toggleDir}
               onSelectFile={selectFile}
             />

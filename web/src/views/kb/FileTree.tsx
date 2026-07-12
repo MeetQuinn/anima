@@ -88,6 +88,7 @@ export function TreeRow({
   expanded,
   selectedPath,
   filterQuery,
+  now,
   onToggleDir,
   onSelectFile,
 }: {
@@ -96,6 +97,11 @@ export function TreeRow({
   expanded: Set<string>;
   selectedPath: string | null;
   filterQuery?: string;
+  // Clock for the relative mtime labels. Owned by the tree surface (one
+  // useNow() per tree, NOT per row) so labels advance while the list stays
+  // open — a render-time `new Date()` here would freeze between data changes
+  // because TanStack structural sharing skips re-renders on identical payloads.
+  now: Date;
   onToggleDir: (path: string) => void;
   onSelectFile: (path: string) => void;
 }) {
@@ -138,7 +144,7 @@ export function TreeRow({
           )}
           <span ref={nameRef} className="truncate">{node.name}</span>
           <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-2 font-normal text-[12px] tabular-nums text-text-subtle md:hidden">
-            {node.mtime ? formatRelativeShort(node.mtime, new Date()) : null}
+            {node.mtime ? formatRelativeShort(node.mtime, now) : null}
             <ChevronRight
               className={`h-3.5 w-3.5 opacity-55 transition-transform ${isOpen ? 'rotate-90' : ''}`}
             />
@@ -153,6 +159,7 @@ export function TreeRow({
               expanded={expanded}
               selectedPath={selectedPath}
               filterQuery={filterQuery}
+              now={now}
               onToggleDir={onToggleDir}
               onSelectFile={onSelectFile}
             />
@@ -184,7 +191,7 @@ export function TreeRow({
       </span>
       {node.mtime ? (
         <span className="ml-auto shrink-0 pl-2 text-[12px] tabular-nums text-text-subtle md:hidden">
-          {formatRelativeShort(node.mtime, new Date())}
+          {formatRelativeShort(node.mtime, now)}
         </span>
       ) : null}
     </button>
