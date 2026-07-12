@@ -1,6 +1,7 @@
 import { nowIso } from '../ids.js';
 import { CodexAppServerController } from './codex-app-server.js';
 import { ControllerAgentRuntime } from './provider-runtime.js';
+import { withProviderCliLaunchPermit } from '../provider-cli/launch-gate.js';
 import {
   type AgentRuntimeFollowupInput,
   type AgentRuntimeFollowupResult,
@@ -63,7 +64,7 @@ export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerC
             if (!input.providerSession && this.slot.get()?.threadId) {
               await this.slot.reset();
             }
-            const controller = this.ensureController(input);
+            const controller = await this.ensureController(input);
             controller.attachRun(input);
             const thread = await controller.ensureThread(input, this.threadParams(input));
             await input.effects.persistProviderSession({
@@ -110,20 +111,24 @@ export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerC
     return { accepted: true, text: `appended to ${turnId}` };
   }
 
-  private ensureController(input: AgentRuntimeInput): CodexAppServerController {
+  private async ensureController(input: AgentRuntimeInput): Promise<CodexAppServerController> {
     const existing = this.slot.get();
     if (existing) return existing;
-    return this.spawnController(
-      {
-        args: codexAppServerArgs(this.env),
-        command: CODEX_COMMAND,
-        label: 'Codex app-server runtime',
-      },
-      input,
-      (child) => new CodexAppServerController(
-        child,
-        this.kind,
-        (reason) => this.markSessionCorruption(reason),
+    return withProviderCliLaunchPermit(
+      this.kind,
+      input.signal,
+      () => this.slot.get() ?? this.spawnController(
+        {
+          args: codexAppServerArgs(this.env),
+          command: CODEX_COMMAND,
+          label: 'Codex app-server runtime',
+        },
+        input,
+        (child) => new CodexAppServerController(
+          child,
+          this.kind,
+          (reason) => this.markSessionCorruption(reason),
+        ),
       ),
     );
   }

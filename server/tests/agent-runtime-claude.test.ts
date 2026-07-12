@@ -163,6 +163,7 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
       (await runtime.run(await runtimeInput(runtime, firstCtx, await loadState()))).text,
       'first run',
     );
+    assert.equal(runtime.health?.().child?.version, 'test');
     const stateAfterFirst = await loadState();
     assert.equal(stateAfterFirst.sessions.anima?.current?.id, 'claude-session-1');
     const firstActivities = await activitiesForInboxItemWindow('anima', firstCtx.item.id);

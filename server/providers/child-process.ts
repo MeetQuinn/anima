@@ -7,6 +7,7 @@ export interface RunningChildProcess {
   completion: Promise<{ stdout: string; stderr: string }>;
   endStdin(): void;
   kill(signal?: NodeJS.Signals): void;
+  setVersion(version: string): void;
   snapshot(): ProviderChildHealthSnapshot;
   writeStdin(input: string): void;
 }
@@ -52,6 +53,7 @@ export function startChildProcess(input: {
   let exitSignal: NodeJS.Signals | null | undefined;
   let lastStderrAt: string | undefined;
   let lastStdoutAt: string | undefined;
+  let version: string | undefined;
   const bufferOutput = input.bufferOutput ?? true;
   let streamEffects = Promise.resolve();
   let streamEffectError: unknown;
@@ -109,6 +111,9 @@ export function startChildProcess(input: {
     kill(signal: NodeJS.Signals = 'SIGTERM') {
       child.kill(signal);
     },
+    setVersion(nextVersion: string) {
+      version = nextVersion;
+    },
     snapshot() {
       return {
         alive: !exitedAt && isProcessAlive(child.pid),
@@ -123,6 +128,7 @@ export function startChildProcess(input: {
         ...(exitSignal !== undefined ? { signal: exitSignal } : {}),
         startedAt,
         stdinWritable: Boolean(child.stdin && !child.stdin.destroyed && child.stdin.writable),
+        ...(version ? { version } : {}),
       };
     },
     writeStdin(chunk: string) {

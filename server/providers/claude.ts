@@ -11,6 +11,7 @@ import { createClaudeJsonlActivityMapper, parseClaudeRuntimeOutput } from './cla
 import { LineBuffer } from './line-buffer.js';
 import { ControllerAgentRuntime } from './provider-runtime.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
+import { withProviderCliLaunchPermit } from '../provider-cli/launch-gate.js';
 import {
   providerSessionPayload,
   type ProviderSessionRecord,
@@ -132,14 +133,18 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
     const existing = this.slot.get();
     if (existing) return existing;
     const systemPromptFilePath = await writeSystemPromptFile(input);
-    return this.spawnController(
-      {
-        args: this.claudeArgs(input.providerSession, systemPromptFilePath),
-        command: CLAUDE_COMMAND,
-        label: 'Claude Code runtime',
-      },
-      input,
-      (child) => new ClaudeStreamJsonController(child),
+    return withProviderCliLaunchPermit(
+      this.kind,
+      input.signal,
+      () => this.slot.get() ?? this.spawnController(
+        {
+          args: this.claudeArgs(input.providerSession, systemPromptFilePath),
+          command: CLAUDE_COMMAND,
+          label: 'Claude Code runtime',
+        },
+        input,
+        (child) => new ClaudeStreamJsonController(child),
+      ),
     );
   }
 
@@ -334,6 +339,8 @@ class ClaudeStreamJsonController {
     const type = stringField(parsed, 'type');
     if (type === 'system' && stringField(parsed, 'subtype') === 'init') {
       this.startedSession = true;
+      const version = stringField(parsed, 'claude_code_version');
+      if (version) this.child.setVersion(version);
     }
     this.updateInputGate(parsed);
     const text = textFromClaudeAssistantEvent(parsed);

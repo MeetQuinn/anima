@@ -61,6 +61,7 @@ const groups = {
     'provider-failure.test.js',
     'provider-launch.test.js',
     'provider-line-buffer.test.js',
+    'provider-cli.test.js',
     'provider-quiescent-waiters.test.js',
     'provider-usage.test.js',
     'inbox-slack-events.test.js',

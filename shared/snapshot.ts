@@ -51,6 +51,7 @@ export interface ProviderChildHealthSnapshot {
   signal?: string | null;
   startedAt: string;
   stdinWritable: boolean;
+  version?: string;
 }
 
 export interface AgentRuntimeHandleSnapshot {

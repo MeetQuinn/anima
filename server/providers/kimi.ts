@@ -6,6 +6,7 @@ import { exposedReasoningEvent } from './reasoning-events.js';
 import { LineBuffer } from './line-buffer.js';
 import { ControllerAgentRuntime } from './provider-runtime.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
+import { withProviderCliLaunchPermit } from '../provider-cli/launch-gate.js';
 import {
   providerSessionPayload,
   type AgentRuntimeFollowupInput,
@@ -75,14 +76,18 @@ export class KimiCliAgentRuntime extends ControllerAgentRuntime<KimiAcpControlle
     if (existing && !requestedSessionId && existing.sessionId) {
       await this.slot.reset();
     }
-    const controller = this.slot.get() ?? this.spawnController(
-      {
-        args: ['--yolo', 'acp'],
-        command: KIMI_COMMAND,
-        label: 'Kimi ACP runtime',
-      },
-      input,
-      (child) => new KimiAcpController(child),
+    const controller = this.slot.get() ?? await withProviderCliLaunchPermit(
+      this.kind,
+      input.signal,
+      () => this.slot.get() ?? this.spawnController(
+        {
+          args: ['--yolo', 'acp'],
+          command: KIMI_COMMAND,
+          label: 'Kimi ACP runtime',
+        },
+        input,
+        (child) => new KimiAcpController(child),
+      ),
     );
     try {
       await controller.ensureSession(input, this.config.model);
@@ -204,6 +209,8 @@ class KimiAcpController {
       protocolVersion: 1,
     });
     const initEvent = kimiAcpInitializeEvent(initResult);
+    const version = initEvent?.['serverVersion'];
+    if (typeof version === 'string') this.child.setVersion(version);
     if (initEvent) await input.effects.recordEvent(initEvent);
 
     const requestedSessionId = input.providerSession?.id;

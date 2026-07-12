@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Button } from './ui/button';
 
 export interface ConfirmModalProps {
@@ -56,9 +57,9 @@ export default function ConfirmModal({
   const isLarge = size === 'large';
 
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-page/70 backdrop-blur-sm"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-page/70 backdrop-blur-sm"
       onClick={() => {
         if (!busy) onCancel();
       }}
@@ -121,6 +122,7 @@ export default function ConfirmModal({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

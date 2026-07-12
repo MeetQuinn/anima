@@ -25,6 +25,7 @@ import type { TeamConfig } from '@/api/teams';
 import { TeamSwitcher } from './sidebar/TeamSwitcher';
 import { CreateTeamModal, EditTeamModal } from './sidebar/TeamModals';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
+import { useProviderCliStatus } from '@/hooks/useProviderCliStatus';
 import { agentColor, initialOf } from '@/lib/avatars';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
@@ -163,6 +164,8 @@ export default function Sidebar({
   // update is available. Reuses the panel's query (deduped by key), so no extra
   // request; the dot disappears once the user opens the panel and upgrades.
   const updateAvailable = useUpdateAvailable();
+  const { data: providerCliStatus } = useProviderCliStatus();
+  const providerUpdateAvailable = providerCliStatus?.providers.some((row) => row.updateAvailable) ?? false;
 
   function openKebab(e: React.MouseEvent<HTMLButtonElement>, id: string) {
     e.stopPropagation();
@@ -356,14 +359,17 @@ export default function Sidebar({
             {orderedAgents.map(renderCollapsedAgent)}
           </div>
 
-          {/* Footer — Usage above Server (usage is the frequently-checked one) */}
+          {/* Footer — Providers above Server. */}
           <div className="shrink-0 border-t border-spine-border py-1.5 flex flex-col items-center gap-1">
             <button
               onClick={() => setUsagePanelOpen((v) => !v)}
-              title="Provider usage"
-              className="flex h-8 w-8 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              title={providerUpdateAvailable ? 'Providers — update available' : 'Providers'}
+              className="relative flex h-8 w-8 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             >
               <Gauge className="h-3.5 w-3.5" />
+              {providerUpdateAvailable && (
+                <span aria-hidden className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-accent ring-1 ring-spine-border" />
+              )}
             </button>
             <button
               data-server-panel-trigger
@@ -526,17 +532,18 @@ export default function Sidebar({
             </div>
           </div>
 
-          {/* Footer — Usage above Server: usage is the frequently-checked entry,
-              server (restart/version/home) is the occasional one, so it sits at
-              the very edge. Both rest visible; entries are not hover-chrome. */}
+          {/* Footer — Providers above Server. */}
           <div className="border-t border-spine-border p-2 space-y-0.5">
             <button
               onClick={() => setUsagePanelOpen((v) => !v)}
               className="chrome flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-2.5 text-left text-[11px] uppercase tracking-[0.1em] text-text-on-spine-muted transition-colors hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              title="Provider usage"
+              title={providerUpdateAvailable ? 'Providers — update available' : 'Providers'}
             >
               <Gauge className="h-3.5 w-3.5" />
-              <span>Usage</span>
+              <span>Providers</span>
+              {providerUpdateAvailable && (
+                <span aria-hidden className="ml-auto h-1.5 w-1.5 rounded-full bg-accent" />
+              )}
             </button>
             <button
               data-server-panel-trigger
