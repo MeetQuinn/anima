@@ -697,16 +697,30 @@
 
 /*
   Page chrome: keep the VitePress navbar, but sit it on the landing palette
-  so the page reads as one surface. Scoped with :has() so no other page is
-  touched; on the rare browser without :has() the navbar simply keeps its
-  default background, which is close.
+  so the page reads as one surface. Two mechanisms, both needed:
+
+  - Custom properties. At >=960px the theme's scoped rules
+    (`.VPNavBar[data-v-*]:not(.has-sidebar):not(.home.top)` and the
+    `.divider-line` equivalents) out-specify any unscoped override, so we
+    don't fight them: we set the variables they consume,
+    `--vp-nav-bg-color` and `--vp-c-gutter`.
+  - Direct background rules. Below 960px the theme paints nothing on a
+    `.home` navbar (its mobile bg rules are all `:not(.home)`, and the
+    scrolled `.content-body` paint is desktop-only), so the variables have
+    no consumer there; the low-specificity direct rules win against the
+    unpainted default and carry mobile.
+
+  Scoped with :has() so no other page is touched; on the rare browser
+  without :has() the navbar simply keeps its default background, which is
+  close.
 */
 body:has(.landing-home) {
+  --vp-nav-bg-color: #f6f3ed;
+  --vp-c-gutter: #dcd4c4;
   background: #f6f3ed;
 }
 
-body:has(.landing-home) .VPNavBar,
-body:has(.landing-home) .VPNavBar:not(.home) {
+body:has(.landing-home) .VPNavBar {
   background-color: #f6f3ed;
 }
 
@@ -715,11 +729,12 @@ body:has(.landing-home) .VPNavBar .divider-line {
 }
 
 .dark body:has(.landing-home) {
+  --vp-nav-bg-color: #1b1916;
+  --vp-c-gutter: #353028;
   background: #1b1916;
 }
 
-.dark body:has(.landing-home) .VPNavBar,
-.dark body:has(.landing-home) .VPNavBar:not(.home) {
+.dark body:has(.landing-home) .VPNavBar {
   background-color: #1b1916;
 }
 
