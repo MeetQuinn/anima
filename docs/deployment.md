@@ -1,135 +1,165 @@
-# Deployment And Upgrades
+---
+title: Runtime and services
+description: Install and operate a managed Anima runtime without mixing code, runtime state, or agent files.
+---
 
-This document describes the npm-era deployment model for running Anima on a machine you control. The
-goal is to keep the runtime package replaceable while your local Anima home stays durable.
+# Runtime and services
 
-## Runtime Shape
+This page is the operator reference for a managed Anima installation. For the normal update task,
+start with [Update Anima](./guide/updating-anima.md). For incident diagnosis, use
+[Recover local services](./service-runbook.md).
 
-| Runtime shape                   | Code source                         | Anima home                              | Purpose                    |
-| ------------------------------- | ----------------------------------- | --------------------------------------- | -------------------------- |
-| Stable install (`stable` track) | Pinned npm stable package           | User's chosen home, normally `~/.anima` | Default user install       |
-| Canary install (`canary` track) | Pinned npm canary package           | User's chosen home                      | Opt-in validation          |
-| Source checkout (`dev`)         | Local source tree, for contributors | Repo-local `./.anima-dev`               | Development and PR testing |
+## Keep three roots separate
 
-Do not run a managed install directly from a development checkout. A development rebuild should not
-be able to change the UI or server code used by a live `~/.anima` install.
+Anima deliberately separates replaceable software from runtime state and team files:
 
-## Code Root Vs Data Home
+| Root                 | Typical path                | Contains                                                           | Replaceable? |
+| -------------------- | --------------------------- | ------------------------------------------------------------------ | ------------ |
+| Managed runtime      | `~/.anima/runtime/current/` | Installed `@meetquinn/animactl` package                            | Yes          |
+| Anima home           | `~/.anima/`                 | Config, agent records, queues, sessions, activity, reminders, logs | No           |
+| Team and agent homes | `~/anima-team/`             | Knowledge bases, memory, notes, skills, work files                 | No           |
 
-Keep these separate:
+The managed runtime can be reinstalled from npm. Do not put durable files under `runtime/current`.
+The Anima home and team or agent homes require separate backups because they can live at unrelated
+paths.
 
-- **Code root:** where the package or source checkout lives.
-- **Anima home:** where runtime state, config, logs, pid files, reminders, and message stores live.
-- **Team and agent homes:** where knowledge bases, memory, notes, skills, and work files live. These
-  paths are configured independently from the Anima home.
+Managed commands use `ANIMA_HOME` when it is set and `~/.anima` otherwise. A source checkout uses a
+separate development home and must not serve or modify a live managed installation.
 
-For example:
+The canonical definitions are in [Concepts](./concepts.md#runtime-and-operation).
 
-```text
-~/anima/                         optional source checkout for contributors
-~/.anima/                        default managed runtime data
-~/.anima/runtime/current/        npm-installed managed runtime
-~/anima-team/                    default team and agent files
-~/anima/.anima-dev/              development runtime data
-```
+## Choose a runtime shape
 
-The code root can be replaced during an upgrade. The Anima home is durable user data and should not
-move during a normal deploy.
+| Shape       | Package or code | Home                        | Use                        |
+| ----------- | --------------- | --------------------------- | -------------------------- |
+| Stable      | npm `latest`    | selected managed Anima home | normal installation        |
+| Canary      | npm `canary`    | selected managed Anima home | explicit canary validation |
+| Development | source checkout | repo-local `.anima-dev`     | contributor testing        |
 
-`~/.anima/runtime/current` is a replaceable cache of the npm package. Do not put durable user state
-there. It can be deleted and reinstalled from npm as long as `~/.anima` is intact.
+Stable does not silently switch to canary. The release track is an operator choice stored in the
+Anima home and shown with the runtime version in **Server**.
 
-## Managed Runtime Commands
+## Install and start
 
-The public npm package exposes a user-facing `animactl` entrypoint. `start` and `restart` install
-the package version that `npx` downloaded into `~/.anima/runtime/current`, then run services from
-that pinned runtime:
+The public installer checks the Node and npm prerequisites, installs the current stable runtime, and
+starts the local services:
 
 ```bash
 curl -fsSL https://anima.meetquinn.ai/install.sh | sh
-npx -y @meetquinn/animactl@latest start # first start on stable/latest
-npx -y @meetquinn/animactl@latest install-services # optional: install macOS launchd or Linux systemd services
-npx -y @meetquinn/animactl@latest dashboard # launch the local dashboard
-npx -y @meetquinn/animactl@latest restart # command-line upgrade to stable/latest
-npx -y @meetquinn/animactl@canary restart # opt in to the canary-track restart path
-npx -y @meetquinn/animactl@latest status
-npx -y @meetquinn/animactl@latest stop
 ```
 
-The curl installer is a bootstrap convenience for stable installs. It checks for Node/npm, then runs
-the `latest` npm dist-tag for `@meetquinn/animactl`. `start` is the first-run path, or for starting
-stopped services. If `start` installs a newer managed runtime over an existing install, it promotes
-the service action to a drain-and-resume restart so already-running services do not keep serving the
-old version. On an interactive desktop it launches the dashboard automatically; use `--no-browser`
-for headless scripts. `install-services` installs OS-managed services from the pinned managed
-runtime; on macOS those services are launchd LaunchAgents with explicit service env/PATH,
-`RunAtLoad`, and `KeepAlive`, and on Linux they are systemd user services with explicit env/PATH and
-`Restart=always`. On headless Linux hosts, run `loginctl enable-linger $USER` once if Anima should
-start after boot before the user logs in. `dashboard` launches the current home's dashboard without starting services.
-`restart` is the explicit command-line upgrade path: it installs the package version selected by
-`npx` into `~/.anima/runtime/current`, then restarts services with drain-and-resume. Docs use
-`@latest` explicitly because the installer does not add `animactl` to the user's `PATH`. Use
-`@canary` or an exact version suffix when you want a different target.
-
-The admin CLI exposes the lower-level runtime status/install commands:
+The equivalent managed command is:
 
 ```bash
-npx -y @meetquinn/animactl@latest runtime status
-npx -y @meetquinn/animactl@latest runtime install --channel canary
+npx -y @meetquinn/animactl@latest start
 ```
 
-Set `ANIMA_HOME=/path/to/home` to manage a non-default home. If `ANIMA_HOME` is unset, managed
-runtime commands use `~/.anima` even when the shell is currently inside a source checkout that has a
-repo-local `.anima-dev`.
+`start` installs the selected package into `runtime/current` when needed. On an interactive desktop
+it opens the dashboard; add `--no-browser` for a headless shell.
 
-## Stable User Upgrades
+Use `ANIMA_HOME=/absolute/path` on every command when operating a non-default home. Do not rely on
+the current directory to select a managed installation.
 
-External users should not be silently upgraded. A stable install checks the `latest` dist-tag and
-offers a one-click upgrade when a newer stable version exists.
+## Choose a service supervisor
 
-First-version behavior:
+Without OS service definitions, Anima can run the agent and web daemons under its detached local
+supervisor. Install operating-system user services when Anima should return after login or reboot:
 
-1. Detect the current package version.
-2. Check npm `latest`.
-3. If newer, show an upgrade button in the dashboard.
-4. On click, install the selected version.
-5. Restart services through drain-and-resume.
-6. Verify the service comes back on the new version.
-7. If the upgrade fails, report the error and leave the old version running when possible.
+```bash
+npx -y @meetquinn/animactl@latest install-services
+```
 
-Canary installs may optionally check `canary` instead of `latest`, but that should be an explicit
-setting. Stable users should not see canary upgrades unless they opt in.
+On macOS, this installs launchd LaunchAgents. On Linux, it installs systemd user services. For a
+headless Linux host that must start before interactive login, enable user lingering separately:
 
-## Restart Behavior
+```bash
+loginctl enable-linger "$USER"
+```
 
-Restarts should use drain-and-resume. If agents are active, the restart waits for each running agent
-to reach a provider quiescent point, re-queues those items, and lets the new worker resume them.
-Queued items remain queued. Use `--force` only for an explicit incident decision.
+Generated service definitions carry an explicit Anima home and PATH because OS supervisors do not
+load an interactive shell profile. The PATH includes normal system, Homebrew, and supported local
+provider locations; it does not copy temporary turn-specific environment values.
 
-## Auto-Upgrade Policy
+Remove the OS definitions without deleting the Anima home:
 
-Default policy: no silent auto-upgrades.
+```bash
+npx -y @meetquinn/animactl@latest uninstall-services
+```
 
-Reasons:
+The next start can use the detached supervisor again.
 
-- Agents may be in the middle of active work.
-- Users run Anima on varied local machines.
-- A package upgrade can require a service restart.
+## Inspect status and open the dashboard
 
-The safe default is a visible update prompt plus a user-initiated restart. Fully automatic canary
-upgrades can come later after the one-click path is reliable.
+```bash
+npx -y @meetquinn/animactl@latest status
+npx -y @meetquinn/animactl@latest dashboard
+```
 
-## Verification
+Status reports the installed runtime and the agent and web services. The dashboard command opens the
+URL configured in the selected Anima home without changing service state.
 
-After a deploy or upgrade, verify:
+Each home runs two local daemons:
 
-- Agent and web pids changed if a restart was expected.
-- `startedAt` advanced.
-- `/api/server-info` reports the expected package version or commit.
-- `/api/health` returns 200.
-- The dashboard serves the expected UI.
-- Agent provider configs are intact.
-- Agents can receive and send Slack messages.
+- **agent** receives transport events, schedules private wakes, and runs the workers
+- **web** serves the local API and dashboard
 
-The service should expose enough metadata to make wrong-version deployments obvious: package
-version, Anima home, runtime track, startedAt, and build commit when available.
+Managed installs normally serve the dashboard at `http://127.0.0.1:4174` for local access, but the
+listener binds to `0.0.0.0` by default. The dashboard may therefore also be reachable through the
+host's network addresses. Configure `dashboardHost` or use host network controls when you need to
+narrow that exposure. The host and port come from the selected Anima home, so treat the URL reported
+by `npx -y @meetquinn/animactl@latest status` as the local access authority.
+
+## Restart without dropping the queue
+
+Use the top-level managed restart for normal operations:
+
+```bash
+npx -y @meetquinn/animactl@latest restart
+```
+
+It installs the selected package when needed, asks running work to reach a provider-safe boundary,
+requeues the affected inbox items, and restarts both services. Queued work remains queued. If a turn
+does not drain before the timeout, Anima continues the restart and leaves that item for startup
+recovery; the completion report does not claim it drained cleanly.
+
+This is not a distributed exactly-once boundary. A shell command, Git push, chat delivery, or API
+request that completed before the restart cannot be rolled back by requeuing an inbox item.
+
+Use `--force` only for an explicit incident decision. It bypasses the normal gate and can abort the
+active provider turn.
+
+The lower-level `services restart` command exists for supervisor work. Its drain mode requires both
+flags together:
+
+```bash
+npx -y @meetquinn/animactl@latest services restart \
+  --drain-active --resume-running
+```
+
+Prefer the top-level `restart` command unless you are following the service runbook.
+
+## Select a release target
+
+The package passed to `npx` is the installation authority:
+
+```bash
+npx -y @meetquinn/animactl@latest restart
+npx -y @meetquinn/animactl@canary restart
+npx -y @meetquinn/animactl@<version> restart
+```
+
+There is no default silent auto-upgrade. The dashboard checks the selected release track and offers
+an explicit update when a newer version is available.
+
+## Verify an installation or restart
+
+Verify the result from the selected home, not from the package cache or source checkout you used to
+start the command:
+
+1. `status` reports both services running.
+2. **Server** reports the expected Home, track, version, health, and new start time.
+3. The dashboard serves the expected UI.
+4. Agent provider configuration and connected transports remain present.
+5. One ordinary inbound and outbound message succeeds.
+
+For the files that must survive a machine move, continue to [Back up and restore](./guide/backup-and-restore.md).

@@ -25,7 +25,10 @@ curl -fsSL https://anima.meetquinn.ai/install.sh | sh
 
 The command installs the managed runtime under `~/.anima/runtime/current`, starts the local services, and opens the dashboard. If the browser does not open, go to <http://127.0.0.1:4174>.
 
-The dashboard binds to loopback by default. Anima does not create a hosted account or upload your runtime state to an Anima service.
+The URL is for local access, but the managed listener binds all interfaces by default and may also
+be reachable from your local network. See [Runtime and services](../deployment.md#inspect-status-and-open-the-dashboard)
+to narrow dashboard exposure. Anima does not create a hosted account or upload your runtime state
+to an Anima service.
 
 ## 2. Choose the team chat
 

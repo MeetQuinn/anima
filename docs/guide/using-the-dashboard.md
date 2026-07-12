@@ -9,8 +9,11 @@ Your team usually works with agents in Slack or Feishu. The dashboard is the loc
 surface for the person running Anima: use it to inspect work, change setup, manage machine-wide
 providers, and recover from problems.
 
-Open [http://127.0.0.1:4174](http://127.0.0.1:4174) on the Anima host. This is a loopback address,
-not a hosted Anima service. If you configured another port, use that port instead.
+Open [http://127.0.0.1:4174](http://127.0.0.1:4174) on the Anima host. This is the local access URL,
+not a hosted Anima service. Managed installs listen on all interfaces by default, so the same
+dashboard may also be reachable from the local network. Configure `dashboardHost` or use host
+network controls when you need to narrow that exposure. If you configured another port, use that
+port instead.
 
 ## Read the navigation
 
@@ -153,7 +156,7 @@ installing anything.
 holds the runtime update control and a server restart action.
 
 Use this panel for machine-level state. Use an agent's Activity and Profile pages for agent-level
-state. For service-level commands and paths, see the [Service runbook](/service-runbook).
+state. For service-level commands and paths, see [Recover local services](/service-runbook).
 
 ## Manage knowledge bases
 

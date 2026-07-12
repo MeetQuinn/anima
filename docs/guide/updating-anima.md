@@ -1,46 +1,83 @@
-# Updating Anima
+---
+title: Update Anima
+description: Install a newer managed runtime, restart safely, and verify the version now serving.
+---
 
-Anima ships improvements often. Updating replaces the Anima software underneath and leaves everything
-else in place: your agents, their memory and notes, your config, and your knowledge base all stay
-exactly as they were.
+# Update Anima
 
-There are two ways to update. Most of the time you will use the dashboard.
+An Anima update replaces the managed runtime under the selected Anima home. It does not move agent
+homes, team homes, knowledge bases, or the runtime records stored in the Anima home.
 
-## From the dashboard
+Most operators should update from the dashboard. Use the terminal path when the dashboard is
+unavailable or when you need an exact release target.
 
-When a new version is available, the **Server** button in the sidebar shows a small dot. Open the
-**Server** panel and find the **Version** section: an available update shows your current version, the
-new one, and an **Upgrade & restart** button (with a **Release notes** link, if the release has them).
+## Update from the dashboard
 
-![The Version section of the Server panel with an update available. The current version reads stable and 0.1.3, and an Update available card shows the version pair 0.1.3 to 0.1.4, an Upgrade & restart button, and a Release notes link below it.](/guide/dashboard/update-available.png)
+Open **Server** in the dashboard navigation. The **Version** row shows the runtime track and current
+version. When a newer version is available, it shows the target, release notes when available, and
+**Upgrade & restart**.
 
-Click **Upgrade & restart**. Anima installs and verifies the new version in the background while your
-current version keeps running, then restarts at a safe point. Any agent that was working finishes or
-saves its place first and resumes where it left off, so nothing in flight is lost. The dashboard
-reloads on its own when it is back, usually within a minute or two.
+If agents are working, the confirmation names them. The upgrade worker installs and checks the
+target before replacing the running services. During restart, Anima asks active work to reach a
+provider-safe boundary and requeues the affected inbox items for the new worker. Queued work stays
+queued.
 
-If any agents are busy, Anima names them and asks you to confirm before it restarts.
+The dashboard waits for the service to return, then reloads against the new runtime. A successful
+drain reports how many agents resumed.
 
-::: tip If an update does not take
-Anima keeps your current version running until the new one is verified. If an install fails, you stay
-on the version you were already on and nothing else changes. Try again from the same place.
-:::
+If installation fails before restart, the current runtime keeps serving. If a later upgrade phase
+fails, the Server panel reports the running version, rollback result, error, and upgrade log path
+instead of claiming success.
 
-## From the terminal
+## Update from a terminal
 
-If you run Anima without the dashboard, re-run the same install command you started with:
+Run the command from an external shell under the host user that owns the Anima installation:
 
 ```bash
-curl -fsSL https://anima.meetquinn.ai/install.sh | sh
+npx -y @meetquinn/animactl@latest restart
 ```
 
-It installs the latest version over your existing setup. If Anima is already running and the runtime
-version changed, the command restarts the local services so the new version is actually serving the
-dashboard and agent runtime. Your home folder (`~/.anima` by default), your agents, their memory and
-notes, and your knowledge base are left untouched.
+This selects the npm `latest` release, installs it into the managed runtime directory for the
+selected Anima home, and performs a drain-and-resume service restart.
 
-## A note on the restart
+To target canary or an exact version, make the target explicit:
 
-The update's restart is graceful: in-flight work is carried through, so agents resume where they left
-off. This is different from **Restart agent**, the hung-agent recovery action, which drops the item in
-flight on purpose. See [Use the dashboard](./using-the-dashboard.md) for that one.
+```bash
+npx -y @meetquinn/animactl@canary restart
+npx -y @meetquinn/animactl@<version> restart
+```
+
+For a non-default runtime, always name its home:
+
+```bash
+ANIMA_HOME=/absolute/path/to/anima-home \
+  npx -y @meetquinn/animactl@latest restart
+```
+
+Do not run a restart from inside an agent turn that belongs to the same Anima home. The CLI refuses
+that self-stop boundary. Use an external shell or the dashboard.
+
+## Verify the serving version
+
+After the dashboard returns:
+
+1. Open **Server** and confirm the expected track, version, health, uptime, and Home path.
+2. Or run:
+
+   ```bash
+   npx -y @meetquinn/animactl@latest status
+   ```
+
+3. Confirm both the agent and web services are running.
+4. Confirm an agent can receive and send one ordinary message before treating the update as closed.
+
+Do not use **Restart agent** as an update mechanism. That action force-stops one hung agent and drops
+its current work. Runtime updates use the machine-level drain-and-resume path.
+
+## Go deeper
+
+- [Runtime and services](/deployment) explains release tracks, homes, service installation, and
+  managed commands.
+- [Recover local services](/service-runbook) covers status, logs, force boundaries, and failure
+  diagnosis.
+- [Back up and restore](./backup-and-restore.md) separates runtime state from agent and team files.

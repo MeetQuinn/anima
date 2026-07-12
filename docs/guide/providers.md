@@ -13,11 +13,11 @@ The provider CLI is a machine-level dependency. Anima launches the executable fo
 
 Install and authenticate at least one before creating the first agent.
 
-| Provider | Official setup | Verify on the Anima host |
-| --- | --- | --- |
-| Claude Code | [Install and authenticate Claude Code](https://docs.anthropic.com/en/docs/claude-code/getting-started) | `claude --version` |
-| Codex CLI | [Install Codex CLI](https://developers.openai.com/codex/cli/) and sign in with your ChatGPT account or configured API access | `codex --version` |
-| Kimi CLI | [Install Kimi Code CLI](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started) and use `/login` on first launch | `kimi --version` |
+| Provider    | Official setup                                                                                                                   | Verify on the Anima host |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| Claude Code | [Install and authenticate Claude Code](https://docs.anthropic.com/en/docs/claude-code/getting-started)                           | `claude --version`       |
+| Codex CLI   | [Install Codex CLI](https://developers.openai.com/codex/cli/) and sign in with your ChatGPT account or configured API access     | `codex --version`        |
+| Kimi CLI    | [Install Kimi Code CLI](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started) and use `/login` on first launch | `kimi --version`         |
 
 Run the verification command from the same host user and service environment that runs Anima. A CLI installed only inside another shell profile or user account may work interactively while remaining invisible to the Anima services.
 
@@ -44,6 +44,28 @@ The **Providers** panel shows the account label or identifier when the provider 
 During agent creation, select the provider, model, and reasoning level. The available model choices come from Anima's supported provider catalog, not from an arbitrary model-name field.
 
 You can change the provider later from the agent's Profile tab. A provider change starts a fresh provider session after the current work reaches a safe boundary. The agent's `MEMORY.md`, notes, files, Anima activity, and chat identity remain intact; the previous provider session is archived.
+
+## Manage provider versions
+
+Open **Providers** in the dashboard navigation to inspect the machine-wide CLI that Anima actually
+resolves. Each provider row reports its path, installed version, detected installation source,
+latest check, update state, affected agents, and usage information when those sources expose it.
+
+Anima offers an **Update** action only when it can prove that the active installation channel can be
+updated in place without changing PATH ownership or requiring elevated privileges. Other rows show a
+manual command and the reason automation is unavailable.
+
+A provider update:
+
+- changes the shared binary for the host user
+- does not log out or edit provider credentials, configuration, MCP servers, plugins, skills, or
+  history
+- does not interrupt provider children already running
+- takes effect for each agent when its provider session next restarts
+
+Only one machine-wide provider update runs at a time, and new provider children wait until the
+install and self-check finish. Use the row's running-version state to distinguish the installed
+binary from a child that is still using the previous version.
 
 ## Troubleshooting
 
