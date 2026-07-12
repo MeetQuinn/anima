@@ -1,19 +1,19 @@
 import {
-  encryptHumanHandoffSecret,
-  encodeHumanHandoffPublicKey,
-  formatHumanHandoffBoxForSlack,
-  parseHumanHandoffPublicKey,
+  encryptSealedHandoffSecret,
+  encodeSealedHandoffPublicKey,
+  formatSealedHandoffBoxForSlack,
+  parseSealedHandoffPublicKey,
 } from '@shared/secret-handoff.ts';
 
 export type HandoffPageState =
   | { kind: 'ready'; publicKey: string }
   | { kind: 'error'; title: string; message: string };
 
-export interface EncryptedHumanTransfer {
+export interface EncryptedSealedTransfer {
   fencedBox: string;
 }
 
-export function requestStateFromFragment(fragment: string): HandoffPageState {
+export function handoffStateFromFragment(fragment: string): HandoffPageState {
   const code = fragment.startsWith('#') ? fragment.slice(1) : fragment;
   if (!code) {
     return {
@@ -23,7 +23,7 @@ export function requestStateFromFragment(fragment: string): HandoffPageState {
     };
   }
   try {
-    return { kind: 'ready', publicKey: parseHumanHandoffPublicKey(code) };
+    return { kind: 'ready', publicKey: parseSealedHandoffPublicKey(code) };
   } catch {
     return {
       kind: 'error',
@@ -33,10 +33,10 @@ export function requestStateFromFragment(fragment: string): HandoffPageState {
   }
 }
 
-export async function encryptHumanTransfer(
+export async function encryptSealedTransfer(
   publicKey: string,
   value: string,
-): Promise<EncryptedHumanTransfer> {
-  const box = await encryptHumanHandoffSecret(encodeHumanHandoffPublicKey(publicKey), value);
-  return { fencedBox: formatHumanHandoffBoxForSlack(box) };
+): Promise<EncryptedSealedTransfer> {
+  const box = await encryptSealedHandoffSecret(encodeSealedHandoffPublicKey(publicKey), value);
+  return { fencedBox: formatSealedHandoffBoxForSlack(box) };
 }

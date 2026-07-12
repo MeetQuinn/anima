@@ -7,17 +7,17 @@ import html from '../../handoff/index.html?raw';
 
 import {
   createHandoffKeyPair,
-  decryptHumanHandoffSecret,
-  encodeHumanHandoffPublicKey,
-  parseHumanHandoffBox,
+  decryptSealedHandoffSecret,
+  encodeSealedHandoffPublicKey,
+  parseSealedHandoffBox,
 } from '@shared/secret-handoff.ts';
-import { encryptHumanTransfer, requestStateFromFragment } from './page';
+import { encryptSealedTransfer, handoffStateFromFragment } from './page';
 
 describe('public-key handoff page boundary', () => {
   it('accepts only a versioned public key in the URL fragment', () => {
     const keys = createHandoffKeyPair();
-    const code = encodeHumanHandoffPublicKey(keys.publicKey);
-    expect(requestStateFromFragment(`#${code}`)).toEqual({
+    const code = encodeSealedHandoffPublicKey(keys.publicKey);
+    expect(handoffStateFromFragment(`#${code}`)).toEqual({
       kind: 'ready',
       publicKey: keys.publicKey,
     });
@@ -26,21 +26,21 @@ describe('public-key handoff page boundary', () => {
   });
 
   it('never offers an input state for a missing or malformed public key', () => {
-    expect(requestStateFromFragment('').kind).toBe('error');
-    expect(requestStateFromFragment('#not-a-key').kind).toBe('error');
-    expect(requestStateFromFragment('#asec_key_v1_deadbeef').kind).toBe('error');
+    expect(handoffStateFromFragment('').kind).toBe('error');
+    expect(handoffStateFromFragment('#not-a-key').kind).toBe('error');
+    expect(handoffStateFromFragment('#asec_key_v1_deadbeef').kind).toBe('error');
   });
 
   it('produces a generic fenced box that the matching private key opens', async () => {
     const keys = createHandoffKeyPair();
-    const transfer = await encryptHumanTransfer(
+    const transfer = await encryptSealedTransfer(
       keys.publicKey,
       'browser-generated-secret-specimen',
     );
     expect(transfer.fencedBox).toMatch(/^```\nasec_sealed_v1_/);
     expect(transfer.fencedBox).not.toContain('browser-generated-secret-specimen');
-    expect(parseHumanHandoffBox(transfer.fencedBox).publicKey).toBe(keys.publicKey);
-    expect(decryptHumanHandoffSecret(keys.privateKey, transfer.fencedBox)).toEqual({
+    expect(parseSealedHandoffBox(transfer.fencedBox).publicKey).toBe(keys.publicKey);
+    expect(decryptSealedHandoffSecret(keys.privateKey, transfer.fencedBox)).toEqual({
       v: 1,
       value: 'browser-generated-secret-specimen',
     });

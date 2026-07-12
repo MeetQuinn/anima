@@ -6,7 +6,13 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { encryptHumanHandoffSecret } from '../../shared/secret-handoff.js';
+import {
+  createHandoffKeyPair,
+  createHandoffRequest,
+  encodeHandoffRequest,
+  encryptSealedHandoffSecret,
+} from '../../shared/secret-handoff.js';
+import { SecretHandoffPendingStore } from '../env/secret-handoff-store.js';
 
 const cliPath = resolve('dist/server/cli/anima.js');
 
@@ -107,7 +113,7 @@ test('env CLI rejects cross-file duplicates and reserved runtime keys', async ()
   }
 });
 
-test('env handoff CLI transfers a secret once, preserves sender policy, and requires explicit replace', async () => {
+test('env handoff CLI transfers one sealed secret between agents and chooses the key on accept', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-env-handoff-test-'));
   const envFor = (agentId: string) => ({ ...process.env, ANIMA_AGENT_ID: agentId, ANIMA_HOME: stateDir });
   const specimen = 'handoff-secret-specimen';
@@ -118,54 +124,48 @@ test('env handoff CLI transfers a secret once, preserves sender policy, and requ
     });
     assert.equal(seed.status, 0, seed.stderr || seed.stdout);
 
-    const request = await runNode([
-      cliPath,
-      'env',
-      'handoff',
-      'request',
-      'SERVICE_TOKEN',
-      '--purpose',
-      'Run the release verification job',
-      '--from',
-      'nora',
-    ], { env: envFor('milo') });
-    assert.equal(request.status, 0, request.stderr || request.stdout);
-    const requestCode = extractHandoffCode(request.stdout, 'asec_req_v1_');
-    assert.doesNotMatch(request.stdout, new RegExp(specimen));
-    assert.match(request.stdout, /Purpose: Run the release verification job/);
-    assert.match(request.stdout, /Sender: `nora`/);
-    assert.match(request.stdout, /Expires: <t:\d+:f>/);
-
-    const pendingFiles = join(stateDir, 'agents', 'milo', 'env', 'handoff');
-    assert.equal((await stat(pendingFiles)).mode & 0o777, 0o700);
-    const pendingFile = join(pendingFiles, `${request.stdout.match(/id=([A-Za-z0-9_-]{22})/)?.[1]}.json`);
-    assert.equal((await stat(pendingFile)).mode & 0o777, 0o600);
-    assert.doesNotMatch(await readFile(pendingFile, 'utf8'), new RegExp(specimen));
-
-    const wrongSender = await runNode([
+    const receive = await runNode([cliPath, 'env', 'handoff', 'receive'], {
+      env: envFor('milo'),
+    });
+    assert.equal(receive.status, 0, receive.stderr || receive.stdout);
+    const publicKey = extractHandoffCode(receive.stdout, 'asec_key_v1_');
+    assert.doesNotMatch(receive.stdout, /SERVICE_TOKEN|workspace|purpose|recipient/i);
+    const malformedKey = await runNode([
       cliPath,
       'env',
       'handoff',
       'send',
-      requestCode,
+      'asec_key_v1_bad',
       '--from-key',
-      'SOURCE_TOKEN',
-    ], { env: envFor('aria') });
-    assert.equal(wrongSender.status, 1);
-    assert.match(wrongSender.stderr, /expects sender nora/);
+      'MISSING_TOKEN',
+    ], { env: envFor('nora') });
+    assert.equal(malformedKey.status, 1);
+    assert.match(malformedKey.stderr, /public key is invalid/);
+    assert.doesNotMatch(malformedKey.stderr, /MISSING_TOKEN/);
+
+    const pendingFiles = join(stateDir, 'agents', 'milo', 'env', 'handoff', 'human');
+    assert.equal((await stat(pendingFiles)).mode & 0o777, 0o700);
+    const pendingFile = join(
+      pendingFiles,
+      `${receive.stdout.match(/id=(s_[A-Za-z0-9_-]{22})/)?.[1]}.json`,
+    );
+    assert.equal((await stat(pendingFile)).mode & 0o777, 0o600);
+    assert.doesNotMatch(await readFile(pendingFile, 'utf8'), new RegExp(specimen));
 
     const send = await runNode([
       cliPath,
       'env',
       'handoff',
       'send',
-      requestCode,
+      publicKey,
       '--from-key',
       'SOURCE_TOKEN',
     ], { env: envFor('nora') });
     assert.equal(send.status, 0, send.stderr || send.stdout);
-    const boxCode = extractHandoffCode(send.stdout, 'asec_box_v1_');
+    const boxCode = extractHandoffCode(send.stdout, 'asec_sealed_v1_');
     assert.doesNotMatch(send.stdout, new RegExp(specimen));
+    assert.doesNotMatch(send.stdout, /SOURCE_TOKEN/);
+    assert.doesNotMatch(boxCode, /milo|nora|SERVICE_TOKEN/i);
 
     const accept = await runNode([
       cliPath,
@@ -173,6 +173,8 @@ test('env handoff CLI transfers a secret once, preserves sender policy, and requ
       'handoff',
       'accept',
       boxCode,
+      '--key',
+      'SERVICE_TOKEN',
     ], { env: envFor('milo') });
     assert.equal(accept.status, 0, accept.stderr || accept.stdout);
     assert.match(accept.stdout, /handoff accepted successfully/);
@@ -197,38 +199,34 @@ test('env handoff CLI transfers a secret once, preserves sender policy, and requ
       'handoff',
       'accept',
       boxCode,
+      '--key',
+      'REPLAY_TOKEN',
     ], { env: envFor('milo') });
     assert.equal(replay.status, 1);
     assert.match(replay.stderr, /not found/);
 
-    const replaceRequest = await runNode([
-      cliPath,
-      'env',
-      'handoff',
-      'request',
-      'SERVICE_TOKEN',
-      '--purpose',
-      'Rotate the release verification credential',
-      '--from',
-      'nora',
-    ], { env: envFor('milo') });
-    const replaceRequestCode = extractHandoffCode(replaceRequest.stdout, 'asec_req_v1_');
+    const replaceReceive = await runNode([cliPath, 'env', 'handoff', 'receive'], {
+      env: envFor('milo'),
+    });
+    const replacePublicKey = extractHandoffCode(replaceReceive.stdout, 'asec_key_v1_');
     const replaceSend = await runNode([
       cliPath,
       'env',
       'handoff',
       'send',
-      replaceRequestCode,
+      replacePublicKey,
       '--from-key',
       'SOURCE_TOKEN',
     ], { env: envFor('nora') });
-    const replaceBox = extractHandoffCode(replaceSend.stdout, 'asec_box_v1_');
+    const replaceBox = extractHandoffCode(replaceSend.stdout, 'asec_sealed_v1_');
     const rejectExisting = await runNode([
       cliPath,
       'env',
       'handoff',
       'accept',
       replaceBox,
+      '--key',
+      'SERVICE_TOKEN',
     ], { env: envFor('milo') });
     assert.equal(rejectExisting.status, 1);
     assert.match(rejectExisting.stderr, /Pass --replace/);
@@ -238,47 +236,84 @@ test('env handoff CLI transfers a secret once, preserves sender policy, and requ
       'handoff',
       'accept',
       replaceBox,
+      '--key',
+      'SERVICE_TOKEN',
       '--replace',
     ], { env: envFor('milo') });
     assert.equal(replace.status, 0, replace.stderr || replace.stdout);
 
-    const invalidPolicy = await runNode([
+    const legacyKeys = createHandoffKeyPair();
+    const legacyRequest = createHandoffRequest({
+      recipientAgentId: 'milo',
+      targetKey: 'LEGACY_TOKEN',
+      purpose: 'Complete an in-flight request after upgrade',
+      sender: { kind: 'agent', agentId: 'nora' },
+      expiresAt: new Date(Date.now() + 10 * 60_000),
+      publicKey: legacyKeys.publicKey,
+    });
+    await new SecretHandoffPendingStore('milo', stateDir).create(
+      legacyRequest,
+      legacyKeys.privateKey,
+    );
+    const wrongLegacySender = await runNode([
       cliPath,
       'env',
       'handoff',
-      'request',
-      'OTHER_TOKEN',
-      '--purpose',
-      'Invalid broad request',
-    ], { env: envFor('milo') });
-    assert.equal(invalidPolicy.status, 1);
-    assert.match(invalidPolicy.stderr, /Choose exactly one sender policy/);
-  } finally {
-    await rm(stateDir, { force: true, recursive: true });
-  }
-});
+      'send',
+      encodeHandoffRequest(legacyRequest),
+      '--from-key',
+      'MISSING_TOKEN',
+    ], { env: envFor('aria') });
+    assert.equal(wrongLegacySender.status, 1);
+    assert.match(wrongLegacySender.stderr, /expects sender nora/);
+    assert.doesNotMatch(wrongLegacySender.stderr, /MISSING_TOKEN/);
+    const legacySend = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'send',
+      encodeHandoffRequest(legacyRequest),
+      '--from-key',
+      'SOURCE_TOKEN',
+    ], { env: envFor('nora') });
+    assert.equal(legacySend.status, 0, legacySend.stderr || legacySend.stdout);
+    const legacyBox = extractHandoffCode(legacySend.stdout, 'asec_box_v1_');
+    const legacyAccept = await runNode(
+      [cliPath, 'env', 'handoff', 'accept', legacyBox],
+      { env: envFor('milo') },
+    );
+    assert.equal(legacyAccept.status, 0, legacyAccept.stderr || legacyAccept.stdout);
+    assert.match(legacyAccept.stdout, /key=LEGACY_TOKEN/);
 
-test('env handoff CLI bounds expiry and destroys cancelled receive keys', async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-env-cancel-handoff-test-'));
-  const env = { ...process.env, ANIMA_AGENT_ID: 'milo', ANIMA_HOME: stateDir };
-  try {
-    const request = await runNode([
+    const retiredRequest = await runNode([
       cliPath,
       'env',
       'handoff',
       'request',
       'SERVICE_TOKEN',
-      '--purpose',
-      'Configure the release verification service',
-      '--from',
-      'nora',
+    ], { env: envFor('milo') });
+    assert.equal(retiredRequest.status, 1);
+    assert.match(retiredRequest.stderr, /input\.invalid_options/);
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('env handoff CLI bounds expiry, cancels sealed keys, and routes legacy ids by full shape', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-env-cancel-handoff-test-'));
+  const env = { ...process.env, ANIMA_AGENT_ID: 'milo', ANIMA_HOME: stateDir };
+  try {
+    const receive = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'receive',
       '--expires',
       '24h',
     ], { env });
-    assert.equal(request.status, 0, request.stderr || request.stdout);
-    assert.match(request.stdout, /asec_req_v1_/);
-    assert.match(request.stdout, /sender=nora/);
-    const requestId = request.stdout.match(/id=([A-Za-z0-9_-]{22})/)?.[1];
+    assert.equal(receive.status, 0, receive.stderr || receive.stdout);
+    assert.match(receive.stdout, /asec_key_v1_/);
+    const requestId = receive.stdout.match(/id=(s_[A-Za-z0-9_-]{22})/)?.[1];
     assert.ok(requestId);
 
     const cancel = await runNode([
@@ -305,25 +340,41 @@ test('env handoff CLI bounds expiry and destroys cancelled receive keys', async 
         cliPath,
         'env',
         'handoff',
-        'request',
-        'OTHER_TOKEN',
-        '--purpose',
-        'Reject invalid expiry',
-        '--from',
-        'nora',
+        'receive',
         '--expires',
         expiry,
       ], { env });
       assert.equal(invalid.status, 1, `${expiry}: ${invalid.stderr || invalid.stdout}`);
       assert.match(invalid.stderr, /Expiry must/);
     }
+
+    const legacyId = `s_${'a'.repeat(20)}`;
+    const legacyKeys = createHandoffKeyPair();
+    const legacyRequest = createHandoffRequest({
+      requestId: legacyId,
+      recipientAgentId: 'milo',
+      targetKey: 'LEGACY_TOKEN',
+      purpose: 'Verify full-shape cancel routing',
+      sender: { kind: 'agent', agentId: 'nora' },
+      expiresAt: new Date(Date.now() + 10 * 60_000),
+      publicKey: legacyKeys.publicKey,
+    });
+    await new SecretHandoffPendingStore('milo', stateDir).create(
+      legacyRequest,
+      legacyKeys.privateKey,
+    );
+    const legacyCancel = await runNode(
+      [cliPath, 'env', 'handoff', 'cancel', legacyId],
+      { env },
+    );
+    assert.equal(legacyCancel.status, 0, legacyCancel.stderr || legacyCancel.stdout);
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }
 });
 
-test('env handoff CLI creates a public-key-only human link and chooses the env key on accept', async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-human-handoff-test-'));
+test('env handoff CLI browser link uses the same public key and sealed box protocol', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-browser-handoff-test-'));
   const env = { ...process.env, ANIMA_AGENT_ID: 'milo', ANIMA_HOME: stateDir };
   const specimen = 'browser-generated-secret-specimen';
   try {
@@ -340,11 +391,11 @@ test('env handoff CLI creates a public-key-only human link and chooses the env k
       result.stdout,
       /<https:\/\/handoff\.meetanima\.online\/#asec_key_v1_[0-9a-f]{66}\|Encrypt a secret>/,
     );
-    assert.match(result.stdout, /id=h_[A-Za-z0-9_-]{22}/);
+    assert.match(result.stdout, /id=s_[A-Za-z0-9_-]{22}/);
     assert.doesNotMatch(result.stdout, /SERVICE_TOKEN|workspace|purpose|recipient/i);
     const publicCode = result.stdout.match(/asec_key_v1_[0-9a-f]{66}/)?.[0];
     assert.ok(publicCode);
-    const box = await encryptHumanHandoffSecret(publicCode, specimen);
+    const box = await encryptSealedHandoffSecret(publicCode, specimen);
     assert.doesNotMatch(box, new RegExp(specimen));
 
     const missingKey = await runNode([cliPath, 'env', 'handoff', 'accept', box], { env });
@@ -362,7 +413,6 @@ test('env handoff CLI creates a public-key-only human link and chooses the env k
     ], { env });
     assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);
     assert.match(accepted.stdout, /key=SERVICE_TOKEN/);
-    assert.match(accepted.stdout, /from=human/);
     assert.doesNotMatch(accepted.stdout, new RegExp(specimen));
 
     const reveal = await runNode([
@@ -393,7 +443,7 @@ test('env handoff CLI creates a public-key-only human link and chooses the env k
     const replaceReceive = await runNode([cliPath, 'env', 'handoff', 'receive'], { env });
     const replaceCode = replaceReceive.stdout.match(/asec_key_v1_[0-9a-f]{66}/)?.[0];
     assert.ok(replaceCode);
-    const replaceBox = await encryptHumanHandoffSecret(replaceCode, 'replacement-specimen');
+    const replaceBox = await encryptSealedHandoffSecret(replaceCode, 'replacement-specimen');
     const rejectExisting = await runNode([
       cliPath,
       'env',
@@ -428,7 +478,7 @@ test('env handoff CLI creates a public-key-only human link and chooses the env k
     assert.equal(staleOverride.status, 0, staleOverride.stderr || staleOverride.stdout);
     assert.match(staleOverride.stdout, /https:\/\/handoff\.meetanima\.online\/#asec_key_v1_/);
     assert.doesNotMatch(staleOverride.stderr + staleOverride.stdout, /example\.com/);
-    const staleId = staleOverride.stdout.match(/id=(h_[A-Za-z0-9_-]{22})/)?.[1];
+    const staleId = staleOverride.stdout.match(/id=(s_[A-Za-z0-9_-]{22})/)?.[1];
     assert.ok(staleId);
     const cancel = await runNode([
       cliPath,

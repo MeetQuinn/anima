@@ -11,7 +11,7 @@ import {
 import { ensureDefaultSkills } from '../agents/default-skills.js';
 import { resolveAnimaHome } from '../anima-home.js';
 import { SecretHandoffPendingStore } from '../env/secret-handoff-store.js';
-import { HumanSecretHandoffPendingStore } from '../env/human-secret-handoff-store.js';
+import { SealedSecretHandoffPendingStore } from '../env/sealed-secret-handoff-store.js';
 import { errorMessage, nowIso } from '../ids.js';
 import { WakeQueueService, wakeQueueServiceForAgent, type InboxItem } from '../inbox/wake-queue.service.js';
 import { MemoryCoherenceScheduler } from '../memory/memory-coherence-scheduler.js';
@@ -288,7 +288,7 @@ export class RuntimeHost {
       },
       {
         agentId: agent.id,
-        run: () => new HumanSecretHandoffPendingStore(agent.id, this.animaHome).cleanupExpired(),
+        run: () => new SealedSecretHandoffPendingStore(agent.id, this.animaHome).cleanupExpired(),
       },
     ]);
     const results = await Promise.allSettled(cleanups.map((cleanup) => cleanup.run()));

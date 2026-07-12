@@ -26,7 +26,7 @@ import type { Activity } from '../../shared/activity.js';
 import type { InboxItem } from '../../shared/inbox.js';
 import { sleep } from './helpers/harness.js';
 import { SecretHandoffPendingStore } from '../env/secret-handoff-store.js';
-import { HumanSecretHandoffPendingStore } from '../env/human-secret-handoff-store.js';
+import { SealedSecretHandoffPendingStore } from '../env/sealed-secret-handoff-store.js';
 import { createHandoffKeyPair, createHandoffRequest } from '../../shared/secret-handoff.js';
 
 // Several RuntimeHost tests reach the health and restart stores through
@@ -121,16 +121,16 @@ test('runtime host startup reconciliation deletes expired handoff private keys',
     });
     await pending.create(request, keys.privateKey);
     const path = pending.pendingPath(request.requestId);
-    const human = new HumanSecretHandoffPendingStore('alpha', stateDir);
-    const humanId = await human.create(
+    const sealed = new SealedSecretHandoffPendingStore('alpha', stateDir);
+    const sealedId = await sealed.create(
       keys.publicKey,
       keys.privateKey,
       new Date(Date.now() - 60 * 60 * 1000),
       new Date(Date.now() - 2 * 60 * 60 * 1000),
     );
-    const humanPath = human.pendingPath(humanId);
+    const sealedPath = sealed.pendingPath(sealedId);
     assert.equal((await stat(path)).isFile(), true);
-    assert.equal((await stat(humanPath)).isFile(), true);
+    assert.equal((await stat(sealedPath)).isFile(), true);
 
     const host = new RuntimeHost({}, {
       animaHome: stateDir,
@@ -142,7 +142,7 @@ test('runtime host startup reconciliation deletes expired handoff private keys',
     await host.reconcileOnce();
 
     await assert.rejects(() => stat(path), /ENOENT/);
-    await assert.rejects(() => stat(humanPath), /ENOENT/);
+    await assert.rejects(() => stat(sealedPath), /ENOENT/);
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }

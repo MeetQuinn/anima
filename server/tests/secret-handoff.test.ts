@@ -11,20 +11,21 @@ import {
   decryptHandoffSecret,
   encodeHandoffRequest,
   encryptHandoffSecret,
-  decryptHumanHandoffSecret,
-  encodeHumanHandoffBox,
-  encodeHumanHandoffPublicKey,
-  encryptHumanHandoffSecret,
+  decryptSealedHandoffSecret,
+  encodeSealedHandoffBox,
+  encodeSealedHandoffPublicKey,
+  encryptSealedHandoffSecret,
   formatHandoffBoxForSlack,
-  formatHumanHandoffBoxForSlack,
-  humanHandoffKeyId,
-  parseHumanHandoffBox,
+  formatSealedHandoffBoxForSlack,
+  sealedHandoffKeyId,
+  parseSealedHandoffBox,
   parseHandoffBox,
   parseHandoffRequest,
+  randomHandoffRequestId,
 } from '../../shared/secret-handoff.js';
 import { AgentEnvStore } from '../env/agent-env-store.js';
 import { SecretHandoffPendingStore } from '../env/secret-handoff-store.js';
-import { HumanSecretHandoffPendingStore } from '../env/human-secret-handoff-store.js';
+import { SealedSecretHandoffPendingStore } from '../env/sealed-secret-handoff-store.js';
 
 const future = () => new Date(Date.now() + 60 * 60 * 1000);
 
@@ -61,49 +62,55 @@ test('secret handoff round trips an agent secret through canonical request and f
     assert.equal(payload.senderAgentId, 'nora');
 });
 
-test('human handoff URL contains only a public key and its generic box round trips', async () => {
+test('sealed handoff code contains only a public key and its generic box round trips', async () => {
   const keys = createHandoffKeyPair();
-  const publicCode = encodeHumanHandoffPublicKey(keys.publicKey);
+  const publicCode = encodeSealedHandoffPublicKey(keys.publicKey);
   assert.equal(publicCode, `asec_key_v1_${keys.publicKey}`);
   assert.doesNotMatch(publicCode, /milo|workspace|SERVICE_TOKEN|purpose|expires/i);
 
-  const box = await encryptHumanHandoffSecret(publicCode, 'known-secret-specimen');
-  const parsed = parseHumanHandoffBox(box);
+  const box = await encryptSealedHandoffSecret(publicCode, 'known-secret-specimen');
+  const parsed = parseSealedHandoffBox(box);
   assert.equal(parsed.publicKey, keys.publicKey);
   assert.doesNotMatch(box, /known-secret-specimen/);
-  assert.deepEqual(decryptHumanHandoffSecret(keys.privateKey, box), {
+  assert.deepEqual(decryptSealedHandoffSecret(keys.privateKey, box), {
     v: 1,
     value: 'known-secret-specimen',
   });
   const wrongKeys = createHandoffKeyPair();
   assert.throws(
-    () => decryptHumanHandoffSecret(wrongKeys.privateKey, box),
+    () => decryptSealedHandoffSecret(wrongKeys.privateKey, box),
     /could not be decrypted|tampered/,
   );
   const first = parsed.ciphertext.at(0);
   assert.ok(first);
-  const tampered = encodeHumanHandoffBox({
+  const tampered = encodeSealedHandoffBox({
     ...parsed,
     ciphertext: `${first === 'A' ? 'B' : 'A'}${parsed.ciphertext.slice(1)}`,
   });
   assert.throws(
-    () => decryptHumanHandoffSecret(keys.privateKey, tampered),
+    () => decryptSealedHandoffSecret(keys.privateKey, tampered),
     /could not be decrypted|tampered|Invalid/,
   );
   assert.equal(
-    await humanHandoffKeyId(keys.publicKey),
-    await humanHandoffKeyId(parsed.publicKey),
+    await sealedHandoffKeyId(keys.publicKey),
+    await sealedHandoffKeyId(parsed.publicKey),
   );
 });
 
-test('pending human handoff lock admits exactly one accept', async () => {
-  const animaHome = await mkdtemp(join(tmpdir(), 'anima-human-handoff-lock-'));
+test('legacy request ids never begin with a Commander option prefix', () => {
+  for (let index = 0; index < 5_000; index += 1) {
+    assert.doesNotMatch(randomHandoffRequestId(), /^-/);
+  }
+});
+
+test('pending sealed handoff lock admits exactly one accept', async () => {
+  const animaHome = await mkdtemp(join(tmpdir(), 'anima-sealed-handoff-lock-'));
   try {
     const keys = createHandoffKeyPair();
-    const pending = new HumanSecretHandoffPendingStore('milo', animaHome);
+    const pending = new SealedSecretHandoffPendingStore('milo', animaHome);
     await pending.create(keys.publicKey, keys.privateKey, future());
-    const box = await encryptHumanHandoffSecret(
-      encodeHumanHandoffPublicKey(keys.publicKey),
+    const box = await encryptSealedHandoffSecret(
+      encodeSealedHandoffPublicKey(keys.publicKey),
       'secret',
     );
     let writes = 0;
@@ -289,19 +296,19 @@ test('maximum secret stays below the committed Slack payload boundary', async ()
   );
 });
 
-test('maximum generic human secret stays below the Slack payload boundary', async () => {
+test('maximum generic sealed secret stays below the Slack payload boundary', async () => {
   const keys = createHandoffKeyPair();
-  const box = await encryptHumanHandoffSecret(
-    encodeHumanHandoffPublicKey(keys.publicKey),
+  const box = await encryptSealedHandoffSecret(
+    encodeSealedHandoffPublicKey(keys.publicKey),
     'x'.repeat(MAX_HANDOFF_SECRET_BYTES),
   );
-  const slackBlock = formatHumanHandoffBoxForSlack(box);
+  const slackBlock = formatSealedHandoffBoxForSlack(box);
   assert.ok(slackBlock.length < 12_000, `${slackBlock.length} must stay below 12000`);
-  assert.equal(decryptHumanHandoffSecret(keys.privateKey, slackBlock).value.length, 4096);
+  assert.equal(decryptSealedHandoffSecret(keys.privateKey, slackBlock).value.length, 4096);
   await assert.rejects(
     () =>
-      encryptHumanHandoffSecret(
-        encodeHumanHandoffPublicKey(keys.publicKey),
+      encryptSealedHandoffSecret(
+        encodeSealedHandoffPublicKey(keys.publicKey),
         'x'.repeat(MAX_HANDOFF_SECRET_BYTES + 1),
       ),
     /exceeds 4096 UTF-8 bytes/,
@@ -354,11 +361,11 @@ test('pending handoff state is private, single-use, and writes directly to encry
   }
 });
 
-test('pending human handoff is private, single-use, and chooses its env key on accept', async () => {
-  const animaHome = await mkdtemp(join(tmpdir(), 'anima-human-handoff-store-'));
+test('pending sealed handoff is private, single-use, and chooses its env key on accept', async () => {
+  const animaHome = await mkdtemp(join(tmpdir(), 'anima-sealed-handoff-store-'));
   try {
     const keys = createHandoffKeyPair();
-    const pending = new HumanSecretHandoffPendingStore('milo', animaHome);
+    const pending = new SealedSecretHandoffPendingStore('milo', animaHome);
     const wrongKeys = createHandoffKeyPair();
     await assert.rejects(
       () => pending.create(keys.publicKey, wrongKeys.privateKey, future()),
@@ -366,12 +373,17 @@ test('pending human handoff is private, single-use, and chooses its env key on a
     );
     const id = await pending.create(keys.publicKey, keys.privateKey, future());
     const path = pending.pendingPath(id);
+    assert.equal(
+      dirname(path),
+      join(animaHome, 'agents', 'milo', 'env', 'handoff', 'human'),
+      'the legacy directory remains readable during the bounded compatibility window',
+    );
     assert.equal((await stat(dirname(path))).mode & 0o777, 0o700);
     assert.equal((await stat(path)).mode & 0o777, 0o600);
     assert.doesNotMatch(await readFile(path, 'utf8'), /known-secret-specimen/);
 
-    const box = await encryptHumanHandoffSecret(
-      encodeHumanHandoffPublicKey(keys.publicKey),
+    const box = await encryptSealedHandoffSecret(
+      encodeSealedHandoffPublicKey(keys.publicKey),
       'known-secret-specimen',
     );
     const envStore = new AgentEnvStore('milo', animaHome);

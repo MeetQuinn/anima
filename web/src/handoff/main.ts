@@ -1,6 +1,6 @@
 import './styles.css';
 
-import { encryptHumanTransfer, requestStateFromFragment } from './page';
+import { encryptSealedTransfer, handoffStateFromFragment } from './page';
 
 const appRoot = document.querySelector<HTMLElement>('#app');
 if (!appRoot) throw new Error('Handoff app root is missing');
@@ -18,7 +18,7 @@ function element<K extends keyof HTMLElementTagNameMap>(
 }
 
 function render(): void {
-  const state = requestStateFromFragment(window.location.hash);
+  const state = handoffStateFromFragment(window.location.hash);
   app.replaceChildren(siteHeader());
   app.append(
     state.kind === 'ready'
@@ -132,7 +132,7 @@ function secretForm(publicKey: string): HTMLElement {
     submit.disabled = true;
     status.textContent = 'Encrypting locally…';
     try {
-      const transfer = await encryptHumanTransfer(publicKey, input.value);
+      const transfer = await encryptSealedTransfer(publicKey, input.value);
       input.value = '';
       wrapper.replaceChildren(resultView(transfer.fencedBox));
     } catch (error) {
