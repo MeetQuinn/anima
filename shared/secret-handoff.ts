@@ -2,6 +2,8 @@ import { PrivateKey, decrypt, encrypt } from 'eciesjs';
 
 export const HANDOFF_REQUEST_PREFIX = 'asec_req_v1_';
 export const HANDOFF_BOX_PREFIX = 'asec_box_v1_';
+export const HUMAN_HANDOFF_KEY_PREFIX = 'asec_key_v1_';
+export const HUMAN_HANDOFF_BOX_PREFIX = 'asec_sealed_v1_';
 export const MAX_HANDOFF_SECRET_BYTES = 4 * 1024;
 export const MAX_HANDOFF_SLACK_PAYLOAD_CHARS = 12_000;
 export const DEFAULT_HANDOFF_EXPIRY_MS = 24 * 60 * 60 * 1000;
@@ -78,6 +80,17 @@ export interface HandoffKeyPair {
   publicKey: string;
 }
 
+export interface HumanHandoffBox {
+  v: 1;
+  publicKey: string;
+  ciphertext: string;
+}
+
+export interface HumanHandoffSecretPayload {
+  v: 1;
+  value: string;
+}
+
 export interface CreateHandoffRequestInput {
   recipientAgentId: string;
   targetKey: string;
@@ -104,6 +117,80 @@ export function createHandoffKeyPair(): HandoffKeyPair {
     privateKey: privateKey.toHex(),
     publicKey: privateKey.publicKey.toHex(),
   };
+}
+
+export function encodeHumanHandoffPublicKey(publicKey: string): string {
+  if (!PUBLIC_KEY.test(publicKey))
+    throw new Error('Human handoff public key is invalid');
+  return `${HUMAN_HANDOFF_KEY_PREFIX}${publicKey}`;
+}
+
+export function parseHumanHandoffPublicKey(input: string): string {
+  const code = unwrapCode(input, HUMAN_HANDOFF_KEY_PREFIX);
+  const publicKey = code.slice(HUMAN_HANDOFF_KEY_PREFIX.length);
+  if (!PUBLIC_KEY.test(publicKey))
+    throw new Error('Human handoff public key is invalid');
+  if (encodeHumanHandoffPublicKey(publicKey) !== code)
+    throw new Error('Human handoff public key is not canonically encoded');
+  return publicKey;
+}
+
+export async function humanHandoffKeyId(publicKey: string): Promise<string> {
+  const canonical = parseHumanHandoffPublicKey(encodeHumanHandoffPublicKey(publicKey));
+  const digest = new Uint8Array(
+    await crypto.subtle.digest('SHA-256', encoder.encode(canonical)),
+  );
+  return `h_${base64UrlEncode(digest).slice(0, 22)}`;
+}
+
+export function encodeHumanHandoffBox(box: HumanHandoffBox): string {
+  const canonical = canonicalHumanBox(validateHumanBox(box));
+  return `${HUMAN_HANDOFF_BOX_PREFIX}${base64UrlEncode(
+    encoder.encode(JSON.stringify(canonical)),
+  )}`;
+}
+
+export function parseHumanHandoffBox(input: string): HumanHandoffBox {
+  const code = unwrapCode(input, HUMAN_HANDOFF_BOX_PREFIX);
+  const encoded = code.slice(HUMAN_HANDOFF_BOX_PREFIX.length);
+  const parsed = parseJsonObject(base64UrlDecode(encoded), 'human handoff box');
+  const box = validateHumanBox(parsed);
+  if (encodeHumanHandoffBox(box) !== code)
+    throw new Error('Human handoff box is not canonically encoded');
+  return box;
+}
+
+export async function encryptHumanHandoffSecret(
+  publicKeyInput: string,
+  value: string,
+): Promise<string> {
+  const publicKey = parseHumanHandoffPublicKey(publicKeyInput);
+  assertSecretValue(value);
+  const payload: HumanHandoffSecretPayload = { v: 1, value };
+  const plaintext = encoder.encode(JSON.stringify(payload));
+  const code = encodeHumanHandoffBox({
+    v: 1,
+    publicKey,
+    ciphertext: base64UrlEncode(encrypt(publicKey, plaintext)),
+  });
+  assertHumanSlackPayloadSize(code);
+  return code;
+}
+
+export function decryptHumanHandoffSecret(
+  privateKey: string,
+  boxInput: string,
+): HumanHandoffSecretPayload {
+  if (!PRIVATE_KEY.test(privateKey))
+    throw new Error('Pending human handoff private key is invalid');
+  const box = parseHumanHandoffBox(boxInput);
+  let plaintext: Uint8Array;
+  try {
+    plaintext = decrypt(privateKey, base64UrlDecode(box.ciphertext));
+  } catch {
+    throw new Error('Human handoff box could not be decrypted or was tampered with');
+  }
+  return validateHumanPayload(parseJsonObject(plaintext, 'human handoff secret payload'));
 }
 
 export function randomHandoffRequestId(): string {
@@ -252,6 +339,17 @@ export async function handoffSecretFingerprint(value: string): Promise<string> {
 
 export function formatHandoffBoxForSlack(boxCode: string): string {
   const code = unwrapCode(boxCode, HANDOFF_BOX_PREFIX);
+  const formatted = `\`\`\`\n${code}\n\`\`\``;
+  if (formatted.length >= MAX_HANDOFF_SLACK_PAYLOAD_CHARS) {
+    throw new Error(
+      `Encrypted handoff exceeds ${MAX_HANDOFF_SLACK_PAYLOAD_CHARS - 1} Slack characters`,
+    );
+  }
+  return formatted;
+}
+
+export function formatHumanHandoffBoxForSlack(boxCode: string): string {
+  const code = unwrapCode(boxCode, HUMAN_HANDOFF_BOX_PREFIX);
   const formatted = `\`\`\`\n${code}\n\`\`\``;
   if (formatted.length >= MAX_HANDOFF_SLACK_PAYLOAD_CHARS) {
     throw new Error(
@@ -430,6 +528,28 @@ function validateBox(value: unknown): HandoffBox {
   return { v: 1, requestId, ciphertext };
 }
 
+function validateHumanBox(value: unknown): HumanHandoffBox {
+  const object = asObject(value, 'human handoff box');
+  assertExactKeys(object, ['ciphertext', 'publicKey', 'v'], 'human handoff box');
+  if (object.v !== 1) throw new Error('Unsupported human handoff box version');
+  const publicKey = requiredString(object, 'publicKey');
+  if (!PUBLIC_KEY.test(publicKey))
+    throw new Error('Human handoff box public key is invalid');
+  const ciphertext = requiredString(object, 'ciphertext');
+  base64UrlDecode(ciphertext);
+  return { v: 1, publicKey, ciphertext };
+}
+
+function validateHumanPayload(value: unknown): HumanHandoffSecretPayload {
+  const object = asObject(value, 'human handoff secret payload');
+  assertExactKeys(object, ['v', 'value'], 'human handoff secret payload');
+  if (object.v !== 1)
+    throw new Error('Unsupported human handoff secret payload version');
+  const secret = requiredString(object, 'value', true);
+  assertSecretValue(secret);
+  return { v: 1, value: secret };
+}
+
 function validatePayload(value: unknown): HandoffSecretPayload {
   const object = asObject(value, 'handoff secret payload');
   const senderKind = requiredString(object, 'senderKind');
@@ -529,6 +649,10 @@ function canonicalBox(box: HandoffBox): Record<string, unknown> {
   return { v: 1, requestId: box.requestId, ciphertext: box.ciphertext };
 }
 
+function canonicalHumanBox(box: HumanHandoffBox): Record<string, unknown> {
+  return { v: 1, publicKey: box.publicKey, ciphertext: box.ciphertext };
+}
+
 function canonicalPayload(
   payload: HandoffSecretPayload,
 ): Record<string, unknown> {
@@ -567,6 +691,10 @@ function assertSecretValue(value: string): void {
 
 function assertSlackPayloadSize(code: string): void {
   formatHandoffBoxForSlack(code);
+}
+
+function assertHumanSlackPayloadSize(code: string): void {
+  formatHumanHandoffBoxForSlack(code);
 }
 
 function unwrapCode(input: string, prefix: string): string {

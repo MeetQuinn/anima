@@ -1,12 +1,12 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseHandoffRequest } from '../../shared/secret-handoff.js';
+import { encryptHumanHandoffSecret } from '../../shared/secret-handoff.js';
 
 const cliPath = resolve('dist/server/cli/anima.js');
 
@@ -322,91 +322,122 @@ test('env handoff CLI bounds expiry and destroys cancelled receive keys', async 
   }
 });
 
-test('env handoff CLI creates a browser-only human request with bound workspace metadata', async () => {
+test('env handoff CLI creates a public-key-only human link and chooses the env key on accept', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-human-handoff-test-'));
-  const agentDir = join(stateDir, 'agents', 'milo');
-  const homePath = join(stateDir, 'home');
   const env = { ...process.env, ANIMA_AGENT_ID: 'milo', ANIMA_HOME: stateDir };
+  const specimen = 'browser-generated-secret-specimen';
   try {
-    await Promise.all([
-      mkdir(agentDir, { recursive: true }),
-      mkdir(homePath, { recursive: true }),
-    ]);
-    await writeFile(
-      join(agentDir, 'config.json'),
-      `${JSON.stringify({
-        id: 'milo',
-        homePath,
-        provider: { kind: 'codex-cli', model: 'gpt-5.5' },
-        slack: {
-          appToken: 'xapp-test',
-          botToken: 'xoxb-test',
-          connected: true,
-          teamId: 'T01234567',
-          workspaceName: 'Anima Team',
-        },
-      }, null, 2)}\n`,
-      'utf8',
-    );
-
     const result = await runNode([
       cliPath,
       'env',
       'handoff',
-      'request',
-      'SERVICE_TOKEN',
-      '--purpose',
-      'Run the deployment verification job',
-      '--from-human',
+      'receive',
+      '--expires',
+      '24h',
     ], { env });
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.match(result.stdout, /Destination: milo's local encrypted env/);
-    assert.match(result.stdout, /Workspace: Anima Team/);
-    assert.match(result.stdout, /Slack and the Anima handoff page never receive the plaintext/);
     assert.match(
       result.stdout,
-      /<https:\/\/handoff\.meetanima\.online\/#asec_req_v1_[A-Za-z0-9_-]+\|Securely provide secret>/,
+      /<https:\/\/handoff\.meetanima\.online\/#asec_key_v1_[0-9a-f]{66}\|Encrypt a secret>/,
     );
-    assert.ok(result.stdout.length < 12_000);
+    assert.match(result.stdout, /id=h_[A-Za-z0-9_-]{22}/);
+    assert.doesNotMatch(result.stdout, /SERVICE_TOKEN|workspace|purpose|recipient/i);
+    const publicCode = result.stdout.match(/asec_key_v1_[0-9a-f]{66}/)?.[0];
+    assert.ok(publicCode);
+    const box = await encryptHumanHandoffSecret(publicCode, specimen);
+    assert.doesNotMatch(box, new RegExp(specimen));
 
-    const code = extractHandoffCode(result.stdout, 'asec_req_v1_');
-    const request = parseHandoffRequest(code);
-    assert.equal(request.senderKind, 'human');
-    if (request.senderKind !== 'human') return;
-    assert.equal(request.workspaceId, 'T01234567');
-    assert.equal(request.workspaceName, 'Anima Team');
-    assert.equal(request.purpose, 'Run the deployment verification job');
+    const missingKey = await runNode([cliPath, 'env', 'handoff', 'accept', box], { env });
+    assert.equal(missingKey.status, 1);
+    assert.match(missingKey.stderr, /Pass --key <key>/);
+
+    const accepted = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'accept',
+      box,
+      '--key',
+      'SERVICE_TOKEN',
+    ], { env });
+    assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);
+    assert.match(accepted.stdout, /key=SERVICE_TOKEN/);
+    assert.match(accepted.stdout, /from=human/);
+    assert.doesNotMatch(accepted.stdout, new RegExp(specimen));
+
+    const reveal = await runNode([
+      cliPath,
+      'env',
+      'run',
+      '--keys',
+      'SERVICE_TOKEN',
+      '--',
+      process.execPath,
+      '-e',
+      'process.stdout.write(process.env.SERVICE_TOKEN || "")',
+    ], { env });
+    assert.equal(reveal.stdout, specimen);
+
+    const replay = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'accept',
+      box,
+      '--key',
+      'ANOTHER_TOKEN',
+    ], { env });
+    assert.equal(replay.status, 1);
+    assert.match(replay.stderr, /not found/);
+
+    const replaceReceive = await runNode([cliPath, 'env', 'handoff', 'receive'], { env });
+    const replaceCode = replaceReceive.stdout.match(/asec_key_v1_[0-9a-f]{66}/)?.[0];
+    assert.ok(replaceCode);
+    const replaceBox = await encryptHumanHandoffSecret(replaceCode, 'replacement-specimen');
+    const rejectExisting = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'accept',
+      replaceBox,
+      '--key',
+      'SERVICE_TOKEN',
+    ], { env });
+    assert.equal(rejectExisting.status, 1);
+    assert.match(rejectExisting.stderr, /Pass --replace/);
+    const replace = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'accept',
+      replaceBox,
+      '--key',
+      'SERVICE_TOKEN',
+      '--replace',
+    ], { env });
+    assert.equal(replace.status, 0, replace.stderr || replace.stdout);
 
     const staleOverride = await runNode([
       cliPath,
       'env',
       'handoff',
-      'request',
-      'STALE_ORIGIN_TOKEN',
-      '--purpose',
-      'Ignore a retired deployment gate',
-      '--from-human',
+      'receive',
     ], {
       env: { ...env, ANIMA_HUMAN_HANDOFF_PAGE_ORIGIN: 'https://example.com' },
     });
     assert.equal(staleOverride.status, 0, staleOverride.stderr || staleOverride.stdout);
-    assert.match(staleOverride.stdout, /https:\/\/handoff\.meetanima\.online\/#asec_req_v1_/);
+    assert.match(staleOverride.stdout, /https:\/\/handoff\.meetanima\.online\/#asec_key_v1_/);
     assert.doesNotMatch(staleOverride.stderr + staleOverride.stdout, /example\.com/);
-
-    const conflicting = await runNode([
+    const staleId = staleOverride.stdout.match(/id=(h_[A-Za-z0-9_-]{22})/)?.[1];
+    assert.ok(staleId);
+    const cancel = await runNode([
       cliPath,
       'env',
       'handoff',
-      'request',
-      'CONFLICTING_POLICY_TOKEN',
-      '--purpose',
-      'Reject ambiguous sender policy',
-      '--from-human',
-      '--from',
-      'nora',
+      'cancel',
+      staleId,
     ], { env });
-    assert.equal(conflicting.status, 1);
-    assert.match(conflicting.stderr, /Choose exactly one sender policy/);
+    assert.equal(cancel.status, 0, cancel.stderr || cancel.stdout);
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }

@@ -1,7 +1,12 @@
 # Anima Secure Handoff static origin
 
-This package builds the browser-only human secret handoff page to
+This package builds the browser-only public-key encryption page to
 `dist/handoff/`. It is intentionally separate from the dashboard and docs apps.
+
+The URL fragment contains only a protocol version and public key. The page does
+not know the recipient, destination env key, purpose, workspace, or expiry. It
+encrypts a value locally and returns a generic sealed box; the receiver chooses
+where to store it after decryption.
 
 Deployment requirements for `handoff.meetanima.online`:
 

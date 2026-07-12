@@ -3,16 +3,19 @@ import { z } from 'zod';
 
 import {
   DEFAULT_HANDOFF_EXPIRY_MS,
+  HUMAN_HANDOFF_BOX_PREFIX,
   MAX_HANDOFF_EXPIRY_MS,
   MIN_HANDOFF_EXPIRY_MS,
   createHandoffKeyPair,
   createHandoffRequest,
   assertHandoffSenderForRequest,
+  encodeHumanHandoffPublicKey,
   encodeHandoffRequest,
   encryptHandoffSecret,
   formatHandoffBoxForSlack,
   formatHandoffRequestForSlack,
   handoffSecretFingerprint,
+  parseHumanHandoffBox,
   parseHandoffBox,
   parseHandoffRequest,
 } from '../../shared/secret-handoff.js';
@@ -22,8 +25,8 @@ import {
   assertEnvKeyAllowed,
 } from '../env/agent-env-store.js';
 import { SecretHandoffPendingStore } from '../env/secret-handoff-store.js';
+import { HumanSecretHandoffPendingStore } from '../env/human-secret-handoff-store.js';
 import { resolveAgentIdFrom } from '../cli/shared.js';
-import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { outcomeLine } from './outcome-line.js';
 
 export const HANDOFF_PAGE_ORIGIN = 'https://handoff.meetanima.online';
@@ -37,7 +40,10 @@ const RequestSchema = SharedFlags.extend({
   purpose: z.string().min(1).max(500),
   from: z.string().optional(),
   allowAnySender: z.boolean().default(false),
-  fromHuman: z.boolean().default(false),
+  expires: z.string().optional(),
+});
+
+const ReceiveSchema = SharedFlags.extend({
   expires: z.string().optional(),
 });
 
@@ -48,6 +54,7 @@ const SendSchema = SharedFlags.extend({
 
 const AcceptSchema = SharedFlags.extend({
   box: z.string().min(1),
+  key: z.string().optional(),
   replace: z.boolean().default(false),
 });
 
@@ -56,6 +63,7 @@ const CancelSchema = SharedFlags.extend({
 });
 
 type RequestOptions = z.infer<typeof RequestSchema>;
+type ReceiveOptions = z.infer<typeof ReceiveSchema>;
 type SendOptions = z.infer<typeof SendSchema>;
 type AcceptOptions = z.infer<typeof AcceptSchema>;
 type CancelOptions = z.infer<typeof CancelSchema>;
@@ -80,14 +88,20 @@ export function registerEnvHandoffCommands(env: Command): void {
       '--allow-any-sender',
       'allow any trusted agent in the workspace to send',
     )
-    .option(
-      '--from-human',
-      'let a human encrypt the value in the Anima Secure Handoff page',
-    )
     .option('--expires <duration>', 'expiry from now (5m to 7d; default 24h)')
     .action(async (key: string, _, command) => {
       const opts = RequestSchema.parse({ ...command.optsWithGlobals(), key });
       await runHandoffRequest(opts);
+    });
+
+  handoff
+    .command('receive')
+    .description('Create a public-key link for a human to encrypt a secret.')
+    .option('--agent <agent>', 'recipient agent id; defaults to ANIMA_AGENT_ID')
+    .option('--expires <duration>', 'expiry from now (5m to 7d; default 24h)')
+    .action(async (_, command) => {
+      const opts = ReceiveSchema.parse(command.optsWithGlobals());
+      await runHandoffReceive(opts);
     });
 
   handoff
@@ -108,6 +122,7 @@ export function registerEnvHandoffCommands(env: Command): void {
       "Explicitly decrypt and store a handoff box in this agent's encrypted env.",
     )
     .option('--agent <agent>', 'recipient agent id; defaults to ANIMA_AGENT_ID')
+    .option('--key <key>', 'destination secret env key for a human sealed box')
     .option(
       '--replace',
       'replace an existing secret env value with the same key',
@@ -133,21 +148,17 @@ export function registerEnvHandoffCommands(env: Command): void {
 async function runHandoffRequest(opts: RequestOptions): Promise<void> {
   const agentId = resolveHandoffAgentId(opts.agent);
   assertEnvKeyAllowed(opts.key);
-  const senderChoices =
-    Number(Boolean(opts.from)) +
-    Number(opts.allowAnySender) +
-    Number(opts.fromHuman);
+  const senderChoices = Number(Boolean(opts.from)) + Number(opts.allowAnySender);
   if (senderChoices !== 1) {
     throw new Error(
-      'Choose exactly one sender policy: --from <agent>, --allow-any-sender, or --from-human',
+      'Choose exactly one sender policy: --from <agent> or --allow-any-sender',
     );
   }
-  const pageOrigin = opts.fromHuman ? HANDOFF_PAGE_ORIGIN : undefined;
   const expiryMs = opts.expires
     ? parseExpiry(opts.expires)
     : DEFAULT_HANDOFF_EXPIRY_MS;
   const keys = createHandoffKeyPair();
-  const sender = await requestSender(opts, agentId);
+  const sender = requestSender(opts);
   const request = createHandoffRequest({
     recipientAgentId: agentId,
     targetKey: opts.key,
@@ -161,9 +172,7 @@ async function runHandoffRequest(opts: RequestOptions): Promise<void> {
   const senderLabel =
     request.senderKind === 'agent'
       ? request.expectedSenderAgentId
-      : request.senderKind === 'human'
-        ? `human in ${request.workspaceName}`
-        : request.senderKind;
+      : request.senderKind;
   console.log(
     outcomeLine('handoff request created', [
       ['id', request.requestId],
@@ -171,58 +180,21 @@ async function runHandoffRequest(opts: RequestOptions): Promise<void> {
       ['sender', senderLabel],
     ]),
   );
-  console.log(formatRequestForSlack(request, code, pageOrigin));
+  console.log(formatRequestForSlack(request, code));
 }
 
-async function requestSender(
+function requestSender(
   opts: RequestOptions,
-  agentId: string,
-): Promise<
-  | { kind: 'agent'; agentId: string }
-  | { kind: 'any-workspace-agent' }
-  | { kind: 'human'; workspaceId: string; workspaceName: string }
-> {
+): { kind: 'agent'; agentId: string } | { kind: 'any-workspace-agent' } {
   if (opts.from) return { kind: 'agent', agentId: opts.from };
-  if (opts.allowAnySender) return { kind: 'any-workspace-agent' };
-  const agent = await defaultAgentRegistryService
-    .serviceFor(agentId)
-    .getConfig();
-  if (
-    !agent.slack.connected ||
-    !agent.slack.teamId ||
-    !agent.slack.workspaceName
-  ) {
-    throw new Error(
-      `Agent ${agentId} needs a connected Slack workspace before requesting a human handoff`,
-    );
-  }
-  return {
-    kind: 'human',
-    workspaceId: agent.slack.teamId,
-    workspaceName: agent.slack.workspaceName,
-  };
+  return { kind: 'any-workspace-agent' };
 }
 
 function formatRequestForSlack(
   request: ReturnType<typeof createHandoffRequest>,
   code: string,
-  pageOrigin?: string,
 ): string {
   const expires = `<t:${Math.floor(Date.parse(request.expiresAt) / 1000)}:f>`;
-  if (request.senderKind === 'human') {
-    if (!pageOrigin) throw new Error('Human secret handoff page is not enabled');
-    const pageUrl = `${pageOrigin}/#${code}`;
-    return [
-      `${request.recipientAgentId} requests \`${request.targetKey}\``,
-      `Purpose: ${escapeSlackText(request.purpose)}`,
-      `Destination: ${request.recipientAgentId}'s local encrypted env`,
-      'Slack and the Anima handoff page never receive the plaintext',
-      `Workspace: ${escapeSlackText(request.workspaceName)}`,
-      `Expires: ${expires}`,
-      '',
-      `<${pageUrl}|Securely provide secret>`,
-    ].join('\n');
-  }
   return [
     `${request.recipientAgentId} requests \`${request.targetKey}\``,
     `Purpose: ${escapeSlackText(request.purpose)}`,
@@ -231,6 +203,28 @@ function formatRequestForSlack(
     '',
     formatHandoffRequestForSlack(code),
   ].join('\n');
+}
+
+async function runHandoffReceive(opts: ReceiveOptions): Promise<void> {
+  const agentId = resolveHandoffAgentId(opts.agent);
+  const expiryMs = opts.expires
+    ? parseExpiry(opts.expires)
+    : DEFAULT_HANDOFF_EXPIRY_MS;
+  const keys = createHandoffKeyPair();
+  const expiresAt = new Date(Date.now() + expiryMs);
+  const id = await new HumanSecretHandoffPendingStore(agentId).create(
+    keys.publicKey,
+    keys.privateKey,
+    expiresAt,
+  );
+  const code = encodeHumanHandoffPublicKey(keys.publicKey);
+  console.log(
+    outcomeLine('human handoff ready', [
+      ['id', id],
+      ['expires', expiresAt.toISOString()],
+    ]),
+  );
+  console.log(`<${HANDOFF_PAGE_ORIGIN}/#${code}|Encrypt a secret>`);
 }
 
 async function runHandoffSend(opts: SendOptions): Promise<void> {
@@ -262,6 +256,12 @@ async function runHandoffSend(opts: SendOptions): Promise<void> {
 
 async function runHandoffAccept(opts: AcceptOptions): Promise<void> {
   const agentId = resolveHandoffAgentId(opts.agent);
+  if (handoffCodeStartsWith(opts.box, HUMAN_HANDOFF_BOX_PREFIX)) {
+    await runHumanHandoffAccept(agentId, opts);
+    return;
+  }
+  if (opts.key)
+    throw new Error('--key is only valid when accepting a human sealed box');
   const box = parseHandoffBox(opts.box);
   const pending = new SecretHandoffPendingStore(agentId);
   const env = new AgentEnvStore(agentId);
@@ -300,13 +300,55 @@ async function runHandoffAccept(opts: AcceptOptions): Promise<void> {
   }
 }
 
+async function runHumanHandoffAccept(
+  agentId: string,
+  opts: AcceptOptions,
+): Promise<void> {
+  if (!opts.key)
+    throw new Error('Pass --key <key> to choose where to store this secret');
+  assertEnvKeyAllowed(opts.key);
+  parseHumanHandoffBox(opts.box);
+  const pending = new HumanSecretHandoffPendingStore(agentId);
+  const env = new AgentEnvStore(agentId);
+  try {
+    const result = await pending.consume(opts.box, async (payload) => {
+      await env.set(opts.key!, payload.value, 'secret', {
+        replace: opts.replace,
+      });
+      return { fingerprint: await handoffSecretFingerprint(payload.value) };
+    });
+    console.log(
+      outcomeLine('handoff accepted', [
+        ['key', opts.key],
+        ['kind', 'secret'],
+        ['from', 'human'],
+        ['fingerprint', result.fingerprint],
+      ]),
+    );
+  } catch (error) {
+    if (error instanceof AgentEnvExistsError) {
+      await pending.resetRejectedWrite(opts.box);
+      if (error.kind === 'secret') {
+        throw new Error(`${error.message}. Pass --replace to replace it.`);
+      }
+    }
+    throw error;
+  }
+}
+
 async function runHandoffCancel(opts: CancelOptions): Promise<void> {
   const agentId = resolveHandoffAgentId(opts.agent);
-  const cancelled = await new SecretHandoffPendingStore(agentId).cancel(
-    opts.requestId,
-  );
+  const cancelled = opts.requestId.startsWith('h_')
+    ? await new HumanSecretHandoffPendingStore(agentId).cancel(opts.requestId)
+    : await new SecretHandoffPendingStore(agentId).cancel(opts.requestId);
   if (!cancelled) throw new Error('Pending handoff request was not found');
   console.log(outcomeLine('handoff cancelled', [['id', opts.requestId]]));
+}
+
+function handoffCodeStartsWith(input: string, prefix: string): boolean {
+  const trimmed = input.trim();
+  const fenced = trimmed.match(/^```(?:text)?\s*\n([\s\S]*?)\n```$/);
+  return (fenced?.[1] ?? trimmed).trim().startsWith(prefix);
 }
 
 function resolveHandoffAgentId(agent: string | undefined): string {

@@ -91,6 +91,27 @@ The request and box are safe ciphertext/public metadata for Slack, but the sourc
 already be a secret env entry. This does not transfer Claude/Codex login state, Slack/Feishu
 credentials, or other Anima-managed credentials.
 
+### Receive an encrypted value from a human
+
+Create a browser link whose fragment contains only a version and one-time public key:
+
+```
+anima env handoff receive
+```
+
+Send the printed `handoff.meetanima.online` link to the human. The page encrypts locally and
+returns a fenced `asec_sealed_v1_...` block. The link does not name an agent, workspace, purpose,
+expiry, or destination key. Choose the destination only when accepting the returned block:
+
+```
+anima env handoff accept 'asec_sealed_v1_...' --key SERVICE_TOKEN
+```
+
+The private key remains local, expires after 24 hours by default, and is destroyed after one
+successful acceptance. `--expires` and `--replace` have the same bounds and explicit-write
+semantics as agent handoffs. Use the printed `h_...` id with `anima env handoff cancel <id>` to
+destroy an unused human receive key.
+
 **Do not:**
 
 - Never print or echo a secret value, in any message, file, or log. `anima env list` masks values

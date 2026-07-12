@@ -7,86 +7,46 @@ import html from '../../handoff/index.html?raw';
 
 import {
   createHandoffKeyPair,
-  createHandoffRequest,
-  decryptHandoffSecret,
-  encodeHandoffRequest,
+  decryptHumanHandoffSecret,
+  encodeHumanHandoffPublicKey,
+  parseHumanHandoffBox,
 } from '@shared/secret-handoff.ts';
 import { encryptHumanTransfer, requestStateFromFragment } from './page';
 
-const NOW = new Date('2026-07-11T12:00:00.000Z');
-
-function humanFixture() {
-  const keys = createHandoffKeyPair();
-  const request = createHandoffRequest({
-    recipientAgentId: 'milo',
-    targetKey: 'SERVICE_TOKEN',
-    purpose: 'Run the deployment verification job',
-    sender: {
-      kind: 'human',
-      workspaceId: 'T01234567',
-      workspaceName: 'Anima Team',
-    },
-    now: NOW,
-    expiresAt: new Date('2026-07-12T12:00:00.000Z'),
-    publicKey: keys.publicKey,
-  });
-  if (request.senderKind !== 'human') throw new Error('Human fixture is invalid');
-  return { keys, request, code: encodeHandoffRequest(request) };
-}
-
-describe('human handoff page boundary', () => {
-  it('parses only an unexpired human request with bound workspace metadata', () => {
-    const { code } = humanFixture();
-    const state = requestStateFromFragment(`#${code}`, NOW);
-    expect(state.kind).toBe('ready');
-    if (state.kind !== 'ready') return;
-    expect(state.request.workspaceId).toBe('T01234567');
-    expect(state.request.workspaceName).toBe('Anima Team');
-    expect(state.request.targetKey).toBe('SERVICE_TOKEN');
-  });
-
-  it('never offers an input state for missing, malformed, expired, or agent requests', () => {
-    expect(requestStateFromFragment('', NOW).kind).toBe('error');
-    expect(requestStateFromFragment('#not-a-request', NOW).kind).toBe('error');
-    const fixture = humanFixture();
-    expect(
-      requestStateFromFragment(`#${fixture.code}`, new Date('2026-07-13T00:00:00.000Z')).kind,
-    ).toBe('error');
-
-    const agentKeys = createHandoffKeyPair();
-    const agentRequest = createHandoffRequest({
-      recipientAgentId: 'milo',
-      targetKey: 'SERVICE_TOKEN',
-      purpose: 'Agent-only fixture',
-      sender: { kind: 'agent', agentId: 'nora' },
-      now: NOW,
-      expiresAt: new Date('2026-07-12T12:00:00.000Z'),
-      publicKey: agentKeys.publicKey,
+describe('public-key handoff page boundary', () => {
+  it('accepts only a versioned public key in the URL fragment', () => {
+    const keys = createHandoffKeyPair();
+    const code = encodeHumanHandoffPublicKey(keys.publicKey);
+    expect(requestStateFromFragment(`#${code}`)).toEqual({
+      kind: 'ready',
+      publicKey: keys.publicKey,
     });
-    expect(requestStateFromFragment(`#${encodeHandoffRequest(agentRequest)}`, NOW).kind).toBe(
-      'error',
-    );
+    expect(code).toBe(`asec_key_v1_${keys.publicKey}`);
+    expect(code).not.toMatch(/milo|workspace|SERVICE_TOKEN|purpose|expires/i);
   });
 
-  it('produces a fenced browser box that the Node protocol accepts', async () => {
-    const { keys, request } = humanFixture();
+  it('never offers an input state for a missing or malformed public key', () => {
+    expect(requestStateFromFragment('').kind).toBe('error');
+    expect(requestStateFromFragment('#not-a-key').kind).toBe('error');
+    expect(requestStateFromFragment('#asec_key_v1_deadbeef').kind).toBe('error');
+  });
+
+  it('produces a generic fenced box that the matching private key opens', async () => {
+    const keys = createHandoffKeyPair();
     const transfer = await encryptHumanTransfer(
-      request,
+      keys.publicKey,
       'browser-generated-secret-specimen',
-      new Date('2026-07-11T12:05:00.000Z'),
     );
-    expect(transfer.fencedBox).toMatch(/^```\nasec_box_v1_/);
+    expect(transfer.fencedBox).toMatch(/^```\nasec_sealed_v1_/);
     expect(transfer.fencedBox).not.toContain('browser-generated-secret-specimen');
-    expect(transfer.fingerprint).toMatch(/^[0-9a-f]{8}$/);
-    await expect(
-      decryptHandoffSecret(request, keys.privateKey, transfer.fencedBox),
-    ).resolves.toMatchObject({
-      senderKind: 'human',
+    expect(parseHumanHandoffBox(transfer.fencedBox).publicKey).toBe(keys.publicKey);
+    expect(decryptHumanHandoffSecret(keys.privateKey, transfer.fencedBox)).toEqual({
+      v: 1,
       value: 'browser-generated-secret-specimen',
     });
   });
 
-  it('ships a no-network CSP and host-enforced anti-frame headers', async () => {
+  it('ships a no-network CSP and host-enforced anti-frame headers', () => {
     expect(html).toContain("connect-src 'none'");
     expect(html).toContain('noindex, nofollow, noarchive');
     expect(html).not.toMatch(/https?:\/\//);
