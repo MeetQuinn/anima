@@ -598,19 +598,23 @@ export function FileContent({
             className="@container min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-10 md:py-10"
           >
             {/* Reading measure: rendered Markdown is a document, so the column
-                caps near 72ch and centers in the panel instead of stretching to
-                the viewer's width - unbounded lines were hitting 160+ characters
-                on wide screens. Code view stays full-width (source, not prose).
-                When the panel itself is wide enough (container query - the tree
-                is resizable, so viewport width says nothing), the reclaimed
-                space carries an "On this page" rail for long docs. */}
+                caps at 1024px and centers in the panel instead of stretching to
+                the viewer's width (operator preference 07-12: widened from the
+                740px/72ch cap - unbounded lines were hitting 160+ characters on
+                wide screens, 1024 keeps a ceiling while using more of the panel).
+                Code view stays full-width (source, not prose). When the panel
+                itself is wide enough (container query - the tree is resizable,
+                so viewport width says nothing), the reclaimed space carries an
+                "On this page" rail for long docs. Rail math: 1024 content +
+                48 gap + 220 rail = 1292; the @min threshold keeps the same
+                80px slack as before. */}
             <div
               className={[
-                'mx-auto flex w-full max-w-[740px] gap-12',
-                showTocRail ? '@min-[1068px]:max-w-[988px]' : '',
+                'mx-auto flex w-full max-w-[1024px] gap-12',
+                showTocRail ? '@min-[1372px]:max-w-[1292px]' : '',
               ].join(' ')}
             >
-              <div className="w-full min-w-0 max-w-[740px] flex-1">
+              <div className="w-full min-w-0 max-w-[1024px] flex-1">
                 {/* Rendered outside .md-prose so the metadata table keeps its own
                     styling instead of inheriting the Markdown code-block / table look. */}
                 {frontmatter && <FrontmatterTable entries={frontmatter} />}
@@ -634,12 +638,12 @@ export function FileContent({
               {showTocRail && (
                 <nav
                   aria-label="On this page"
-                  className="sticky top-2 hidden w-[200px] shrink-0 self-start @min-[1068px]:block"
+                  className="sticky top-2 hidden w-[220px] shrink-0 self-start @min-[1372px]:block"
                 >
-                  <div className="chrome mb-3 text-[10px] uppercase tracking-[0.14em] text-text-muted">
+                  <div className="chrome mb-3 text-[11px] uppercase tracking-[0.14em] text-text-muted">
                     On this page
                   </div>
-                  <ul className="space-y-1.5 border-l border-border-soft pl-3">
+                  <ul className="space-y-2 border-l border-border-soft pl-3">
                     {tocEntries.map((entry) => (
                       <li key={`${entry.id}-${entry.line}`}>
                         <a
@@ -654,7 +658,7 @@ export function FileContent({
                             setActiveHeadingId(entry.id);
                           }}
                           className={[
-                            'block truncate font-sans text-[12px] leading-snug transition-colors',
+                            'block truncate font-sans text-[14px] leading-snug transition-colors',
                             activeHeadingId === entry.id
                               ? 'text-accent'
                               : 'text-text-muted hover:text-text',

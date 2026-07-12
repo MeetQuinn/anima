@@ -81,6 +81,28 @@ function orderRoot(nodes: KbTreeNode[]): KbTreeNode[] {
 
 // ---------------------------------------------------------------------------
 
+// Expanded-dirs memory per agent — module-level so the tree survives the
+// component remounts that file navigation triggers, exactly like the KB
+// browser's expandedDirsByKb (views/kb/index.tsx). Without it, clicking a
+// file reset the tree to just the clicked file's ancestors, collapsing every
+// other open folder. Session-transient by design (not a durable preference).
+const expandedDirsByAgent = new Map<string, string[]>();
+
+function restoredExpandedDirs(agentId: string, filePath: string | null): Set<string> {
+  const cached = expandedDirsByAgent.get(agentId);
+  const expanded = new Set(cached ?? []);
+  for (const ancestor of ancestorsOf(filePath)) expanded.add(ancestor);
+  // First visit only (no cache), no deep link: open notes/ by default so any
+  // note is two clicks (tab → note). Harmless if the dir is absent — TreeRow
+  // only expands what exists. Once a cached layout exists, respect it as-is.
+  if (!cached && !filePath) expanded.add('notes');
+  return expanded;
+}
+
+function cacheExpandedDirs(agentId: string, expanded: Set<string>): void {
+  expandedDirsByAgent.set(agentId, [...expanded]);
+}
+
 export default function AgentFiles() {
   const { agentId, '*': splat } = useParams<{ agentId: string; '*'?: string }>();
   const filePath = splat || null;
@@ -99,13 +121,9 @@ function AgentFilesContent({
   const navigate = useNavigate();
   const treeRef = useRef<HTMLDivElement>(null);
 
-  const [expanded, setExpanded] = useState<Set<string>>(() => {
-    const init = ancestorsOf(filePath);
-    // No deep link: open notes/ by default so any note is two clicks (tab →
-    // note). Harmless if the dir is absent — TreeRow only expands what exists.
-    if (!filePath) init.add('notes');
-    return init;
-  });
+  const [expanded, setExpanded] = useState<Set<string>>(() =>
+    restoredExpandedDirs(agentId, filePath),
+  );
   const [filterQuery, setFilterQuery] = useState('');
 
   const {
@@ -188,20 +206,25 @@ function AgentFilesContent({
       setExpanded((prev) => {
         const next = new Set(prev);
         for (const a of ancestorsOf(filePath)) next.add(a);
+        cacheExpandedDirs(agentId, next);
         return next;
       });
     }, 0);
     return () => clearTimeout(t);
-  }, [filePath]);
+  }, [agentId, filePath]);
 
-  const toggleDir = useCallback((path: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }, []);
+  const toggleDir = useCallback(
+    (path: string) => {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        if (next.has(path)) next.delete(path);
+        else next.add(path);
+        cacheExpandedDirs(agentId, next);
+        return next;
+      });
+    },
+    [agentId],
+  );
 
   const selectFile = useCallback(
     (path: string) => {
