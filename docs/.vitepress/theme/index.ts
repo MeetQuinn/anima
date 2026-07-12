@@ -73,29 +73,38 @@ export default {
         }
       };
 
-      // Pause the hero relay loop while it is scrolled out of view, so it does
-      // not burn battery/CPU on mobile when nobody is looking at it.
+      // Landing scroll reveal. CSS hides [data-reveal] elements only once
+      // <html> carries .reveal-ready (added here), so a no-JS render and
+      // crawlers always see the full page. Each element reveals once when it
+      // enters the viewport; per-element stagger comes from --reveal-delay.
       let observer: IntersectionObserver | undefined;
-      const observeHeroLoop = () => {
-        const thread =
-          document.querySelector<HTMLElement>(".hero-relay-thread");
-        if (!thread || typeof IntersectionObserver === "undefined") return;
+      const observeReveals = () => {
+        const targets = document.querySelectorAll<HTMLElement>(
+          ".landing-home [data-reveal]",
+        );
+        if (
+          targets.length === 0 ||
+          typeof IntersectionObserver === "undefined"
+        ) {
+          return;
+        }
+        document.documentElement.classList.add("reveal-ready");
         observer = new IntersectionObserver(
-          (entries) => {
+          (entries, self) => {
             for (const entry of entries) {
-              thread.style.animationPlayState = entry.isIntersecting
-                ? "running"
-                : "paused";
+              if (!entry.isIntersecting) continue;
+              entry.target.classList.add("is-revealed");
+              self.unobserve(entry.target);
             }
           },
-          { threshold: 0 },
+          { threshold: 0.15, rootMargin: "0px 0px -40px 0px" },
         );
-        observer.observe(thread);
+        for (const target of targets) observer.observe(target);
       };
 
       onMounted(() => {
         document.addEventListener("click", handleClick);
-        observeHeroLoop();
+        observeReveals();
       });
       onBeforeUnmount(() => {
         document.removeEventListener("click", handleClick);
