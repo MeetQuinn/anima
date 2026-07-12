@@ -14,7 +14,7 @@ This document is the server map. It should explain the major components and owne
 - Agent-facing tools exposed through the `anima` CLI, such as Slack messages, files, reactions, reminders, and subscriptions.
 - Web HTTP API, static web serving, and daemon supervision.
 
-It does not own provider internals. Codex, Claude, and Kimi adapters speak provider protocols; they do not decide Slack routing, queue policy, visible output, or web UI shape.
+It does not own provider internals. Codex, Claude, Kimi, and Grok adapters speak provider protocols; they do not decide Slack routing, queue policy, visible output, or web UI shape.
 
 ## Composition Roots
 

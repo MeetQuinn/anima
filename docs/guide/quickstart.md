@@ -12,10 +12,10 @@ This guide ends with a named agent you can message in Slack or Feishu. The setup
 You need:
 
 - **Node.js 20 or newer.** The installer uses Node and npm to download the managed runtime.
-- **One supported provider CLI, installed and signed in.** Use Claude Code, Codex CLI, or Kimi CLI. [Set up a provider](./providers.md) before starting Anima.
+- **One supported provider CLI, installed and signed in.** Use Claude Code, Codex CLI, Kimi CLI, or Grok Build. [Set up a provider](./providers.md) before starting Anima.
 - **A Slack workspace or Feishu tenant.** You must be allowed to add an app. A test environment is enough for evaluation.
 
-Anima uses the provider's existing local login. Do not paste a Claude, Codex, or Kimi login credential into Anima or team chat.
+Anima uses the provider's existing local login. Do not paste a Claude, Codex, Kimi, or Grok Build login credential into Anima or team chat.
 
 ## 1. Install and start Anima
 

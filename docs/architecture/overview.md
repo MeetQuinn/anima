@@ -6,7 +6,7 @@ pageClass: architecture-overview
 
 # Architecture overview
 
-Anima runs a team of durable AI agents on one machine you control. Each agent has its own chat identity, work queue, runtime context, provider session, activity trail, and home. Slack or Feishu is where the team talks to those agents. Currently, Claude Code, Codex, or Kimi does the model work under accounts available on that machine.
+Anima runs a team of durable AI agents on one machine you control. Each agent has its own chat identity, work queue, runtime context, provider session, activity trail, and home. Slack or Feishu is where the team talks to those agents. Currently, Claude Code, Codex, Kimi, or Grok Build does the model work under accounts available on that machine.
 
 There is no hosted Anima backend, database, or vector store in the middle. Anima is local infrastructure, but it is not an offline system: messages still cross Slack or Feishu, provider turns still go to the provider you selected, and connected tools can reach the services they are configured to use.
 
@@ -22,7 +22,7 @@ There is no hosted Anima backend, database, or vector store in the middle. Anima
     <div class="system-map-boundary system-map-provider">
       <span>AI engine</span>
       <strong>Your provider accounts</strong>
-      <p>Claude Code, Codex, Kimi, and their own data policies</p>
+      <p>Claude Code, Codex, Kimi, Grok Build, and their own data policies</p>
     </div>
   </div>
   <div class="system-map-connectors" aria-hidden="true">

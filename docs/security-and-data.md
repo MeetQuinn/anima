@@ -57,7 +57,7 @@ Anima runs the provider CLI installed on the host. The provider receives the tur
 - file content read by the provider;
 - tool calls and results returned through the provider protocol.
 
-Provider authentication remains in that provider's own local credential store and account boundary. Anima does not ask operators to paste Claude, Codex, or Kimi login credentials into agent chat. The Providers panel can inspect account and usage information exposed by supported local credentials, and supported upgrades refresh the machine-level provider binary without logging out or moving its configuration.
+Provider authentication remains in that provider's own local credential store and account boundary. Anima does not ask operators to paste Claude, Codex, Kimi, or Grok Build login credentials into agent chat. The Providers panel can inspect account and usage information exposed by supported local credentials, and supported upgrades refresh the machine-level provider binary without logging out or moving its configuration.
 
 The provider's retention, training, regional, and enterprise controls are not replaced by Anima. Evaluate them under the provider account and plan you intend to use.
 

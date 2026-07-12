@@ -1,11 +1,11 @@
 ---
 title: Provider setup and identity
-description: Install and authenticate Claude Code, Codex CLI, or Kimi CLI for use by Anima agents.
+description: Install and authenticate Claude Code, Codex CLI, Kimi CLI, or Grok Build for use by Anima agents.
 ---
 
 # Provider setup and identity
 
-Anima supplies the durable agent identity, chat routing, queue, memory, and activity trail. Claude Code, Codex CLI, or Kimi CLI supplies the model work and developer tools.
+Anima supplies the durable agent identity, chat routing, queue, memory, and activity trail. Claude Code, Codex CLI, Kimi CLI, or Grok Build supplies the model work and developer tools.
 
 The provider CLI is a machine-level dependency. Anima launches the executable found on the host's `PATH` and uses that provider's existing local authentication. Provider login state is not copied into an agent home or stored by Anima.
 
@@ -13,11 +13,12 @@ The provider CLI is a machine-level dependency. Anima launches the executable fo
 
 Install and authenticate at least one before creating the first agent.
 
-| Provider    | Official setup                                                                                                                   | Verify on the Anima host |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| Claude Code | [Install and authenticate Claude Code](https://docs.anthropic.com/en/docs/claude-code/getting-started)                           | `claude --version`       |
-| Codex CLI   | [Install Codex CLI](https://developers.openai.com/codex/cli/) and sign in with your ChatGPT account or configured API access     | `codex --version`        |
-| Kimi CLI    | [Install Kimi Code CLI](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started) and use `/login` on first launch | `kimi --version`         |
+| Provider    | Official setup                                                                                                                         | Verify on the Anima host          |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| Claude Code | [Install and authenticate Claude Code](https://docs.anthropic.com/en/docs/claude-code/getting-started)                                 | `claude --version`                |
+| Codex CLI   | [Install Codex CLI](https://developers.openai.com/codex/cli/) and sign in with your ChatGPT account or configured API access           | `codex --version`                 |
+| Kimi CLI    | [Install Kimi Code CLI](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started) and use `/login` on first launch       | `kimi --version`                  |
+| Grok Build  | [Install Grok Build](https://docs.x.ai/build/overview) and sign in with `grok login` or configure its supported API-key authentication | `grok --no-auto-update --version` |
 
 Run the verification command from the same host user and service environment that runs Anima. A CLI installed only inside another shell profile or user account may work interactively while remaining invisible to the Anima services.
 
@@ -41,7 +42,7 @@ The **Providers** panel shows the account label or identifier when the provider 
 
 ## Pick the provider for an agent
 
-During agent creation, select the provider, model, and reasoning level. The available model choices come from Anima's supported provider catalog, not from an arbitrary model-name field.
+During agent creation, select the provider, model, and reasoning level. For Grok Build, Anima reads the current model catalog from the installed CLI and records the actual model ID returned by the runtime. The `grok-build` marketing alias is never stored as model authority.
 
 You can change the provider later from the agent's Profile tab. A provider change starts a fresh provider session after the current work reaches a safe boundary. The agent's `MEMORY.md`, notes, files, Anima activity, and chat identity remain intact; the previous provider session is archived.
 

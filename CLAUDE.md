@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Anima is a local runtime that turns a code-agent runtime (Codex CLI, Claude Code, or Kimi) into a durable teammate in Slack or Feishu. One agent identity maps to one **primary provider session** that spans every DM, channel, chat, and thread - not one session per thread. See `docs/architecture/overview.md` for the architecture and `README.md` for the user-facing pitch.
+Anima is a local runtime that turns a code-agent runtime (Codex CLI, Claude Code, Kimi, or Grok Build) into a durable teammate in Slack or Feishu. One agent identity maps to one **primary provider session** that spans every DM, channel, chat, and thread - not one session per thread. See `docs/architecture/overview.md` for the architecture and `README.md` for the user-facing pitch.
 
 ## Commands
 
@@ -52,7 +52,7 @@ The repo is one TypeScript Node ESM project (`"type": "module"`, NodeNext, stric
 
 ```
 Slack Socket Mode ──┐
-Feishu events/WS ───┼──► transports/inbox ──► Runtime worker ──► Codex / Claude / Kimi CLI
+Feishu events/WS ───┼──► transports/inbox ──► Runtime worker ──► Codex / Claude / Kimi / Grok CLI
 Reminder scheduler ─┘                                                    │
                                                                          ▼
                                                           anima CLI tools (messages,
@@ -80,7 +80,7 @@ The chat transports, reminder scheduler, and agent worker all run in one `agent`
 - **`server/env/`** — Per-agent provider environment storage, encryption/decryption, key validation, and masking.
 - **`server/provider-usage/`** — Provider usage/account probing. It should stay decoupled from provider runtime adapters.
 - **`server/runtime/`** — Runtime item execution. `runtime-worker.ts` drains the wake queue, handles active-run follow-ups, stop/idle/crash behavior, prompt construction, provider effects, session stats, and activity emission.
-- **`server/providers/`** — Provider adapter layer. Claude Code, Claude Code Channels, Codex CLI, and Kimi CLI adapters own only their provider protocols; `child-process.ts` is the shared spawn layer.
+- **`server/providers/`** — Provider adapter layer. Claude Code, Claude Code Channels, Codex CLI, Kimi CLI, and Grok Build adapters own only their provider protocols; `child-process.ts` is the shared spawn layer.
 - **`server/reminders/`** — Reminder records, repeat-rule parsing (`every:15m`, `daily@09:00`, `weekly:mon,fri@09:00`), reminder lifecycle/activity, and the `anima reminder` CLI. Due reminders become inbox items through `inbox/`.
 - **`server/storage/`** — Persistence primitives and typed stores: JSON files, JSONL logs, file locks, safe filenames, and `storage/schema/*` store modules. Folder layout is under `$ANIMA_HOME/agents/<agentId>/`.
 - **`server/settings/`** — Runtime-wide settings, including dashboard password-auth state.

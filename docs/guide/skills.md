@@ -59,7 +59,7 @@ agent home. Keep it with the agent so its ownership is visible and portable with
 
 Use a shared provider skill when multiple agents on the same host should load the same capability.
 Shared here means the host user's provider environment, not every provider and not every machine.
-Claude Code, Codex, Kimi, and future providers may use different roots and plugin systems.
+Claude Code, Codex, Kimi, Grok Build, and future providers may use different roots and plugin systems.
 
 The dashboard is the source-checked inventory for one agent. If a skill is absent there, do not
 assume a directory that another provider uses is active for this one.
