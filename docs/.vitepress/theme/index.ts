@@ -1,6 +1,7 @@
 import DefaultTheme from "vitepress/theme";
 import { h, onBeforeUnmount, onMounted } from "vue";
 import "./architecture.css";
+import "./docs-home.css";
 import "./landing.css";
 import "./how-it-works.css";
 
@@ -76,7 +77,8 @@ export default {
       // not burn battery/CPU on mobile when nobody is looking at it.
       let observer: IntersectionObserver | undefined;
       const observeHeroLoop = () => {
-        const thread = document.querySelector<HTMLElement>(".hero-relay-thread");
+        const thread =
+          document.querySelector<HTMLElement>(".hero-relay-thread");
         if (!thread || typeof IntersectionObserver === "undefined") return;
         observer = new IntersectionObserver(
           (entries) => {

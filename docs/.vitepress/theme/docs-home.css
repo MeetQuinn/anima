@@ -1,0 +1,117 @@
+.docs-home .VPDoc .content-container {
+  max-width: 900px;
+}
+
+.docs-home .vp-doc > p {
+  max-width: 680px;
+  color: var(--vp-c-text-2);
+  font-size: 17px;
+  line-height: 1.65;
+}
+
+.docs-start {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin: 28px 0 38px;
+}
+
+.docs-start a {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  color: inherit;
+  text-decoration: none;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.docs-start a:first-child {
+  border-top: 3px solid #b3401f;
+}
+
+.docs-start a:last-child {
+  border-top: 3px solid #17786f;
+}
+
+.docs-start a:hover,
+.docs-start a:focus-visible {
+  border-color: var(--vp-c-brand-1);
+  background: var(--vp-c-bg-soft);
+}
+
+.docs-start span {
+  color: var(--vp-c-text-3);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.4;
+}
+
+.docs-start strong {
+  color: var(--vp-c-text-1);
+  font-size: 19px;
+  line-height: 1.3;
+}
+
+.docs-start p {
+  margin: 0;
+  color: var(--vp-c-text-2);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.docs-link-list {
+  display: grid;
+  margin: 12px 0 32px;
+  border-top: 1px solid var(--vp-c-divider);
+}
+
+.docs-link-list a {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.3fr);
+  gap: 20px;
+  align-items: baseline;
+  padding: 14px 2px;
+  border-bottom: 1px solid var(--vp-c-divider);
+  color: inherit;
+  text-decoration: none;
+}
+
+.docs-link-list a:hover strong,
+.docs-link-list a:focus-visible strong {
+  color: var(--vp-c-brand-1);
+}
+
+.docs-link-list strong {
+  color: var(--vp-c-text-1);
+  font-size: 15px;
+  line-height: 1.45;
+  transition: color 140ms ease;
+}
+
+.docs-link-list span {
+  color: var(--vp-c-text-2);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+@media (max-width: 700px) {
+  .docs-home .VPDoc .content-container {
+    max-width: 100%;
+  }
+
+  .docs-start {
+    grid-template-columns: 1fr;
+  }
+
+  .docs-link-list a {
+    grid-template-columns: 1fr;
+    gap: 3px;
+    padding: 15px 0;
+  }
+}

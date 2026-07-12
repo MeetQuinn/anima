@@ -19,8 +19,9 @@ be able to change the UI or server code used by a live `~/.anima` install.
 Keep these separate:
 
 - **Code root:** where the package or source checkout lives.
-- **Anima home:** where runtime state, config, logs, pid files, agent homes, reminders, and message
-  stores live.
+- **Anima home:** where runtime state, config, logs, pid files, reminders, and message stores live.
+- **Team and agent homes:** where knowledge bases, memory, notes, skills, and work files live. These
+  paths are configured independently from the Anima home.
 
 For example:
 
@@ -28,6 +29,7 @@ For example:
 ~/anima/                         optional source checkout for contributors
 ~/.anima/                        default managed runtime data
 ~/.anima/runtime/current/        npm-installed managed runtime
+~/anima-team/                    default team and agent files
 ~/anima/.anima-dev/              development runtime data
 ```
 

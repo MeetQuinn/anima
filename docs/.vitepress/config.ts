@@ -11,7 +11,8 @@ export default defineConfig({
   // Internal design/PRD material lives under docs/design/ for engineering
   // reference; it must never be built into the public site.
   srcExclude: ["design/**"],
-  description: "AI agent teams that work alongside your human team in Slack.",
+  description:
+    "Local infrastructure for durable AI agent teams in Slack and Feishu.",
   head: [
     ["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
     ["link", { rel: "icon", type: "image/x-icon", href: "/favicon.ico" }],
@@ -32,7 +33,7 @@ export default defineConfig({
     },
     nav: [
       { text: "How it works", link: "/how-it-works" },
-      { text: "Guide", link: "/guide/quickstart" },
+      { text: "Docs", link: "/guide/" },
       {
         text: "Use Cases",
         link: "/use-cases/external-events-via-slack",
@@ -44,21 +45,20 @@ export default defineConfig({
     },
     sidebar: [
       {
-        text: "Guide",
+        text: "Start",
         items: [
-          { text: "Concepts", link: "/concepts" },
+          { text: "Documentation", link: "/guide/" },
           { text: "Quickstart", link: "/guide/quickstart" },
+          { text: "Concepts", link: "/concepts" },
+        ],
+      },
+      {
+        text: "Work with agents",
+        items: [
           {
             text: "Working with your agent",
             link: "/guide/working-with-your-agent",
           },
-          {
-            text: "Using the dashboard",
-            link: "/guide/using-the-dashboard",
-          },
-          { text: "Updating Anima", link: "/guide/updating-anima" },
-          { text: "Deployment and upgrades", link: "/deployment" },
-          { text: "Service runbook", link: "/service-runbook" },
           { text: "How an agent works", link: "/guide/how-an-agent-works" },
           {
             text: "How your agents work as a team",
@@ -69,7 +69,26 @@ export default defineConfig({
         ],
       },
       {
-        text: "Use Cases",
+        text: "Operate Anima",
+        items: [
+          {
+            text: "Using the dashboard",
+            link: "/guide/using-the-dashboard",
+          },
+          { text: "Updating Anima", link: "/guide/updating-anima" },
+          { text: "Deployment and upgrades", link: "/deployment" },
+          { text: "Service runbook", link: "/service-runbook" },
+        ],
+      },
+      {
+        text: "Evaluate and understand",
+        items: [
+          { text: "Architecture overview", link: "/architecture/overview" },
+          { text: "Security and data", link: "/security-and-data" },
+        ],
+      },
+      {
+        text: "Use cases",
         items: [
           {
             text: "Set up a software team",
@@ -82,7 +101,7 @@ export default defineConfig({
         ],
       },
       {
-        text: "Agent Docs",
+        text: "Agent runtime reference",
         items: [
           { text: "Agent platform guide", link: "/agent/guide" },
           { text: "Agent command reference", link: "/agent/reference" },
@@ -91,9 +110,8 @@ export default defineConfig({
         ],
       },
       {
-        text: "Architecture",
+        text: "Contributor reference",
         items: [
-          { text: "Overview", link: "/architecture/overview" },
           { text: "Codebase internals", link: "/architecture/internals" },
           { text: "Provider layer", link: "/runtime-providers" },
           { text: "Activity events", link: "/activity-events" },
