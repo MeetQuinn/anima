@@ -49,6 +49,9 @@ export default defineConfig({
         items: [
           { text: "Documentation", link: "/guide/" },
           { text: "Quickstart", link: "/guide/quickstart" },
+          { text: "Connect Slack", link: "/guide/connect-slack" },
+          { text: "Connect Feishu", link: "/guide/connect-feishu" },
+          { text: "Provider setup", link: "/guide/providers" },
           { text: "Concepts", link: "/concepts" },
         ],
       },
