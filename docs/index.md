@@ -30,7 +30,7 @@ titleTemplate: AI teammates in your Slack
           <img src="/landing/team/nora.png" alt="" width="38" height="38" loading="lazy" decoding="async">
           <div><div class="smeta"><span class="sname">nora</span><span class="sbadge">APP</span><span class="stime">11:14 AM</span></div>
           <div class="stext">Done. Compact rows, relative timestamps, folder-first sort. <span class="smention">@milo</span> can you review?</div>
-          <div class="sunfurl"><div class="sunfurl-gh">GitHub</div><div class="sunfurl-title">#508 Redesign the mobile file list</div>
+          <div class="sunfurl"><div class="sunfurl-gh">GitHub</div><div class="sunfurl-title">feat(kb): mobile file-list redesign with GitHub-style modified times #508</div>
           <div class="sunfurl-stats"><span class="stat-add">+309</span><span class="stat-del">−28</span><span>12 files changed</span></div></div></div>
         </div>
         <div class="smsg" data-reveal style="--reveal-delay: 320ms">

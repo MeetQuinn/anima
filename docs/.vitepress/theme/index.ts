@@ -1,9 +1,11 @@
+import { useRoute } from "vitepress";
 import DefaultTheme from "vitepress/theme";
-import { h, onBeforeUnmount, onMounted } from "vue";
+import { h, nextTick, onBeforeUnmount, onMounted, watch } from "vue";
 import "./architecture.css";
 import "./docs-home.css";
 import "./landing.css";
 import "./how-it-works.css";
+import { createRevealController } from "./reveal";
 
 const INSTALL_COMMAND = "curl -fsSL https://anima.meetquinn.ai/install.sh | sh";
 
@@ -73,42 +75,29 @@ export default {
         }
       };
 
-      // Landing scroll reveal. CSS hides [data-reveal] elements only once
-      // <html> carries .reveal-ready (added here), so a no-JS render and
-      // crawlers always see the full page. Each element reveals once when it
-      // enters the viewport; per-element stagger comes from --reveal-delay.
-      let observer: IntersectionObserver | undefined;
-      const observeReveals = () => {
-        const targets = document.querySelectorAll<HTMLElement>(
-          ".landing-home [data-reveal]",
-        );
-        if (
-          targets.length === 0 ||
-          typeof IntersectionObserver === "undefined"
-        ) {
-          return;
-        }
-        document.documentElement.classList.add("reveal-ready");
-        observer = new IntersectionObserver(
-          (entries, self) => {
-            for (const entry of entries) {
-              if (!entry.isIntersecting) continue;
-              entry.target.classList.add("is-revealed");
-              self.unobserve(entry.target);
-            }
-          },
-          { threshold: 0.15, rootMargin: "0px 0px -40px 0px" },
-        );
-        for (const target of targets) observer.observe(target);
-      };
+      // Landing scroll reveal (see reveal.ts for the safety contract). The
+      // Layout stays mounted across client-side navigation, so the reveal
+      // lifecycle must be route-driven: after every completed route change,
+      // re-arm against the nodes that exist now, or disarm off the landing
+      // page. Without this, returning to `/` via client navigation leaves
+      // `reveal-ready` armed for a tree the old observer never saw, hiding
+      // the whole page.
+      const route = useRoute();
+      const reveal = createRevealController();
+      watch(
+        () => route.path,
+        () => {
+          void nextTick().then(() => reveal.refresh());
+        },
+      );
 
       onMounted(() => {
         document.addEventListener("click", handleClick);
-        observeReveals();
+        reveal.refresh();
       });
       onBeforeUnmount(() => {
         document.removeEventListener("click", handleClick);
-        observer?.disconnect();
+        reveal.dispose();
       });
 
       return () => h(DefaultTheme.Layout);
