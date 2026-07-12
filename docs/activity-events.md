@@ -73,10 +73,11 @@ Adding emitter #11 turns the test red. Add it to the table in the same commit.
 
 ## What the Activity tab is
 
-The Activity tab is our **audited boundary made legible**: every persisted Slack
-side effect, tool call, provider event, and runtime transition is turned into
-something a human can actually read. The activity log is the source of truth for
-the curated audit; the tab is a readable projection of it.
+The Activity tab is our **audited boundary made legible**: it turns the
+conversational subset of persisted chat side effects, tool calls, provider
+events, and runtime transitions into something a human can actually read. The
+activity log is the source of truth for the curated audit; the tab is a readable
+projection of it.
 
 ## Display principles
 
@@ -110,11 +111,11 @@ Conversation, Audit, and Hidden rows.
 
 ## Event catalog
 
-1. [Run lifecycle & agent output](#1-run-lifecycle--agent-output)
-2. [Provider tool calls](#2-provider-tool-calls)
-3. [Slack actions](#3-slack-actions)
-4. [Reminders, subscriptions & session](#4-reminders-subscriptions--session)
-5. [Provider internals & diagnostics](#5-provider-internals--diagnostics)
+1. [Run lifecycle & agent output](#_1-run-lifecycle-agent-output)
+2. [Provider tool calls](#_2-provider-tool-calls)
+3. [Chat actions](#_3-chat-actions)
+4. [Reminders, subscriptions & session](#_4-reminders-subscriptions-session)
+5. [Provider internals & diagnostics](#_5-provider-internals-diagnostics)
 
 ### 1. Run lifecycle & agent output
 
@@ -149,41 +150,41 @@ failures; successful completion rows aren't emitted yet (see [Known gaps](#known
 | `tool.call.failed` (provider tools)                                                                                                                                  | A provider tool errors or a command exits non-zero. | Conversation | `<verb> failed` + target/command + terse error. Failed shell leads with the command.                                                       | Full error.                    |
 | `(missing)` legacy Kimi tool-calls without `payload.tool`                                                                                                            | Pre-rename Kimi logs.                               | Hidden       | —                                                                                                                                          | —                              |
 
-### 3. Slack actions
+### 3. Chat actions
 
-Messages, files, reactions, and reads the agent performs, plus the side-effect
-wrappers around the actual Slack write. `started` rows are dropped: the
-`completed`/`effect` row is the visible action, and the audited
+Messages, files, reactions, and reads the agent performs in Slack or Feishu, plus
+the side-effect wrappers around the actual platform write. `started` rows are
+dropped: the `completed`/`effect` row is the visible action, and the audited
 `external.effect.*` row dedupes against the `anima.*` one.
 
-| Event                                                                                    | When it fires                                                | Tier                       | Shown inline                                                                                                                                      | On expand                                  |
-| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------ | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| `external.effect.completed:slack.ask.post` / `tool=anima.ask`                            | Agent posts a bounded Slack question with buttons.           | Conversation               | `Asked <person>` / `Asked anyone` + question + `[option / option]`; the plain raw `anima ask ...` shell row is deduped.                           | Full question/options target if truncated. |
-| `choice_response` inbox item                                                             | A human clicks an ask option.                                | Conversation (inbound)     | Inbound row from the answerer: `Selected: <option>` + original question; surface chip points to the original channel/thread/DM.                   | Full body shown inline.                    |
-| Slack inbox item                                                                         | Human message, mention, DM, or thread reply wakes the agent. | Conversation (inbound)     | Actor + rendered message body, with Slack/usergroup/date/special mentions, emoji names, and both Slack `*bold*` and Anima `**bold**` handled.     | Full body shown inline.                    |
-| `anima.message.send` / `update` (completed), `external.effect.completed:slack.message.*` | Agent posts or edits a Slack message.                        | Conversation (message row) | `Replied` / `Replied in thread` / `Edited` + surface chip + full message body. Subtle warning badge when `warnings` present.                      | Full body shown inline.                    |
-| `anima.file.send` (completed), `external.effect.completed:slack.file.send`               | Agent sends one or more files.                               | Conversation (message row) | File row + caption + attachment cards.                                                                                                            | Full body shown inline.                    |
-| `anima.message.react` (completed), `external.effect.completed:slack.reaction`            | Agent adds/removes a reaction.                               | Conversation (light)       | Reaction glyph/name + surface chip; subtle `noop` ("already present/absent").                                                                     | —                                          |
-| `anima.message.read` (completed)                                                         | Agent reads Slack history or a thread.                       | Conversation               | `Read messages` + channel · slice (`thread` / `around <time>` / `last N`) · message count.                                                        | Full target if truncated.                  |
-| `anima.message.*` (failed), `external.effect.failed:slack.*`                             | A Slack message/file/react/read write fails.                 | Conversation               | Product title (`Message failed` / `Edit failed` / `File upload failed` / `Reaction failed` / `Read failed`) + error, matched by tool or `effect`. | Full error.                                |
-| `tool.call.started:anima.*`, `external.effect.started:slack.*`                           | The pre-write/started phase of any Anima Slack action.       | Hidden (dropped)           | —                                                                                                                                                 | —                                          |
+| Event                                                                                                         | When it fires                                                   | Tier                       | Shown inline                                                                                                                                      | On expand                                  |
+| ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `external.effect.completed:slack.ask.post` / `tool=anima.ask`                                                 | Agent posts a bounded Slack question with buttons.              | Conversation               | `Asked <person>` / `Asked anyone` + question + `[option / option]`; the plain raw `anima ask ...` shell row is deduped.                           | Full question/options target if truncated. |
+| `choice_response` inbox item                                                                                  | A human clicks a Slack ask option.                              | Conversation (inbound)     | Inbound row from the answerer: `Selected: <option>` + original question; surface chip points to the original channel/thread/DM.                   | Full body shown inline.                    |
+| Slack or Feishu inbox item                                                                                    | A message, mention, DM, thread, or topic reply wakes the agent. | Conversation (inbound)     | Actor + rendered message body + platform-appropriate surface chip. Slack mention and formatting forms are normalized before display.              | Full body shown inline.                    |
+| `anima.message.send` / `update` (completed), `external.effect.completed:slack.message.*` / `feishu.message.*` | Agent posts or edits a chat message.                            | Conversation (message row) | `Replied` / `Replied in thread` / `Edited` + surface chip + full message body. Subtle warning badge when `warnings` present.                      | Full body shown inline.                    |
+| `anima.file.send` (completed), `external.effect.completed:slack.file.send` / `feishu.file.send`               | Agent sends one or more files.                                  | Conversation (message row) | File row + caption + attachment cards.                                                                                                            | Full body shown inline.                    |
+| `anima.message.react` (completed), `external.effect.completed:slack.reaction` / `feishu.reaction`             | Agent adds/removes a reaction.                                  | Conversation (light)       | Reaction glyph/name + surface chip; subtle `noop` ("already present/absent").                                                                     | —                                          |
+| `anima.message.read` (completed)                                                                              | Agent reads Slack or Feishu history.                            | Conversation               | `Read messages` + conversation · slice (`thread` / `around <time>` / `last N`) · message count.                                                   | Full target if truncated.                  |
+| `anima.message.*` (failed), `external.effect.failed:slack.*` / `feishu.*`                                     | A chat message/file/react/read action fails.                    | Conversation               | Product title (`Message failed` / `Edit failed` / `File upload failed` / `Reaction failed` / `Read failed`) + error, matched by tool or `effect`. | Full error.                                |
+| `tool.call.started:anima.*`, `external.effect.started:slack.*` / `feishu.*`                                   | The pre-write/started phase of an Anima chat action.            | Hidden (dropped)           | —                                                                                                                                                 | —                                          |
 
 ### 4. Reminders, subscriptions & session
 
 Agent-owned schedules, channel/thread subscriptions, and provider-session rotation.
 
-| Event                                       | When it fires                                          | Tier             | Shown inline                                                      | On expand   |
-| ------------------------------------------- | ------------------------------------------------------ | ---------------- | ----------------------------------------------------------------- | ----------- |
-| `anima.reminder.schedule` (completed)       | Agent schedules a reminder.                            | Conversation     | `Scheduled reminder` + title · `at <nextDueAt>`.                  | —           |
-| `anima.reminder.cancel` (completed)         | Reminder cancelled.                                    | Conversation     | `Cancelled reminder` + title.                                     | —           |
-| `anima.reminder.snooze` (completed)         | Reminder snoozed.                                      | Conversation     | `Snoozed reminder` + `until <time>`.                              | —           |
-| `anima.reminder.fire` (completed)           | Reminder wake fires and is enqueued.                   | Conversation     | Consumed into the inbound row: `Reminder` / `Reminder · fire #N`. | —           |
-| `anima.reminder.list` (completed)           | Agent lists its reminders.                             | Audit            | `Listed reminders`.                                               | —           |
-| `anima.reminder.*` (failed)                 | A reminder action fails.                               | Conversation     | `Reminder <action> failed` + error.                               | Full error. |
-| `anima.subscription.add`                    | A Slack mention creates a channel/thread subscription. | Conversation     | `Subscribed to` + `#channel` · kind (`channel`/`thread`).         | —           |
-| `anima.subscription.remove`                 | Agent removes a subscription.                          | Conversation     | `Unsubscribed from` + `#channel`.                                 | —           |
-| `anima.session.rotate`                      | User rotates the provider session from web/API.        | Conversation     | `Session rotated` + `Archived N provider sessions` · note.        | —           |
-| `tool.call.started:anima.reminder.schedule` | The started phase of a schedule.                       | Hidden (dropped) | —                                                                 | —           |
+| Event                                       | When it fires                                                                                      | Tier             | Shown inline                                                      | On expand   |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------- | ---------------- | ----------------------------------------------------------------- | ----------- |
+| `anima.reminder.schedule` (completed)       | Agent schedules a reminder.                                                                        | Conversation     | `Scheduled reminder` + title · `at <nextDueAt>`.                  | —           |
+| `anima.reminder.cancel` (completed)         | Reminder cancelled.                                                                                | Conversation     | `Cancelled reminder` + title.                                     | —           |
+| `anima.reminder.snooze` (completed)         | Reminder snoozed.                                                                                  | Conversation     | `Snoozed reminder` + `until <time>`.                              | —           |
+| `anima.reminder.fire` (completed)           | Reminder wake fires and is enqueued.                                                               | Conversation     | Consumed into the inbound row: `Reminder` / `Reminder · fire #N`. | —           |
+| `anima.reminder.list` (completed)           | Agent lists its reminders.                                                                         | Audit            | `Listed reminders`.                                               | —           |
+| `anima.reminder.*` (failed)                 | A reminder action fails.                                                                           | Conversation     | `Reminder <action> failed` + error.                               | Full error. |
+| `anima.subscription.add`                    | A Slack mention creates a channel/thread subscription.                                             | Conversation     | `Subscribed to` + `#channel` · kind (`channel`/`thread`).         | —           |
+| `anima.subscription.remove`                 | Agent removes a subscription.                                                                      | Conversation     | `Unsubscribed from` + `#channel`.                                 | —           |
+| `anima.session.rotate`                      | User rotates a provider session, or the runtime archives one during automatic corruption recovery. | Conversation     | `Session rotated` + `Archived N provider sessions` · note.        | —           |
+| `tool.call.started:anima.reminder.schedule` | The started phase of a schedule.                                                                   | Hidden (dropped) | —                                                                 | —           |
 
 ### 5. Provider internals & diagnostics
 
@@ -203,7 +204,11 @@ Audit or Hidden: these explain _how_ the provider ran, not what the agent did.
 | `codex.protocol.invalid_json`                                                                                                                           | Codex writes a non-JSON line where JSON-RPC was expected.                                | Audit                 | Surfaces generically when flagged warning/failed.            | Full error.   |
 | `claude.provider.retry`                                                                                                                                 | Side-effect-free transient error; Anima retries the turn.                                | Audit                 | `Provider retry` + reason.                                   | Full error.   |
 | `claude.provider.resume_retry`                                                                                                                          | Transient error after partial progress; Anima resumes instead of repeating side effects. | Audit                 | `Provider resume retry` + reason.                            | Full error.   |
+| `provider.crash.retry`                                                                                                                                  | Provider child crashes; Anima retries the same inbox item with a recovery notice.        | Audit                 | `Provider retry` + attempt/max + error.                      | Full error.   |
 | `claude.session.resume_missing`                                                                                                                         | Stored provider session can't resume; a fresh one starts.                                | Audit                 | `Provider session expired` / `Started a fresh session`.      | —             |
+| `grok.session.load_missing`, `kimi.session.resume_missing`                                                                                              | Stored ACP session can't resume; the adapter starts a fresh one.                         | Hidden                | —                                                            | —             |
+| `grok.model.catalog`, `grok.turn.started`, `grok.turn.completed`, `kimi.turn.started`, `kimi.turn.completed`                                            | Grok and Kimi record model authority or per-prompt ACP lifecycle telemetry.              | Hidden                | —                                                            | —             |
+| `runtime.restart_resumed`                                                                                                                               | A restart-drained inbox item resumes after service restart.                              | Hidden                | —                                                            | —             |
 | `kimi.approval.response`                                                                                                                                | Kimi approval prompt is answered.                                                        | Audit                 | `Approval answered` + response.                              | —             |
 | `*.context.stats`                                                                                                                                       | Continuous mid-run context-window telemetry.                                             | Hidden                | —                                                            | —             |
 | `provider.reasoning`                                                                                                                                    | Sanitized reasoning snippet (not persisted).                                             | Hidden                | —                                                            | —             |
