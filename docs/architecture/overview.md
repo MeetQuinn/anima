@@ -114,7 +114,7 @@ Slack and Feishu use different platform adapters, then enter the same runtime sh
 
 The outbox is a precise boundary, not a claim that Anima observes every effect. Plain provider output is not automatically a chat reply. A team-visible message or file must be sent through an Anima action. The provider may also edit files, run commands, push to GitHub, or use other configured tools. Those effects belong to the corresponding filesystem, repository, or tool and are not made transactional by the outbox.
 
-For the human-facing rules about mentions, followed threads, and agent replies, see [How an agent works](../guide/how-an-agent-works.md).
+For the human-facing rules about mentions, followed threads, and agent replies, see [Work with one agent](../guide/working-with-your-agent.md).
 
 ## Runtime plane and operator plane
 
@@ -189,4 +189,4 @@ For a team champion deciding whether Anima fits, the architectural questions are
 - [Codebase internals](./internals.md) names the modules and persisted artifacts behind this overview.
 - [Provider layer](../runtime-providers.md) explains provider process protocols, sessions, health, and restart behavior.
 - [Activity events](../activity-events.md) defines what the activity trail records and how emitter coverage is kept exhaustive.
-- [How an agent works](../guide/how-an-agent-works.md) covers the teammate-facing behavior of inboxes, attention, turns, and explicit actions.
+- [Work with one agent](../guide/working-with-your-agent.md) covers teammate-facing handoffs, attention, corrections, and durable context.

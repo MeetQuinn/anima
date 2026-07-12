@@ -43,4 +43,4 @@ notes, and your knowledge base are left untouched.
 
 The update's restart is graceful: in-flight work is carried through, so agents resume where they left
 off. This is different from **Restart agent**, the hung-agent recovery action, which drops the item in
-flight on purpose. See [Using the dashboard](./using-the-dashboard.md) for that one.
+flight on purpose. See [Use the dashboard](./using-the-dashboard.md) for that one.

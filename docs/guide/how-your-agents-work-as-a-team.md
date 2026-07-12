@@ -1,130 +1,118 @@
-# How your agents work as a team
+---
+title: Run an agent team
+description: Organize agent roles, visible handoffs, independent review, shared knowledge, and human decisions without inventing a hidden orchestration layer.
+---
 
-The moment you run a second agent, a question appears that no chatbot ever had to answer: how do
-the two of them work together without you standing in the middle, relaying every step?
+# Run an agent team
 
-Anima's answer is deliberately boring: **the same way people do.** Work moves between agents in
-channels, by @mention, with one owner at a time. There is no orchestration engine to configure and
-no protocol to learn, because your team already has one. It's called working together, and the
-agents were built to do it your way.
+A second agent creates a team only when work can move between distinct owners without a person relaying every step. Anima uses the same coordination surface as the rest of the team: channels, threads, named handoffs, shared files, and review.
 
-> You don't command a swarm. You run colleagues. And you already know how to run colleagues.
+There is no hidden agent-only workflow engine. The work stays visible in Slack or Feishu, and the important decisions stay with people.
 
-This page is about the team layer. For what's going on inside a single agent, see
-**[How an agent works](./how-an-agent-works.md)**. (The dashboard also has **Teams** as a concrete
-thing — named groups of agents with their own home folder and Knowledge Bases, for when you run
-more than one crew. That's covered in
-**[Using the dashboard](./using-the-dashboard.md#teams)**; this page is about how any group of
-agents works together, whichever team they sit in.)
+## Give each agent a clear seat
 
-## What makes it a team, not several bots
+Start with responsibilities that are easy to distinguish. A builder and reviewer are enough for the first real team:
 
-Three things, and they're the same three that make a group of people a team:
+- the **builder** owns a change from reproduction through evidence;
+- the **reviewer** did not author the change and judges whether it is ready;
+- the **human owner** sets direction and accepts, rejects, spends, publishes, or merges.
 
-- **Each agent is somebody.** A name, a face, a role, a memory that persists. When Nora hands work
-  to Tess, that's one identifiable teammate handing to another, visible in the channel, part of the
-  record.
-- **They share a workspace.** The same channels, the same threads, the same shared knowledge base.
-  What one agent learns for the team lands where the others (and you) can build on it.
-- **They divide the work by role.** One builds, one reviews, one keeps the docs honest. Not because
-  a scheduler routes tickets, but because each agent knows what it's responsible for and acts like
-  it.
+A role shapes attention and ownership. It is not an access-control list. Agents on the same host can still share provider credential stores, repositories, binaries, and operating-system access. Use channel membership, repository controls, credentials, and host isolation for security boundaries. See [Security and data](../security-and-data.md#repositories-and-connected-tools).
 
-Take any of the three away and you have what everyone else ships: a pile of bots in one room.
+Write a role in terms of decisions and deliverables, not personality. "Own frontend changes through responsive render evidence" gives the team a usable boundary. "Be a creative engineer" does not.
 
-## Roles give focus, not keys
+## Put the work in a shared place
 
-The role you give an agent is the single biggest lever on how useful it is. A role shapes what the
-agent pays attention to, what it takes ownership of, and what it leaves for others.
+Choose a channel for the work stream and add every collaborating agent to it. Keep each task in a thread when possible. The thread should contain:
 
-One thing a role is **not**: a permission system. An agent with a narrow role has a narrow focus,
-not a narrow key, and we won't pretend otherwise. You scope what an agent _sees_ the same way you
-do for a new hire: by which channels you add it to. Membership is the boundary; the role is the
-job.
+- the request and acceptance boundary;
+- progress that changes the team's understanding;
+- the artifact or pull request;
+- the review verdict and corrections;
+- the human decision;
+- the final result.
 
-## How work moves: the handoff
+The original request can arrive in a DM. The result should still return to the conversation where the person asked, so they do not have to follow an internal build channel to learn the outcome.
 
-Watch a team of agents for a day and you'll see one move repeated over and over. It's the handoff,
-and it has one rule: **name the next owner.**
+## Hand off by naming the next owner
 
-An agent finishing its part doesn't announce "done" into the void. It @mentions whoever is next:
-the reviewer, the teammate with the missing context, the human whose call it is. That @mention is
-what wakes the next agent and puts the work in its hands. An unaddressed handoff is a dropped one,
-and the agents know it.
+A handoff is complete only when it identifies who acts next.
 
-This is also the one place where you set your team up to succeed or fail:
+> Built and verified at 390px and 1280px. @milo, please gate the route transition and mobile overflow on PR #123.
 
-- **Put collaborating agents in the same channels.** An agent follows the channels it's a member
-  of. An @mention in a channel the agent isn't in can't wake it.
-- **A DM always gets through.** So does an @mention in any channel or thread the agent is part of,
-  even one it has muted. For anything that must not be missed, message the agent directly, the
-  same advice you'd give a human team.
+The mention wakes the reviewer and places the decision boundary in the same visible record. "Done" without an owner is not a handoff; it is an unowned status message.
 
-## Everything between agents happens in the open
+Use one owner at a time. Multiple people can contribute evidence, but one named teammate should hold the next obligation. If work changes owner, record that transition in the thread.
 
-Agents have no private DMs with each other. When your agents coordinate, they do it in channels
-and threads, with the same visibility as any other conversation there. Every handoff, every
-review, every disagreement between them is sitting in your Slack, readable by everyone in that
-channel, and never hidden in an agent-only back channel.
+## Separate author, reviewer, and approver
 
-Most multi-agent systems coordinate through queues and API calls you'll never see. Anima's agents
-coordinate where you can watch, which means the question "what are my agents doing?" has the same
-answer as "what are my teammates doing?": scroll up.
+Independent review is the highest-leverage team pattern. The reviewer should:
 
-## One team memory, many private notebooks
+1. read the actual artifact, not only the author's summary;
+2. replay the risky behavior against a known answer;
+3. state findings before praise or recap;
+4. bind the verdict to the exact version reviewed;
+5. return a HOLD to the author with a reproducible boundary when something fails.
 
-Each agent keeps its own memory: its role, its context, what it has learned about how you like to
-work. That's the agent's own notebook, in its own home folder.
+The author fixes and re-hands a new exact version. The reviewer treats changed behavior as fresh evidence rather than transferring a green verdict across versions.
 
-The team's memory is a different thing: a shared **knowledge base** of plain files in git, where
-decisions, context, and the reasons behind them accumulate. Agents write to it as they work; humans
-govern it, comment on it, and @mention an agent to revise it. It's the difference between what a
-colleague knows and what the team has written down, and a good team needs both.
+A human still holds decisions that change product direction, release state, money, credentials, or external commitments. Agent review reduces the work at that gate; it does not remove the gate.
 
-This split is why a team of agents compounds. The tenth task doesn't start from zero, because the
-first nine left their residue where everyone can use it. To set one up and put your agents to work
-in it, see **[The knowledge base](./knowledge-base.md)**.
+## Keep coordination observable
 
-## Humans hold the gates
+Agent-to-agent requests belong in the channel or thread where the work is happening. This gives the team a social audit trail even when the underlying artifact lives in GitHub or a filesystem.
 
-Agents produce and agents review, and a good pair will catch each other's mistakes before you ever
-see them. What they don't do is decide. Ship or hold, accept or redo, spend or don't: the calls
-that matter wait for a person, in the thread, with the evidence attached.
+The chat thread is not the only authority:
 
-That's the shape of every task on a well-run agent team: the work runs ahead of you, and the
-decisions wait for you.
+- code truth lives in the repository and test results;
+- durable decisions and context live in the knowledge base;
+- runtime actions live in Activity;
+- provider-native, shell, Git, and external API effects may have their authoritative record in those systems.
 
-## Working agreements, not workflow engines
+Link those artifacts into the handoff. Do not paste a conclusion with no path back to the evidence.
 
-Here's the honest part: Anima does not enforce any of the patterns above. There's no setting that
-makes reviewer and author different agents, no rule engine that rejects an unaddressed handoff.
-These are **working agreements**, the same kind your human team runs on, and they work the same
-way: you set them, teammates keep them, and everyone can see when they slip.
+## Share knowledge, not private context
 
-The agreements we run our own team on, and recommend starting with:
+Each agent maintains its own memory and notes. The team should not depend on one agent privately remembering a decision everyone needs.
 
-- **One owner per piece of work.** Shared ownership is no ownership.
-- **The reviewer isn't the author.** A second pair of eyes is the point.
-- **Handoffs name the next owner.** Every time.
-- **Results return to the thread where the work was asked.** No hunting.
-- **Speak when you have something.** Agents that echo and pile on get muted, like anyone else.
+Put shared facts in plain files:
 
-To set an agreement, tell the agent and ask it to remember. It writes the agreement into its own
-memory, and it survives every restart after that.
+- a roster that names roles and owners;
+- decision records with the reason, not only the result;
+- current operating agreements;
+- research and source links;
+- runbooks and acceptance checks;
+- pointers to shipped artifacts.
 
-## Start with two
+Use git when those files need history, review, or rollback. The working rule is simple: agents can author the knowledge, and humans govern the repository and its consequences. See [Use a knowledge base](./knowledge-base.md).
 
-You don't need six agents to feel this. The cheapest real team is two: one that builds and one that
-reviews. The first time your builder finishes a change, hands it to your reviewer by name, and the
-review lands in the thread before you've even looked up, you'll understand the difference between
-running an assistant and running a team.
+## Adopt a small set of agreements
 
-And that's not a hypothetical: it's how Anima itself gets built. The team behind it is a team of
-these agents in one Slack workspace, scoping, building, reviewing, and handing to a human at the
-gate. This page describes the way we actually work, every day.
+Anima does not enforce team process merely because the agents use it. Start with a few agreements the team can observe:
 
-## Where to go next
+- one owner holds the next action;
+- the reviewer is not the author;
+- handoffs name the next owner;
+- results return to the request conversation;
+- claims link to rerunnable evidence;
+- human decisions wait for a human;
+- agents speak when they add information, not to echo one another.
 
-- **[Working with your agent](./working-with-your-agent.md)**: the day-to-day of working with one
-  agent.
-- **[How an agent works](./how-an-agent-works.md)**: what's going on inside a single agent.
+Ask each agent to record the agreements that affect its role. Put team-wide agreements in the shared knowledge base so they have one owner and one revision history.
+
+## Grow only when a seam appears
+
+Two agents are enough to prove the pattern. Add another seat when a recurring boundary has a real owner:
+
+- QA when verification repeatedly competes with implementation;
+- product when fuzzy asks need consistent acceptance decisions;
+- operations when runtime or release work needs an independent on-call owner;
+- documentation when public claims repeatedly drift from shipped behavior.
+
+Do not add agents to create the appearance of a team. Each additional seat creates more subscriptions, handoffs, review load, provider cost, and shared-machine access to govern.
+
+## Next
+
+- [Set up a software team](../use-cases/run-a-software-team.md) is the concrete builder-reviewer recipe.
+- [Work with one agent](./working-with-your-agent.md) covers daily requests, progress, memory, reminders, and secrets.
+- [Concepts](../concepts.md#people-and-structure) defines team, owner, role-adjacent boundaries, and homes.

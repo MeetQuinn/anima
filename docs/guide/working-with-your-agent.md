@@ -1,101 +1,109 @@
-# Work with your agent like a teammate
+---
+title: Work with one agent
+description: Hand over work, follow progress, make decisions, and keep useful context durable when working with an Anima agent.
+---
 
-Most tools make you learn them first: the right prompt, the special syntax, one more app to open. Your agent is
-the opposite. It is a teammate in the chat your team already uses. Tell it what you need in plain words, and it
-works from there, replying right in the channel or DM. If you can send a message, you can work with it. Nothing
-for your team to install, nothing to learn.
+# Work with one agent
 
-> You talk in the chat. The work runs on your machine, and the thinking runs through your own AI provider account. Your agent lives in both, and remembers.
+An Anima agent is a durable teammate in Slack or Feishu. You give it work in the conversation where the work belongs, it uses the provider and tools available on its machine, and it reports back through an explicit chat action.
 
-Here's what your agent can do, and how to work with it day to day.
+You do not need a prompt language. The useful skill is the same one you use with a capable colleague: state the outcome, explain why it matters, name the important boundaries, and stay available for decisions.
 
-## Talk to it
+## Choose the right conversation
 
-Two ways to reach it, both things you already do:
+Use the surface that matches the work:
 
-- **DM it.** A direct message always gets through.
-- **@mention it in a channel it is in.** That is how you pull it into the work happening there. It picks up the
-  message and replies in that channel or thread.
+- **DM the agent** for a direct request or private context. A DM reaches it for certain.
+- **Mention the agent in a channel** when the work belongs to that group. The agent must be a member of the channel.
+- **Continue in the same thread** for follow-up context, review, and corrections. Once an agent is involved in a thread, later replies normally continue to reach it without another mention.
 
-Say what you want in plain language. No prompts, no special syntax. You send the message, you watch it pick the
-message up, and it answers where you asked.
+A direct mention still has a special job: it assigns attention. Use one when you are handing over ownership, when a reply must not be missed, or when the conversation has been quiet for a while.
 
-## A shared teammate, not a private bot
+The durable rules behind DMs, mentions, follows, and mutes are defined in [Concepts](../concepts.md#work-and-attention).
 
-Your agent belongs to the whole workspace. Anyone can DM it, and anyone in a channel it is in can @mention it. It
-works with each person the way it works with you: answering questions, talking things through, and picking up the
-work they hand over. One teammate the team shares, not a dozen private chats.
+## Hand over an outcome
 
-## Hand it work
+A good request gives the agent enough information to exercise judgment:
 
-Give work to your agent the way you would hand it to a person: describe what you want, and @mention it. Say what
-you want and why, and leave the how to the agent.
+1. **Outcome.** What should be true when the work is done?
+2. **Reason.** Why does the result matter, and who is it for?
+3. **Boundaries.** What must not change, which systems are in scope, and which decisions belong to you?
+4. **Evidence.** What should the agent run, inspect, render, or return so the result can be checked?
 
-- **Small things, it just does.** You see it take the message, and it reports back when it is done.
-- **Longer things, it keeps you posted.** A quick heads-up up front, a check-in at milestones or blockers, and a
-  word when it is finished.
-- **When something is yours to decide, it asks.** A clear question with a few options is your cue to weigh in.
-  That part it is holding for you. Everything else, it handles.
+For example:
 
-You do not spell out the steps. Describe the outcome, and the agent works out how to get there.
+> @milo The mobile file list is hard to scan. Rework the list page without changing desktop behavior. Show me 390px before and after renders, and keep the file data contract unchanged.
 
-## It does real work, not just chat
+That is more useful than a long list of implementation steps. The agent owns the route from the request to the evidence. You own the product decision and any boundary only a person can authorize.
 
-Your agent is not a chat box you type at. It is a real member of your workspace, and it does the things a capable
-teammate does in the chat, and more:
+## Read progress as evidence
 
-- post messages and reply in threads
-- react with emoji
-- spin up a channel for a piece of work and bring the right people in
-- pin and bookmark what the team keeps coming back to
-- share files
-- schedule a message to go out later, like a morning update
-- ask for a quick decision, right in the conversation
+For a small task, the agent may work silently and return the result. For longer work, expect a brief start notice, updates at real milestones or blockers, and a final handoff.
 
-That is the everyday stuff, across every channel and DM it is part of, in the same chat your team already uses.
-You are not setting up a bot. You have a colleague who knows their way around.
+Useful updates answer one of four questions:
 
-And it goes beyond chat. It works with files and runs real tasks, not just messages, and it is built to be
-extended: give it new skills, connect new tools, and it takes on much more.
+- What fact did the agent establish?
+- What changed?
+- What is blocked?
+- What decision is needed from a person?
 
-## Give it keys and settings
+An agent can send a bounded **ask** when it needs one choice from a short list. Answering the ask resumes the work. Open-ended discussion stays in the conversation instead.
 
-Real work often needs a service credential: an API key for a tool, a token, a region setting. Each agent has its
-own small store for these, so a value you give one agent is not visible to the others, and secrets are encrypted
-at rest. The agent injects a value only into the specific command that needs it; nothing sits in its shell
-waiting to leak.
+Plain provider output is not a message to the team. A reply exists only when the agent sends a message, file, reaction, or ask through Anima. This is why the Activity view can distinguish an internal step from an outward action.
 
-For a plain setting, just tell the agent in chat: "use region us-west-2 for the reports" and it stores the value
-itself. For a real secret, do not paste it into Slack: anything you send in chat lives in your workspace history.
-Instead, set it from a terminal on the machine Anima runs on:
+## Correct the work in place
 
-```bash
-printf '%s' "$THE_SECRET" | anima env set OPENAI_API_KEY --secret --agent <agent-id>
-```
+When something is wrong, reply where the evidence lives:
 
-The secret goes straight into that agent's encrypted store without ever touching the chat. Then tell the agent
-the key is there; it can confirm with `anima env list`, which shows names but masks values.
+- quote the failed claim or point at the affected file;
+- name the behavior you expected;
+- mention the agent responsible for the next move;
+- ask for the proof that would make the correction credible.
 
-## It remembers what you tell it
+The agent keeps the conversation context and can revise without a new briefing. For code and document work, a second agent should review the result before you accept it. The team pattern is covered in [Run an agent team](./how-your-agents-work-as-a-team.md).
 
-What you tell it and what it learns working with you stay with it: across channels, across DMs, and from one day
-to the next. You do not re-explain the background every time, and you do not start over after a break. The more
-you work together, the more it knows, and the less you repeat.
+## Make durable context explicit
 
-Want something to stick? Say so. "Remember this for next time," and it holds onto it. And it knows the difference
-between what belongs in a private DM and what belongs in a shared channel.
+Not every message should become memory. Tell the agent when a fact needs to survive:
 
-## It takes initiative
+- **A personal operating preference** belongs in the agent's maintained memory. Say, "Remember that release changes always need a canary replay."
+- **Long-lived detail for one agent** belongs in notes under its agent home.
+- **A decision or artifact the whole team needs** belongs in a shared [knowledge base](./knowledge-base.md) or repository.
+- **A repeatable portable workflow** may be ready to become a [skill](./skills.md).
 
-A good teammate does not only move when you message it, and neither does your agent. It follows up on the work it
-owns, keeps things moving, and sets its own reminders for later or recurring work, so "circle back on this Friday"
-or "check this every morning" actually happens.
+The agent's provider context can compact or be replaced. Maintained memory and files survive that boundary. Asking an agent to remember something means it should write the fact into the appropriate durable layer, not merely acknowledge the message.
 
-It drives the work you hand it. You stay in charge of direction: you decide what matters, and the agent carries it
-forward.
+## Ask for later work
 
-## Where to go next
+An agent can persist a reminder for a later or recurring wake. Requests such as "check this after the deploy," "follow up Friday," or "run this every weekday morning" should become reminders rather than promises held only in the current conversation.
 
-- **[How an agent works](./how-an-agent-works.md)** explains what is going on inside a single agent.
-- Once you are running more than one agent and want them coordinating, see
-  **[How your agents work as a team](./how-your-agents-work-as-a-team.md)**.
+A reminder wakes the agent privately. It does not post by itself. When it fires, the agent re-evaluates the instruction in current context and takes any outward action explicitly. You can inspect active and past reminders in the dashboard.
+
+## Transfer a secret without pasting it
+
+Do not paste API keys or other secrets into Slack or Feishu. Ask the receiving agent to create a sealed handoff. It sends a one-time link; you enter the value on `handoff.meetanima.online`; the page encrypts it in your browser; and you return the complete encrypted block to the same conversation.
+
+The receiving agent chooses the destination key only when it accepts the block. The one-time private key stays on its machine and is destroyed after a successful acceptance. The link and ciphertext do not transfer provider login state, Slack or Feishu credentials, or other Anima-managed credentials.
+
+The protocol and CLI commands are documented in [Transfer a secret](../agent/reference.md#transfer-a-secret). The broader credential boundaries are in [Security and data](../security-and-data.md#credentials-and-secret-handling).
+
+## Use the dashboard for oversight
+
+Conversation is where you work with an agent. The dashboard is where you inspect and operate it.
+
+Open the dashboard when you need to:
+
+- see whether work is running, queued, retrying, or unhealthy;
+- inspect the Activity trail after a task;
+- review the channels the agent can see;
+- change its role, provider, team, owner, or transport setup;
+- browse its files, skills, and reminders;
+- stop current work, rotate a session, copy diagnostics, or perform recovery.
+
+See [Use the dashboard](./using-the-dashboard.md) for the current surface and the consequences of each lifecycle action.
+
+## Next
+
+- [Run an agent team](./how-your-agents-work-as-a-team.md) adds visible handoffs, independent review, and human gates.
+- [Set up a software team](../use-cases/run-a-software-team.md) turns those agreements into a concrete builder-reviewer loop.
+- [Architecture overview](../architecture/overview.md) explains the runtime path behind a message and a turn.

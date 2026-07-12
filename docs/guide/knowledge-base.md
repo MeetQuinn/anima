@@ -1,80 +1,114 @@
-# The knowledge base
+---
+title: Use a knowledge base
+description: Register, read, and govern shared team knowledge as ordinary files.
+---
 
-Every team accumulates knowledge: decisions and the reasons behind them, research, specs, the
-roster of who owns what. On most teams it evaporates into old threads. On an Anima team it lands in
-the **knowledge base**: a shared folder of plain Markdown files that agents write to as they work
-and humans can read, review, and correct.
+# Use a knowledge base
 
-The principle behind it is short enough to remember: **agents author it, humans govern it.** Files
-are the source of truth. An agent that learns something the team will need again records it where
-it belongs, in legible Markdown, and anyone — human or agent — builds on it from there. This page
-is the how-to; for where the knowledge base sits in the team model, see
-[How your agents work as a team](./how-your-agents-work-as-a-team.md#one-team-memory-many-private-notebooks).
+A knowledge base is a team-owned folder registered in Anima. Agents can read and write its files;
+humans can inspect, correct, version, and back them up with ordinary filesystem tools.
 
-## Add one in the dashboard
+Use it for durable shared context such as decisions, research, specifications, operating notes, and
+the roster of who owns what. Keep private working memory in an agent home instead. The canonical
+distinction is in [Concepts](/concepts#people-and-structure).
 
-In the sidebar, the **Knowledge Base** section sits above your agents. Click **+** and pick the
-folder:
+## Register a folder
 
-- Browse to an existing folder under your home directory, or create a new one right in the picker.
-- The folder's name becomes the knowledge base's label (you can rename the label later; renaming
-  never touches the folder).
-- The knowledge base belongs to the team you are working in, so with more than one team, each team
-  sees its own.
+Select the team that should own the knowledge base, then click **+** beside **Knowledge Base** in
+the dashboard navigation.
 
-Anima registers the folder; it does not take it over. The files stay ordinary files on your
-machine, owned by you, editable with anything.
+Choose an existing folder under your home directory or create a folder in the picker. Anima records
+the folder path and gives it a sidebar label. Renaming the label does not rename or move the folder.
 
-**Removing** a knowledge base from the sidebar only unregisters it. The folder and every file in it
-stay exactly where they are.
+Removing a knowledge base from the sidebar only unregisters it. The folder and every file inside it
+remain on disk.
 
-## Browse it
+## Give the folder a useful shape
 
-Click a knowledge base and you get a reading surface for the whole folder: a file tree on the left,
-content on the right.
+Agents follow the structure they find. Seed a small structure before the folder grows:
 
-- The top-level `README.md`, if there is one, is what you land on — write one, and it becomes the
-  front door.
-- Markdown renders as a document, with a table of contents for longer files. Flip to **Code** view
-  when you need the raw text, and link to a specific line from there.
-- Any file can be downloaded, and links to files and headings are deep links — paste one in Slack
-  and a teammate lands on the exact section.
+```text
+README.md
+decisions/
+product/
+research/
+operations/
+team.md
+```
 
-![A Knowledge Base opened in the dashboard: the file tree on the left, and the folder's README rendered on the right as the landing page.](/guide/dashboard/kb-browse.png)
+Use `README.md` as the front door: explain what belongs here, where each topic lives, and which files
+are authoritative. A short `team.md` can name human and agent roles so handoffs come from a governed
+file rather than a guess.
 
-## Let the agents at it
+Prefer one durable topic per file. Record conclusions and the evidence behind them, not complete
+chat transcripts.
 
-Agents reach the knowledge base the way they reach anything: it is a folder on the machine they
-work on. Tell an agent where it lives ("our knowledge base is `~/team/kb`; record decisions
-there") and ask it to remember. From then on it reads the knowledge base when it needs context and
-writes to it when something worth keeping happens — meeting outcomes, decision records, research
-summaries, the why behind a change.
+## Read it in the dashboard
 
-Two habits make this compound instead of sprawl:
+Open a knowledge base from the navigation.
 
-- **Give it a shape.** A `README.md` index, one topic per file, folders by area (`decisions/`,
-  `research/`, `product/`). Agents follow the structure they find, so the structure you seed is
-  the structure you get.
-- **Keep a roster.** A `team.md` naming each teammate — human and agent — with their role and what
-  they own answers the question every agent asks eventually ("who do I hand this to?") from a
-  governed file instead of a guess.
+On mobile, the file list is the first screen. Folder rows show the newest modification time among
+their descendants, so a changed file also updates its parent folders. Open a file to move into the
+reader.
 
-## Govern it with git
+On desktop, the tree and reader share the screen. At the knowledge-base root:
 
-Anima does not version the knowledge base for you, and that is deliberate: git already does it
-better. Make the folder a git repository, and you get the whole governance story for free —
-history for every change an agent makes, diffs you can review, blame that shows which teammate
-(agent or human) wrote a line, and revert when something recorded is wrong.
+- a top-level `README.md` becomes the default document
+- returning to the root in the same browser tab resumes the last open file
+- the filter narrows the file tree without changing the folder on disk
 
-The working agreement that keeps quality up is the same one from the
-[team guide](./how-your-agents-work-as-a-team.md): agents write, humans review. When you find
-something wrong or stale, fix it or @mention the responsible agent and ask it to revise — the file
-is the conversation piece, and the correction becomes part of the record.
+For Markdown files:
 
-## Where to go next
+- **Preview** renders the document in a reading column.
+- **Code** shows the source and supports line links such as `#L24`.
+- Heading links open the exact section and stay in sync as you read.
+- Relative file links navigate inside the knowledge base.
+- **On this page** appears for longer documents when the reader is wide enough.
 
-- **[How your agents work as a team](./how-your-agents-work-as-a-team.md)** — where shared memory
-  fits in the team model.
-- **[Skills](./skills.md)** — when recurring knowledge should graduate from notes into a packaged
-  capability.
-- **[Using the dashboard](./using-the-dashboard.md)** — the rest of the operator surface.
+The overflow menu can copy the path, open the raw file, or download the selected knowledge-base
+file. These actions operate on the registered folder; Anima does not create a second copy.
+
+## Make the location durable
+
+Agents reach a knowledge base through its filesystem path. When assigning work, name the folder and
+the intended document:
+
+> Record the final decision and its evidence in `~/anima-team/product/decisions/`.
+
+If an agent will use the folder repeatedly, ask it to record the path in its durable memory or
+working conventions. Registering a folder in the dashboard does not automatically add its meaning
+to every agent prompt.
+
+## Use agents to maintain it
+
+Useful requests are concrete:
+
+- Summarize the decision from this thread in `decisions/` and link the source artifact.
+- Compare the implementation with the current specification and correct stale claims.
+- Add this research result to the index without duplicating an existing source of truth.
+- Review every open item in `operations/` and mark only the ones proven closed.
+
+The agent should update the owning file, not create a second summary elsewhere. If two pages claim
+the same fact, choose one owner and turn the other into a pointer.
+
+## Govern it with Git
+
+Anima does not version knowledge-base files. Put the folder in Git when history and review matter.
+Git then provides diffs, authorship, rollback, branches, and pull requests without a separate Anima
+storage model.
+
+The practical working agreement is:
+
+1. Agents author and update files as part of the work.
+2. Reviewers verify important claims against their source.
+3. Humans own publication, access, and irreversible decisions.
+4. Stale or incorrect material is corrected in place.
+
+A Git repository is a governance mechanism, not an access-control boundary. Files remain readable
+to host processes and agents that can reach the path. See [Security and data](/security-and-data).
+
+## Next steps
+
+- [Run an agent team](./how-your-agents-work-as-a-team.md)
+- [Skills](./skills.md)
+- [Use the dashboard](./using-the-dashboard.md)
