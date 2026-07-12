@@ -6,9 +6,10 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { buildKbPath } from '@/lib/url-state';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useNow } from '@/hooks/useNow';
 import type { KbTreeNode } from '@shared/kb';
 
-import { TreeRow, ancestorsOf, matchesFilter } from './FileTree';
+import { TreeRow, TreeSummary, ancestorsOf, matchesFilter } from './FileTree';
 import {
   FileContent,
   FileBreadcrumb,
@@ -64,6 +65,8 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
 
   const [expanded, setExpanded] = useState<Set<string>>(() => restoredExpandedDirs(id, filePath));
   const [filterQuery, setFilterQuery] = useState('');
+  // One clock for every row's relative mtime label (see TreeRow's `now`).
+  const now = useNow();
   const [treeWidth, setTreeWidth] = useState(() => {
     try {
       const saved = localStorage.getItem('kb.treeWidth');
@@ -467,6 +470,7 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
                 No tracked files.
               </div>
             )}
+            {tree && !filterQuery && <TreeSummary nodes={tree.nodes} />}
             {tree?.nodes.map((node) => (
               <TreeRow
                 key={node.path}
@@ -475,6 +479,7 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
                 expanded={expanded}
                 selectedPath={filePath ?? rowToRestore}
                 filterQuery={filterQuery || undefined}
+                now={now}
                 onToggleDir={toggleDir}
                 onSelectFile={selectFile}
               />

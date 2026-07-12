@@ -96,9 +96,11 @@
      at UI sizes, so ALL chains fall to sans CJK (PingFang first): serif Latin +
      sans CJK is the standard mixed-script pairing. */
   --font-cjk: 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Microsoft YaHei';
-  --font-sans: 'Albert Sans Variable', 'Albert Sans', var(--font-cjk), ui-sans-serif, system-ui, sans-serif;
+  --font-sans:
+    'Albert Sans Variable', 'Albert Sans', var(--font-cjk), ui-sans-serif, system-ui, sans-serif;
   --font-serif: 'Fraunces Variable', 'Fraunces', 'Iowan Old Style', Georgia, var(--font-cjk), serif;
-  --font-mono: 'IBM Plex Mono', 'SF Mono', Menlo, Consolas, var(--font-cjk), ui-monospace, monospace;
+  --font-mono:
+    'IBM Plex Mono', 'SF Mono', Menlo, Consolas, var(--font-cjk), ui-monospace, monospace;
   --font-display: var(--font-serif);
 
   /* Shadows — warm, not cool grey. Subtle lift, not Material elevation. */
@@ -567,13 +569,14 @@ body::before {
 }
 
 /* Knowledge Base file-tree indent — depth controlled by CSS custom property set inline.
-   12px per level on desktop, 8px on mobile to keep names readable at 375px. */
+   12px per level on desktop. Mobile leads with 16px (aligned with the filter row's
+   px-4) and 10px per level, keeping names readable at 375px. */
 .tree-row {
   padding-left: calc(var(--tree-depth, 0) * 12px + 12px);
 }
 @media (max-width: 767px) {
   .tree-row {
-    padding-left: calc(var(--tree-depth, 0) * 8px + 8px);
+    padding-left: calc(var(--tree-depth, 0) * 10px + 16px);
   }
 }
 

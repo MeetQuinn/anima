@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -298,6 +298,41 @@ test('kb tree exposes non-ignored files in a nested shape', async () => {
       assert.equal(docs?.type, 'dir');
       const docChildren = (docs?.children ?? []).map((c) => (c as { name: string }).name);
       assert.deepEqual([...docChildren].sort(), ['app.ts', 'data.json', 'report.html', 'untracked-target.md']);
+    });
+  } finally {
+    await rm(homeDir, { force: true, recursive: true });
+    await rm(repoDir, { force: true, recursive: true });
+  }
+});
+
+test('kb tree stamps file mtimes and bubbles the latest into ancestor dirs', async () => {
+  const { homeDir, repoDir } = await setupKb('anima-kb-mtime');
+  try {
+    // Pin every docs/ file so the dir's bubbled max is deterministic (a file
+    // left at "now" would win over any fixed past timestamp).
+    const newest = new Date('2026-01-02T03:04:05.000Z');
+    const older = new Date('2025-05-05T05:05:05.000Z');
+    await utimes(join(repoDir, 'docs', 'data.json'), newest, newest);
+    for (const rel of ['docs/app.ts', 'docs/report.html', 'docs/untracked-target.md']) {
+      await utimes(join(repoDir, rel), older, older);
+    }
+
+    await withServer(homeDir, async (base) => {
+      const res = await fetch(`${base}/api/kbs/test/tree`);
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as {
+        nodes: Array<{ name: string; type: string; mtime?: string; children?: Array<{ name: string; mtime?: string }> }>;
+      };
+
+      const docs = body.nodes.find((n) => n.name === 'docs');
+      assert.equal(docs?.children?.find((c) => c.name === 'data.json')?.mtime, newest.toISOString());
+      assert.equal(docs?.children?.find((c) => c.name === 'app.ts')?.mtime, older.toISOString());
+      // Dir mtime is the max of its descendants, not the dir inode's own stamp.
+      assert.equal(docs?.mtime, newest.toISOString());
+
+      const readme = body.nodes.find((n) => n.name === 'README.md');
+      assert.ok(readme?.mtime, 'file node carries an mtime');
+      assert.ok(!Number.isNaN(Date.parse(readme!.mtime!)), 'mtime is parseable ISO 8601');
     });
   } finally {
     await rm(homeDir, { force: true, recursive: true });
