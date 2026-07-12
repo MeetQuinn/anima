@@ -111,11 +111,11 @@ Conversation, Audit, and Hidden rows.
 
 ## Event catalog
 
-1. [Run lifecycle & agent output](#1-run-lifecycle--agent-output)
-2. [Provider tool calls](#2-provider-tool-calls)
-3. [Chat actions](#3-chat-actions)
-4. [Reminders, subscriptions & session](#4-reminders-subscriptions--session)
-5. [Provider internals & diagnostics](#5-provider-internals--diagnostics)
+1. [Run lifecycle & agent output](#_1-run-lifecycle-agent-output)
+2. [Provider tool calls](#_2-provider-tool-calls)
+3. [Chat actions](#_3-chat-actions)
+4. [Reminders, subscriptions & session](#_4-reminders-subscriptions-session)
+5. [Provider internals & diagnostics](#_5-provider-internals-diagnostics)
 
 ### 1. Run lifecycle & agent output
 

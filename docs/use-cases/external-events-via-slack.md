@@ -45,7 +45,7 @@ When you connect a monitoring tool you may get an API token for teardown or auto
 Goal: when a monitor detects a problem, an agent wakes in your Slack, triages it, and recommends a next step, while a human stays in control of any action that touches production.
 
 1. **Pick a monitoring tool with a native Slack app.** We used Better Stack Uptime. Anything with a real "Add to Slack" / OAuth integration works (status pages, error trackers, CI). A raw incoming webhook does not (see Rule 1).
-2. **Make a channel for the alerts** (we used `#alerts-demo`) and add both the monitoring tool's Slack app and the agent you want to respond. Adding the agent is what subscribes it: a channel it's a member of, it follows, so every alert that lands there wakes it ([the subscription rules](/concepts#how-an-agent-experiences-the-world)).
+2. **Make a channel for the alerts** (we used `#alerts-demo`) and add both the monitoring tool's Slack app and the agent you want to respond. Adding the agent is what subscribes it: a channel it's a member of, it follows, so every alert that lands there wakes it ([the subscription rules](/concepts#work-and-attention)).
 3. **Point the monitor at the channel.** When an incident fires, the tool posts an alert card into the channel. That post wakes the responding agent.
 4. **The agent triages.** A good responder reply has a clear spine: acknowledge, state what fired, give severity, add context, recommend a next step, and name the human gate explicitly. Here is the reply from our drill:
 
