@@ -103,8 +103,11 @@ Each home runs two local daemons:
 - **agent** receives transport events, schedules private wakes, and runs the workers
 - **web** serves the local API and dashboard
 
-Managed installs normally bind the dashboard to `127.0.0.1:4174`. The host and port come from the
-selected Anima home, so treat the reported URL as authority.
+Managed installs normally serve the dashboard at `http://127.0.0.1:4174` for local access, but the
+listener binds to `0.0.0.0` by default. The dashboard may therefore also be reachable through the
+host's network addresses. Configure `dashboardHost` or use host network controls when you need to
+narrow that exposure. The host and port come from the selected Anima home, so treat the URL reported
+by `anima status` as the local access authority.
 
 ## Restart without dropping the queue
 
