@@ -144,13 +144,15 @@ function secretForm(publicKey: string, panel: HTMLElement): HTMLElement {
   label.htmlFor = 'secret-value';
 
   const fieldWrap = element('div', 'field-wrap');
-  // A textarea, not an input: secrets are often multi-line (PEM keys, JSON
-  // service accounts). Masking uses CSS text-security via the `masked` class;
-  // browsers without support simply show the text, and Show/Hide still works.
-  const input = element('textarea', 'secret-input masked');
+  // A native password input: the browser masks the value in the visual paint
+  // AND the accessibility tree, and browsers without any masking support do
+  // not exist for type=password. CSS-only masking on a textarea leaks the raw
+  // value to assistive technology and fails open; multi-line secret entry is
+  // a follow-up that needs a purpose-built masking interaction.
+  const input = element('input', 'secret-input');
+  input.type = 'password';
   input.id = 'secret-value';
   input.name = 'secret';
-  input.rows = 3;
   input.autocomplete = 'off';
   input.spellcheck = false;
   input.required = true;
@@ -160,9 +162,10 @@ function secretForm(publicKey: string, panel: HTMLElement): HTMLElement {
   show.type = 'button';
   show.setAttribute('aria-pressed', 'false');
   show.addEventListener('click', () => {
-    const masked = input.classList.toggle('masked');
-    show.textContent = masked ? 'Show' : 'Hide';
-    show.setAttribute('aria-pressed', String(!masked));
+    const reveal = input.type === 'password';
+    input.type = reveal ? 'text' : 'password';
+    show.textContent = reveal ? 'Hide' : 'Show';
+    show.setAttribute('aria-pressed', String(reveal));
     input.focus();
   });
   labelRow.append(label, show);

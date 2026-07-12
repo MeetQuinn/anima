@@ -237,9 +237,8 @@ h2 {
 .secret-input {
   display: block;
   width: 100%;
-  min-height: 88px;
-  padding: 13px 16px;
-  resize: vertical;
+  height: 50px;
+  padding: 0 16px;
   border: 1px solid var(--line-strong);
   border-radius: 9px;
   outline: none;
@@ -247,14 +246,9 @@ h2 {
   color: var(--ink);
   font-family: ui-monospace, 'SF Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
   font-size: 14px;
-  line-height: 1.5;
   transition:
     border-color 0.15s ease,
     box-shadow 0.15s ease;
-}
-
-.secret-input.masked {
-  -webkit-text-security: disc;
 }
 
 .secret-input:focus {
