@@ -2,11 +2,11 @@
 
 This document explains the layer where Anima talks to an underlying provider such as Codex CLI, Claude Code, Kimi CLI, or Grok Build.
 
-It intentionally does not re-explain Slack routing, reminder scheduling, inbox ingestion, or the web app. For the system map, start with [Architecture overview](architecture/overview.md).
+It intentionally does not re-explain chat routing, reminder scheduling, inbox ingestion, or the web app. For the system map, start with [Architecture overview](architecture/overview.md).
 
 ## Mental Model
 
-Anima has one durable primary session per Slack bot. Provider sessions are lower-level execution details under that primary session.
+Anima has one durable primary session per agent. Provider sessions are lower-level execution details under that primary session.
 
 The runtime worker owns Anima inbox item execution:
 
@@ -18,7 +18,7 @@ The runtime worker owns Anima inbox item execution:
 6. mark items completed or failed;
 7. close provider resources when the worker shuts down.
 
-Provider adapters own only the protocol to the underlying CLI process. They do not receive inbox items, Slack channel/thread/DM objects, or agent state. They do not decide Slack eligibility, queue priority, reaction policy, prompt construction, or whether visible output should be posted. Visible Slack output still has to go through Anima tools from inside the spawned provider process.
+Provider adapters own only the protocol to the underlying CLI process. They do not receive inbox items, Slack or Feishu conversation objects, or agent state. They do not decide chat eligibility, queue priority, reaction policy, prompt construction, or whether visible output should be posted. Visible chat output still has to go through Anima tools from inside the spawned provider process.
 
 The adapter boundary is:
 
@@ -77,7 +77,7 @@ Controller-style adapters (Codex app-server, Claude stream-json, Kimi ACP, and G
   the worker sets this because it owns failure recording for the item and wants exactly one final
   record.
 
-The important boundary: `AgentRuntimeInput` does not contain inbox items, Slack channel/thread/DM objects, or agent state beyond the provider-facing prompt, environment, and effect sink.
+The important boundary: `AgentRuntimeInput` does not contain inbox items, Slack or Feishu conversation objects, or the full agent record. Its fields are the provider-facing prompt, system prompt and optional prompt-file path, working directory, environment, current provider-session record, item id, abort signal, activity callback, failure-recording flag, and effect sink.
 
 The worker uses `onActivity` to reset the idle watchdog. If the provider produces no activity for the configured idle timeout, the worker aborts the item.
 
@@ -96,7 +96,7 @@ The sink is Anima-aware; the adapter is not. `AgentRuntimeBridge` binds the sink
 
 ### Runtime Result
 
-`AgentRuntimeResult.text` is internal runtime output. It is useful for logs and inspection, but Anima does not post it to Slack automatically. The spawned code agent must call `anima message send` or `anima message update` for visible Slack side effects.
+`AgentRuntimeResult.text` is internal runtime output. It is useful for logs and inspection, but Anima does not post it to chat automatically. The spawned code agent must call `anima message send` or `anima message update` for visible chat side effects.
 
 ## How the Worker Uses Providers
 
@@ -126,20 +126,26 @@ When a same-session message arrives during an active item:
 3. `claimNextFollowup` claims it for the same worker;
 4. `AgentRuntimeBridge` builds a provider-facing follow-up input with `activeItemId`, follow-up `itemId`, and `prompt`;
 5. the worker calls `agentRuntime.appendToActiveRun`;
-6. if accepted, the follow-up item is marked `completed` immediately and gets a `runtime.followup_appended` activity;
+6. if accepted, the follow-up item stays `running`, is marked as appended to the active item, and gets a `runtime.followup_appended` activity;
 7. if rejected, the item is requeued and will execute after the active item.
 
-Accepted follow-up append means the provider adapter has taken responsibility for injecting that message into the active provider context. The follow-up item does not get its own independent provider execution.
+Accepted follow-up append means the provider adapter has taken responsibility for injecting that message into the active provider context. The follow-up item does not get its own independent provider execution. Settlement depends on the parent outcome:
 
-This is why reaction cleanup runs for both the active item and accepted follow-up items: the human sees multiple Slack messages being worked on, but the provider sees one active execution context.
+- normal completion settles the active item and its accepted prompts together;
+- final provider failure requeues appended follow-ups;
+- restart drain and user stop settle them under the worker's corresponding requeue or failure policy;
+- Grok process-crash recovery retains accepted prompts through child replacement and delivers them to the fresh child before their durable rows complete;
+- Codex session-corruption recovery requeues appended follow-ups before retrying with a fresh session.
+
+This is why reaction cleanup runs for both the active item and accepted follow-up items: the human sees multiple chat messages being worked on, but the provider sees one active execution context.
 
 ## Prompt Boundary
 
 The shared prompt helpers live in `server/runtime/delivery-prompt.ts` and `server/runtime/standing-prompt.ts`. Provider adapters do not call them directly; `server/runtime/runtime-bridge.ts` calls them before invoking the adapter.
 
-The Anima runtime profile tells the provider-side agent how Slack side effects work, which `anima` tools exist, and which environment variables are available. This is platform behavior, not provider-specific behavior.
+The Anima runtime profile tells the provider-side agent how chat side effects work, which `anima` tools exist, and which environment variables are available. This is platform behavior, not provider-specific behavior.
 
-The runtime profile is delivered through provider-native standing-prompt mechanisms. The per-item prompt contains only the current Slack or reminder event. It may include "Recovery context" when Anima does not have a persistent provider session yet. Recovery context is a safety net, not the product session model.
+The runtime profile is delivered through provider-native standing-prompt mechanisms. The per-item prompt contains only the current chat or reminder event. It may include "Recovery context" when Anima does not have a persistent provider session yet. Recovery context is a safety net, not the product session model.
 
 ## Environment Boundary
 
@@ -151,9 +157,9 @@ The important pieces are:
 - configured provider env from the agent config;
 - a `PATH` that includes Anima's agent-facing CLI.
 
-`ANIMA_INBOX_ITEM_ID` is deliberately stripped from the long-lived provider environment. Slack-visible tools resolve the audited item at call time from `runtime/active-item.json`.
+`ANIMA_INBOX_ITEM_ID` is deliberately stripped from the long-lived provider environment. Chat-visible tools resolve the audited item at call time from `runtime/active-item.json`.
 
-Provider code should not read Slack tokens directly. It should call `anima message`, `anima reminder`, or `anima subscription` so the side effect is audited against the current item.
+Provider code should not read chat credentials directly. It should call `anima message`, `anima reminder`, or `anima subscription` so the side effect is audited against the current item.
 
 ## Provider Sessions
 
@@ -169,6 +175,8 @@ They are used to resume the underlying tool's native context:
 When a provider emits a new session id, the adapter calls `effects.persistProviderSession`. The sink updates Anima's primary session record.
 
 Provider sessions are not the Anima product session. If a provider session is compacted, rotated, restarted, or replaced, Anima still has the durable primary session, inbox history, instructions, and activity log.
+
+If a resumed provider session is identified as structurally corrupt, the worker can archive that exact provider session and retry the current inbox item once with a fresh provider session. Any follow-ups already appended to the failed run are requeued before the retry. The recovery writes an automatic `anima.session.rotate` activity. This is separate from ordinary provider-process crash retry: adapters must raise a typed corruption error for a condition they can identify precisely rather than treating every provider failure as damaged session state. Codex currently does this for resumed-session turn desynchronization and the exact missing-tool-output transcript diagnostic.
 
 ## Codex Adapter
 
@@ -216,7 +224,7 @@ Activity mapping:
 Implementation: `server/providers/claude.ts`.
 
 Claude Code uses the stream-json transport over stdio. (A tmux transport existed until 2026-07;
-it was removed as unused — git history has it if ever needed.) The launch pieces live in
+it was removed as unused; git history has it if ever needed.) The launch pieces live in
 `server/providers/claude-launch.ts`: the common CLI flags, the provider env defaults, and the
 system-prompt file written from `systemPromptFilePath`.
 
@@ -246,19 +254,20 @@ claude
 
 ### Provider Tool Policy
 
-Anima uses provider tools for observability only; Slack side effects, reminders, subscriptions, inbox routing, and scheduling must stay Anima-owned. Claude Code currently receives a small strategic denylist through `--disallowedTools`:
+Anima uses provider tools for observability only; chat side effects, reminders, subscriptions, inbox routing, and scheduling must stay Anima-owned. Claude Code currently receives a small strategic denylist through `--disallowedTools`:
 
-| Tool                                                       | Current CLI presence      | Stream-json behavior                                                                                       | Side effect                                                                                     | Decision      |
-| ---------------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------- |
-| `AskUserQuestion`                                          | Claude Code built-in      | Fails in the non-interactive runtime.                                                                      | Attempts to ask the operator outside Anima.                                                     | Deny          |
-| `CronCreate` / `CronDelete` / `CronList`                   | Claude Code built-ins     | Works as Claude-native session cron management.                                                            | Creates or manages recurring scheduled prompts outside Anima inbox/reminder/activity ownership. | Deny          |
-| `ScheduleWakeup`                                           | Claude Code built-in      | Works as Claude-native one-off delayed wake.                                                               | Creates future wakeups outside Anima reminders and audit.                                       | Deny          |
-| `RemoteTrigger`                                            | Claude Code built-in      | Not needed by Anima runtime.                                                                               | Establishes provider-native remote triggers outside Anima routing.                              | Deny          |
-| `PushNotification`                                         | Claude Code built-in      | Not needed by Anima runtime.                                                                               | Sends provider-native notifications outside Anima-visible messaging.                            | Deny          |
-| `SlashCommand`                                             | Claude Code built-in      | Observe. Some commands are internal and may be valid in stream-json.                                       | Can affect Claude session state, but not proven broken in Anima.                                | Allow/observe |
-| File, shell, search, task, todo, notebook, and skill tools | Claude Code built-ins     | Required for normal agent work.                                                                            | Provider work, surfaced through Anima activity mapping.                                         | Allow         |
-| Codex CLI tools                                            | Codex app-server protocol | No equivalent user-question/scheduler controls found in the current adapter surface.                       | Tool activity is mapped by Anima.                                                               | Allow/observe |
-| Kimi CLI tools                                             | Kimi wire protocol        | Anima initializes with empty client capabilities; interactive prompts are not exposed through the adapter. | Tool activity is mapped by Anima.                                                               | Allow/observe |
+| Tool                                                       | Current CLI presence      | Runtime behavior                                                                                                                    | Side effect                                                                                     | Decision      |
+| ---------------------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------- |
+| `AskUserQuestion`                                          | Claude Code built-in      | Fails in the non-interactive runtime.                                                                                               | Attempts to ask the operator outside Anima.                                                     | Deny          |
+| `CronCreate` / `CronDelete` / `CronList`                   | Claude Code built-ins     | Works as Claude-native session cron management.                                                                                     | Creates or manages recurring scheduled prompts outside Anima inbox/reminder/activity ownership. | Deny          |
+| `ScheduleWakeup`                                           | Claude Code built-in      | Works as Claude-native one-off delayed wake.                                                                                        | Creates future wakeups outside Anima reminders and audit.                                       | Deny          |
+| `RemoteTrigger`                                            | Claude Code built-in      | Not needed by Anima runtime.                                                                                                        | Establishes provider-native remote triggers outside Anima routing.                              | Deny          |
+| `PushNotification`                                         | Claude Code built-in      | Not needed by Anima runtime.                                                                                                        | Sends provider-native notifications outside Anima-visible messaging.                            | Deny          |
+| `SlashCommand`                                             | Claude Code built-in      | Observe. Some commands are internal and may be valid in stream-json.                                                                | Can affect Claude session state, but not proven broken in Anima.                                | Allow/observe |
+| File, shell, search, task, todo, notebook, and skill tools | Claude Code built-ins     | Required for normal agent work.                                                                                                     | Provider work, surfaced through Anima activity mapping.                                         | Allow         |
+| Codex CLI tools                                            | Codex app-server protocol | No equivalent user-question/scheduler controls found in the current adapter surface.                                                | Tool activity is mapped by Anima.                                                               | Allow/observe |
+| Grok Build tools                                           | Grok ACP                  | Launched with `--always-approve`; ACP permission requests are approved for the session and unsupported client methods are rejected. | Tool activity is mapped by Anima.                                                               | Allow/observe |
+| Kimi CLI tools                                             | Kimi wire protocol        | Anima initializes with empty client capabilities; interactive prompts are not exposed through the adapter.                          | Tool activity is mapped by Anima.                                                               | Allow/observe |
 
 The denylist is global for now. Per-agent tool policy should be added only when there is a concrete operator need; the default policy should keep provider-native scheduling and notifications out of the runtime.
 
@@ -408,7 +417,7 @@ Agent text:
 
 - `agent.text`: assistant text observed from provider stdout.
 
-Slack tool activities are separate. When the spawned code agent calls `anima message send`, that goes through `server/tools/messages.ts` and records `tool.call.started` / `tool.call.completed` / `tool.call.failed` for the Slack side effect. Provider shell/Bash wrapper rows for first-class Anima CLI tools (`anima message read/send/update/react`, `anima file send`) are suppressed so the activity stream shows the semantic Slack tool row once.
+Chat tool activities are separate. When the spawned code agent calls `anima message send`, that goes through `server/tools/messages.ts` and records `tool.call.started` / `tool.call.completed` / `tool.call.failed` for the chat side effect. Provider shell/Bash wrapper rows for first-class Anima CLI tools (`anima message read/send/update/react`, `anima file send`) are suppressed so the activity stream shows the semantic chat tool row once.
 
 ## Current Boundaries and Tradeoffs
 

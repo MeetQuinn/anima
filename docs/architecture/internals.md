@@ -117,9 +117,10 @@ The adapter contract is `AgentRuntime` in `server/providers/contract.ts`. It req
 
 - `server/providers/claude.ts` for `claude-code`;
 - `server/providers/codex.ts` for `codex-cli`;
+- `server/providers/grok.ts` for `grok-cli`;
 - `server/providers/kimi.ts` for `kimi-cli`.
 
-Provider adapters own the protocol to the underlying CLI process. They do not decide Slack attention, queue priority, prompt construction, or visible Slack output. See [Provider layer](../runtime-providers.md) for adapter details.
+Provider adapters own the protocol to the underlying CLI process. They do not decide chat attention, queue priority, prompt construction, or visible chat output. See [Provider layer](../runtime-providers.md) for adapter details.
 
 Provider config is validated in `shared/agent-config.ts` and `shared/provider-catalog.ts`. The Claude transport enum intentionally contains only `stream-json`; stale removed values fail loudly during validation.
 
@@ -174,7 +175,7 @@ Typed stores live in `server/storage/schema/`. Examples:
 - `server/storage/schema/subscription.store.ts` for listening state;
 - `server/storage/schema/cache.ts` for reconstructable platform caches.
 
-Session state is not one session per Slack thread. `server/storage/schema/session.store.ts` stores the provider-native session id under the agent's primary session record. Provider adapters update it through the effects sink in `server/runtime/runtime-bridge.ts`.
+Session state is not one provider session per chat thread. `server/storage/schema/session.store.ts` stores the provider-native session id under the agent's primary session record. Provider adapters update it through the effects sink in `server/runtime/runtime-bridge.ts`.
 
 ### Slack workspace directory
 
