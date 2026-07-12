@@ -31,7 +31,7 @@ export interface ProviderTurnController {
 // Shared lifecycle for provider adapters that keep one long-lived child-process
 // controller per runtime: controller slot ownership, active-run tracking,
 // close/health/drain, and the runtime.started/completed/failed envelope.
-// Claude (stream-json), Codex, and Kimi each carried a copy of this plumbing.
+// Claude (stream-json), Codex, Grok, and Kimi share this plumbing.
 export abstract class ControllerAgentRuntime<C extends ProviderTurnController> implements AgentRuntime {
   abstract readonly env: Record<string, string> | undefined;
   abstract readonly kind: string;
@@ -71,22 +71,25 @@ export abstract class ControllerAgentRuntime<C extends ProviderTurnController> i
   ): C {
     this.cancelProviderChildIdleReset();
     let controller!: C;
-    controller = create(startChildProcess({
-      args: spawn.args,
-      bufferOutput: false,
-      command: spawn.command,
-      cwd: input.cwd,
-      env: input.env,
-      label: spawn.label,
-      onStderrChunk: (chunk) => controller.acceptStderrChunk(chunk),
-      onStdoutChunk: (chunk) => controller.acceptStdoutChunk(chunk),
-    }));
+    controller = create(
+      startChildProcess({
+        args: spawn.args,
+        bufferOutput: false,
+        command: spawn.command,
+        cwd: input.cwd,
+        env: input.env,
+        label: spawn.label,
+        onStderrChunk: (chunk) => controller.acceptStderrChunk(chunk),
+        onStdoutChunk: (chunk) => controller.acceptStdoutChunk(chunk),
+      }),
+    );
     return this.slot.install(controller);
   }
 
   protected async runTurnLifecycle(
     input: AgentRuntimeInput,
     options: {
+      abort?(signal?: NodeJS.Signals): Promise<void> | void;
       beforeFinishRun?(): void;
       // Invoked on every failure, before the suppressFailureRecord check, so
       // adapters can run failure-time side effects (e.g. mapper flush).
@@ -103,7 +106,11 @@ export abstract class ControllerAgentRuntime<C extends ProviderTurnController> i
         ...options.startedPayload,
         providerSession: providerSessionPayload(input.providerSession, this.kind),
       });
-      finishRun = this.activeRun.start(input, options.label, (signal) => void this.slot.reset(signal));
+      finishRun = this.activeRun.start(
+        input,
+        options.label,
+        (signal) => options.abort?.(signal) ?? this.slot.reset(signal),
+      );
       const result = await options.turn();
       await input.effects.recordRuntime('runtime.completed');
       return result;

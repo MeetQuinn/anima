@@ -119,6 +119,7 @@ function installSourceLabel(source: ProviderCliRow['installSource']): string {
   if (source === 'claude-native') return 'Native';
   if (source === 'codex-npm-global') return 'Global npm';
   if (source === 'kimi-native') return 'Native';
+  if (source === 'grok-native') return 'Native';
   return 'Unknown source';
 }
 
@@ -128,7 +129,8 @@ function managementStatus(row: ProviderCliRow): string {
   if (row.state === 'not_installed') return 'Not installed';
   if (row.state === 'error') return 'Version check failed';
   if (row.state === 'available') return `Update available${row.latestVersion ? ` ${row.latestVersion}` : ''}`;
-  if (row.state === 'manual' && row.updateAvailable) return `Update available${row.latestVersion ? ` ${row.latestVersion}` : ''}`;
+  if (row.state === 'manual' && row.updateAvailable)
+    return `Update available${row.latestVersion ? ` ${row.latestVersion}` : ''}`;
   if (row.state === 'unknown') return 'Manual only';
   if (row.state === 'not_checked') return 'Not checked';
   if (row.operation.provider === row.provider && row.operation.status === 'succeeded') return 'Installed';
@@ -150,9 +152,7 @@ const OPENAI_PATH =
 const MOONSHOT_PATH =
   'm1.053 16.91 9.538 2.55a21 20.981 0 0 0 .06 2.031l5.956 1.592a12 11.99 0 0 1-15.554-6.172m-1.02-5.79 11.352 3.035a21 20.981 0 0 0-.469 2.01l10.817 2.89a12 11.99 0 0 1-1.845 2.004L.658 15.918a12 11.99 0 0 1-.625-4.796m1.593-5.146L13.573 9.17a21 20.981 0 0 0-1.01 1.874l11.297 3.02a21 20.981 0 0 1-.67 2.362l-11.55-3.087L.125 10.26a12 11.99 0 0 1 1.499-4.285ZM6.067 1.58l11.285 3.016a21 20.981 0 0 0-1.688 1.719l7.824 2.091a21 20.981 0 0 1 .513 2.664L2.107 5.218a12 11.99 0 0 1 3.96-3.638M21.68 4.866 7.222 1.003A12 11.99 0 0 1 21.68 4.866';
 
-const BRAND_MARKS: Partial<
-  Record<ProviderUsageKind, { path: string; fill: string }>
-> = {
+const BRAND_MARKS: Partial<Record<ProviderUsageKind, { path: string; fill: string }>> = {
   // Claude keeps its brand terracotta; OpenAI and Moonshot take the text color.
   'claude-code': { path: CLAUDE_PATH, fill: '#D97757' },
   'codex-cli': { path: OPENAI_PATH, fill: 'currentColor' },
@@ -171,9 +171,7 @@ function BrandIcon({ provider, label }: { provider: ProviderUsageKind; label: st
           <path d={mark.path} />
         </svg>
       ) : (
-        <span className="font-mono text-[12px] font-semibold text-text-muted">
-          {label.charAt(0).toUpperCase()}
-        </span>
+        <span className="font-mono text-[12px] font-semibold text-text-muted">{label.charAt(0).toUpperCase()}</span>
       )}
     </span>
   );
@@ -192,9 +190,7 @@ function WindowMeter({ w, now }: { w: ProviderUsageWindow; now: Date }) {
         <div className="flex items-baseline gap-2">
           <span className={`font-mono text-[13px] tabular-nums ${pctColor(pct)}`}>{pct}%</span>
           {w.resetsAt && (
-            <span className="font-sans text-[10px] text-text-subtle">
-              resets in {formatReset(w.resetsAt, now)}
-            </span>
+            <span className="font-sans text-[10px] text-text-subtle">resets in {formatReset(w.resetsAt, now)}</span>
           )}
         </div>
       </div>
@@ -240,9 +236,7 @@ function ProviderUnit({
         <BrandIcon provider={management.provider} label={management.label} />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate font-serif text-[15px] font-semibold text-text">
-              {management.label}
-            </span>
+            <span className="truncate font-serif text-[15px] font-semibold text-text">{management.label}</span>
             {plan && (
               <span className="shrink-0 rounded-full border border-border-soft px-1.5 py-px font-sans text-[9px] font-medium uppercase tracking-wider text-text-subtle">
                 {plan}
@@ -323,11 +317,13 @@ function ProviderUnit({
         {operation?.status === 'failed' && operation.error && (
           <p className="font-sans text-[11px] leading-relaxed text-health-error">{operation.error}</p>
         )}
-        {operation?.status === 'succeeded' && runningAgents.some((agent) => agent.runningVersion !== management.installedVersion) && (
-          <p className="font-sans text-[11px] leading-relaxed text-text-muted">
-            New sessions use v{management.installedVersion}. Existing sessions keep their current version until restart.
-          </p>
-        )}
+        {operation?.status === 'succeeded' &&
+          runningAgents.some((agent) => agent.runningVersion !== management.installedVersion) && (
+            <p className="font-sans text-[11px] leading-relaxed text-text-muted">
+              New sessions use v{management.installedVersion}. Existing sessions keep their current version until
+              restart.
+            </p>
+          )}
         {management.manualCommand && management.updateAvailable && management.updateMode === 'manual' && (
           <button
             type="button"
@@ -343,18 +339,18 @@ function ProviderUnit({
           <details className="group">
             <summary className="flex cursor-pointer list-none items-center gap-1 font-sans text-[10px] text-text-subtle hover:text-text-muted">
               <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
-              {management.agents.length}{' '}
-              {management.agents.length === 1
-                ? 'agent uses'
-                : 'agents use'}{' '}
-              this provider
+              {management.agents.length} {management.agents.length === 1 ? 'agent uses' : 'agents use'} this provider
             </summary>
             <div className="mt-1.5 space-y-1 border-l border-border-soft pl-3">
               {management.agents.map((agent) => (
                 <div key={agent.id} className="flex min-w-0 items-baseline justify-between gap-3">
                   <span className="truncate font-sans text-[11px] text-text-muted">{agent.name}</span>
                   <span className="shrink-0 font-mono text-[10px] text-text-subtle">
-                    {agent.runningVersion ? `running v${agent.runningVersion}` : agent.enabled ? 'next session' : 'disabled'}
+                    {agent.runningVersion
+                      ? `running v${agent.runningVersion}`
+                      : agent.enabled
+                        ? 'next session'
+                        : 'disabled'}
                   </span>
                 </div>
               ))}
@@ -390,9 +386,7 @@ function ProviderUnit({
                   ? 'Unreachable'
                   : 'Unavailable'}
           </span>
-          {errorMessage && (
-            <p className="font-mono text-[10px] leading-relaxed text-text-subtle">{errorMessage}</p>
-          )}
+          {errorMessage && <p className="font-mono text-[10px] leading-relaxed text-text-subtle">{errorMessage}</p>}
         </div>
       )}
     </div>
@@ -456,10 +450,7 @@ export default function UsagePanel({ onClose }: Props) {
     if (refreshingProvider) return;
     setRefreshingProvider(provider);
     try {
-      const [row, status] = await Promise.all([
-        fetchProviderUsageProvider(provider),
-        checkProviderClis(provider),
-      ]);
+      const [row, status] = await Promise.all([fetchProviderUsageProvider(provider), checkProviderClis(provider)]);
       queryClient.setQueryData(queryKeys.providerCliStatus(), status);
       queryClient.setQueryData<ProviderUsageResponse>(queryKeys.providerUsage(), (current) => {
         const providers = current?.providers ?? [];
@@ -487,13 +478,13 @@ export default function UsagePanel({ onClose }: Props) {
       description: (
         <div className="space-y-2">
           <p>
-            Update the machine-wide {row.label} binary from v{row.installedVersion} to v{row.latestVersion}.
-            {' '}This affects {enabledAgents.length} {enabledAgents.length === 1 ? 'agent' : 'agents'}:
-            {' '}{enabledAgents.map((agent) => agent.name).join(', ') || 'none'}.
+            Update the machine-wide {row.label} binary from v{row.installedVersion} to v{row.latestVersion}. This
+            affects {enabledAgents.length} {enabledAgents.length === 1 ? 'agent' : 'agents'}:{' '}
+            {enabledAgents.map((agent) => agent.name).join(', ') || 'none'}.
           </p>
           <p>
-            Running work is not interrupted. New versions take effect when each provider session next restarts.
-            Login credentials and provider configuration are not changed.
+            Running work is not interrupted. New versions take effect when each provider session next restarts. Login
+            credentials and provider configuration are not changed.
           </p>
         </div>
       ),
@@ -518,85 +509,84 @@ export default function UsagePanel({ onClose }: Props) {
 
   return (
     <Fragment>
-      {createPortal(<div className="fixed inset-0 z-50">
-      {/* Desktop backdrop — click to close */}
-      <div className="hidden md:block fixed inset-0 bg-page/70 backdrop-blur-sm" onClick={onClose} />
+      {createPortal(
+        <div className="fixed inset-0 z-50">
+          {/* Desktop backdrop — click to close */}
+          <div className="hidden md:block fixed inset-0 bg-page/70 backdrop-blur-sm" onClick={onClose} />
 
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Providers"
-        className={[
-          'relative flex h-full w-full flex-col bg-surface',
-          'md:absolute md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2',
-          'md:h-auto md:max-h-[calc(100dvh-4rem)] md:max-w-xl md:rounded-sm md:border md:border-border-soft md:shadow-deep',
-        ].join(' ')}
-        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
-      >
-        {/* ── Panel header ── */}
-        {/* Mobile full-screen pages share the home header height (h-14 / 56px);
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Providers"
+            className={[
+              'relative flex h-full w-full flex-col bg-surface',
+              'md:absolute md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2',
+              'md:h-auto md:max-h-[calc(100dvh-4rem)] md:max-w-xl md:rounded-sm md:border md:border-border-soft md:shadow-deep',
+            ].join(' ')}
+            style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+          >
+            {/* ── Panel header ── */}
+            {/* Mobile full-screen pages share the home header height (h-14 / 56px);
             the desktop modal keeps its compact h-10 chrome. */}
-        <div className="flex h-14 shrink-0 items-center justify-between border-b border-border-soft px-3 md:h-10">
-          <span className="caps text-text">Providers</span>
-          <div className="flex items-center gap-2">
-            {checkedAt && (
-              <span className="font-sans text-[10px] text-text-subtle">
-                checked {formatAgo(checkedAt, now)}
-              </span>
-            )}
-            <button
-              onClick={() => void refreshAll()}
-              disabled={fetching}
-              className="flex h-7 w-7 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40"
-              aria-label="Refresh providers"
-              title="Refresh"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${fetching ? 'animate-spin' : ''}`} />
-            </button>
-            <button
-              onClick={onClose}
-              className="flex h-7 w-7 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              aria-label="Close providers panel"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
+            <div className="flex h-14 shrink-0 items-center justify-between border-b border-border-soft px-3 md:h-10">
+              <span className="caps text-text">Providers</span>
+              <div className="flex items-center gap-2">
+                {checkedAt && (
+                  <span className="font-sans text-[10px] text-text-subtle">checked {formatAgo(checkedAt, now)}</span>
+                )}
+                <button
+                  onClick={() => void refreshAll()}
+                  disabled={fetching}
+                  className="flex h-7 w-7 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40"
+                  aria-label="Refresh providers"
+                  title="Refresh"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${fetching ? 'animate-spin' : ''}`} />
+                </button>
+                <button
+                  onClick={onClose}
+                  className="flex h-7 w-7 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  aria-label="Close providers panel"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
 
-        {/* ── Body ── */}
-        <div className="flex-1 overflow-y-auto px-4 py-5 md:px-6">
-          {usageLoading || cliLoading ? (
-            <div className="space-y-6">
-              <UsageSkeleton />
-              <UsageSkeleton />
-            </div>
-          ) : visible.length > 0 ? (
-            <div className="divide-y divide-border-soft">
-              {visible.map((row, i) => (
-                <div key={row.provider} className={i === 0 ? 'pb-6' : 'py-6 last:pb-1'}>
-                  <ProviderUnit
-                    globallyLocked={cliData?.upgradeLocked}
-                    management={row}
-                    isRefreshing={refreshingProvider === row.provider}
-                    now={now}
-                    onApply={() => requestApply(row)}
-                    onCopyCommand={() => {
-                      if (row.manualCommand) void navigator.clipboard.writeText(row.manualCommand);
-                    }}
-                    onRefresh={() => void refreshOneProvider(row.provider)}
-                    usage={usageByProvider.get(row.provider)}
-                  />
+            {/* ── Body ── */}
+            <div className="flex-1 overflow-y-auto px-4 py-5 md:px-6">
+              {usageLoading || cliLoading ? (
+                <div className="space-y-6">
+                  <UsageSkeleton />
+                  <UsageSkeleton />
                 </div>
-              ))}
+              ) : visible.length > 0 ? (
+                <div className="divide-y divide-border-soft">
+                  {visible.map((row, i) => (
+                    <div key={row.provider} className={i === 0 ? 'pb-6' : 'py-6 last:pb-1'}>
+                      <ProviderUnit
+                        globallyLocked={cliData?.upgradeLocked}
+                        management={row}
+                        isRefreshing={refreshingProvider === row.provider}
+                        now={now}
+                        onApply={() => requestApply(row)}
+                        onCopyCommand={() => {
+                          if (row.manualCommand) void navigator.clipboard.writeText(row.manualCommand);
+                        }}
+                        onRefresh={() => void refreshOneProvider(row.provider)}
+                        usage={usageByProvider.get(row.provider)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="font-serif italic text-[13px] text-text-subtle">No provider CLIs found.</p>
+              )}
             </div>
-          ) : (
-            <p className="font-serif italic text-[13px] text-text-subtle">
-              No provider CLIs found.
-            </p>
-          )}
-        </div>
-      </div>
-    </div>, document.body)}
+          </div>
+        </div>,
+        document.body,
+      )}
       {modal}
     </Fragment>
   );

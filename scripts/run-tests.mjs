@@ -12,7 +12,7 @@ const currentNodeMajor = Number.parseInt(process.versions.node.split('.')[0] ?? 
 if (!Number.isFinite(currentNodeMajor) || currentNodeMajor < minimumNodeMajor) {
   throw new Error(
     `Anima repository tests require Node.js ${minimumNodeMajor} or newer; ` +
-    `current runtime is ${process.version}. Use the version pinned in .nvmrc.`,
+      `current runtime is ${process.version}. Use the version pinned in .nvmrc.`,
   );
 }
 
@@ -96,6 +96,7 @@ const groups = {
   runtime: [
     'agent-runtime-codex.test.js',
     'agent-runtime-claude.test.js',
+    'agent-runtime-grok.test.js',
     'agent-runtime-kimi.test.js',
     'cli-env.test.js',
     'cli-errors.test.js',
@@ -129,9 +130,10 @@ const fallbackTimeoutProfile = {
 
 export function testTimeoutsFor(group, testFiles) {
   const profile = timeoutProfiles[group] ?? fallbackTimeoutProfile;
-  const suiteGrowthMs = group === 'fast' || group === 'all'
-    ? testFiles.reduce((total, file) => total + compositeTierFileBudgetMs(group, file), 0)
-    : testFiles.length * profile.suitePerFileMs;
+  const suiteGrowthMs =
+    group === 'fast' || group === 'all'
+      ? testFiles.reduce((total, file) => total + compositeTierFileBudgetMs(group, file), 0)
+      : testFiles.length * profile.suitePerFileMs;
   const derivedSuiteMs = profile.suiteBaseMs + suiteGrowthMs;
   return {
     perTestMs: profile.perTestMs,
@@ -148,20 +150,15 @@ export function runTestFiles({ group, testPaths, perTestMs, suiteMs }) {
   if (!Number.isFinite(suiteMs) || suiteMs <= perTestMs) {
     throw new Error(
       `suiteMs must exceed perTestMs so Node can report a named test timeout first; ` +
-      `received suiteMs=${suiteMs}, perTestMs=${perTestMs}`,
+        `received suiteMs=${suiteMs}, perTestMs=${perTestMs}`,
     );
   }
 
-  const args = [
-    '--test',
-    `--test-timeout=${perTestMs}`,
-    '--test-concurrency=1',
-    ...testPaths,
-  ];
+  const args = ['--test', `--test-timeout=${perTestMs}`, '--test-concurrency=1', ...testPaths];
 
   console.log(
     `Running ${group} tests (${testPaths.length} files, ` +
-    `per-test ${formatSeconds(perTestMs)}, suite ${formatSeconds(suiteMs)})`,
+      `per-test ${formatSeconds(perTestMs)}, suite ${formatSeconds(suiteMs)})`,
   );
   const child = spawn(process.execPath, args, {
     detached: process.platform !== 'win32',
@@ -174,8 +171,7 @@ export function runTestFiles({ group, testPaths, perTestMs, suiteMs }) {
     const timer = setTimeout(() => {
       didTimeout = true;
       console.error(
-        `\n${group} tests exceeded suite budget ${formatSeconds(suiteMs)}; ` +
-        'terminating test process tree.',
+        `\n${group} tests exceeded suite budget ${formatSeconds(suiteMs)}; ` + 'terminating test process tree.',
       );
       killChildTree(child, 'SIGTERM');
       forceKillTimer = setTimeout(() => killChildTree(child, 'SIGKILL'), 2_000);
@@ -244,12 +240,7 @@ function auditTierMembership() {
     .map((name) => name.replace(/\.ts$/, '.js'))
     .sort();
   const sourceSet = new Set(sourceTests);
-  const tieredTests = [
-    ...groups.unit,
-    ...groups.api,
-    ...groups.runtime,
-    ...groups.quarantine,
-  ];
+  const tieredTests = [...groups.unit, ...groups.api, ...groups.runtime, ...groups.quarantine];
   const tierCounts = new Map();
   for (const name of tieredTests) tierCounts.set(name, (tierCounts.get(name) ?? 0) + 1);
   const tieredSet = new Set(tieredTests);

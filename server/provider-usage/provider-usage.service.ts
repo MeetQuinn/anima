@@ -1,8 +1,4 @@
-import type {
-  ProviderUsageKind,
-  ProviderUsageResponse,
-  ProviderUsageRow,
-} from '../../shared/provider-usage.js';
+import type { ProviderUsageKind, ProviderUsageResponse, ProviderUsageRow } from '../../shared/provider-usage.js';
 import { fetchClaudeUsage } from './providers/claude.js';
 import { fetchCodexUsage } from './providers/codex.js';
 import { fetchKimiUsage } from './providers/kimi.js';
@@ -48,7 +44,7 @@ export class ProviderUsageService {
         label: adapter.label,
         provider: adapter.provider,
         source: adapter.source,
-        ...await adapter.fetch(),
+        ...(await adapter.fetch()),
       };
     } catch (error) {
       return {
@@ -83,6 +79,17 @@ export function defaultProviderUsageAdapters(): ProviderUsageAdapter[] {
       fetch: fetchKimiUsage,
       label: 'Kimi CLI',
       provider: 'kimi-cli',
+      source: 'native',
+    },
+    {
+      fetch: async () => ({
+        error: usageError('unknown', 'Grok Build CLI does not report account usage'),
+        extras: [],
+        status: 'unavailable' as const,
+        windows: [],
+      }),
+      label: 'Grok Build',
+      provider: 'grok-cli',
       source: 'native',
     },
   ];

@@ -20,6 +20,8 @@ import { DEFAULT_AGENT_HOMES_ROOT, defaultAgentHomePath } from '@shared/agent-ho
 import { agentIdFromName } from '@shared/agent-config';
 import {
   firstReadyProvider,
+  providerCatalogForAvailability,
+  providerModelAuthorityLabel,
   providerReady,
   providerUnavailableHint,
   unavailableProviderHints,
@@ -30,16 +32,10 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import DirectoryPicker from '@/components/DirectoryPicker';
 import { SlackConnectStepper } from '@/views/agents/profile/SlackConnectStepper';
-import {
-  FeishuOnboardingConnect,
-  type FeishuOnboardingPhase,
-} from '@/views/agents/profile/FeishuOnboardingConnect';
+import { FeishuOnboardingConnect, type FeishuOnboardingPhase } from '@/views/agents/profile/FeishuOnboardingConnect';
 import { OwnerPickerForm } from '@/views/agents/profile/OwnerPickerForm';
 import { queryKeys } from '@/lib/query-keys';
-import {
-  isFeishuRegistrationActive,
-  useFeishuRegistrationPoll,
-} from '@/hooks/useFeishuRegistrationPoll';
+import { isFeishuRegistrationActive, useFeishuRegistrationPoll } from '@/hooks/useFeishuRegistrationPoll';
 import type { AgentFeishuRegisterAppStatus } from '@shared/agent-config';
 import { DEFAULT_TEAM_ID, type TeamConfig, type WorkspacePlatform } from '@shared/server-settings';
 
@@ -79,27 +75,33 @@ type FlowStep = 'agent' | 'connect' | 'permissions' | 'owner' | 'platform';
 export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultTeamId }: AgentCreateFlowProps) {
   const queryClient = useQueryClient();
   // Optional preview params for dev/screenshot use
-  const previewSearch = typeof window !== 'undefined'
-    ? new URLSearchParams(window.location.search)
-    : new URLSearchParams();
+  const previewSearch =
+    typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const previewStepRaw = Number(previewSearch.get('_previewStep') ?? 0);
   const previewFeishuPhase = (previewSearch.get('_previewFeishu') as FeishuOnboardingPhase | null) ?? undefined;
   const previewPlatform = (previewSearch.get('_previewPlatform') as WorkspacePlatform | null) ?? undefined;
-  const previewCreateLoading =
-    import.meta.env.DEV && previewSearch.get('_previewCreateLoading') === 'feishu';
-  const previewCreateSlow =
-    previewCreateLoading && previewSearch.get('_previewSlow') === '1';
+  const previewCreateLoading = import.meta.env.DEV && previewSearch.get('_previewCreateLoading') === 'feishu';
+  const previewCreateSlow = previewCreateLoading && previewSearch.get('_previewSlow') === '1';
   const previewStepName = previewSearch.get('_previewStep');
-  const previewStep: FlowStep | undefined =
-    previewFeishuPhase ? (previewFeishuPhase === 'permissions' || previewFeishuPhase === 'connected' ? 'permissions' : 'connect')
-      : previewStepName === 'platform' ? 'platform'
-        : previewStepRaw === 1 ? 'agent'
-          : previewStepRaw === 2 ? 'connect'
-            : previewStepRaw === 3 ? (previewPlatform === 'feishu' ? 'permissions' : 'owner') : undefined;
+  const previewStep: FlowStep | undefined = previewFeishuPhase
+    ? previewFeishuPhase === 'permissions' || previewFeishuPhase === 'connected'
+      ? 'permissions'
+      : 'connect'
+    : previewStepName === 'platform'
+      ? 'platform'
+      : previewStepRaw === 1
+        ? 'agent'
+        : previewStepRaw === 2
+          ? 'connect'
+          : previewStepRaw === 3
+            ? previewPlatform === 'feishu'
+              ? 'permissions'
+              : 'owner'
+            : undefined;
 
   const [step, setStep] = useState<FlowStep>(previewStep ?? (firstRun ? 'platform' : 'agent'));
   const [workspacePlatform, setWorkspacePlatform] = useState<WorkspacePlatform>(
-    previewFeishuPhase ? 'feishu' : previewPlatform ?? 'slack',
+    previewFeishuPhase ? 'feishu' : (previewPlatform ?? 'slack'),
   );
   const [workspacePlatformTouched, setWorkspacePlatformTouched] = useState(false);
   const [platformSaving, setPlatformSaving] = useState(false);
@@ -128,14 +130,10 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
   const selectedTeam = teamsList.find((t) => t.id === teamId);
   // The team's agents live under $TEAM_HOME/agents/. For the default team this is
   // exactly DEFAULT_AGENT_HOMES_ROOT, so N=1 create is byte-identical to today.
-  const teamAgentsRoot = selectedTeam
-    ? `${selectedTeam.home.replace(/\/+$/, '')}/agents`
-    : DEFAULT_AGENT_HOMES_ROOT;
+  const teamAgentsRoot = selectedTeam ? `${selectedTeam.home.replace(/\/+$/, '')}/agents` : DEFAULT_AGENT_HOMES_ROOT;
 
   // Create state
-  const [createdAgentId, setCreatedAgentId] = useState<string | null>(
-    previewFeishuPhase ? 'preview-agent' : null,
-  );
+  const [createdAgentId, setCreatedAgentId] = useState<string | null>(previewFeishuPhase ? 'preview-agent' : null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [createStage, setCreateStage] = useState<'agent' | 'feishu' | undefined>();
@@ -153,10 +151,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
   const createRunRef = useRef(0);
   const feishuSlowTimerRef = useRef<number | null>(null);
 
-  const {
-    data: providerAvailability,
-    error: providerAvailabilityError,
-  } = useQuery({
+  const { data: providerAvailability, error: providerAvailabilityError } = useQuery({
     queryKey: queryKeys.providerAvailability(),
     queryFn: fetchProviderAvailability,
   });
@@ -165,7 +160,10 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
     queryFn: fetchWorkspacePlatform,
   });
 
-  const providerOptions = useMemo(() => providerCatalog(), []);
+  const providerOptions = useMemo(
+    () => providerCatalogForAvailability(providerCatalog(), providerAvailability),
+    [providerAvailability],
+  );
   // Platform is a pre-step fork, not a numbered step. Each platform gets its own
   // numbered sequence (Slack: agent → connect → owner; Feishu: agent → connect → permissions),
   // so the two flows no longer share a stepper count.
@@ -186,11 +184,12 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
   // Display helpers — Base UI SelectValue shows raw value before items register;
   // use render-prop form to always resolve a human label.
   const displayProvider = (v: string) => providerOptions.find((r) => r.kind === v)?.label ?? v;
-  const displayModel = (v: string) => v ? v.charAt(0).toUpperCase() + v.slice(1) : v;
-  const displayEffort = (v: string) => v === 'xhigh' ? 'Extra High' : (v ? v.charAt(0).toUpperCase() + v.slice(1) : v);
+  const displayModel = (v: string) => (v ? v.charAt(0).toUpperCase() + v.slice(1) : v);
+  const displayEffort = (v: string) => (v === 'xhigh' ? 'Extra High' : v ? v.charAt(0).toUpperCase() + v.slice(1) : v);
   const currentProvider = providerOptions.find((o) => o.kind === providerKind);
   const selectedProviderReady = providerReady(currentProvider, providerAvailability);
   const selectedProviderHint = providerUnavailableHint(currentProvider, providerAvailability);
+  const selectedProviderAuthority = providerModelAuthorityLabel(currentProvider, providerAvailability);
   const unavailableProviders = unavailableProviderHints(providerOptions, providerAvailability);
   const providerCheckPending = !providerAvailability && !providerAvailabilityError;
   const effectiveCreating = previewCreateLoading || creating;
@@ -204,7 +203,13 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
   // Auto-select a ready provider when availability resolves.
   useEffect(() => {
     if (!providerAvailability) return;
-    if (providerReady(providerOptions.find((o) => o.kind === providerKind), providerAvailability)) return;
+    if (
+      providerReady(
+        providerOptions.find((o) => o.kind === providerKind),
+        providerAvailability,
+      )
+    )
+      return;
     const next = firstReadyProvider(providerOptions, providerAvailability);
     if (!next) return;
     setTimeout(() => {
@@ -250,7 +255,10 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key !== 'Escape' || effectiveCreating) return;
-      if (showPicker) { setShowPicker(false); return; }
+      if (showPicker) {
+        setShowPicker(false);
+        return;
+      }
       void handleClose();
     }
     window.addEventListener('keydown', onKey);
@@ -319,7 +327,9 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
     agentId: string,
     runId: number,
   ): Promise<AgentFeishuRegisterAppStatus | null> {
-    const next = await startAgentFeishuAppRegistration(agentId, { botName: name.trim() || undefined });
+    const next = await startAgentFeishuAppRegistration(agentId, {
+      botName: name.trim() || undefined,
+    });
     if (createRunRef.current !== runId) return null;
     setFeishuRegistration(next);
 
@@ -419,9 +429,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
     } catch (err) {
       if (createRunRef.current !== runId) return;
       setCreateError(
-        err instanceof Error
-          ? err.message
-          : (createdAgentId ? 'Failed to update agent' : 'Failed to create agent'),
+        err instanceof Error ? err.message : createdAgentId ? 'Failed to update agent' : 'Failed to create agent',
       );
     } finally {
       if (createRunRef.current === runId) {
@@ -459,11 +467,17 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
   }
 
   const stepTitle =
-    step === 'platform' ? 'Where does your team work?' :
-    step === 'agent' ? 'Create your agent' :
-    step === 'connect' ? (workspacePlatform === 'feishu' ? 'Create Feishu bot' : `Connect to ${WORKSPACE_PLATFORM_LABELS[workspacePlatform]}`) :
-    step === 'permissions' ? 'Authorize Feishu permissions' :
-    'Pick an owner';
+    step === 'platform'
+      ? 'Where does your team work?'
+      : step === 'agent'
+        ? 'Create your agent'
+        : step === 'connect'
+          ? workspacePlatform === 'feishu'
+            ? 'Create Feishu bot'
+            : `Connect to ${WORKSPACE_PLATFORM_LABELS[workspacePlatform]}`
+          : step === 'permissions'
+            ? 'Authorize Feishu permissions'
+            : 'Pick an owner';
   const createDisabledReason = (() => {
     if (effectiveCreating) return undefined;
     if (!derivedId) return 'Enter a name';
@@ -474,7 +488,11 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
     return undefined;
   })();
   const createButtonLabel = effectiveCreating
-    ? (effectiveCreateStage === 'feishu' ? 'Creating your Feishu app…' : (createdAgentId ? 'Saving…' : 'Creating…'))
+    ? effectiveCreateStage === 'feishu'
+      ? 'Creating your Feishu app…'
+      : createdAgentId
+        ? 'Saving…'
+        : 'Creating…'
     : (createDisabledReason ?? (createdAgentId ? 'Save & continue →' : 'Create agent →'));
 
   // -------------------------------------------------------------------------
@@ -514,7 +532,6 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
 
   const card = (
     <div className="relative w-full max-w-xl rounded-sm border border-border-soft bg-white shadow-deep">
-
       {/* hero lives outside the card now — see shell below */}
 
       {/* ---- Card header row ---- */}
@@ -584,12 +601,16 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') void handleCreate(); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void handleCreate();
+                }}
                 placeholder="e.g. Aria"
                 className="w-full rounded-sm border border-border-soft bg-surface px-3 py-2 font-serif text-[15px] text-text placeholder:text-text-subtle focus:border-accent focus:outline-none"
               />
               {nameTouched && !derivedId && (
-                <p className="font-sans mt-1 text-[11px] text-health-error">Name must include at least one letter or number.</p>
+                <p className="font-sans mt-1 text-[11px] text-health-error">
+                  Name must include at least one letter or number.
+                </p>
               )}
             </div>
 
@@ -602,7 +623,9 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                 type="text"
                 value={role}
                 onChange={(e) => setRole(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') void handleCreate(); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void handleCreate();
+                }}
                 placeholder="e.g. Full-stack developer"
                 className="w-full rounded-sm border border-border-soft bg-surface px-3 py-2 font-serif text-[15px] text-text placeholder:text-text-subtle focus:border-accent focus:outline-none"
               />
@@ -615,14 +638,19 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
               </label>
               {providerAvailability && unavailableProviders.length === providerOptions.length ? (
                 <p className="font-sans text-[12px] text-health-warn">
-                  No providers detected. Install Claude Code, Codex CLI, or Kimi CLI first.
+                  No providers detected. Install Claude Code, Codex CLI, Kimi CLI, or Grok Build first.
                 </p>
               ) : (
-                <div className={[
-                  'grid gap-2',
-                  (currentProvider?.reasoningEfforts ?? []).length > 0 ? 'grid-cols-3' : 'grid-cols-2',
-                ].join(' ')}>
-                  <Select value={providerKind} onValueChange={(v) => handleProviderChange(v as ProviderCatalogEntry['kind'])}>
+                <div
+                  className={[
+                    'grid gap-2',
+                    (currentProvider?.reasoningEfforts ?? []).length > 0 ? 'grid-cols-3' : 'grid-cols-2',
+                  ].join(' ')}
+                >
+                  <Select
+                    value={providerKind}
+                    onValueChange={(v) => handleProviderChange(v as ProviderCatalogEntry['kind'])}
+                  >
                     <SelectTrigger className="!h-auto w-full py-2 font-serif text-[15px]">
                       <SelectValue>{(v: string) => displayProvider(v)}</SelectValue>
                     </SelectTrigger>
@@ -631,30 +659,45 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                         const hint = providerUnavailableHint(r, providerAvailability);
                         return (
                           <SelectItem key={r.kind} value={r.kind} disabled={!!hint}>
-                            {r.label}{hint ? ` — ${hint}` : ''}
+                            {r.label}
+                            {hint ? ` — ${hint}` : ''}
                           </SelectItem>
                         );
                       })}
                     </SelectContent>
                   </Select>
-                  <Select value={model} onValueChange={(v) => { if (v) setModel(v); }}>
+                  <Select
+                    value={model}
+                    onValueChange={(v) => {
+                      if (v) setModel(v);
+                    }}
+                  >
                     <SelectTrigger className="!h-auto w-full py-2 font-serif text-[15px]">
                       <SelectValue>{(v: string) => displayModel(v)}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {(currentProvider?.models ?? []).map((m) => (
-                        <SelectItem key={m} value={m}>{displayModel(m)}</SelectItem>
+                        <SelectItem key={m} value={m}>
+                          {displayModel(m)}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                   {(currentProvider?.reasoningEfforts ?? []).length > 0 && (
-                    <Select value={effort} onValueChange={(v) => { if (v) setEffort(v); }}>
+                    <Select
+                      value={effort}
+                      onValueChange={(v) => {
+                        if (v) setEffort(v);
+                      }}
+                    >
                       <SelectTrigger className="!h-auto w-full py-2 font-serif text-[15px]">
                         <SelectValue>{(v: string) => displayEffort(v)}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {(currentProvider?.reasoningEfforts ?? []).map((e) => (
-                          <SelectItem key={e} value={e}>{displayEffort(e)}</SelectItem>
+                          <SelectItem key={e} value={e}>
+                            {displayEffort(e)}
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -664,12 +707,18 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
               {selectedProviderHint && (
                 <p className="font-sans mt-1 text-[11px] text-health-warn">{selectedProviderHint}</p>
               )}
+              {selectedProviderAuthority && !selectedProviderHint && (
+                <p className="font-sans mt-1 text-[10px] text-text-subtle">{selectedProviderAuthority}</p>
+              )}
               {providerCheckPending && (
                 <p className="font-sans mt-1 text-[11px] text-text-subtle">Checking installed provider CLIs...</p>
               )}
               {providerAvailabilityError && (
                 <p className="font-sans mt-1 text-[11px] text-health-error">
-                  Provider check failed: {providerAvailabilityError instanceof Error ? providerAvailabilityError.message : String(providerAvailabilityError)}
+                  Provider check failed:{' '}
+                  {providerAvailabilityError instanceof Error
+                    ? providerAvailabilityError.message
+                    : String(providerAvailabilityError)}
                 </p>
               )}
             </div>
@@ -679,56 +728,54 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                 Its home lands under that team's folder. */}
 
             {/* Home — collapsed secondary field; hidden when agent already created (dir exists) */}
-            {!createdAgentId && <div>
-              <button
-                type="button"
-                onClick={() => setHomeExpanded((v) => !v)}
-                className="font-sans flex items-center gap-1 text-[12px] text-text-muted hover:text-text transition-colors"
-              >
-                {homeExpanded
-                  ? <ChevronDown className="h-3.5 w-3.5" />
-                  : <ChevronRight className="h-3.5 w-3.5" />
-                }
-                Where it lives
-              </button>
+            {!createdAgentId && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setHomeExpanded((v) => !v)}
+                  className="font-sans flex items-center gap-1 text-[12px] text-text-muted hover:text-text transition-colors"
+                >
+                  {homeExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                  Where it lives
+                </button>
 
-              {homeExpanded && (
-                <div className="mt-2 rounded-sm border border-border-soft bg-surface-elevated p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="font-mono text-[13px] text-text break-all">{homePath}</div>
-                      <div className="font-sans mt-0.5 text-[11px] text-text-subtle">
-                        Will be created automatically
+                {homeExpanded && (
+                  <div className="mt-2 rounded-sm border border-border-soft bg-surface-elevated p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-mono text-[13px] text-text break-all">{homePath}</div>
+                        <div className="font-sans mt-0.5 text-[11px] text-text-subtle">
+                          Will be created automatically
+                        </div>
+                        <p className="font-sans mt-2 text-[12px] text-text-muted">
+                          Your agent's memory lives here, in its own{' '}
+                          <strong className="font-semibold text-text">home folder</strong> under the team's folder.
+                        </p>
                       </div>
-                      <p className="font-sans mt-2 text-[12px] text-text-muted">
-                        Your agent's memory lives here, in its own <strong className="font-semibold text-text">home folder</strong> under the team's folder.
-                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setShowPicker(true)}
+                        className="font-sans shrink-0 text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 hover:text-text hover:decoration-text/40 transition-colors"
+                      >
+                        Change…
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setShowPicker(true)}
-                      className="font-sans shrink-0 text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 hover:text-text hover:decoration-text/40 transition-colors"
-                    >
-                      Change…
-                    </button>
+                    {customParent && (
+                      <button
+                        type="button"
+                        onClick={() => setCustomParent(null)}
+                        className="font-sans mt-2 text-[11px] text-text-subtle underline underline-offset-2 hover:text-text transition-colors"
+                      >
+                        Reset to default
+                      </button>
+                    )}
                   </div>
-                  {customParent && (
-                    <button
-                      type="button"
-                      onClick={() => setCustomParent(null)}
-                      className="font-sans mt-2 text-[11px] text-text-subtle underline underline-offset-2 hover:text-text transition-colors"
-                    >
-                      Reset to default
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>}
+                )}
+              </div>
+            )}
           </div>
 
-          {createError && (
-            <p className="font-sans mt-3 text-[12px] text-health-error">{createError}</p>
-          )}
+          {createError && <p className="font-sans mt-3 text-[12px] text-health-error">{createError}</p>}
 
           <div className="mt-6">
             <Button
@@ -900,7 +947,10 @@ export function AgentCreateModal({
           onClose();
           navigate(`/agents/${id}/activity`, {
             state: justConnected
-              ? { onboardingConnected: justConnected, feishuGreetingBanner: Boolean(greetingBanner) }
+              ? {
+                  onboardingConnected: justConnected,
+                  feishuGreetingBanner: Boolean(greetingBanner),
+                }
               : undefined,
           });
         }}
