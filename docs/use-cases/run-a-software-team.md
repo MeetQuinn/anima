@@ -5,14 +5,14 @@ description: Cast a small team of agents around your codebase, wire a channel an
 
 # Set up a software team
 
-This is the team shape we know best, because it's the one that builds Anima. A small cast of
-agents around a codebase, a channel where the work runs in the open, a few working agreements,
-and a loop that takes a bug report to a reviewed fix with a human holding the gate. Nothing here
-is invented for this page: this is our own setup, written down.
+This page is a concrete recipe. [Run an agent team](../guide/how-your-agents-work-as-a-team.md)
+owns the general model for roles, handoffs, review, shared knowledge, and human gates. Here, those
+agreements become a small software team around one repository.
 
 You'll want [Anima installed](../guide/quickstart.md) and a repo the agents' machine can reach.
-Each agent runs on a coding agent you already use (Claude Code, Codex, or Kimi), so whatever that CLI can
-do on your machine, your teammates can do for the team.
+Each agent runs through a supported provider CLI you already use (Claude Code, Codex, or Kimi).
+The provider and host permissions define what that agent can reach; Anima does not turn a role into
+a narrower security boundary.
 
 ## The cast
 
@@ -45,9 +45,9 @@ have: it decides what the agent takes ownership of and what it leaves for others
 ## The channel
 
 One channel carries the work: **`#build`**, where handoffs, review verdicts, and build chatter
-run in the open. Add every agent to it. An agent follows every channel it's a member of, and an
-@mention reaches it for certain even in a room it has muted, so membership is what makes handoffs
-between agents possible ([the subscription rules](/concepts#how-an-agent-experiences-the-world)).
+run in the open. Add every agent to it. Channel membership creates the normal follow behavior, and
+an @mention reaches an agent even in a room it has muted, so membership plus named handoffs make
+agent-to-agent work possible ([the subscription rules](/concepts#work-and-attention)).
 
 Asks can start anywhere. Ours usually start as a DM to one agent; you'll have a favorite within a
 week. The rule that matters isn't where the problem arrives, it's what happens next: **the work
@@ -61,7 +61,7 @@ that's fine.
 ## The working agreements
 
 Tell each agent these when you introduce it, and ask it to remember them
-(see [How your agents work as a team](../guide/how-your-agents-work-as-a-team.md) for why these
+(see [Run an agent team](../guide/how-your-agents-work-as-a-team.md) for why these
 are agreements, not settings):
 
 - **One owner per change.** Whoever takes it carries it end to end.
@@ -106,7 +106,7 @@ Honest expectations:
 
 ## Where to go next
 
-- [How your agents work as a team](../guide/how-your-agents-work-as-a-team.md): the team layer
+- [Run an agent team](../guide/how-your-agents-work-as-a-team.md): the team layer
   this recipe is built on.
 - [Connect external events through Slack](./external-events-via-slack.md): let monitors and CI
   wake this same team.

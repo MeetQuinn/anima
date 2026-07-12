@@ -1,171 +1,169 @@
-# Using the dashboard
+---
+title: Use the dashboard
+description: Inspect agent work, manage setup, and operate the local Anima runtime.
+---
 
-Most of the time, your team works with an agent in Slack. The dashboard is the other half: a window
-for the person who set Anima up. It is where you watch what each agent is doing, check its work after
-the fact, step in when you need to, and tune how it runs.
+# Use the dashboard
 
-The dashboard runs on your own machine, alongside the rest of Anima. It updates on its own, so you
-never refresh. You do not talk to agents here. Think of it as the cockpit, not the conversation.
+Your team usually works with agents in Slack or Feishu. The dashboard is the local operator
+surface for the person running Anima: use it to inspect work, change setup, manage machine-wide
+providers, and recover from problems.
 
-## Opening the dashboard
+Open [http://127.0.0.1:4174](http://127.0.0.1:4174) on the Anima host. This is a loopback address,
+not a hosted Anima service. If you configured another port, use that port instead.
 
-On a local desktop, Anima opens the dashboard for you when it starts. To open it yourself at any time,
-visit **http://127.0.0.1:4174**. That is the default address. If you changed the dashboard port in
-your config, use the port you set.
+## Read the navigation
 
-If you are setting Anima up for the first time, the [Quickstart](./quickstart.md) walks through the
-whole flow, including connecting Slack.
+The desktop sidebar holds three levels of navigation:
 
-## Finding your way around
+- The team switcher sets the team you are currently working in.
+- **Knowledge Base** and **Agents** list the folders and agents registered to that team.
+- **Providers** and **Server** open machine-wide operational panels.
 
-The sidebar shows one team at a time: its agents, and its shared **Knowledge Base** folders above
-them. Each agent carries a small status dot so you can read the room at a glance:
+Collapse the sidebar when you need more room. On mobile, the same information opens as a full
+navigation screen; once you open an agent, a fixed bottom bar switches between its five tabs:
+**Activity**, **Channels**, **Profile**, **Files**, and **Reminders**.
 
-- **Green**: idle, waiting for something to do.
-- **Amber**: working on an item right now.
-- **Off**: the agent is disabled. It stays in the list with its config and memory intact, it just
-  is not responding.
+Switching teams changes the current working context. It does not hide or move the other teams.
+New agents and knowledge bases belong to the selected team. Renaming a team or changing its home
+does not move existing agent homes.
 
-Open an agent and you get four views: its **activity**, its **channels**, its **profile**, and its
-**reminders**. The address bar follows wherever you are, so you can bookmark or share a link and
-land back on the same agent and the same view.
+## Read agent state
 
-![The sidebar listing four agents. Each row shows an avatar and name with a status dot: idle agents are green, one agent working on an item is amber, and a disabled agent shows an Off pill.](/guide/dashboard/sidebar.png)
+The agent list is a fast summary, not the complete diagnosis:
 
-## Teams
+- A green dot means the agent is healthy and idle.
+- An amber dot with a breathing halo means the agent is working.
+- A red dot means the agent needs attention.
+- A neutral dot can mean starting, retrying, degraded, or unknown. Hover it for the current reason.
+- **Off** means the agent is disabled.
+- **Not connected** means the agent is enabled but has no Slack or Feishu connection.
 
-With a single team you will never notice teams at all: the sidebar header just shows the Anima
-wordmark, and everything you create lands in the default team. The moment you have a second team,
-that header becomes a **team switcher**: it names the team you are working in, and clicking it
-lists every team plus **+ New team**.
+Open **Activity** for the authoritative status line, queue depth, health reason, and current run.
 
-![The sidebar team switcher open, showing two teams, Anima with a check mark and Quinn, plus a New team entry, above the team's agent list.](/guide/dashboard/team-switcher.png)
+## Inspect work in Activity
 
-Switching teams changes your working context, not what exists. The sidebar swaps to that team's
-agents and Knowledge Bases, and a new agent you create lands in the team you are standing in.
-Nothing is hidden from you as the operator; the other teams are one click away.
+Activity combines the messages that woke an agent with the work that followed. Expand a step group
+to inspect tool calls, file actions, messages, and errors. The current run stays open and follows
+new activity while it is running.
 
-A team has a **name** and a **home folder**. New agents created in the team get their home under
-the team's folder. Renaming a team, or pointing it at a different home folder, never moves
-existing agents; their files stay exactly where they are, and only future agents land in the new
-place.
+Use this page to answer:
 
-## Is the agent healthy?
+- What request is the agent handling?
+- Is it running, queued, retrying, or waiting?
+- What did it do before replying?
+- Where did a run fail?
 
-At the top of the activity view, a status line tells you whether the agent is **working** right now
-(with how long ago it started) or **idle**. Next to it, a short note shows the latest thing the agent
-did, so you can tell a long-running task from a stuck one without digging.
+Activity is a post-hoc Anima record. It is not a complete host audit log and it cannot prove every
+effect in a provider, shell, Git remote, or external API. Check the system that owns an external
+effect when the distinction matters. See [Security and data](/security-and-data#audit-boundary).
 
-## What did the agent actually do?
+## Review conversations in Channels
 
-The activity view is where you verify an agent's work. This is its single most useful job: a record
-you read **after** the fact to see what happened, not a gate that approves actions before they run.
+**Channels** lists conversations Anima has indexed for the selected agent. Open a channel or DM to
+read recent messages, muted state, and thread context without changing the active Slack or Feishu
+conversation.
 
-It reads like a Slack conversation: one timeline, in time order, holding both sides at once. The
-messages that woke the agent and the replies it sent back appear as messages; the work between them
-folds into a small **`▸ N steps`** line under the message that caused it. Expand it and you see the
-step-by-step trail: the tools the agent called, the files it wrote, the reactions it added, and any
-errors, each with its own detail. Collapse it and the timeline is just the conversation again.
+The chat platform remains the authority for membership, retention, delivery, and the full message
+history. Use the platform itself when you need to verify those facts.
 
-A few things surface on their own, without expanding anything:
+## Change setup in Profile
 
-- A floating **day pill** keeps you oriented while you scroll through history.
-- While the agent is working, the feed follows along live, and the run it is on stays expanded so
-  you can watch steps land as they happen.
-- System moments show as centred lines in the stream: runtime restarts and stops, and the result of
-  the daily [**memory pass**](/concepts#memory) — the private wake where the agent tidies its own `MEMORY.md`.
-  A healthy pass reads as one quiet line; a failed one shows red, so memory upkeep problems are
-  visible at a glance instead of buried.
+The top of **Profile** holds the agent identity: avatar, editable name, editable role, creation time,
+last activity, and archived-session count.
 
-![An agent's activity timeline: messages in a release channel, each with a collapsed steps fold under it, floating day pills between days, and centred memory-pass lines reporting each daily pass.](/guide/dashboard/activity-timeline.png)
+The **Setup** ledger then shows the operational configuration:
 
-## What does the agent see in Slack?
+- **Home**: the folder that owns the agent's memory, notes, and local files.
+- **Team**: the current team assignment, including repair when a saved team no longer exists.
+- **Provider**: provider, model, and reasoning settings.
+- **Launch env**: provider-specific environment values.
+- **Owner**: the human responsible for the agent. Ownership is not an access-control boundary.
+- **Slack** and **Feishu**: connected identities, setup state, and any manifest or permission work.
 
-The **channels** view lists every Slack channel and DM the agent is part of, and opening one shows
-that conversation's recent messages in place. It answers two questions you will actually have: "which
-rooms does this agent sit in?" and "what did that thread look like from the agent's side?" — without
-switching to Slack and reading as yourself.
+Provider changes require confirmation. Moving to another provider starts a fresh provider session,
+but the agent's memory, notes, files, and Anima activity remain. Changes made while an agent is busy
+take effect at the next safe reload boundary.
 
-## Stepping in
+**This session** shows the current provider session, including context occupancy when the provider
+reports it, compaction information, and start time. The **Skills** region is described in
+[Skills](./skills.md).
 
-When you need to take the wheel:
+## Browse the agent home in Files
 
-- **Stop** halts the work an agent is doing right now. It appears while the agent is busy.
-- The **More actions** menu (the `⋯` on an agent) holds the rest:
-  - **Disable**: pauses the agent until you turn it back on. If the agent is idle, this happens
-    right away. If the agent is running, stop the agent first, then disable it. Memory and session
-    are preserved. This is the reversible pause, distinct from removing the agent.
-  - **Rotate session**: the current work keeps running, but the next turn starts with a fresh
-    context. The old session is archived. Reach for this when a session has gotten cluttered and you
-    want a clean slate without losing history.
-  - **Restart agent**: forces a hung agent to stop and start over right away. Use it only when an
-    agent is wedged. The work it is doing right now is dropped and is not retried, so re-run it
-    afterward. Memory, notes, and config are kept, and queued work stays queued.
-  - **Remove agent**: stops the agent and deletes its local Anima config. Its home files (memory,
-    notes) are left untouched.
+**Files** is a browser for the agent home. Expand folders, filter the tree, and open Markdown or
+text files without leaving the dashboard.
 
-::: tip "Restart agent" is not the graceful restart
-**Restart agent** above is the hung-agent escape hatch: anything in flight is dropped. Restarting the
-whole Anima service (for example, after [an update](./updating-anima.md)) is different. There, agents
-finish or save their place first, so nothing in flight is lost. Don't read one as the other.
-:::
+- **Preview** renders Markdown for reading.
+- **Code** shows the source, supports wrapping, copying, and links to specific lines with `#L<n>`.
+- Relative Markdown links stay inside the file browser when the target is available.
 
-## The profile
+The dashboard reads the same files the agent reads. Editing, versioning, and backup remain ordinary
+filesystem concerns.
 
-The profile is where you see and change how an agent is set up, and check how its current session is
-doing. It reads from the top down.
+## Manage Reminders
 
-The settings at the top are editable in place:
+**Reminders** separates scheduled wakes into **Active** and **Past**.
 
-- **Name** and **Role**: how the agent is addressed and what it is responsible for. The role is the
-  biggest lever on how useful the agent is.
-- **Provider**, **model**, and **reasoning effort**: the engine the agent runs on and how hard it
-  thinks.
-- **Home**: the folder that holds the agent's memory and notes.
-- **Owner**: the person responsible for the agent.
+Active rows show when a reminder will fire and whether it repeats. Expand one to inspect its
+instructions. Past initially shows the 12 most recent rows; use **Show all** for the full history.
+Expanded past rows can link to the originating conversation when provenance is available and to
+the corresponding activity.
 
-It also shows a few read-only facts: when the agent was **created**, when it was **last active** (the
-last time it did anything), and how many past sessions have been **archived**.
+## Use lifecycle actions deliberately
 
-Changes are saved as soon as you make them, and the agent applies them the next time it is idle. If it
-is mid-item, you will see a note that the change will apply once the current item finishes, so you are
-never left guessing. Changing the provider asks you to confirm, then the agent reloads itself.
-Switching to a different provider starts a fresh session, but MEMORY.md, notes, and activity history
-stay intact.
+The agent action menu controls the local runtime:
 
-Below that, the **Slack** section shows the workspace and handle the agent posts as. You can re-pull
-the agent's avatar from Slack with **Sync avatar from Slack**, or open its Slack app settings to change
-the icon at the source.
+- **Stop** interrupts the current work.
+- **Disable** prevents new work until you enable the agent again. Its config and files remain.
+- **Rotate session** lets current work finish, archives the current provider session, and starts
+  future work in a fresh session.
+- **Restart agent** force-stops a hung agent. Current work is dropped and is not retried; queued work,
+  memory, notes, and config remain. Do not use Restart to solve provider authentication or quota
+  failures.
+- **Copy diagnostics** copies a support-oriented snapshot of the agent state.
+- **Remove agent** stops the agent and removes its local Anima configuration. Its home files remain,
+  and Anima does not delete the remote Slack or Feishu app.
 
-![The top of an agent profile, showing the editable Name, Role, Provider, Home, and Owner settings, with a notice that a just-made change will apply once the current item finishes.](/guide/dashboard/profile-top.png)
+Runtime updates use a separate graceful process. See [Update Anima](./updating-anima.md) instead of
+using **Restart agent** as an update mechanism.
 
-Further down, the **This session** block shows how the agent's current working session is doing:
+## Manage provider CLIs
 
-- **Context**: how full the agent's working memory is, as a percentage. When it fills up the agent
-  automatically compacts, so this tells you how close that is. (Some providers do not report it, in
-  which case it shows a dash.)
-- **Compactions**: how many times the session has compacted so far.
-- **Started**, with how long the session has been up.
+**Providers** combines the state of each machine-wide provider CLI with its usage information.
+Each provider row reports facts from their owning source when available:
 
-![The This session block on an agent profile, showing the context fullness as a percentage, the number of compactions so far, and when the session started.](/guide/dashboard/this-session.png)
+- the executable Anima resolves, its path, installed version, and installation source
+- update status, latest checked version, and whether an in-place update is safely managed
+- the provider account label and plan when the provider exposes them
+- usage windows and reset times
+- agents using that provider and the version each running session currently has
 
-Last, the profile lists the agent's **Skills** (see [Skills](./skills.md)).
+An update changes the shared machine binary. It does not log out, rewrite provider credentials, or
+change provider configuration. Existing work keeps running on its current child process; the new
+version takes effect as provider sessions restart. Anima offers **Update** only for installation
+channels it can verify and update in place. Other rows show a manual command instead of guessing.
 
-## Reminders
+Only one provider update runs at a time. Use refresh to check one provider or all providers without
+installing anything.
 
-The reminders view lists an agent's scheduled wakes in two sections:
+## Inspect the Anima server
 
-- **Active**: reminders that are still scheduled, each with its schedule (one-shot, or recurring on an
-  interval, daily, or weekly), when it next fires, and when it last fired.
-- **Past**: reminders that have fired or been cancelled, with their status.
+**Server** shows the local service health, uptime, Anima version, and resolved Anima home. It also
+holds the runtime update control and a server restart action.
 
-Expand any reminder to see its instructions, how many times it has fired, and the Slack message it was
-anchored to, plus a jump to the activity stream from when it last ran.
+Use this panel for machine-level state. Use an agent's Activity and Profile pages for agent-level
+state. For service-level commands and paths, see the [Service runbook](/service-runbook).
 
-![The reminders view split into two sections: Active reminders that are still scheduled with their schedule and next fire time, and Past reminders that have fired or been cancelled.](/guide/dashboard/reminders.png)
+## Manage knowledge bases
 
-## In short
+Knowledge bases are team-owned folders registered in the sidebar. Adding one points Anima at an
+existing folder or a folder you create in the picker. Removing it only unregisters it; no files are
+deleted. Read [Use a knowledge base](./knowledge-base.md) for the full workflow.
 
-The dashboard is for oversight. Day to day you will work with your agents in Slack and glance at the
-dashboard when you want to check what happened, adjust how an agent runs, or step in. The more you use
-it, the faster you will read an agent's state from a single look at the sidebar.
+## Next steps
+
+- [Work with one agent](./working-with-your-agent.md)
+- [Run an agent team](./how-your-agents-work-as-a-team.md)
+- [Security and data](/security-and-data)
+- [Update Anima](./updating-anima.md)

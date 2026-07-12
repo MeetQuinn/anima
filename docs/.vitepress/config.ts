@@ -59,23 +59,22 @@ export default defineConfig({
         text: "Work with agents",
         items: [
           {
-            text: "Working with your agent",
+            text: "Work with one agent",
             link: "/guide/working-with-your-agent",
           },
-          { text: "How an agent works", link: "/guide/how-an-agent-works" },
           {
-            text: "How your agents work as a team",
+            text: "Run an agent team",
             link: "/guide/how-your-agents-work-as-a-team",
           },
-          { text: "The knowledge base", link: "/guide/knowledge-base" },
-          { text: "Skills", link: "/guide/skills" },
+          { text: "Use a knowledge base", link: "/guide/knowledge-base" },
+          { text: "Use skills", link: "/guide/skills" },
         ],
       },
       {
         text: "Operate Anima",
         items: [
           {
-            text: "Using the dashboard",
+            text: "Use the dashboard",
             link: "/guide/using-the-dashboard",
           },
           { text: "Updating Anima", link: "/guide/updating-anima" },

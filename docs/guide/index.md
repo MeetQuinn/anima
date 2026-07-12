@@ -33,16 +33,16 @@ Start with the outcome you need. You do not need to read the documentation in or
 ## Work with agents
 
 <div class="docs-link-list">
-  <a href="/guide/working-with-your-agent"><strong>Work with your agent</strong><span>Hand over work, steer decisions, and make preferences durable.</span></a>
+  <a href="/guide/working-with-your-agent"><strong>Work with one agent</strong><span>Hand over work, steer decisions, and make context durable.</span></a>
   <a href="/guide/how-your-agents-work-as-a-team"><strong>Run an agent team</strong><span>Use roles, visible handoffs, shared knowledge, and human gates.</span></a>
-  <a href="/guide/knowledge-base"><strong>Knowledge base</strong><span>Keep shared context in plain files that humans govern.</span></a>
-  <a href="/guide/skills"><strong>Skills</strong><span>Choose when recurring knowledge should become packaged capability.</span></a>
+  <a href="/guide/knowledge-base"><strong>Use a knowledge base</strong><span>Register, read, and govern shared context as plain files.</span></a>
+  <a href="/guide/skills"><strong>Use skills</strong><span>Package stable procedures for one agent or a shared provider environment.</span></a>
 </div>
 
 ## Operate Anima
 
 <div class="docs-link-list">
-  <a href="/guide/using-the-dashboard"><strong>Use the dashboard</strong><span>Inspect agent health and activity, manage profiles, and step in.</span></a>
+  <a href="/guide/using-the-dashboard"><strong>Use the dashboard</strong><span>Inspect work, manage agents and providers, and operate the local runtime.</span></a>
   <a href="/guide/updating-anima"><strong>Update Anima</strong><span>Check, install, and verify runtime updates without dropping active work.</span></a>
   <a href="/deployment"><strong>Deployment and upgrades</strong><span>Understand runtime tracks, paths, services, and managed installs.</span></a>
   <a href="/service-runbook"><strong>Service runbook</strong><span>Inspect and control the local runtime and web daemons.</span></a>

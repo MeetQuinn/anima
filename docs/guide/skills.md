@@ -1,105 +1,136 @@
-# Skills
+---
+title: Use skills
+description: Package stable, repeatable capability for one agent or a shared provider environment.
+---
 
-Skills are how you teach an agent a repeatable way to handle a kind of work.
+# Use skills
 
-A skill is a capability pack: a `SKILL.md` file plus optional supporting files such as scripts,
-templates, or references. When a task matches the skill's description, the provider (the coding
-agent your agent runs on, such as Claude Code or Codex) reads the skill and follows it while it
-works.
+A skill is a `SKILL.md` file with optional scripts, templates, and reference material. It gives a
+provider a repeatable procedure for a class of work.
 
-Skills are different from MCP. A skill teaches an agent how to think and act for a workflow; MCP
-gives it a tool channel to an external service or API. They work well together. They solve
-different problems.
+A skill is not memory and it is not MCP:
 
-## When to use notes, and when to use a skill
+- **Memory, notes, and knowledge bases** preserve context and facts.
+- **Skills** package instructions for a repeatable capability.
+- **MCP servers and other tools** provide channels to external systems.
 
-Most of what an agent learns should stay in its memory, its notes, or the shared knowledge base.
-That is the default. Notes are light, local, and allowed to be messy while the agent and the team
-are still figuring out how the work actually happens.
+These layers can work together, but they have different owners and trust boundaries.
 
-Reach for a skill only when a capability has stabilized. The question to ask:
+## Decide whether the procedure is ready
 
-- **Is this something this agent needs to learn and remember?** Memory, notes, or the knowledge
-  base.
-- **Is this an ability you would hand to any agent?** That may be ready to become a skill.
+Most new knowledge should begin in notes or a knowledge base. Turn it into a skill only after the
+workflow is stable enough to reuse.
 
-The portability test doubles as the privacy test: could another team or agent install this from the
-open skills ecosystem without inheriting your private paths, people, secrets, or identity? If not,
-it is a note, not a skill.
+Ask two questions:
 
-Portable here means installable through the Skills CLI from the open ecosystem. It does not promise
-a skill works on every provider or every machine without adaptation.
+1. Is this a fact or preference this team needs to remember? Keep it in memory, notes, or the
+   knowledge base.
+2. Is this a procedure another agent could follow without inheriting private people, paths,
+   credentials, or identity? It may be ready for a skill.
 
-Text-to-speech makes the line concrete. Teaching an agent to call an `edge-tts` tool and send back
-an audio file is a good skill. "Milo uses this male Mandarin voice" is a profile preference, and it
-belongs in memory, not in the shared skill.
+For example, a procedure for rendering and visually checking a PDF can be a skill. A particular
+teammate's preferred voice or a private customer path belongs in durable context instead.
 
-In short: notes are how an agent remembers what it learns. Skills are how a stable capability
-becomes something another agent can use.
+## Inspect skills in Profile
 
-## What skills are good for
+Open an agent, then open **Profile** and scroll to **Skills**. The dashboard shows the exact skills
+Anima found for that agent and provider.
 
-Use a skill when you want an agent to get better at a repeatable workflow:
+The ledger has two groups:
 
-- reviewing pull requests in your team's style
-- writing changelogs or release notes
-- testing a frontend app
-- following a design system
-- working with a product or API your team uses often
+- **This agent** comes first. These skills live under the agent home and express agent-specific
+  capability.
+- **Shared** contains skills exposed by the host user's provider environment.
 
-The best skills are specific. "Review React PRs for regressions" beats "be good at engineering."
+When a provider has several sources, the shared group is divided into source rows such as
+**Common**, **Claude Code**, **Codex**, **Built-in**, or **Bundled**. Large built-in and bundled
+groups start collapsed. The source names and paths come from the directories Anima actually scans;
+they are not a promise that every provider loads the same roots.
 
-## Global skills and this agent's skills
+Expand a skill row to read its full description and source path. If the skill is inside the agent
+home, **Open in Files** opens its `SKILL.md` in the agent file browser.
 
-The dashboard shows skills in two main groups:
+An empty **This agent** group shows the path where an agent-local skill would live.
 
-- **Global skills** live on the machine and are available to the agents that run there.
-- **This agent's skills** live in one agent's home and belong to that agent alone.
+## Choose agent-local or shared placement
 
-Provider and bundled skills may also appear in the dashboard; those are usually system or provider
-skills. The two groups above are the ones you manage: the global skills you installed and the local
-skills you gave a specific agent.
+Use an agent-local skill when the capability belongs to one agent's role or depends on files in that
+agent home. Keep it with the agent so its ownership is visible and portable with that home.
 
-## Finding new skills
+Use a shared provider skill when multiple agents on the same host should load the same capability.
+Shared here means the host user's provider environment, not every provider and not every machine.
+Claude Code, Codex, Kimi, and future providers may use different roots and plugin systems.
 
-Most teammates never touch skills directly. They talk to the agent in Slack, and the person who
-runs the agent's machine is the one who reviews and installs skills.
+The dashboard is the source-checked inventory for one agent. If a skill is absent there, do not
+assume a directory that another provider uses is active for this one.
 
-Anima includes a default `find-skills` skill so discovery has a clear path: ask an agent for a
-specialized capability, and it should search for an existing skill before deciding the capability
-is unsupported. The search runs through the Skills CLI against the open ecosystem:
+## Find and install a skill
+
+Anima installs a default `find-skills` capability so an agent can search before declaring a
+specialized task unsupported. You can also search directly with the Skills CLI:
 
 ```bash
 npx skills find <query>
 ```
 
-Ask for help with frontend testing, say, and the agent can search for testing skills and show you
-the relevant options. If you approve one, it can install it with:
+Review the result and its source before installation. A global install for the current host user is:
 
 ```bash
 npx skills add <owner/repo@skill> -g -y
 ```
 
-The `-g` flag installs the skill globally for the current user on that machine.
+The `-g` flag requests a shared user-level install. The provider still decides which directories it
+loads. After installation, verify the target agent's **Skills** ledger instead of assuming the
+command made the skill active everywhere.
 
-## When changes take effect
+For an agent-local skill, place the skill under the agent-specific path shown by the empty
+**This agent** group, using the layout expected by that provider.
 
-Provider CLIs discover skills when they start or begin work, so a newly installed or edited skill
-usually applies to the next task or the next restarted provider session, not to a task already in
-progress. If an agent does not seem to pick up a new skill, start a fresh task or restart the agent
-runtime.
+## Write a useful skill
 
-## Third-party skill safety
+A good `SKILL.md` makes its trigger and procedure explicit:
 
-Skills come from an open, community ecosystem, not from Anima. Anima does not host, curate, or vet
-them.
+- name the tasks it should handle
+- state prerequisites and external tools
+- separate required steps from judgment calls
+- name the artifacts and evidence it must produce
+- include stop conditions for missing credentials, unsafe changes, or unverifiable results
+- keep private team facts out of a portable skill
 
-A skill can carry instructions and executable scripts, so treat one the way you treat code:
+Keep supporting scripts narrow and inspectable. A skill should remove repeated ambiguity, not hide a
+large application behind instructions.
 
-- install only from sources you trust
-- read the `SKILL.md` before installing
-- review any scripts or executable files that ship with the skill
-- avoid installing skills that ask for secrets or broad credentials without a clear reason
+## Know when changes apply
 
-Skills make agents more capable. They should still be visible and reviewable by the person who runs
-the machine.
+Providers discover skills at provider-defined boundaries. A new or edited skill usually affects a
+future task or a fresh provider session, not work already in progress.
+
+After a change:
+
+1. Refresh or reopen the agent Profile and confirm the skill appears at the expected source path.
+2. Start a new task that should match the skill description.
+3. If the existing provider session does not discover it, use **Rotate session** so future work
+   starts fresh. Do not use a force restart for ordinary skill discovery.
+
+## Review third-party skills as code
+
+Skills come from provider, plugin, and community ecosystems. Anima displays them; it does not host,
+curate, or vet the ecosystem.
+
+Before installation:
+
+- read `SKILL.md`
+- inspect scripts and executable files
+- verify the publisher and repository
+- reject unexplained requests for secrets or broad credentials
+- check what external systems and paths the skill can reach
+
+A skill executes inside the provider and host boundaries available to the agent. It is not a
+sandbox. See [Security and data](/security-and-data) before adding a skill that handles credentials
+or destructive operations.
+
+## Next steps
+
+- [Use a knowledge base](./knowledge-base.md)
+- [Work with one agent](./working-with-your-agent.md)
+- [Use the dashboard](./using-the-dashboard.md)
