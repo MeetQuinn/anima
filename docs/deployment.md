@@ -107,7 +107,7 @@ Managed installs normally serve the dashboard at `http://127.0.0.1:4174` for loc
 listener binds to `0.0.0.0` by default. The dashboard may therefore also be reachable through the
 host's network addresses. Configure `dashboardHost` or use host network controls when you need to
 narrow that exposure. The host and port come from the selected Anima home, so treat the URL reported
-by `anima status` as the local access authority.
+by `npx -y @meetquinn/animactl@latest status` as the local access authority.
 
 ## Restart without dropping the queue
 
