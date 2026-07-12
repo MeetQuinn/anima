@@ -1,115 +1,158 @@
-# Anima Service Runbook
+---
+title: Recover local services
+description: Diagnose and recover the agent and web daemons for one Anima home.
+---
 
-This is an operator runbook for the lower-level service supervisor. Most users should start with
-[Quickstart](guide/quickstart.md) and [Deployment and upgrades](deployment.md). Use this page when you need
-to inspect or directly control the local daemons behind an Anima home.
+# Recover local services
 
-`animactl services <op>` supervises the agent and web daemons for one Anima home. The target is the
-home selected by `ANIMA_HOME`, or the default managed home `~/.anima` when `ANIMA_HOME` is unset.
-Anima records the visible runtime track (`dev`, `canary`, or `stable`) in that home's config; the
-track is shown in the dashboard so operators can tell which kind of runtime they are looking at.
-On macOS, `animactl services install` installs launchd LaunchAgents for the selected home. On Linux,
-it installs systemd user services. Once installed, `services start`, `stop`, `restart`, and `status`
-use the OS manager for those services. Homes without installed OS services keep using Anima's
-detached pid-file supervisor, which remains useful for source development and CI.
+Use this runbook when the dashboard is unreachable, the agent daemon is unhealthy, or a normal
+runtime restart did not return cleanly. Most routine operations belong in [Runtime and
+services](./deployment.md).
 
-For managed installs, operators normally drive the runtime with the public commands:
+Always identify the Anima home before acting. The **Home** row in the Server panel is the easiest
+source when the dashboard still works. In a terminal, set it explicitly for every command:
 
 ```bash
-curl -fsSL https://anima.meetquinn.ai/install.sh | sh
-npx -y @meetquinn/animactl@latest dashboard
-npx -y @meetquinn/animactl@latest install-services # optional: install OS services on macOS/Linux
-npx -y @meetquinn/animactl@latest restart
+export ANIMA_HOME=/absolute/path/to/anima-home
+```
+
+Do not operate a development home when you intend to recover the managed home, or the reverse.
+
+## Start with status
+
+```bash
 npx -y @meetquinn/animactl@latest status
+```
+
+Status reports:
+
+- the installed managed runtime and runtime directory
+- the `agent` and `web` service state
+- process IDs when available
+- launchd or systemd ownership when OS services are installed
+- the dashboard URL and log paths
+
+Record this output before restarting. A status snapshot distinguishes a service problem from a
+wrong-home or wrong-version problem.
+
+## Read the logs
+
+The selected Anima home owns both service logs:
+
+```text
+$ANIMA_HOME/logs/agent.log
+$ANIMA_HOME/logs/web.log
+```
+
+Use the agent log for transport, scheduler, queue, worker, and provider-child failures. Use the web
+log for dashboard and local API failures.
+
+Logs can contain message context, paths, provider diagnostics, and errors. Treat them as sensitive
+operator data. Do not paste a full log into a public issue; extract the narrow relevant lines and
+remove secrets or private content.
+
+## Choose the smallest recovery action
+
+| Symptom                                        | First action                                                  | Why                                     |
+| ---------------------------------------------- | ------------------------------------------------------------- | --------------------------------------- |
+| Dashboard unavailable, agents still responding | restart only `web`                                            | avoids touching agent work              |
+| Dashboard works, one agent is hung             | use **Restart agent** after inspecting Activity               | scopes the force-stop to that agent     |
+| Both local services need a clean restart       | top-level `restart`                                           | uses drain and requeue behavior         |
+| Provider login, billing, or quota failure      | repair it in the provider                                     | a restart does not change account state |
+| Wrong Home or runtime version                  | stop and re-run with explicit `ANIMA_HOME` and package target | fixes the authority, not the symptom    |
+
+Restart only the web service:
+
+```bash
+npx -y @meetquinn/animactl@latest restart --only web
+```
+
+Restart both services through the normal continuity path:
+
+```bash
+npx -y @meetquinn/animactl@latest restart
+```
+
+If agents are running, the normal restart asks them to drain, requeues the affected inbox items, and
+recovers interrupted items after the worker returns. It does not make already-completed external
+effects transactional.
+
+## Stop and start manually
+
+Use a manual stop/start when you need a quiet filesystem for backup or repair:
+
+```bash
 npx -y @meetquinn/animactl@latest stop
+npx -y @meetquinn/animactl@latest start --no-browser
 ```
 
-Those commands are documented in [Deployment and upgrades](deployment.md). This runbook covers the
-underlying `animactl services <op>` supervisor they invoke, plus its idle-gate and cross-environment
-restart semantics.
+Wait for agents to become idle before stopping. `stop` is not a graceful drain command.
 
-For Anima source development, the `dev:services:*` npm scripts explicitly set
-`ANIMA_HOME=./.anima-dev` and seed dashboard port `14174`, so local dev state stays inside the repo
-clone and does not collide with the managed `~/.anima` dashboard on `4174`.
+An Anima agent turn cannot stop or restart the agent service for its own Anima home. The CLI refuses
+that self-stop boundary. Run the command from an external human shell. Cross-home control is allowed
+only when the target home is explicit and differs from the caller's runtime home.
 
-Each Anima home runs two daemons:
-
-- Agent (`animactl server`): Slack listener, reminder scheduler, and worker loop in one process.
-- Web (`animactl web`): local status and activity views.
-
-The web app port comes from the selected home config's `dashboardPort` field. Managed installs
-normally use `4174`; source-development services seed `14174`. Use
-`npx -y @meetquinn/animactl@latest dashboard` for managed installs, or
-`ANIMA_HOME=<path> npx -y @meetquinn/animactl@latest services dashboard` for a specific home, to
-launch the dashboard without remembering the port.
-The agent service auto-starts newly runnable Slack-connected agents. Restart services after changing an already-running agent's provider, home, Slack tokens, or enabled state.
-
-## Status
+## Use force only during an incident
 
 ```bash
-ANIMA_HOME=<path> npx -y @meetquinn/animactl@latest services status
+npx -y @meetquinn/animactl@latest restart --force
 ```
 
-Status output includes each service id (`agent` / `web`), pid if running, `launchd` or `systemd` when
-the service is OS-managed, web URL when relevant, and log path.
+`--force` bypasses idle and drain protection. It can terminate the active provider turn. Use it only
+after you have recorded the running item and accepted that the provider process will be interrupted.
+The durable inbox record can recover, but external effects that already completed may run again when
+the item is retried.
 
-## Install OS Services
+## Inspect the OS supervisor
+
+When OS services are installed, launchd or systemd owns process restart and startup. Use the service
+manager to inspect its view, but keep Anima lifecycle changes in `animactl` so the selected home,
+runtime path, and service pair stay consistent.
+
+macOS:
 
 ```bash
-ANIMA_HOME=<path> npx -y @meetquinn/animactl@latest install-services
+launchctl print gui/"$(id -u)" | grep -i anima
 ```
 
-On macOS this installs the selected package into that home's managed runtime directory, then writes
-LaunchAgent plists under `~/Library/LaunchAgents`, with `RunAtLoad` and `KeepAlive` enabled. On Linux
-it writes systemd user units under `${XDG_CONFIG_HOME:-~/.config}/systemd/user`, runs
-`systemctl --user enable`, and starts the services. Headless Linux hosts should run
-`loginctl enable-linger $USER` once if the user services must start after boot before the user logs
-in.
-
-The generated service environment is explicit because OS service managers do not load shell startup
-files. It includes the selected `ANIMA_HOME`, a durable `PATH` with Anima's runtime, local provider
-bins such as `~/.local/bin` and `~/.kimi-code/bin`, Homebrew locations on macOS, and system
-directories. It intentionally does not copy temporary provider/Codex shell paths or in-flight
-`ANIMA_*` item context.
-
-Use `--only agent` or `--only web` to install one service. Use `uninstall-services` to remove the OS
-service definitions and return that home to pid-file supervision on the next start. The lower-level
-`animactl services install` command exists for the pinned runtime/admin CLI; avoid running that
-lower-level command from a transient `npx` cache because the generated service definition records
-the CLI path.
-
-## Restart
+Linux:
 
 ```bash
-ANIMA_HOME=<path> npx -y @meetquinn/animactl@latest restart
+systemctl --user status | grep -i anima
 ```
 
-Managed restarts drain active agents before stopping services. Running agents are asked to reach a provider quiescent point after the current tool result and before the next tool call; their current item is then re-queued so the new worker resumes it with the persisted session. Queued items are not blockers and remain queued for the new worker. Use `--drain-timeout-ms <ms>` to tune how long the drain waits before failing honestly.
+Homes without OS-managed services use pid files under:
 
-The lower-level `animactl services restart` command keeps the original idle gate unless passed `--drain-active --resume-running`. Use it only when you need direct supervisor control.
+```text
+$ANIMA_HOME/run/agent.pid
+$ANIMA_HOME/run/web.pid
+```
 
-`--force` bypasses the idle gate and preserves the old stop/start behavior. Reserve it for an explicit operator decision during an incident; it can abort an active turn.
+Do not treat a stale pid file as proof that a process is alive. Use `status`, then the operating
+system process table when the two disagree.
 
-The supervisor stops the agent and web app, then starts them again with Anima runtime environment variables scrubbed from the child service environment.
+## Reinstall service definitions
 
-Same-environment restart from inside an active runtime is refused, because it would kill the item making the request. Cross-environment restart is allowed when `ANIMA_HOME` points at another Anima home and `ANIMA_RUNTIME_HOME` still points at the caller's own home. A human can restart any environment from a fresh shell or the web restart button.
-
-## Stop And Start
+Use this when a managed runtime moved, the generated PATH is stale, or the OS service files were
+removed:
 
 ```bash
-ANIMA_HOME=<path> npx -y @meetquinn/animactl@latest services stop
-ANIMA_HOME=<path> npx -y @meetquinn/animactl@latest services start
+npx -y @meetquinn/animactl@latest uninstall-services
+npx -y @meetquinn/animactl@latest install-services
 ```
 
-`stop` is also refused from inside the same environment's active runtime, for the same reason.
+This changes service definitions, not the Anima home. It does not log in to providers or recreate
+chat apps.
 
-## Logs
+## Verify recovery
 
-Logs live under the selected Anima home:
+Close an incident only after checking all relevant layers:
 
-- `$ANIMA_HOME/logs/agent.log`
-- `$ANIMA_HOME/logs/web.log`
+1. `status` reports the expected runtime and both intended services running.
+2. **Server** reports the expected Home, version, health, and start time.
+3. The web log shows the dashboard started on the expected host and port.
+4. The agent log no longer repeats the failure that triggered recovery.
+5. Queued work is advancing and no running item remains stranded.
+6. One ordinary inbound and outbound message succeeds.
 
-Pid files live under `$ANIMA_HOME/run/{agent,web}.pid` for homes that have not installed OS-managed
-services. Launchd-managed services are inspected through `launchctl`, and systemd-managed services
-through `systemctl --user`, not pid files.
+If a filesystem restore or machine move is involved, follow [Back up and restore](./guide/backup-and-restore.md) before starting services.

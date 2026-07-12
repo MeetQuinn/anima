@@ -44,8 +44,9 @@ Start with the outcome you need. You do not need to read the documentation in or
 <div class="docs-link-list">
   <a href="/guide/using-the-dashboard"><strong>Use the dashboard</strong><span>Inspect work, manage agents and providers, and operate the local runtime.</span></a>
   <a href="/guide/updating-anima"><strong>Update Anima</strong><span>Check, install, and verify runtime updates without dropping active work.</span></a>
-  <a href="/deployment"><strong>Deployment and upgrades</strong><span>Understand runtime tracks, paths, services, and managed installs.</span></a>
-  <a href="/service-runbook"><strong>Service runbook</strong><span>Inspect and control the local runtime and web daemons.</span></a>
+  <a href="/deployment"><strong>Runtime and services</strong><span>Operate release tracks, homes, managed installs, supervisors, and restarts.</span></a>
+  <a href="/service-runbook"><strong>Recover local services</strong><span>Inspect status and logs, choose the smallest recovery, and verify it.</span></a>
+  <a href="/guide/backup-and-restore"><strong>Back up and restore</strong><span>Preserve runtime state, agent homes, team files, and external authorities.</span></a>
 </div>
 
 ## Evaluate the boundaries

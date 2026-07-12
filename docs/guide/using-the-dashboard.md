@@ -153,7 +153,7 @@ installing anything.
 holds the runtime update control and a server restart action.
 
 Use this panel for machine-level state. Use an agent's Activity and Profile pages for agent-level
-state. For service-level commands and paths, see the [Service runbook](/service-runbook).
+state. For service-level commands and paths, see [Recover local services](/service-runbook).
 
 ## Manage knowledge bases
 

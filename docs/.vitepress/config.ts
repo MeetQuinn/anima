@@ -77,9 +77,10 @@ export default defineConfig({
             text: "Use the dashboard",
             link: "/guide/using-the-dashboard",
           },
-          { text: "Updating Anima", link: "/guide/updating-anima" },
-          { text: "Deployment and upgrades", link: "/deployment" },
-          { text: "Service runbook", link: "/service-runbook" },
+          { text: "Update Anima", link: "/guide/updating-anima" },
+          { text: "Runtime and services", link: "/deployment" },
+          { text: "Recover local services", link: "/service-runbook" },
+          { text: "Back up and restore", link: "/guide/backup-and-restore" },
         ],
       },
       {
