@@ -11,6 +11,9 @@ export interface AgentHomeEntry {
   kind: 'file' | 'dir';
   ext?: string;
   size?: number;
+  // File lstat mtime, ISO 8601 UTC. Dirs carry none — the tree builder derives
+  // a dir's "latest change inside" from its descendants (GitHub semantics).
+  mtime?: string;
 }
 
 export interface AgentHomeManifest {

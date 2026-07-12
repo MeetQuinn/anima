@@ -74,7 +74,9 @@ export function expandHome(path: string): string {
 }
 
 // Build a nested dir/file tree from a flat list of repo-relative POSIX paths.
-export function buildTree(paths: string[]): KbTreeNode[] {
+// `mtimes` (path → epoch ms) stamps file nodes; dirs then carry the max of
+// their descendants (GitHub-style "latest change inside").
+export function buildTree(paths: string[], mtimes?: ReadonlyMap<string, number>): KbTreeNode[] {
   const rootNodes: KbTreeNode[] = [];
   const dirIndex = new Map<string, KbTreeNode[]>();
   dirIndex.set('', rootNodes);
@@ -94,12 +96,34 @@ export function buildTree(paths: string[]): KbTreeNode[] {
         siblings.push(node);
         if (!isLeaf) dirIndex.set(currentPath, node.children as KbTreeNode[]);
       }
+      if (isLeaf) {
+        // Falsy (absent or the walk's unknown-mtime 0) leaves the node undated.
+        const mtime = mtimes?.get(filePath);
+        if (mtime) node.mtime = new Date(mtime).toISOString();
+      }
       prefix = currentPath;
     }
   }
 
   sortTree(rootNodes);
+  bubbleMtimes(rootNodes);
   return rootNodes;
+}
+
+// Dir mtime = latest mtime among descendants, bubbled bottom-up. ISO 8601 UTC
+// strings share a fixed format, so lexicographic max is chronological max.
+function bubbleMtimes(nodes: KbTreeNode[]): string | undefined {
+  let latest: string | undefined;
+  for (const node of nodes) {
+    if (node.children) {
+      const childLatest = bubbleMtimes(node.children);
+      if (childLatest !== undefined) node.mtime = childLatest;
+    }
+    if (node.mtime !== undefined && (latest === undefined || node.mtime > latest)) {
+      latest = node.mtime;
+    }
+  }
+  return latest;
 }
 
 export function contentTypeFor(relPath: string): string {

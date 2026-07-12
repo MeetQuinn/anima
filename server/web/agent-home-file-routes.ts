@@ -15,6 +15,9 @@ type HomeEntry = {
   kind: 'file' | 'dir';
   ext?: string;
   size?: number;
+  // File lstat mtime, ISO 8601 UTC. Dirs carry none — the client derives a
+  // dir's "latest change inside" from its descendants (GitHub semantics).
+  mtime?: string;
 };
 
 // Protects the dashboard from a stray node_modules/venv in an agent home.
@@ -104,19 +107,20 @@ async function collectEntries(root: string, dirRelPath: string, entries: HomeEnt
         entries.push({ path: relPath, name: entry.name, kind: 'dir' });
         continue;
       }
-      entries.push(fileEntry(relPath, entry.name, entryStat.size));
+      entries.push(fileEntry(relPath, entry.name, entryStat.size, entryStat.mtimeMs));
       continue;
     }
 
-    if (entryStat.isFile()) entries.push(fileEntry(relPath, entry.name, entryStat.size));
+    if (entryStat.isFile()) entries.push(fileEntry(relPath, entry.name, entryStat.size, entryStat.mtimeMs));
   }
   return false;
 }
 
-function fileEntry(relPath: string, name: string, size: number): HomeEntry {
+function fileEntry(relPath: string, name: string, size: number, mtimeMs?: number): HomeEntry {
   const entry: HomeEntry = { path: relPath, name, kind: 'file', size };
   const ext = kbFileExtension(relPath);
   if (ext) entry.ext = ext;
+  if (mtimeMs) entry.mtime = new Date(mtimeMs).toISOString();
   return entry;
 }
 

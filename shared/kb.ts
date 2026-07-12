@@ -38,6 +38,10 @@ export interface KbTreeNode {
   name: string;
   path: string; // repo-relative POSIX
   type: 'dir' | 'file';
+  // Last modification, ISO 8601 UTC. Files carry their lstat mtime; dirs carry
+  // the max of their descendants (GitHub-style "latest change inside"), so a
+  // dir with no dated descendants has none.
+  mtime?: string;
   children?: KbTreeNode[];
 }
 

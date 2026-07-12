@@ -1,7 +1,7 @@
 import { once } from 'node:events';
 import assert from 'node:assert/strict';
 import { connect } from 'node:net';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -18,6 +18,7 @@ type ManifestEntry = {
   kind: 'file' | 'dir';
   ext?: string;
   size?: number;
+  mtime?: string;
 };
 
 type ManifestBody = {
@@ -70,6 +71,8 @@ test('agent home files manifest includes nested files, dotfiles, directories, an
     await writeHomeFile(homeDir, '.hidden', 'secret\n');
     await writeHomeFile(homeDir, 'scratch/tmp.txt', 'tmp\n');
     await mkdir(join(homeDir, 'empty'), { recursive: true });
+    const pinnedMtime = new Date('2026-01-02T03:04:05.000Z');
+    await utimes(join(homeDir, 'notes/topic.md'), pinnedMtime, pinnedMtime);
 
     await withHomeServer(homeDir, async (base) => {
       const response = await getJson<ManifestBody>(`${base}/api/agents/anima/home/files`);
@@ -92,6 +95,12 @@ test('agent home files manifest includes nested files, dotfiles, directories, an
       });
       assert.equal(response.body.entries.find((entry) => entry.path === 'notes/topic.md')?.ext, 'md');
       assert.equal(response.body.entries.find((entry) => entry.path === 'scratch/tmp.txt')?.size, 4);
+      // Files carry their lstat mtime as ISO 8601; dirs carry none (the `empty`
+      // deepEqual above pins the dir shape).
+      assert.equal(
+        response.body.entries.find((entry) => entry.path === 'notes/topic.md')?.mtime,
+        pinnedMtime.toISOString(),
+      );
     });
   } finally {
     await rm(homeDir, { force: true, recursive: true });

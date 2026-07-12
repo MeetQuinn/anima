@@ -7,7 +7,7 @@ import type { AgentHomeEntry } from '@/api/agent-files';
 import { buildAgentFilePath, buildAgentFileRawPath } from '@/lib/url-state';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import type { KbTreeNode } from '@shared/kb';
-import { TreeRow, ancestorsOf, matchesFilter } from '../../kb/FileTree';
+import { TreeRow, TreeSummary, ancestorsOf, matchesFilter } from '../../kb/FileTree';
 import {
   FileContent,
   FileBreadcrumb,
@@ -37,6 +37,7 @@ function buildTree(entries: AgentHomeEntry[]): KbTreeNode[] {
       name: e.name,
       path: e.path,
       type: e.kind === 'dir' ? 'dir' : 'file',
+      ...(e.mtime ? { mtime: e.mtime } : {}),
       ...(e.kind === 'dir' ? { children: [] as KbTreeNode[] } : {}),
     });
   }
@@ -50,7 +51,25 @@ function buildTree(entries: AgentHomeEntry[]): KbTreeNode[] {
     if (parent && parent.children) parent.children.push(node);
     else roots.push(node);
   }
+  bubbleMtimes(roots);
   return roots;
+}
+
+// Dir mtime = latest mtime among descendants (GitHub-style "latest change
+// inside"), matching the KB tree the server pre-bubbles. ISO 8601 UTC strings
+// share a fixed format, so lexicographic max is chronological max.
+function bubbleMtimes(nodes: KbTreeNode[]): string | undefined {
+  let latest: string | undefined;
+  for (const node of nodes) {
+    if (node.children) {
+      const childLatest = bubbleMtimes(node.children);
+      if (childLatest !== undefined) node.mtime = childLatest;
+    }
+    if (node.mtime !== undefined && (latest === undefined || node.mtime > latest)) {
+      latest = node.mtime;
+    }
+  }
+  return latest;
 }
 
 function byDirsFirstThenName(a: KbTreeNode, b: KbTreeNode): number {
@@ -343,6 +362,7 @@ function AgentFilesContent({
               This agent's home is empty.
             </div>
           )}
+          {!filterQuery && <TreeSummary nodes={tree} />}
           {tree.map((node) => (
             <TreeRow
               key={node.path}

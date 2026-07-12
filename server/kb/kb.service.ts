@@ -178,7 +178,9 @@ export class KbRegistryService {
 // always skipped. Every request resolves to a root-relative POSIX path that must
 // be an exact member of the visible file set before any byte is read.
 export class KbService {
-  private visibleFilesCache: { files: Set<string>; loadedAt: number } | undefined;
+  // Visible file paths → lstat mtime (epoch ms). Keys are the visibility set;
+  // mtimes ride along for the tree payload.
+  private visibleFilesCache: { files: Map<string, number>; loadedAt: number } | undefined;
 
   constructor(
     private readonly id: string,
@@ -211,7 +213,7 @@ export class KbService {
   async buildTree(): Promise<KbTree> {
     const kb = await this.resolvedKb();
     const files = await this.visibleKbFiles(kb);
-    return { kb: kbView(kb), nodes: buildTree([...files]) };
+    return { kb: kbView(kb), nodes: buildTree([...files.keys()], files) };
   }
 
   async readFile(rawPath: string): Promise<KbFile> {
@@ -265,7 +267,7 @@ export class KbService {
   private async resolveVisibleKbPath(
     kb: ResolvedKbRoot,
     relPath: string,
-    files: Set<string>,
+    files: ReadonlyMap<string, number>,
   ): Promise<{ kb: ResolvedKbRoot; relPath: string; absPath: string }> {
     if (!files.has(relPath)) {
       throw new KbError(404, 'not_found');
@@ -298,12 +300,12 @@ export class KbService {
     return { kb, relPath, absPath };
   }
 
-  private async visibleKbFiles(kb: ResolvedKbRoot): Promise<Set<string>> {
+  private async visibleKbFiles(kb: ResolvedKbRoot): Promise<Map<string, number>> {
     const now = Date.now();
     if (this.visibleFilesCache && now - this.visibleFilesCache.loadedAt < CACHE_TTL_MS) {
       return this.visibleFilesCache.files;
     }
-    const files = new Set<string>();
+    const files = new Map<string, number>();
     const filter = await this.rootGitignoreFilter(kb.path);
     await this.collectVisibleFiles(kb.path, '', filter, files);
     this.visibleFilesCache = { files, loadedAt: now };
@@ -322,7 +324,7 @@ export class KbService {
     rootPath: string,
     dirRelPath: string,
     filter: Ignore | undefined,
-    files: Set<string>,
+    files: Map<string, number>,
   ): Promise<void> {
     const dirPath = dirRelPath ? join(rootPath, dirRelPath) : rootPath;
     const entries = await readdir(dirPath, { withFileTypes: true });
@@ -335,7 +337,10 @@ export class KbService {
         continue;
       }
       if ((entry.isFile() || entry.isSymbolicLink()) && !filter?.ignores(relPath)) {
-        files.add(relPath);
+        // A vanished-mid-walk entry stays visible with an unknown mtime (0)
+        // rather than dropping from the set on a transient race.
+        const entryStat = await lstat(join(dirPath, entry.name)).catch(() => undefined);
+        files.set(relPath, entryStat?.mtimeMs ?? 0);
       }
     }
   }

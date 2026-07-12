@@ -8,7 +8,7 @@ import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useIsMobile } from '@/hooks/use-mobile';
 import type { KbTreeNode } from '@shared/kb';
 
-import { TreeRow, ancestorsOf, matchesFilter } from './FileTree';
+import { TreeRow, TreeSummary, ancestorsOf, matchesFilter } from './FileTree';
 import {
   FileContent,
   FileBreadcrumb,
@@ -467,6 +467,7 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
                 No tracked files.
               </div>
             )}
+            {tree && !filterQuery && <TreeSummary nodes={tree.nodes} />}
             {tree?.nodes.map((node) => (
               <TreeRow
                 key={node.path}
