@@ -6,6 +6,9 @@ const appRoot = document.querySelector<HTMLElement>('#app');
 if (!appRoot) throw new Error('Handoff app root is missing');
 const app: HTMLElement = appRoot;
 
+const PROOF_LINE =
+  "The value is encrypted in this browser. Only your agent's key can open it.";
+
 function element<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className?: string,
@@ -15,6 +18,46 @@ function element<K extends keyof HTMLElementTagNameMap>(
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
+}
+
+// Static markup only; parsed via innerHTML because the artifact checker forbids
+// URL literals in emitted bytes, which rules out createElementNS's namespace string.
+function icon(paths: string[], size = 18): SVGSVGElement {
+  const host = document.createElement('div');
+  host.innerHTML =
+    `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" ` +
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    paths.map((d) => `<path d="${d}"></path>`).join('') +
+    '</svg>';
+  return host.firstElementChild as SVGSVGElement;
+}
+
+function lockIcon(size = 18): SVGSVGElement {
+  return icon(
+    [
+      'M5 11.5a1.8 1.8 0 0 1 1.8-1.8h10.4a1.8 1.8 0 0 1 1.8 1.8v6.7a1.8 1.8 0 0 1-1.8 1.8H6.8A1.8 1.8 0 0 1 5 18.2z',
+      'M8.2 9.7V7.3a3.8 3.8 0 0 1 7.6 0v2.4',
+      'M12 14v2.2',
+    ],
+    size,
+  );
+}
+
+function checkIcon(size = 18): SVGSVGElement {
+  return icon(['M5.5 12.5l4.2 4.2L18.5 7.5'], size);
+}
+
+function seal(kind: 'lock' | 'check'): HTMLElement {
+  const mark = element('div', kind === 'check' ? 'seal success' : 'seal');
+  mark.append(kind === 'check' ? checkIcon() : lockIcon());
+  return mark;
+}
+
+function proofNote(): HTMLElement {
+  const note = element('p', 'proof-note');
+  note.append(lockIcon(14), document.createTextNode(PROOF_LINE));
+  return note;
 }
 
 function render(): void {
@@ -28,16 +71,26 @@ function render(): void {
   );
 }
 
+// The Ember mark (open halo + glowing core) from web/src/components/AnimaIcon.tsx,
+// inlined because the handoff page cannot import React components. Keep the two
+// geometries in sync if the brand mark ever changes.
+function animaMark(size = 30): SVGSVGElement {
+  const host = document.createElement('div');
+  host.innerHTML =
+    `<svg width="${size}" height="${size}" viewBox="0 0 64 64" fill="currentColor" aria-hidden="true">` +
+    '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="5.5" ' +
+    'd="M48.11 22.93a19 19 0 1 1-32.22 0"></path>' +
+    '<circle cx="32" cy="33" r="9"></circle></svg>';
+  return host.firstElementChild as SVGSVGElement;
+}
+
 function siteHeader(): HTMLElement {
   const header = element('header', 'site-header');
   const brand = element('div', 'brand-lockup');
-  brand.append(element('span', 'brand-mark', 'A'));
-  const names = element('div');
-  names.append(
-    element('p', 'brand-name', 'Anima'),
-    element('p', 'brand-product', 'Local encryption'),
-  );
-  brand.append(names);
+  const mark = element('span', 'brand-mark');
+  mark.append(animaMark());
+  brand.append(mark);
+  brand.append(element('p', 'brand-name', 'Anima'));
   header.append(brand);
   return header;
 }
@@ -55,6 +108,7 @@ function errorView(title: string, message: string): HTMLElement {
   const heading = element('h1', undefined, title);
   heading.id = 'error-title';
   panel.append(
+    seal('lock'),
     element('p', 'eyebrow', 'Unable to continue'),
     heading,
     element('p', 'lede', message),
@@ -67,23 +121,19 @@ function encryptionView(publicKey: string): HTMLElement {
   const main = element('main', 'page-shell');
   const panel = element('section', 'panel');
   panel.setAttribute('aria-labelledby', 'handoff-title');
-  panel.append(element('p', 'eyebrow', 'Browser-only'));
-  const heading = element('h1', undefined, 'Encrypt a secret');
+  const heading = element('h1', undefined, 'Encrypt a secret for your agent');
   heading.id = 'handoff-title';
   panel.append(
+    seal('lock'),
     heading,
-    element(
-      'p',
-      'lede',
-      'The value is encrypted in this browser. Only the matching private key can open it.',
-    ),
-    secretForm(publicKey),
+    element('p', 'lede', PROOF_LINE),
+    secretForm(publicKey, panel),
   );
   main.append(panel);
   return main;
 }
 
-function secretForm(publicKey: string): HTMLElement {
+function secretForm(publicKey: string, panel: HTMLElement): HTMLElement {
   const wrapper = element('div', 'form-stack');
   const form = element('form', 'secret-form');
   form.noValidate = true;
@@ -92,27 +142,34 @@ function secretForm(publicKey: string): HTMLElement {
   const labelRow = element('div', 'label-row');
   const label = element('label', undefined, 'Secret');
   label.htmlFor = 'secret-value';
-  const show = element('button', 'show-control', 'Show');
-  show.type = 'button';
-  show.setAttribute('aria-pressed', 'false');
-  labelRow.append(label, show);
 
+  const fieldWrap = element('div', 'field-wrap');
+  // A native password input: the browser masks the value in the visual paint
+  // AND the accessibility tree, and browsers without any masking support do
+  // not exist for type=password. CSS-only masking on a textarea leaks the raw
+  // value to assistive technology and fails open; multi-line secret entry is
+  // a follow-up that needs a purpose-built masking interaction.
   const input = element('input', 'secret-input');
+  input.type = 'password';
   input.id = 'secret-value';
   input.name = 'secret';
   input.autocomplete = 'off';
   input.spellcheck = false;
   input.required = true;
-  input.type = 'password';
   input.setAttribute('aria-describedby', 'form-status');
 
+  const show = element('button', 'show-control', 'Show');
+  show.type = 'button';
+  show.setAttribute('aria-pressed', 'false');
   show.addEventListener('click', () => {
-    const masked = input.type === 'password';
-    input.type = masked ? 'text' : 'password';
-    show.textContent = masked ? 'Hide' : 'Show';
-    show.setAttribute('aria-pressed', String(masked));
+    const reveal = input.type === 'password';
+    input.type = reveal ? 'text' : 'password';
+    show.textContent = reveal ? 'Hide' : 'Show';
+    show.setAttribute('aria-pressed', String(reveal));
     input.focus();
   });
+  labelRow.append(label, show);
+  fieldWrap.append(input);
 
   const status = element('p', 'form-status');
   status.id = 'form-status';
@@ -121,7 +178,7 @@ function secretForm(publicKey: string): HTMLElement {
   const submit = element('button', 'primary-action', 'Encrypt');
   submit.type = 'submit';
 
-  form.append(labelRow, input, status, submit);
+  form.append(labelRow, fieldWrap, status, submit);
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (!input.value) {
@@ -134,7 +191,8 @@ function secretForm(publicKey: string): HTMLElement {
     try {
       const transfer = await encryptSealedTransfer(publicKey, input.value);
       input.value = '';
-      wrapper.replaceChildren(resultView(transfer.fencedBox));
+      panel.setAttribute('aria-labelledby', 'result-title');
+      panel.replaceChildren(resultView(transfer.fencedBox));
     } catch (error) {
       status.textContent =
         error instanceof Error ? error.message : 'The value could not be encrypted.';
@@ -149,10 +207,13 @@ function secretForm(publicKey: string): HTMLElement {
 function resultView(fencedBox: string): HTMLElement {
   const result = element('section', 'result-view');
   result.setAttribute('aria-labelledby', 'result-title');
-  result.append(element('p', 'eyebrow success', 'Encrypted'));
+  result.append(seal('check'), element('p', 'eyebrow success', 'Encrypted'));
   const heading = element('h2', undefined, 'Copy the encrypted value');
   heading.id = 'result-title';
-  result.append(heading, element('p', 'lede', 'Send this entire block back exactly as copied.'));
+  result.append(
+    heading,
+    element('p', 'lede', 'Send this entire block back to your agent exactly as copied.'),
+  );
 
   const output = element('textarea', 'encrypted-output');
   output.readOnly = true;
@@ -167,7 +228,8 @@ function resultView(fencedBox: string): HTMLElement {
   copy.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(fencedBox);
-      copy.textContent = 'Copied';
+      copy.replaceChildren(checkIcon(16), document.createTextNode('Copied'));
+      copy.classList.add('copied');
       copyStatus.textContent = 'Encrypted value copied.';
     } catch {
       output.focus();
@@ -175,7 +237,7 @@ function resultView(fencedBox: string): HTMLElement {
       copyStatus.textContent = 'Clipboard access failed. The encrypted value is selected.';
     }
   });
-  result.append(output, copy, copyStatus);
+  result.append(output, copy, copyStatus, proofNote());
   return result;
 }
 
