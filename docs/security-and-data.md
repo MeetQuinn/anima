@@ -76,9 +76,9 @@ Use least-privilege credentials, repository protections, review gates, and isola
 
 ## Dashboard exposure
 
-The dashboard binds to `127.0.0.1` by default. In that default shape, only processes and browsers on the host can connect directly.
+Managed installs normally serve the dashboard at `http://127.0.0.1:4174` for local access, but the listener binds to `0.0.0.0` by default. The dashboard may therefore also be reachable through the host's network addresses. Configure `dashboardHost` or use host network controls when you need to narrow that exposure.
 
-If you deliberately expose the dashboard beyond the host:
+If the dashboard is reachable beyond its intended operators:
 
 - enable dashboard authentication;
 - terminate TLS at a trusted boundary;
@@ -86,7 +86,7 @@ If you deliberately expose the dashboard beyond the host:
 - treat the dashboard as access to agent configuration, activity, knowledge bases, and operational controls;
 - verify that proxies do not bypass authentication or cache private responses.
 
-Binding to `0.0.0.0`, forwarding a port, or placing the dashboard behind a tunnel changes the threat model. Anima does not make that change automatically.
+The URL displayed for local access does not prove that the listener is isolated to the host. Binding, port forwarding, tunnels, proxies, and host network policy all determine the real exposure boundary.
 
 ## Credentials and secret handling
 

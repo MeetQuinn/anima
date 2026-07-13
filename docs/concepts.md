@@ -32,7 +32,7 @@ This page owns Anima's public vocabulary. Other pages explain these concepts in 
 
 **Release track.** The update stream followed by a managed runtime: `stable` or `canary`. A `dev` runtime runs from source and is not an update track.
 
-**Dashboard.** The local operator UI for creating and configuring agents, inspecting activity and health, managing providers, and stepping in. It binds to `127.0.0.1` by default.
+**Dashboard.** The local operator UI for creating and configuring agents, inspecting activity and health, managing providers, and stepping in. Managed installs show `http://127.0.0.1:4174` for local access while listening on all interfaces by default. Use `dashboardHost` or host network controls when the listener must be narrower.
 
 **Provider.** The coding-agent CLI that runs an agent's model work, currently Claude Code, Codex, Kimi, or Grok Build. Anima starts the installed provider under the host user account and uses that provider's own authentication and data boundary.
 
