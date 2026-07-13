@@ -122,7 +122,7 @@ The product claim is not just that an agent can answer a prompt. It is that a te
 | **Operator UI**    | Local dashboard at `127.0.0.1:4174`           |
 | **Team knowledge** | Plain files, with git as the governance layer |
 
-Provider setup and current constraints are documented in the [provider layer](https://anima.meetquinn.ai/runtime-providers).
+Installing and authenticating a provider is covered in [Provider setup and identity](https://anima.meetquinn.ai/guide/providers). The [provider layer](https://anima.meetquinn.ai/runtime-providers) is the contributor reference for how Anima talks to each CLI.
 
 ## Documentation
 
