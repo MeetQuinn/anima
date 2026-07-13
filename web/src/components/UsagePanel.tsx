@@ -123,18 +123,19 @@ function installSourceLabel(source: ProviderCliRow['installSource']): string {
   return 'Unknown source';
 }
 
-function managementStatus(row: ProviderCliRow): string {
-  if (row.operation.provider === row.provider && row.operation.status === 'running') return 'Installing';
-  if (row.operation.provider === row.provider && row.operation.status === 'failed') return 'Update failed';
-  if (row.state === 'not_installed') return 'Not installed';
-  if (row.state === 'error') return 'Version check failed';
-  if (row.state === 'available') return `Update available${row.latestVersion ? ` ${row.latestVersion}` : ''}`;
-  if (row.state === 'manual' && row.updateAvailable)
-    return `Update available${row.latestVersion ? ` ${row.latestVersion}` : ''}`;
-  if (row.state === 'unknown') return 'Manual only';
-  if (row.state === 'not_checked') return 'Not checked';
-  if (row.operation.provider === row.provider && row.operation.status === 'succeeded') return 'Installed';
-  return 'Up to date';
+/** One quiet key/value line inside the Details disclosure. */
+function DetailRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex min-w-0 items-baseline gap-2">
+      <span className="w-20 shrink-0 font-sans text-[10px] text-text-subtle">{label}</span>
+      <span
+        className={`min-w-0 truncate text-[10px] text-text-muted ${mono ? 'font-mono' : 'font-sans'}`}
+        title={value}
+      >
+        {value}
+      </span>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -230,9 +231,17 @@ function ProviderUnit({
   const runningAgents = management.agents.filter((agent) => agent.runningVersion);
   const canApply = management.updateAvailable && management.updateMode === 'managed';
   const updateLocked = globallyLocked || management.operation.status === 'running';
+  const installing = operation?.status === 'running';
+  const manualUpdate = !installing && management.updateAvailable && management.updateMode === 'manual';
+  const staleSessions =
+    operation?.status === 'succeeded' &&
+    runningAgents.some((agent) => agent.runningVersion !== management.installedVersion);
+  const versionCheckFailed = management.state === 'error' || Boolean(management.checkError);
+  const needsAttention = installing || operation?.status === 'failed' || manualUpdate || staleSessions;
   return (
     <div>
-      <div className="mb-3 flex items-center gap-2.5">
+      {/* ── Identity row: who it is, what plan, which version. ── */}
+      <div className="flex items-center gap-2.5">
         <BrandIcon provider={management.provider} label={management.label} />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
@@ -249,11 +258,22 @@ function ProviderUnit({
             </div>
           )}
         </div>
+        {/* `not installed` is reserved for the server's not_installed state:
+            a resolvable binary whose --version fails arrives as state
+            'unknown' with no installedVersion, and must not claim absence. */}
+        <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-subtle">
+          {management.installedVersion
+            ? `v${management.installedVersion}`
+            : management.state === 'not_installed'
+              ? 'not installed'
+              : 'version unknown'}
+        </span>
         {canApply && (
           <button
             type="button"
             onClick={onApply}
             disabled={updateLocked}
+            title={management.latestVersion ? `Update to v${management.latestVersion}` : 'Update'}
             className="flex h-7 items-center gap-1 rounded-sm bg-accent px-2 font-sans text-[10px] font-semibold text-white hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
           >
             <ArrowUp className="h-3 w-3" />
@@ -274,74 +294,104 @@ function ProviderUnit({
         )}
       </div>
 
-      <div className="mb-4 space-y-2 pl-[38px]">
-        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-          <span className="font-mono text-[13px] font-medium text-text">
-            {management.installedVersion ? `v${management.installedVersion}` : 'Not installed'}
-          </span>
-          {management.binaryPath && (
-            <span className="font-sans text-[10px] uppercase tracking-[0.08em] text-text-subtle">
-              {installSourceLabel(management.installSource)}
-            </span>
+      {/* ── Attention strip: rendered only when the operator can act on it. ── */}
+      {needsAttention && (
+        <div className="mt-2.5 space-y-1.5 pl-[38px]">
+          {installing && <p className="font-sans text-[11px] text-text-muted">Installing…</p>}
+          {operation?.status === 'failed' && (
+            <p className="font-sans text-[11px] leading-relaxed text-health-error">
+              {operation.error ?? 'Update failed'}
+            </p>
           )}
-          <span
-            className={[
-              'font-sans text-[11px]',
-              management.state === 'available' || (management.state === 'manual' && management.updateAvailable)
-                ? 'text-health-warn'
-                : operation?.status === 'failed'
-                  ? 'text-health-error'
-                  : 'text-text-muted',
-            ].join(' ')}
-          >
-            {operation?.status === 'running' ? 'Installing…' : managementStatus(management)}
-          </span>
-        </div>
-        {management.binaryPath && (
-          <div className="truncate font-mono text-[10px] text-text-subtle" title={management.binaryPath}>
-            {management.binaryPath}
-          </div>
-        )}
-        {management.autoUpdatesEnabled !== undefined && (
-          <div className="font-sans text-[10px] text-text-subtle">
-            Auto-update {management.autoUpdatesEnabled ? 'on' : 'off'}
-            {management.autoUpdateChannel ? ` · ${management.autoUpdateChannel}` : ''}
-          </div>
-        )}
-        {management.sourceDetail && management.updateMode !== 'managed' && (
-          <p className="font-sans text-[11px] leading-relaxed text-text-muted">{management.sourceDetail}</p>
-        )}
-        {management.checkError && (
-          <p className="font-sans text-[11px] leading-relaxed text-health-error">{management.checkError.message}</p>
-        )}
-        {operation?.status === 'failed' && operation.error && (
-          <p className="font-sans text-[11px] leading-relaxed text-health-error">{operation.error}</p>
-        )}
-        {operation?.status === 'succeeded' &&
-          runningAgents.some((agent) => agent.runningVersion !== management.installedVersion) && (
+          {manualUpdate && (
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="shrink-0 font-sans text-[11px] text-health-warn">
+                Update available{management.latestVersion ? ` ${management.latestVersion}` : ''}
+              </span>
+              {management.manualCommand && (
+                <button
+                  type="button"
+                  onClick={onCopyCommand}
+                  className="flex min-w-0 items-center gap-1.5 text-left font-mono text-[10px] text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  title="Copy update command"
+                >
+                  <Copy className="h-3 w-3 shrink-0" />
+                  <span className="truncate">{management.manualCommand}</span>
+                </button>
+              )}
+            </div>
+          )}
+          {staleSessions && (
             <p className="font-sans text-[11px] leading-relaxed text-text-muted">
               New sessions use v{management.installedVersion}. Existing sessions keep their current version until
               restart.
             </p>
           )}
-        {management.manualCommand && management.updateAvailable && management.updateMode === 'manual' && (
-          <button
-            type="button"
-            onClick={onCopyCommand}
-            className="flex max-w-full items-center gap-1.5 text-left font-mono text-[10px] text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-            title="Copy update command"
-          >
-            <Copy className="h-3 w-3 shrink-0" />
-            <span className="truncate">{management.manualCommand}</span>
-          </button>
-        )}
-        {management.agents.length > 0 && (
-          <details className="group">
-            <summary className="flex cursor-pointer list-none items-center gap-1 font-sans text-[10px] text-text-subtle hover:text-text-muted">
-              <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
-              {management.agents.length} {management.agents.length === 1 ? 'agent uses' : 'agents use'} this provider
-            </summary>
-            <div className="mt-1.5 space-y-1 border-l border-border-soft pl-3">
+        </div>
+      )}
+
+      {/* ── Usage meters: the reason this panel exists. ── */}
+      {isAvailable && usage ? (
+        <div className="mt-4 space-y-3 pl-[38px]">
+          {usage.windows.map((w, i) => (
+            <WindowMeter key={i} w={w} now={now} />
+          ))}
+          {rest.length > 0 && (
+            <div className="flex flex-wrap gap-x-4 gap-y-0.5">
+              {rest.map((e, i) => (
+                <div key={i} className="flex items-baseline gap-1.5">
+                  <span className="font-sans text-[10px] text-text-subtle">{e.label}</span>
+                  <span className="font-mono text-[11px] tabular-nums text-text-muted">{extraValue(e)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="mt-4 space-y-0.5 pl-[38px] opacity-60">
+          <span className="font-sans text-[12px] text-text-muted">
+            {!usage || usage.error?.type === 'not_configured'
+              ? 'Not configured'
+              : usage.error?.type === 'unauthorized'
+                ? 'Auth expired'
+                : usage.error?.type === 'network_error'
+                  ? 'Unreachable'
+                  : 'Unavailable'}
+          </span>
+          {errorMessage && <p className="font-mono text-[10px] leading-relaxed text-text-subtle">{errorMessage}</p>}
+        </div>
+      )}
+
+      {/* ── Details: install diagnostics, demoted out of the default view. ── */}
+      <details className="group mt-3 pl-[38px]">
+        <summary className="flex cursor-pointer list-none items-center gap-1 font-sans text-[10px] uppercase tracking-[0.08em] text-text-subtle hover:text-text-muted">
+          <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
+          Details
+          {management.agents.length > 0 && (
+            <span className="normal-case tracking-normal">
+              · {management.agents.length} {management.agents.length === 1 ? 'agent' : 'agents'}
+            </span>
+          )}
+        </summary>
+        <div className="mt-2 space-y-1.5 border-l border-border-soft pl-3">
+          {management.binaryPath && <DetailRow label="Binary" value={management.binaryPath} mono />}
+          {management.binaryPath && <DetailRow label="Source" value={installSourceLabel(management.installSource)} />}
+          {management.autoUpdatesEnabled !== undefined && (
+            <DetailRow
+              label="Auto-update"
+              value={`${management.autoUpdatesEnabled ? 'on' : 'off'}${management.autoUpdateChannel ? ` · ${management.autoUpdateChannel}` : ''}`}
+            />
+          )}
+          {management.sourceDetail && management.updateMode !== 'managed' && (
+            <p className="font-sans text-[10px] leading-relaxed text-text-muted">{management.sourceDetail}</p>
+          )}
+          {versionCheckFailed && (
+            <p className="font-sans text-[10px] leading-relaxed text-text-muted">
+              Version check failed{management.checkError ? ` · ${management.checkError.message}` : ''}
+            </p>
+          )}
+          {management.agents.length > 0 && (
+            <div className="space-y-1 pt-0.5">
               {management.agents.map((agent) => (
                 <div key={agent.id} className="flex min-w-0 items-baseline justify-between gap-3">
                   <span className="truncate font-sans text-[11px] text-text-muted">{agent.name}</span>
@@ -355,40 +405,9 @@ function ProviderUnit({
                 </div>
               ))}
             </div>
-          </details>
-        )}
-      </div>
-
-      {isAvailable && usage ? (
-        <div className="space-y-3 border-t border-border-soft pt-3 pl-[38px]">
-          {usage.windows.map((w, i) => (
-            <WindowMeter key={i} w={w} now={now} />
-          ))}
-          {rest.length > 0 && (
-            <div className="flex flex-wrap gap-x-4 gap-y-0.5">
-              {rest.map((e, i) => (
-                <div key={i} className="flex items-baseline gap-1">
-                  <span className="font-sans text-[10px] text-text-subtle">{e.label}</span>
-                  <span className="font-serif text-[12px] text-text-muted">{extraValue(e)}</span>
-                </div>
-              ))}
-            </div>
           )}
         </div>
-      ) : (
-        <div className="space-y-0.5 border-t border-border-soft pt-3 pl-[38px] opacity-60">
-          <span className="font-sans text-[12px] text-text-muted">
-            {!usage || usage.error?.type === 'not_configured'
-              ? 'Not configured'
-              : usage.error?.type === 'unauthorized'
-                ? 'Auth expired'
-                : usage.error?.type === 'network_error'
-                  ? 'Unreachable'
-                  : 'Unavailable'}
-          </span>
-          {errorMessage && <p className="font-mono text-[10px] leading-relaxed text-text-subtle">{errorMessage}</p>}
-        </div>
-      )}
+      </details>
     </div>
   );
 }
