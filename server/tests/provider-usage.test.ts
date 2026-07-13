@@ -96,6 +96,26 @@ test('Codex usage parser keeps positional labels when window duration is absent'
   assert.deepEqual(parsed.windows.map(({ label }) => label), ['5h', 'Weekly']);
 });
 
+test('Codex usage parser keeps the Code Review feature label regardless of window duration', () => {
+  // Code Review's label names the feature, not the window length: a weekly
+  // duration must not relabel it via the duration-derivation path.
+  const parsed = parseCodexUsageResponse({
+    code_review_rate_limit: {
+      primary_window: { limit_window_seconds: 604800, reset_after_seconds: 120, used_percent: 10 },
+    },
+    plan_type: 'pro',
+    rate_limit: {
+      primary_window: { limit_window_seconds: 18000, reset_after_seconds: 60, used_percent: 8 },
+    },
+  });
+
+  assert.equal(parsed.error, undefined);
+  assert.deepEqual(parsed.windows.map(({ label, windowSeconds }) => [label, windowSeconds]), [
+    ['5h', 18000],
+    ['Code Review', 604800],
+  ]);
+});
+
 test('Kimi usage parser returns top-level and short-window limits', () => {
   const parsed = parseKimiUsageResponse({
     limits: [
