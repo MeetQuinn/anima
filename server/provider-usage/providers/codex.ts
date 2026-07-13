@@ -69,11 +69,14 @@ export function parseCodexUsageResponse(
   if (!root) return { error: usageError('parse_error', 'Codex usage response is not an object'), extras: [], windows: [] };
 
   const rateLimit = record(root.rate_limit);
+  // Labels derive from the window's own duration (limit_window_seconds), not
+  // its slot: when Codex drops a limit, the remaining window can move into
+  // primary_window, and the positional fallback would mislabel Weekly as 5h.
   const primary = codexWindow('5h', record(rateLimit?.primary_window));
   const secondary = codexWindow('Weekly', record(rateLimit?.secondary_window));
   const windows = [primary, secondary].filter((window): window is ProviderUsageWindow => Boolean(window));
 
-  const codeReview = codexWindow('Code Review', record(record(root.code_review_rate_limit)?.primary_window));
+  const codeReview = codexWindow('Code Review', record(record(root.code_review_rate_limit)?.primary_window), false);
   if (codeReview) windows.push(codeReview);
   if (windows.length === 0) {
     return { error: usageError('parse_error', 'Codex usage response did not include rate limit windows'), extras: [], windows: [] };
@@ -175,10 +178,29 @@ async function refreshCodexCredentials(
   };
 }
 
-function codexWindow(label: string, value: Record<string, unknown> | undefined): ProviderUsageWindow | undefined {
+function codexWindow(
+  fallbackLabel: string,
+  value: Record<string, unknown> | undefined,
+  deriveLabel = true,
+): ProviderUsageWindow | undefined {
   const usedPercent = numberValue(value?.used_percent);
+  const windowSeconds = numberValue(value?.limit_window_seconds);
+  const label = deriveLabel ? codexWindowLabel(windowSeconds, fallbackLabel) : fallbackLabel;
   return windowFromUsedPercent(label, usedPercent, {
     resetAfterSeconds: numberValue(value?.reset_after_seconds),
-    windowSeconds: numberValue(value?.limit_window_seconds),
+    windowSeconds,
   });
+}
+
+/** Human label for a rate-limit window from its duration; fallback keeps the
+ * positional label when the response omits limit_window_seconds. */
+function codexWindowLabel(windowSeconds: number | undefined, fallback: string): string {
+  if (!windowSeconds || windowSeconds <= 0) return fallback;
+  const hours = windowSeconds / 3600;
+  const days = hours / 24;
+  if (days >= 27 && days <= 32) return 'Monthly';
+  if (days >= 6.5 && days <= 8) return 'Weekly';
+  if (days >= 1.5) return `${Math.round(days)}d`;
+  if (hours >= 1) return `${Math.round(hours)}h`;
+  return `${Math.max(1, Math.round(windowSeconds / 60))}m`;
 }
