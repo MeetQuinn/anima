@@ -69,6 +69,33 @@ test('Codex usage parser returns rate-limit windows and credits', () => {
   ]);
 });
 
+test('Codex usage parser labels windows by duration, not slot position', () => {
+  // When Codex retires a limit, the remaining window can arrive as
+  // primary_window; the label must follow limit_window_seconds.
+  const parsed = parseCodexUsageResponse({
+    plan_type: 'pro',
+    rate_limit: {
+      primary_window: { limit_window_seconds: 604800, reset_after_seconds: 563640, used_percent: 15 },
+    },
+  });
+
+  assert.equal(parsed.error, undefined);
+  assert.deepEqual(parsed.windows.map(({ label, windowSeconds }) => [label, windowSeconds]), [['Weekly', 604800]]);
+});
+
+test('Codex usage parser keeps positional labels when window duration is absent', () => {
+  const parsed = parseCodexUsageResponse({
+    plan_type: 'pro',
+    rate_limit: {
+      primary_window: { reset_after_seconds: 60, used_percent: 8 },
+      secondary_window: { reset_after_seconds: 120, used_percent: 56 },
+    },
+  });
+
+  assert.equal(parsed.error, undefined);
+  assert.deepEqual(parsed.windows.map(({ label }) => label), ['5h', 'Weekly']);
+});
+
 test('Kimi usage parser returns top-level and short-window limits', () => {
   const parsed = parseKimiUsageResponse({
     limits: [
