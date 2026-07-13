@@ -25,10 +25,12 @@ vi.mock('@/api/system', () => ({
     operation: { status: 'idle' as const },
     providers: [
       {
-        // Milo's replay shape: resolvable binary, --version failed.
+        // Milo's replay shape: resolvable binary, --version failed. A real
+        // failure also loses install-source detection, so the server reports
+        // installSource 'unknown' (gate fixture-fidelity note, #520).
         agents: [],
         binaryPath: '/Users/op/.local/bin/claude',
-        installSource: 'claude-native' as const,
+        installSource: 'unknown' as const,
         label: 'Claude Code',
         operation: { status: 'idle' as const },
         provider: 'claude-code' as const,
