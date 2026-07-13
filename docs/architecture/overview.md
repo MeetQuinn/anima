@@ -128,7 +128,7 @@ The runtime plane owns chat connections, attention decisions, durable queues, wo
 
 The operator plane is the local dashboard, API, and CLI. It reads runtime state and performs explicit management actions such as editing agent configuration, checking provider health and usage, requesting a restart, or upgrading the installed runtime and supported provider CLIs.
 
-The dashboard binds to `127.0.0.1` by default. It is a control surface, not a hosted dependency and not a relay for every agent turn. Because the web service and runtime service are separate, a dashboard failure does not by itself erase queues or agent homes, and a healthy runtime can continue operating without the UI being open.
+The dashboard is a control surface on local infrastructure, not a hosted dependency and not a relay for every agent turn. Managed installs show `http://127.0.0.1:4174` for local access while the listener binds to `0.0.0.0` by default, so local infrastructure does not mean host-only reachability. Configure `dashboardHost` or use host network controls to narrow that exposure. Because the web service and runtime service are separate, a dashboard failure does not by itself erase queues or agent homes, and a healthy runtime can continue operating without the UI being open.
 
 ## Two kinds of local state
 
