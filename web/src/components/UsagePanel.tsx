@@ -258,8 +258,15 @@ function ProviderUnit({
             </div>
           )}
         </div>
+        {/* `not installed` is reserved for the server's not_installed state:
+            a resolvable binary whose --version fails arrives as state
+            'unknown' with no installedVersion, and must not claim absence. */}
         <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-subtle">
-          {management.installedVersion ? `v${management.installedVersion}` : 'not installed'}
+          {management.installedVersion
+            ? `v${management.installedVersion}`
+            : management.state === 'not_installed'
+              ? 'not installed'
+              : 'version unknown'}
         </span>
         {canApply && (
           <button
