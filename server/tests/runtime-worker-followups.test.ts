@@ -14,11 +14,9 @@ import { addProcessingReaction, removeProcessingReactions } from '../runtime/pro
 import {
   ControlledRuntime,
   FailingFollowupRuntime,
-  FOLLOWUP_NOTE_PREFIX,
   FollowupRuntime,
   NotReadyFollowupRuntime,
   RejectingFollowupRuntime,
-  countOccurrences,
   enqueueInbox,
   queueFor,
   seedReminder,
@@ -94,8 +92,7 @@ test('runtime worker appends queued follow-up messages into an active runtime', 
     await waitFor(() => runtime.followups.length === 1);
     assert.equal(runtime.followups[0]?.activeItemId, first.ctx.item.id);
     assert.equal(runtime.followups[0]?.itemId, second.ctx.item.id);
-    assert.equal(countOccurrences(runtime.followups[0]?.prompt ?? '', FOLLOWUP_NOTE_PREFIX), 1);
-    assert.match(runtime.followups[0]?.prompt ?? '', /record it as a task before this turn ends/);
+    assert.match(runtime.followups[0]?.prompt ?? '', /second/);
     await waitForInboxItemAppendedTo('scout', second.ctx.item.id, first.ctx.item.id);
     await waitFor(() => reactionCalls.includes('add:D-user:1770000011.000001:eyes'));
     assert.deepEqual(reactionCalls, [
@@ -119,7 +116,6 @@ test('runtime worker appends queued follow-up messages into an active runtime', 
     await waitFor(() => runtime.followups.length === 2);
     assert.equal(runtime.followups[1]?.activeItemId, first.ctx.item.id);
     assert.equal(runtime.followups[1]?.itemId, third.ctx.item.id);
-    assert.equal(countOccurrences(runtime.followups[1]?.prompt ?? '', FOLLOWUP_NOTE_PREFIX), 0);
     assert.match(runtime.followups[1]?.prompt ?? '', /third/);
     await waitForInboxItemAppendedTo('scout', third.ctx.item.id, first.ctx.item.id);
     await waitFor(() => reactionCalls.includes('add:D-user:1770000012.000001:eyes'));

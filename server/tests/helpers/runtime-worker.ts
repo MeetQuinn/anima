@@ -19,8 +19,6 @@ import type { RuntimeWorkerConfig, RuntimeItemContext } from '../../runtime/type
 
 type TestInboxDecision = WakeQueueEnqueueResult & { ctx: RuntimeItemContext };
 
-export const FOLLOWUP_NOTE_PREFIX = 'Anima note: this message arrived while you were mid-task.';
-
 export async function enqueueInbox(
   event: InboxItem,
   options: RuntimeWorkerConfig,
@@ -34,10 +32,6 @@ export async function enqueueInbox(
 }
 
 export const queueFor = (agentId: string): WakeQueueService => new WakeQueueService(agentId);
-
-export function countOccurrences(text: string, needle: string): number {
-  return text.split(needle).length - 1;
-}
 
 export async function ensureTestAgentConfig(options: RuntimeWorkerConfig): Promise<void> {
   const agentDir = join(options.stateDir, 'agents', options.agentId);

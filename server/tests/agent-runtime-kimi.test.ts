@@ -10,7 +10,7 @@ import { makeSlackEvent } from './helpers/slack.js';
 import { ingestEvent } from './helpers/inbox.js';
 import { allActivities, loadState } from './helpers/state.js';
 import { withAnimaHome } from './anima-home.js';
-import { runtimeInput, runtimeFollowupInput, assertFollowupPrompt, countOccurrences, FOLLOWUP_NOTE_PREFIX, providerSessionStartedPayload, runtimeTestEnv } from './helpers/agent-runtime.js';
+import { runtimeInput, runtimeFollowupInput, assertFollowupPrompt, providerSessionStartedPayload, runtimeTestEnv } from './helpers/agent-runtime.js';
 
 test('kimi-cli ACP transport starts a turn and appends subscription follow-up input', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
@@ -125,7 +125,6 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
       assert.equal(sessionPrompts.length, 2);
       const firstPrompt = sessionPrompts[0]?.params?.prompt?.[0]?.text ?? '';
       assert.ok(firstPrompt.includes('You are Anima'));
-      assert.equal(countOccurrences(firstPrompt, FOLLOWUP_NOTE_PREFIX), 0);
       assertFollowupPrompt(sessionPrompts[1]?.params?.prompt?.[0]?.text ?? '', 'Steer Kimi.');
       assert.deepEqual(await providerSessionStartedPayload(firstCtx.item.id), { kind: 'kimi-cli', resumed: false });
       const kimiTool = allActivities(state).find((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'kimi-tool-1');

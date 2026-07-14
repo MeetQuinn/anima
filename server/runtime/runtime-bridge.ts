@@ -4,7 +4,6 @@ import { fileURLToPath } from 'node:url';
 import { resolveAnimaHome } from '../anima-home.js';
 import type { RuntimeItemContext } from './types.js';
 import { reminderServiceForAgent } from '../reminders/reminder.service.js';
-import { FOLLOWUP_NOTE } from './delivery-notes.js';
 import {
   recordAgentText,
   recordRuntimeActivity,
@@ -31,9 +30,6 @@ import type {
 } from '../providers/contract.js';
 
 export class AgentRuntimeBridge {
-  private currentRunItemId: string | undefined;
-  private readonly followupNoteInjectedForItemIds = new Set<string>();
-
   constructor(private readonly runtime: AgentRuntime) {}
 
   async runInput(input: {
@@ -46,7 +42,6 @@ export class AgentRuntimeBridge {
     signal?: AbortSignal;
     suppressFailureRecord?: boolean;
   }): Promise<AgentRuntimeInput> {
-    this.notePrimaryRun(input.context.item.id);
     const promptContext = await this.promptContext(input.context);
     const prompt = buildCodeAgentDeliveryPrompt(input.context.item, promptContext);
     return {
@@ -69,24 +64,11 @@ export class AgentRuntimeBridge {
     context: RuntimeItemContext;
   }): Promise<AgentRuntimeFollowupInput> {
     const promptContext = await this.promptContext(input.context);
-    const includeFollowupNote = this.shouldIncludeFollowupNote(input.activeContext.item.id);
     return {
       activeItemId: input.activeContext.item.id,
-      prompt: followupPrompt(buildCodeAgentDeliveryPrompt(input.context.item, promptContext), includeFollowupNote),
+      prompt: buildCodeAgentDeliveryPrompt(input.context.item, promptContext),
       itemId: input.context.item.id,
     };
-  }
-
-  private notePrimaryRun(itemId: string): void {
-    if (this.currentRunItemId === itemId) return;
-    this.currentRunItemId = itemId;
-    this.followupNoteInjectedForItemIds.clear();
-  }
-
-  private shouldIncludeFollowupNote(activeItemId: string): boolean {
-    if (this.followupNoteInjectedForItemIds.has(activeItemId)) return false;
-    this.followupNoteInjectedForItemIds.add(activeItemId);
-    return true;
   }
 
   private async promptContext(context: RuntimeItemContext): Promise<CodeAgentPromptContext> {
@@ -149,12 +131,6 @@ export class AgentRuntimeBridge {
       },
     };
   }
-}
-
-function followupPrompt(prompt: string, includeFollowupNote: boolean): string {
-  if (!includeFollowupNote) return prompt;
-  if (prompt.startsWith(FOLLOWUP_NOTE)) return prompt;
-  return `${FOLLOWUP_NOTE}\n\n${prompt}`;
 }
 
 export function runtimeEnv(context: RuntimeItemContext, env?: Record<string, string>): NodeJS.ProcessEnv {
