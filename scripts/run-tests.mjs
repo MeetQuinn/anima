@@ -87,6 +87,7 @@ const groups = {
   api: [
     'client-error-routes.test.js',
     'kb.test.js',
+    'read-only-runtime.test.js',
     'web-api-agent-home-files.test.js',
     'web-api-agent-ops.test.js',
     'web-api-server.test.js',
