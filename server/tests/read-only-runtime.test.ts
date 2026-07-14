@@ -11,7 +11,21 @@ import {
   isReadOnlyRuntime,
   registerReadOnlyGuard,
 } from '../web/read-only.js';
+import { registerAgentRoutes } from '../web/agent-routes.js';
+import { registerKbRoutes } from '../web/kb-routes.js';
 import { registerSystemRoutes } from '../web/system-routes.js';
+
+/**
+ * The governed set spans THREE route modules, not one. Registering only
+ * system-routes here would silently drop /api/filesystem/mkdir and POST /api/agents
+ * from every assertion below — and the suite would still be green, because a test
+ * that never reaches a route cannot fail on it.
+ */
+function registerGovernedRouteModules(fastify: FastifyInstance): void {
+  registerSystemRoutes(fastify);
+  registerKbRoutes(fastify);
+  registerAgentRoutes(fastify);
+}
 
 /**
  * Read-only runtime (issue #524).
@@ -33,7 +47,7 @@ import { registerSystemRoutes } from '../web/system-routes.js';
 function appWithGuard(readOnly: boolean): FastifyInstance {
   const fastify = Fastify({ logger: false });
   registerReadOnlyGuard(fastify, { readOnly });
-  registerSystemRoutes(fastify);
+  registerGovernedRouteModules(fastify);
   return fastify;
 }
 
@@ -79,7 +93,7 @@ test('#524 every governed route id is actually mounted by the real system routes
     const methods = Array.isArray(route.method) ? route.method : [route.method];
     for (const method of methods) mounted.add(`${method} ${route.url}`);
   });
-  registerSystemRoutes(fastify);
+  registerGovernedRouteModules(fastify);
   await fastify.ready();
 
   for (const route of GOVERNED_ROUTES) {
@@ -187,6 +201,16 @@ test('#524 the governed table matches on method and path, and ignores the query 
   assert.equal(governedRouteFor('POST', '/api/provider-cli-status/claude-code/check'), undefined);
   // Method matters: the governed set is not "every POST".
   assert.equal(governedRouteFor('POST', '/api/provider-usage'), undefined);
+
+  // Host-path writers, proven in Milo's inventory and re-derived from the property.
+  assert.ok(governedRouteFor('POST', '/api/filesystem/mkdir'));
+  assert.ok(governedRouteFor('POST', '/api/agents'));
+
+  // CONSIDERED AND EXCLUDED: ensureExistingAgentHome() stats the path and throws
+  // unless it is already a directory. It validates; it does not create. Over-blocking
+  // is a failure too — a guard that refuses more than it can justify gets routed around.
+  assert.equal(governedRouteFor('POST', '/api/agents/nora/home'), undefined);
+  assert.equal(governedRouteFor('GET', '/api/agents'), undefined);
 });
 
 test('#524 ANIMA_READ_ONLY parsing: default off, explicit on', () => {

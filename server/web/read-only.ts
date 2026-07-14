@@ -56,9 +56,15 @@ export interface GovernedRoute {
  * provider-usage GETs below take no lease and are not POSTs, and they rewrite the
  * machine user's OAuth credentials.
  *
- * Extended by @milo's machine-scoped capability inventory when it lands. Until
- * then this list is what has been *proven*, not what is *complete* — and the
- * difference is the whole point of the mode.
+ * Cross-checked against Milo's source-first capability inventory
+ * (anima-team @ bb0e7ad). Applying the property above independently reproduced his
+ * seven. `POST /api/agents/:agentId/home` was CONSIDERED AND EXCLUDED:
+ * ensureExistingAgentHome() only stats the path and throws unless it is already a
+ * directory. It validates; it does not create. Over-blocking is also a failure —
+ * a guard that refuses more than it can justify teaches people to route around it.
+ *
+ * Still the *proven* set, not the *complete* one, and the difference is the whole
+ * point of the mode.
  */
 export const GOVERNED_ROUTES: readonly GovernedRoute[] = [
   {
@@ -95,6 +101,20 @@ export const GOVERNED_ROUTES: readonly GovernedRoute[] = [
     pattern: /^\/api\/provider-usage\/[^/]+$/,
     evidence:
       'Same credential refresh-and-write path as GET /api/provider-usage, for a single provider.',
+  },
+  {
+    id: 'POST /api/filesystem/mkdir',
+    method: 'POST',
+    pattern: /^\/api\/filesystem\/mkdir$/,
+    evidence:
+      'Creates a directory at a caller-supplied host path. server/kb/kb.service.ts createKbDirectory() roots at realpath(homedir()) — the MACHINE USER\'s home, not ANIMA_HOME — and expands the requested parent under it. A read-only runtime must not write directories into the operator\'s home.',
+  },
+  {
+    id: 'POST /api/agents',
+    method: 'POST',
+    pattern: /^\/api\/agents$/,
+    evidence:
+      'Materializes an agent home at a caller-supplied host path: createAgent() honors an explicit homePath "as-is", then ensureCreateAgentHome(), writeSeedMemory(), and mkdir(<home>/notes). Those files land outside ANIMA_HOME, on the machine the operator shares.',
   },
 ];
 
