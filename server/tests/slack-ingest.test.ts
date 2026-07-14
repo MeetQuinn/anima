@@ -8,6 +8,7 @@ import type { WebClient } from '@slack/web-api';
 import { buildSlackInboxItem, buildSlackInboxItemWithLatePreview } from '../inbox/slack-ingest.js';
 import { applyLateSlackPreviewToQueuedItem } from '../inbox/slack-subscriber.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { slackMessageContentForText } from '../tools/slack-message-format.js';
 import { withAnimaHome } from './anima-home.js';
 
 interface FakeSlackCalls {
@@ -189,6 +190,52 @@ test('buildSlackInboxItem uses the complete visible block body instead of trunca
     assert.match(item.text, /Full implementation tradeoff after the fallback cutoff\.$/);
     assert.doesNotMatch(item.text, /evidence…$/);
     assert.ok(calls.usersInfo.includes('UB0B1'));
+  });
+});
+
+test('buildSlackInboxItem keeps content after unsupported Slack blocks and elements', async () => {
+  await withIngestHome(async () => {
+    const calls = emptyCalls();
+    const prefix = '界'.repeat(1_200);
+    const tail = 'RECIPIENT TAIL SENTINEL';
+    const fallback = slackMessageContentForText(`${prefix}\n${tail}`).text;
+    assert.doesNotMatch(fallback, /RECIPIENT TAIL SENTINEL/);
+
+    const item = await buildSlackInboxItem({
+      client: fakeIngestClient({ calls }),
+      envelope: { team_id: 'T-ingest' },
+      event: {
+        blocks: [
+          richTextCell(prefix),
+          { type: 'divider' },
+          { type: 'header', text: { type: 'plain_text', text: 'Binding result' } },
+          { type: 'future_control_block', elements: [{ type: 'button', value: 'approve' }] },
+          {
+            elements: [{
+              elements: [
+                { type: 'text', text: 'Before inline. ' },
+                { type: 'future_inline', text: 'Unknown inline words. ' },
+                { type: 'text', text: `After inline. ${tail}` },
+              ],
+              type: 'rich_text_section',
+            }],
+            type: 'rich_text',
+          },
+        ],
+        channel: 'C-team',
+        channel_type: 'channel',
+        text: fallback,
+        ts: '1770000012.000002',
+        type: 'message',
+        user: 'UALICE1',
+      },
+      warn: () => {},
+    });
+
+    assert.match(item.text, /---/);
+    assert.match(item.text, /Binding result/);
+    assert.match(item.text, /\[unsupported block: future_control_block\]/);
+    assert.match(item.text, /Before inline\. Unknown inline words\. After inline\. RECIPIENT TAIL SENTINEL$/);
   });
 });
 
