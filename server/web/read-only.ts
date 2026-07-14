@@ -126,11 +126,97 @@ export const GOVERNED_ROUTES: readonly GovernedRoute[] = [
   },
 ];
 
-export function isReadOnlyRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = env[READ_ONLY_ENV];
+/**
+ * The explicit machine-write opt-in (issue #524, cut 2).
+ *
+ * Today a runtime that forgets `ANIMA_READ_ONLY` gets full machine permissions. That
+ * is a rule enforced by remembering, which is the same object as a rule enforced by
+ * prose. The end state inverts it: refuse by default, and let a runtime that genuinely
+ * must write the machine (live, which really does have to refresh credentials) say so.
+ *
+ * THE ORDER IS LOAD-BEARING AND CANNOT BE COMPRESSED:
+ *   1. ship this flag, MEANINGFUL from day one            <- this cut
+ *   2. live sets it, and is verified still working        <- a live action: totoday only
+ *   3. only then does unset flip from "permit" to "refuse"
+ * Doing 3 before 2 makes live start 403-ing on upgrade, and live is the one machine
+ * that must write credentials. We would have traded live for a correct default.
+ */
+export const MACHINE_WRITE_ENV = 'ANIMA_ALLOW_MACHINE_WRITES';
+
+/**
+ * Rides on every governed-route response THAT REACHES THIS GUARD — including the
+ * refusal and including the handler's own 4xx.
+ *
+ * ⚠️ THE QUALIFIER IS THE CONTRACT, NOT A FOOTNOTE. Dashboard auth is a `preHandler`
+ * registered BEFORE this one, so an UNAUTHENTICATED governed request is answered `401`
+ * and this hook never runs: no header. An older build that predates this cut: no header.
+ * An ungoverned path: no header, by design.
+ *
+ * So an ABSENT header is not a pass and not a fail — it means the probe never reached
+ * the guard. The only affirmative reading is the value itself. Anyone verifying a
+ * machine must require that they positively READ `explicit`; "we didn't see
+ * implicit-default" is the same nothing a dead guard prints. (@milo reproduced the 401
+ * case on this PR; I had written "EVERY governed response", which was false.)
+ *
+ * Given that, the design still holds: the safe probe (`POST /api/filesystem/mkdir` at a
+ * nonexistent parent, which 404s at `realpath()` before writing anything) carries the
+ * header out on its 404, so an AUTHENTICATED caller can read a running machine's mode
+ * with ZERO machine action. That is what step 2 needs: verify live is opted in, without
+ * making live write.
+ */
+export const MACHINE_WRITE_HEADER = 'x-anima-machine-writes';
+
+export type MachineWriteMode =
+  /** ANIMA_READ_ONLY is on. Governed routes are refused 403. */
+  | 'refused'
+  /** Opted in on purpose. This is what live will carry. */
+  | 'explicit'
+  /**
+   * Nobody said anything, so we permit — for now. This is the state we are trying to
+   * delete, so it is never silent: it warns, and it is visible on the wire. If a
+   * process we thought was safe is sitting in this state, we want to find out from an
+   * instrument, not from an incident.
+   */
+  | 'implicit-default';
+
+function envFlag(raw: string | undefined): boolean {
   if (raw === undefined) return false;
   const value = raw.trim().toLowerCase();
   return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
+export function isReadOnlyRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
+  return envFlag(env[READ_ONLY_ENV]);
+}
+
+export function allowsMachineWrites(env: NodeJS.ProcessEnv = process.env): boolean {
+  return envFlag(env[MACHINE_WRITE_ENV]);
+}
+
+/**
+ * Read-only WINS over the machine-write opt-in.
+ *
+ * Both set is a contradiction, and a guard that resolves a contradiction toward
+ * permission is a guard you can talk out of refusing. Refusal is the safe reading, and
+ * it is also the honest one: someone who set both did not mean "write the machine".
+ */
+export function machineWriteMode(readOnly: boolean, allowMachineWrites: boolean): MachineWriteMode {
+  if (readOnly) return 'refused';
+  if (allowMachineWrites) return 'explicit';
+  return 'implicit-default';
+}
+
+/**
+ * THE ONLY PLACE THIS PRECEDENCE IS WRITTEN.
+ *
+ * The first draft of this cut stated the rule twice — here, and again inline in the
+ * guard — and tested only this one. Mutation m6 walked straight through: flip the
+ * guard's copy and a process with BOTH flags set permits the write, with every test
+ * still green. Two copies of a safety rule is one copy that is untested by construction,
+ * and it is always the copy that runs.
+ */
+export function resolveMachineWriteMode(env: NodeJS.ProcessEnv = process.env): MachineWriteMode {
+  return machineWriteMode(isReadOnlyRuntime(env), allowsMachineWrites(env));
 }
 
 function pathnameOf(url: string): string {
@@ -156,6 +242,51 @@ export function governedRouteFor(method: string, url: string): GovernedRoute | u
 export interface ReadOnlyGuardOptions {
   /** Defaults to the ANIMA_READ_ONLY environment variable. Injectable for tests. */
   readonly readOnly?: boolean;
+  /** Defaults to the ANIMA_ALLOW_MACHINE_WRITES environment variable. Injectable for tests. */
+  readonly allowMachineWrites?: boolean;
+  /**
+   * Where the implicit-default warning goes. Defaults to stderr.
+   *
+   * Injectable because a warning nobody can observe is a warning nobody can test, and
+   * an untested warning is the kind that turns out to have been silent all along.
+   */
+  readonly warn?: (message: string) => void;
+}
+
+function defaultWarn(message: string): void {
+  process.stderr.write(`${message}\n`);
+}
+
+/**
+ * ⚠️ SAY ONLY WHAT THIS HOOK ACTUALLY KNOWS.
+ *
+ * This runs in `preHandler` — BEFORE the handler. At this point the request has been
+ * ADMITTED to a machine-scoped route. Whether it goes on to write anything is not known
+ * here and often it does not: the safe probe reaches `POST /api/filesystem/mkdir` and
+ * 404s at `realpath()` having written nothing.
+ *
+ * The first draft said "MACHINE WRITE PERMITTED ... so it wrote machine-scoped state".
+ * @milo ran the safe probe against it: 404, nothing written, and stderr announcing a
+ * write. **An instrument that overstates in the alarming direction gets disbelieved, and
+ * then it is worth less than no instrument** — the next person to see this line on a
+ * harmless 404 learns that the warning cries wolf, and the census dies right there.
+ *
+ * So: admission, which is true of every line this prints. The census counts CALLERS THAT
+ * WOULD BE REFUSED AFTER THE FLIP, and admission is exactly that set.
+ */
+function implicitDefaultWarning(route: GovernedRoute): string {
+  return (
+    // `route.id` is already "METHOD /path" — do not prefix the method again.
+    `[anima] ADMITTED TO A MACHINE-SCOPED ROUTE BY IMPLICIT DEFAULT: ${route.id}. ` +
+    `This process set neither ${MACHINE_WRITE_ENV} nor ${READ_ONLY_ENV}, so the request was ` +
+    'let through to a handler that MAY write state outside ANIMA_HOME — not because anyone ' +
+    'allowed it, but because nobody refused it. (Whether this particular request went on to ' +
+    'write anything is not known at this point, and is not the question: the question is that ' +
+    'it was not stopped.) That default is being inverted (issue #524): once it flips, this ' +
+    `exact request becomes a 403. If this process legitimately needs to write the machine, set ` +
+    `${MACHINE_WRITE_ENV}=1 on it NOW, while the permission is still free. If it does not, ` +
+    'this line is the bug.'
+  );
 }
 
 /**
@@ -190,19 +321,46 @@ export function registerReadOnlyGuard(fastify: FastifyInstance, options: ReadOnl
   }
 
   const readOnly = options.readOnly ?? isReadOnlyRuntime();
-  // Nothing to enforce when the runtime is writable. The check above still ran: the ordering
-  // contract holds whether or not the mode is on, so it cannot rot while read-only is off.
-  if (!readOnly) return;
+  const allowMachineWrites = options.allowMachineWrites ?? allowsMachineWrites();
+  const mode = machineWriteMode(readOnly, allowMachineWrites);
+  const warn = options.warn ?? defaultWarn;
+
+  // NOTE: the hook is registered in ALL THREE modes, including the two that permit.
+  //
+  // The previous cut returned early when read-only was off, and that was the dead-instrument
+  // shape one layer up: a flag that does nothing until the default flips cannot be verified
+  // before the flip, so "we checked that live still works" would have been necessarily green.
+  // The flag has to MEAN something on day one, or step 2 of the migration is decorative.
+  //
+  // So in the permitting modes the hook does not permit silently. It stamps the mode on the
+  // response and, for the default we are deleting, says so out loud.
+  const warnedRoutes = new Set<string>();
 
   fastify.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
     const governed = governedRouteFor(request.method, request.url);
     if (!governed) return;
 
-    return reply.status(403).send({
-      error: READ_ONLY_REFUSAL,
-      reason: governed.evidence,
-      route: governed.id,
-      readOnly: true,
-    });
+    // Set BEFORE the branch, so it rides on every outcome: the 403, the handler's 200, and
+    // — the point of the whole exercise — the handler's own 404. That is what lets the safe
+    // probe (POST /api/filesystem/mkdir at a nonexistent parent, which 404s at realpath()
+    // before it writes anything) read a running machine's mode with ZERO machine action.
+    reply.header(MACHINE_WRITE_HEADER, mode);
+
+    if (mode === 'refused') {
+      return reply.status(403).send({
+        error: READ_ONLY_REFUSAL,
+        reason: governed.evidence,
+        route: governed.id,
+        readOnly: true,
+      });
+    }
+
+    // Once per route per process: loud enough to be found, bounded so it cannot become noise
+    // that people learn to scroll past. Every line here is a caller we must migrate before
+    // the default flips — this warning is the census.
+    if (mode === 'implicit-default' && !warnedRoutes.has(governed.id)) {
+      warnedRoutes.add(governed.id);
+      warn(implicitDefaultWarning(governed));
+    }
   });
 }
