@@ -33,6 +33,18 @@ export function registerKbRoutes(
   fastify.get<{ Params: { id: string } }>('/api/kbs/:id/tree', async (request) =>
     kbRegistryService.serviceFor(request.params.id).buildTree(),
   );
+  fastify.get<{ Params: { id: string } }>('/api/kbs/:id/entries', async (request) =>
+    kbRegistryService.serviceFor(request.params.id).listDirectory(
+      queryParam(request.url, 'path') ?? '',
+      queryParam(request.url, 'cursor'),
+    ),
+  );
+  fastify.get<{ Params: { id: string } }>('/api/kbs/:id/search', async (request) =>
+    kbRegistryService.serviceFor(request.params.id).searchFiles(
+      queryParam(request.url, 'q') ?? '',
+      () => request.raw.aborted || request.raw.destroyed,
+    ),
+  );
   fastify.get<{ Params: { id: string } }>('/api/kbs/:id/file', async (request) => {
     const filePath = queryParam(request.url, 'path');
     if (!filePath) throw new HttpError(400, 'path is required');

@@ -44,6 +44,8 @@ async function setupKb(prefix: string): Promise<KbFixture> {
   await writeFile(join(repoDir, 'docs', 'untracked-target.md'), 'untracked target\n', 'utf8');
   await mkdir(join(repoDir, '.git'), { recursive: true });
   await writeFile(join(repoDir, '.git', 'config'), '[core]\n', 'utf8');
+  await mkdir(join(repoDir, 'docs', '.git'), { recursive: true });
+  await writeFile(join(repoDir, 'docs', '.git', 'nested-marker'), 'nested metadata\n', 'utf8');
   // Symlink pointing at a visible file; allowed only because the resolved target
   // remains under the root and is itself visible.
   await symlink('README.md', join(repoDir, 'link.md'));
@@ -302,6 +304,142 @@ test('kb tree exposes non-ignored files in a nested shape', async () => {
   } finally {
     await rm(homeDir, { force: true, recursive: true });
     await rm(repoDir, { force: true, recursive: true });
+  }
+});
+
+test('kb directory pages and file reads stay bounded when an unrelated subtree is huge', async () => {
+  const { homeDir, repoDir } = await setupKb('anima-kb-paged');
+  const hugeDir = join(repoDir, 'huge-unignored');
+  try {
+    await mkdir(hugeDir);
+    for (let start = 0; start < 5_100; start += 200) {
+      await Promise.all(
+        Array.from({ length: Math.min(200, 5_100 - start) }, (_, index) =>
+          writeFile(join(hugeDir, `entry-${String(start + index).padStart(5, '0')}.txt`), 'x', 'utf8'),
+        ),
+      );
+    }
+
+    await withServer(homeDir, async (base) => {
+      const file = await fetch(`${base}/api/kbs/test/file?path=README.md`);
+      assert.equal(file.status, 200, 'one file does not require an all-KB visibility scan');
+
+      const root = await fetch(`${base}/api/kbs/test/entries`);
+      assert.equal(root.status, 200);
+      const rootBody = (await root.json()) as {
+        path: string;
+        entries: Array<{ name: string; path: string; type: string; children?: unknown }>;
+      };
+      assert.equal(rootBody.path, '');
+      assert.ok(rootBody.entries.some((entry) => entry.name === 'huge-unignored' && entry.type === 'dir'));
+      assert.ok(rootBody.entries.every((entry) => entry.children === undefined), 'directory response is one level');
+
+      const firstPage = await fetch(`${base}/api/kbs/test/entries?path=huge-unignored`);
+      assert.equal(firstPage.status, 200);
+      const firstBody = (await firstPage.json()) as {
+        entries: Array<{ name: string }>;
+        nextCursor?: string;
+      };
+      assert.equal(firstBody.entries.length, 250);
+      assert.ok(firstBody.nextCursor, 'large directories are paged');
+      assert.deepEqual(
+        firstBody.entries.map((entry) => entry.name),
+        firstBody.entries.map((entry) => entry.name).sort(),
+        'each bounded page is sorted for stable presentation',
+      );
+
+      const secondPage = await fetch(
+        `${base}/api/kbs/test/entries?path=huge-unignored&cursor=${encodeURIComponent(firstBody.nextCursor!)}`,
+      );
+      assert.equal(secondPage.status, 200);
+      const secondBody = (await secondPage.json()) as { entries: Array<{ name: string }> };
+      assert.equal(secondBody.entries.length, 250);
+      assert.equal(
+        secondBody.entries.some((entry) => firstBody.entries.some((first) => first.name === entry.name)),
+        false,
+        'cursor advances past the first page',
+      );
+
+      const search = await fetch(`${base}/api/kbs/test/search?q=entry`);
+      assert.equal(search.status, 200);
+      const searchBody = (await search.json()) as { matches: unknown[]; truncated: boolean };
+      assert.equal(searchBody.matches.length, 200, 'search returns a bounded result set');
+      assert.equal(searchBody.truncated, true, 'search reports that more matches exist');
+
+      const legacyTree = await fetch(`${base}/api/kbs/test/tree`);
+      assert.equal(legacyTree.status, 413, 'legacy full-tree callers fail explicitly instead of hanging');
+      assert.match(await legacyTree.text(), /kb_tree_too_large/);
+    });
+  } finally {
+    await rm(homeDir, { force: true, recursive: true });
+    await rm(repoDir, { force: true, recursive: true });
+  }
+});
+
+test('kb search is bounded and excludes ignored files and git metadata', async () => {
+  const { homeDir, repoDir } = await setupKb('anima-kb-search');
+  try {
+    await withServer(homeDir, async (base) => {
+      const match = await fetch(`${base}/api/kbs/test/search?q=untracked`);
+      assert.equal(match.status, 200);
+      const body = (await match.json()) as {
+        matches: Array<{ path: string }>;
+        scanned: number;
+        truncated: boolean;
+      };
+      assert.deepEqual(body.matches.map((entry) => entry.path), [
+        'docs/untracked-target.md',
+        'untracked-link.md',
+        'untracked.txt',
+      ]);
+      assert.ok(body.scanned > 0);
+      assert.equal(body.truncated, false);
+
+      const ignored = await fetch(`${base}/api/kbs/test/search?q=secret`);
+      assert.equal(ignored.status, 200);
+      assert.deepEqual(((await ignored.json()) as { matches: unknown[] }).matches, []);
+
+      const metadata = await fetch(`${base}/api/kbs/test/entries?path=.git`);
+      assert.equal(metadata.status, 404);
+      const nestedMetadata = await fetch(`${base}/api/kbs/test/file?path=docs/.git/nested-marker`);
+      assert.equal(nestedMetadata.status, 404, 'git metadata is excluded at every depth');
+      const badCursor = await fetch(`${base}/api/kbs/test/entries?cursor=not-a-cursor`);
+      assert.equal(badCursor.status, 400);
+    });
+  } finally {
+    await rm(homeDir, { force: true, recursive: true });
+    await rm(repoDir, { force: true, recursive: true });
+  }
+});
+
+test('kb paged browser accepts a configured root symlink without traversing nested directory symlinks', async () => {
+  const { homeDir, repoDir } = await setupKb('anima-kb-root-link');
+  const linkParent = await mkdtemp(join(tmpdir(), 'anima-kb-root-link-parent-'));
+  const rootLink = join(linkParent, 'linked-root');
+  try {
+    await symlink(repoDir, rootLink);
+    await writeTestKbConfig(homeDir, { id: 'test', label: 'Test', path: rootLink });
+
+    await withServer(homeDir, async (base) => {
+      const root = await fetch(`${base}/api/kbs/test/entries`);
+      assert.equal(root.status, 200);
+      assert.ok(
+        ((await root.json()) as { entries: Array<{ name: string }> }).entries.some(
+          (entry) => entry.name === 'README.md',
+        ),
+      );
+
+      const file = await fetch(`${base}/api/kbs/test/file?path=README.md`);
+      assert.equal(file.status, 200);
+
+      await symlink(join(repoDir, 'docs'), join(repoDir, 'docs-link'));
+      const nestedLink = await fetch(`${base}/api/kbs/test/entries?path=docs-link`);
+      assert.equal(nestedLink.status, 404);
+    });
+  } finally {
+    await rm(homeDir, { force: true, recursive: true });
+    await rm(repoDir, { force: true, recursive: true });
+    await rm(linkParent, { force: true, recursive: true });
   }
 });
 

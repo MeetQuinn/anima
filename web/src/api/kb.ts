@@ -1,5 +1,13 @@
 import { apiRequest, jsonInit } from './client';
-import type { KbCreateRequest, KbFile, KbRenameRequest, KbView, KbTree } from '@shared/kb';
+import type {
+  KbCreateRequest,
+  KbDirectoryPage,
+  KbFile,
+  KbRenameRequest,
+  KbSearchResult,
+  KbView,
+  KbTree,
+} from '@shared/kb';
 
 export interface KbBrowseResult {
   path: string;
@@ -60,8 +68,26 @@ export async function fetchKbTree(id: string): Promise<KbTree> {
   return apiRequest(`/api/kbs/${encodeURIComponent(id)}/tree`);
 }
 
-export async function fetchKbFile(id: string, filePath: string): Promise<KbFile> {
-  return apiRequest(`/api/kbs/${encodeURIComponent(id)}/file?path=${encodeURIComponent(filePath)}`);
+export async function fetchKbDirectory(
+  id: string,
+  path: string,
+  cursor?: string,
+  signal?: AbortSignal,
+): Promise<KbDirectoryPage> {
+  const params = new URLSearchParams();
+  if (path) params.set('path', path);
+  if (cursor) params.set('cursor', cursor);
+  const suffix = params.size ? `?${params.toString()}` : '';
+  return apiRequest(`/api/kbs/${encodeURIComponent(id)}/entries${suffix}`, { signal });
+}
+
+export async function searchKb(id: string, query: string, signal?: AbortSignal): Promise<KbSearchResult> {
+  const params = new URLSearchParams({ q: query });
+  return apiRequest(`/api/kbs/${encodeURIComponent(id)}/search?${params.toString()}`, { signal });
+}
+
+export async function fetchKbFile(id: string, filePath: string, signal?: AbortSignal): Promise<KbFile> {
+  return apiRequest(`/api/kbs/${encodeURIComponent(id)}/file?path=${encodeURIComponent(filePath)}`, { signal });
 }
 
 export function kbDownloadUrl(id: string, filePath: string): string {

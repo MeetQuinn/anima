@@ -91,6 +91,7 @@ export function TreeRow({
   now,
   onToggleDir,
   onSelectFile,
+  renderChildren,
 }: {
   node: KbTreeNode;
   depth: number;
@@ -104,6 +105,7 @@ export function TreeRow({
   now: Date;
   onToggleDir: (path: string) => void;
   onSelectFile: (path: string) => void;
+  renderChildren?: (node: KbTreeNode, depth: number) => React.ReactNode;
 }) {
   const isFiltering = !!filterQuery;
   const [nameRef, isTruncated] = useIsTruncated<HTMLSpanElement>();
@@ -150,20 +152,23 @@ export function TreeRow({
             />
           </span>
         </button>
-        {isOpen &&
-          node.children?.map((child) => (
-            <TreeRow
-              key={child.path}
-              node={child}
-              depth={depth + 1}
-              expanded={expanded}
-              selectedPath={selectedPath}
-              filterQuery={filterQuery}
-              now={now}
-              onToggleDir={onToggleDir}
-              onSelectFile={onSelectFile}
-            />
-          ))}
+        {isOpen && (
+          renderChildren
+            ? renderChildren(node, depth + 1)
+            : node.children?.map((child) => (
+                <TreeRow
+                  key={child.path}
+                  node={child}
+                  depth={depth + 1}
+                  expanded={expanded}
+                  selectedPath={selectedPath}
+                  filterQuery={filterQuery}
+                  now={now}
+                  onToggleDir={onToggleDir}
+                  onSelectFile={onSelectFile}
+                />
+              ))
+        )}
       </div>
     );
   }
