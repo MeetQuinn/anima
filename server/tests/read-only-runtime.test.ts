@@ -399,7 +399,7 @@ test('#524 a request to a both-flags-set runtime is REFUSED, not permitted', asy
   await fastify.close();
 });
 
-test('#524 the mode rides on every governed response, so a machine can be asked what it is', async () => {
+test('#524 the mode rides on every governed response that reaches the guard, so an authenticated caller can ask a machine what it is', async () => {
   const cases: ReadonlyArray<{ readOnly: boolean; allow: boolean; mode: string; status: number }> = [
     { readOnly: true, allow: false, mode: 'refused', status: 403 },
     { readOnly: false, allow: true, mode: 'explicit', status: 200 },
