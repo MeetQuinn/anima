@@ -1,5 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 
+import { DASHBOARD_AUTH_GUARD_MARKER } from './dashboard-auth.js';
+
 /**
  * Read-only runtime (issue #524).
  *
@@ -151,15 +153,42 @@ export interface ReadOnlyGuardOptions {
 }
 
 /**
- * Register BEFORE any route. An onRequest hook runs ahead of the handler, so the
- * governed handler never executes — the refusal is not a late abort, it is a
- * closed door.
+ * Register AFTER `registerDashboardAuthGuard`, and before any route.
+ *
+ * This is a `preHandler`, not an `onRequest`, and the distinction is load-bearing.
+ * Dashboard auth checks at `preHandler`; `onRequest` runs strictly earlier. A
+ * read-only guard on `onRequest` would answer an UNAUTHENTICATED governed request
+ * with this detailed 403 — leaking the route inventory and its evidence to a caller
+ * who was never entitled to a reply, and quietly replacing the `401
+ * authentication_required` contract.
+ *
+ * Same-type hooks run in registration order, so auth answers first (401), and only
+ * an authenticated caller reaches the read-only refusal (403). Both still run ahead
+ * of the handler, so the governed handler never executes: the refusal remains a
+ * closed door, not a late abort inside one.
  */
 export function registerReadOnlyGuard(fastify: FastifyInstance, options: ReadOnlyGuardOptions = {}): void {
+  // The ordering above is a CONTRACT, so it is checked, not documented. If the read-only
+  // guard is registered before the dashboard auth guard, its hook runs first and answers
+  // an unauthenticated governed request with the detailed 403 — leaking the governed route
+  // inventory to a caller with no credentials. That reorder is a one-line edit in app.ts
+  // and every request-level test would stay green, because both guards still "work".
+  //
+  // So it fails at BOOT instead: the server does not start. An ordering bug that can only
+  // be caught by remembering to look for it will eventually not be looked for.
+  if (!fastify.hasDecorator(DASHBOARD_AUTH_GUARD_MARKER)) {
+    throw new Error(
+      'registerReadOnlyGuard must be registered AFTER registerDashboardAuthGuard: ' +
+        'same-type hooks run in registration order, and read-only must not preempt authentication.',
+    );
+  }
+
   const readOnly = options.readOnly ?? isReadOnlyRuntime();
+  // Nothing to enforce when the runtime is writable. The check above still ran: the ordering
+  // contract holds whether or not the mode is on, so it cannot rot while read-only is off.
   if (!readOnly) return;
 
-  fastify.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
     const governed = governedRouteFor(request.method, request.url);
     if (!governed) return;
 

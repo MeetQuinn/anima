@@ -70,10 +70,20 @@ export function registerDashboardAuthRoutes(
   });
 }
 
+/**
+ * Marker decorator, set at registration. Read by `registerReadOnlyGuard`, which must
+ * run AFTER this guard so an unauthenticated caller still gets `401` rather than a
+ * detailed read-only refusal. Same-type hooks run in registration order, so the
+ * ordering is the whole contract — and a comment is not a contract.
+ */
+export const DASHBOARD_AUTH_GUARD_MARKER = 'dashboardAuthGuardRegistered';
+
 export function registerDashboardAuthGuard(
   fastify: FastifyInstance,
   authService: DashboardAuthService = defaultDashboardAuthService,
 ): void {
+  fastify.decorate(DASHBOARD_AUTH_GUARD_MARKER, true);
+
   fastify.addHook('preHandler', async (request, reply) => {
     const path = routePath(request.url);
     if (!path.startsWith('/api/') && !path.startsWith('/kb/raw/')) return;
