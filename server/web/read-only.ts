@@ -42,6 +42,12 @@ export interface GovernedRoute {
    * WHY this route is machine-scoped. This is evidence read out of the code, not
    * a guess. Guessing a list manufactures exactly the "looks contained" illusion
    * this mode exists to remove.
+   *
+   * It ships to the caller inside the 403, so it is part of the refusal's contract:
+   * state the STABLE PROPERTY, never a current constant. A constant (a path, a
+   * default, a root) is configuration; it goes stale, and worse, it invites the
+   * reader to conclude the route is safe once the constant changes. The property is
+   * what makes the route machine-scoped, and the property is what survives.
    */
   readonly evidence: string;
 }
@@ -109,7 +115,7 @@ export const GOVERNED_ROUTES: readonly GovernedRoute[] = [
     method: 'POST',
     pattern: /^\/api\/filesystem\/mkdir$/,
     evidence:
-      'Creates a directory at a caller-supplied host path. server/kb/kb.service.ts createKbDirectory() roots at realpath(homedir()) — the MACHINE USER\'s home, not ANIMA_HOME — and expands the requested parent under it. A read-only runtime must not write directories into the operator\'s home.',
+      'Creates a directory at a CALLER-SUPPLIED host path, outside ANIMA_HOME, on the filesystem this machine user shares (server/kb/kb.service.ts createKbDirectory()). The browse root bounds HOW FAR the caller may write; it does not decide WHETHER the write lands outside ANIMA_HOME, so the root\'s location is configuration, not exemption. Today that root is realpath(homedir()) — the machine user\'s home — but this route stays governed wherever the root points: a guard keyed on a knob is a guard a misconfigured runtime silently loses.',
   },
   {
     id: 'POST /api/agents',
