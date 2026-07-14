@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { fetchKbDirectory } from '@/api/kb';
 import Kb from './index';
 
 // Stale-clock regression (#508 gate, Milo). The tree's relative mtime labels
@@ -29,22 +30,17 @@ const h = vi.hoisted(() => {
   // Factory: every poll returns a FRESH object that is deep-equal to the
   // last, so react-query's structural sharing preserves data identity and
   // the data itself never triggers a re-render (the production condition).
-  const tree = () => ({
+  const directory = (path: string) => ({
     kb,
-    nodes: [
-      {
-        name: 'docs',
-        path: 'docs',
-        type: 'dir' as const,
-        mtime: MTIME,
-        children: [
-          { name: 'guide.md', path: 'docs/guide.md', type: 'file' as const, mtime: MTIME },
+    path,
+    entries: path === 'docs'
+      ? [{ name: 'guide.md', path: 'docs/guide.md', type: 'file' as const, mtime: MTIME }]
+      : [
+          { name: 'docs', path: 'docs', type: 'dir' as const, mtime: MTIME },
+          { name: 'notes.md', path: 'notes.md', type: 'file' as const, mtime: MTIME },
         ],
-      },
-      { name: 'notes.md', path: 'notes.md', type: 'file' as const, mtime: MTIME },
-    ],
   });
-  return { MTIME, MOUNT, kb, tree };
+  return { MTIME, MOUNT, kb, directory };
 });
 
 vi.mock('@/api/kb', async (importOriginal) => {
@@ -52,7 +48,7 @@ vi.mock('@/api/kb', async (importOriginal) => {
   return {
     ...actual,
     fetchKb: vi.fn(async () => h.kb),
-    fetchKbTree: vi.fn(async () => h.tree()),
+    fetchKbDirectory: vi.fn(async (_id: string, path: string) => h.directory(path)),
     fetchKbFile: vi.fn(async () => {
       throw new Error('fetchKbFile should not be called (no file selected)');
     }),
@@ -73,6 +69,7 @@ function renderKb() {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   // shouldAdvanceTime keeps mocked timers firing in step with real time so
   // testing-library's polling and react-query's promise plumbing still run;
   // the boundary itself is crossed only by the explicit advance below (the
@@ -109,8 +106,11 @@ describe('tree mtime labels while the list stays open', () => {
 
     // Tree loaded; expand the dir so the recursive child row is on screen too.
     const dirRow = await screen.findByText('docs');
+    expect(vi.mocked(fetchKbDirectory)).toHaveBeenCalledWith('team', '', undefined, expect.any(AbortSignal));
+    expect(vi.mocked(fetchKbDirectory).mock.calls.some(([, path]) => path === 'docs')).toBe(false);
     fireEvent.click(dirRow);
     await screen.findByText('guide.md');
+    expect(vi.mocked(fetchKbDirectory).mock.calls.some(([, path]) => path === 'docs')).toBe(true);
 
     // dir + nested file + root file: all three read the stuck-repro label.
     expect(screen.getAllByText('60 min ago')).toHaveLength(3);

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
-import { fetchKb, fetchKbFile, fetchKbTree } from '@/api/kb';
+import { fetchKb, fetchKbFile, searchKb } from '@/api/kb';
 import { useNavigate, useParams } from 'react-router-dom';
 import { buildKbPath } from '@/lib/url-state';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
@@ -9,7 +9,8 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useNow } from '@/hooks/useNow';
 import type { KbTreeNode } from '@shared/kb';
 
-import { TreeRow, TreeSummary, ancestorsOf, matchesFilter } from './FileTree';
+import { TreeRow, TreeSummary, ancestorsOf } from './FileTree';
+import { KbDirectoryRows, useKbDirectoryPages } from './KbDirectoryRows';
 import {
   FileContent,
   FileBreadcrumb,
@@ -37,17 +38,34 @@ function cacheExpandedDirs(kbId: string, expanded: Set<string>): void {
   expandedDirsByKb.set(kbId, [...expanded]);
 }
 
-// Does a file with this exact path exist anywhere in the tree? Used to confirm a
-// remembered "last viewed" file is still present before resuming to it.
-function fileNodeExists(nodes: KbTreeNode[], path: string): boolean {
-  for (const node of nodes) {
-    if (node.type === 'file') {
-      if (node.path === path) return true;
-    } else if (node.children && fileNodeExists(node.children, path)) {
-      return true;
+function searchResultTree(matches: KbTreeNode[]): KbTreeNode[] {
+  const roots: KbTreeNode[] = [];
+  const childrenByDir = new Map<string, KbTreeNode[]>([['', roots]]);
+  for (const match of matches) {
+    const segments = match.path.split('/');
+    let parentPath = '';
+    for (let index = 0; index < segments.length - 1; index += 1) {
+      const name = segments[index] as string;
+      const path = parentPath ? `${parentPath}/${name}` : name;
+      const siblings = childrenByDir.get(parentPath) ?? roots;
+      if (!childrenByDir.has(path)) {
+        const children: KbTreeNode[] = [];
+        siblings.push({ name, path, type: 'dir', children });
+        childrenByDir.set(path, children);
+      }
+      parentPath = path;
     }
+    (childrenByDir.get(parentPath) ?? roots).push(match);
   }
-  return false;
+  const sort = (nodes: KbTreeNode[]) => {
+    nodes.sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+      return a.name.toLocaleLowerCase().localeCompare(b.name.toLocaleLowerCase());
+    });
+    for (const node of nodes) if (node.children) sort(node.children);
+  };
+  sort(roots);
+  return roots;
 }
 
 export default function Kb() {
@@ -65,6 +83,7 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
 
   const [expanded, setExpanded] = useState<Set<string>>(() => restoredExpandedDirs(id, filePath));
   const [filterQuery, setFilterQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   // One clock for every row's relative mtime label (see TreeRow's `now`).
   const now = useNow();
   const [treeWidth, setTreeWidth] = useState(() => {
@@ -90,15 +109,28 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
     isLoading: kbLoading,
   } = useQuery({ queryKey: queryKeys.kb(id), queryFn: () => fetchKb(id) });
 
-  const {
-    data: tree,
-    error: treeError,
-    isLoading: treeLoading,
-  } = useQuery({
-    queryKey: queryKeys.kbTree(id),
-    queryFn: () => fetchKbTree(id),
-    refetchInterval: refetchIntervals.kbContent,
+  const rootQuery = useKbDirectoryPages(id, '');
+  const rootEntries = useMemo(
+    () => rootQuery.data?.pages.flatMap((page) => page.entries) ?? [],
+    [rootQuery.data?.pages],
+  );
+  const treeError = rootQuery.error;
+  const treeLoading = rootQuery.isPending;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearchQuery(filterQuery.trim()), 180);
+    return () => window.clearTimeout(timer);
+  }, [filterQuery]);
+
+  const searchResult = useQuery({
+    queryKey: queryKeys.kbSearch(id, searchQuery),
+    queryFn: ({ signal }) => searchKb(id, searchQuery, signal),
+    enabled: !!searchQuery,
   });
+  const filteredTree = useMemo(
+    () => searchResultTree(searchResult.data?.matches ?? []),
+    [searchResult.data?.matches],
+  );
 
   const {
     data: file,
@@ -106,19 +138,18 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
     isLoading: fileLoading,
   } = useQuery({
     queryKey: queryKeys.kbFile(id, filePath ?? ''),
-    queryFn: () => fetchKbFile(id, filePath!),
+    queryFn: ({ signal }) => fetchKbFile(id, filePath!, signal),
     enabled: !!filePath,
     refetchInterval: refetchIntervals.kbContent,
   });
 
   // Find the top-level README so we can show it as default right-panel content.
   const readmePath = useMemo<string | null>(() => {
-    if (!tree) return null;
-    const node = tree.nodes.find(
+    const node = rootEntries.find(
       (n) => n.type === 'file' && /^readme(\.(md|txt|rst))?$/i.test(n.name),
     );
     return node?.path ?? null;
-  }, [tree]);
+  }, [rootEntries]);
 
   // Fetch README when no file is selected and one was found.
   const {
@@ -127,7 +158,7 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
     error: readmeError,
   } = useQuery({
     queryKey: queryKeys.kbFile(id, readmePath ?? ''),
-    queryFn: () => fetchKbFile(id, readmePath!),
+    queryFn: ({ signal }) => fetchKbFile(id, readmePath!, signal),
     enabled: !filePath && !!readmePath,
     refetchInterval: refetchIntervals.kbContent,
   });
@@ -137,13 +168,16 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
   // back to that file so the tree highlight and the content panel agree instead
   // of showing a stale tree selection next to the README. Tab-session memory
   // only (lastViewedFileByKb) — a hard reload has no memory and lands on the
-  // README. Mobile keeps its file-list-first flow (one panel at a time, so the
-  // desktop side-by-side desync this fixes doesn't exist there).
+  // README. The file endpoint validates the remembered target directly; it no
+  // longer needs a full-tree membership scan. Mobile keeps its list-first flow.
   const rememberedFile = !filePath ? (lastViewedFileByKb.get(id) ?? null) : null;
-  const resumeTarget = useMemo<string | null>(() => {
-    if (isMobile || !rememberedFile || !tree) return null;
-    return fileNodeExists(tree.nodes, rememberedFile) ? rememberedFile : null;
-  }, [isMobile, rememberedFile, tree]);
+  const resumeFile = useQuery({
+    queryKey: queryKeys.kbFile(id, rememberedFile ?? ''),
+    queryFn: ({ signal }) => fetchKbFile(id, rememberedFile!, signal),
+    enabled: !isMobile && !filePath && !!rememberedFile,
+    retry: false,
+  });
+  const resumeTarget = isMobile ? null : (resumeFile.data?.path ?? null);
 
   useEffect(() => {
     if (!resumeTarget) return;
@@ -210,7 +244,7 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
   // This is intentionally transient/in-memory, not a durable preference.
   const rowToRestore = filePath ? null : (lastViewedFileByKb.get(id) ?? null);
   useEffect(() => {
-    if (filterQuery || !tree || !rowToRestore) return;
+    if (filterQuery.trim() || rootQuery.isPending || !rowToRestore) return;
     const t = setTimeout(() => {
       const rows = Array.from(
         treeRef.current?.querySelectorAll<HTMLElement>('[data-tree-row][data-type="file"]') ?? [],
@@ -219,7 +253,7 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
       row?.scrollIntoView({ block: 'center' });
     }, 0);
     return () => clearTimeout(t);
-  }, [expanded, filterQuery, rowToRestore, tree]);
+  }, [expanded, filterQuery, rootQuery.isPending, rowToRestore]);
 
   // ---------------------------------------------------------------------------
   // Handlers
@@ -319,6 +353,7 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
 
   // On mobile, right panel (file view) only slides in when a file is selected.
   const mobileShowRight = !!filePath;
+  const hasFilter = !!filterQuery.trim();
 
   // ---------------------------------------------------------------------------
   // Render
@@ -443,12 +478,12 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
 
           {/* File tree */}
           <div ref={treeRef} onKeyDown={handleTreeKeyDown} className="min-h-0 flex-1 overflow-y-auto py-1">
-            {treeError && (
+            {!hasFilter && treeError && (
               <div className="px-4 py-3 font-sans text-[12px] text-health-error">
                 {treeError instanceof Error ? treeError.message : String(treeError)}
               </div>
             )}
-            {!tree && !treeError && (
+            {!hasFilter && treeLoading && !treeError && (
               <div className="animate-pulse py-1">
                 {([0, 0, 1, 1, 0, 2, 1] as const).map((depth, i) => (
                   <div
@@ -465,32 +500,61 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
                 ))}
               </div>
             )}
-            {tree && tree.nodes.length === 0 && (
+            {!hasFilter && !treeLoading && !treeError && rootEntries.length === 0 && (
               <div className="px-4 py-3 font-sans text-[12px] text-text-subtle">
-                No tracked files.
+                No files.
               </div>
             )}
-            {tree && !filterQuery && <TreeSummary nodes={tree.nodes} />}
-            {tree?.nodes.map((node) => (
-              <TreeRow
-                key={node.path}
-                node={node}
+            {!hasFilter && !treeLoading && !treeError && !rootQuery.hasNextPage && (
+              <TreeSummary nodes={rootEntries} />
+            )}
+            {!hasFilter && !treeLoading && !treeError && (
+              <KbDirectoryRows
+                id={id}
+                path=""
                 depth={0}
                 expanded={expanded}
                 selectedPath={filePath ?? rowToRestore}
-                filterQuery={filterQuery || undefined}
                 now={now}
                 onToggleDir={toggleDir}
                 onSelectFile={selectFile}
               />
-            ))}
-            {/* Filter zero-results notice */}
-            {filterQuery && tree && tree.nodes.length > 0 &&
-              tree.nodes.every((n) => !matchesFilter(n, filterQuery)) && (
-                <div className="px-4 py-3 font-sans text-[12px] text-text-subtle">
-                  No files match "{filterQuery}".
-                </div>
-              )}
+            )}
+            {hasFilter && (searchQuery !== filterQuery.trim() || searchResult.isPending) && (
+              <div className="px-4 py-3 font-sans text-[12px] text-text-subtle">Searching…</div>
+            )}
+            {hasFilter && searchResult.error && searchQuery === filterQuery.trim() && (
+              <div className="px-4 py-3 font-sans text-[12px] text-health-error">
+                {searchResult.error instanceof Error ? searchResult.error.message : String(searchResult.error)}
+              </div>
+            )}
+            {hasFilter && searchQuery === filterQuery.trim() && searchResult.data && (
+              <>
+                {filteredTree.map((node) => (
+                  <TreeRow
+                    key={node.path}
+                    node={node}
+                    depth={0}
+                    expanded={expanded}
+                    selectedPath={filePath ?? rowToRestore}
+                    filterQuery={searchQuery}
+                    now={now}
+                    onToggleDir={toggleDir}
+                    onSelectFile={selectFile}
+                  />
+                ))}
+                {filteredTree.length === 0 && (
+                  <div className="px-4 py-3 font-sans text-[12px] text-text-subtle">
+                    No files match "{filterQuery}".
+                  </div>
+                )}
+                {searchResult.data.truncated && (
+                  <div className="px-4 py-3 font-sans text-[11px] text-text-subtle">
+                    Showing a limited result set. Refine the filter to search less of this Knowledge Base.
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </nav>
 

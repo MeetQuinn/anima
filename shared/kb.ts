@@ -38,9 +38,8 @@ export interface KbTreeNode {
   name: string;
   path: string; // repo-relative POSIX
   type: 'dir' | 'file';
-  // Last modification, ISO 8601 UTC. Files carry their lstat mtime; dirs carry
-  // the max of their descendants (GitHub-style "latest change inside"), so a
-  // dir with no dated descendants has none.
+  // Last modification, ISO 8601 UTC. Legacy full trees may bubble a directory's
+  // latest descendant mtime; paged directory entries omit directory mtimes.
   mtime?: string;
   children?: KbTreeNode[];
 }
@@ -48,6 +47,21 @@ export interface KbTreeNode {
 export interface KbTree {
   kb: KbView;
   nodes: KbTreeNode[];
+}
+
+export interface KbDirectoryPage {
+  kb: KbView;
+  path: string; // repo-relative POSIX; empty string is the KB root
+  entries: KbTreeNode[]; // immediate children only
+  nextCursor?: string;
+}
+
+export interface KbSearchResult {
+  kb: KbView;
+  query: string;
+  matches: KbTreeNode[]; // flat file matches
+  scanned: number;
+  truncated: boolean;
 }
 
 export interface KbFile {
