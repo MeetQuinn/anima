@@ -14,16 +14,16 @@ import {
 } from '../runtime/delivery-prompt.js';
 import {
   feishuChatAttentionNote,
-  FOLLOWUP_NOTE,
   providerCrashRetryNote,
   RUNTIME_RESTART_CONTINUATION_NOTE,
   slackChannelAttentionNote,
   slackThreadAttentionNote,
 } from '../runtime/delivery-notes.js';
 import { resolveAnimaReferencePathsFromRoots } from '../runtime/anima-reference.js';
-import { runtimeEnv } from '../runtime/runtime-bridge.js';
+import { AgentRuntimeBridge, runtimeEnv } from '../runtime/runtime-bridge.js';
 import { buildAnimaRuntimeProfile } from '../runtime/standing-prompt.js';
 import { makeSlackEvent } from './helpers/slack.js';
+import { ControlledRuntime } from './helpers/runtime-worker.js';
 import type { InboxFileMeta } from '../../shared/inbox.js';
 import type { Session } from '../storage/schema/session.store.js';
 
@@ -82,6 +82,39 @@ test('buildCodeAgentDeliveryPrompt includes the Slack message envelope for threa
   assert.doesNotMatch(text, /Reply command/);
 });
 
+test('runtime bridge preserves the complete mid-turn message in a follow-up prompt', async () => {
+  const activeEvent = makeSlackEvent({
+    channelId: 'C-team',
+    eventId: 'evt-active',
+    teamId: 'T-demo',
+    text: 'active task',
+    threadTs: '1770000020.000001',
+    ts: '1770000010.000001',
+    userId: 'U1',
+  });
+  const followupEvent = makeSlackEvent({
+    channelId: 'C-team',
+    eventId: 'evt-followup',
+    teamId: 'T-demo',
+    text: 'mid-turn body sentinel',
+    threadTs: '1770000020.000001',
+    ts: '1770000011.000001',
+    userId: 'U2',
+  });
+  const followup = await new AgentRuntimeBridge(new ControlledRuntime()).followupInput({
+    activeContext: buildContext(activeEvent),
+    context: buildContext(followupEvent),
+  });
+  const expectedDeliveryPrompt = buildCodeAgentDeliveryPrompt(followupEvent);
+
+  assert.ok(followup.prompt.includes(expectedDeliveryPrompt));
+  assert.match(
+    followup.prompt,
+    /\[channel=C-team thread_ts=1770000020\.000001 message_ts=1770000011\.000001 time=[^ \]]+ user_id=U2\]/,
+  );
+  assert.match(followup.prompt, /mid-turn body sentinel/);
+});
+
 test('buildCodeAgentDeliveryPrompt renders restart resumes as a short system continuation', () => {
   const event = makeSlackEvent({
     channelId: 'D-user',
@@ -109,7 +142,6 @@ test('buildCodeAgentDeliveryPrompt renders restart resumes as a short system con
 });
 
 test('delivery prompt module exposes named provider-facing Anima builders', () => {
-  assert.equal(FOLLOWUP_NOTE, 'Anima note: this message arrived while you were mid-task. Finish or pause your current work as you judge best, but address it before the turn ends: an unanswered mid-turn message is a dropped one. If it is heavy and unrelated, record it as a task before this turn ends.');
   assert.equal(RUNTIME_RESTART_CONTINUATION_NOTE, [
     'Anima note: the runtime restarted while this task was in progress.',
     'Continue the same task from the current session; do not repeat completed external side effects.',
