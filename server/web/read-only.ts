@@ -144,16 +144,25 @@ export const GOVERNED_ROUTES: readonly GovernedRoute[] = [
 export const MACHINE_WRITE_ENV = 'ANIMA_ALLOW_MACHINE_WRITES';
 
 /**
- * Rides on EVERY governed-route response, including refusals and including the
- * handler's own 4xx.
+ * Rides on every governed-route response THAT REACHES THIS GUARD — including the
+ * refusal and including the handler's own 4xx.
  *
- * That last part is the whole design. The safe way to probe a guard is the route whose
- * red path is harmless — `POST /api/filesystem/mkdir` with a parent that does not
- * exist, which 404s at `realpath()` before it writes anything. Because this header is
- * set in the hook, it rides out on that 404. So a machine's machine-write mode can be
- * read WITHOUT performing a single machine action.
+ * ⚠️ THE QUALIFIER IS THE CONTRACT, NOT A FOOTNOTE. Dashboard auth is a `preHandler`
+ * registered BEFORE this one, so an UNAUTHENTICATED governed request is answered `401`
+ * and this hook never runs: no header. An older build that predates this cut: no header.
+ * An ungoverned path: no header, by design.
  *
- * Step 2 above needs exactly that: verify live is opted in, without touching live.
+ * So an ABSENT header is not a pass and not a fail — it means the probe never reached
+ * the guard. The only affirmative reading is the value itself. Anyone verifying a
+ * machine must require that they positively READ `explicit`; "we didn't see
+ * implicit-default" is the same nothing a dead guard prints. (@milo reproduced the 401
+ * case on this PR; I had written "EVERY governed response", which was false.)
+ *
+ * Given that, the design still holds: the safe probe (`POST /api/filesystem/mkdir` at a
+ * nonexistent parent, which 404s at `realpath()` before writing anything) carries the
+ * header out on its 404, so an AUTHENTICATED caller can read a running machine's mode
+ * with ZERO machine action. That is what step 2 needs: verify live is opted in, without
+ * making live write.
  */
 export const MACHINE_WRITE_HEADER = 'x-anima-machine-writes';
 
@@ -248,15 +257,35 @@ function defaultWarn(message: string): void {
   process.stderr.write(`${message}\n`);
 }
 
+/**
+ * ⚠️ SAY ONLY WHAT THIS HOOK ACTUALLY KNOWS.
+ *
+ * This runs in `preHandler` — BEFORE the handler. At this point the request has been
+ * ADMITTED to a machine-scoped route. Whether it goes on to write anything is not known
+ * here and often it does not: the safe probe reaches `POST /api/filesystem/mkdir` and
+ * 404s at `realpath()` having written nothing.
+ *
+ * The first draft said "MACHINE WRITE PERMITTED ... so it wrote machine-scoped state".
+ * @milo ran the safe probe against it: 404, nothing written, and stderr announcing a
+ * write. **An instrument that overstates in the alarming direction gets disbelieved, and
+ * then it is worth less than no instrument** — the next person to see this line on a
+ * harmless 404 learns that the warning cries wolf, and the census dies right there.
+ *
+ * So: admission, which is true of every line this prints. The census counts CALLERS THAT
+ * WOULD BE REFUSED AFTER THE FLIP, and admission is exactly that set.
+ */
 function implicitDefaultWarning(route: GovernedRoute): string {
   return (
     // `route.id` is already "METHOD /path" — do not prefix the method again.
-    `[anima] MACHINE WRITE PERMITTED BY IMPLICIT DEFAULT: ${route.id}. ` +
-    `This process did not set ${MACHINE_WRITE_ENV}, and it did not set ${READ_ONLY_ENV} either, ` +
-    'so it wrote machine-scoped state because nobody said not to. That default is being ' +
-    'inverted (issue #524): once it flips, this exact request becomes a 403. If this process ' +
-    `legitimately needs to write the machine, set ${MACHINE_WRITE_ENV}=1 on it NOW, while the ` +
-    'permission is still free. If it does not, this line is the bug.'
+    `[anima] ADMITTED TO A MACHINE-SCOPED ROUTE BY IMPLICIT DEFAULT: ${route.id}. ` +
+    `This process set neither ${MACHINE_WRITE_ENV} nor ${READ_ONLY_ENV}, so the request was ` +
+    'let through to a handler that MAY write state outside ANIMA_HOME — not because anyone ' +
+    'allowed it, but because nobody refused it. (Whether this particular request went on to ' +
+    'write anything is not known at this point, and is not the question: the question is that ' +
+    'it was not stopped.) That default is being inverted (issue #524): once it flips, this ' +
+    `exact request becomes a 403. If this process legitimately needs to write the machine, set ` +
+    `${MACHINE_WRITE_ENV}=1 on it NOW, while the permission is still free. If it does not, ` +
+    'this line is the bug.'
   );
 }
 

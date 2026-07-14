@@ -109,11 +109,19 @@ function inertApp(readOnly: boolean, authenticated = true, extra: InertOptions =
  * calling the real one. (Probe a guard with the route whose red path is most harmless.
  * Never with the most dangerous one. — @iris, after I did exactly that.)
  */
-function safeProbeApp(readOnly: boolean, allowMachineWrites: boolean): FastifyInstance {
+function safeProbeApp(
+  readOnly: boolean,
+  allowMachineWrites: boolean,
+  extra: { warnings?: string[]; authenticated?: boolean } = {},
+): FastifyInstance {
   const fastify = Fastify({ logger: false });
   registerErrorHandler(fastify);
-  registerDashboardAuthGuard(fastify, fakeAuth(true));
-  registerReadOnlyGuard(fastify, { readOnly, allowMachineWrites, warn: () => {} });
+  registerDashboardAuthGuard(fastify, fakeAuth(extra.authenticated ?? true));
+  registerReadOnlyGuard(fastify, {
+    readOnly,
+    allowMachineWrites,
+    warn: (message) => extra.warnings?.push(message),
+  });
   fastify.post('/api/filesystem/mkdir', async () => {
     throw new KbError(404, 'path_not_found');
   });
@@ -422,6 +430,48 @@ test('#524 the mode rides on every governed response, so a machine can be asked 
 });
 
 /**
+ * THE HEADER'S REAL BOUNDARY: it rides responses that REACH THE GUARD, not "every
+ * governed response". (@milo, HOLD on #536 — he reproduced the 401 independently.)
+ *
+ * Dashboard auth is a `preHandler` registered BEFORE the read-only guard, so an
+ * unauthenticated governed request is answered `401` and the mode hook never runs. That
+ * ordering is CORRECT and load-bearing (it is what stops the refusal leaking the route
+ * inventory to a caller with no credentials) — so the header contract must be written to
+ * match it, not the other way round.
+ *
+ * The consequence is the dangerous part, and it is why this is asserted rather than
+ * mentioned: **an absent header is not a pass.** Unauthenticated, an older build, or a
+ * typo'd path all print the same nothing — and that nothing is indistinguishable from a
+ * healthy guard unless the verifier requires a POSITIVE read of `explicit`. "We didn't
+ * see implicit-default" is what a guard that never ran also looks like.
+ */
+test('#524 the mode header is absent on 401 and present once authenticated — absence is NOT a pass', async () => {
+  const unauthenticated = inertApp(false, false, { allowMachineWrites: true });
+  await unauthenticated.ready();
+
+  for (const route of GOVERNED_ROUTES) {
+    const response = await unauthenticated.inject({ method: route.method, url: concretePathOf(route) });
+    assert.equal(response.statusCode, 401, `${route.id}: auth answers first, by design`);
+    assert.equal(
+      response.headers[MACHINE_WRITE_HEADER],
+      undefined,
+      'the hook never ran, so there is no mode to report — a verifier must not read this as safe',
+    );
+  }
+  await unauthenticated.close();
+
+  // POSITIVE CONTROL. Without this, the assertion above would also pass for a build that
+  // never sets the header at all — i.e. the exact failure it is meant to catch.
+  const authenticated = inertApp(false, true, { allowMachineWrites: true });
+  await authenticated.ready();
+  for (const route of GOVERNED_ROUTES) {
+    const response = await authenticated.inject({ method: route.method, url: concretePathOf(route) });
+    assert.equal(response.headers[MACHINE_WRITE_HEADER], 'explicit', `${route.id}: reachable ⇒ the mode is reported`);
+  }
+  await authenticated.close();
+});
+
+/**
  * THE LOAD-BEARING TEST OF THIS CUT.
  *
  * The whole point of putting the mode in a HEADER rather than a body is that the header
@@ -503,6 +553,46 @@ test('#524 implicit-default WARNS — the permission we are deleting is never gr
   await fastify.inject({ method: 'POST', url: '/api/agents' });
   assert.equal(warnings.length, 2);
   assert.match(warnings[1] ?? '', /POST \/api\/agents/);
+
+  await fastify.close();
+});
+
+/**
+ * THE WARNING MUST NOT CLAIM AN ACT IT CANNOT OBSERVE. (@milo, HOLD on #536.)
+ *
+ * It fires in `preHandler`, before the handler. My first draft said the process "wrote
+ * machine-scoped state" — and @milo ran the safe probe at it: 404, nothing written, and
+ * stderr announcing a write. **An instrument that overstates in the alarming direction
+ * gets disbelieved, and then it is worth less than no instrument.** The next person who
+ * sees it cry wolf on a harmless 404 stops reading it, and the census dies.
+ *
+ * The claim it CAN make is admission — true of every line it prints, and exactly the set
+ * the flip will start refusing.
+ */
+test('#524 the implicit-default warning claims ADMISSION, not a write — it still fires on a 404 that wrote nothing', async () => {
+  const warnings: string[] = [];
+  const fastify = safeProbeApp(false, false, { warnings });
+  await fastify.ready();
+
+  const response = await fastify.inject({
+    method: 'POST',
+    url: '/api/filesystem/mkdir',
+    payload: { parent: '/nonexistent-anima-read-only-probe', name: 'probe' },
+  });
+
+  // The handler refused on its own terms, before writing. NOTHING was written.
+  assert.equal(response.statusCode, 404);
+  assert.deepEqual(response.json(), { error: 'path_not_found' });
+
+  // And the warning still fires — admission is what it counts, and this request WAS
+  // admitted. It is a caller that the flip will start refusing.
+  assert.equal(warnings.length, 1, 'the census counts admissions, so a 404 admission still counts');
+  const warning = warnings[0] ?? '';
+  assert.match(warning, /ADMITTED TO A MACHINE-SCOPED ROUTE/);
+
+  // But it must NOT assert that a write happened, because on this exact request none did.
+  assert.doesNotMatch(warning, /\bwrote\b/i, 'the hook cannot observe a write, so it must not claim one');
+  assert.doesNotMatch(warning, /MACHINE WRITE PERMITTED/i, 'the original overstatement, kept red on purpose');
 
   await fastify.close();
 });
