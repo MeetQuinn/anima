@@ -4,8 +4,8 @@ export interface SlackMessageTextInput {
 }
 
 // Slack's top-level text is an accessibility/notification fallback. For rich
-// messages it can be shorter than the body Slack renders from blocks, so use
-// blocks only when every block is a supported message-content block.
+// messages it can be shorter than the body Slack renders from blocks, so
+// preserve every renderable block and degrade unsupported nodes locally.
 export function slackVisibleMessageText(input: SlackMessageTextInput): string | undefined {
   return slackMessageTextFromBlocks(input.blocks) ?? input.text;
 }
@@ -15,28 +15,38 @@ export function slackMessageTextFromBlocks(blocks: unknown): string | undefined 
   const rendered: string[] = [];
   for (const block of blocks) {
     const text = renderBlock(block);
-    if (text === undefined) return undefined;
     if (text.length > 0) rendered.push(text);
   }
   return rendered.length > 0 ? rendered.join('\n\n') : undefined;
 }
 
-function renderBlock(value: unknown): string | undefined {
+function renderBlock(value: unknown): string {
   const block = record(value);
-  if (!block) return undefined;
-  if (block['type'] === 'markdown') return stringField(block, 'text');
-  if (block['type'] === 'rich_text') return renderRichTextElements(block['elements']);
-  if (block['type'] === 'table') return renderTable(block['rows']);
-  return undefined;
+  if (!block) return unsupported('block', value);
+  switch (block['type']) {
+    case 'actions':
+      return '';
+    case 'divider':
+      return '---';
+    case 'header':
+      return readableNodeText(block) ?? unsupported('block', block);
+    case 'markdown':
+      return stringField(block, 'text') ?? unsupported('block', block);
+    case 'rich_text':
+      return renderRichTextElements(block['elements']);
+    case 'table':
+      return renderTable(block['rows']);
+    default:
+      return readableNodeText(block) ?? unsupported('block', block);
+  }
 }
 
-function renderRichTextElements(value: unknown): string | undefined {
-  if (!Array.isArray(value)) return undefined;
+function renderRichTextElements(value: unknown): string {
+  if (!Array.isArray(value)) return unsupported('rich text element', value);
   let output = '';
   let previousWasBlock = false;
   for (const element of value) {
     const text = renderRichTextElement(element);
-    if (text === undefined) return undefined;
     const currentWasBlock = record(element)?.['type'] !== 'rich_text_section';
     if (
       output.length > 0
@@ -52,9 +62,9 @@ function renderRichTextElements(value: unknown): string | undefined {
   return output;
 }
 
-function renderRichTextElement(value: unknown): string | undefined {
+function renderRichTextElement(value: unknown): string {
   const element = record(value);
-  if (!element) return undefined;
+  if (!element) return unsupported('rich text element', value);
   switch (element['type']) {
     case 'rich_text_section':
       return renderInlineElements(element['elements']);
@@ -62,31 +72,29 @@ function renderRichTextElement(value: unknown): string | undefined {
       return renderList(element);
     case 'rich_text_preformatted': {
       const text = renderInlineElements(element['elements']);
-      return text === undefined ? undefined : `\`\`\`\n${text}\n\`\`\``;
+      return `\`\`\`\n${text}\n\`\`\``;
     }
     case 'rich_text_quote': {
       const text = renderInlineElements(element['elements']);
-      return text === undefined ? undefined : text.split('\n').map((line) => `> ${line}`).join('\n');
+      return text.split('\n').map((line) => `> ${line}`).join('\n');
     }
     default:
-      return undefined;
+      return readableNodeText(element) ?? unsupported('rich text element', element);
   }
 }
 
-function renderInlineElements(value: unknown): string | undefined {
-  if (!Array.isArray(value)) return undefined;
+function renderInlineElements(value: unknown): string {
+  if (!Array.isArray(value)) return unsupported('inline element', value);
   const parts: string[] = [];
   for (const element of value) {
-    const text = renderInlineElement(element);
-    if (text === undefined) return undefined;
-    parts.push(text);
+    parts.push(renderInlineElement(element));
   }
   return parts.join('');
 }
 
-function renderInlineElement(value: unknown): string | undefined {
+function renderInlineElement(value: unknown): string {
   const element = record(value);
-  if (!element) return undefined;
+  if (!element) return unsupported('inline element', value);
   const type = element['type'];
   let text: string | undefined;
   switch (type) {
@@ -105,9 +113,8 @@ function renderInlineElement(value: unknown): string | undefined {
     }
     case 'link': {
       const url = stringField(element, 'url');
-      if (!url) return undefined;
       const label = stringField(element, 'text');
-      text = label && label !== url ? `<${url}|${label}>` : `<${url}>`;
+      if (url) text = label && label !== url ? `<${url}|${label}>` : `<${url}>`;
       break;
     }
     case 'emoji': {
@@ -132,14 +139,16 @@ function renderInlineElement(value: unknown): string | undefined {
       text = stringField(element, 'value');
       break;
     default:
-      return undefined;
+      text = readableNodeText(element);
+      break;
   }
-  return text === undefined ? undefined : applyStyle(text, element['style']);
+  const rendered = text ?? readableNodeText(element) ?? unsupported('inline element', element);
+  return applyStyle(rendered, element['style']);
 }
 
-function renderList(element: Record<string, unknown>): string | undefined {
+function renderList(element: Record<string, unknown>): string {
   const entries = element['elements'];
-  if (!Array.isArray(entries)) return undefined;
+  if (!Array.isArray(entries)) return unsupported('rich text element', element);
   const ordered = element['style'] === 'ordered';
   const indent = typeof element['indent'] === 'number' && Number.isFinite(element['indent'])
     ? Math.max(0, Math.floor(element['indent']))
@@ -148,7 +157,6 @@ function renderList(element: Record<string, unknown>): string | undefined {
   const lines: string[] = [];
   for (let index = 0; index < entries.length; index += 1) {
     const entry = renderRichTextElement(entries[index]);
-    if (entry === undefined) return undefined;
     const marker = ordered ? `${index + 1}. ` : '- ';
     const continuationIndent = `${prefixIndent}${' '.repeat(marker.length)}`;
     const [first = '', ...rest] = entry.split('\n');
@@ -158,15 +166,17 @@ function renderList(element: Record<string, unknown>): string | undefined {
   return lines.join('\n');
 }
 
-function renderTable(value: unknown): string | undefined {
-  if (!Array.isArray(value) || value.length === 0) return undefined;
+function renderTable(value: unknown): string {
+  if (!Array.isArray(value) || value.length === 0) return unsupported('block', { type: 'table' });
   const rows: string[][] = [];
   for (const rawRow of value) {
-    if (!Array.isArray(rawRow) || rawRow.length === 0) return undefined;
+    if (!Array.isArray(rawRow) || rawRow.length === 0) {
+      rows.push([unsupported('table row', rawRow)]);
+      continue;
+    }
     const row: string[] = [];
     for (const cell of rawRow) {
       const rendered = renderBlock(cell);
-      if (rendered === undefined) return undefined;
       row.push(rendered.replace(/\|/g, '\\|').replace(/\n/g, '<br>'));
     }
     rows.push(row);
@@ -176,6 +186,23 @@ function renderTable(value: unknown): string | undefined {
   const lines = normalized.map((row) => `| ${row.join(' | ')} |`);
   lines.splice(1, 0, `| ${Array<string>(width).fill('---').join(' | ')} |`);
   return lines.join('\n');
+}
+
+function readableNodeText(value: Record<string, unknown>): string | undefined {
+  const directText = stringField(value, 'text');
+  if (directText) return directText;
+  const nestedText = record(value['text']);
+  const nestedTextValue = nestedText && stringField(nestedText, 'text');
+  if (nestedTextValue) return nestedTextValue;
+  const altText = stringField(value, 'alt_text');
+  if (altText) return altText;
+  const url = stringField(value, 'url') ?? stringField(value, 'image_url');
+  return url || undefined;
+}
+
+function unsupported(scope: string, value: unknown): string {
+  const type = record(value)?.['type'];
+  return `[unsupported ${scope}: ${typeof type === 'string' && type.length > 0 ? type : 'unknown'}]`;
 }
 
 function applyStyle(text: string, value: unknown): string {

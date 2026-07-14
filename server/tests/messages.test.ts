@@ -81,6 +81,53 @@ test('Slack visible message text reads a realtime markdown block verbatim', () =
   }), 'Complete markdown body after the fallback cutoff.');
 });
 
+test('Slack visible message text degrades unsupported blocks and elements locally', () => {
+  const prefix = '界'.repeat(1_200);
+  const tail = 'TAIL KEPT after every unsupported node.';
+  const fallback = slackMessageContentForText(`${prefix}\n${tail}`).text;
+  assert.doesNotMatch(fallback, /TAIL KEPT/);
+
+  const text = slackVisibleMessageText({
+    blocks: [
+      richTextBlock([{ type: 'text', text: prefix }]),
+      { type: 'divider' },
+      { type: 'header', text: { type: 'plain_text', text: 'Review findings' } },
+      { type: 'image', alt_text: 'Evidence diagram', image_url: 'https://example.com/evidence.png' },
+      { type: 'future_control_block', elements: [{ type: 'button', value: 'approve' }] },
+      {
+        elements: [
+          {
+            elements: [
+              { type: 'text', text: 'Before inline. ' },
+              { type: 'future_inline', text: 'Unknown inline words. ' },
+              { type: 'link', text: 'Link label without a URL. ' },
+              { type: 'future_opaque_inline', opaque: true },
+              { type: 'text', text: 'After inline.' },
+            ],
+            type: 'rich_text_section',
+          },
+          { type: 'future_rich_text', text: 'Unknown rich-text words.' },
+          {
+            elements: [{ type: 'text', text: tail }],
+            type: 'rich_text_section',
+          },
+        ],
+        type: 'rich_text',
+      },
+    ],
+    text: fallback,
+  });
+
+  assert.match(text ?? '', /^界+/);
+  assert.match(text ?? '', /---/);
+  assert.match(text ?? '', /Review findings/);
+  assert.match(text ?? '', /Evidence diagram/);
+  assert.match(text ?? '', /\[unsupported block: future_control_block\]/);
+  assert.match(text ?? '', /Before inline\. Unknown inline words\. Link label without a URL\. \[unsupported inline element: future_opaque_inline\]After inline\./);
+  assert.match(text ?? '', /Unknown rich-text words\./);
+  assert.match(text ?? '', /TAIL KEPT after every unsupported node\.$/);
+});
+
 test('Slack message unfurl attachments normalize into explicit previews', () => {
   const previews = slackMessagePreviewsFromAttachments([
     {
@@ -113,6 +160,13 @@ test('Slack message unfurl attachments normalize into explicit previews', () => 
 function richTextCell(text: string): object {
   return {
     elements: [{ elements: [{ text, type: 'text' }], type: 'rich_text_section' }],
+    type: 'rich_text',
+  };
+}
+
+function richTextBlock(elements: object[]): object {
+  return {
+    elements: [{ elements, type: 'rich_text_section' }],
     type: 'rich_text',
   };
 }
