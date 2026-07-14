@@ -242,26 +242,17 @@ export class KbService {
     const relPath = normalizeDirectoryPath(rawPath);
     const dirPath = await this.resolveVisibleDirectory(kb, relPath, filter);
     const offset = directoryCursorOffset(rawCursor);
-    const page: Array<{ name: string; path: string; type: 'dir' | 'file' }> = [];
-    let rawIndex = 0;
-    let pageEndOffset = offset;
-    let hasMore = false;
-    const dir = await opendir(dirPath);
-    for await (const entry of dir) {
-      rawIndex += 1;
-      if (rawIndex <= offset) continue;
+    const visibleEntries: Array<{ name: string; path: string; type: 'dir' | 'file' }> = [];
+    for (const entry of await readdir(dirPath, { withFileTypes: true })) {
       const type = entry.isDirectory() ? 'dir' : entry.isFile() || entry.isSymbolicLink() ? 'file' : undefined;
       if (!type) continue;
       const path = relPath ? `${relPath}/${entry.name}` : entry.name;
       if (!this.isVisiblePath(path, type === 'dir', filter)) continue;
-      if (page.length >= DIRECTORY_PAGE_SIZE) {
-        hasMore = true;
-        break;
-      }
-      page.push({ name: entry.name, path, type });
-      pageEndOffset = rawIndex;
+      visibleEntries.push({ name: entry.name, path, type });
     }
-    page.sort(compareDirectoryEntries);
+    visibleEntries.sort(compareDirectoryEntries);
+    const page = visibleEntries.slice(offset, offset + DIRECTORY_PAGE_SIZE);
+    const nextOffset = offset + page.length;
     const nodes = await Promise.all(page.map(async (entry): Promise<KbTreeNode> => {
       const entryStat = await lstat(join(kb.path, entry.path)).catch(() => undefined);
       return {
@@ -273,7 +264,7 @@ export class KbService {
       kb: kbView(kb),
       path: relPath,
       entries: nodes,
-      ...(hasMore ? { nextCursor: encodeDirectoryCursor(pageEndOffset) } : {}),
+      ...(nextOffset < visibleEntries.length ? { nextCursor: encodeDirectoryCursor(nextOffset) } : {}),
     };
   }
 
@@ -501,7 +492,9 @@ function compareDirectoryEntries(
   b: { name: string; type: 'dir' | 'file' },
 ): number {
   if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
-  return a.name.toLocaleLowerCase().localeCompare(b.name.toLocaleLowerCase());
+  const foldedOrder = a.name.toLocaleLowerCase().localeCompare(b.name.toLocaleLowerCase());
+  if (foldedOrder !== 0) return foldedOrder;
+  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 }
 
 function encodeDirectoryCursor(offset: number): string {

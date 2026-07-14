@@ -319,6 +319,11 @@ test('kb directory pages and file reads stay bounded when an unrelated subtree i
         ),
       );
     }
+    const lateDirectories = Array.from(
+      { length: 12 },
+      (_, index) => `dir-${String(index).padStart(3, '0')}`,
+    );
+    await Promise.all(lateDirectories.map((name) => mkdir(join(hugeDir, name))));
 
     await withServer(homeDir, async (base) => {
       const file = await fetch(`${base}/api/kbs/test/file?path=README.md`);
@@ -354,10 +359,14 @@ test('kb directory pages and file reads stay bounded when an unrelated subtree i
       assert.equal(secondPage.status, 200);
       const secondBody = (await secondPage.json()) as { entries: Array<{ name: string }> };
       assert.equal(secondBody.entries.length, 250);
-      assert.equal(
-        secondBody.entries.some((entry) => firstBody.entries.some((first) => first.name === entry.name)),
-        false,
-        'cursor advances past the first page',
+      const expectedNames = [
+        ...lateDirectories,
+        ...Array.from({ length: 5_100 }, (_, index) => `entry-${String(index).padStart(5, '0')}.txt`),
+      ];
+      assert.deepEqual(
+        [...firstBody.entries, ...secondBody.entries].map((entry) => entry.name),
+        expectedNames.slice(0, 500),
+        'pages concatenate into one globally sorted directory listing',
       );
 
       const search = await fetch(`${base}/api/kbs/test/search?q=entry`);
