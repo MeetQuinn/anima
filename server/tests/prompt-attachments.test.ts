@@ -522,6 +522,22 @@ test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack t
   assert.doesNotMatch(text, /\$ANIMA_CHANNEL|\$ANIMA_THREAD/);
 });
 
+test('buildAnimaRuntimeProfile treats silence as a complete team response', () => {
+  const text = buildAnimaRuntimeProfile({
+    displayName: 'Iris',
+    role: 'Product PM for prioritization.',
+    transports: { feishu: false, slack: true },
+  });
+
+  assert.match(text, /Coordinate, don't crowd\./);
+  assert.match(text, /Collaboration means adding signal, not proving that you were present\./);
+  assert.match(text, /If you decide to reply, your reply only exists if it goes out through an `anima message` send/);
+  assert.match(text, /Choosing not to reply is a complete end state; send nothing in that case\./);
+  assert.match(text, /Silence is a legitimate and complete response\./);
+  assert.match(text, /do not send an acknowledgement, agreement, or restatement merely to show receipt/);
+  assert.doesNotMatch(text, /Before you end a turn that a message prompted, verify your response actually went out/);
+});
+
 test('buildAnimaRuntimeProfile tells the agent its own Slack identity when provided', () => {
   const text = buildAnimaRuntimeProfile({
     displayName: 'Iris',
