@@ -299,6 +299,17 @@ test('file send converts Markdown captions but sends entity captions verbatim', 
       const raw = (await activitiesForInboxItemWindow('scout', itemId)).at(-1);
       assert.equal(raw?.payload?.['caption'], entities);
       assert.equal(raw?.payload?.['slackCaption'], undefined);
+
+      // A whitespace-only caption converts to '' and is dropped from the send:
+      // Slack receives NO comment. The audit has to say so. Keying the record on
+      // the converted value's truthiness would skip this case and leave the
+      // payload asserting a caption that was never posted.
+      await send('   ');
+      assert.ok(!('initial_comment' in (completeCalls.at(-1) ?? {})));
+
+      const blank = (await activitiesForInboxItemWindow('scout', itemId)).at(-1);
+      assert.equal(blank?.payload?.['caption'], '   ');
+      assert.equal(blank?.payload?.['slackCaption'], '');
     });
   } finally {
     await slackApi.close();

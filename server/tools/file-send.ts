@@ -197,7 +197,13 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
           // for, not what Slack was told. Record the sent form too, but only
           // when the two differ — on the raw path they are the same string and a
           // duplicate field would just be noise.
-          ...(captionText && captionText !== caption ? { slackCaption: captionText } : {}),
+          //
+          // Keyed on `caption`, not on `captionText`: a whitespace-only caption
+          // converts to '' and is dropped from the send, so '' IS the sent form
+          // and the case that most needs recording. A truthy check on the result
+          // would skip exactly it, leaving the payload claiming a caption Slack
+          // never received — the ambiguity this field exists to kill.
+          ...(caption && captionText !== caption ? { slackCaption: captionText } : {}),
           status: 'sent',
           uploads: enriched,
         },
