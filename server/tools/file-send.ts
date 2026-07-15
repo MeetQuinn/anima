@@ -9,6 +9,7 @@ import type {
   FeishuReceiveIdType,
 } from '../feishu/client.js';
 import { safeFilename } from '../storage/safe-filename.js';
+import { slackCaptionText } from './slack-mrkdwn.js';
 import {
   completeSlackFileUpload,
   type SlackFileClient,
@@ -139,6 +140,12 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
     basePayload,
     effectType: 'slack.file.send',
     op: async () => {
+      // GFM -> Slack mrkdwn, except when the author already typed Slack entity
+      // syntax; see slackCaptionText. Empty result (whitespace-only caption)
+      // falls through as undefined and the file posts with no comment, which is
+      // what it looked like anyway.
+      const captionText = caption ? slackCaptionText(caption) : undefined;
+
       // Step 1+2: per-file upload URL + POST bytes. Each path's pair is
       // independent — Slack docs don't require serialization, so we run them
       // in parallel for batches (N files = 1×RTT instead of N×RTT).
@@ -152,7 +159,7 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
         client,
         files: uploaded.map((file) => ({ fileId: file.fileId })),
         ...(threadTs ? { threadTs } : {}),
-        ...(caption ? { caption } : {}),
+        ...(captionText ? { caption: captionText } : {}),
       });
 
       // Per-file enrichment: permalink + thumbs (image only) for the audit
@@ -185,6 +192,12 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
       return {
         result: undefined,
         completedPayload: {
+          // basePayload records the caption the author typed. Once we transform
+          // it, that alone is a misleading audit trail: it says what was asked
+          // for, not what Slack was told. Record the sent form too, but only
+          // when the two differ — on the raw path they are the same string and a
+          // duplicate field would just be noise.
+          ...(captionText && captionText !== caption ? { slackCaption: captionText } : {}),
           status: 'sent',
           uploads: enriched,
         },

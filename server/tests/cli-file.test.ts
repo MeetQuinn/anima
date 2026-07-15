@@ -214,6 +214,100 @@ test('file send supports multi-file batch with caption and thread', async () => 
   }
 });
 
+// The seam these two cases guard is what reaches Slack, so they assert the
+// outgoing `initial_comment` on the wire. The mock answers 200 to anything and
+// validates nothing — it cannot tell us Slack renders the result. That half is
+// proven by a real-Slack probe, recorded on the PR; this half only locks in
+// which branch each caption takes and what the audit trail records.
+test('file send converts Markdown captions but sends entity captions verbatim', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-file-caption-branch-test-'));
+  const completeCalls: Array<Record<string, unknown>> = [];
+
+  const uploadServer = createServer((_request, response) => {
+    response.writeHead(200);
+    response.end();
+  });
+  uploadServer.listen(0, '127.0.0.1');
+  await once(uploadServer, 'listening');
+  const uploadAddr = uploadServer.address();
+  if (!uploadAddr || typeof uploadAddr === 'string') throw new Error('upload server not bound');
+
+  let getUploadCount = 0;
+  const slackApi = await startSlackApiMock((method, body) => {
+    if (method === 'conversations.info') {
+      return { channel: { id: 'C-product', is_channel: true, name: 'product', name_normalized: 'product' }, ok: true };
+    }
+    if (method === 'files.getUploadURLExternal') {
+      getUploadCount += 1;
+      return {
+        ok: true,
+        file_id: `F-cap-${getUploadCount}`,
+        upload_url: `http://127.0.0.1:${uploadAddr.port}/upload/${getUploadCount}`,
+      };
+    }
+    if (method === 'files.completeUploadExternal') {
+      completeCalls.push(slackRequestBody(body));
+      return { ok: true, files: [{ id: `F-cap-${getUploadCount}` }] };
+    }
+    if (method === 'files.info') {
+      return { ok: true, file: { id: `F-cap-${getUploadCount}`, mimetype: 'image/png', size: 4 } };
+    }
+    throw new Error(`unexpected method ${method}`);
+  });
+
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeSlackAgentConfig(stateDir);
+      const itemId = await ingestSlackThread(stateDir);
+      const png = join(stateDir, 'shot.png');
+      await writeFile(png, Buffer.from('aaaa'));
+
+      const send = async (caption: string) => {
+        const result = await runNode(
+          [cliPath, 'file', 'send', '--channel', 'C-product', '--caption', caption, png],
+          {
+            env: {
+              ...process.env,
+              ANIMA_AGENT_ID: 'scout',
+              ANIMA_HOME: stateDir,
+              ANIMA_INBOX_ITEM_ID: itemId,
+              ANIMA_SLACK_API_URL: slackApi.url,
+            },
+          },
+        );
+        assert.equal(result.status, 0, result.stderr || result.stdout);
+      };
+
+      // The user's original report: Markdown in a long caption showing raw.
+      await send('**bold** and `code`');
+      assert.equal(completeCalls.at(-1)?.['initial_comment'], '​*bold*​ and `code`');
+
+      // Audit keeps the author's input AND records the transformed form that
+      // Slack actually received — the input alone would misdescribe the effect.
+      const converted = (await activitiesForInboxItemWindow('scout', itemId)).at(-1);
+      assert.equal(converted?.payload?.['caption'], '**bold** and `code`');
+      assert.equal(converted?.payload?.['slackCaption'], '​*bold*​ and `code`');
+
+      // #541: a caption carrying Slack's own entity syntax must reach Slack
+      // untouched. Conversion escaped the channel link's `>` and stripped the
+      // labelled URL's brackets, destroying both.
+      const entities = 'cc <@U0B3ZB0NCLA> in <#C0B8U0ZR2AW|code-review>: <https://example.com|Docs>';
+      await send(entities);
+      assert.equal(completeCalls.at(-1)?.['initial_comment'], entities);
+
+      // Nothing was transformed, so there is no second form to record.
+      const raw = (await activitiesForInboxItemWindow('scout', itemId)).at(-1);
+      assert.equal(raw?.payload?.['caption'], entities);
+      assert.equal(raw?.payload?.['slackCaption'], undefined);
+    });
+  } finally {
+    await slackApi.close();
+    uploadServer.close();
+    await once(uploadServer, 'close');
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('file send accepts caption from stdin when --caption is not passed', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-file-stdin-caption-test-'));
   const completeCalls: Array<Record<string, unknown>> = [];
