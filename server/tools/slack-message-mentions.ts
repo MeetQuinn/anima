@@ -32,6 +32,17 @@ export type SlackMentionResolutionFailure = {
   type: 'channel' | 'user';
 };
 
+export function slackTextAuditPayload(
+  slackText: SlackTextForPostMessage,
+  originalText: string,
+): Record<string, unknown> {
+  return {
+    ...(slackText.resolved.length > 0 ? { resolvedMentions: slackText.resolved } : {}),
+    ...(slackText.text !== originalText ? { slackText: slackText.text } : {}),
+    ...(slackText.unresolved.length > 0 ? { unresolvedMentions: slackText.unresolved } : {}),
+  };
+}
+
 const BROADCAST_MENTION_HANDLES = new Set(['channel', 'everyone', 'here']);
 const LITERAL_READABLE_MENTION_HANDLES = new Set(['mention', 'mentions']);
 const SLACK_USER_ID_HANDLE = /^u[A-Z0-9]+$/i;
