@@ -74,7 +74,6 @@ const groups = {
     'slack-files.test.js',
     'slack-ingest.test.js',
     'slack-message-previews.test.js',
-    'slack-mrkdwn.test.js',
     'slack-shortcuts.test.js',
     'slack.test.js',
     'socket-mode-predicate.test.js',

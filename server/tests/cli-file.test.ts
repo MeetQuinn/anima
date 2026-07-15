@@ -151,9 +151,6 @@ test('file send supports multi-file batch with caption and thread', async () => 
     if (method === 'conversations.info') {
       return { channel: { id: 'C-product', is_channel: true, name: 'product', name_normalized: 'product' }, ok: true };
     }
-    if (method === 'conversations.members') {
-      return { members: ['U123'], ok: true };
-    }
     if (method === 'files.getUploadURLExternal') {
       getUploadCount += 1;
       return {
@@ -183,19 +180,7 @@ test('file send supports multi-file batch with caption and thread', async () => 
       await writeFile(b, Buffer.from('bbbb'));
 
       const send = await runNode(
-        [
-          cliPath,
-          'file',
-          'send',
-          '--channel',
-          'C-product',
-          '--thread-ts',
-          '1770000200.000001',
-          '--caption',
-          '**see** `attached`; cc @U123',
-          a,
-          b,
-        ],
+        [cliPath, 'file', 'send', '--channel', 'C-product', '--thread-ts', '1770000200.000001', '--caption', 'see attached', a, b],
         {
           env: {
             ...process.env,
@@ -211,19 +196,14 @@ test('file send supports multi-file batch with caption and thread', async () => 
 
       assert.equal(completeCalls.length, 1);
       const complete = completeCalls[0]!;
-      assert.equal(Object.hasOwn(complete, 'blocks'), false);
-      assert.equal(complete['initial_comment'], '\u200b*see*\u200b `attached`; cc <@U123>');
+      assert.equal(complete['initial_comment'], 'see attached');
       assert.equal(complete['thread_ts'], '1770000200.000001');
       const files = parseFilesField(complete['files']);
       assert.equal(files.length, 2);
 
       const completed = (await activitiesForInboxItemWindow('scout', itemId)).at(-1);
       assert.equal(completed?.payload?.['fileCount'], 2);
-      assert.equal(completed?.payload?.['caption'], '**see** `attached`; cc @U123');
-      assert.equal(completed?.payload?.['slackText'], '\u200b*see*\u200b `attached`; cc <@U123>');
-      assert.deepEqual(completed?.payload?.['resolvedMentions'], [{ id: 'U123', label: '@U123', type: 'user' }]);
-      assert.equal(completed?.payload?.['messageFormat'], 'mrkdwn');
-      assert.equal(Object.hasOwn(completed?.payload ?? {}, 'blockCount'), false);
+      assert.equal(completed?.payload?.['caption'], 'see attached');
       assert.equal(completed?.payload?.['threadTs'], '1770000200.000001');
     });
   } finally {
@@ -300,7 +280,6 @@ test('file send accepts caption from stdin when --caption is not passed', async 
       // Caption survived shell-quoting hell because it never hit the shell.
       assert.equal(completeCalls.length, 1);
       const complete = completeCalls[0]!;
-      assert.equal(Object.hasOwn(complete, 'blocks'), false);
       assert.equal(complete['initial_comment'], captionWithShellMetachars);
 
       // Audit payload preserves the same caption string.
@@ -311,50 +290,6 @@ test('file send accepts caption from stdin when --caption is not passed', async 
     await slackApi.close();
     uploadServer.close();
     await once(uploadServer, 'close');
-    await rm(stateDir, { force: true, recursive: true });
-  }
-});
-
-test('file send rejects a caption with no displayable Markdown before uploading bytes', async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-file-empty-caption-test-'));
-  let uploadCalls = 0;
-  const slackApi = await startSlackApiMock((method) => {
-    if (method === 'conversations.info') {
-      return { channel: { id: 'C-product', is_channel: true, name: 'product', name_normalized: 'product' }, ok: true };
-    }
-    if (method === 'files.getUploadURLExternal' || method === 'files.completeUploadExternal') {
-      uploadCalls += 1;
-      return { ok: true };
-    }
-    throw new Error(`unexpected method ${method}`);
-  });
-
-  try {
-    await withAnimaHome(stateDir, async () => {
-      await writeSlackAgentConfig(stateDir);
-      const itemId = await ingestSlackThread(stateDir);
-      const localPath = join(stateDir, 'evidence.png');
-      await writeFile(localPath, Buffer.from('img!'));
-
-      const send = await runNode(
-        [cliPath, 'file', 'send', '--channel', 'C-product', '--caption', '   ', localPath],
-        {
-          env: {
-            ...process.env,
-            ANIMA_AGENT_ID: 'scout',
-            ANIMA_HOME: stateDir,
-            ANIMA_INBOX_ITEM_ID: itemId,
-            ANIMA_SLACK_API_URL: slackApi.url,
-          },
-        },
-      );
-
-      assert.notEqual(send.status, 0);
-      assert.match(send.stderr, /caption has no displayable text after Markdown conversion/);
-      assert.equal(uploadCalls, 0);
-    });
-  } finally {
-    await slackApi.close();
     await rm(stateDir, { force: true, recursive: true });
   }
 });

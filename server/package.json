@@ -30,7 +30,6 @@
     "ignore": "^7.0.5",
     "luxon": "^3.7.2",
     "mustache": "^4.2.0",
-    "slackify-markdown": "^4.5.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
