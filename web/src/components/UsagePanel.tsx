@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
 import { ArrowUp, ChevronDown, Copy, RefreshCw, X } from 'lucide-react';
@@ -6,7 +6,6 @@ import {
   applyProviderCliUpdate,
   checkProviderClis,
   fetchProviderUsage,
-  fetchProviderUsageProvider,
 } from '@/api/system';
 import { queryKeys } from '@/lib/query-keys';
 import { useNow } from '@/hooks/useNow';
@@ -15,7 +14,6 @@ import { useProviderCliStatus } from '@/hooks/useProviderCliStatus';
 import type { ProviderCliRow } from '@shared/provider-cli';
 import type {
   ProviderUsageKind,
-  ProviderUsageResponse,
   ProviderUsageRow,
   ProviderUsageWindow,
   ProviderUsageExtra,
@@ -205,23 +203,24 @@ function WindowMeter({ w, now }: { w: ProviderUsageWindow; now: Date }) {
   );
 }
 
+// Refreshing is a panel-level act, not a per-row one: the header's "Refresh
+// providers" re-reads every provider at once, and a second per-row copy of the
+// same verb bought nothing but a lone icon marooned at the right edge of every
+// identity row. Dropped deliberately (totoday, 07-15) so the row can be pure
+// identity: icon + name + plan, account beneath.
 function ProviderUnit({
   globallyLocked = false,
   management,
-  isRefreshing = false,
   now,
   onApply,
   onCopyCommand,
-  onRefresh,
   usage,
 }: {
   globallyLocked?: boolean;
   management: ProviderCliRow;
-  isRefreshing?: boolean;
   now: Date;
   onApply: () => void;
   onCopyCommand: () => void;
-  onRefresh?: () => void;
   usage?: ProviderUsageRow;
 }) {
   const isAvailable = usage?.status === 'available';
@@ -233,11 +232,16 @@ function ProviderUnit({
   const updateLocked = globallyLocked || management.operation.status === 'running';
   const installing = operation?.status === 'running';
   const manualUpdate = !installing && management.updateAvailable && management.updateMode === 'manual';
+  // Both update flavours announce themselves in the attention strip, in the same
+  // words, and only differ in the affordance that follows. Previously `managed`
+  // put a filled button in the identity row while `manual` put a sentence down
+  // here: one concept, two registers, two places to look.
+  const updateOffer = !installing && management.updateAvailable && (canApply || manualUpdate);
   const staleSessions =
     operation?.status === 'succeeded' &&
     runningAgents.some((agent) => agent.runningVersion !== management.installedVersion);
   const versionCheckFailed = management.state === 'error' || Boolean(management.checkError);
-  const needsAttention = installing || operation?.status === 'failed' || manualUpdate || staleSessions;
+  const needsAttention = installing || operation?.status === 'failed' || updateOffer || staleSessions;
   return (
     <div>
       {/* ── Identity row: who it is, what plan, which version. ── */}
@@ -258,39 +262,16 @@ function ProviderUnit({
             </div>
           )}
         </div>
-        {/* `not installed` is reserved for the server's not_installed state:
-            a resolvable binary whose --version fails arrives as state
-            'unknown' with no installedVersion, and must not claim absence. */}
-        <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-subtle">
-          {management.installedVersion
-            ? `v${management.installedVersion}`
-            : management.state === 'not_installed'
-              ? 'not installed'
-              : 'version unknown'}
-        </span>
-        {canApply && (
-          <button
-            type="button"
-            onClick={onApply}
-            disabled={updateLocked}
-            title={management.latestVersion ? `Update to v${management.latestVersion}` : 'Update'}
-            className="flex h-7 items-center gap-1 rounded-sm bg-accent px-2 font-sans text-[10px] font-semibold text-white hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <ArrowUp className="h-3 w-3" />
-            Update
-          </button>
-        )}
-        {onRefresh && (
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={isRefreshing}
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40"
-            aria-label={`Refresh ${management.label}`}
-            title={`Refresh ${management.label}`}
-          >
-            <RefreshCw className={`h-3 w-3 ${isRefreshing ? 'animate-spin' : ''}`} />
-          </button>
+        {/* Exceptions only. A working provider's version number is a fact nobody
+            acts on — "am I current?" is already answered by the Update line — so
+            it demotes to Details and this slot stays empty. What CANNOT go quiet
+            is the abnormal pair: `not installed` is reserved for the server's
+            not_installed state, and a resolvable binary whose --version fails
+            arrives as state 'unknown' and must not claim absence (#520). */}
+        {!management.installedVersion && (
+          <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-subtle">
+            {management.state === 'not_installed' ? 'not installed' : 'version unknown'}
+          </span>
         )}
       </div>
 
@@ -303,21 +284,34 @@ function ProviderUnit({
               {operation.error ?? 'Update failed'}
             </p>
           )}
-          {manualUpdate && (
+          {updateOffer && (
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
               <span className="shrink-0 font-sans text-[11px] text-health-warn">
                 Update available{management.latestVersion ? ` ${management.latestVersion}` : ''}
               </span>
-              {management.manualCommand && (
+              {canApply ? (
                 <button
                   type="button"
-                  onClick={onCopyCommand}
-                  className="flex min-w-0 items-center gap-1.5 text-left font-mono text-[10px] text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-                  title="Copy update command"
+                  onClick={onApply}
+                  disabled={updateLocked}
+                  title={management.latestVersion ? `Update to v${management.latestVersion}` : 'Update'}
+                  className="flex h-6 shrink-0 items-center gap-1 rounded-sm bg-accent px-2 font-sans text-[10px] font-semibold text-white hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  <Copy className="h-3 w-3 shrink-0" />
-                  <span className="truncate">{management.manualCommand}</span>
+                  <ArrowUp className="h-3 w-3" />
+                  Update
                 </button>
+              ) : (
+                management.manualCommand && (
+                  <button
+                    type="button"
+                    onClick={onCopyCommand}
+                    className="flex min-w-0 items-center gap-1.5 text-left font-mono text-[10px] text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                    title="Copy update command"
+                  >
+                    <Copy className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{management.manualCommand}</span>
+                  </button>
+                )
               )}
             </div>
           )}
@@ -358,7 +352,9 @@ function ProviderUnit({
                   ? 'Unreachable'
                   : 'Unavailable'}
           </span>
-          {errorMessage && <p className="font-mono text-[10px] leading-relaxed text-text-subtle">{errorMessage}</p>}
+          {/* Prose, not an identifier: mono is reserved for IDs/paths/timestamps
+              (index.css:8). A wrapped sentence in mono reads as debug output. */}
+          {errorMessage && <p className="font-sans text-[11px] leading-relaxed text-text-subtle">{errorMessage}</p>}
         </div>
       )}
 
@@ -374,6 +370,9 @@ function ProviderUnit({
           )}
         </summary>
         <div className="mt-2 space-y-1.5 border-l border-border-soft pl-3">
+          {/* Demoted out of the identity row, not deleted: still the first thing
+              you want when something looks wrong. */}
+          {management.installedVersion && <DetailRow label="Version" value={`v${management.installedVersion}`} mono />}
           {management.binaryPath && <DetailRow label="Binary" value={management.binaryPath} mono />}
           {management.binaryPath && <DetailRow label="Source" value={installSourceLabel(management.installSource)} />}
           {management.autoUpdatesEnabled !== undefined && (
@@ -432,7 +431,6 @@ function UsageSkeleton() {
 // ---------------------------------------------------------------------------
 
 export default function UsagePanel({ onClose }: Props) {
-  const [refreshingProvider, setRefreshingProvider] = useState<ProviderUsageKind | null>(null);
   const queryClient = useQueryClient();
   const { confirm, modal } = useConfirm();
   const { data: cliData, isLoading: cliLoading, isFetching: cliFetching } = useProviderCliStatus();
@@ -464,26 +462,6 @@ export default function UsagePanel({ onClose }: Props) {
     if (!latest) return row.checkedAt;
     return row.checkedAt > latest ? row.checkedAt : latest;
   }, undefined);
-
-  async function refreshOneProvider(provider: ProviderUsageKind): Promise<void> {
-    if (refreshingProvider) return;
-    setRefreshingProvider(provider);
-    try {
-      const [row, status] = await Promise.all([fetchProviderUsageProvider(provider), checkProviderClis(provider)]);
-      queryClient.setQueryData(queryKeys.providerCliStatus(), status);
-      queryClient.setQueryData<ProviderUsageResponse>(queryKeys.providerUsage(), (current) => {
-        const providers = current?.providers ?? [];
-        const found = providers.some((candidate) => candidate.provider === row.provider);
-        return {
-          providers: found
-            ? providers.map((candidate) => (candidate.provider === row.provider ? row : candidate))
-            : [...providers, row],
-        };
-      });
-    } finally {
-      setRefreshingProvider((current) => (current === provider ? null : current));
-    }
-  }
 
   async function refreshAll(): Promise<void> {
     const [, status] = await Promise.all([refetchUsage(), checkProviderClis()]);
@@ -586,13 +564,11 @@ export default function UsagePanel({ onClose }: Props) {
                       <ProviderUnit
                         globallyLocked={cliData?.upgradeLocked}
                         management={row}
-                        isRefreshing={refreshingProvider === row.provider}
                         now={now}
                         onApply={() => requestApply(row)}
                         onCopyCommand={() => {
                           if (row.manualCommand) void navigator.clipboard.writeText(row.manualCommand);
                         }}
-                        onRefresh={() => void refreshOneProvider(row.provider)}
                         usage={usageByProvider.get(row.provider)}
                       />
                     </div>
