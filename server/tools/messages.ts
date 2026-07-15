@@ -14,8 +14,8 @@ import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
 import { slackMessageContentForText } from './slack-message-format.js';
 import {
   mentionWarningsForTarget,
-  slackTextAuditPayload,
   slackTextForPostMessage,
+  type SlackTextForPostMessage,
 } from './slack-message-mentions.js';
 import {
   slackOutputTarget,
@@ -162,7 +162,7 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
         result: undefined,
         completedPayload: {
           payload,
-          ...slackTextAuditPayload(slackText, text),
+          ...slackTextPayload(slackText, text),
           messageFormat: content.format,
           ...(content.blockCount ? { blockCount: content.blockCount } : {}),
           ...(permalink ? { permalink } : {}),
@@ -342,7 +342,7 @@ export async function runMessageUpdate(
         result: undefined,
         completedPayload: {
           payload,
-          ...slackTextAuditPayload(slackText, text),
+          ...slackTextPayload(slackText, text),
           messageFormat: content.format,
           ...(content.blockCount ? { blockCount: content.blockCount } : {}),
           ...(permalink ? { permalink } : {}),
@@ -419,6 +419,14 @@ function subscriptionPayload(subscription: { kind: string; mutedAt?: string; sub
     kind: subscription.kind,
     ...(subscription.mutedAt ? { mutedAt: subscription.mutedAt } : {}),
     ...(subscription.threadTs ? { threadTs: subscription.threadTs } : {}),
+  };
+}
+
+function slackTextPayload(slackText: SlackTextForPostMessage, originalText: string): Record<string, unknown> {
+  return {
+    ...(slackText.resolved.length > 0 ? { resolvedMentions: slackText.resolved } : {}),
+    ...(slackText.text !== originalText ? { slackText: slackText.text } : {}),
+    ...(slackText.unresolved.length > 0 ? { unresolvedMentions: slackText.unresolved } : {}),
   };
 }
 
