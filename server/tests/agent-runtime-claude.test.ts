@@ -800,6 +800,125 @@ test('claude-code follow-up append waits for compact and tool gates before writi
   }
 });
 
+test('claude-code closes the tool gate before tool.call.started persists', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+    const callsPath = join(stateDir, 'claude-toolgate-input.jsonl');
+    const releasePath = join(stateDir, 'claude-toolgate-release');
+    const fakeClaude = join(stateDir, 'claude');
+    await writeFile(
+      fakeClaude,
+      [
+        '#!/usr/bin/env node',
+        "import { appendFileSync, existsSync } from 'node:fs';",
+        "import readline from 'node:readline';",
+        "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
+        "let count = 0;",
+        "send({ type: 'system', subtype: 'init', session_id: 'claude-toolgate-session', cwd: process.cwd(), claude_code_version: 'test' });",
+        "const rl = readline.createInterface({ input: process.stdin });",
+        "rl.on('line', (line) => {",
+        "  const msg = JSON.parse(line);",
+        "  appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + '\\n');",
+        "  const text = msg.message.content[0].text;",
+        "  count += 1;",
+        "  if (count === 1) {",
+        "    if (!text.includes('first message')) process.exit(52);",
+        "    send({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_only_1', name: 'Read', input: { file_path: '/tmp/gated.md' } }] }, session_id: 'claude-toolgate-session' });",
+        "    const release = setInterval(() => {",
+        "      if (!existsSync(process.env.RELEASE_PATH)) return;",
+        "      clearInterval(release);",
+        "      send({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_only_1', content: 'done', is_error: false }] }, session_id: 'claude-toolgate-session' });",
+        "    }, 10);",
+        "    return;",
+        "  }",
+        "  if (count === 2) {",
+        "    if (!text.includes('second message')) process.exit(53);",
+        "    send({ type: 'assistant', message: { content: [{ type: 'text', text: 'handled tool-gated follow-up' }] }, session_id: 'claude-toolgate-session' });",
+        "    send({ type: 'result', subtype: 'success', result: 'tool gated done', session_id: 'claude-toolgate-session' });",
+        "  }",
+        "});",
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await chmod(fakeClaude, 0o755);
+
+    const config = { agentId: 'anima', stateDir };
+    const firstCtx = await ingestEvent(
+      makeSlackEvent({ channelId: 'D-anima', teamId: 'T-demo', text: 'first message', userId: 'U1' }),
+      config,
+    );
+    const secondCtx = await ingestEvent(
+      makeSlackEvent({ channelId: 'D-anima', teamId: 'T-demo', text: 'second message', userId: 'U1' }),
+      config,
+    );
+
+    runtime = createAgentRuntime({
+      env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath, RELEASE_PATH: releasePath }),
+      kind: 'claude-code',
+    });
+    const firstInput = await runtimeInput(runtime, firstCtx, await loadState());
+    const toolPersistenceReached = deferredSignal();
+    const releaseToolPersistence = deferredSignal();
+    const originalEffects = firstInput.effects;
+    firstInput.effects = {
+      ...originalEffects,
+      async recordToolStarted(payload) {
+        await originalEffects.recordToolStarted(payload);
+        if (payload['providerToolId'] !== 'toolu_only_1') return;
+        toolPersistenceReached.resolve();
+        await releaseToolPersistence.promise;
+      },
+    };
+    const runPromise = runtime.run(firstInput);
+    await waitFor(async () => (await readFile(callsPath, 'utf8')).includes('first message'));
+    await withTimeout(toolPersistenceReached.promise, 2_000);
+
+    let appendSettled = false;
+    const appendPromise = runtime.appendToActiveRun(
+      await runtimeFollowupInput(runtime, firstCtx, secondCtx, await loadState()),
+    ).finally(() => {
+      appendSettled = true;
+    });
+
+    try {
+      await nextImmediate();
+      assert.equal(appendSettled, false);
+      assert.equal((await readFile(callsPath, 'utf8')).trim().split('\n').length, 1);
+
+      releaseToolPersistence.resolve();
+      await nextImmediate();
+      assert.equal(appendSettled, false);
+
+      await writeFile(releasePath, '1', 'utf8');
+      assert.deepEqual(
+        await withTimeout(appendPromise, 2_000),
+        { accepted: true, text: 'appended to Claude stream-json stdin' },
+      );
+      assert.equal((await withTimeout(runPromise, 2_000)).text, 'tool gated done');
+    } finally {
+      releaseToolPersistence.resolve();
+      await writeFile(releasePath, '1', 'utf8');
+      await Promise.allSettled([
+        withTimeout(appendPromise, 2_000),
+        withTimeout(runPromise, 2_000),
+      ]);
+    }
+
+    const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { message: { content: Array<{ text: string }> } });
+    assert.equal(calls.length, 2);
+    assert.match(calls[1]?.message.content[0]?.text ?? '', /second message/);
+    await runtime.close?.();
+    runtime = undefined;
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 function deferredSignal(): { promise: Promise<void>; resolve(): void } {
   let resolve!: () => void;
   const promise = new Promise<void>((settle) => {
