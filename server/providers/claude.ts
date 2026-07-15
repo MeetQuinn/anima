@@ -314,9 +314,17 @@ class ClaudeStreamJsonController {
   }
 
   async acceptStdoutChunk(chunk: string): Promise<void> {
-    this.currentTurn?.input.onActivity?.();
-    await this.currentTurn?.jsonlMapper.accept(chunk);
-    for (const line of this.stdoutLines.accept(chunk)) this.acceptStdoutLine(line);
+    const turn = this.currentTurn;
+    turn?.input.onActivity?.();
+    const values = this.stdoutLines.accept(chunk)
+      .map((line) => this.parseStdoutLine(line))
+      .filter((value): value is Record<string, unknown> => Boolean(value));
+
+    // Close or open the stdin gate from provider output before activity
+    // persistence can expose that output to a concurrent follow-up.
+    for (const value of values) this.updateInputGate(value);
+    await turn?.jsonlMapper.accept(chunk);
+    for (const value of values) this.acceptStdoutValue(value);
   }
 
   async acceptStderrChunk(chunk: string): Promise<void> {
@@ -327,7 +335,7 @@ class ClaudeStreamJsonController {
     await turn.input.effects.recordOutput('stderr', chunk);
   }
 
-  private acceptStdoutLine(line: string): void {
+  private parseStdoutLine(line: string): Record<string, unknown> | undefined {
     if (!line.trim()) return;
     let parsed: unknown;
     try {
@@ -336,13 +344,16 @@ class ClaudeStreamJsonController {
       return;
     }
     if (!isRecord(parsed)) return;
+    return parsed;
+  }
+
+  private acceptStdoutValue(parsed: Record<string, unknown>): void {
     const type = stringField(parsed, 'type');
     if (type === 'system' && stringField(parsed, 'subtype') === 'init') {
       this.startedSession = true;
       const version = stringField(parsed, 'claude_code_version');
       if (version) this.child.setVersion(version);
     }
-    this.updateInputGate(parsed);
     const text = textFromClaudeAssistantEvent(parsed);
     if (text && this.currentTurn) this.currentTurn.lastText = text;
     const result = parsed['result'];
@@ -423,7 +434,6 @@ class ClaudeStreamJsonController {
         if (id) this.activeToolUseIds.delete(id);
       }
     }
-    this.resolveQuiescentWaitersIfReady();
   }
 
   private resolveQuiescentWaitersIfReady(): void {
