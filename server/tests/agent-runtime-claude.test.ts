@@ -1,5 +1,5 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { sleep, waitFor, withTimeout } from './helpers/harness.js';
+import { waitFor, withTimeout } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -654,6 +654,7 @@ test('claude-code follow-up append waits for compact and tool gates before writi
   try {
     await withAnimaHome(stateDir, async () => {
     const callsPath = join(stateDir, 'claude-gated-input.jsonl');
+    const boundaryPath = join(stateDir, 'claude-gated-boundary');
     const releasePath = join(stateDir, 'claude-gated-release');
     const fakeClaude = join(stateDir, 'claude');
     await writeFile(
@@ -675,7 +676,11 @@ test('claude-code follow-up append waits for compact and tool gates before writi
         "    if (!text.includes('first message')) process.exit(52);",
         "    send({ type: 'system', subtype: 'status', status: 'compacting', session_id: 'claude-gated-session' });",
         "    send({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_gate_1', name: 'Read', input: { file_path: '/tmp/gated.md' } }] }, session_id: 'claude-gated-session' });",
-        "    setTimeout(() => send({ type: 'system', subtype: 'compact_boundary', session_id: 'claude-gated-session' }), 50);",
+        "    const boundary = setInterval(() => {",
+        "      if (!existsSync(process.env.BOUNDARY_PATH)) return;",
+        "      clearInterval(boundary);",
+        "      send({ type: 'system', subtype: 'compact_boundary', session_id: 'claude-gated-session' });",
+        "    }, 10);",
         "    const release = setInterval(() => {",
         "      if (!existsSync(process.env.RELEASE_PATH)) return;",
         "      clearInterval(release);",
@@ -716,15 +721,33 @@ test('claude-code follow-up append waits for compact and tool gates before writi
     );
 
     runtime = createAgentRuntime({
-      env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath, RELEASE_PATH: releasePath }),
+      env: runtimeTestEnv(stateDir, {
+        BOUNDARY_PATH: boundaryPath,
+        CALLS_PATH: callsPath,
+        RELEASE_PATH: releasePath,
+      }),
       kind: 'claude-code',
     });
-    const runPromise = runtime.run(await runtimeInput(runtime, firstCtx, await loadState()));
+    const firstInput = await runtimeInput(runtime, firstCtx, await loadState());
+    const gatePersistenceReached = deferredSignal();
+    const releaseGatePersistence = deferredSignal();
+    const originalEffects = firstInput.effects;
+    firstInput.effects = {
+      ...originalEffects,
+      async recordEvent(payload) {
+        await originalEffects.recordEvent(payload);
+        if (payload['eventType'] !== 'claude.compact.started') return;
+        gatePersistenceReached.resolve();
+        await releaseGatePersistence.promise;
+      },
+    };
+    const runPromise = runtime.run(firstInput);
     await waitFor(async () => (await readFile(callsPath, 'utf8')).includes('first message'));
-    await waitFor(async () => {
-      const activities = await activitiesForInboxItemWindow('anima', firstCtx.item.id);
-      return activities.some((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'toolu_gate_1');
-    });
+    await withTimeout(gatePersistenceReached.promise, 1_000);
+    const activitiesAtBarrier = await activitiesForInboxItemWindow('anima', firstCtx.item.id);
+    assert.ok(activitiesAtBarrier.some(
+      (activity) => activity.type === 'runtime.event' && activity.payload?.['eventType'] === 'claude.compact.started',
+    ));
     let appendSettled = false;
     const appendPromise = runtime.appendToActiveRun(
       await runtimeFollowupInput(runtime, firstCtx, secondCtx, await loadState()),
@@ -732,16 +755,38 @@ test('claude-code follow-up append waits for compact and tool gates before writi
       appendSettled = true;
     });
 
-    // settle window: asserting absence of follow-up append completion before the Claude gate is released.
-    await sleep(100);
-    assert.equal(appendSettled, false);
-    assert.equal((await readFile(callsPath, 'utf8')).trim().split('\n').length, 1);
-    await writeFile(releasePath, '1', 'utf8');
-    assert.deepEqual(
-      await withTimeout(appendPromise, 2_000),
-      { accepted: true, text: 'appended to Claude stream-json stdin' },
-    );
-    assert.equal((await withTimeout(runPromise, 2_000)).text, 'gated done');
+    try {
+      await nextImmediate();
+      assert.equal(appendSettled, false);
+      assert.equal((await readFile(callsPath, 'utf8')).trim().split('\n').length, 1);
+
+      releaseGatePersistence.resolve();
+      await writeFile(boundaryPath, '1', 'utf8');
+      await waitFor(async () => {
+        const activities = await activitiesForInboxItemWindow('anima', firstCtx.item.id);
+        return activities.some(
+          (activity) => activity.type === 'runtime.event' && activity.payload?.['eventType'] === 'claude.compact.completed',
+        );
+      });
+      await nextImmediate();
+      assert.equal(appendSettled, false);
+      assert.equal((await readFile(callsPath, 'utf8')).trim().split('\n').length, 1);
+
+      await writeFile(releasePath, '1', 'utf8');
+      assert.deepEqual(
+        await withTimeout(appendPromise, 2_000),
+        { accepted: true, text: 'appended to Claude stream-json stdin' },
+      );
+      assert.equal((await withTimeout(runPromise, 2_000)).text, 'gated done');
+    } finally {
+      releaseGatePersistence.resolve();
+      await writeFile(boundaryPath, '1', 'utf8');
+      await writeFile(releasePath, '1', 'utf8');
+      await Promise.allSettled([
+        withTimeout(appendPromise, 2_000),
+        withTimeout(runPromise, 2_000),
+      ]);
+    }
 
     const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { message: { content: Array<{ text: string }> } });
     assert.equal(calls.length, 2);
@@ -754,6 +799,18 @@ test('claude-code follow-up append waits for compact and tool gates before writi
     await rm(stateDir, { force: true, recursive: true });
   }
 });
+
+function deferredSignal(): { promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+function nextImmediate(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
 
 test('claude-code stream-json input completes when process exits without a result event', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
