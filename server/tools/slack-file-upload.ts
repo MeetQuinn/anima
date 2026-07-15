@@ -1,6 +1,7 @@
 import { readFile, stat as fsStat } from 'node:fs/promises';
 import { basename } from 'node:path';
 import type {
+  FilesCompleteUploadExternalArguments,
   FilesCompleteUploadExternalResponse,
   FilesGetUploadURLExternalResponse,
   FilesInfoResponse,
@@ -13,12 +14,9 @@ export type SlackFileInfo = NonNullable<FilesInfoResponse['file']>;
 
 export interface SlackFileClient {
   files: {
-    completeUploadExternal(input: {
-      channel_id?: string;
-      files: Array<{ id: string; title?: string }>;
-      initial_comment?: string;
-      thread_ts?: string;
-    }): Promise<FilesCompleteUploadExternalResponse>;
+    completeUploadExternal(
+      input: FilesCompleteUploadExternalArguments,
+    ): Promise<FilesCompleteUploadExternalResponse>;
     getUploadURLExternal(input: { filename: string; length: number }): Promise<FilesGetUploadURLExternalResponse>;
     info(input: { file: string }): Promise<FilesInfoResponse>;
   };
@@ -39,7 +37,7 @@ export interface UploadedSlackFile {
 //
 // `uploadSlackFile` covers step 1-2 for one local path. The file-send tool
 // batches the resulting file ids into one completeUploadExternal call so N
-// files post as a single Slack message.
+// files and their formatted caption post as a single Slack message.
 export async function uploadSlackFile(input: {
   client: SlackFileClient;
   fetchImpl?: typeof fetch;
@@ -94,14 +92,18 @@ export async function completeSlackFileUpload(input: {
   files: Array<{ fileId: string; title?: string }>;
   threadTs?: string;
 }): Promise<CompletedSlackUploadFile[]> {
+  const mappedFiles = input.files.map(({ fileId, title }) => ({
+    id: fileId,
+    ...(title && { title }),
+  }));
+  const firstFile = mappedFiles[0];
+  if (!firstFile) throw new Error('Slack file upload completion requires at least one file');
+  const files: FilesCompleteUploadExternalArguments['files'] = [firstFile, ...mappedFiles.slice(1)];
   const completion = await input.client.files.completeUploadExternal({
     channel_id: input.channelId,
-    files: input.files.map(({ fileId, title }) => ({
-      id: fileId,
-      ...(title && { title }),
-    })),
+    files,
+    ...(input.caption ? { initial_comment: input.caption } : {}),
     ...(input.threadTs && { thread_ts: input.threadTs }),
-    ...(input.caption && { initial_comment: input.caption }),
   });
   const titleByFileId = new Map<string, string | undefined>(
     (completion.files ?? []).map((file) => [file.id ?? '', file.title]),

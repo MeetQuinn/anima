@@ -21,6 +21,12 @@ import {
   slackTargetSummary,
   type SlackTargetSummary,
 } from './slack-target.js';
+import {
+  mentionWarningsForTarget,
+  slackTextAuditPayload,
+  slackTextForPostMessage,
+} from './slack-message-mentions.js';
+import { slackMrkdwnForMarkdown } from './slack-mrkdwn.js';
 import { outcomeLine, type OutcomePart } from './outcome-line.js';
 import {
   feishuMessageClientForOpts,
@@ -139,6 +145,23 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
     basePayload,
     effectType: 'slack.file.send',
     op: async () => {
+      const mrkdwnCaption = caption ? slackMrkdwnForMarkdown(caption) : undefined;
+      if (caption && !mrkdwnCaption) {
+        throw new Error('caption has no displayable text after Markdown conversion');
+      }
+      const slackCaption = mrkdwnCaption
+        ? await slackTextForPostMessage({ channelId: channel.id, client, teamId, text: mrkdwnCaption })
+        : undefined;
+      const warnings = slackCaption
+        ? await mentionWarningsForTarget({
+            channelId: channel.id,
+            client,
+            slackText: slackCaption,
+            target,
+            teamId,
+          })
+        : [];
+
       // Step 1+2: per-file upload URL + POST bytes. Each path's pair is
       // independent — Slack docs don't require serialization, so we run them
       // in parallel for batches (N files = 1×RTT instead of N×RTT).
@@ -148,11 +171,11 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
 
       // Step 3: single completeUploadExternal posts all N files as one message.
       const completed = await completeSlackFileUpload({
+        ...(slackCaption ? { caption: slackCaption.text } : {}),
         channelId: channel.id,
         client,
         files: uploaded.map((file) => ({ fileId: file.fileId })),
         ...(threadTs ? { threadTs } : {}),
-        ...(caption ? { caption } : {}),
       });
 
       // Per-file enrichment: permalink + thumbs (image only) for the audit
@@ -180,13 +203,17 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
         fileCount: enriched.length,
         target,
         threadTs,
+        warnings,
       }));
 
       return {
         result: undefined,
         completedPayload: {
+          ...(slackCaption && caption ? slackTextAuditPayload(slackCaption, caption) : {}),
+          ...(slackCaption ? { messageFormat: 'mrkdwn' } : {}),
           status: 'sent',
           uploads: enriched,
+          ...(warnings.length ? { warnings } : {}),
         },
       };
     },
@@ -339,11 +366,12 @@ function slackFileOutputLine(input: {
   fileCount: number;
   target: SlackTargetSummary;
   threadTs?: string;
+  warnings?: string[];
 }): string {
   const parts: OutcomePart[] = [slackOutputTarget(input.target)];
   if (input.threadTs) parts.push(['thread_ts', input.threadTs]);
   parts.push(['files', input.fileCount]);
-  return outcomeLine('uploaded', parts);
+  return outcomeLine('uploaded', parts, input.warnings?.length ? { note: input.warnings.join(' ') } : undefined);
 }
 
 function assertFeishuFileSize(file: ValidatedLocalFile): void {
