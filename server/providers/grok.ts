@@ -581,8 +581,9 @@ class GrokAcpController {
     rawInput: Record<string, unknown> | undefined,
   ): Promise<void> {
     if (pending?.emitted) return;
-    // Prefer latest ACP frame for identity (meta/title often enrich on update).
-    const name = grokToolName(data) || pending?.name || 'Tool';
+    // Prefer the latest ACP frame only when it actually supplies identity
+    // (meta/title often enrich on update); otherwise keep the start-frame name.
+    const name = grokToolIdentity(data) ?? pending?.name ?? 'Tool';
     const parsedInput = rawInput ?? parseToolArguments(pending?.argsText ?? extractAcpToolCallText(data['content']));
     await this.emitToolStarted(
       input,
@@ -950,6 +951,16 @@ function parseToolArguments(raw: unknown): unknown {
  * Live ListDir shape: title `List \`path\``, kind Other, meta name list_dir.
  */
 export function grokToolName(data: Record<string, unknown>): string {
+  return grokToolIdentity(data) ?? 'Tool';
+}
+
+/**
+ * Tool identity from a single ACP frame, or undefined when the frame supplies no
+ * identity signal (no meta name / title / kind / name). Distinguishing "identity
+ * absent" from the intentional `Tool` fallback lets a terminal update without
+ * identity keep the start frame's already-resolved name instead of clobbering it.
+ */
+export function grokToolIdentity(data: Record<string, unknown>): string | undefined {
   const meta = isRecord(data['_meta']) ? data['_meta'] : undefined;
   const xaiTool = isRecord(meta?.['x.ai/tool']) ? meta['x.ai/tool'] : undefined;
   const metaName =
@@ -963,7 +974,10 @@ export function grokToolName(data: Record<string, unknown>): string {
 
   const title = stringField(data, 'title') ?? '';
   const kind = stringField(data, 'kind') ?? '';
-  const candidate = `${title || kind || 'tool'}`.trim();
+  // No identity fields in this frame — let the caller keep any prior identity.
+  const candidateSource = title || kind || metaName || '';
+  if (!candidateSource) return undefined;
+  const candidate = candidateSource.trim();
   const normalized = candidate.toLowerCase();
   if (/(run command|shell|bash|terminal)/.test(normalized)) return 'Shell';
   if (/(read file|\bread\b)/.test(normalized)) return 'ReadFile';

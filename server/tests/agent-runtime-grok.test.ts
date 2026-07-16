@@ -248,6 +248,63 @@ test('grok-cli surfaces ListDir from live ACP meta/title as narrative ListDir', 
   }
 });
 
+test('grok-cli keeps the start-frame tool identity when the terminal update has none', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-grok-defer-identity-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      await installFakeGrok(stateDir, [
+        "const fs = require('fs');",
+        "process.stdin.setEncoding('utf8');",
+        "let buffer = '';",
+        "function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }",
+        "function update(value) { send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'grok-session-defer', update: value } }); }",
+        "process.stdin.on('data', (chunk) => {",
+        '  buffer += chunk;',
+        '  const lines = buffer.split(/\\r?\\n/);',
+        "  buffer = lines.pop() || '';",
+        '  for (const line of lines) {',
+        '    if (!line.trim()) continue;',
+        '    const msg = JSON.parse(line);',
+        "    fs.appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + '\\n');",
+        "    if (msg.method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, _meta: { agentVersion: '0.2.93', modelState: { currentModelId: 'grok-4.5', availableModels: [] } } } });",
+        "    if (msg.method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'grok-session-defer' } });",
+        "    if (msg.method === 'session/prompt') {",
+        // Start frame has identity (title) but no rawInput/target → deferred, not emitted yet.
+        "      update({ sessionUpdate: 'tool_call', toolCallId: 'call-defer-1', title: 'read_file' });",
+        // Terminal update carries only status/output — no title/kind/meta/name identity.
+        "      update({ sessionUpdate: 'tool_call_update', toolCallId: 'call-defer-1', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: 'file contents' } }] });",
+        "      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'done' } });",
+        "      send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn', _meta: { modelId: 'grok-4.5', totalTokens: 5 } } });",
+        '    }',
+        '  }',
+        '});',
+      ]);
+
+      const ctx = await ingestGrokEvent(stateDir, 'Read deferred.', '1771000099.000003');
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'grok-cli',
+        model: 'grok-4.5',
+      });
+      assert.equal((await withTimeout(runtime.run(await runtimeInput(runtime, ctx, await loadState())), 2_000)).text, 'done');
+
+      const started = allActivities(await loadState()).find(
+        (activity) =>
+          activity.type === 'tool.call.started' &&
+          activity.payload?.['providerToolId'] === 'call-defer-1',
+      );
+      // Identity-less terminal update must not clobber the start-frame ReadFile with the Tool fallback.
+      assert.equal(started?.payload?.['providerToolName'], 'ReadFile');
+      assert.equal(started?.payload?.['tool'], 'grok.ReadFile');
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('grok-cli restores a persisted top-level session with session/load', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-grok-load-'));
   let runtime: AgentRuntime | undefined;
