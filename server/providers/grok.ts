@@ -177,9 +177,12 @@ class GrokAcpController {
   private turnCompletion?: Promise<string>;
   private actualModel?: string;
   private contextWindow?: number;
-  // Live reasoning-effort menu for the current model, from ACP modelState.
-  // undefined = capability unknown (fail closed); [] = advertised as unsupported.
-  private currentModelEfforts?: string[];
+  // Live reasoning-effort menu bound to the exact model that advertised it, from ACP
+  // modelState. undefined = no capability captured (fail closed); efforts [] = the
+  // model advertised effort as unsupported. Binding to modelId prevents a stale
+  // positive: a later frame that switches the current model to one with no capability
+  // signal must not inherit the previous model's menu.
+  private currentEffortSnapshot?: { modelId: string; efforts: string[] };
   private appliedEffort = false;
   readonly completion: Promise<{ stdout: string; stderr: string }>;
   sessionId = '';
@@ -472,19 +475,23 @@ class GrokAcpController {
     const selectedMeta = isRecord(selected?.['_meta']) ? selected['_meta'] : undefined;
     const contextWindow = numberField(selectedMeta, 'totalContextTokens') ?? numberField(meta, 'totalContextTokens');
     if (contextWindow !== undefined) this.contextWindow = contextWindow;
-    // Only update the effort menu when this frame actually carries the current
-    // model's capability; a frame without it must not erase what we captured.
-    if (selectedMeta) {
+    // Only capture the effort menu when this frame carries the current model's
+    // capability, and bind it to that exact model id. A frame that switches the
+    // current model but omits its capability leaves the old (now-mismatched)
+    // snapshot in place; applyReasoningEffort then rejects it on the id check
+    // rather than firing a setter against a model whose menu we never saw.
+    if (selectedMeta && currentModel) {
       const efforts = grokAdvertisedEfforts(selectedMeta);
-      if (efforts !== undefined) this.currentModelEfforts = efforts;
+      if (efforts !== undefined) this.currentEffortSnapshot = { efforts, modelId: currentModel };
     }
   }
 
   /**
    * Apply the configured reasoning effort via a same-model `session/set_model`,
    * exactly once, before the first prompt. Fail closed: skip when nothing is
-   * configured, when the live current model or its capability menu is unknown, or
-   * when the effort is not advertised — never infer support from the model name.
+   * configured, when the live current model is unknown, when no capability snapshot
+   * was captured for *that exact* model, or when the effort is not advertised — never
+   * infer support from the model name, and never reuse a snapshot from another model.
    */
   private async applyReasoningEffort(input: AgentRuntimeInput): Promise<void> {
     if (this.appliedEffort) return;
@@ -492,8 +499,8 @@ class GrokAcpController {
     const effort = this.configuredEffort?.trim();
     if (!effort) return;
     const model = this.actualModel;
-    const advertised = this.currentModelEfforts;
-    if (!model || !advertised || !advertised.includes(effort)) return;
+    const snapshot = this.currentEffortSnapshot;
+    if (!model || snapshot?.modelId !== model || !snapshot.efforts.includes(effort)) return;
     const result = await this.request('session/set_model', {
       _meta: { reasoningEffort: effort },
       modelId: model,
