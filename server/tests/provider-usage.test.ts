@@ -775,6 +775,34 @@ test('Grok billing parser still rejects an unknown field whose length overruns t
   assert.match(parsed.error?.message ?? '', /truncated|length/i);
 });
 
+test('Grok billing parser consumes a valid wide unknown varint without truncation error (round-5)', () => {
+  // Unknown top-level varint field 15 = 2^40 (6 bytes). The message is complete, so a
+  // 64-bit-capable reader must consume it and still surface the known 9% — a 5-byte
+  // (32-bit) reader would mis-flag the wide varint as truncated.
+  const wideVarint = Buffer.from([(15 << 3) | 0, 0x80, 0x80, 0x80, 0x80, 0x80, 0x20]); // field 15 = 2^40
+  const payload = Buffer.concat([
+    encodeLengthDelimited(1, encodeFixed32Field(1, 9)), // [1,1] = 9%
+    wideVarint,
+  ]);
+  const parsed = parseGrokBillingBytes(grpcWebMessageAndOkTrailer(payload));
+  assert.equal(parsed.error, undefined, 'a valid 64-bit varint must not read as truncated');
+  assert.equal(parsed.snapshot?.usedPercent, 9);
+});
+
+test('Grok billing parser never seeds resetsAt from an unrelated varint (round-5)', () => {
+  const nowMs = Date.parse('2026-07-16T00:00:00.000Z');
+  // 1_800_000_000s is a future-looking timestamp, but it sits at unknown top-level
+  // field 15 — not the [1,5,1] reset path — so it must not fabricate a reset window.
+  const payload = Buffer.concat([
+    encodeLengthDelimited(1, encodeFixed32Field(1, 9)), // [1,1] = 9%
+    encodeVarintField(15, 1_800_000_000), // unknown future-looking varint
+  ]);
+  const parsed = parseGrokBillingBytes(grpcWebMessageAndOkTrailer(payload), nowMs);
+  assert.equal(parsed.error, undefined);
+  assert.equal(parsed.snapshot?.usedPercent, 9);
+  assert.equal(parsed.snapshot?.resetsAt, undefined, 'unrelated varint must not become a reset');
+});
+
 test('Grok fetchUntilBody times out when response body stalls after headers', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => {

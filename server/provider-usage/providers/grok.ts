@@ -53,6 +53,15 @@ const RECURSE_PREFIXES: ReadonlySet<string> = new Set(
   ),
 );
 
+/** Fixed32 fields Anima decodes as used-percent floats. */
+const FIXED32_READ_PATHS: readonly number[][] = USAGE_PERCENT_PATHS;
+
+/** Varint fields Anima decodes: reset timestamp and period type. */
+const VARINT_READ_PATHS: readonly number[][] = [
+  [1, 5, 1], // reset timestamp (unix seconds)
+  [1, 8, 1], // period type (1=monthly, 2=weekly)
+];
+
 interface GrokCredentials {
   accessToken: string;
   account?: string;
@@ -577,7 +586,12 @@ function scanProtobuf(buf: Uint8Array, depth = 0, path: number[] = []): Protobuf
         return { error: 'truncated protobuf varint field', ok: false };
       }
       i = v.next;
-      out.varint.push({ path: nextPath, value: v.value });
+      // Keep only varints on an exact read path (reset/period). Unknown varints
+      // are consumed by their 10-byte protobuf boundary above and never
+      // collected — a valid unknown 64-bit varint must not error or seed a reset.
+      if (isReadPath(nextPath, VARINT_READ_PATHS)) {
+        out.varint.push({ path: nextPath, value: v.value });
+      }
     } else if (wire === 1) {
       if (i + 8 > buf.length) {
         return { error: 'truncated protobuf fixed64 field', ok: false };
@@ -609,8 +623,11 @@ function scanProtobuf(buf: Uint8Array, depth = 0, path: number[] = []): Protobuf
       if (i + 4 > buf.length) {
         return { error: 'truncated protobuf fixed32 field', ok: false };
       }
-      const view = new DataView(buf.buffer, buf.byteOffset + i, 4);
-      out.fixed32.push({ path: nextPath, value: view.getFloat32(0, true) });
+      // Keep only fixed32 on an exact used-percent read path; ignore other floats.
+      if (isReadPath(nextPath, FIXED32_READ_PATHS)) {
+        const view = new DataView(buf.buffer, buf.byteOffset + i, 4);
+        out.fixed32.push({ path: nextPath, value: view.getFloat32(0, true) });
+      }
       i += 4;
     } else {
       return { error: `unsupported protobuf wire type ${wire}`, ok: false };
@@ -619,21 +636,35 @@ function scanProtobuf(buf: Uint8Array, depth = 0, path: number[] = []): Protobuf
   return { fields: out, ok: true };
 }
 
+/**
+ * Read a protobuf base-128 varint. Tolerates the full 64-bit / 10-byte width so a
+ * valid unknown field (e.g. 2^40) is consumed, not mis-flagged as truncated. Uses
+ * float accumulation rather than 32-bit shifts; the fields Anima reads (reset ~1.7e9,
+ * period 1/2, keys, lengths) are well within exact-integer range. Returns null only
+ * when the varint runs off the buffer or exceeds 10 bytes without a terminator.
+ */
 function readVarint(buf: Uint8Array, cursor: { value: number }): { next: number; value: number } | null {
   let result = 0;
-  let shift = 0;
+  let shift = 1;
   let i = cursor.value;
-  while (i < buf.length && shift < 35) {
+  let bytes = 0;
+  while (i < buf.length) {
     const byte = buf[i]!;
     i += 1;
-    result |= (byte & 0x7f) << shift;
+    bytes += 1;
+    result += (byte & 0x7f) * shift;
     if ((byte & 0x80) === 0) {
       cursor.value = i;
-      return { next: i, value: result >>> 0 };
+      return { next: i, value: result };
     }
-    shift += 7;
+    if (bytes >= 10) return null; // >10 bytes cannot be a valid 64-bit varint
+    shift *= 128;
   }
-  return null;
+  return null; // ran off the buffer before the varint terminated
+}
+
+function isReadPath(path: number[], known: readonly number[][]): boolean {
+  return known.some((candidate) => pathEquals(path, candidate));
 }
 
 function pathEquals(a: number[], b: readonly number[]): boolean {
@@ -675,14 +706,12 @@ function isZeroUsageOmittedShape(fields: ProtoScan, nowMs: number): boolean {
 
 function firstFutureTimestamp(fields: ProtoScan, nowMs: number): string | undefined {
   const nowSec = nowMs / 1000;
-  // Prefer path (1, 5, 1) when present (Raycast's primary reset field).
-  const preferred = fields.varint
+  // Only the exact reset path (1, 5, 1) seeds the reset — never an arbitrary varint,
+  // which would let an unrelated field fabricate a resetsAt.
+  const pick = fields.varint
     .filter((f) => pathEquals(f.path, [1, 5, 1]))
     .map((f) => f.value)
-    .filter((v) => v > nowSec && v < 2.1e9);
-  const all = fields.varint
-    .map((f) => f.value)
-    .filter((v) => v > nowSec && v < 2.1e9 && v > 1.7e9);
-  const pick = preferred.sort((a, b) => a - b)[0] ?? all.sort((a, b) => a - b)[0];
+    .filter((v) => v > nowSec && v < 2.1e9)
+    .sort((a, b) => a - b)[0];
   return pick !== undefined ? new Date(pick * 1000).toISOString() : undefined;
 }
