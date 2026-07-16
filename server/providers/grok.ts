@@ -509,14 +509,18 @@ class GrokAcpController {
     const id = toolCallId(data);
     if (!id) return;
     const rawInput = toolInput(data);
-    const name = grokToolNameFromTitle(
-      stringField(data, 'title') ?? stringField(data, 'name') ?? stringField(data, 'kind') ?? '',
-      stringField(data, 'kind'),
-    );
+    const name = grokToolName(data);
     this.activeToolIds.add(id);
     if (rawInput) {
-      this.pendingTools.set(id, { emitted: true, input: rawInput, name });
-      await this.emitToolStarted(input, id, name, rawInput);
+      // Emit immediately when we can show a useful target/command; otherwise wait
+      // for tool_call_update which often carries target_file / locations / title.
+      const summary = summarizeGrokToolInput(name, rawInput, data);
+      if (summary.target || summary.command || summary.diff) {
+        this.pendingTools.set(id, { emitted: true, input: rawInput, name });
+        await this.emitToolStarted(input, id, name, rawInput, data);
+        return;
+      }
+      this.pendingTools.set(id, { emitted: false, input: rawInput, name });
       return;
     }
     this.pendingTools.set(id, {
@@ -577,14 +581,17 @@ class GrokAcpController {
     rawInput: Record<string, unknown> | undefined,
   ): Promise<void> {
     if (pending?.emitted) return;
-    const name =
-      pending?.name ??
-      grokToolNameFromTitle(
-        stringField(data, 'title') ?? stringField(data, 'name') ?? stringField(data, 'kind') ?? '',
-        stringField(data, 'kind'),
-      );
+    // Prefer the latest ACP frame only when it actually supplies identity
+    // (meta/title often enrich on update); otherwise keep the start-frame name.
+    const name = grokToolIdentity(data) ?? pending?.name ?? 'Tool';
     const parsedInput = rawInput ?? parseToolArguments(pending?.argsText ?? extractAcpToolCallText(data['content']));
-    await this.emitToolStarted(input, id, name, isRecord(parsedInput) ? parsedInput : { text: parsedInput });
+    await this.emitToolStarted(
+      input,
+      id,
+      name,
+      isRecord(parsedInput) ? parsedInput : { text: parsedInput },
+      data,
+    );
   }
 
   private async emitToolStarted(
@@ -592,8 +599,9 @@ class GrokAcpController {
     id: string,
     name: string,
     rawInput: Record<string, unknown>,
+    data?: Record<string, unknown>,
   ): Promise<void> {
-    const summary = summarizeGrokToolInput(name, rawInput);
+    const summary = summarizeGrokToolInput(name, rawInput, data);
     await input.effects.recordToolStarted({
       eventType: 'grok.tool.call',
       provider: GROK_RUNTIME_KIND,
@@ -937,8 +945,42 @@ function parseToolArguments(raw: unknown): unknown {
   }
 }
 
-function grokToolNameFromTitle(title: string, kind?: string): string {
-  const candidate = `${title || kind || 'tool'}`.trim();
+/**
+ * Resolve Grok ACP tool identity for Activity. Prefer canonical
+ * `_meta['x.ai/tool'].name` (e.g. list_dir), then title/kind patterns.
+ * Live ListDir shape: title `List \`path\``, kind Other, meta name list_dir.
+ */
+export function grokToolName(data: Record<string, unknown>): string {
+  return grokToolIdentity(data) ?? 'Tool';
+}
+
+/**
+ * Tool identity from a single ACP frame, or undefined when the frame supplies no
+ * identity signal (no meta name / title / kind / name). Distinguishing "identity
+ * absent" from the intentional `Tool` fallback lets a terminal update without
+ * identity keep the start frame's already-resolved name instead of clobbering it.
+ */
+export function grokToolIdentity(data: Record<string, unknown>): string | undefined {
+  const meta = isRecord(data['_meta']) ? data['_meta'] : undefined;
+  const xaiTool = isRecord(meta?.['x.ai/tool']) ? meta['x.ai/tool'] : undefined;
+  const metaName =
+    stringField(xaiTool, 'name') ??
+    stringField(xaiTool, 'id') ??
+    stringField(data, 'name');
+  if (metaName) {
+    const fromMeta = grokCanonicalToolName(metaName);
+    if (fromMeta) return fromMeta;
+  }
+
+  const title = stringField(data, 'title') ?? '';
+  const kind = stringField(data, 'kind') ?? '';
+  // ACP `kind: Other` is a generic bucket, not a tool identity (live ListDir uses it),
+  // so it never stands in for a real name — only title/meta/name can.
+  const identifyingKind = kind.trim().toLowerCase() === 'other' ? '' : kind;
+  // No identity fields in this frame — let the caller keep any prior identity.
+  const candidateSource = title || identifyingKind || metaName || '';
+  if (!candidateSource) return undefined;
+  const candidate = candidateSource.trim();
   const normalized = candidate.toLowerCase();
   if (/(run command|shell|bash|terminal)/.test(normalized)) return 'Shell';
   if (/(read file|\bread\b)/.test(normalized)) return 'ReadFile';
@@ -946,6 +988,8 @@ function grokToolNameFromTitle(title: string, kind?: string): string {
   if (/(edit|patch|replace)/.test(normalized)) return 'StrReplaceFile';
   if (/web search/.test(normalized)) return 'WebSearch';
   if (/(fetch|web fetch)/.test(normalized)) return 'Fetch';
+  // List `server/providers` — must not fall through to ListServerProviders.
+  if (/^list\b/.test(normalized) || /\blist[_ ]?dir\b/.test(normalized)) return 'ListDir';
   if (/search/.test(normalized)) return 'Search';
   if (/glob/.test(normalized)) return 'Glob';
   if (/todo/.test(normalized)) return 'TodoWrite';
@@ -955,9 +999,44 @@ function grokToolNameFromTitle(title: string, kind?: string): string {
     .replace(/^[a-z]/, (char) => char.toUpperCase());
 }
 
-function summarizeGrokToolInput(
+function grokCanonicalToolName(raw: string): string | undefined {
+  const key = raw.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  switch (key) {
+    case 'list_dir':
+    case 'listdir':
+    case 'list_directory':
+      return 'ListDir';
+    case 'read_file':
+    case 'readfile':
+      return 'ReadFile';
+    case 'write_file':
+    case 'writefile':
+      return 'WriteFile';
+    case 'str_replace_file':
+    case 'strreplacefile':
+    case 'str_replace':
+      return 'StrReplaceFile';
+    case 'run_command':
+    case 'shell':
+    case 'bash':
+      return 'Shell';
+    case 'web_search':
+    case 'websearch':
+      return 'WebSearch';
+    case 'grep':
+      return 'Grep';
+    case 'glob':
+      return 'Glob';
+    default:
+      return undefined;
+  }
+}
+
+/** Exported for unit tests — keep Activity targets aligned with live Grok ACP. */
+export function summarizeGrokToolInput(
   name: string,
   input: Record<string, unknown>,
+  data?: Record<string, unknown>,
 ): { command?: string; diff?: string; target?: string } {
   const normalized = name.toLowerCase();
   if (normalized === 'shell' || normalized === 'bash') {
@@ -972,18 +1051,56 @@ function summarizeGrokToolInput(
           : {}),
     };
   }
-  const target =
-    stringField(input, 'file_path') ??
-    stringField(input, 'path') ??
-    stringField(input, 'filePath') ??
-    stringField(input, 'pattern') ??
-    stringField(input, 'query') ??
-    stringField(input, 'glob') ??
-    stringField(input, 'url');
+  const target = grokToolTarget(input, data);
   return {
     ...(target ? { target: singleLineForActivity(target) } : {}),
     ...(normalized === 'strreplacefile' ? { diff: grokReplacementDiff(input) } : {}),
   };
+}
+
+/**
+ * Grok Build ACP uses `target_file` / `target_directory` (not Claude's file_path).
+ * Later tool_call_update frames also carry locations[] and titled paths in backticks.
+ */
+function grokToolTarget(input: Record<string, unknown>, data?: Record<string, unknown>): string | undefined {
+  const fromInput =
+    stringField(input, 'target_file') ??
+    stringField(input, 'targetFile') ??
+    stringField(input, 'target_directory') ??
+    stringField(input, 'targetDirectory') ??
+    stringField(input, 'file_path') ??
+    stringField(input, 'path') ??
+    stringField(input, 'filePath') ??
+    stringField(input, 'absolute_path') ??
+    stringField(input, 'absolutePath') ??
+    stringField(input, 'pattern') ??
+    stringField(input, 'query') ??
+    stringField(input, 'glob') ??
+    stringField(input, 'url');
+  if (fromInput) return fromInput;
+
+  const locations = Array.isArray(data?.['locations']) ? data['locations'] : [];
+  for (const location of locations) {
+    if (!isRecord(location)) continue;
+    const path = stringField(location, 'path');
+    if (path) return path;
+  }
+
+  const meta = isRecord(data?.['_meta']) ? data['_meta'] : undefined;
+  const xaiTool = isRecord(meta?.['x.ai/tool']) ? meta['x.ai/tool'] : undefined;
+  const metaInput = isRecord(xaiTool?.['input']) ? xaiTool['input'] : undefined;
+  const metaPath =
+    stringField(metaInput, 'path') ??
+    stringField(metaInput, 'target_file') ??
+    stringField(metaInput, 'target_directory');
+  if (metaPath) return metaPath;
+
+  // e.g. title: Read `PROBE.txt`
+  const title = stringField(data, 'title') ?? '';
+  const tick = title.match(/`([^`]+)`/);
+  if (tick?.[1]?.trim()) return tick[1].trim();
+
+  return undefined;
 }
 
 function grokReplacementDiff(input: Record<string, unknown>): string | undefined {
