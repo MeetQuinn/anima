@@ -32,6 +32,27 @@ const USAGE_PERCENT_PATHS: readonly number[][] = [
   [1, 7, 2], // nested weekly window used percent
 ];
 
+/**
+ * Every schema path Anima actually reads: used-percent (fixed32) plus reset and
+ * period (varint). The protobuf scan recurses into a length-delimited field only
+ * when its path is a strict prefix of one of these. Other valid length-delimited
+ * fields (strings, opaque bytes, unknown submessages) are skipped as unknown
+ * bytes for forward compatibility instead of being mis-parsed as submessages.
+ */
+const READ_FIELD_PATHS: readonly number[][] = [
+  [1, 1], // used percent (top level)
+  [1, 7, 2], // used percent (nested weekly window)
+  [1, 5, 1], // reset timestamp
+  [1, 8, 1], // period type (1=monthly, 2=weekly)
+];
+
+/** Message paths worth descending into: the strict prefixes of READ_FIELD_PATHS. */
+const RECURSE_PREFIXES: ReadonlySet<string> = new Set(
+  READ_FIELD_PATHS.flatMap((path) =>
+    path.slice(0, -1).map((_, index) => path.slice(0, index + 1).join('/')),
+  ),
+);
+
 interface GrokCredentials {
   accessToken: string;
   account?: string;
@@ -573,7 +594,12 @@ function scanProtobuf(buf: Uint8Array, depth = 0, path: number[] = []): Protobuf
       const startSub = len.next;
       const endSub = startSub + len.value;
       i = endSub;
-      if (depth < 4) {
+      // Descend only into fields on a path we actually read. Other valid
+      // length-delimited fields (strings/bytes/unknown submessages) are skipped
+      // as opaque unknown bytes for forward compatibility — never mis-parsed as
+      // protobuf. The outer declared-length check above still runs for every
+      // field, so a length that overruns the enclosing message stays parse_error.
+      if (depth < 4 && RECURSE_PREFIXES.has(nextPath.join('/'))) {
         const nested = scanProtobuf(buf.subarray(startSub, endSub), depth + 1, nextPath);
         if (!nested.ok) return nested;
         out.fixed32.push(...nested.fields.fixed32);

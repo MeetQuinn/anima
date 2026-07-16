@@ -745,6 +745,36 @@ test('Grok billing parser rejects truncated protobuf after a valid known-path pe
   assert.equal(parsed.error?.type, 'parse_error');
 });
 
+test('Grok billing parser skips valid unknown length-delimited fields (Milo round-4 probe)', () => {
+  // Complete frame: nested field 1 carries [1,1]=9% plus an unknown string label,
+  // and an unknown top-level string field 15 = "plan". None of these are on a read
+  // path, so they must be skipped as opaque bytes — not parsed as submessages.
+  const inner = Buffer.concat([
+    encodeFixed32Field(1, 9), // [1,1] = 9% used
+    encodeLengthDelimited(9, Buffer.from('weekly-label', 'utf8')), // unknown nested string
+  ]);
+  const payload = Buffer.concat([
+    encodeLengthDelimited(1, inner),
+    encodeLengthDelimited(15, Buffer.from('plan', 'utf8')), // unknown top-level string
+  ]);
+  const parsed = parseGrokBillingBytes(grpcWebMessageAndOkTrailer(payload));
+  assert.equal(parsed.error, undefined, 'valid unknown fields must not fail parsing');
+  assert.equal(parsed.snapshot?.usedPercent, 9);
+});
+
+test('Grok billing parser still rejects an unknown field whose length overruns the message', () => {
+  // Forward-compat skip must not relax the outer bound: a length-delimited field
+  // (even one Anima never reads) that declares more bytes than remain stays a hard error.
+  const payload = Buffer.concat([
+    encodeFixed32Field(1, 9), // known-ish percent earlier in the message
+    Buffer.from([(15 << 3) | 2, 0x20, 0x61, 0x62]), // field 15: len=32, only 2 bytes follow
+  ]);
+  const parsed = parseGrokBillingBytes(grpcWebMessageAndOkTrailer(payload));
+  assert.equal(parsed.snapshot, undefined, 'must not salvage earlier percent after an overrun field');
+  assert.equal(parsed.error?.type, 'parse_error');
+  assert.match(parsed.error?.message ?? '', /truncated|length/i);
+});
+
 test('Grok fetchUntilBody times out when response body stalls after headers', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => {
