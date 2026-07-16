@@ -8,7 +8,12 @@ import { ProviderUsageService } from '../provider-usage/provider-usage.service.j
 import { providerUsageNetworkErrorMessage } from '../provider-usage/http.js';
 import { fetchClaudeUsage, parseClaudeUsageResponse } from '../provider-usage/providers/claude.js';
 import { fetchCodexUsage, parseCodexUsageResponse } from '../provider-usage/providers/codex.js';
-import { fetchGrokUsage, parseGrokBillingBytes, parseGrpcWebFrames } from '../provider-usage/providers/grok.js';
+import {
+  fetchGrokUsage,
+  fetchUntilBody,
+  parseGrokBillingBytes,
+  parseGrpcWebFrames,
+} from '../provider-usage/providers/grok.js';
 import { fetchKimiUsage, parseKimiUsageResponse } from '../provider-usage/providers/kimi.js';
 
 test('Claude usage parser returns remaining windows and extra usage', () => {
@@ -668,72 +673,86 @@ test('Grok billing parser is fail-closed on unrelated fixed32 and accepts omitte
     assert.equal(parsed.error?.type, 'parse_error');
   }
 
-  // reset [1,5,1] + weekly period [1,8,1]=2, no percent fixed32 (proto3 zero-omitted).
-  const zeroOmitted = encodeLengthDelimited(
+  const nowMs = Date.parse('2026-07-16T03:00:00.000Z');
+  const futureResetSec = 1_800_000_000; // 2027-01-15 — future relative to nowMs
+  const pastResetSec = 1_700_000_000; // 2023-11 — stale
+
+  // future reset + weekly period 2 → 0%
+  const weeklyZero = encodeLengthDelimited(
     1,
     Buffer.concat([
-      encodeLengthDelimited(5, encodeVarintField(1, 1_800_000_000)),
+      encodeLengthDelimited(5, encodeVarintField(1, futureResetSec)),
       encodeLengthDelimited(8, encodeVarintField(1, 2)),
     ]),
   );
-  const zeroParsed = parseGrokBillingBytes(
-    grpcWebMessageAndOkTrailer(zeroOmitted),
-    Date.parse('2026-07-16T03:00:00.000Z'),
+  const weeklyParsed = parseGrokBillingBytes(grpcWebMessageAndOkTrailer(weeklyZero), nowMs);
+  assert.equal(weeklyParsed.error, undefined);
+  assert.equal(weeklyParsed.snapshot?.usedPercent, 0);
+  assert.equal(weeklyParsed.snapshot?.resetsAt, new Date(futureResetSec * 1000).toISOString());
+
+  // future reset + monthly period 1 → also 0% (Raycast treats 1 and 2 as valid periods)
+  const monthlyZero = encodeLengthDelimited(
+    1,
+    Buffer.concat([
+      encodeLengthDelimited(5, encodeVarintField(1, futureResetSec)),
+      encodeLengthDelimited(8, encodeVarintField(1, 1)),
+    ]),
   );
-  assert.equal(zeroParsed.error, undefined);
-  assert.equal(zeroParsed.snapshot?.usedPercent, 0);
-  assert.equal(zeroParsed.snapshot?.resetsAt, new Date(1_800_000_000 * 1000).toISOString());
+  const monthlyParsed = parseGrokBillingBytes(grpcWebMessageAndOkTrailer(monthlyZero), nowMs);
+  assert.equal(monthlyParsed.error, undefined);
+  assert.equal(monthlyParsed.snapshot?.usedPercent, 0);
+
+  // past/stale reset + weekly period must not invent 0%
+  const staleZero = encodeLengthDelimited(
+    1,
+    Buffer.concat([
+      encodeLengthDelimited(5, encodeVarintField(1, pastResetSec)),
+      encodeLengthDelimited(8, encodeVarintField(1, 2)),
+    ]),
+  );
+  const staleParsed = parseGrokBillingBytes(grpcWebMessageAndOkTrailer(staleZero), nowMs);
+  assert.equal(staleParsed.snapshot, undefined);
+  assert.equal(staleParsed.error?.type, 'parse_error');
 });
 
-test('Grok usage times out when response body stalls after headers', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'anima-grok-body-stall-'));
-  await mkdir(join(home, '.grok'), { recursive: true });
-  await writeFile(
-    join(home, '.grok', 'auth.json'),
-    JSON.stringify({
-      'https://auth.x.ai::test-client': {
-        auth_mode: 'oidc',
-        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
-        key: 'access',
-        oidc_client_id: 'test-client',
-        oidc_issuer: 'https://auth.x.ai',
-        refresh_token: 'refresh',
-      },
-    }),
-    'utf8',
-  );
+test('Grok billing parser rejects truncated gRPC-Web trailer frames', () => {
+  const frames = parseGrpcWebFrames(new Uint8Array(GROK_BILLING_FIXTURE));
+  assert.ok(frames.payload);
+  // Live 9% data frame + truncated trailer (declared length 20, only 4 bytes present).
+  const truncated = Buffer.concat([
+    grpcWebFrame(0, Buffer.from(frames.payload)),
+    Buffer.from([0x80, 0x00, 0x00, 0x00, 0x14, 0x67, 0x72, 0x70, 0x63]), // "grpc"
+  ]);
+  const parsed = parseGrokBillingBytes(new Uint8Array(truncated));
+  assert.equal(parsed.snapshot, undefined);
+  assert.equal(parsed.error?.type, 'parse_error');
+  assert.match(parsed.error?.message ?? '', /truncated/i);
+});
 
-  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
+test('Grok fetchUntilBody times out when response body stalls after headers', async () => {
   const originalFetch = globalThis.fetch;
-  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
-  globalThis.fetch = (async (url) => {
-    const href = String(url);
-    if (href.includes('GetGrokCreditsConfig')) {
-      // Headers resolve immediately; body never ends.
-      const stream = new ReadableStream({
-        start() {
-          /* never enqueue or close */
-        },
-      });
-      return new Response(stream, {
-        headers: { 'content-type': 'application/grpc-web+proto' },
-        status: 200,
-      });
-    }
-    return new Response('unexpected', { status: 500 });
+  globalThis.fetch = (async () => {
+    const stream = new ReadableStream({
+      start() {
+        /* never enqueue or close */
+      },
+    });
+    return new Response(stream, {
+      headers: { 'content-type': 'application/grpc-web+proto' },
+      status: 200,
+    });
   }) as typeof fetch;
 
   try {
     const started = Date.now();
-    const result = await fetchGrokUsage({ timeoutMs: 40 });
+    await assert.rejects(
+      () => fetchUntilBody('https://example.test/stall', { method: 'POST' }, 40),
+      (error: unknown) => error instanceof Error && error.name === 'AbortError',
+    );
     const elapsed = Date.now() - started;
-    assert.equal(result.status, 'unavailable');
-    assert.equal(result.error?.type, 'network_error');
-    assert.match(result.error?.message ?? '', /timed out/i);
     assert.ok(elapsed < 2_000, `expected timeout well under 2s, got ${elapsed}ms`);
   } finally {
     globalThis.fetch = originalFetch;
-    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
   }
 });
 
