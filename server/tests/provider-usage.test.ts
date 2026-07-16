@@ -729,6 +729,22 @@ test('Grok billing parser rejects truncated gRPC-Web trailer frames', () => {
   assert.match(parsed.error?.message ?? '', /truncated/i);
 });
 
+test('Grok billing parser rejects truncated protobuf after a valid known-path percent', () => {
+  // Complete gRPC-Web frame: nested field 1 with [1,1]=9% float, then a length-delimited
+  // field that declares 5 bytes but only supplies 1 (Milo round-3 probe).
+  const inner = Buffer.alloc(5);
+  inner[0] = 0x0d; // field 1, fixed32
+  inner.writeFloatLE(9, 1);
+  const payload = Buffer.concat([
+    Buffer.from([0x0a, inner.length]),
+    inner,
+    Buffer.from([0x12, 0x05, 0x00]), // field 2: len=5, only 1 byte follows
+  ]);
+  const parsed = parseGrokBillingBytes(grpcWebMessageAndOkTrailer(payload));
+  assert.equal(parsed.snapshot, undefined, 'must not salvage earlier 9% after truncated field');
+  assert.equal(parsed.error?.type, 'parse_error');
+});
+
 test('Grok fetchUntilBody times out when response body stalls after headers', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => {

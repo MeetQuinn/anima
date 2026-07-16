@@ -102,7 +102,11 @@ export function parseGrokBillingBytes(
     if (!payload || payload.length === 0) {
       return { error: usageError('parse_error', 'Grok billing response had no protobuf payload') };
     }
-    const fields = scanProtobuf(payload);
+    const scanned = scanProtobuf(payload);
+    if (!scanned.ok) {
+      return { error: usageError('parse_error', scanned.error) };
+    }
+    const fields = scanned.fields;
     const usedPercent = firstUsagePercent(fields);
     if (usedPercent === undefined) {
       // proto3 omits default 0.0 fixed32; a known quota shell without percent means unused.
@@ -521,49 +525,72 @@ interface ProtoScan {
   varint: Array<{ path: number[]; value: number }>;
 }
 
-function scanProtobuf(buf: Uint8Array, depth = 0, path: number[] = []): ProtoScan {
+type ProtobufScanResult =
+  | { error: string; ok: false }
+  | { fields: ProtoScan; ok: true };
+
+/**
+ * Fail-closed protobuf walk: any truncated/malformed field rejects the whole
+ * message. Never return partial fields collected before a break — a known-path
+ * percent earlier in the payload must not salvage a corrupt tail.
+ */
+function scanProtobuf(buf: Uint8Array, depth = 0, path: number[] = []): ProtobufScanResult {
   const out: ProtoScan = { fixed32: [], varint: [] };
   let i = 0;
   while (i < buf.length) {
-    const start = i;
     const key = readVarint(buf, { value: i });
-    if (key === null) break;
+    if (key === null) {
+      return { error: 'truncated protobuf field key', ok: false };
+    }
     i = key.next;
-    if (key.value === 0) {
-      i = start + 1;
-      continue;
+    // Field number 0 is invalid in protobuf; do not skip/recover.
+    if (key.value === 0 || key.value >>> 3 === 0) {
+      return { error: 'invalid protobuf field number 0', ok: false };
     }
     const field = key.value >>> 3;
     const wire = key.value & 7;
     const nextPath = [...path, field];
     if (wire === 0) {
       const v = readVarint(buf, { value: i });
-      if (v === null) break;
+      if (v === null) {
+        return { error: 'truncated protobuf varint field', ok: false };
+      }
       i = v.next;
       out.varint.push({ path: nextPath, value: v.value });
     } else if (wire === 1) {
+      if (i + 8 > buf.length) {
+        return { error: 'truncated protobuf fixed64 field', ok: false };
+      }
       i += 8;
     } else if (wire === 2) {
       const len = readVarint(buf, { value: i });
-      if (len === null || len.value > buf.length - len.next) break;
+      if (len === null) {
+        return { error: 'truncated protobuf length-delimited field', ok: false };
+      }
+      if (len.value > buf.length - len.next) {
+        return { error: 'truncated protobuf length-delimited field', ok: false };
+      }
       const startSub = len.next;
       const endSub = startSub + len.value;
       i = endSub;
       if (depth < 4) {
         const nested = scanProtobuf(buf.subarray(startSub, endSub), depth + 1, nextPath);
-        out.fixed32.push(...nested.fixed32);
-        out.varint.push(...nested.varint);
+        if (!nested.ok) return nested;
+        out.fixed32.push(...nested.fields.fixed32);
+        out.varint.push(...nested.fields.varint);
       }
     } else if (wire === 5) {
-      if (i + 4 > buf.length) break;
+      if (i + 4 > buf.length) {
+        return { error: 'truncated protobuf fixed32 field', ok: false };
+      }
       const view = new DataView(buf.buffer, buf.byteOffset + i, 4);
       out.fixed32.push({ path: nextPath, value: view.getFloat32(0, true) });
       i += 4;
     } else {
-      break;
+      return { error: `unsupported protobuf wire type ${wire}`, ok: false };
     }
   }
-  return out;
+  return { fields: out, ok: true };
 }
 
 function readVarint(buf: Uint8Array, cursor: { value: number }): { next: number; value: number } | null {
