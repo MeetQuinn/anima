@@ -400,8 +400,9 @@ Model and context authority:
 - Model availability and context-window size are read at runtime and carry a check timestamp. If
   the CLI cannot provide the catalog, operator surfaces say **not checked** instead of using a static
   provider enum.
-- Grok Build currently exposes no supported account-usage endpoint to this adapter, so Anima does
-  not invent account or quota data for its usage row.
+- Grok Build account credits are read from the same private grok.com billing endpoint Raycast Agent
+  Usage uses (`GetGrokCreditsConfig`), authenticated with `~/.grok/auth.json` (and optional OIDC
+  refresh). The CLI itself has no usage subcommand; Anima does not invent quota numbers.
 
 Install and credential boundaries:
 

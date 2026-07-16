@@ -1,6 +1,7 @@
 import type { ProviderUsageKind, ProviderUsageResponse, ProviderUsageRow } from '../../shared/provider-usage.js';
 import { fetchClaudeUsage } from './providers/claude.js';
 import { fetchCodexUsage } from './providers/codex.js';
+import { fetchGrokUsage } from './providers/grok.js';
 import { fetchKimiUsage } from './providers/kimi.js';
 import { usageError } from './result.js';
 
@@ -82,15 +83,12 @@ export function defaultProviderUsageAdapters(): ProviderUsageAdapter[] {
       source: 'native',
     },
     {
-      fetch: async () => ({
-        error: usageError('unknown', 'Grok Build CLI does not report account usage'),
-        extras: [],
-        status: 'unavailable' as const,
-        windows: [],
-      }),
+      fetch: fetchGrokUsage,
       label: 'Grok Build',
       provider: 'grok-cli',
-      source: 'native',
+      // Account credits come from grok.com gRPC-Web billing (same path as Raycast Agent Usage),
+      // not from a Grok CLI subcommand.
+      source: 'private-api',
     },
   ];
 }

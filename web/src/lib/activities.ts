@@ -79,6 +79,8 @@ export function isNarrativeStep(activity: ActivityRecord): boolean {
       'grep',
       'glob',
       'ls',
+      'listdir',
+      'list_dir',
       'todowrite',
       'settodolist',
       'filechange',
@@ -212,7 +214,8 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     return tool_('Edited', pickString(payload, ['target']), pickString(payload, ['diff']));
   if (normalized === 'grep') return tool_('Searched', pickString(payload, ['target']));
   if (normalized === 'glob') return tool_('Listed', pickString(payload, ['target']));
-  if (normalized === 'ls') return tool_('Listed', pickString(payload, ['target']));
+  if (normalized === 'ls' || normalized === 'listdir' || normalized === 'list_dir')
+    return tool_('Listed', pickString(payload, ['target']));
   if (normalized === 'webfetch' || normalized === 'fetchurl') return tool_('Fetched', pickString(payload, ['target']));
   if (normalized === 'websearch' || normalized === 'searchweb') return tool_('Searched', webSearchTarget(payload));
   if (normalized === 'todowrite' || normalized === 'settodolist') return tool_('Updated todos');
