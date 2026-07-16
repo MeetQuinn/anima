@@ -974,8 +974,11 @@ export function grokToolIdentity(data: Record<string, unknown>): string | undefi
 
   const title = stringField(data, 'title') ?? '';
   const kind = stringField(data, 'kind') ?? '';
+  // ACP `kind: Other` is a generic bucket, not a tool identity (live ListDir uses it),
+  // so it never stands in for a real name — only title/meta/name can.
+  const identifyingKind = kind.trim().toLowerCase() === 'other' ? '' : kind;
   // No identity fields in this frame — let the caller keep any prior identity.
-  const candidateSource = title || kind || metaName || '';
+  const candidateSource = title || identifyingKind || metaName || '';
   if (!candidateSource) return undefined;
   const candidate = candidateSource.trim();
   const normalized = candidate.toLowerCase();

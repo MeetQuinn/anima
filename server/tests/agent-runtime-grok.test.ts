@@ -273,8 +273,9 @@ test('grok-cli keeps the start-frame tool identity when the terminal update has 
         "    if (msg.method === 'session/prompt') {",
         // Start frame has identity (title) but no rawInput/target → deferred, not emitted yet.
         "      update({ sessionUpdate: 'tool_call', toolCallId: 'call-defer-1', title: 'read_file' });",
-        // Terminal update carries only status/output — no title/kind/meta/name identity.
-        "      update({ sessionUpdate: 'tool_call_update', toolCallId: 'call-defer-1', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: 'file contents' } }] });",
+        // Terminal update carries only status/output and the generic ACP kind Other —
+        // no real identity, so it must not overwrite the start-frame ReadFile.
+        "      update({ sessionUpdate: 'tool_call_update', toolCallId: 'call-defer-1', status: 'completed', kind: 'Other', content: [{ type: 'content', content: { type: 'text', text: 'file contents' } }] });",
         "      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'done' } });",
         "      send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn', _meta: { modelId: 'grok-4.5', totalTokens: 5 } } });",
         '    }',
