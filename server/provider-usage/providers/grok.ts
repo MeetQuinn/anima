@@ -1,0 +1,738 @@
+import { join } from 'node:path';
+
+import type { ProviderUsageExtra, ProviderUsageRow, ProviderUsageWindow } from '../../../shared/provider-usage.js';
+import { providerUsageNetworkErrorMessage } from '../http.js';
+import { available, unavailable, usageError } from '../result.js';
+import {
+  clampPercent,
+  expiresSoon,
+  homePath,
+  providerHome,
+  readJsonFile,
+  record,
+  stringValue,
+  writeJsonFile,
+} from './common.js';
+
+/** Same endpoint Raycast Agent Usage uses for SuperGrok / Grok Build credits. */
+const GROK_BILLING_API = 'https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig';
+const GROK_OIDC_ISSUER_DEFAULT = 'https://auth.x.ai';
+const GROK_AUTH_SCOPE_PREFIX = 'https://auth.x.ai::';
+/** Empty gRPC-Web request frame (flags=0, length=0). */
+const EMPTY_GRPC_WEB_BODY = new Uint8Array([0, 0, 0, 0, 0]);
+const BILLING_TIMEOUT_MS = 15_000;
+const REFRESH_TIMEOUT_MS = 15_000;
+
+/**
+ * Known used-percent paths on GetGrokCreditsConfig (live fixture + Raycast).
+ * Do not accept arbitrary fixed32 floats — that is not fail-closed.
+ */
+const USAGE_PERCENT_PATHS: readonly number[][] = [
+  [1, 1], // credits config top-level used percent
+  [1, 7, 2], // nested weekly window used percent
+];
+
+/**
+ * Every schema path Anima actually reads: used-percent (fixed32) plus reset and
+ * period (varint). The protobuf scan recurses into a length-delimited field only
+ * when its path is a strict prefix of one of these. Other valid length-delimited
+ * fields (strings, opaque bytes, unknown submessages) are skipped as unknown
+ * bytes for forward compatibility instead of being mis-parsed as submessages.
+ */
+const READ_FIELD_PATHS: readonly number[][] = [
+  [1, 1], // used percent (top level)
+  [1, 7, 2], // used percent (nested weekly window)
+  [1, 5, 1], // reset timestamp
+  [1, 8, 1], // period type (1=monthly, 2=weekly)
+];
+
+/** Message paths worth descending into: the strict prefixes of READ_FIELD_PATHS. */
+const RECURSE_PREFIXES: ReadonlySet<string> = new Set(
+  READ_FIELD_PATHS.flatMap((path) =>
+    path.slice(0, -1).map((_, index) => path.slice(0, index + 1).join('/')),
+  ),
+);
+
+/** Fixed32 fields Anima decodes as used-percent floats. */
+const FIXED32_READ_PATHS: readonly number[][] = USAGE_PERCENT_PATHS;
+
+/** Varint fields Anima decodes: reset timestamp and period type. */
+const VARINT_READ_PATHS: readonly number[][] = [
+  [1, 5, 1], // reset timestamp (unix seconds)
+  [1, 8, 1], // period type (1=monthly, 2=weekly)
+];
+
+interface GrokCredentials {
+  accessToken: string;
+  account?: string;
+  expiresAt?: string;
+  oidcClientId?: string;
+  oidcIssuer: string;
+  refreshToken?: string;
+  scope: string;
+  sourcePath: string;
+  teamId?: string;
+}
+
+export async function fetchGrokUsage(): Promise<
+  Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>
+> {
+  const credentials = await readGrokCredentials();
+  if (!credentials) {
+    return unavailable(usageError('not_configured', 'Grok Build credentials not found. Run `grok login` to authenticate.'));
+  }
+
+  let active = credentials;
+  if (grokExpiresSoon(active.expiresAt) && active.refreshToken && active.oidcClientId) {
+    const refreshed = await refreshGrokCredentials(active);
+    if (refreshed.error) return unavailable(refreshed.error, active.account);
+    active = refreshed.credentials;
+  }
+
+  let result = await fetchGrokBilling(active.accessToken);
+  if (result.error?.type === 'unauthorized' && active.refreshToken && active.oidcClientId) {
+    const refreshed = await refreshGrokCredentials(active);
+    if (refreshed.error) return unavailable(refreshed.error, active.account);
+    active = refreshed.credentials;
+    result = await fetchGrokBilling(active.accessToken);
+  }
+
+  if (result.error) return unavailable(result.error, active.account);
+  if (!result.snapshot) {
+    return unavailable(usageError('unknown', 'Grok billing response did not include usage data'), active.account);
+  }
+
+  const windows = grokWindows(result.snapshot);
+  if (windows.length === 0) {
+    return unavailable(usageError('parse_error', 'Grok billing response did not include quota windows'), active.account);
+  }
+
+  const extras: ProviderUsageExtra[] = [];
+  // Plan name is not always present in auth.json; SuperGrok/Heavy are account-side labels.
+  if (active.teamId) extras.push({ label: 'Team', balance: active.teamId });
+
+  return available(windows, extras, active.account);
+}
+
+export function parseGrokBillingBytes(
+  body: Uint8Array,
+  nowMs: number = Date.now(),
+): { error?: ReturnType<typeof usageError>; snapshot?: GrokBillingSnapshot } {
+  try {
+    const framed = parseGrpcWebFrames(body);
+    if (framed.error) {
+      return { error: usageError('parse_error', framed.error) };
+    }
+    const trailerStatus = framed.trailers['grpc-status'];
+    if (trailerStatus === undefined) {
+      return { error: usageError('parse_error', 'Grok billing response missing grpc-status trailer') };
+    }
+    if (trailerStatus !== '0') {
+      return { error: grpcStatusError(trailerStatus, framed.trailers['grpc-message']) };
+    }
+
+    const payload = framed.payload;
+    if (!payload || payload.length === 0) {
+      return { error: usageError('parse_error', 'Grok billing response had no protobuf payload') };
+    }
+    const scanned = scanProtobuf(payload);
+    if (!scanned.ok) {
+      return { error: usageError('parse_error', scanned.error) };
+    }
+    const fields = scanned.fields;
+    const usedPercent = firstUsagePercent(fields);
+    if (usedPercent === undefined) {
+      // proto3 omits default 0.0 fixed32; a known quota shell without percent means unused.
+      if (!isZeroUsageOmittedShape(fields, nowMs)) {
+        return { error: usageError('parse_error', 'Grok billing response did not include used percent') };
+      }
+    }
+    const resetsAt = firstFutureTimestamp(fields, nowMs);
+    return {
+      snapshot: {
+        resetsAt,
+        usedPercent: clampPercent(usedPercent ?? 0),
+      },
+    };
+  } catch (error) {
+    return {
+      error: usageError(
+        'parse_error',
+        error instanceof Error ? error.message : 'Could not parse Grok billing usage',
+      ),
+    };
+  }
+}
+
+interface GrokBillingSnapshot {
+  resetsAt?: string;
+  usedPercent: number;
+}
+
+async function readGrokCredentials(): Promise<GrokCredentials | undefined> {
+  const sourcePath = grokAuthPath();
+  const root = record(await readJsonFile(sourcePath));
+  if (!root) return undefined;
+
+  for (const [scope, value] of Object.entries(root)) {
+    const entry = record(value);
+    // CLI stores the access token as `key` (Raycast Agent Usage reads the same field).
+    const accessToken = stringValue(entry?.key) ?? stringValue(entry?.accessToken) ?? stringValue(entry?.access_token);
+    if (!accessToken) continue;
+    const email = stringValue(entry?.email);
+    return {
+      accessToken,
+      ...(email ? { account: email } : {}),
+      expiresAt: stringValue(entry?.expires_at) ?? stringValue(entry?.expiresAt),
+      oidcClientId: stringValue(entry?.oidc_client_id)
+        ?? stringValue(entry?.oidcClientId)
+        ?? clientIdFromScope(scope),
+      oidcIssuer: stringValue(entry?.oidc_issuer) ?? stringValue(entry?.oidcIssuer) ?? GROK_OIDC_ISSUER_DEFAULT,
+      refreshToken: stringValue(entry?.refresh_token) ?? stringValue(entry?.refreshToken),
+      scope,
+      sourcePath,
+      teamId: stringValue(entry?.team_id) ?? stringValue(entry?.teamId),
+    };
+  }
+  return undefined;
+}
+
+async function refreshGrokCredentials(
+  credentials: GrokCredentials,
+): Promise<
+  | { credentials: GrokCredentials; error?: never }
+  | { credentials?: never; error: NonNullable<ReturnType<typeof usageError>> }
+> {
+  if (!credentials.refreshToken || !credentials.oidcClientId) {
+    return {
+      error: usageError('unauthorized', 'Grok refresh token not found. Run `grok login` to authenticate again.'),
+    };
+  }
+
+  try {
+    const tokenUrl = await discoverTokenEndpoint(credentials.oidcIssuer);
+    const body = new URLSearchParams({
+      client_id: credentials.oidcClientId,
+      grant_type: 'refresh_token',
+      refresh_token: credentials.refreshToken,
+    });
+    const response = await fetchUntilBody(
+      tokenUrl,
+      {
+        body: body.toString(),
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        method: 'POST',
+      },
+      REFRESH_TIMEOUT_MS,
+    );
+
+    if (response.status === 401 || response.status === 403) {
+      return {
+        error: usageError('unauthorized', 'Grok session expired or invalid. Run `grok login` to refresh credentials.'),
+      };
+    }
+    if (!response.ok) {
+      return {
+        error: usageError('unknown', `Grok token refresh failed with HTTP ${response.status}`),
+      };
+    }
+
+    const data = record(JSON.parse(response.bodyText));
+    const accessToken = stringValue(data?.access_token);
+    if (!accessToken) {
+      return { error: usageError('parse_error', 'Grok refresh response did not include an access token.') };
+    }
+    const refreshToken = stringValue(data?.refresh_token) ?? credentials.refreshToken;
+    const expiresIn = typeof data?.expires_in === 'number' && Number.isFinite(data.expires_in)
+      ? data.expires_in
+      : numberFromUnknown(data?.expires_in);
+    const expiresAt = expiresIn !== undefined && expiresIn > 0
+      ? new Date(Date.now() + expiresIn * 1000).toISOString()
+      : credentials.expiresAt;
+
+    await writeGrokAccessToken(credentials, {
+      accessToken,
+      ...(expiresAt ? { expiresAt } : {}),
+      refreshToken,
+    });
+
+    return {
+      credentials: {
+        ...credentials,
+        accessToken,
+        ...(expiresAt ? { expiresAt } : {}),
+        refreshToken,
+      },
+    };
+  } catch (error) {
+    return {
+      error: usageError(
+        'network_error',
+        error instanceof Error && error.name === 'AbortError'
+          ? 'Provider usage request timed out.'
+          : providerUsageNetworkErrorMessage(error),
+      ),
+    };
+  }
+}
+
+async function writeGrokAccessToken(
+  credentials: GrokCredentials,
+  next: { accessToken: string; expiresAt?: string; refreshToken: string },
+): Promise<void> {
+  const root = record(await readJsonFile(credentials.sourcePath)) ?? {};
+  const entry = record(root[credentials.scope]) ?? {};
+  root[credentials.scope] = {
+    ...entry,
+    key: next.accessToken,
+    refresh_token: next.refreshToken,
+    ...(next.expiresAt ? { expires_at: next.expiresAt } : {}),
+  };
+  await writeJsonFile(credentials.sourcePath, root);
+}
+
+async function fetchGrokBilling(
+  accessToken: string,
+): Promise<{ error?: ReturnType<typeof usageError>; snapshot?: GrokBillingSnapshot }> {
+  try {
+    const response = await fetchUntilBody(
+      GROK_BILLING_API,
+      {
+        body: EMPTY_GRPC_WEB_BODY,
+        headers: {
+          Accept: '*/*',
+          Authorization: accessToken.toLowerCase().startsWith('bearer ') ? accessToken : `Bearer ${accessToken}`,
+          'Content-Type': 'application/grpc-web+proto',
+          Origin: 'https://grok.com',
+          Referer: 'https://grok.com/?_s=usage',
+          'User-Agent': 'Anima/provider-usage',
+          'x-grpc-web': '1',
+          'x-user-agent': 'connect-es/2.1.1',
+        },
+        method: 'POST',
+      },
+      BILLING_TIMEOUT_MS,
+    );
+
+    if (response.status === 401 || response.status === 403) {
+      return {
+        error: usageError('unauthorized', 'Grok session expired or invalid. Run `grok login` to refresh credentials.'),
+      };
+    }
+    if (!response.ok) {
+      return {
+        error: usageError('unknown', `Grok billing request failed with HTTP ${response.status}`),
+      };
+    }
+
+    const headerStatus = response.headers.get('grpc-status');
+    if (headerStatus && headerStatus !== '0') {
+      return { error: grpcStatusError(headerStatus, response.headers.get('grpc-message') ?? undefined) };
+    }
+
+    return parseGrokBillingBytes(response.bodyBytes);
+  } catch (error) {
+    return {
+      error: usageError(
+        'network_error',
+        error instanceof Error && error.name === 'AbortError'
+          ? 'Provider usage request timed out.'
+          : providerUsageNetworkErrorMessage(error),
+      ),
+    };
+  }
+}
+
+/**
+ * Abort covers headers **and** body consumption. Clearing the timer after
+ * `fetch()` resolves (headers only) leaves body stalls hanging forever.
+ * Race body read against the abort signal because some runtimes do not reject
+ * `arrayBuffer()` promptly when only the request signal aborts mid-stream.
+ *
+ * Exported so unit tests can exercise the timeout contract without changing
+ * the production `fetchGrokUsage()` surface.
+ */
+export async function fetchUntilBody(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<{ bodyBytes: Uint8Array; bodyText: string; headers: Headers; status: number; ok: boolean }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    const bodyBytes = new Uint8Array(await readBodyWithAbort(response, controller.signal));
+    return {
+      bodyBytes,
+      bodyText: new TextDecoder().decode(bodyBytes),
+      headers: response.headers,
+      ok: response.ok,
+      status: response.status,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function readBodyWithAbort(response: Response, signal: AbortSignal): Promise<ArrayBuffer> {
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(abortError());
+    };
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    signal.addEventListener('abort', onAbort, { once: true });
+    void response
+      .arrayBuffer()
+      .then((buffer) => {
+        cleanup();
+        if (signal.aborted) reject(abortError());
+        else resolve(buffer);
+      })
+      .catch((error) => {
+        cleanup();
+        reject(error);
+      });
+  });
+}
+
+function abortError(): Error {
+  const error = new Error('The operation was aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
+function grpcStatusError(status: string, message?: string): ReturnType<typeof usageError> {
+  if (status === '16' || status === '7') {
+    return usageError(
+      'unauthorized',
+      message
+        ? `Grok session rejected (${status}): ${message}`
+        : 'Grok session expired or invalid. Run `grok login` to refresh credentials.',
+    );
+  }
+  return usageError('unknown', message ? `gRPC status ${status}: ${message}` : `gRPC status ${status}`);
+}
+
+function grokWindows(snapshot: GrokBillingSnapshot): ProviderUsageWindow[] {
+  const used = snapshot.usedPercent;
+  const remaining = clampPercent(100 - used);
+  const label = windowLabel(snapshot.resetsAt);
+  return [{
+    label,
+    remainingPercent: remaining,
+    ...(snapshot.resetsAt ? { resetsAt: snapshot.resetsAt } : {}),
+    usedPercent: used,
+  }];
+}
+
+function windowLabel(resetsAt: string | undefined, nowMs: number = Date.now()): string {
+  if (!resetsAt) return 'Credits';
+  const ms = Date.parse(resetsAt) - nowMs;
+  if (!Number.isFinite(ms) || ms <= 3_600_000) return 'Credits';
+  const days = Math.round(ms / 86_400_000);
+  if (days >= 4 && days <= 12) return 'Weekly';
+  if (days >= 20 && days <= 45) return 'Monthly';
+  return 'Credits';
+}
+
+function grokAuthPath(): string {
+  const grokHome = process.env.GROK_HOME?.trim();
+  if (grokHome) {
+    if (grokHome === '~') return join(providerHome(), 'auth.json');
+    if (grokHome.startsWith('~/') || grokHome.startsWith('~\\')) {
+      return join(providerHome(), grokHome.slice(2), 'auth.json');
+    }
+    return join(grokHome, 'auth.json');
+  }
+  return homePath('.grok', 'auth.json');
+}
+
+function clientIdFromScope(scope: string): string | undefined {
+  if (!scope.startsWith(GROK_AUTH_SCOPE_PREFIX)) return undefined;
+  const id = scope.slice(GROK_AUTH_SCOPE_PREFIX.length).trim();
+  return id || undefined;
+}
+
+/** Grok stores `expires_at` as ISO-8601; shared expiresSoon only handles numeric epochs. */
+function grokExpiresSoon(expiresAt: string | undefined, skewMs = 60_000, nowMs: number = Date.now()): boolean {
+  if (!expiresAt) return false;
+  const parsed = Date.parse(expiresAt);
+  if (Number.isFinite(parsed)) return parsed <= nowMs + skewMs;
+  return expiresSoon(expiresAt, skewMs / 1000, nowMs);
+}
+
+async function discoverTokenEndpoint(issuer: string): Promise<string> {
+  const base = issuer.replace(/\/$/, '');
+  try {
+    const response = await fetchUntilBody(
+      `${base}/.well-known/openid-configuration`,
+      { headers: { Accept: 'application/json' }, method: 'GET' },
+      REFRESH_TIMEOUT_MS,
+    );
+    if (!response.ok) {
+      // Fallback used by the CLI / Raycast when discovery is unavailable.
+      return `${base}/oauth/token`;
+    }
+    const data = record(JSON.parse(response.bodyText));
+    return stringValue(data?.token_endpoint) ?? `${base}/oauth/token`;
+  } catch {
+    return `${base}/oauth/token`;
+  }
+}
+
+function numberFromUnknown(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+// --- gRPC-Web + protobuf (minimal scan; mirrors Raycast Agent Usage) ---
+
+interface GrpcWebFrames {
+  error?: string;
+  payload?: Uint8Array;
+  trailers: Record<string, string>;
+}
+
+/**
+ * Parse the gRPC-Web envelope of this **unary** endpoint fail-closed. A valid
+ * response is exactly one uncompressed data frame followed by one uncompressed
+ * trailer frame (the trailer must be last). Anything else — a second data frame,
+ * a frame after the trailer, a trailer before the data, a truncated/residual
+ * frame, or a compressed/unknown frame flag — is a hard error. The caller still
+ * requires the trailer to carry an explicit `grpc-status:0`.
+ */
+export function parseGrpcWebFrames(body: Uint8Array): GrpcWebFrames {
+  let offset = 0;
+  let payload: Uint8Array | undefined;
+  let trailerText: string | undefined;
+  let sawData = false;
+
+  while (offset < body.length) {
+    if (offset + 5 > body.length) {
+      return { error: 'truncated gRPC-Web frame', trailers: {} };
+    }
+    const flags = body[offset] ?? 0;
+    const length =
+      ((body[offset + 1]! << 24) | (body[offset + 2]! << 16) | (body[offset + 3]! << 8) | body[offset + 4]!) >>> 0;
+    offset += 5;
+    if (offset + length > body.length) {
+      return { error: 'truncated gRPC-Web frame', trailers: {} };
+    }
+    const frame = body.subarray(offset, offset + length);
+    offset += length;
+
+    const isTrailer = (flags & 0x80) !== 0;
+    // Only the trailer bit is allowed; compression (0x01) and any reserved bit
+    // are unsupported for this endpoint (we never negotiate compression).
+    if ((isTrailer ? flags & ~0x80 : flags) !== 0) {
+      return { error: 'unsupported gRPC-Web frame flags', trailers: {} };
+    }
+    // Nothing may follow the trailer, and the trailer must come after the data.
+    if (trailerText !== undefined) {
+      return { error: 'unexpected gRPC-Web frame after trailer', trailers: {} };
+    }
+    if (isTrailer) {
+      trailerText = new TextDecoder().decode(frame);
+      continue;
+    }
+    if (sawData) {
+      return { error: 'unexpected second gRPC-Web data frame', trailers: {} };
+    }
+    sawData = true;
+    payload = frame;
+  }
+
+  if (!sawData) {
+    return { error: 'gRPC-Web response had no data frame', trailers: {} };
+  }
+  if (trailerText === undefined) {
+    return { error: 'gRPC-Web response missing trailer frame', trailers: {} };
+  }
+
+  const trailers: Record<string, string> = {};
+  for (const line of trailerText.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const idx = line.indexOf(':');
+    if (idx <= 0) continue;
+    const key = line.slice(0, idx).trim().toLowerCase();
+    const value = line.slice(idx + 1).trim();
+    if (key) trailers[key] = value;
+  }
+
+  return { payload, trailers };
+}
+
+interface ProtoScan {
+  fixed32: Array<{ path: number[]; value: number }>;
+  varint: Array<{ path: number[]; value: number }>;
+}
+
+type ProtobufScanResult =
+  | { error: string; ok: false }
+  | { fields: ProtoScan; ok: true };
+
+/**
+ * Fail-closed protobuf walk: any truncated/malformed field rejects the whole
+ * message. Never return partial fields collected before a break — a known-path
+ * percent earlier in the payload must not salvage a corrupt tail.
+ */
+function scanProtobuf(buf: Uint8Array, depth = 0, path: number[] = []): ProtobufScanResult {
+  const out: ProtoScan = { fixed32: [], varint: [] };
+  let i = 0;
+  while (i < buf.length) {
+    const key = readVarint(buf, { value: i });
+    if (key === null) {
+      return { error: 'truncated protobuf field key', ok: false };
+    }
+    i = key.next;
+    // Field number 0 is invalid in protobuf; do not skip/recover.
+    if (key.value === 0 || key.value >>> 3 === 0) {
+      return { error: 'invalid protobuf field number 0', ok: false };
+    }
+    const field = key.value >>> 3;
+    const wire = key.value & 7;
+    const nextPath = [...path, field];
+    if (wire === 0) {
+      const v = readVarint(buf, { value: i });
+      if (v === null) {
+        return { error: 'truncated protobuf varint field', ok: false };
+      }
+      i = v.next;
+      // Keep only varints on an exact read path (reset/period). Unknown varints
+      // are consumed by their 10-byte protobuf boundary above and never
+      // collected — a valid unknown 64-bit varint must not error or seed a reset.
+      if (isReadPath(nextPath, VARINT_READ_PATHS)) {
+        out.varint.push({ path: nextPath, value: v.value });
+      }
+    } else if (wire === 1) {
+      if (i + 8 > buf.length) {
+        return { error: 'truncated protobuf fixed64 field', ok: false };
+      }
+      i += 8;
+    } else if (wire === 2) {
+      const len = readVarint(buf, { value: i });
+      if (len === null) {
+        return { error: 'truncated protobuf length-delimited field', ok: false };
+      }
+      if (len.value > buf.length - len.next) {
+        return { error: 'truncated protobuf length-delimited field', ok: false };
+      }
+      const startSub = len.next;
+      const endSub = startSub + len.value;
+      i = endSub;
+      // Descend only into fields on a path we actually read. Other valid
+      // length-delimited fields (strings/bytes/unknown submessages) are skipped
+      // as opaque unknown bytes for forward compatibility — never mis-parsed as
+      // protobuf. The outer declared-length check above still runs for every
+      // field, so a length that overruns the enclosing message stays parse_error.
+      if (depth < 4 && RECURSE_PREFIXES.has(nextPath.join('/'))) {
+        const nested = scanProtobuf(buf.subarray(startSub, endSub), depth + 1, nextPath);
+        if (!nested.ok) return nested;
+        out.fixed32.push(...nested.fields.fixed32);
+        out.varint.push(...nested.fields.varint);
+      }
+    } else if (wire === 5) {
+      if (i + 4 > buf.length) {
+        return { error: 'truncated protobuf fixed32 field', ok: false };
+      }
+      // Keep only fixed32 on an exact used-percent read path; ignore other floats.
+      if (isReadPath(nextPath, FIXED32_READ_PATHS)) {
+        const view = new DataView(buf.buffer, buf.byteOffset + i, 4);
+        out.fixed32.push({ path: nextPath, value: view.getFloat32(0, true) });
+      }
+      i += 4;
+    } else {
+      return { error: `unsupported protobuf wire type ${wire}`, ok: false };
+    }
+  }
+  return { fields: out, ok: true };
+}
+
+/**
+ * Read a protobuf base-128 varint. Tolerates the full 64-bit / 10-byte width so a
+ * valid unknown field (e.g. 2^40) is consumed, not mis-flagged as truncated. Uses
+ * float accumulation rather than 32-bit shifts; the fields Anima reads (reset ~1.7e9,
+ * period 1/2, keys, lengths) are well within exact-integer range. Returns null only
+ * when the varint runs off the buffer or exceeds 10 bytes without a terminator.
+ */
+function readVarint(buf: Uint8Array, cursor: { value: number }): { next: number; value: number } | null {
+  let result = 0;
+  let shift = 1;
+  let i = cursor.value;
+  let bytes = 0;
+  while (i < buf.length) {
+    const byte = buf[i]!;
+    i += 1;
+    bytes += 1;
+    result += (byte & 0x7f) * shift;
+    if ((byte & 0x80) === 0) {
+      cursor.value = i;
+      return { next: i, value: result };
+    }
+    if (bytes >= 10) return null; // >10 bytes cannot be a valid 64-bit varint
+    shift *= 128;
+  }
+  return null; // ran off the buffer before the varint terminated
+}
+
+function isReadPath(path: number[], known: readonly number[][]): boolean {
+  return known.some((candidate) => pathEquals(path, candidate));
+}
+
+function pathEquals(a: number[], b: readonly number[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function isPercent(value: number): boolean {
+  return Number.isFinite(value) && value >= 0 && value <= 100;
+}
+
+function firstUsagePercent(fields: ProtoScan): number | undefined {
+  for (const known of USAGE_PERCENT_PATHS) {
+    const hit = fields.fixed32.find((f) => pathEquals(f.path, known) && isPercent(f.value));
+    if (hit) return hit.value;
+  }
+  return undefined;
+}
+
+/**
+ * Live schema (Raycast-aligned): future reset at [1,5,1] plus period at [1,8,1]
+ * where 1=monthly and 2=weekly. When that shell is present but used-percent
+ * fixed32 is omitted (proto3 default 0), treat as 0% rather than parse_error.
+ * Stale/past resets and unknown period types must not invent a 0% window.
+ */
+function isZeroUsageOmittedShape(fields: ProtoScan, nowMs: number): boolean {
+  const nowSec = nowMs / 1000;
+  const hasFutureReset = fields.varint.some(
+    (f) => pathEquals(f.path, [1, 5, 1]) && f.value > nowSec && f.value < 2.1e9,
+  );
+  const hasPeriod = fields.varint.some(
+    (f) => pathEquals(f.path, [1, 8, 1]) && (f.value === 1 || f.value === 2),
+  );
+  return hasFutureReset && hasPeriod;
+}
+
+function firstFutureTimestamp(fields: ProtoScan, nowMs: number): string | undefined {
+  const nowSec = nowMs / 1000;
+  // Only the exact reset path (1, 5, 1) seeds the reset — never an arbitrary varint,
+  // which would let an unrelated field fabricate a resetsAt.
+  const pick = fields.varint
+    .filter((f) => pathEquals(f.path, [1, 5, 1]))
+    .map((f) => f.value)
+    .filter((v) => v > nowSec && v < 2.1e9)
+    .sort((a, b) => a - b)[0];
+  return pick !== undefined ? new Date(pick * 1000).toISOString() : undefined;
+}

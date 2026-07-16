@@ -8,6 +8,12 @@ import { ProviderUsageService } from '../provider-usage/provider-usage.service.j
 import { providerUsageNetworkErrorMessage } from '../provider-usage/http.js';
 import { fetchClaudeUsage, parseClaudeUsageResponse } from '../provider-usage/providers/claude.js';
 import { fetchCodexUsage, parseCodexUsageResponse } from '../provider-usage/providers/codex.js';
+import {
+  fetchGrokUsage,
+  fetchUntilBody,
+  parseGrokBillingBytes,
+  parseGrpcWebFrames,
+} from '../provider-usage/providers/grok.js';
 import { fetchKimiUsage, parseKimiUsageResponse } from '../provider-usage/providers/kimi.js';
 
 test('Claude usage parser returns remaining windows and extra usage', () => {
@@ -427,6 +433,484 @@ test('provider usage service can refresh a single provider without calling the o
   assert.equal(codexCalls, 1);
   assert.equal(claudeCalls, 0);
 });
+
+// Captured live response from GetGrokCreditsConfig (usedPercent=9), matching Raycast Agent Usage.
+const GROK_BILLING_FIXTURE = Buffer.from(
+  '00000000560a540d0000104112001a00220c08eebfcfd20610d8a4b890032a0c08eeb4f4d20610d8a4b890033a0708021500001041421e0802120c08eebfcfd20610d8a4b890031a0c08eeb4f4d20610d8a4b89003580162006801800000000f677270632d7374617475733a300d0a',
+  'hex',
+);
+
+test('Grok billing parser extracts used percent from gRPC-Web protobuf', () => {
+  const parsed = parseGrokBillingBytes(new Uint8Array(GROK_BILLING_FIXTURE), Date.parse('2026-07-16T03:00:00.000Z'));
+  assert.equal(parsed.error, undefined);
+  assert.equal(parsed.snapshot?.usedPercent, 9);
+});
+
+test('Grok usage reads ~/.grok/auth.json key and calls billing endpoint', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-grok-usage-home-'));
+  await mkdir(join(home, '.grok'), { recursive: true });
+  const authPath = join(home, '.grok', 'auth.json');
+  await writeFile(
+    authPath,
+    JSON.stringify({
+      'https://auth.x.ai::test-client': {
+        auth_mode: 'oidc',
+        email: 'operator@example.com',
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        key: 'grok-access-token',
+        oidc_client_id: 'test-client',
+        oidc_issuer: 'https://auth.x.ai',
+        refresh_token: 'grok-refresh',
+        team_id: 'team-1',
+      },
+    }),
+    'utf8',
+  );
+
+  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
+  const originalGrokHome = process.env.GROK_HOME;
+  const originalFetch = globalThis.fetch;
+  const seen: Array<{ auth?: string; url: string }> = [];
+  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
+  delete process.env.GROK_HOME;
+  globalThis.fetch = (async (url, init) => {
+    const href = String(url);
+    seen.push({
+      auth: String((init?.headers as Record<string, string> | undefined)?.Authorization ?? ''),
+      url: href,
+    });
+    if (href.includes('GetGrokCreditsConfig')) {
+      return new Response(GROK_BILLING_FIXTURE, {
+        headers: { 'content-type': 'application/grpc-web+proto' },
+        status: 200,
+      });
+    }
+    return new Response('unexpected', { status: 500 });
+  }) as typeof fetch;
+
+  try {
+    const result = await fetchGrokUsage();
+    assert.equal(result.status, 'available');
+    assert.equal(result.account, 'operator@example.com');
+    assert.equal(result.windows[0]?.usedPercent, 9);
+    assert.equal(result.windows[0]?.remainingPercent, 91);
+    // Label is Weekly/Monthly/Credits based on reset distance; fixture resets are multi-day.
+    assert.ok(result.windows[0]?.label === 'Weekly' || result.windows[0]?.label === 'Credits');
+    assert.equal(seen.length, 1);
+    assert.match(seen[0]?.url ?? '', /GetGrokCreditsConfig/);
+    assert.equal(seen[0]?.auth, 'Bearer grok-access-token');
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
+    restoreEnv('GROK_HOME', originalGrokHome);
+  }
+});
+
+test('Grok usage refreshes an expired access token before billing', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-grok-refresh-home-'));
+  await mkdir(join(home, '.grok'), { recursive: true });
+  const authPath = join(home, '.grok', 'auth.json');
+  const scope = 'https://auth.x.ai::test-client';
+  await writeFile(
+    authPath,
+    JSON.stringify({
+      [scope]: {
+        auth_mode: 'oidc',
+        email: 'operator@example.com',
+        expires_at: new Date(Date.now() - 60_000).toISOString(),
+        key: 'stale-grok-access',
+        oidc_client_id: 'test-client',
+        oidc_issuer: 'https://auth.x.ai',
+        refresh_token: 'old-grok-refresh',
+      },
+    }),
+    'utf8',
+  );
+
+  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
+  const originalFetch = globalThis.fetch;
+  const authorizations: string[] = [];
+  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
+  globalThis.fetch = (async (url, init) => {
+    const href = String(url);
+    if (href.includes('openid-configuration')) {
+      return jsonResponse({ token_endpoint: 'https://auth.x.ai/oauth/token' });
+    }
+    if (href === 'https://auth.x.ai/oauth/token') {
+      const body = String(init?.body);
+      assert.match(body, /grant_type=refresh_token/);
+      assert.match(body, /refresh_token=old-grok-refresh/);
+      assert.match(body, /client_id=test-client/);
+      return jsonResponse({
+        access_token: 'fresh-grok-access',
+        expires_in: 3600,
+        refresh_token: 'fresh-grok-refresh',
+      });
+    }
+    if (href.includes('GetGrokCreditsConfig')) {
+      authorizations.push(String((init?.headers as Record<string, string> | undefined)?.Authorization ?? ''));
+      return new Response(GROK_BILLING_FIXTURE, {
+        headers: { 'content-type': 'application/grpc-web+proto' },
+        status: 200,
+      });
+    }
+    return new Response('unexpected', { status: 500 });
+  }) as typeof fetch;
+
+  try {
+    const result = await fetchGrokUsage();
+    assert.equal(result.status, 'available');
+    assert.deepEqual(authorizations, ['Bearer fresh-grok-access']);
+    const stored = JSON.parse(await readFile(authPath, 'utf8')) as Record<string, { key: string; refresh_token: string }>;
+    assert.equal(stored[scope]?.key, 'fresh-grok-access');
+    assert.equal(stored[scope]?.refresh_token, 'fresh-grok-refresh');
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
+  }
+});
+
+test('Grok usage reports not_configured without auth.json', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-grok-empty-home-'));
+  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
+  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
+  try {
+    const result = await fetchGrokUsage();
+    assert.equal(result.status, 'unavailable');
+    assert.equal(result.error?.type, 'not_configured');
+  } finally {
+    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
+  }
+});
+
+test('Grok billing parser rejects body trailer grpc-status 16 before accepting data', () => {
+  const unauth = withGrpcTrailerStatus(GROK_BILLING_FIXTURE, '16', 'unauthenticated');
+  const frames = parseGrpcWebFrames(new Uint8Array(unauth));
+  assert.equal(frames.trailers['grpc-status'], '16');
+  assert.ok(frames.payload && frames.payload.length > 0);
+
+  const parsed = parseGrokBillingBytes(new Uint8Array(unauth));
+  assert.equal(parsed.snapshot, undefined);
+  assert.equal(parsed.error?.type, 'unauthorized');
+});
+
+test('Grok usage refreshes and retries after body trailer grpc-status 16', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-grok-trailer-auth-'));
+  await mkdir(join(home, '.grok'), { recursive: true });
+  const authPath = join(home, '.grok', 'auth.json');
+  const scope = 'https://auth.x.ai::test-client';
+  await writeFile(
+    authPath,
+    JSON.stringify({
+      [scope]: {
+        auth_mode: 'oidc',
+        email: 'operator@example.com',
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        key: 'stale-access',
+        oidc_client_id: 'test-client',
+        oidc_issuer: 'https://auth.x.ai',
+        refresh_token: 'trailer-refresh',
+      },
+    }),
+    'utf8',
+  );
+
+  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
+  const originalFetch = globalThis.fetch;
+  const authorizations: string[] = [];
+  let billingCalls = 0;
+  let refreshCalls = 0;
+  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
+  globalThis.fetch = (async (url, init) => {
+    const href = String(url);
+    if (href.includes('openid-configuration')) {
+      return jsonResponse({ token_endpoint: 'https://auth.x.ai/oauth/token' });
+    }
+    if (href === 'https://auth.x.ai/oauth/token') {
+      refreshCalls += 1;
+      return jsonResponse({
+        access_token: 'refreshed-after-trailer',
+        expires_in: 3600,
+        refresh_token: 'trailer-refresh-2',
+      });
+    }
+    if (href.includes('GetGrokCreditsConfig')) {
+      billingCalls += 1;
+      authorizations.push(String((init?.headers as Record<string, string> | undefined)?.Authorization ?? ''));
+      if (billingCalls === 1) {
+        return new Response(new Uint8Array(withGrpcTrailerStatus(GROK_BILLING_FIXTURE, '16', 'unauthenticated')), {
+          headers: { 'content-type': 'application/grpc-web+proto' },
+          status: 200,
+        });
+      }
+      return new Response(new Uint8Array(GROK_BILLING_FIXTURE), {
+        headers: { 'content-type': 'application/grpc-web+proto' },
+        status: 200,
+      });
+    }
+    return new Response('unexpected', { status: 500 });
+  }) as typeof fetch;
+
+  try {
+    const result = await fetchGrokUsage();
+    assert.equal(result.status, 'available');
+    assert.equal(result.windows[0]?.usedPercent, 9);
+    assert.equal(billingCalls, 2);
+    assert.equal(refreshCalls, 1);
+    assert.deepEqual(authorizations, ['Bearer stale-access', 'Bearer refreshed-after-trailer']);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
+  }
+});
+
+test('Grok billing parser is fail-closed on unrelated fixed32 and accepts omitted 0%', () => {
+  for (const field of [1, 2, 15]) {
+    const raw = encodeFixed32Field(field, 42);
+    const framed = grpcWebMessageAndOkTrailer(raw);
+    const parsed = parseGrokBillingBytes(framed);
+    assert.equal(parsed.snapshot, undefined, `field ${field} float 42 must not be usage`);
+    assert.equal(parsed.error?.type, 'parse_error');
+  }
+
+  const nowMs = Date.parse('2026-07-16T03:00:00.000Z');
+  const futureResetSec = 1_800_000_000; // 2027-01-15 — future relative to nowMs
+  const pastResetSec = 1_700_000_000; // 2023-11 — stale
+
+  // future reset + weekly period 2 → 0%
+  const weeklyZero = encodeLengthDelimited(
+    1,
+    Buffer.concat([
+      encodeLengthDelimited(5, encodeVarintField(1, futureResetSec)),
+      encodeLengthDelimited(8, encodeVarintField(1, 2)),
+    ]),
+  );
+  const weeklyParsed = parseGrokBillingBytes(grpcWebMessageAndOkTrailer(weeklyZero), nowMs);
+  assert.equal(weeklyParsed.error, undefined);
+  assert.equal(weeklyParsed.snapshot?.usedPercent, 0);
+  assert.equal(weeklyParsed.snapshot?.resetsAt, new Date(futureResetSec * 1000).toISOString());
+
+  // future reset + monthly period 1 → also 0% (Raycast treats 1 and 2 as valid periods)
+  const monthlyZero = encodeLengthDelimited(
+    1,
+    Buffer.concat([
+      encodeLengthDelimited(5, encodeVarintField(1, futureResetSec)),
+      encodeLengthDelimited(8, encodeVarintField(1, 1)),
+    ]),
+  );
+  const monthlyParsed = parseGrokBillingBytes(grpcWebMessageAndOkTrailer(monthlyZero), nowMs);
+  assert.equal(monthlyParsed.error, undefined);
+  assert.equal(monthlyParsed.snapshot?.usedPercent, 0);
+
+  // past/stale reset + weekly period must not invent 0%
+  const staleZero = encodeLengthDelimited(
+    1,
+    Buffer.concat([
+      encodeLengthDelimited(5, encodeVarintField(1, pastResetSec)),
+      encodeLengthDelimited(8, encodeVarintField(1, 2)),
+    ]),
+  );
+  const staleParsed = parseGrokBillingBytes(grpcWebMessageAndOkTrailer(staleZero), nowMs);
+  assert.equal(staleParsed.snapshot, undefined);
+  assert.equal(staleParsed.error?.type, 'parse_error');
+});
+
+test('Grok billing parser rejects truncated gRPC-Web trailer frames', () => {
+  const frames = parseGrpcWebFrames(new Uint8Array(GROK_BILLING_FIXTURE));
+  assert.ok(frames.payload);
+  // Live 9% data frame + truncated trailer (declared length 20, only 4 bytes present).
+  const truncated = Buffer.concat([
+    grpcWebFrame(0, Buffer.from(frames.payload)),
+    Buffer.from([0x80, 0x00, 0x00, 0x00, 0x14, 0x67, 0x72, 0x70, 0x63]), // "grpc"
+  ]);
+  const parsed = parseGrokBillingBytes(new Uint8Array(truncated));
+  assert.equal(parsed.snapshot, undefined);
+  assert.equal(parsed.error?.type, 'parse_error');
+  assert.match(parsed.error?.message ?? '', /truncated/i);
+});
+
+test('Grok billing parser rejects truncated protobuf after a valid known-path percent', () => {
+  // Complete gRPC-Web frame: nested field 1 with [1,1]=9% float, then a length-delimited
+  // field that declares 5 bytes but only supplies 1 (Milo round-3 probe).
+  const inner = Buffer.alloc(5);
+  inner[0] = 0x0d; // field 1, fixed32
+  inner.writeFloatLE(9, 1);
+  const payload = Buffer.concat([
+    Buffer.from([0x0a, inner.length]),
+    inner,
+    Buffer.from([0x12, 0x05, 0x00]), // field 2: len=5, only 1 byte follows
+  ]);
+  const parsed = parseGrokBillingBytes(grpcWebMessageAndOkTrailer(payload));
+  assert.equal(parsed.snapshot, undefined, 'must not salvage earlier 9% after truncated field');
+  assert.equal(parsed.error?.type, 'parse_error');
+});
+
+test('Grok billing parser skips valid unknown length-delimited fields (Milo round-4 probe)', () => {
+  // Complete frame: nested field 1 carries [1,1]=9% plus an unknown string label,
+  // and an unknown top-level string field 15 = "plan". None of these are on a read
+  // path, so they must be skipped as opaque bytes — not parsed as submessages.
+  const inner = Buffer.concat([
+    encodeFixed32Field(1, 9), // [1,1] = 9% used
+    encodeLengthDelimited(9, Buffer.from('weekly-label', 'utf8')), // unknown nested string
+  ]);
+  const payload = Buffer.concat([
+    encodeLengthDelimited(1, inner),
+    encodeLengthDelimited(15, Buffer.from('plan', 'utf8')), // unknown top-level string
+  ]);
+  const parsed = parseGrokBillingBytes(grpcWebMessageAndOkTrailer(payload));
+  assert.equal(parsed.error, undefined, 'valid unknown fields must not fail parsing');
+  assert.equal(parsed.snapshot?.usedPercent, 9);
+});
+
+test('Grok billing parser still rejects an unknown field whose length overruns the message', () => {
+  // Forward-compat skip must not relax the outer bound: a length-delimited field
+  // (even one Anima never reads) that declares more bytes than remain stays a hard error.
+  const payload = Buffer.concat([
+    encodeFixed32Field(1, 9), // known-ish percent earlier in the message
+    Buffer.from([(15 << 3) | 2, 0x20, 0x61, 0x62]), // field 15: len=32, only 2 bytes follow
+  ]);
+  const parsed = parseGrokBillingBytes(grpcWebMessageAndOkTrailer(payload));
+  assert.equal(parsed.snapshot, undefined, 'must not salvage earlier percent after an overrun field');
+  assert.equal(parsed.error?.type, 'parse_error');
+  assert.match(parsed.error?.message ?? '', /truncated|length/i);
+});
+
+test('Grok billing parser consumes a valid wide unknown varint without truncation error (round-5)', () => {
+  // Unknown top-level varint field 15 = 2^40 (6 bytes). The message is complete, so a
+  // 64-bit-capable reader must consume it and still surface the known 9% — a 5-byte
+  // (32-bit) reader would mis-flag the wide varint as truncated.
+  const wideVarint = Buffer.from([(15 << 3) | 0, 0x80, 0x80, 0x80, 0x80, 0x80, 0x20]); // field 15 = 2^40
+  const payload = Buffer.concat([
+    encodeLengthDelimited(1, encodeFixed32Field(1, 9)), // [1,1] = 9%
+    wideVarint,
+  ]);
+  const parsed = parseGrokBillingBytes(grpcWebMessageAndOkTrailer(payload));
+  assert.equal(parsed.error, undefined, 'a valid 64-bit varint must not read as truncated');
+  assert.equal(parsed.snapshot?.usedPercent, 9);
+});
+
+test('Grok billing parser never seeds resetsAt from an unrelated varint (round-5)', () => {
+  const nowMs = Date.parse('2026-07-16T00:00:00.000Z');
+  // 1_800_000_000s is a future-looking timestamp, but it sits at unknown top-level
+  // field 15 — not the [1,5,1] reset path — so it must not fabricate a reset window.
+  const payload = Buffer.concat([
+    encodeLengthDelimited(1, encodeFixed32Field(1, 9)), // [1,1] = 9%
+    encodeVarintField(15, 1_800_000_000), // unknown future-looking varint
+  ]);
+  const parsed = parseGrokBillingBytes(grpcWebMessageAndOkTrailer(payload), nowMs);
+  assert.equal(parsed.error, undefined);
+  assert.equal(parsed.snapshot?.usedPercent, 9);
+  assert.equal(parsed.snapshot?.resetsAt, undefined, 'unrelated varint must not become a reset');
+});
+
+test('Grok billing parser enforces the unary gRPC-Web envelope fail-closed (round-6)', () => {
+  const data = () => encodeLengthDelimited(1, encodeFixed32Field(1, 9)); // valid [1,1]=9%
+  const okTrailer = () => grpcWebFrame(0x80, Buffer.from('grpc-status:0\r\n', 'utf8'));
+
+  // Control: the well-formed unary shape still parses.
+  const good = parseGrokBillingBytes(
+    new Uint8Array(Buffer.concat([grpcWebFrame(0, data()), okTrailer()])),
+  );
+  assert.equal(good.error, undefined);
+  assert.equal(good.snapshot?.usedPercent, 9);
+
+  const rejected: Record<string, Uint8Array> = {
+    'data frame only, no trailer': new Uint8Array(grpcWebFrame(0, data())),
+    'trailer without grpc-status': new Uint8Array(
+      Buffer.concat([grpcWebFrame(0, data()), grpcWebFrame(0x80, Buffer.from('grpc-message:ok\r\n', 'utf8'))]),
+    ),
+    'two data frames': new Uint8Array(
+      Buffer.concat([grpcWebFrame(0, data()), grpcWebFrame(0, data()), okTrailer()]),
+    ),
+    'trailer before data': new Uint8Array(Buffer.concat([okTrailer(), grpcWebFrame(0, data())])),
+    'frame after trailer': new Uint8Array(
+      Buffer.concat([grpcWebFrame(0, data()), okTrailer(), grpcWebFrame(0, data())]),
+    ),
+    'compressed data flag': new Uint8Array(Buffer.concat([grpcWebFrame(0x01, data()), okTrailer()])),
+  };
+  for (const [label, body] of Object.entries(rejected)) {
+    const parsed = parseGrokBillingBytes(body);
+    assert.equal(parsed.snapshot, undefined, `${label}: must not surface a snapshot`);
+    assert.equal(parsed.error?.type, 'parse_error', `${label}: must be parse_error`);
+  }
+});
+
+test('Grok fetchUntilBody times out when response body stalls after headers', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    const stream = new ReadableStream({
+      start() {
+        /* never enqueue or close */
+      },
+    });
+    return new Response(stream, {
+      headers: { 'content-type': 'application/grpc-web+proto' },
+      status: 200,
+    });
+  }) as typeof fetch;
+
+  try {
+    const started = Date.now();
+    await assert.rejects(
+      () => fetchUntilBody('https://example.test/stall', { method: 'POST' }, 40),
+      (error: unknown) => error instanceof Error && error.name === 'AbortError',
+    );
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 2_000, `expected timeout well under 2s, got ${elapsed}ms`);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+function withGrpcTrailerStatus(fixture: Buffer, status: string, message?: string): Buffer {
+  const frames = parseGrpcWebFrames(new Uint8Array(fixture));
+  assert.ok(frames.payload, 'fixture must include a data frame');
+  const trailerLines = [`grpc-status:${status}`];
+  if (message) trailerLines.push(`grpc-message:${message}`);
+  trailerLines.push('');
+  const trailer = Buffer.from(`${trailerLines.join('\r\n')}\r\n`, 'utf8');
+  return Buffer.concat([grpcWebFrame(0, Buffer.from(frames.payload)), grpcWebFrame(0x80, trailer)]);
+}
+
+function grpcWebMessageAndOkTrailer(message: Buffer): Uint8Array {
+  const trailer = Buffer.from('grpc-status:0\r\n', 'utf8');
+  return new Uint8Array(Buffer.concat([grpcWebFrame(0, message), grpcWebFrame(0x80, trailer)]));
+}
+
+function grpcWebFrame(flags: number, data: Buffer): Buffer {
+  const header = Buffer.alloc(5);
+  header[0] = flags;
+  header.writeUInt32BE(data.length, 1);
+  return Buffer.concat([header, data]);
+}
+
+function encodeVarint(value: number): Buffer {
+  const bytes: number[] = [];
+  let v = value >>> 0;
+  while (v >= 0x80) {
+    bytes.push((v & 0x7f) | 0x80);
+    v >>>= 7;
+  }
+  bytes.push(v);
+  return Buffer.from(bytes);
+}
+
+function encodeVarintField(field: number, value: number): Buffer {
+  const key = (field << 3) | 0;
+  return Buffer.concat([encodeVarint(key), encodeVarint(value)]);
+}
+
+function encodeFixed32Field(field: number, floatValue: number): Buffer {
+  const key = (field << 3) | 5;
+  const body = Buffer.alloc(4);
+  body.writeFloatLE(floatValue, 0);
+  return Buffer.concat([encodeVarint(key), body]);
+}
+
+function encodeLengthDelimited(field: number, value: Buffer): Buffer {
+  const key = (field << 3) | 2;
+  return Buffer.concat([encodeVarint(key), encodeVarint(value.length), value]);
+}
 
 function restoreEnv(key: string, value: string | undefined): void {
   if (value === undefined) {
