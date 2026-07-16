@@ -157,6 +157,34 @@ describe('activityRow', () => {
     expect(row.targetFull).toBeUndefined();
   });
 
+  it('shows Grok ReadFile / ListDir targets in the narrative step row', () => {
+    const read = activity({
+      providerToolName: 'ReadFile',
+      target: 'shared/provider-catalog.ts',
+      tool: 'grok.ReadFile',
+    });
+    expect(isNarrativeStep(read)).toBe(true);
+    expect(activityRow(read)).toEqual({
+      title: 'Read',
+      target: 'shared/provider-catalog.ts',
+      color: 'var(--color-activity-tool)',
+      kind: 'tool',
+    });
+
+    const list = activity({
+      providerToolName: 'ListDir',
+      target: 'server/providers',
+      tool: 'grok.ListDir',
+    });
+    expect(isNarrativeStep(list)).toBe(true);
+    expect(activityRow(list)).toEqual({
+      title: 'Listed',
+      target: 'server/providers',
+      color: 'var(--color-activity-tool)',
+      kind: 'tool',
+    });
+  });
+
   it('shows Codex web search query from nested action payloads', () => {
     expect(activityRow(activity({
       action: { query: 'activity tab\nsearched row query' },

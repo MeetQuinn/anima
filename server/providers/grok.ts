@@ -515,8 +515,15 @@ class GrokAcpController {
     );
     this.activeToolIds.add(id);
     if (rawInput) {
-      this.pendingTools.set(id, { emitted: true, input: rawInput, name });
-      await this.emitToolStarted(input, id, name, rawInput);
+      // Emit immediately when we can show a useful target/command; otherwise wait
+      // for tool_call_update which often carries target_file / locations / title.
+      const summary = summarizeGrokToolInput(name, rawInput, data);
+      if (summary.target || summary.command || summary.diff) {
+        this.pendingTools.set(id, { emitted: true, input: rawInput, name });
+        await this.emitToolStarted(input, id, name, rawInput, data);
+        return;
+      }
+      this.pendingTools.set(id, { emitted: false, input: rawInput, name });
       return;
     }
     this.pendingTools.set(id, {
@@ -584,7 +591,13 @@ class GrokAcpController {
         stringField(data, 'kind'),
       );
     const parsedInput = rawInput ?? parseToolArguments(pending?.argsText ?? extractAcpToolCallText(data['content']));
-    await this.emitToolStarted(input, id, name, isRecord(parsedInput) ? parsedInput : { text: parsedInput });
+    await this.emitToolStarted(
+      input,
+      id,
+      name,
+      isRecord(parsedInput) ? parsedInput : { text: parsedInput },
+      data,
+    );
   }
 
   private async emitToolStarted(
@@ -592,8 +605,9 @@ class GrokAcpController {
     id: string,
     name: string,
     rawInput: Record<string, unknown>,
+    data?: Record<string, unknown>,
   ): Promise<void> {
-    const summary = summarizeGrokToolInput(name, rawInput);
+    const summary = summarizeGrokToolInput(name, rawInput, data);
     await input.effects.recordToolStarted({
       eventType: 'grok.tool.call',
       provider: GROK_RUNTIME_KIND,
@@ -955,9 +969,11 @@ function grokToolNameFromTitle(title: string, kind?: string): string {
     .replace(/^[a-z]/, (char) => char.toUpperCase());
 }
 
-function summarizeGrokToolInput(
+/** Exported for unit tests — keep Activity targets aligned with live Grok ACP. */
+export function summarizeGrokToolInput(
   name: string,
   input: Record<string, unknown>,
+  data?: Record<string, unknown>,
 ): { command?: string; diff?: string; target?: string } {
   const normalized = name.toLowerCase();
   if (normalized === 'shell' || normalized === 'bash') {
@@ -972,18 +988,56 @@ function summarizeGrokToolInput(
           : {}),
     };
   }
-  const target =
-    stringField(input, 'file_path') ??
-    stringField(input, 'path') ??
-    stringField(input, 'filePath') ??
-    stringField(input, 'pattern') ??
-    stringField(input, 'query') ??
-    stringField(input, 'glob') ??
-    stringField(input, 'url');
+  const target = grokToolTarget(input, data);
   return {
     ...(target ? { target: singleLineForActivity(target) } : {}),
     ...(normalized === 'strreplacefile' ? { diff: grokReplacementDiff(input) } : {}),
   };
+}
+
+/**
+ * Grok Build ACP uses `target_file` / `target_directory` (not Claude's file_path).
+ * Later tool_call_update frames also carry locations[] and titled paths in backticks.
+ */
+function grokToolTarget(input: Record<string, unknown>, data?: Record<string, unknown>): string | undefined {
+  const fromInput =
+    stringField(input, 'target_file') ??
+    stringField(input, 'targetFile') ??
+    stringField(input, 'target_directory') ??
+    stringField(input, 'targetDirectory') ??
+    stringField(input, 'file_path') ??
+    stringField(input, 'path') ??
+    stringField(input, 'filePath') ??
+    stringField(input, 'absolute_path') ??
+    stringField(input, 'absolutePath') ??
+    stringField(input, 'pattern') ??
+    stringField(input, 'query') ??
+    stringField(input, 'glob') ??
+    stringField(input, 'url');
+  if (fromInput) return fromInput;
+
+  const locations = Array.isArray(data?.['locations']) ? data['locations'] : [];
+  for (const location of locations) {
+    if (!isRecord(location)) continue;
+    const path = stringField(location, 'path');
+    if (path) return path;
+  }
+
+  const meta = isRecord(data?.['_meta']) ? data['_meta'] : undefined;
+  const xaiTool = isRecord(meta?.['x.ai/tool']) ? meta['x.ai/tool'] : undefined;
+  const metaInput = isRecord(xaiTool?.['input']) ? xaiTool['input'] : undefined;
+  const metaPath =
+    stringField(metaInput, 'path') ??
+    stringField(metaInput, 'target_file') ??
+    stringField(metaInput, 'target_directory');
+  if (metaPath) return metaPath;
+
+  // e.g. title: Read `PROBE.txt`
+  const title = stringField(data, 'title') ?? '';
+  const tick = title.match(/`([^`]+)`/);
+  if (tick?.[1]?.trim()) return tick[1].trim();
+
+  return undefined;
 }
 
 function grokReplacementDiff(input: Record<string, unknown>): string | undefined {
