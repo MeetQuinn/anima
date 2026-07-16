@@ -337,8 +337,9 @@ export const AgentProviderConfig = z.preprocess(
         : undefined;
     const model = typeof input.model === 'string' ? input.model : defaultModelForProvider(kind);
     const rawEffort = typeof input.reasoningEffort === 'string' ? input.reasoningEffort : undefined;
-    // Drop effort that the selected model does not support (Grok model-scoped menus;
-    // Kimi has no effort field). Prevents stale config from failing load validation.
+    // Keep a persisted effort when it is a valid token for the provider; do not infer
+    // per-model support from the model name here (Grok's per-model authority is the live
+    // ACP catalog at runtime). Kimi has no effort field, so its efforts are dropped.
     const keepEffort =
       rawEffort && isSupportedReasoningEffort(kind, rawEffort, model) ? rawEffort : undefined;
     const { reasoningEffort: _dropEffort, ...rest } = input;

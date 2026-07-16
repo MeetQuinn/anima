@@ -7,7 +7,6 @@ import { LineBuffer } from './line-buffer.js';
 import { ControllerAgentRuntime } from './provider-runtime.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
 import { withProviderCliLaunchPermit } from '../provider-cli/launch-gate.js';
-import { isSupportedReasoningEffort } from '../../shared/provider-catalog.js';
 import {
   providerSessionPayload,
   type AgentRuntimeFollowupInput,
@@ -20,20 +19,20 @@ import {
 const GROK_COMMAND = 'grok';
 const GROK_RUNTIME_KIND = 'grok-cli';
 
-/** Launch args for ACP; effort only when the selected model advertises support. */
+/**
+ * Launch args for ACP. Never carries `--effort`: reasoning effort is applied after
+ * session init via a live-capability-gated `session/set_model`, so the ACP catalog
+ * is the single authority (a name heuristic could pass `--effort` to a model that
+ * silently ignores it).
+ */
 export function grokAcpLaunchArgs(config: GrokCliAgentProviderConfig): string[] {
   const model = config.model?.trim();
-  const effort = config.reasoningEffort?.trim();
-  const passEffort = Boolean(
-    model && effort && isSupportedReasoningEffort('grok-cli', effort, model),
-  );
   return [
     '--no-auto-update',
     'agent',
     '--no-leader',
     '--always-approve',
     ...(model ? ['-m', model] : []),
-    ...(passEffort && effort ? ['--effort', effort] : []),
     'stdio',
   ];
 }
@@ -129,7 +128,7 @@ export class GrokCliAgentRuntime extends ControllerAgentRuntime<GrokAcpControlle
               label: 'Grok ACP runtime',
             },
             input,
-            (child) => new GrokAcpController(child),
+            (child) => new GrokAcpController(child, this.config.reasoningEffort?.trim() || undefined),
           ),
       ));
     try {
@@ -178,10 +177,17 @@ class GrokAcpController {
   private turnCompletion?: Promise<string>;
   private actualModel?: string;
   private contextWindow?: number;
+  // Live reasoning-effort menu for the current model, from ACP modelState.
+  // undefined = capability unknown (fail closed); [] = advertised as unsupported.
+  private currentModelEfforts?: string[];
+  private appliedEffort = false;
   readonly completion: Promise<{ stdout: string; stderr: string }>;
   sessionId = '';
 
-  constructor(private readonly child: RunningChildProcess) {
+  constructor(
+    private readonly child: RunningChildProcess,
+    private readonly configuredEffort?: string,
+  ) {
     this.completion = child.completion.then(
       (result) => {
         this.rejectAllPending(new Error('Grok ACP runtime exited'));
@@ -313,6 +319,9 @@ class GrokAcpController {
       runtimeKind: GROK_RUNTIME_KIND,
       transport: 'acp',
     });
+
+    // Set reasoning effort against the live current model before the first prompt.
+    await this.applyReasoningEffort(input);
   }
 
   private async createSession(input: AgentRuntimeInput): Promise<string> {
@@ -463,6 +472,41 @@ class GrokAcpController {
     const selectedMeta = isRecord(selected?.['_meta']) ? selected['_meta'] : undefined;
     const contextWindow = numberField(selectedMeta, 'totalContextTokens') ?? numberField(meta, 'totalContextTokens');
     if (contextWindow !== undefined) this.contextWindow = contextWindow;
+    // Only update the effort menu when this frame actually carries the current
+    // model's capability; a frame without it must not erase what we captured.
+    if (selectedMeta) {
+      const efforts = grokAdvertisedEfforts(selectedMeta);
+      if (efforts !== undefined) this.currentModelEfforts = efforts;
+    }
+  }
+
+  /**
+   * Apply the configured reasoning effort via a same-model `session/set_model`,
+   * exactly once, before the first prompt. Fail closed: skip when nothing is
+   * configured, when the live current model or its capability menu is unknown, or
+   * when the effort is not advertised — never infer support from the model name.
+   */
+  private async applyReasoningEffort(input: AgentRuntimeInput): Promise<void> {
+    if (this.appliedEffort) return;
+    this.appliedEffort = true;
+    const effort = this.configuredEffort?.trim();
+    if (!effort) return;
+    const model = this.actualModel;
+    const advertised = this.currentModelEfforts;
+    if (!model || !advertised || !advertised.includes(effort)) return;
+    const result = await this.request('session/set_model', {
+      _meta: { reasoningEffort: effort },
+      modelId: model,
+      sessionId: this.sessionId,
+    });
+    this.captureModelAuthority(result);
+    await input.effects.recordEvent({
+      eventType: 'grok.model.effort',
+      model,
+      reasoningEffort: effort,
+      runtimeKind: GROK_RUNTIME_KIND,
+      transport: 'acp',
+    });
   }
 
   private async handleNotification(message: Record<string, unknown>): Promise<void> {
@@ -832,6 +876,31 @@ function grokResultModel(record: Record<string, unknown> | undefined): string | 
 
 function firstRecord(...values: unknown[]): Record<string, unknown> | undefined {
   return values.find(isRecord) as Record<string, unknown> | undefined;
+}
+
+/**
+ * Reasoning-effort menu advertised by a model's ACP `_meta`. Returns undefined when
+ * the frame carries no capability signal (unknown → fail closed), [] when the model
+ * reports it is unsupported, or the advertised values (defaulting to low/medium/high
+ * when the model supports effort but sends an empty menu, matching Grok CLI).
+ */
+function grokAdvertisedEfforts(meta: Record<string, unknown> | undefined): string[] | undefined {
+  if (!meta) return undefined;
+  const supports = meta['supportsReasoningEffort'];
+  if (supports === false) return [];
+  if (supports !== true) return undefined;
+  const raw = Array.isArray(meta['reasoningEfforts']) ? meta['reasoningEfforts'] : [];
+  const efforts: string[] = [];
+  for (const item of raw) {
+    const value = isRecord(item)
+      ? stringField(item, 'value') ?? stringField(item, 'id')
+      : typeof item === 'string'
+        ? item.trim()
+        : undefined;
+    if (value && !efforts.includes(value)) efforts.push(value);
+  }
+  if (efforts.length === 0) efforts.push('low', 'medium', 'high');
+  return efforts;
 }
 
 function copyNumberLike(

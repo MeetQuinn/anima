@@ -308,7 +308,7 @@ test('codex-cli catalog includes current GPT-5.6 and GPT-5.5 models only', () =>
   );
 });
 
-test('grok-cli effort is model-scoped: reasoning models only, never composer', () => {
+test('grok-cli effort write-validates the provider vocabulary; per-model support is a runtime gate', () => {
   const entry = providerCatalogEntry('grok-cli');
   assert.equal(entry?.dynamicModels, true);
   assert.equal(entry?.defaultModel, '');
@@ -328,22 +328,23 @@ test('grok-cli effort is model-scoped: reasoning models only, never composer', (
     }).provider.model,
     'grok-4.5',
   );
-  // Composer does not support reasoning effort — Anima must reject, not silently ignore.
-  assert.throws(
-    () =>
-      AgentCreateRequest.parse({
-        name: 'Grok Composer',
-        homePath: 'agents/grok-composer',
-        role: 'general purpose',
-        provider: {
-          kind: 'grok-cli',
-          model: 'grok-composer-2.5-fast',
-          reasoningEffort: 'low',
-        },
-      }),
-    /unsupported reasoningEffort low/,
+  // A valid effort token is stored as a preference regardless of the model name:
+  // whether *this* model actually supports it is decided at runtime by the live ACP
+  // catalog (session/set_model is gated on it), never inferred from the name at write.
+  assert.equal(
+    AgentCreateRequest.parse({
+      name: 'Grok Composer',
+      homePath: 'agents/grok-composer',
+      role: 'general purpose',
+      provider: {
+        kind: 'grok-cli',
+        model: 'grok-composer-2.5-fast',
+        reasoningEffort: 'low',
+      },
+    }).provider.reasoningEffort,
+    'low',
   );
-  // Live ACP menu for grok-4.5 is low/medium/high — not xhigh.
+  // xhigh is not part of Grok's effort vocabulary — rejected at write time.
   assert.throws(
     () =>
       AgentCreateRequest.parse({

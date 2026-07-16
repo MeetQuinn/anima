@@ -96,6 +96,8 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
 
       const calls = await readJsonLines(callsPath);
       const launch = calls[0] as { argv?: string[] };
+      // Launch argv never carries --effort: effort is applied post-init via
+      // session/set_model against the live ACP catalog, never as a spawn flag.
       assert.deepEqual(launch.argv, [
         '--no-auto-update',
         'agent',
@@ -103,10 +105,16 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
         '--always-approve',
         '-m',
         'grok-4.5',
-        '--effort',
-        'high',
         'stdio',
       ]);
+      assert.equal(launch.argv?.includes('--effort'), false);
+      // This model's catalog entry advertises no reasoning-effort capability, so a
+      // configured effort is fail-closed: no session/set_model is issued (unknown
+      // capability must never fall back to model-name inference).
+      assert.equal(
+        calls.some((call) => call['method'] === 'session/set_model'),
+        false,
+      );
       const prompts = calls.filter((call) => call['method'] === 'session/prompt');
       assert.equal(prompts.length, 2);
       assertFollowupPrompt(promptText(prompts[1]), 'Continue Grok.');
@@ -133,6 +141,91 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
         ),
       );
       assert.equal(stats?.payload?.['contextWindow'], 500000);
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('grok-cli applies configured effort via session/set_model on the live current model before the first prompt (new session)', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-grok-effort-new-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      await installFakeGrok(stateDir, effortCapableFakeGrok({ sessionId: 'grok-session-effort' }));
+      const ctx = await ingestGrokEvent(stateDir, 'Effort Grok.', '1771000030.000001');
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'grok-cli',
+        model: 'grok-4.5',
+        reasoningEffort: 'high',
+      });
+      assert.equal((await runtime.run(await runtimeInput(runtime, ctx, await loadState()))).text, 'effort reply');
+      const calls = await readJsonLines(callsPath);
+      const launch = calls[0] as { argv?: string[] };
+      assert.equal(launch.argv?.includes('--effort'), false);
+      // The setter runs after session/new (live catalog captured) and before the
+      // first prompt, targeting the ACP-reported current model — not the config name.
+      assert.deepEqual(
+        calls.filter((call) => typeof call['method'] === 'string').map((call) => call['method']),
+        ['initialize', 'session/new', 'session/set_model', 'session/prompt'],
+      );
+      const setter = calls.find((call) => call['method'] === 'session/set_model');
+      assert.deepEqual(setter?.['params'], {
+        _meta: { reasoningEffort: 'high' },
+        modelId: 'grok-4.5',
+        sessionId: 'grok-session-effort',
+      });
+      assert.ok(
+        allActivities(await loadState()).some(
+          (activity) =>
+            activity.payload?.['eventType'] === 'grok.model.effort' &&
+            activity.payload?.['model'] === 'grok-4.5' &&
+            activity.payload?.['reasoningEffort'] === 'high',
+        ),
+      );
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('grok-cli applies configured effort via session/set_model after restoring a persisted session (loaded session)', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-grok-effort-load-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      await installFakeGrok(
+        stateDir,
+        effortCapableFakeGrok({ sessionId: 'grok-session-effort-persisted', loadSessionId: 'grok-session-effort-persisted' }),
+      );
+      const ctx = await ingestGrokEvent(stateDir, 'Resume with effort.', '1771000031.000001');
+      await runtimeSessionServiceForAgent('anima').persistProviderSession('grok-cli', {
+        id: 'grok-session-effort-persisted',
+        updatedAt: '2026-07-13T00:00:00.000Z',
+      });
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'grok-cli',
+        model: 'grok-4.5',
+        reasoningEffort: 'high',
+      });
+      assert.equal((await runtime.run(await runtimeInput(runtime, ctx, await loadState()))).text, 'effort reply');
+      const calls = await readJsonLines(callsPath);
+      assert.deepEqual(
+        calls.filter((call) => typeof call['method'] === 'string').map((call) => call['method']),
+        ['initialize', 'session/load', 'session/set_model', 'session/prompt'],
+      );
+      const setter = calls.find((call) => call['method'] === 'session/set_model');
+      assert.deepEqual(setter?.['params'], {
+        _meta: { reasoningEffort: 'high' },
+        modelId: 'grok-4.5',
+        sessionId: 'grok-session-effort-persisted',
+      });
     });
   } finally {
     await runtime?.close?.();
@@ -580,6 +673,43 @@ function standardFakeGrok(input: { callsPath: string; loadSessionId: string; rep
       ' } });',
     "      send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn', _meta: { modelId: 'grok-4.5', totalTokens: 10 } } });",
     '    }',
+    '  }',
+    '});',
+  ];
+}
+
+// A fake Grok whose current model advertises reasoning-effort support (low/high),
+// so a configured, advertised effort triggers exactly one same-model session/set_model.
+// When loadSessionId is set the fake also honors session/load for the loaded-session path.
+function effortCapableFakeGrok(input: { sessionId: string; loadSessionId?: string }): string[] {
+  const sessionId = JSON.stringify(input.sessionId);
+  return [
+    "const fs = require('fs');",
+    "process.stdin.setEncoding('utf8');",
+    "let buffer = '';",
+    "function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }",
+    'function update(value) { send({ jsonrpc: ' +
+      "'2.0', method: 'session/update', params: { sessionId: " +
+      sessionId +
+      ', update: value } }); }',
+    "const modelState = { currentModelId: 'grok-4.5', availableModels: [{ modelId: 'grok-4.5', _meta: { totalContextTokens: 500000, supportsReasoningEffort: true, reasoningEfforts: [{ value: 'low' }, { value: 'high' }] } }] };",
+    "process.stdin.on('data', (chunk) => {",
+    '  buffer += chunk;',
+    '  const lines = buffer.split(/\\r?\\n/);',
+    "  buffer = lines.pop() || '';",
+    '  for (const line of lines) {',
+    '    if (!line.trim()) continue;',
+    '    const msg = JSON.parse(line);',
+    "    fs.appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + '\\n');",
+    "    if (msg.method === 'initialize') { send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true }, _meta: { agentVersion: '0.2.93', modelState } } }); continue; }",
+    "    if (msg.method === 'session/new') { send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: " +
+      sessionId +
+      ', models: modelState } }); continue; }',
+    "    if (msg.method === 'session/load') { send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: " +
+      sessionId +
+      ', models: modelState } }); continue; }',
+    "    if (msg.method === 'session/set_model') { send({ jsonrpc: '2.0', id: msg.id, result: { models: modelState } }); continue; }",
+    "    if (msg.method === 'session/prompt') { update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'effort reply' } }); send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn', _meta: { modelId: 'grok-4.5', totalTokens: 10 } } }); continue; }",
     '  }',
     '});',
   ];

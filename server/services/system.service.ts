@@ -11,7 +11,6 @@ import { cleanServiceEnv } from './env.js';
 import { readLastServicesRestart, servicesRestartLogPath, servicesRestartResultPath } from './restart-result.js';
 import type { ServerInfo, ServicesRestartResponse } from '../../shared/server-info.js';
 import {
-  grokReasoningEffortsForModel,
   PROVIDER_CATALOG,
   type ProviderAvailability,
 } from '../../shared/provider-catalog.js';
@@ -168,11 +167,11 @@ export function parseGrokModelsOutput(output: string): GrokModelCatalog {
   if (!defaultModel || !uniqueModels.includes(defaultModel)) {
     throw new Error('Grok model catalog did not report a valid default model');
   }
+  // The text `models` catalog cannot report per-model effort support, and it must
+  // not be synthesized from model names. Effort capability comes only from the ACP
+  // modelState (parseGrokAcpModelState); omit it here rather than guess.
   return {
     defaultModel,
-    modelReasoningEfforts: Object.fromEntries(
-      uniqueModels.map((model) => [model, grokReasoningEffortsForModel(model)]),
-    ),
     models: uniqueModels,
   };
 }

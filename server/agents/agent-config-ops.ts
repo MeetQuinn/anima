@@ -96,8 +96,9 @@ function mergeProviderSelection(
   if (!update.kind || update.kind === current.kind) {
     const currentEffort = 'reasoningEffort' in current ? current.reasoningEffort : undefined;
     const model = update.model ?? current.model;
-    // Explicit effort wins; otherwise keep current only when still valid for the model
-    // (Grok effort is model-scoped — switching to composer must drop effort).
+    // Explicit effort wins; otherwise keep current only when it is still a valid effort
+    // token for the provider. Grok's per-model support is enforced at runtime (the ACP
+    // catalog gates session/set_model), so writes store the token as a preference.
     let reasoningEffort =
       update.reasoningEffort !== undefined ? update.reasoningEffort : currentEffort;
     if (

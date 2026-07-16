@@ -39,11 +39,10 @@ test('Grok model availability is runtime-checked and timestamped', async () => {
       ].join('\n'),
     ),
     {
+      // The text `models` catalog cannot report per-model effort support and must
+      // not synthesize it from model names — effort capability comes only from the
+      // live ACP modelState (parseGrokAcpModelState).
       defaultModel: 'grok-4.5',
-      modelReasoningEfforts: {
-        'grok-4.5': ['low', 'medium', 'high'],
-        'grok-composer-2.5-fast': [],
-      },
       models: ['grok-4.5', 'grok-composer-2.5-fast'],
     },
   );
