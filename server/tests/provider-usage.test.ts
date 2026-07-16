@@ -803,6 +803,38 @@ test('Grok billing parser never seeds resetsAt from an unrelated varint (round-5
   assert.equal(parsed.snapshot?.resetsAt, undefined, 'unrelated varint must not become a reset');
 });
 
+test('Grok billing parser enforces the unary gRPC-Web envelope fail-closed (round-6)', () => {
+  const data = () => encodeLengthDelimited(1, encodeFixed32Field(1, 9)); // valid [1,1]=9%
+  const okTrailer = () => grpcWebFrame(0x80, Buffer.from('grpc-status:0\r\n', 'utf8'));
+
+  // Control: the well-formed unary shape still parses.
+  const good = parseGrokBillingBytes(
+    new Uint8Array(Buffer.concat([grpcWebFrame(0, data()), okTrailer()])),
+  );
+  assert.equal(good.error, undefined);
+  assert.equal(good.snapshot?.usedPercent, 9);
+
+  const rejected: Record<string, Uint8Array> = {
+    'data frame only, no trailer': new Uint8Array(grpcWebFrame(0, data())),
+    'trailer without grpc-status': new Uint8Array(
+      Buffer.concat([grpcWebFrame(0, data()), grpcWebFrame(0x80, Buffer.from('grpc-message:ok\r\n', 'utf8'))]),
+    ),
+    'two data frames': new Uint8Array(
+      Buffer.concat([grpcWebFrame(0, data()), grpcWebFrame(0, data()), okTrailer()]),
+    ),
+    'trailer before data': new Uint8Array(Buffer.concat([okTrailer(), grpcWebFrame(0, data())])),
+    'frame after trailer': new Uint8Array(
+      Buffer.concat([grpcWebFrame(0, data()), okTrailer(), grpcWebFrame(0, data())]),
+    ),
+    'compressed data flag': new Uint8Array(Buffer.concat([grpcWebFrame(0x01, data()), okTrailer()])),
+  };
+  for (const [label, body] of Object.entries(rejected)) {
+    const parsed = parseGrokBillingBytes(body);
+    assert.equal(parsed.snapshot, undefined, `${label}: must not surface a snapshot`);
+    assert.equal(parsed.error?.type, 'parse_error', `${label}: must be parse_error`);
+  }
+});
+
 test('Grok fetchUntilBody times out when response body stalls after headers', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => {

@@ -124,7 +124,10 @@ export function parseGrokBillingBytes(
       return { error: usageError('parse_error', framed.error) };
     }
     const trailerStatus = framed.trailers['grpc-status'];
-    if (trailerStatus !== undefined && trailerStatus !== '0') {
+    if (trailerStatus === undefined) {
+      return { error: usageError('parse_error', 'Grok billing response missing grpc-status trailer') };
+    }
+    if (trailerStatus !== '0') {
       return { error: grpcStatusError(trailerStatus, framed.trailers['grpc-message']) };
     }
 
@@ -500,17 +503,23 @@ interface GrpcWebFrames {
 }
 
 /**
- * Parse every gRPC-Web frame so trailer `grpc-status` is never ignored.
- * Once framing is observed, any truncated frame length or residual tail bytes
- * is a hard parse error — never return a partial data payload as success.
+ * Parse the gRPC-Web envelope of this **unary** endpoint fail-closed. A valid
+ * response is exactly one uncompressed data frame followed by one uncompressed
+ * trailer frame (the trailer must be last). Anything else — a second data frame,
+ * a frame after the trailer, a trailer before the data, a truncated/residual
+ * frame, or a compressed/unknown frame flag — is a hard error. The caller still
+ * requires the trailer to carry an explicit `grpc-status:0`.
  */
 export function parseGrpcWebFrames(body: Uint8Array): GrpcWebFrames {
   let offset = 0;
   let payload: Uint8Array | undefined;
-  let trailerText = '';
-  let sawFrame = false;
+  let trailerText: string | undefined;
+  let sawData = false;
 
-  while (offset + 5 <= body.length) {
+  while (offset < body.length) {
+    if (offset + 5 > body.length) {
+      return { error: 'truncated gRPC-Web frame', trailers: {} };
+    }
     const flags = body[offset] ?? 0;
     const length =
       ((body[offset + 1]! << 24) | (body[offset + 2]! << 16) | (body[offset + 3]! << 8) | body[offset + 4]!) >>> 0;
@@ -520,17 +529,33 @@ export function parseGrpcWebFrames(body: Uint8Array): GrpcWebFrames {
     }
     const frame = body.subarray(offset, offset + length);
     offset += length;
-    sawFrame = true;
-    if ((flags & 0x80) !== 0) {
-      trailerText += new TextDecoder().decode(frame);
+
+    const isTrailer = (flags & 0x80) !== 0;
+    // Only the trailer bit is allowed; compression (0x01) and any reserved bit
+    // are unsupported for this endpoint (we never negotiate compression).
+    if ((isTrailer ? flags & ~0x80 : flags) !== 0) {
+      return { error: 'unsupported gRPC-Web frame flags', trailers: {} };
+    }
+    // Nothing may follow the trailer, and the trailer must come after the data.
+    if (trailerText !== undefined) {
+      return { error: 'unexpected gRPC-Web frame after trailer', trailers: {} };
+    }
+    if (isTrailer) {
+      trailerText = new TextDecoder().decode(frame);
       continue;
     }
-    if (frame.length > 0 && payload === undefined) payload = frame;
+    if (sawData) {
+      return { error: 'unexpected second gRPC-Web data frame', trailers: {} };
+    }
+    sawData = true;
+    payload = frame;
   }
 
-  // Incomplete frame header (1–4 residual bytes) after complete frames.
-  if (sawFrame && offset < body.length) {
-    return { error: 'truncated gRPC-Web frame', trailers: {} };
+  if (!sawData) {
+    return { error: 'gRPC-Web response had no data frame', trailers: {} };
+  }
+  if (trailerText === undefined) {
+    return { error: 'gRPC-Web response missing trailer frame', trailers: {} };
   }
 
   const trailers: Record<string, string> = {};
@@ -543,10 +568,6 @@ export function parseGrpcWebFrames(body: Uint8Array): GrpcWebFrames {
     if (key) trailers[key] = value;
   }
 
-  // Unframed raw protobuf only when no gRPC-Web framing was present.
-  if (!sawFrame && body.length > 0) {
-    return { payload: body, trailers };
-  }
   return { payload, trailers };
 }
 
