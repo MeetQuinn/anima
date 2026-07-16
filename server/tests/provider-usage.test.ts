@@ -8,6 +8,7 @@ import { ProviderUsageService } from '../provider-usage/provider-usage.service.j
 import { providerUsageNetworkErrorMessage } from '../provider-usage/http.js';
 import { fetchClaudeUsage, parseClaudeUsageResponse } from '../provider-usage/providers/claude.js';
 import { fetchCodexUsage, parseCodexUsageResponse } from '../provider-usage/providers/codex.js';
+import { fetchGrokUsage, parseGrokBillingBytes } from '../provider-usage/providers/grok.js';
 import { fetchKimiUsage, parseKimiUsageResponse } from '../provider-usage/providers/kimi.js';
 
 test('Claude usage parser returns remaining windows and extra usage', () => {
@@ -426,6 +427,155 @@ test('provider usage service can refresh a single provider without calling the o
   assert.equal(row.status, 'available');
   assert.equal(codexCalls, 1);
   assert.equal(claudeCalls, 0);
+});
+
+// Captured live response from GetGrokCreditsConfig (usedPercent=9), matching Raycast Agent Usage.
+const GROK_BILLING_FIXTURE = Buffer.from(
+  '00000000560a540d0000104112001a00220c08eebfcfd20610d8a4b890032a0c08eeb4f4d20610d8a4b890033a0708021500001041421e0802120c08eebfcfd20610d8a4b890031a0c08eeb4f4d20610d8a4b89003580162006801800000000f677270632d7374617475733a300d0a',
+  'hex',
+);
+
+test('Grok billing parser extracts used percent from gRPC-Web protobuf', () => {
+  const parsed = parseGrokBillingBytes(new Uint8Array(GROK_BILLING_FIXTURE), Date.parse('2026-07-16T03:00:00.000Z'));
+  assert.equal(parsed.error, undefined);
+  assert.equal(parsed.snapshot?.usedPercent, 9);
+});
+
+test('Grok usage reads ~/.grok/auth.json key and calls billing endpoint', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-grok-usage-home-'));
+  await mkdir(join(home, '.grok'), { recursive: true });
+  const authPath = join(home, '.grok', 'auth.json');
+  await writeFile(
+    authPath,
+    JSON.stringify({
+      'https://auth.x.ai::test-client': {
+        auth_mode: 'oidc',
+        email: 'operator@example.com',
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        key: 'grok-access-token',
+        oidc_client_id: 'test-client',
+        oidc_issuer: 'https://auth.x.ai',
+        refresh_token: 'grok-refresh',
+        team_id: 'team-1',
+      },
+    }),
+    'utf8',
+  );
+
+  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
+  const originalGrokHome = process.env.GROK_HOME;
+  const originalFetch = globalThis.fetch;
+  const seen: Array<{ auth?: string; url: string }> = [];
+  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
+  delete process.env.GROK_HOME;
+  globalThis.fetch = (async (url, init) => {
+    const href = String(url);
+    seen.push({
+      auth: String((init?.headers as Record<string, string> | undefined)?.Authorization ?? ''),
+      url: href,
+    });
+    if (href.includes('GetGrokCreditsConfig')) {
+      return new Response(GROK_BILLING_FIXTURE, {
+        headers: { 'content-type': 'application/grpc-web+proto' },
+        status: 200,
+      });
+    }
+    return new Response('unexpected', { status: 500 });
+  }) as typeof fetch;
+
+  try {
+    const result = await fetchGrokUsage();
+    assert.equal(result.status, 'available');
+    assert.equal(result.account, 'operator@example.com');
+    assert.equal(result.windows[0]?.usedPercent, 9);
+    assert.equal(result.windows[0]?.remainingPercent, 91);
+    // Label is Weekly/Monthly/Credits based on reset distance; fixture resets are multi-day.
+    assert.ok(result.windows[0]?.label === 'Weekly' || result.windows[0]?.label === 'Credits');
+    assert.equal(seen.length, 1);
+    assert.match(seen[0]?.url ?? '', /GetGrokCreditsConfig/);
+    assert.equal(seen[0]?.auth, 'Bearer grok-access-token');
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
+    restoreEnv('GROK_HOME', originalGrokHome);
+  }
+});
+
+test('Grok usage refreshes an expired access token before billing', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-grok-refresh-home-'));
+  await mkdir(join(home, '.grok'), { recursive: true });
+  const authPath = join(home, '.grok', 'auth.json');
+  const scope = 'https://auth.x.ai::test-client';
+  await writeFile(
+    authPath,
+    JSON.stringify({
+      [scope]: {
+        auth_mode: 'oidc',
+        email: 'operator@example.com',
+        expires_at: new Date(Date.now() - 60_000).toISOString(),
+        key: 'stale-grok-access',
+        oidc_client_id: 'test-client',
+        oidc_issuer: 'https://auth.x.ai',
+        refresh_token: 'old-grok-refresh',
+      },
+    }),
+    'utf8',
+  );
+
+  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
+  const originalFetch = globalThis.fetch;
+  const authorizations: string[] = [];
+  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
+  globalThis.fetch = (async (url, init) => {
+    const href = String(url);
+    if (href.includes('openid-configuration')) {
+      return jsonResponse({ token_endpoint: 'https://auth.x.ai/oauth/token' });
+    }
+    if (href === 'https://auth.x.ai/oauth/token') {
+      const body = String(init?.body);
+      assert.match(body, /grant_type=refresh_token/);
+      assert.match(body, /refresh_token=old-grok-refresh/);
+      assert.match(body, /client_id=test-client/);
+      return jsonResponse({
+        access_token: 'fresh-grok-access',
+        expires_in: 3600,
+        refresh_token: 'fresh-grok-refresh',
+      });
+    }
+    if (href.includes('GetGrokCreditsConfig')) {
+      authorizations.push(String((init?.headers as Record<string, string> | undefined)?.Authorization ?? ''));
+      return new Response(GROK_BILLING_FIXTURE, {
+        headers: { 'content-type': 'application/grpc-web+proto' },
+        status: 200,
+      });
+    }
+    return new Response('unexpected', { status: 500 });
+  }) as typeof fetch;
+
+  try {
+    const result = await fetchGrokUsage();
+    assert.equal(result.status, 'available');
+    assert.deepEqual(authorizations, ['Bearer fresh-grok-access']);
+    const stored = JSON.parse(await readFile(authPath, 'utf8')) as Record<string, { key: string; refresh_token: string }>;
+    assert.equal(stored[scope]?.key, 'fresh-grok-access');
+    assert.equal(stored[scope]?.refresh_token, 'fresh-grok-refresh');
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
+  }
+});
+
+test('Grok usage reports not_configured without auth.json', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-grok-empty-home-'));
+  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
+  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
+  try {
+    const result = await fetchGrokUsage();
+    assert.equal(result.status, 'unavailable');
+    assert.equal(result.error?.type, 'not_configured');
+  } finally {
+    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
+  }
 });
 
 function restoreEnv(key: string, value: string | undefined): void {
