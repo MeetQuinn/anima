@@ -373,10 +373,26 @@ Current process model:
   fresh child before their durable rows complete. Cancellation closes the in-memory queue before
   `session/cancel`, so no later prompt begins after a stop.
 
+Command shape:
+
+```text
+grok
+  --no-auto-update
+  agent
+  --no-leader
+  --always-approve
+  [-m <model>]
+  [--effort <reasoningEffort>]
+  stdio
+```
+
 Model and context authority:
 
 - The configured and reported model is the actual ID returned by Grok's model catalog or prompt
-  result. `grok-build` is a marketing alias and is not accepted as stored model identity.
+  result. `grok-build` is a marketing alias and is not accepted as stored model identity. Live
+  catalog examples include `grok-4.5` and `grok-composer-2.5-fast` (dynamic; not a static enum).
+- Optional `reasoningEffort` (`low` | `medium` | `high` | `xhigh`) is passed through as
+  `grok agent --effort`, matching the CLI `/effort` levels.
 - Model availability and context-window size are read at runtime and carry a check timestamp. If
   the CLI cannot provide the catalog, operator surfaces say **not checked** instead of using a static
   provider enum.

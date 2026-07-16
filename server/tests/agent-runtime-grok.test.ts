@@ -84,6 +84,7 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
         env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
         kind: 'grok-cli',
         model: 'grok-4.5',
+        reasoningEffort: 'high',
       });
       const runPromise = runtime.run(await runtimeInput(runtime, first, await loadState()));
       await waitFor(() => readFile(callsPath, 'utf8').then((value) => value.includes('session/prompt')));
@@ -102,6 +103,8 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
         '--always-approve',
         '-m',
         'grok-4.5',
+        '--effort',
+        'high',
         'stdio',
       ]);
       const prompts = calls.filter((call) => call['method'] === 'session/prompt');

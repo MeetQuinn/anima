@@ -111,6 +111,7 @@ export class GrokCliAgentRuntime extends ControllerAgentRuntime<GrokAcpControlle
                 '--no-leader',
                 '--always-approve',
                 ...(this.config.model ? ['-m', this.config.model] : []),
+                ...(this.config.reasoningEffort ? ['--effort', this.config.reasoningEffort] : []),
                 'stdio',
               ],
               command: GROK_COMMAND,

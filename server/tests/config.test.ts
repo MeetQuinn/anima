@@ -308,12 +308,12 @@ test('codex-cli catalog includes current GPT-5.6 and GPT-5.5 models only', () =>
   );
 });
 
-test('grok-cli catalog keeps model identity runtime-authoritative', () => {
+test('grok-cli catalog keeps model identity runtime-authoritative and accepts effort', () => {
   const entry = providerCatalogEntry('grok-cli');
   assert.equal(entry?.dynamicModels, true);
   assert.equal(entry?.defaultModel, '');
   assert.deepEqual(entry?.models, []);
-  assert.deepEqual(entry?.reasoningEfforts, []);
+  assert.deepEqual(entry?.reasoningEfforts, ['low', 'medium', 'high', 'xhigh']);
   assert.equal(
     AgentCreateRequest.parse({
       name: 'Grok',
@@ -322,9 +322,23 @@ test('grok-cli catalog keeps model identity runtime-authoritative', () => {
       provider: {
         kind: 'grok-cli',
         model: 'grok-4.5',
+        reasoningEffort: 'high',
       },
     }).provider.model,
     'grok-4.5',
+  );
+  assert.equal(
+    AgentCreateRequest.parse({
+      name: 'Grok Composer',
+      homePath: 'agents/grok-composer',
+      role: 'general purpose',
+      provider: {
+        kind: 'grok-cli',
+        model: 'grok-composer-2.5-fast',
+        reasoningEffort: 'low',
+      },
+    }).provider.model,
+    'grok-composer-2.5-fast',
   );
   assert.throws(
     () =>
@@ -338,6 +352,20 @@ test('grok-cli catalog keeps model identity runtime-authoritative', () => {
         },
       }),
     /unsupported model for grok-cli: grok-build/,
+  );
+  assert.throws(
+    () =>
+      AgentCreateRequest.parse({
+        name: 'Grok bad effort',
+        homePath: 'agents/grok-effort',
+        role: 'general purpose',
+        provider: {
+          kind: 'grok-cli',
+          model: 'grok-4.5',
+          reasoningEffort: 'ultra',
+        },
+      }),
+    /unsupported reasoningEffort ultra/,
   );
 });
 

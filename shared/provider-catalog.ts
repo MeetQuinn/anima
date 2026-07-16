@@ -65,7 +65,8 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     models: [],
     defaultModel: '',
     dynamicModels: true,
-    reasoningEfforts: [],
+    // Grok CLI: /effort + --reasoning-effort/--effort → low | medium | high | xhigh
+    reasoningEfforts: STANDARD_REASONING_EFFORTS,
   },
 ];
 

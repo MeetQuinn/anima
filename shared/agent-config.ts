@@ -314,6 +314,7 @@ export const GrokCliAgentProviderConfig = z.object({
   kind: z.literal('grok-cli'),
   model: z.string().optional(),
   providerChildIdleTimeoutMs: z.number().nonnegative().optional(),
+  reasoningEffort: z.string().optional(),
 });
 
 export type GrokCliAgentProviderConfig = z.infer<typeof GrokCliAgentProviderConfig>;
