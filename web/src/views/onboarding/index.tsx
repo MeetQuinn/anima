@@ -19,6 +19,7 @@ import {
 import { DEFAULT_AGENT_HOMES_ROOT, defaultAgentHomePath } from '@shared/agent-home';
 import { agentIdFromName } from '@shared/agent-config';
 import {
+  effortOptionsForSelectedModel,
   firstReadyProvider,
   providerCatalogForAvailability,
   providerModelAuthorityLabel,
@@ -187,6 +188,11 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
   const displayModel = (v: string) => (v ? v.charAt(0).toUpperCase() + v.slice(1) : v);
   const displayEffort = (v: string) => (v === 'xhigh' ? 'Extra High' : v ? v.charAt(0).toUpperCase() + v.slice(1) : v);
   const currentProvider = providerOptions.find((o) => o.kind === providerKind);
+  const selectedEffortOptions = effortOptionsForSelectedModel(
+    currentProvider,
+    model,
+    providerAvailability,
+  );
   const selectedProviderReady = providerReady(currentProvider, providerAvailability);
   const selectedProviderHint = providerUnavailableHint(currentProvider, providerAvailability);
   const selectedProviderAuthority = providerModelAuthorityLabel(currentProvider, providerAvailability);
@@ -273,9 +279,16 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
   }, []);
 
   function handleProviderChange(next: ProviderCatalogEntry['kind']) {
+    const nextProvider = providerOptions.find((o) => o.kind === next);
+    const nextModel = nextProvider?.defaultModel ?? '';
+    const nextEfforts = effortOptionsForSelectedModel(nextProvider, nextModel, providerAvailability);
     setProviderKind(next);
-    setModel(providerOptions.find((o) => o.kind === next)?.defaultModel ?? '');
-    setEffort(DEFAULT_REASONING_EFFORT);
+    setModel(nextModel);
+    setEffort(
+      nextEfforts.includes(DEFAULT_REASONING_EFFORT)
+        ? DEFAULT_REASONING_EFFORT
+        : (nextEfforts[0] ?? ''),
+    );
   }
 
   async function persistPlatform(next: WorkspacePlatform) {
@@ -374,7 +387,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
         const provider = {
           kind: providerKind,
           model,
-          ...((currentProvider?.reasoningEfforts ?? []).length > 0 ? { reasoningEffort: effort } : {}),
+          ...(selectedEffortOptions.length > 0 && effort ? { reasoningEffort: effort } : {}),
         };
         const agent = await createAgent({
           name: name.trim(),
@@ -644,7 +657,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                 <div
                   className={[
                     'grid gap-2',
-                    (currentProvider?.reasoningEfforts ?? []).length > 0 ? 'grid-cols-3' : 'grid-cols-2',
+                    selectedEffortOptions.length > 0 ? 'grid-cols-3' : 'grid-cols-2',
                   ].join(' ')}
                 >
                   <Select
@@ -669,7 +682,18 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                   <Select
                     value={model}
                     onValueChange={(v) => {
-                      if (v) setModel(v);
+                      if (!v) return;
+                      const nextEfforts = effortOptionsForSelectedModel(
+                        currentProvider,
+                        v,
+                        providerAvailability,
+                      );
+                      setModel(v);
+                      setEffort(
+                        nextEfforts.includes(DEFAULT_REASONING_EFFORT)
+                          ? DEFAULT_REASONING_EFFORT
+                          : (nextEfforts[0] ?? ''),
+                      );
                     }}
                   >
                     <SelectTrigger className="!h-auto w-full py-2 font-serif text-[15px]">
@@ -683,7 +707,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                       ))}
                     </SelectContent>
                   </Select>
-                  {(currentProvider?.reasoningEfforts ?? []).length > 0 && (
+                  {selectedEffortOptions.length > 0 && (
                     <Select
                       value={effort}
                       onValueChange={(v) => {
@@ -694,7 +718,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                         <SelectValue>{(v: string) => displayEffort(v)}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
-                        {(currentProvider?.reasoningEfforts ?? []).map((e) => (
+                        {selectedEffortOptions.map((e) => (
                           <SelectItem key={e} value={e}>
                             {displayEffort(e)}
                           </SelectItem>

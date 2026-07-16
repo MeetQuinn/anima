@@ -1,5 +1,6 @@
 import type { ProviderCatalogEntry } from '@shared/provider-catalog';
 import type { ProviderAvailability } from '@shared/provider-catalog';
+import { reasoningEffortsForModel } from '@shared/provider-catalog';
 
 export function providerCatalogForAvailability(
   providers: ProviderCatalogEntry[],
@@ -14,6 +15,17 @@ export function providerCatalogForAvailability(
       models: status?.models ?? [],
     };
   });
+}
+
+/** Effort menu for the selected model (Grok is model-scoped). */
+export function effortOptionsForSelectedModel(
+  provider: ProviderCatalogEntry | undefined,
+  model: string | undefined,
+  availability: ProviderAvailability[] | null | undefined,
+): string[] {
+  if (!provider) return [];
+  const status = providerStatus(provider, availability ?? null);
+  return reasoningEffortsForModel(provider.kind, model, status);
 }
 
 export function providerStatus(

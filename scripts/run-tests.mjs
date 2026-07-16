@@ -64,6 +64,7 @@ const groups = {
     'provider-cli.test.js',
     'provider-quiescent-waiters.test.js',
     'provider-usage.test.js',
+    'grok-launch-args.test.js',
     'grok-tool-summary.test.js',
     'inbox-slack-events.test.js',
     'reminders.test.js',

@@ -19,6 +19,24 @@ import {
 const GROK_COMMAND = 'grok';
 const GROK_RUNTIME_KIND = 'grok-cli';
 
+/**
+ * Launch args for ACP. Never carries `--effort`: reasoning effort is applied after
+ * session init via a live-capability-gated `session/set_model`, so the ACP catalog
+ * is the single authority (a name heuristic could pass `--effort` to a model that
+ * silently ignores it).
+ */
+export function grokAcpLaunchArgs(config: GrokCliAgentProviderConfig): string[] {
+  const model = config.model?.trim();
+  return [
+    '--no-auto-update',
+    'agent',
+    '--no-leader',
+    '--always-approve',
+    ...(model ? ['-m', model] : []),
+    'stdio',
+  ];
+}
+
 class GrokJsonRpcError extends Error {
   constructor(
     readonly method: string,
@@ -105,19 +123,12 @@ export class GrokCliAgentRuntime extends ControllerAgentRuntime<GrokAcpControlle
           this.slot.get() ??
           this.spawnController(
             {
-              args: [
-                '--no-auto-update',
-                'agent',
-                '--no-leader',
-                '--always-approve',
-                ...(this.config.model ? ['-m', this.config.model] : []),
-                'stdio',
-              ],
+              args: grokAcpLaunchArgs(this.config),
               command: GROK_COMMAND,
               label: 'Grok ACP runtime',
             },
             input,
-            (child) => new GrokAcpController(child),
+            (child) => new GrokAcpController(child, this.config.reasoningEffort?.trim() || undefined),
           ),
       ));
     try {
@@ -166,10 +177,20 @@ class GrokAcpController {
   private turnCompletion?: Promise<string>;
   private actualModel?: string;
   private contextWindow?: number;
+  // Live reasoning-effort menu bound to the exact model that advertised it, from ACP
+  // modelState. undefined = no capability captured (fail closed); efforts [] = the
+  // model advertised effort as unsupported. Binding to modelId prevents a stale
+  // positive: a later frame that switches the current model to one with no capability
+  // signal must not inherit the previous model's menu.
+  private currentEffortSnapshot?: { modelId: string; efforts: string[] };
+  private appliedEffort = false;
   readonly completion: Promise<{ stdout: string; stderr: string }>;
   sessionId = '';
 
-  constructor(private readonly child: RunningChildProcess) {
+  constructor(
+    private readonly child: RunningChildProcess,
+    private readonly configuredEffort?: string,
+  ) {
     this.completion = child.completion.then(
       (result) => {
         this.rejectAllPending(new Error('Grok ACP runtime exited'));
@@ -301,6 +322,9 @@ class GrokAcpController {
       runtimeKind: GROK_RUNTIME_KIND,
       transport: 'acp',
     });
+
+    // Set reasoning effort against the live current model before the first prompt.
+    await this.applyReasoningEffort(input);
   }
 
   private async createSession(input: AgentRuntimeInput): Promise<string> {
@@ -451,6 +475,45 @@ class GrokAcpController {
     const selectedMeta = isRecord(selected?.['_meta']) ? selected['_meta'] : undefined;
     const contextWindow = numberField(selectedMeta, 'totalContextTokens') ?? numberField(meta, 'totalContextTokens');
     if (contextWindow !== undefined) this.contextWindow = contextWindow;
+    // Only capture the effort menu when this frame carries the current model's
+    // capability, and bind it to that exact model id. A frame that switches the
+    // current model but omits its capability leaves the old (now-mismatched)
+    // snapshot in place; applyReasoningEffort then rejects it on the id check
+    // rather than firing a setter against a model whose menu we never saw.
+    if (selectedMeta && currentModel) {
+      const efforts = grokAdvertisedEfforts(selectedMeta);
+      if (efforts !== undefined) this.currentEffortSnapshot = { efforts, modelId: currentModel };
+    }
+  }
+
+  /**
+   * Apply the configured reasoning effort via a same-model `session/set_model`,
+   * exactly once, before the first prompt. Fail closed: skip when nothing is
+   * configured, when the live current model is unknown, when no capability snapshot
+   * was captured for *that exact* model, or when the effort is not advertised — never
+   * infer support from the model name, and never reuse a snapshot from another model.
+   */
+  private async applyReasoningEffort(input: AgentRuntimeInput): Promise<void> {
+    if (this.appliedEffort) return;
+    this.appliedEffort = true;
+    const effort = this.configuredEffort?.trim();
+    if (!effort) return;
+    const model = this.actualModel;
+    const snapshot = this.currentEffortSnapshot;
+    if (!model || snapshot?.modelId !== model || !snapshot.efforts.includes(effort)) return;
+    const result = await this.request('session/set_model', {
+      _meta: { reasoningEffort: effort },
+      modelId: model,
+      sessionId: this.sessionId,
+    });
+    this.captureModelAuthority(result);
+    await input.effects.recordEvent({
+      eventType: 'grok.model.effort',
+      model,
+      reasoningEffort: effort,
+      runtimeKind: GROK_RUNTIME_KIND,
+      transport: 'acp',
+    });
   }
 
   private async handleNotification(message: Record<string, unknown>): Promise<void> {
@@ -828,6 +891,31 @@ function grokResultModel(record: Record<string, unknown> | undefined): string | 
 
 function firstRecord(...values: unknown[]): Record<string, unknown> | undefined {
   return values.find(isRecord) as Record<string, unknown> | undefined;
+}
+
+/**
+ * Reasoning-effort menu advertised by a model's ACP `_meta`. Returns undefined when
+ * the frame carries no capability signal (unknown → fail closed), [] when the model
+ * reports it is unsupported, or the advertised values (defaulting to low/medium/high
+ * when the model supports effort but sends an empty menu, matching Grok CLI).
+ */
+function grokAdvertisedEfforts(meta: Record<string, unknown> | undefined): string[] | undefined {
+  if (!meta) return undefined;
+  const supports = meta['supportsReasoningEffort'];
+  if (supports === false) return [];
+  if (supports !== true) return undefined;
+  const raw = Array.isArray(meta['reasoningEfforts']) ? meta['reasoningEfforts'] : [];
+  const efforts: string[] = [];
+  for (const item of raw) {
+    const value = isRecord(item)
+      ? stringField(item, 'value') ?? stringField(item, 'id')
+      : typeof item === 'string'
+        ? item.trim()
+        : undefined;
+    if (value && !efforts.includes(value)) efforts.push(value);
+  }
+  if (efforts.length === 0) efforts.push('low', 'medium', 'high');
+  return efforts;
 }
 
 function copyNumberLike(

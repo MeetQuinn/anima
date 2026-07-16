@@ -10,7 +10,10 @@ import { defaultServerSettingsService, type ServerSettingsService } from '../set
 import { cleanServiceEnv } from './env.js';
 import { readLastServicesRestart, servicesRestartLogPath, servicesRestartResultPath } from './restart-result.js';
 import type { ServerInfo, ServicesRestartResponse } from '../../shared/server-info.js';
-import { PROVIDER_CATALOG, type ProviderAvailability } from '../../shared/provider-catalog.js';
+import {
+  PROVIDER_CATALOG,
+  type ProviderAvailability,
+} from '../../shared/provider-catalog.js';
 
 const execFileAsync = promisify(execFile);
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -26,12 +29,18 @@ export interface SystemServiceOptions {
   commandPresent?: (command: string, args: string[]) => Promise<boolean>;
   commit?: Promise<string | undefined> | string;
   now?: () => Date;
-  providerModels?: (command: string) => Promise<{ defaultModel: string; models: string[] }>;
+  providerModels?: (command: string) => Promise<GrokModelCatalog>;
   packageVersion?: () => Promise<string>;
   projectRoot?: string;
   restartDelayMs?: number;
   settings?: ServerSettingsService;
   startedAt?: string;
+}
+
+export interface GrokModelCatalog {
+  defaultModel: string;
+  modelReasoningEfforts?: Record<string, string[]>;
+  models: string[];
 }
 
 export class SystemServiceError extends Error {}
@@ -41,7 +50,7 @@ export class SystemService {
   private readonly commandPresent: (command: string, args: string[]) => Promise<boolean>;
   private readonly commit: Promise<string | undefined>;
   private readonly now: () => Date;
-  private readonly providerModels: (command: string) => Promise<{ defaultModel: string; models: string[] }>;
+  private readonly providerModels: (command: string) => Promise<GrokModelCatalog>;
   private readonly packageVersion: () => Promise<string>;
   private readonly projectRoot: string;
   private readonly restartDelayMs: number;
@@ -149,10 +158,7 @@ export class SystemService {
 
 export const defaultSystemService = new SystemService();
 
-export function parseGrokModelsOutput(output: string): {
-  defaultModel: string;
-  models: string[];
-} {
+export function parseGrokModelsOutput(output: string): GrokModelCatalog {
   const defaultModel = output.match(/^Default model:\s*(\S+)\s*$/m)?.[1];
   const models = [...output.matchAll(/^\s*[*-]\s+([A-Za-z0-9._/-]+)(?:\s+\(default\))?\s*$/gm)]
     .map((match) => match[1])
@@ -161,15 +167,176 @@ export function parseGrokModelsOutput(output: string): {
   if (!defaultModel || !uniqueModels.includes(defaultModel)) {
     throw new Error('Grok model catalog did not report a valid default model');
   }
-  return { defaultModel, models: uniqueModels };
+  // The text `models` catalog cannot report per-model effort support, and it must
+  // not be synthesized from model names. Effort capability comes only from the ACP
+  // modelState (parseGrokAcpModelState); omit it here rather than guess.
+  return {
+    defaultModel,
+    models: uniqueModels,
+  };
 }
 
-async function grokProviderModels(command: string): Promise<{ defaultModel: string; models: string[] }> {
+/**
+ * Parse ACP initialize/session modelState into model ids + per-model effort menus.
+ * Live Grok Build exposes `supportsReasoningEffort` and `reasoningEfforts` here;
+ * models without that flag (e.g. composer) get an empty effort list.
+ */
+export function parseGrokAcpModelState(modelState: unknown): GrokModelCatalog | undefined {
+  if (!modelState || typeof modelState !== 'object') return undefined;
+  const record = modelState as Record<string, unknown>;
+  const currentModelId =
+    typeof record['currentModelId'] === 'string' ? record['currentModelId'].trim() : '';
+  const available = Array.isArray(record['availableModels']) ? record['availableModels'] : [];
+  const models: string[] = [];
+  const modelReasoningEfforts: Record<string, string[]> = {};
+  for (const entry of available) {
+    if (!entry || typeof entry !== 'object') continue;
+    const model = entry as Record<string, unknown>;
+    const modelId = typeof model['modelId'] === 'string' ? model['modelId'].trim() : '';
+    if (!modelId) continue;
+    models.push(modelId);
+    const meta =
+      model['_meta'] && typeof model['_meta'] === 'object'
+        ? (model['_meta'] as Record<string, unknown>)
+        : undefined;
+    const supports = meta?.['supportsReasoningEffort'] === true;
+    const effortsRaw = Array.isArray(meta?.['reasoningEfforts']) ? meta['reasoningEfforts'] : [];
+    const efforts: string[] = [];
+    if (supports) {
+      for (const item of effortsRaw) {
+        if (!item || typeof item !== 'object') continue;
+        const value =
+          typeof (item as Record<string, unknown>)['value'] === 'string'
+            ? String((item as Record<string, unknown>)['value']).trim()
+            : typeof (item as Record<string, unknown>)['id'] === 'string'
+              ? String((item as Record<string, unknown>)['id']).trim()
+              : '';
+        if (value && !efforts.includes(value)) efforts.push(value);
+      }
+      // Menu present but empty → built-in low/medium/high (no xhigh), matching Grok CLI.
+      if (efforts.length === 0) efforts.push('low', 'medium', 'high');
+    }
+    modelReasoningEfforts[modelId] = efforts;
+  }
+  const uniqueModels = [...new Set(models)];
+  const defaultModel =
+    currentModelId && uniqueModels.includes(currentModelId) ? currentModelId : uniqueModels[0];
+  if (!defaultModel || uniqueModels.length === 0) return undefined;
+  return { defaultModel, modelReasoningEfforts, models: uniqueModels };
+}
+
+async function grokProviderModels(command: string): Promise<GrokModelCatalog> {
+  try {
+    const fromAcp = await grokAcpModelCatalog(command);
+    if (fromAcp) return fromAcp;
+  } catch {
+    // Fall through to CLI text catalog.
+  }
   const { stdout, stderr } = await execFileAsync(command, ['--no-auto-update', 'models'], {
     maxBuffer: 1024 * 1024,
     timeout: 10_000,
   });
   return parseGrokModelsOutput(`${stdout}\n${stderr}`);
+}
+
+/** Short-lived ACP initialize probe for per-model effort metadata. */
+async function grokAcpModelCatalog(command: string): Promise<GrokModelCatalog | undefined> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      command,
+      ['--no-auto-update', 'agent', '--no-leader', '--always-approve', 'stdio'],
+      { stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    let buffer = '';
+    let settled = false;
+    const finish = (error?: Error, value?: GrokModelCatalog) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill('SIGTERM');
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const timer = setTimeout(() => finish(new Error('Grok ACP model catalog probe timed out')), 8_000);
+
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => {
+      buffer += chunk;
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let message: Record<string, unknown>;
+        try {
+          message = JSON.parse(line) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        // Answer agent→client requests so the process does not stall.
+        if (
+          message['id'] !== undefined &&
+          typeof message['method'] === 'string' &&
+          !('result' in message) &&
+          !('error' in message)
+        ) {
+          const id = message['id'];
+          if (message['method'] === 'session/request_permission') {
+            child.stdin?.write(
+              `${JSON.stringify({
+                id,
+                jsonrpc: '2.0',
+                result: { outcome: { optionId: 'approve_for_session', outcome: 'selected' } },
+              })}\n`,
+            );
+          } else {
+            child.stdin?.write(
+              `${JSON.stringify({
+                error: { code: -32601, message: `method not found: ${String(message['method'])}` },
+                id,
+                jsonrpc: '2.0',
+              })}\n`,
+            );
+          }
+          continue;
+        }
+        if (message['id'] !== 1 || !('result' in message)) continue;
+        const result = message['result'];
+        if (!result || typeof result !== 'object') {
+          finish(new Error('Grok ACP initialize returned no result'));
+          return;
+        }
+        const meta =
+          (result as Record<string, unknown>)['_meta'] &&
+          typeof (result as Record<string, unknown>)['_meta'] === 'object'
+            ? ((result as Record<string, unknown>)['_meta'] as Record<string, unknown>)
+            : undefined;
+        const modelState = meta?.['modelState'] ?? (result as Record<string, unknown>)['models'];
+        const catalog = parseGrokAcpModelState(modelState);
+        if (!catalog) {
+          finish(new Error('Grok ACP initialize did not include a model catalog'));
+          return;
+        }
+        finish(undefined, catalog);
+      }
+    });
+    child.on('error', (error) => finish(error instanceof Error ? error : new Error(String(error))));
+    child.on('exit', (code) => {
+      if (!settled) finish(new Error(`Grok ACP model catalog probe exited (${code ?? 'null'})`));
+    });
+
+    child.stdin?.write(
+      `${JSON.stringify({
+        id: 1,
+        jsonrpc: '2.0',
+        method: 'initialize',
+        params: {
+          clientCapabilities: {},
+          clientInfo: { name: 'anima', version: '0.1.0' },
+          protocolVersion: 1,
+        },
+      })}\n`,
+    );
+  });
 }
 
 async function restartServicesDetached(input: {

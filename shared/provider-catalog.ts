@@ -19,6 +19,12 @@ export const ProviderAvailability = z.object({
   defaultModel: z.string().optional(),
   kind: z.enum(['claude-code', 'codex-cli', 'kimi-cli', 'grok-cli']),
   modelCheckError: z.string().optional(),
+  /**
+   * Per-model reasoning effort menus (Grok Build). Missing or empty array means
+   * the model does not support effort. When present, UI/config must not show a
+   * provider-global effort control for that model.
+   */
+  modelReasoningEfforts: z.record(z.string(), z.array(z.string())).optional(),
   models: z.array(z.string()).optional(),
   present: z.boolean(),
 });
@@ -27,6 +33,13 @@ export type ProviderAvailability = z.infer<typeof ProviderAvailability>;
 export const DEFAULT_PROVIDER_KIND: ProviderCatalogEntry['kind'] = 'claude-code';
 export const DEFAULT_REASONING_EFFORT = 'xhigh';
 const STANDARD_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh'];
+/**
+ * Effort tokens a Grok model may support. This is the write-time vocabulary only:
+ * whether a *specific* model actually supports an effort is decided at runtime by
+ * the live ACP catalog (`session/set_model` is gated on it), never inferred here
+ * from the model name.
+ */
+const GROK_REASONING_EFFORTS = ['low', 'medium', 'high'];
 
 export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
   {
@@ -65,6 +78,9 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     models: [],
     defaultModel: '',
     dynamicModels: true,
+    // Effort is model-scoped in Grok (supportsReasoningEffort / reasoningEfforts on
+    // each ACP catalog entry). Do not expose a provider-wide menu; UI reads live
+    // modelReasoningEfforts, and the runtime applies effort via session/set_model.
     reasoningEfforts: [],
   },
 ];
@@ -98,6 +114,34 @@ export function isSupportedProviderModel(kind: string, model: string): boolean {
   return normalized.length > 0 && !entry.marketingModelAliases?.includes(normalized);
 }
 
-export function isSupportedReasoningEffort(kind: string, effort: string): boolean {
+/**
+ * Whether `effort` is a valid token to store for this provider. For Grok this is the
+ * provider effort vocabulary, not a per-model claim: the model-specific decision is
+ * made at runtime against the live ACP catalog, so writes never infer support from
+ * the model name (which could disagree with what the model actually advertises).
+ */
+export function isSupportedReasoningEffort(kind: string, effort: string, _model?: string): boolean {
+  if (kind === 'grok-cli') {
+    return GROK_REASONING_EFFORTS.includes(effort);
+  }
   return providerCatalogEntry(kind)?.reasoningEfforts.includes(effort) ?? false;
+}
+
+/**
+ * Effort menu to show for the selected model. Grok is live-only: the ACP catalog
+ * (`modelReasoningEfforts`) is the single authority, so absent that data the menu is
+ * empty rather than guessed from the model name.
+ */
+export function reasoningEffortsForModel(
+  kind: string,
+  model: string | undefined,
+  availability?: { modelReasoningEfforts?: Record<string, string[]> } | null,
+): string[] {
+  if (kind === 'grok-cli') {
+    if (model && availability?.modelReasoningEfforts && model in availability.modelReasoningEfforts) {
+      return [...(availability.modelReasoningEfforts[model] ?? [])];
+    }
+    return [];
+  }
+  return [...(providerCatalogEntry(kind)?.reasoningEfforts ?? [])];
 }

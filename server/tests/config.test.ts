@@ -308,11 +308,12 @@ test('codex-cli catalog includes current GPT-5.6 and GPT-5.5 models only', () =>
   );
 });
 
-test('grok-cli catalog keeps model identity runtime-authoritative', () => {
+test('grok-cli effort write-validates the provider vocabulary; per-model support is a runtime gate', () => {
   const entry = providerCatalogEntry('grok-cli');
   assert.equal(entry?.dynamicModels, true);
   assert.equal(entry?.defaultModel, '');
   assert.deepEqual(entry?.models, []);
+  // Provider-wide effort menu stays empty; capability is per model.
   assert.deepEqual(entry?.reasoningEfforts, []);
   assert.equal(
     AgentCreateRequest.parse({
@@ -322,9 +323,41 @@ test('grok-cli catalog keeps model identity runtime-authoritative', () => {
       provider: {
         kind: 'grok-cli',
         model: 'grok-4.5',
+        reasoningEffort: 'high',
       },
     }).provider.model,
     'grok-4.5',
+  );
+  // A valid effort token is stored as a preference regardless of the model name:
+  // whether *this* model actually supports it is decided at runtime by the live ACP
+  // catalog (session/set_model is gated on it), never inferred from the name at write.
+  assert.equal(
+    AgentCreateRequest.parse({
+      name: 'Grok Composer',
+      homePath: 'agents/grok-composer',
+      role: 'general purpose',
+      provider: {
+        kind: 'grok-cli',
+        model: 'grok-composer-2.5-fast',
+        reasoningEffort: 'low',
+      },
+    }).provider.reasoningEffort,
+    'low',
+  );
+  // xhigh is not part of Grok's effort vocabulary — rejected at write time.
+  assert.throws(
+    () =>
+      AgentCreateRequest.parse({
+        name: 'Grok xhigh',
+        homePath: 'agents/grok-xhigh',
+        role: 'general purpose',
+        provider: {
+          kind: 'grok-cli',
+          model: 'grok-4.5',
+          reasoningEffort: 'xhigh',
+        },
+      }),
+    /unsupported reasoningEffort xhigh/,
   );
   assert.throws(
     () =>
@@ -338,6 +371,20 @@ test('grok-cli catalog keeps model identity runtime-authoritative', () => {
         },
       }),
     /unsupported model for grok-cli: grok-build/,
+  );
+  assert.throws(
+    () =>
+      AgentCreateRequest.parse({
+        name: 'Grok bad effort',
+        homePath: 'agents/grok-effort',
+        role: 'general purpose',
+        provider: {
+          kind: 'grok-cli',
+          model: 'grok-4.5',
+          reasoningEffort: 'ultra',
+        },
+      }),
+    /unsupported reasoningEffort ultra/,
   );
 });
 

@@ -88,7 +88,10 @@ const AgentProviderCreateRequest = z
         path: ['model'],
       });
     }
-    if (provider.reasoningEffort && !isSupportedReasoningEffort(provider.kind, provider.reasoningEffort)) {
+    if (
+      provider.reasoningEffort &&
+      !isSupportedReasoningEffort(provider.kind, provider.reasoningEffort, provider.model)
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: `unsupported reasoningEffort ${provider.reasoningEffort}`,
@@ -314,6 +317,7 @@ export const GrokCliAgentProviderConfig = z.object({
   kind: z.literal('grok-cli'),
   model: z.string().optional(),
   providerChildIdleTimeoutMs: z.number().nonnegative().optional(),
+  reasoningEffort: z.string().optional(),
 });
 
 export type GrokCliAgentProviderConfig = z.infer<typeof GrokCliAgentProviderConfig>;
@@ -331,14 +335,23 @@ export const AgentProviderConfig = z.preprocess(
             ? input.transport
             : 'stream-json'
         : undefined;
+    const model = typeof input.model === 'string' ? input.model : defaultModelForProvider(kind);
+    const rawEffort = typeof input.reasoningEffort === 'string' ? input.reasoningEffort : undefined;
+    // Keep a persisted effort when it is a valid token for the provider; do not infer
+    // per-model support from the model name here (Grok's per-model authority is the live
+    // ACP catalog at runtime). Kimi has no effort field, so its efforts are dropped.
+    const keepEffort =
+      rawEffort && isSupportedReasoningEffort(kind, rawEffort, model) ? rawEffort : undefined;
+    const { reasoningEffort: _dropEffort, ...rest } = input;
     return {
-      ...input,
+      ...rest,
       ...(typeof input.idleTimeoutMs !== 'number' ? { idleTimeoutMs: PROVIDER_IDLE_TIMEOUT_MS_DEFAULT } : {}),
       ...(typeof input.providerChildIdleTimeoutMs !== 'number'
         ? { providerChildIdleTimeoutMs: PROVIDER_CHILD_IDLE_TIMEOUT_MS_DEFAULT }
         : {}),
       kind,
-      model: typeof input.model === 'string' ? input.model : defaultModelForProvider(kind),
+      model,
+      ...(keepEffort ? { reasoningEffort: keepEffort } : {}),
       ...(kind === 'claude-code' ? { transport: claudeTransport } : {}),
     };
   },
