@@ -23,6 +23,15 @@ const EMPTY_GRPC_WEB_BODY = new Uint8Array([0, 0, 0, 0, 0]);
 const BILLING_TIMEOUT_MS = 15_000;
 const REFRESH_TIMEOUT_MS = 15_000;
 
+/**
+ * Known used-percent paths on GetGrokCreditsConfig (live fixture + Raycast).
+ * Do not accept arbitrary fixed32 floats — that is not fail-closed.
+ */
+const USAGE_PERCENT_PATHS: readonly number[][] = [
+  [1, 1], // credits config top-level used percent
+  [1, 7, 2], // nested weekly window used percent
+];
+
 interface GrokCredentials {
   accessToken: string;
   account?: string;
@@ -35,7 +44,15 @@ interface GrokCredentials {
   teamId?: string;
 }
 
-export async function fetchGrokUsage(): Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>> {
+export interface GrokUsageFetchOptions {
+  /** Overrides default 15s billing/refresh timeouts (tests inject short values). */
+  timeoutMs?: number;
+}
+
+export async function fetchGrokUsage(
+  options: GrokUsageFetchOptions = {},
+): Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>> {
+  const timeoutMs = options.timeoutMs;
   const credentials = await readGrokCredentials();
   if (!credentials) {
     return unavailable(usageError('not_configured', 'Grok Build credentials not found. Run `grok login` to authenticate.'));
@@ -43,17 +60,17 @@ export async function fetchGrokUsage(): Promise<Omit<ProviderUsageRow, 'checkedA
 
   let active = credentials;
   if (grokExpiresSoon(active.expiresAt) && active.refreshToken && active.oidcClientId) {
-    const refreshed = await refreshGrokCredentials(active);
+    const refreshed = await refreshGrokCredentials(active, timeoutMs);
     if (refreshed.error) return unavailable(refreshed.error, active.account);
     active = refreshed.credentials;
   }
 
-  let result = await fetchGrokBilling(active.accessToken);
+  let result = await fetchGrokBilling(active.accessToken, timeoutMs);
   if (result.error?.type === 'unauthorized' && active.refreshToken && active.oidcClientId) {
-    const refreshed = await refreshGrokCredentials(active);
+    const refreshed = await refreshGrokCredentials(active, timeoutMs);
     if (refreshed.error) return unavailable(refreshed.error, active.account);
     active = refreshed.credentials;
-    result = await fetchGrokBilling(active.accessToken);
+    result = await fetchGrokBilling(active.accessToken, timeoutMs);
   }
 
   if (result.error) return unavailable(result.error, active.account);
@@ -78,20 +95,29 @@ export function parseGrokBillingBytes(
   nowMs: number = Date.now(),
 ): { error?: ReturnType<typeof usageError>; snapshot?: GrokBillingSnapshot } {
   try {
-    const payload = firstGrpcWebPayload(body);
+    const framed = parseGrpcWebFrames(body);
+    const trailerStatus = framed.trailers['grpc-status'];
+    if (trailerStatus !== undefined && trailerStatus !== '0') {
+      return { error: grpcStatusError(trailerStatus, framed.trailers['grpc-message']) };
+    }
+
+    const payload = framed.payload;
     if (!payload || payload.length === 0) {
       return { error: usageError('parse_error', 'Grok billing response had no protobuf payload') };
     }
     const fields = scanProtobuf(payload);
     const usedPercent = firstUsagePercent(fields);
     if (usedPercent === undefined) {
-      return { error: usageError('parse_error', 'Grok billing response did not include used percent') };
+      // proto3 omits default 0.0 fixed32; a known quota shell without percent means unused.
+      if (!isZeroUsageOmittedShape(fields)) {
+        return { error: usageError('parse_error', 'Grok billing response did not include used percent') };
+      }
     }
     const resetsAt = firstFutureTimestamp(fields, nowMs);
     return {
       snapshot: {
         resetsAt,
-        usedPercent: clampPercent(usedPercent),
+        usedPercent: clampPercent(usedPercent ?? 0),
       },
     };
   } catch (error) {
@@ -139,6 +165,7 @@ async function readGrokCredentials(): Promise<GrokCredentials | undefined> {
 
 async function refreshGrokCredentials(
   credentials: GrokCredentials,
+  timeoutMs: number = REFRESH_TIMEOUT_MS,
 ): Promise<
   | { credentials: GrokCredentials; error?: never }
   | { credentials?: never; error: NonNullable<ReturnType<typeof usageError>> }
@@ -150,28 +177,24 @@ async function refreshGrokCredentials(
   }
 
   try {
-    const tokenUrl = await discoverTokenEndpoint(credentials.oidcIssuer);
+    const tokenUrl = await discoverTokenEndpoint(credentials.oidcIssuer, timeoutMs);
     const body = new URLSearchParams({
       client_id: credentials.oidcClientId,
       grant_type: 'refresh_token',
       refresh_token: credentials.refreshToken,
     });
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS);
-    let response: Response;
-    try {
-      response = await fetch(tokenUrl, {
+    const response = await fetchUntilBody(
+      tokenUrl,
+      {
         body: body.toString(),
         headers: {
           Accept: 'application/json',
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         method: 'POST',
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
+      },
+      timeoutMs,
+    );
 
     if (response.status === 401 || response.status === 403) {
       return {
@@ -184,7 +207,7 @@ async function refreshGrokCredentials(
       };
     }
 
-    const data = record(await response.json());
+    const data = record(JSON.parse(response.bodyText));
     const accessToken = stringValue(data?.access_token);
     if (!accessToken) {
       return { error: usageError('parse_error', 'Grok refresh response did not include an access token.') };
@@ -240,26 +263,27 @@ async function writeGrokAccessToken(
 
 async function fetchGrokBilling(
   accessToken: string,
+  timeoutMs: number = BILLING_TIMEOUT_MS,
 ): Promise<{ error?: ReturnType<typeof usageError>; snapshot?: GrokBillingSnapshot }> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), BILLING_TIMEOUT_MS);
   try {
-    const response = await fetch(GROK_BILLING_API, {
-      body: EMPTY_GRPC_WEB_BODY,
-      headers: {
-        Accept: '*/*',
-        Authorization: accessToken.toLowerCase().startsWith('bearer ') ? accessToken : `Bearer ${accessToken}`,
-        'Content-Type': 'application/grpc-web+proto',
-        Origin: 'https://grok.com',
-        Referer: 'https://grok.com/?_s=usage',
-        'User-Agent': 'Anima/provider-usage',
-        'x-grpc-web': '1',
-        'x-user-agent': 'connect-es/2.1.1',
+    const response = await fetchUntilBody(
+      GROK_BILLING_API,
+      {
+        body: EMPTY_GRPC_WEB_BODY,
+        headers: {
+          Accept: '*/*',
+          Authorization: accessToken.toLowerCase().startsWith('bearer ') ? accessToken : `Bearer ${accessToken}`,
+          'Content-Type': 'application/grpc-web+proto',
+          Origin: 'https://grok.com',
+          Referer: 'https://grok.com/?_s=usage',
+          'User-Agent': 'Anima/provider-usage',
+          'x-grpc-web': '1',
+          'x-user-agent': 'connect-es/2.1.1',
+        },
+        method: 'POST',
       },
-      method: 'POST',
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
+      timeoutMs,
+    );
 
     if (response.status === 401 || response.status === 403) {
       return {
@@ -274,26 +298,11 @@ async function fetchGrokBilling(
 
     const headerStatus = response.headers.get('grpc-status');
     if (headerStatus && headerStatus !== '0') {
-      const message = response.headers.get('grpc-message') ?? '';
-      if (headerStatus === '16' || headerStatus === '7') {
-        return {
-          error: usageError(
-            'unauthorized',
-            message
-              ? `Grok session rejected (${headerStatus}): ${message}`
-              : 'Grok session expired or invalid. Run `grok login` to refresh credentials.',
-          ),
-        };
-      }
-      return {
-        error: usageError('unknown', message ? `gRPC status ${headerStatus}: ${message}` : `gRPC status ${headerStatus}`),
-      };
+      return { error: grpcStatusError(headerStatus, response.headers.get('grpc-message') ?? undefined) };
     }
 
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    return parseGrokBillingBytes(bytes);
+    return parseGrokBillingBytes(response.bodyBytes);
   } catch (error) {
-    clearTimeout(timeout);
     return {
       error: usageError(
         'network_error',
@@ -303,6 +312,75 @@ async function fetchGrokBilling(
       ),
     };
   }
+}
+
+/**
+ * Abort covers headers **and** body consumption. Clearing the timer after
+ * `fetch()` resolves (headers only) leaves body stalls hanging forever.
+ * Race body read against the abort signal because some runtimes do not reject
+ * `arrayBuffer()` promptly when only the request signal aborts mid-stream.
+ */
+async function fetchUntilBody(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<{ bodyBytes: Uint8Array; bodyText: string; headers: Headers; status: number; ok: boolean }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    const bodyBytes = new Uint8Array(await readBodyWithAbort(response, controller.signal));
+    return {
+      bodyBytes,
+      bodyText: new TextDecoder().decode(bodyBytes),
+      headers: response.headers,
+      ok: response.ok,
+      status: response.status,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function readBodyWithAbort(response: Response, signal: AbortSignal): Promise<ArrayBuffer> {
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(abortError());
+    };
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    signal.addEventListener('abort', onAbort, { once: true });
+    void response
+      .arrayBuffer()
+      .then((buffer) => {
+        cleanup();
+        if (signal.aborted) reject(abortError());
+        else resolve(buffer);
+      })
+      .catch((error) => {
+        cleanup();
+        reject(error);
+      });
+  });
+}
+
+function abortError(): Error {
+  const error = new Error('The operation was aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
+function grpcStatusError(status: string, message?: string): ReturnType<typeof usageError> {
+  if (status === '16' || status === '7') {
+    return usageError(
+      'unauthorized',
+      message
+        ? `Grok session rejected (${status}): ${message}`
+        : 'Grok session expired or invalid. Run `grok login` to refresh credentials.',
+    );
+  }
+  return usageError('unknown', message ? `gRPC status ${status}: ${message}` : `gRPC status ${status}`);
 }
 
 function grokWindows(snapshot: GrokBillingSnapshot): ProviderUsageWindow[] {
@@ -353,25 +431,22 @@ function grokExpiresSoon(expiresAt: string | undefined, skewMs = 60_000, nowMs: 
   return expiresSoon(expiresAt, skewMs / 1000, nowMs);
 }
 
-async function discoverTokenEndpoint(issuer: string): Promise<string> {
+async function discoverTokenEndpoint(issuer: string, timeoutMs: number = REFRESH_TIMEOUT_MS): Promise<string> {
   const base = issuer.replace(/\/$/, '');
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS);
   try {
-    const response = await fetch(`${base}/.well-known/openid-configuration`, {
-      headers: { Accept: 'application/json' },
-      signal: controller.signal,
-    });
+    const response = await fetchUntilBody(
+      `${base}/.well-known/openid-configuration`,
+      { headers: { Accept: 'application/json' }, method: 'GET' },
+      timeoutMs,
+    );
     if (!response.ok) {
       // Fallback used by the CLI / Raycast when discovery is unavailable.
       return `${base}/oauth/token`;
     }
-    const data = record(await response.json());
+    const data = record(JSON.parse(response.bodyText));
     return stringValue(data?.token_endpoint) ?? `${base}/oauth/token`;
   } catch {
     return `${base}/oauth/token`;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -386,24 +461,49 @@ function numberFromUnknown(value: unknown): number | undefined {
 
 // --- gRPC-Web + protobuf (minimal scan; mirrors Raycast Agent Usage) ---
 
-function firstGrpcWebPayload(body: Uint8Array): Uint8Array | undefined {
+interface GrpcWebFrames {
+  payload?: Uint8Array;
+  trailers: Record<string, string>;
+}
+
+/** Parse every gRPC-Web frame so trailer `grpc-status` is never ignored. */
+export function parseGrpcWebFrames(body: Uint8Array): GrpcWebFrames {
   let offset = 0;
+  let payload: Uint8Array | undefined;
+  let trailerText = '';
+  let sawFrame = false;
+
   while (offset + 5 <= body.length) {
     const flags = body[offset] ?? 0;
-    const length = (body[offset + 1]! << 24)
-      | (body[offset + 2]! << 16)
-      | (body[offset + 3]! << 8)
-      | body[offset + 4]!;
+    const length =
+      ((body[offset + 1]! << 24) | (body[offset + 2]! << 16) | (body[offset + 3]! << 8) | body[offset + 4]!) >>> 0;
     offset += 5;
-    if (length < 0 || offset + length > body.length) break;
+    if (offset + length > body.length) break;
     const frame = body.subarray(offset, offset + length);
     offset += length;
-    // Trailers frame (MSB of flags) is not a message payload.
-    if ((flags & 0x80) !== 0) continue;
-    if (frame.length > 0) return frame;
+    sawFrame = true;
+    if ((flags & 0x80) !== 0) {
+      trailerText += new TextDecoder().decode(frame);
+      continue;
+    }
+    if (frame.length > 0 && payload === undefined) payload = frame;
   }
-  // Some servers return raw protobuf without framing.
-  return body.length > 0 ? body : undefined;
+
+  const trailers: Record<string, string> = {};
+  for (const line of trailerText.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const idx = line.indexOf(':');
+    if (idx <= 0) continue;
+    const key = line.slice(0, idx).trim().toLowerCase();
+    const value = line.slice(idx + 1).trim();
+    if (key) trailers[key] = value;
+  }
+
+  // Unframed raw protobuf only when no gRPC-Web framing was present.
+  if (!sawFrame && body.length > 0) {
+    return { payload: body, trailers };
+  }
+  return { payload, trailers };
 }
 
 interface ProtoScan {
@@ -473,21 +573,42 @@ function readVarint(buf: Uint8Array, cursor: { value: number }): { next: number;
   return null;
 }
 
+function pathEquals(a: number[], b: readonly number[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function isPercent(value: number): boolean {
+  return Number.isFinite(value) && value >= 0 && value <= 100;
+}
+
 function firstUsagePercent(fields: ProtoScan): number | undefined {
-  // Prefer field-number-1 floats in 0..100 (Raycast selects path ending in 1).
-  const candidates = fields.fixed32
-    .filter((f) => f.path[f.path.length - 1] === 1 && Number.isFinite(f.value) && f.value >= 0 && f.value <= 100)
-    .sort((a, b) => a.path.length - b.path.length || 0);
-  if (candidates[0]) return candidates[0].value;
-  const any = fields.fixed32.find((f) => Number.isFinite(f.value) && f.value >= 0 && f.value <= 100);
-  return any?.value;
+  for (const known of USAGE_PERCENT_PATHS) {
+    const hit = fields.fixed32.find((f) => pathEquals(f.path, known) && isPercent(f.value));
+    if (hit) return hit.value;
+  }
+  return undefined;
+}
+
+/**
+ * Live schema: reset timestamp at [1,5,1] and weekly period marker [1,8,1]=2.
+ * When both are present but used-percent fixed32 is omitted (proto3 default 0),
+ * treat as 0% rather than parse_error.
+ */
+function isZeroUsageOmittedShape(fields: ProtoScan): boolean {
+  const hasReset = fields.varint.some((f) => pathEquals(f.path, [1, 5, 1]) && f.value > 0);
+  const hasWeeklyPeriod = fields.varint.some((f) => pathEquals(f.path, [1, 8, 1]) && f.value === 2);
+  return hasReset && hasWeeklyPeriod;
 }
 
 function firstFutureTimestamp(fields: ProtoScan, nowMs: number): string | undefined {
   const nowSec = nowMs / 1000;
   // Prefer path (1, 5, 1) when present (Raycast's primary reset field).
   const preferred = fields.varint
-    .filter((f) => f.path.length === 3 && f.path[0] === 1 && f.path[1] === 5 && f.path[2] === 1)
+    .filter((f) => pathEquals(f.path, [1, 5, 1]))
     .map((f) => f.value)
     .filter((v) => v > nowSec && v < 2.1e9);
   const all = fields.varint
