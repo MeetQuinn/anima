@@ -509,10 +509,7 @@ class GrokAcpController {
     const id = toolCallId(data);
     if (!id) return;
     const rawInput = toolInput(data);
-    const name = grokToolNameFromTitle(
-      stringField(data, 'title') ?? stringField(data, 'name') ?? stringField(data, 'kind') ?? '',
-      stringField(data, 'kind'),
-    );
+    const name = grokToolName(data);
     this.activeToolIds.add(id);
     if (rawInput) {
       // Emit immediately when we can show a useful target/command; otherwise wait
@@ -584,12 +581,8 @@ class GrokAcpController {
     rawInput: Record<string, unknown> | undefined,
   ): Promise<void> {
     if (pending?.emitted) return;
-    const name =
-      pending?.name ??
-      grokToolNameFromTitle(
-        stringField(data, 'title') ?? stringField(data, 'name') ?? stringField(data, 'kind') ?? '',
-        stringField(data, 'kind'),
-      );
+    // Prefer latest ACP frame for identity (meta/title often enrich on update).
+    const name = grokToolName(data) || pending?.name || 'Tool';
     const parsedInput = rawInput ?? parseToolArguments(pending?.argsText ?? extractAcpToolCallText(data['content']));
     await this.emitToolStarted(
       input,
@@ -951,7 +944,25 @@ function parseToolArguments(raw: unknown): unknown {
   }
 }
 
-function grokToolNameFromTitle(title: string, kind?: string): string {
+/**
+ * Resolve Grok ACP tool identity for Activity. Prefer canonical
+ * `_meta['x.ai/tool'].name` (e.g. list_dir), then title/kind patterns.
+ * Live ListDir shape: title `List \`path\``, kind Other, meta name list_dir.
+ */
+export function grokToolName(data: Record<string, unknown>): string {
+  const meta = isRecord(data['_meta']) ? data['_meta'] : undefined;
+  const xaiTool = isRecord(meta?.['x.ai/tool']) ? meta['x.ai/tool'] : undefined;
+  const metaName =
+    stringField(xaiTool, 'name') ??
+    stringField(xaiTool, 'id') ??
+    stringField(data, 'name');
+  if (metaName) {
+    const fromMeta = grokCanonicalToolName(metaName);
+    if (fromMeta) return fromMeta;
+  }
+
+  const title = stringField(data, 'title') ?? '';
+  const kind = stringField(data, 'kind') ?? '';
   const candidate = `${title || kind || 'tool'}`.trim();
   const normalized = candidate.toLowerCase();
   if (/(run command|shell|bash|terminal)/.test(normalized)) return 'Shell';
@@ -960,6 +971,8 @@ function grokToolNameFromTitle(title: string, kind?: string): string {
   if (/(edit|patch|replace)/.test(normalized)) return 'StrReplaceFile';
   if (/web search/.test(normalized)) return 'WebSearch';
   if (/(fetch|web fetch)/.test(normalized)) return 'Fetch';
+  // List `server/providers` — must not fall through to ListServerProviders.
+  if (/^list\b/.test(normalized) || /\blist[_ ]?dir\b/.test(normalized)) return 'ListDir';
   if (/search/.test(normalized)) return 'Search';
   if (/glob/.test(normalized)) return 'Glob';
   if (/todo/.test(normalized)) return 'TodoWrite';
@@ -967,6 +980,39 @@ function grokToolNameFromTitle(title: string, kind?: string): string {
   return base
     .replace(/[^a-zA-Z0-9]+(.)/g, (_, char: string) => char.toUpperCase())
     .replace(/^[a-z]/, (char) => char.toUpperCase());
+}
+
+function grokCanonicalToolName(raw: string): string | undefined {
+  const key = raw.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  switch (key) {
+    case 'list_dir':
+    case 'listdir':
+    case 'list_directory':
+      return 'ListDir';
+    case 'read_file':
+    case 'readfile':
+      return 'ReadFile';
+    case 'write_file':
+    case 'writefile':
+      return 'WriteFile';
+    case 'str_replace_file':
+    case 'strreplacefile':
+    case 'str_replace':
+      return 'StrReplaceFile';
+    case 'run_command':
+    case 'shell':
+    case 'bash':
+      return 'Shell';
+    case 'web_search':
+    case 'websearch':
+      return 'WebSearch';
+    case 'grep':
+      return 'Grep';
+    case 'glob':
+      return 'Glob';
+    default:
+      return undefined;
+  }
 }
 
 /** Exported for unit tests — keep Activity targets aligned with live Grok ACP. */

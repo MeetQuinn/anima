@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { summarizeGrokToolInput } from '../providers/grok.js';
+import { grokToolName, summarizeGrokToolInput } from '../providers/grok.js';
 
 test('Grok ReadFile uses target_file (live ACP field), not only Claude-style path keys', () => {
   assert.deepEqual(
@@ -47,6 +47,22 @@ test('Grok ListDir uses target_directory', () => {
     summarizeGrokToolInput('ListDir', { target_directory: 'server/providers' }),
     { target: 'server/providers' },
   );
+});
+
+test('Grok ListDir tool name comes from live ACP meta/title, not ListServerProviders', () => {
+  // Live Grok shape (tool_calls.rs): title List `path`, kind Other, meta name list_dir.
+  assert.equal(
+    grokToolName({
+      kind: 'Other',
+      title: 'List `server/providers`',
+      rawInput: { target_directory: 'server/providers' },
+      _meta: { 'x.ai/tool': { name: 'list_dir', kind: 'other' } },
+    }),
+    'ListDir',
+  );
+  // Title alone must not camelCase into ListServerProviders.
+  assert.equal(grokToolName({ kind: 'Other', title: 'List `server/providers`' }), 'ListDir');
+  assert.equal(grokToolName({ title: 'list_dir' }), 'ListDir');
 });
 
 test('Grok Shell still prefers command and description', () => {
