@@ -308,12 +308,13 @@ test('codex-cli catalog includes current GPT-5.6 and GPT-5.5 models only', () =>
   );
 });
 
-test('grok-cli catalog keeps model identity runtime-authoritative and accepts effort', () => {
+test('grok-cli effort is model-scoped: reasoning models only, never composer', () => {
   const entry = providerCatalogEntry('grok-cli');
   assert.equal(entry?.dynamicModels, true);
   assert.equal(entry?.defaultModel, '');
   assert.deepEqual(entry?.models, []);
-  assert.deepEqual(entry?.reasoningEfforts, ['low', 'medium', 'high', 'xhigh']);
+  // Provider-wide effort menu stays empty; capability is per model.
+  assert.deepEqual(entry?.reasoningEfforts, []);
   assert.equal(
     AgentCreateRequest.parse({
       name: 'Grok',
@@ -327,18 +328,35 @@ test('grok-cli catalog keeps model identity runtime-authoritative and accepts ef
     }).provider.model,
     'grok-4.5',
   );
-  assert.equal(
-    AgentCreateRequest.parse({
-      name: 'Grok Composer',
-      homePath: 'agents/grok-composer',
-      role: 'general purpose',
-      provider: {
-        kind: 'grok-cli',
-        model: 'grok-composer-2.5-fast',
-        reasoningEffort: 'low',
-      },
-    }).provider.model,
-    'grok-composer-2.5-fast',
+  // Composer does not support reasoning effort — Anima must reject, not silently ignore.
+  assert.throws(
+    () =>
+      AgentCreateRequest.parse({
+        name: 'Grok Composer',
+        homePath: 'agents/grok-composer',
+        role: 'general purpose',
+        provider: {
+          kind: 'grok-cli',
+          model: 'grok-composer-2.5-fast',
+          reasoningEffort: 'low',
+        },
+      }),
+    /unsupported reasoningEffort low/,
+  );
+  // Live ACP menu for grok-4.5 is low/medium/high — not xhigh.
+  assert.throws(
+    () =>
+      AgentCreateRequest.parse({
+        name: 'Grok xhigh',
+        homePath: 'agents/grok-xhigh',
+        role: 'general purpose',
+        provider: {
+          kind: 'grok-cli',
+          model: 'grok-4.5',
+          reasoningEffort: 'xhigh',
+        },
+      }),
+    /unsupported reasoningEffort xhigh/,
   );
   assert.throws(
     () =>

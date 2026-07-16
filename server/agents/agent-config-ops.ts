@@ -96,7 +96,19 @@ function mergeProviderSelection(
   if (!update.kind || update.kind === current.kind) {
     const currentEffort = 'reasoningEffort' in current ? current.reasoningEffort : undefined;
     const model = update.model ?? current.model;
-    const reasoningEffort = update.reasoningEffort ?? currentEffort;
+    // Explicit effort wins; otherwise keep current only when still valid for the model
+    // (Grok effort is model-scoped — switching to composer must drop effort).
+    let reasoningEffort =
+      update.reasoningEffort !== undefined ? update.reasoningEffort : currentEffort;
+    if (
+      reasoningEffort &&
+      !isSupportedReasoningEffort(current.kind, reasoningEffort, model)
+    ) {
+      if (update.reasoningEffort !== undefined) {
+        throw new AgentConfigError(400, `unsupported reasoningEffort ${reasoningEffort}`);
+      }
+      reasoningEffort = undefined;
+    }
     if (update.transport !== undefined && current.kind !== 'claude-code') {
       throw new AgentConfigError(400, `unsupported transport for ${current.kind}: ${update.transport}`);
     }
@@ -106,6 +118,7 @@ function mergeProviderSelection(
     const next: Record<string, unknown> = { ...rest };
     if (update.model !== undefined) next.model = update.model;
     if (update.reasoningEffort !== undefined) next.reasoningEffort = update.reasoningEffort;
+    else if (currentEffort && !reasoningEffort) delete next.reasoningEffort;
     if (update.transport !== undefined) next.transport = update.transport;
     return next;
   }
@@ -234,7 +247,7 @@ function validateProviderShape(
   if (model && !isSupportedProviderModel(kind, model)) {
     throw new AgentConfigError(400, `${prefix}unsupported model for ${kind}: ${model}`);
   }
-  if (reasoningEffort && !isSupportedReasoningEffort(kind, reasoningEffort)) {
+  if (reasoningEffort && !isSupportedReasoningEffort(kind, reasoningEffort, model)) {
     throw new AgentConfigError(400, `${prefix}unsupported reasoningEffort ${reasoningEffort}`);
   }
 }

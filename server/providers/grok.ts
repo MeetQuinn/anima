@@ -7,6 +7,7 @@ import { LineBuffer } from './line-buffer.js';
 import { ControllerAgentRuntime } from './provider-runtime.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
 import { withProviderCliLaunchPermit } from '../provider-cli/launch-gate.js';
+import { isSupportedReasoningEffort } from '../../shared/provider-catalog.js';
 import {
   providerSessionPayload,
   type AgentRuntimeFollowupInput,
@@ -18,6 +19,24 @@ import {
 
 const GROK_COMMAND = 'grok';
 const GROK_RUNTIME_KIND = 'grok-cli';
+
+/** Launch args for ACP; effort only when the selected model advertises support. */
+export function grokAcpLaunchArgs(config: GrokCliAgentProviderConfig): string[] {
+  const model = config.model?.trim();
+  const effort = config.reasoningEffort?.trim();
+  const passEffort = Boolean(
+    model && effort && isSupportedReasoningEffort('grok-cli', effort, model),
+  );
+  return [
+    '--no-auto-update',
+    'agent',
+    '--no-leader',
+    '--always-approve',
+    ...(model ? ['-m', model] : []),
+    ...(passEffort && effort ? ['--effort', effort] : []),
+    'stdio',
+  ];
+}
 
 class GrokJsonRpcError extends Error {
   constructor(
@@ -105,15 +124,7 @@ export class GrokCliAgentRuntime extends ControllerAgentRuntime<GrokAcpControlle
           this.slot.get() ??
           this.spawnController(
             {
-              args: [
-                '--no-auto-update',
-                'agent',
-                '--no-leader',
-                '--always-approve',
-                ...(this.config.model ? ['-m', this.config.model] : []),
-                ...(this.config.reasoningEffort ? ['--effort', this.config.reasoningEffort] : []),
-                'stdio',
-              ],
+              args: grokAcpLaunchArgs(this.config),
               command: GROK_COMMAND,
               label: 'Grok ACP runtime',
             },

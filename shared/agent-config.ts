@@ -88,7 +88,10 @@ const AgentProviderCreateRequest = z
         path: ['model'],
       });
     }
-    if (provider.reasoningEffort && !isSupportedReasoningEffort(provider.kind, provider.reasoningEffort)) {
+    if (
+      provider.reasoningEffort &&
+      !isSupportedReasoningEffort(provider.kind, provider.reasoningEffort, provider.model)
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: `unsupported reasoningEffort ${provider.reasoningEffort}`,
@@ -332,14 +335,22 @@ export const AgentProviderConfig = z.preprocess(
             ? input.transport
             : 'stream-json'
         : undefined;
+    const model = typeof input.model === 'string' ? input.model : defaultModelForProvider(kind);
+    const rawEffort = typeof input.reasoningEffort === 'string' ? input.reasoningEffort : undefined;
+    // Drop effort that the selected model does not support (Grok model-scoped menus;
+    // Kimi has no effort field). Prevents stale config from failing load validation.
+    const keepEffort =
+      rawEffort && isSupportedReasoningEffort(kind, rawEffort, model) ? rawEffort : undefined;
+    const { reasoningEffort: _dropEffort, ...rest } = input;
     return {
-      ...input,
+      ...rest,
       ...(typeof input.idleTimeoutMs !== 'number' ? { idleTimeoutMs: PROVIDER_IDLE_TIMEOUT_MS_DEFAULT } : {}),
       ...(typeof input.providerChildIdleTimeoutMs !== 'number'
         ? { providerChildIdleTimeoutMs: PROVIDER_CHILD_IDLE_TIMEOUT_MS_DEFAULT }
         : {}),
       kind,
-      model: typeof input.model === 'string' ? input.model : defaultModelForProvider(kind),
+      model,
+      ...(keepEffort ? { reasoningEffort: keepEffort } : {}),
       ...(kind === 'claude-code' ? { transport: claudeTransport } : {}),
     };
   },

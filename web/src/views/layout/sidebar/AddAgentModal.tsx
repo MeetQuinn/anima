@@ -13,6 +13,7 @@ import {
 } from '@shared/provider-catalog';
 import { DEFAULT_AGENT_HOMES_ROOT, defaultAgentHomePath } from '@shared/agent-home';
 import {
+  effortOptionsForSelectedModel,
   firstReadyProvider,
   providerCatalogForAvailability,
   providerModelAuthorityLabel,
@@ -66,6 +67,11 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
 
   const derivedId = slugify(name);
   const currentProvider = providerOptions.find((o) => o.kind === providerKind);
+  const selectedEffortOptions = effortOptionsForSelectedModel(
+    currentProvider,
+    model,
+    providerAvailability,
+  );
   const selectedProviderReady = providerReady(currentProvider, providerAvailability);
   const selectedProviderHint = providerUnavailableHint(currentProvider, providerAvailability);
   const selectedProviderAuthority = providerModelAuthorityLabel(currentProvider, providerAvailability);
@@ -74,9 +80,16 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
   const previewPath = derivedId ? defaultAgentHomePath(derivedId, customParent ?? DEFAULT_AGENT_HOMES_ROOT) : null;
 
   function handleProviderChange(next: ProviderCatalogEntry['kind']) {
+    const nextProvider = providerOptions.find((o) => o.kind === next);
+    const nextModel = nextProvider?.defaultModel ?? '';
+    const nextEfforts = effortOptionsForSelectedModel(nextProvider, nextModel, providerAvailability);
     setProviderKind(next);
-    setModel(providerOptions.find((o) => o.kind === next)?.defaultModel ?? '');
-    setEffort(DEFAULT_REASONING_EFFORT);
+    setModel(nextModel);
+    setEffort(
+      nextEfforts.includes(DEFAULT_REASONING_EFFORT)
+        ? DEFAULT_REASONING_EFFORT
+        : (nextEfforts[0] ?? ''),
+    );
   }
 
   useEffect(() => {
@@ -118,7 +131,7 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
     const provider = {
       kind: providerKind,
       model,
-      ...((currentProvider?.reasoningEfforts ?? []).length > 0 ? { reasoningEffort: effort } : {}),
+      ...(selectedEffortOptions.length > 0 && effort ? { reasoningEffort: effort } : {}),
     };
     try {
       const agent = await createAgent({
@@ -282,7 +295,7 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
               <div
                 className={[
                   'grid grid-cols-1 gap-3 sm:gap-2',
-                  (currentProvider?.reasoningEfforts ?? []).length > 0 ? 'sm:grid-cols-3' : 'sm:grid-cols-2',
+                  selectedEffortOptions.length > 0 ? 'sm:grid-cols-3' : 'sm:grid-cols-2',
                 ].join(' ')}
               >
                 <div>
@@ -340,7 +353,18 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
                   <Select
                     value={model}
                     onValueChange={(v) => {
-                      if (v) setModel(v);
+                      if (!v) return;
+                      const nextEfforts = effortOptionsForSelectedModel(
+                        currentProvider,
+                        v,
+                        providerAvailability,
+                      );
+                      setModel(v);
+                      setEffort(
+                        nextEfforts.includes(DEFAULT_REASONING_EFFORT)
+                          ? DEFAULT_REASONING_EFFORT
+                          : (nextEfforts[0] ?? ''),
+                      );
                     }}
                     disabled={busy || !currentProvider || !selectedProviderReady}
                   >
@@ -356,7 +380,7 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
                     </SelectContent>
                   </Select>
                 </div>
-                {(currentProvider?.reasoningEfforts ?? []).length > 0 && (
+                {selectedEffortOptions.length > 0 && (
                   <div>
                     <label className="mb-1 block font-sans text-[11px] uppercase tracking-wide text-text-subtle">
                       Effort
@@ -372,7 +396,7 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {(currentProvider?.reasoningEfforts ?? []).map((e) => (
+                        {selectedEffortOptions.map((e) => (
                           <SelectItem key={e} value={e}>
                             {providerValueLabel(e)}
                           </SelectItem>

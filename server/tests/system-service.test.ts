@@ -4,7 +4,12 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { docsUrl, parseGrokModelsOutput, SystemService } from '../services/system.service.js';
+import {
+  docsUrl,
+  parseGrokAcpModelState,
+  parseGrokModelsOutput,
+  SystemService,
+} from '../services/system.service.js';
 
 test('docsUrl uses public docs by default and accepts an explicit override', () => {
   const previous = process.env.ANIMA_DOCS_URL;
@@ -35,6 +40,10 @@ test('Grok model availability is runtime-checked and timestamped', async () => {
     ),
     {
       defaultModel: 'grok-4.5',
+      modelReasoningEfforts: {
+        'grok-4.5': ['low', 'medium', 'high'],
+        'grok-composer-2.5-fast': [],
+      },
       models: ['grok-4.5', 'grok-composer-2.5-fast'],
     },
   );
@@ -115,4 +124,35 @@ test('Grok model availability reports not checked when the live catalog fails', 
       present: true,
     },
   );
+});
+
+test('parseGrokAcpModelState extracts per-model effort menus from ACP metadata', () => {
+  const catalog = parseGrokAcpModelState({
+    currentModelId: 'grok-4.5',
+    availableModels: [
+      {
+        modelId: 'grok-4.5',
+        _meta: {
+          supportsReasoningEffort: true,
+          reasoningEfforts: [
+            { id: 'high', value: 'high' },
+            { id: 'medium', value: 'medium' },
+            { id: 'low', value: 'low' },
+          ],
+        },
+      },
+      {
+        modelId: 'grok-composer-2.5-fast',
+        _meta: { totalContextTokens: 200000 },
+      },
+    ],
+  });
+  assert.deepEqual(catalog, {
+    defaultModel: 'grok-4.5',
+    modelReasoningEfforts: {
+      'grok-4.5': ['high', 'medium', 'low'],
+      'grok-composer-2.5-fast': [],
+    },
+    models: ['grok-4.5', 'grok-composer-2.5-fast'],
+  });
 });

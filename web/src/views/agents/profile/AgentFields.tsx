@@ -14,6 +14,7 @@ import { EditAffordance, ErrorHint, Field, SavedHint } from './Primitives';
 import { ANIMA_MANAGED_PROVIDER_ENV_KEYS, type AgentProviderConfig } from '@shared/agent-config';
 import type { TeamConfig } from '@shared/server-settings';
 import {
+  effortOptionsForSelectedModel,
   providerReady,
   providerModelAuthorityLabel,
   providerUnavailableHint,
@@ -369,10 +370,15 @@ export function ProviderInlineRow({
   const [draftEffort, setDraftEffort] = useState('');
   const draftProvider = providerOptions.find((option) => option.kind === draftKind);
   const draftModelOptions = draftProvider?.models ?? [];
-  const draftEffortOptions = draftProvider?.reasoningEfforts ?? [];
+  const draftEffortOptions = effortOptionsForSelectedModel(
+    draftProvider,
+    draftModel,
+    providerAvailability,
+  );
   const hasDraftEffort = draftEffortOptions.length > 0;
   const currentProvider = providerOptions.find((option) => option.kind === kind);
-  const hasCurrentEffort = (currentProvider?.reasoningEfforts ?? []).length > 0;
+  const hasCurrentEffort =
+    effortOptionsForSelectedModel(currentProvider, model, providerAvailability).length > 0;
   const kindChanged = draftKind !== kind;
   const draftProviderUnavailableHint = providerAvailability
     ? providerUnavailableHint(draftProvider, providerAvailability)
@@ -405,7 +411,15 @@ export function ProviderInlineRow({
     if (!providerSelectable(nextProvider)) return;
     setDraftKind(nextProvider.kind);
     setDraftModel(nextProvider.defaultModel);
-    setDraftEffort(defaultEffortForProvider(nextProvider));
+    setDraftEffort(
+      defaultEffortForModel(nextProvider, nextProvider.defaultModel, providerAvailability),
+    );
+  }
+
+  function handleModelChange(next: string | null) {
+    if (!next || !draftProvider) return;
+    setDraftModel(next);
+    setDraftEffort(defaultEffortForModel(draftProvider, next, providerAvailability));
   }
 
   function handleSave() {
@@ -448,9 +462,7 @@ export function ProviderInlineRow({
             </Select>
             <Select
               value={draftModel}
-              onValueChange={(v) => {
-                if (v) setDraftModel(v);
-              }}
+              onValueChange={handleModelChange}
             >
               <SelectTrigger className="h-8 w-52 font-serif text-[14px]">
                 {providerValueLabel(draftModel)}
@@ -531,11 +543,16 @@ export function ProviderInlineRow({
   );
 }
 
-function defaultEffortForProvider(provider: ProviderCatalogEntry): string {
-  if (provider.reasoningEfforts.length === 0) return '';
-  return provider.reasoningEfforts.includes(DEFAULT_REASONING_EFFORT)
+function defaultEffortForModel(
+  provider: ProviderCatalogEntry,
+  model: string | undefined,
+  availability: ProviderAvailability[] | null | undefined,
+): string {
+  const options = effortOptionsForSelectedModel(provider, model, availability);
+  if (options.length === 0) return '';
+  return options.includes(DEFAULT_REASONING_EFFORT)
     ? DEFAULT_REASONING_EFFORT
-    : (provider.reasoningEfforts[0] ?? '');
+    : (options[0] ?? '');
 }
 
 // ── ProviderEnvRow ──────────────────────────────────────────────────────────
@@ -789,8 +806,13 @@ export function modelOptionsFor(provider: AgentProviderConfig, providerOptions: 
   return [...catalogModels, provider.model].filter((m): m is string => Boolean(m));
 }
 
-export function effortOptionsFor(provider: AgentProviderConfig, providerOptions: ProviderCatalogEntry[]): string[] {
-  const catalogEfforts = providerOptions.find((option) => option.kind === provider.kind)?.reasoningEfforts ?? [];
+export function effortOptionsFor(
+  provider: AgentProviderConfig,
+  providerOptions: ProviderCatalogEntry[],
+  availability?: ProviderAvailability[] | null,
+): string[] {
+  const entry = providerOptions.find((option) => option.kind === provider.kind);
+  const catalogEfforts = effortOptionsForSelectedModel(entry, provider.model, availability);
   if (catalogEfforts.length === 0) return [];
   const providerEffort = 'reasoningEffort' in provider ? provider.reasoningEffort : undefined;
   return [...catalogEfforts, providerEffort].filter((effort): effort is string => Boolean(effort));

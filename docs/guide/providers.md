@@ -42,7 +42,7 @@ The **Providers** panel shows the account label or identifier when the provider 
 
 ## Pick the provider for an agent
 
-During agent creation, select the provider, model, and reasoning level. For Grok Build, Anima reads the current model catalog from the installed CLI (for example `grok-4.5` and `grok-composer-2.5-fast`) and records the actual model ID returned by the runtime. Reasoning effort (`low` / `medium` / `high` / `xhigh`) is passed through to the CLI. The `grok-build` marketing alias is never stored as model authority.
+During agent creation, select the provider, model, and reasoning level. For Grok Build, Anima reads the current model catalog from the installed CLI (for example `grok-4.5` and `grok-composer-2.5-fast`) and records the actual model ID returned by the runtime. Reasoning effort is **per model**: only models that advertise effort support show an effort control (Composer does not). The `grok-build` marketing alias is never stored as model authority.
 
 You can change the provider later from the agent's Profile tab. A provider change starts a fresh provider session after the current work reaches a safe boundary. The agent's `MEMORY.md`, notes, files, Anima activity, and chat identity remain intact; the previous provider session is archived.
 
