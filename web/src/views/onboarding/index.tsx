@@ -673,7 +673,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                         return (
                           <SelectItem key={r.kind} value={r.kind} disabled={!!hint}>
                             {r.label}
-                            {hint ? ` — ${hint}` : ''}
+                            {hint ? `: ${hint}` : ''}
                           </SelectItem>
                         );
                       })}
