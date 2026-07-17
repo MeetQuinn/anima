@@ -67,7 +67,7 @@ export default function RuntimeUpgradeRow() {
     } catch (err) {
       setPhase('idle');
       if (err instanceof RuntimeUpgradeApplyError && err.status === 409) {
-        setApplyError('An agent started working — try again once idle.');
+        setApplyError('An agent started working. Try again once idle.');
       } else if (err instanceof RuntimeUpgradeApplyError && err.status === 503) {
         setApplyError('Update is unavailable right now.');
       } else {
@@ -333,7 +333,7 @@ function AvailableCard({
         {error && <p className="mt-1.5 font-sans text-[11px] text-health-error">{error}</p>}
         {checkFailed && (
           <p className="mt-1.5 font-sans text-[11px] text-text-subtle">
-            Check failed — showing last known.
+            Check failed: showing last known.
           </p>
         )}
       </div>
@@ -365,11 +365,11 @@ function FailedCard({
         <AlertTriangle aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-health-error" />
         {rollbackFailed ? (
           <span className="font-serif text-[14px] font-medium text-text">
-            Update failed and rollback didn&apos;t complete — the runtime may need attention.
+            Update failed and rollback didn&apos;t complete. The runtime may need attention.
           </span>
         ) : (
           <span className="font-serif text-[14px] font-medium text-text">
-            Update failed — still on{' '}
+            Update failed: still on{' '}
             <span className="font-mono text-[12px] text-text-muted">{currentVersion}</span>
             <span className="font-sans text-[12px] font-normal text-text-subtle">
               {' '}· nothing else changed
@@ -465,7 +465,7 @@ function CheckNowButton({
 function CheckFailedLabel() {
   return (
     <span className="font-sans text-[11px] text-text-subtle">
-      Check failed — showing last known.
+      Check failed: showing last known.
     </span>
   );
 }
