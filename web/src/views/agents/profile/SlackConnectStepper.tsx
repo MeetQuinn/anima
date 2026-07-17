@@ -22,7 +22,7 @@ const REASON_COPY: Record<NonNullable<SlackTokenValidation['reason']>, string> =
   missing_connections_write:
     "Slack says this App-Level Token is missing `connections:write`. In App-Level Tokens, regenerate it with that scope checked.",
   not_bot_token:
-    "Slack says this is not the Bot User OAuth Token. Copy Bot User OAuth Token from OAuth & Permissions — it starts with `xoxb-`.",
+    "Slack says this is not the Bot User OAuth Token. Copy Bot User OAuth Token from OAuth & Permissions. It starts with `xoxb-`.",
   slack_api_error: "Couldn't reach Slack to check this token. Try again in a moment.",
 };
 
@@ -47,8 +47,8 @@ function reasonMessage(result: SlackTokenValidation, field: 'app' | 'bot'): stri
   if (!result.reason || result.reason === 'missing_token') return '';
   if (result.reason === 'wrong_token_type') {
     return field === 'app'
-      ? "That’s a Bot token (`xoxb-…`). The App-Level Token goes here — it starts with `xapp-`."
-      : "That’s an App-Level Token (`xapp-…`). The Bot User OAuth Token goes here — it starts with `xoxb-`.";
+      ? "That’s a Bot token (`xoxb-…`). The App-Level Token goes here. It starts with `xapp-`."
+      : "That’s an App-Level Token (`xapp-…`). The Bot User OAuth Token goes here. It starts with `xoxb-`.";
   }
   return REASON_COPY[result.reason] || 'Validation failed.';
 }
@@ -257,7 +257,7 @@ export function SlackConnectStepper({ agentId, onConnect }: Props) {
       } else if (res.connection.reason === 'incomplete') {
         // Quiet — waiting on the other token; no red
       } else {
-        setConnectError('Could not connect — try again.');
+        setConnectError('Could not connect. Try again.');
       }
     } catch {
       setConnectError('Could not reach Slack to validate the token pair.');
