@@ -1,3 +1,8 @@
+import { defaultAgentRegistryService } from '../agents/agent.service.js';
+import {
+  memberChannelsForAgent,
+  type MemberChannel,
+} from '../inbox/member-channels.js';
 import {
   listSubscriptionsForAgent,
   platformForSubscription,
@@ -17,6 +22,17 @@ import type {
 } from '../../shared/messages.js';
 
 export const CHANNEL_LIST_MESSAGE_WINDOW = 3_000;
+
+export interface ChannelNameEnrichmentDeps {
+  listMemberChannels: (agentId: string) => Promise<MemberChannel[]>;
+}
+
+const defaultChannelNameDeps: ChannelNameEnrichmentDeps = {
+  listMemberChannels: async (agentId) => {
+    const agent = await defaultAgentRegistryService.serviceFor(agentId).getConfig();
+    return memberChannelsForAgent(agent);
+  },
+};
 
 // Slack channel IDs are prefixed by kind: D = 1:1 DM, everything else (C public,
 // G private/mpim) is a channel. Lets a DM that was muted as a subscription still
@@ -80,6 +96,7 @@ function displayNameForMessage(message: AgentMessageRecord, kind: 'channel' | 'd
 // activity timestamps, and channel subscriptions create rows for subscribed but
 // quiet channels.
 export function composeChannelList(input: {
+  memberChannels?: MemberChannel[];
   subscriptions: SubscriptionRecord[];
   messages: AgentMessageRecord[];
 }): AgentChannelListResponse {
@@ -136,6 +153,16 @@ export function composeChannelList(input: {
     byId.set(channelId, subscribedChannel);
   }
 
+  // Directory data decorates rows that already belong to this local-history +
+  // subscription view. It never creates rows, so a Channels read does not turn
+  // into a complete Slack membership inventory. Applying it last also replaces
+  // stale names from old message records after a channel rename.
+  for (const memberChannel of input.memberChannels ?? []) {
+    const channel = byId.get(memberChannel.id);
+    const name = cleanChannelName(memberChannel.name);
+    if (channel?.kind === 'channel' && name) channel.name = name;
+  }
+
   const channels = [...byId.values()].sort((a, b) => {
     const byActivity = (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? '');
     if (byActivity !== 0) return byActivity;
@@ -165,19 +192,16 @@ function dmCounterpartsByChannel(messages: AgentMessageRecord[]): Map<string, st
   return byChannel;
 }
 
-// IO wrapper: fetch bounded local message history + subscription overlay. The durable
-// message ledger never persists sender avatars, so DM rows would render from
-// raw records with no photo and fall back to the initial letter, even though
-// the detail-pane bylines (served by the already-enriched /messages route) show
-// the real photo. We close that gap read-time, but scoped to DM counterparts
-// only: resolving one avatar per unique DM counterpart through the same
-// cache-first resolver the /messages feed shares. A miss costs one users.info
-// per unique DM counterpart and any failure leaves the avatar unset, so this
-// stays a fast local-history view, not a Slack membership inventory. deps stay
-// injectable so the enrichment is unit-testable without real Slack IO.
+// IO wrapper: fetch bounded local message history + subscription overlay, then
+// enrich only those rows. One cache-backed member-channel collection supplies
+// current names without adding membership-only rows or issuing per-row lookups.
+// DM avatars remain scoped to one resolver call per unique counterpart. Either
+// enrichment may fail independently without breaking the local-history view;
+// deps stay injectable so both boundaries are testable without real Slack IO.
 export async function buildAgentChannelList(
   agentId: string,
   deps?: AvatarEnrichmentDeps,
+  channelNameDeps: ChannelNameEnrichmentDeps = defaultChannelNameDeps,
 ): Promise<AgentChannelListResponse> {
   const [subscriptions, messages] = await Promise.all([
     listSubscriptionsForAgent(agentId),
@@ -185,9 +209,12 @@ export async function buildAgentChannelList(
   ]);
 
   const dmCounterparts = dmCounterpartsByChannel(messages);
-  const avatarByUser = await resolveAvatarsForUsers(agentId, dmCounterparts.values(), deps);
+  const [avatarByUser, memberChannels] = await Promise.all([
+    resolveAvatarsForUsers(agentId, dmCounterparts.values(), deps),
+    channelNameDeps.listMemberChannels(agentId).catch(() => []),
+  ]);
 
-  const list = composeChannelList({ subscriptions, messages });
+  const list = composeChannelList({ memberChannels, subscriptions, messages });
   if (avatarByUser.size > 0) {
     for (const channel of list.channels) {
       if (channel.kind !== 'dm' || channel.avatarUrl) continue;
