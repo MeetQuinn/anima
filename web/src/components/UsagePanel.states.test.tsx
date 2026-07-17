@@ -54,6 +54,27 @@ vi.mock('@/api/system', () => ({
     ],
     upgradeLocked: false,
   })),
+  fetchProviderAccounts: vi.fn(async () => ({
+    providers: [
+      {
+        accounts: [
+          {
+            account: 'op@example.com',
+            id: 'primary',
+            label: 'Primary',
+            profile: 'default' as const,
+            selected: true,
+            status: 'available' as const,
+          },
+        ],
+        activeAccountId: 'primary',
+        errorAgentIds: [],
+        pendingAgentIds: [],
+        provider: 'claude-code' as const,
+        status: 'active' as const,
+      },
+    ],
+  })),
   fetchProviderUsage: vi.fn(async () => ({
     providers: [
       {
@@ -78,6 +99,7 @@ vi.mock('@/api/system', () => ({
     ],
   })),
   fetchProviderUsageProvider: vi.fn(),
+  selectClaudeAccount: vi.fn(),
 }));
 
 function renderPanel() {

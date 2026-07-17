@@ -76,6 +76,13 @@ export interface GovernedRoute {
  */
 export const GOVERNED_ROUTES: readonly GovernedRoute[] = [
   {
+    id: 'POST /api/provider-accounts/claude-code/select',
+    method: 'POST',
+    pattern: /^\/api\/provider-accounts\/claude-code\/select$/,
+    evidence:
+      'Switches every Claude runtime to a different machine-user credential profile and creates shared-state links under the machine user\'s Claude configuration directories. Those directories and Keychain credentials live outside ANIMA_HOME and are shared with Claude Code processes this runtime does not own.',
+  },
+  {
     id: 'POST /api/provider-cli-status/:provider/apply',
     method: 'POST',
     pattern: /^\/api\/provider-cli-status\/[^/]+\/apply$/,

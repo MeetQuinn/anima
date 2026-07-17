@@ -624,6 +624,48 @@ test('runtime host force-restarts only the requested agent', async () => {
   }
 });
 
+test('runtime host keeps a when-idle reload pending until active work finishes', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-when-idle-reload-test-'));
+  try {
+    const restartCommands = new AgentRestartCommandStore({ animaHome: stateDir });
+    const agents = [runtimeHostAgent('alpha', { connected: true })];
+    let active = true;
+    const started: string[] = [];
+    const stopped: string[] = [];
+    const stopOptions: Array<Parameters<RunningAgentHandle['stop']>[0]> = [];
+    const host = new RuntimeHost({}, {
+      animaHome: stateDir,
+      loadAgents: async () => agents,
+      logger: silentLogger,
+      restartCommands,
+      startAgent: async (agent) => {
+        started.push(agent.id);
+        return stopHandle(agent.id, stopped, () => active, (options) => stopOptions.push(options));
+      },
+      validateAgent: async () => {},
+    });
+
+    await host.reconcileOnce();
+    const command = await restartCommands.request('alpha', { whenIdle: true });
+    await host.reconcileOnce();
+
+    assert.deepEqual(started, ['alpha']);
+    assert.deepEqual(stopped, []);
+    assert.equal((await restartCommands.get('alpha'))?.requestId, command.requestId);
+
+    active = false;
+    await host.reconcileOnce();
+
+    assert.deepEqual(started, ['alpha', 'alpha']);
+    assert.deepEqual(stopped, ['alpha']);
+    assert.deepEqual(stopOptions, [{ drainActive: true, forceAfterMs: 5_000 }]);
+    assert.equal(await restartCommands.get('alpha'), undefined);
+    await host.stop();
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('runtime host writes recovered restart health snapshots', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-health-restart-test-'));
   try {

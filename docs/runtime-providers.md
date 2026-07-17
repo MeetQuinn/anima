@@ -237,6 +237,42 @@ Current process model:
 - The adapter sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW=272000` by default to match Codex's current `gpt-5.5` context-window budget; agent config `provider.env` can override it.
 - The process stays alive across Anima items until abort or worker shutdown.
 
+### Claude Account Selection
+
+Claude account selection is server-level state, not an agent setting. The selected account applies to every
+enabled Claude agent and to the Claude row in the Usage panel. Agent records may still contain a legacy
+`CLAUDE_CONFIG_DIR`; once the platform registry is persisted, the global selection replaces that value for
+runtime launch and usage reads.
+
+The default Claude profile is the primary account. Profile directories with account metadata directly under
+`~/.claude-profiles/` are discovered as additional choices; only profiles with resolvable OAuth credentials
+can be selected. Existing per-agent `CLAUDE_CONFIG_DIR` values are also imported during migration. The
+dashboard response exposes account labels and email addresses, but not credential material or profile paths.
+
+Switching is explicit and human initiated. Anima does not rotate accounts automatically in response to quota
+or rate-limit errors. A switch writes one global target and queues a `whenIdle` runtime reload for every Claude
+agent whose effective profile changes. An active turn finishes on its current process; the reload remains
+pending until that worker is idle. The Anima primary session and stored Claude session id are not rotated or
+archived, so the new process resumes the same conversation.
+
+Claude Code normally places credentials, settings, history, plugins, skills, project transcripts, and task
+state under `CLAUDE_CONFIG_DIR`. Anima keeps credentials and account metadata profile-local, while linking the
+following durable non-account state to the default profile before a switch:
+
+- `history.jsonl`;
+- `plugins/`;
+- `projects/`;
+- `scheduled-tasks/`;
+- `settings.json`;
+- `skills/`;
+- `tasks/`.
+
+Continuity setup fails closed if a profile already contains independent data that cannot be proven identical
+or a redundant overlay. It never overwrites that data: replaceable overlays are renamed to an
+`.anima-account-backup` path before the shared link is created. The mixed-purpose `.claude.json` file remains
+profile-local because it contains OAuth identity alongside CLI caches and project metadata. Ephemeral shell,
+telemetry, and session-environment caches also remain profile-local.
+
 Command shape:
 
 ```text

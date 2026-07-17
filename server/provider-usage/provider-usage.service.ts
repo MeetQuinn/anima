@@ -1,9 +1,17 @@
 import type { ProviderUsageKind, ProviderUsageResponse, ProviderUsageRow } from '../../shared/provider-usage.js';
+import type { AgentConfig } from '../../shared/agent-config.js';
+import type { ProviderAccountsConfig } from '../../shared/provider-accounts.js';
 import { fetchClaudeUsage } from './providers/claude.js';
 import { fetchCodexUsage } from './providers/codex.js';
 import { fetchGrokUsage } from './providers/grok.js';
 import { fetchKimiUsage } from './providers/kimi.js';
 import { usageError } from './result.js';
+import { defaultAgentRegistryService } from '../agents/agent.service.js';
+import { defaultServerSettingsService } from '../settings/settings.service.js';
+import {
+  effectiveClaudeAccountRegistry,
+  selectedClaudeAccount,
+} from '../provider-accounts/claude-account-config.js';
 
 export interface ProviderUsageAdapter {
   label: string;
@@ -65,7 +73,7 @@ export class ProviderUsageService {
 export function defaultProviderUsageAdapters(): ProviderUsageAdapter[] {
   return [
     {
-      fetch: fetchClaudeUsage,
+      fetch: fetchSelectedClaudeUsage,
       label: 'Claude Code',
       provider: 'claude-code',
       source: 'private-api',
@@ -91,6 +99,22 @@ export function defaultProviderUsageAdapters(): ProviderUsageAdapter[] {
       source: 'private-api',
     },
   ];
+}
+
+async function fetchSelectedClaudeUsage(): ReturnType<typeof fetchClaudeUsage> {
+  const [providerAccounts, agents] = await Promise.all([
+    defaultServerSettingsService.getProviderAccounts(),
+    defaultAgentRegistryService.listAgentConfigs(),
+  ]);
+  return fetchClaudeUsage({ configDir: selectedClaudeUsageConfigDir(providerAccounts, agents) });
+}
+
+export function selectedClaudeUsageConfigDir(
+  providerAccounts: ProviderAccountsConfig,
+  agents: AgentConfig[],
+): string | undefined {
+  const registry = effectiveClaudeAccountRegistry(providerAccounts.claudeCode, agents);
+  return selectedClaudeAccount(registry).configDir;
 }
 
 export const defaultProviderUsageService = new ProviderUsageService();

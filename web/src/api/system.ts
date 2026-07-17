@@ -1,6 +1,10 @@
 import { apiRequest, jsonInit } from './client';
 import type { ProviderAvailability } from '@shared/provider-catalog';
 import type { ProviderUsageKind, ProviderUsageResponse, ProviderUsageRow } from '@shared/provider-usage';
+import type {
+  ClaudeCodeAccountState,
+  ProviderAccountsResponse,
+} from '@shared/provider-accounts';
 import type { ProviderCliApplyResponse, ProviderCliStatusResponse } from '@shared/provider-cli';
 import type { ServerInfo } from '@shared/server-info';
 import type { SidebarOrder, WorkspacePlatform } from '@shared/server-settings';
@@ -52,6 +56,17 @@ export async function fetchProviderUsage(): Promise<ProviderUsageResponse> {
 
 export async function fetchProviderUsageProvider(provider: ProviderUsageKind): Promise<ProviderUsageRow> {
   return apiRequest(`/api/provider-usage/${encodeURIComponent(provider)}`);
+}
+
+export async function fetchProviderAccounts(): Promise<ProviderAccountsResponse> {
+  return apiRequest('/api/provider-accounts');
+}
+
+export async function selectClaudeAccount(accountId: string): Promise<ClaudeCodeAccountState> {
+  return apiRequest(
+    '/api/provider-accounts/claude-code/select',
+    jsonInit('POST', { accountId }),
+  );
 }
 
 export async function fetchProviderCliStatus(): Promise<ProviderCliStatusResponse> {

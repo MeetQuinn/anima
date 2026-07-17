@@ -20,6 +20,7 @@ import type { AgentProviderConfig } from '../providers/contract.js';
 import { isRestartDrainActive } from '../services/restart-drain.js';
 import { cacheDelete } from '../storage/json-file.js';
 import { ServerConfigStore } from '../storage/schema/server.store.js';
+import { applyClaudeAccountToAgent } from '../provider-accounts/claude-account-config.js';
 import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import {
   FEISHU_OPEN_API_BASE_URL,
@@ -243,9 +244,16 @@ export class RuntimeHost {
       try {
         await this.validateAgent(agent);
         const skipStatus = agentSkipStatus(agent);
-        const restartCommand = pendingRestartAgentIds.has(agent.id)
-          ? await this.restartCommands.take(agent.id)
+        const pendingRestart = pendingRestartAgentIds.has(agent.id)
+          ? await this.restartCommands.get(agent.id)
           : undefined;
+        if (pendingRestart?.whenIdle && running && isHandleActive(running.handle)) {
+          this.logAgentStatus(record, `pending-idle-reload:${pendingRestart.requestId}`, () => {
+            this.logger.log(`Agent ${agent.id}: account changed; will reload after the active item finishes.`);
+          });
+          continue;
+        }
+        const restartCommand = pendingRestart ? await this.restartCommands.take(agent.id) : undefined;
         if (restartCommand) {
           await this.forceRestartAgent(record, skipStatus, restartCommand);
           continue;
@@ -357,10 +365,9 @@ export class RuntimeHost {
     try {
       await this.resolveStaleRestartItem(agent.id, running?.handle.health?.());
       if (running) {
-        await running.handle.stop({
-          abortReason: command.reason,
-          forceAfterMs: this.forceRestartTimeoutMs,
-        });
+        await running.handle.stop(command.whenIdle
+          ? { drainActive: true, forceAfterMs: this.forceRestartTimeoutMs }
+          : { abortReason: command.reason, forceAfterMs: this.forceRestartTimeoutMs });
         record.running = undefined;
       }
       await this.startAndStore(agent, command);
@@ -743,8 +750,11 @@ export class RuntimeHost {
 }
 
 export async function loadRuntimeAgents(opts: RuntimeHostOptions = {}): Promise<AgentConfig[]> {
-  if (opts.agent) return [await defaultAgentRegistryService.serviceFor(opts.agent).getConfig()];
-  return defaultAgentRegistryService.listAgentConfigs();
+  const agents = opts.agent
+    ? [await defaultAgentRegistryService.serviceFor(opts.agent).getConfig()]
+    : await defaultAgentRegistryService.listAgentConfigs();
+  const providerAccounts = await new ServerConfigStore().read().then((config) => config.providerAccounts);
+  return agents.map((agent) => applyClaudeAccountToAgent(agent, providerAccounts?.claudeCode));
 }
 
 async function syncSlackDisplayInfoForRuntimeStart(
