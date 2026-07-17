@@ -21,6 +21,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm type-check
       - run: pnpm lint
+      - run: pnpm check:docs-voice
       - run: pnpm build
       - run: pnpm animactl:package-smoke
       - run: pnpm test:fast:dist
