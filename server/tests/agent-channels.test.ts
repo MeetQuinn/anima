@@ -9,6 +9,7 @@ import {
   buildAgentChannelList,
   CHANNEL_LIST_MESSAGE_WINDOW,
   composeChannelList,
+  type ChannelNameEnrichmentDeps,
 } from '../web/agent-channels.js';
 import type { AvatarEnrichmentDeps } from '../web/message-profiles.js';
 import { memberChannelsResultForAgent } from '../inbox/member-channels.js';
@@ -16,6 +17,7 @@ import { messageServiceForAgent } from '../messages/message.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import type { Activity } from '../../shared/activity.js';
 import type { SubscriptionRecord } from '../inbox/subscription.service.js';
+import { SubscriptionStore } from '../storage/schema/subscription.store.js';
 import type { AgentMessageRecord } from '../../shared/messages.js';
 import { withAnimaHome } from './anima-home.js';
 import { makeSlackEvent } from './helpers/slack.js';
@@ -108,6 +110,36 @@ test('subscription-only channels appear without local message history', () => {
     status: 'muted',
     lastActivityAt: '2026-06-22T10:00:00.000Z',
   }]);
+});
+
+test('directory names backfill quiet subscriptions without expanding into membership inventory', () => {
+  const res = composeChannelList({
+    memberChannels: [
+      { id: 'C-silent', name: 'code-review' },
+      { id: 'C-unseen', name: 'not-a-conversation' },
+    ],
+    subscriptions: [channelSub({ channelId: 'C-silent' })],
+    messages: [],
+  });
+
+  assert.deepEqual(res.channels.map((channel) => ({ id: channel.id, name: channel.name })), [
+    { id: 'C-silent', name: 'code-review' },
+  ]);
+});
+
+test('current directory name replaces a stale name from message history', () => {
+  const res = composeChannelList({
+    memberChannels: [{ id: 'C1', name: 'current-name' }],
+    subscriptions: [],
+    messages: [channelMessage({
+      channelId: 'C1',
+      channelName: 'old-name',
+      messageId: 'm1',
+      timestamp: '2026-06-23T00:00:00.000Z',
+    })],
+  });
+
+  assert.equal(res.channels[0]?.name, 'current-name');
 });
 
 test('historical channels remain visible when local message history exists', () => {
@@ -253,6 +285,60 @@ test('channels are sorted by most recent local/subscription activity', () => {
 test('memberChannelsResultForAgent: no Slack token is legitimately empty, not degraded', async () => {
   const res = await memberChannelsResultForAgent({ id: 'a1' });
   assert.deepEqual(res, { channels: [], degraded: false });
+});
+
+test('buildAgentChannelList resolves multiple quiet subscription names in one batch', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-channels-directory-names-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const store = new SubscriptionStore('scout');
+      await store.replace(channelSub({ agentId: 'scout', channelId: 'C-one' }));
+      await store.replace(channelSub({ agentId: 'scout', channelId: 'C-two' }));
+
+      let directoryCalls = 0;
+      const channelNameDeps: ChannelNameEnrichmentDeps = {
+        listMemberChannels: async (agentId) => {
+          directoryCalls += 1;
+          assert.equal(agentId, 'scout');
+          return [
+            { id: 'C-one', name: 'one' },
+            { id: 'C-two', name: 'two' },
+          ];
+        },
+      };
+
+      const res = await buildAgentChannelList('scout', undefined, channelNameDeps);
+      assert.equal(directoryCalls, 1);
+      assert.deepEqual(
+        res.channels.map((channel) => [channel.id, channel.name]),
+        [['C-one', 'one'], ['C-two', 'two']],
+      );
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('buildAgentChannelList keeps quiet subscriptions when directory enrichment fails', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-channels-directory-failure-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await new SubscriptionStore('scout').replace(
+        channelSub({ agentId: 'scout', channelId: 'C-silent' }),
+      );
+
+      const res = await buildAgentChannelList('scout', undefined, {
+        listMemberChannels: async () => {
+          throw new Error('Slack unavailable');
+        },
+      });
+      assert.deepEqual(res.channels.map((channel) => [channel.id, channel.name]), [
+        ['C-silent', undefined],
+      ]);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 test('buildAgentChannelList decorates DM rows with the inbound sender avatar', async () => {
