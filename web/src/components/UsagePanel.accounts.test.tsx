@@ -102,7 +102,7 @@ describe('UsagePanel Claude account selection', () => {
     fireEvent.change(accountSelect, { target: { value: 'primary' } });
     expect(await screen.findByText('Switch to primary@example.com?')).toBeTruthy();
     expect(screen.getByText(/Current Claude turns continue uninterrupted/)).toBeTruthy();
-    expect(screen.getByText(/sessions, MCP settings, and shared state stay in place/)).toBeTruthy();
+    expect(screen.getByText(/sessions, MCP servers, and shared state stay in place/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Switch account' }));
 
     await waitFor(() => expect(api.selectClaudeAccount).toHaveBeenCalledWith('primary'));
