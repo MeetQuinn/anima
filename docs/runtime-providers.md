@@ -274,11 +274,12 @@ or a redundant overlay. It never overwrites that data: replaceable overlays are 
 The mixed-purpose `.claude.json` file is handled field by field instead of linked. Before a switch, Anima copies
 only the current profile's top-level and per-project MCP server settings, including MCP enable/disable selectors,
 into the target profile. It preserves the target profile's OAuth identity and every other CLI or project-cache
-field in that same file. A changed target file is written to a temporary file and atomically renamed before the
-account selection is persisted; invalid or concurrently changed metadata fails the switch without a partial
-field merge. One restricted, account-local `.claude.json.anima-account-backup` recovery snapshot is retained and
-atomically refreshed on later MCP synchronizations instead of accumulating copies. Ephemeral shell, telemetry,
-and session-environment caches also remain profile-local.
+field in that same file. This is a mirror, not a union: the target profile's previous MCP server settings are
+replaced by the current profile's set. A changed target file is written to a temporary file and atomically renamed
+before the account selection is persisted; invalid or concurrently changed metadata fails the switch without a
+partial field merge. One restricted, account-local `.claude.json.anima-account-backup` recovery snapshot retains
+the target's latest pre-switch state and is atomically refreshed on later MCP synchronizations instead of
+accumulating copies. Ephemeral shell, telemetry, and session-environment caches also remain profile-local.
 
 Command shape:
 
