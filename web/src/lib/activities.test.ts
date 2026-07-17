@@ -157,6 +157,59 @@ describe('activityRow', () => {
     expect(row.targetFull).toBeUndefined();
   });
 
+  it.each([
+    [
+      'created task',
+      { providerToolName: 'TaskCreate', taskSubject: 'Trace task activity', tool: 'claude.TaskCreate' },
+      { title: 'Created task', target: 'Trace task activity' },
+    ],
+    [
+      'started task',
+      { providerToolName: 'TaskUpdate', taskActiveForm: 'Tracing task activity', taskId: '7', taskStatus: 'in_progress', tool: 'claude.TaskUpdate' },
+      { title: 'Started task', target: '#7 · Tracing task activity' },
+    ],
+    [
+      'completed task',
+      { providerToolName: 'TaskUpdate', taskId: '7', taskStatus: 'completed', tool: 'claude.TaskUpdate' },
+      { title: 'Completed task', target: '#7' },
+    ],
+    [
+      'deleted task',
+      { providerToolName: 'TaskUpdate', taskId: '7', taskStatus: 'deleted', tool: 'claude.TaskUpdate' },
+      { title: 'Deleted task', target: '#7' },
+    ],
+  ])('shows the identity and state for a Claude %s', (_label, payload, expected) => {
+    const row = activityRow(activity(payload));
+
+    expect(row).toMatchObject({
+      ...expected,
+      color: 'var(--color-activity-tool)',
+      kind: 'tool',
+    });
+    expect(isNarrativeStep(activity(payload))).toBe(true);
+  });
+
+  it('shows the active Codex plan step and expands to the full plan', () => {
+    const record = activity({
+      eventType: 'codex.plan.updated',
+      explanation: 'Plan changed',
+      plan: [
+        { step: 'Read provider', status: 'completed' },
+        { step: 'Record events', status: 'inProgress' },
+        { step: 'Verify Activity', status: 'pending' },
+      ],
+    }, 'runtime.event');
+
+    expect(isNarrativeStep(record)).toBe(true);
+    expect(activityRow(record)).toEqual({
+      title: 'Updated plan',
+      target: '1/3 complete · Record events',
+      targetFull: '[done] Read provider\n[active] Record events\n[todo] Verify Activity',
+      color: 'var(--color-activity-tool)',
+      kind: 'tool',
+    });
+  });
+
   it('shows Grok ReadFile / ListDir targets in the narrative step row', () => {
     const read = activity({
       providerToolName: 'ReadFile',

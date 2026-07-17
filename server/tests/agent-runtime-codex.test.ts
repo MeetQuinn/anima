@@ -379,7 +379,6 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
       'codex.reasoning.summary_delta',
       'provider.reasoning',
       'codex.reasoning.completed',
-      'codex.plan.updated',
       'codex.diff.updated',
       'codex.raw_response_item.completed',
       'codex.item.commandExecution.outputDelta',
@@ -395,6 +394,12 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
     assert.equal(rerouted?.payload?.['toModel'], 'gpt-fallback');
     const warning = activities.find((activity) => activity.type === 'runtime.event' && activity.payload?.['eventType'] === 'codex.warning');
     assert.equal(warning?.payload?.['message'], 'non-fatal warning');
+    const plan = activities.find((activity) => activity.type === 'runtime.event' && activity.payload?.['eventType'] === 'codex.plan.updated');
+    assert.equal(plan?.payload?.['explanation'], 'Plan changed');
+    assert.deepEqual(plan?.payload?.['plan'], [
+      { status: 'completed', step: 'Read provider' },
+      { status: 'inProgress', step: 'Record events' },
+    ]);
 
     const thirdCtx = await ingestEvent(
       makeSlackEvent({

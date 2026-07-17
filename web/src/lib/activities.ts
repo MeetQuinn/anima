@@ -116,6 +116,7 @@ export function isNarrativeStep(activity: ActivityRecord): boolean {
 
   if (activity.type === 'runtime.event') {
     const eventType = String(activity.payload?.['eventType'] ?? '');
+    if (eventType === 'codex.plan.updated') return true;
     // Compact events are meaningful lifecycle milestones.
     if (eventType.endsWith('.compact.started')) return true;
     if (eventType.endsWith('.compact.completed')) return true;
@@ -492,8 +493,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   }
   if (bare === 'agent') return tool_('Delegated to subagent', pickString(payload, ['target', 'description']));
   if (bare === 'skill') return skillActivityRow(payload);
-  if (bare === 'taskcreate') return tool_('Created task', pickString(payload, ['target', 'title']));
-  if (bare === 'taskupdate') return tool_('Updated task', pickString(payload, ['target', 'title']));
+  if (bare === 'taskcreate' || bare === 'taskupdate') return taskActivityRow(bare, payload);
 
   if (tool) {
     const target = pickString(payload, ['target', 'command']);
@@ -619,6 +619,8 @@ function outboundFailureRow(
 }
 
 function runtimeEventRow(eventType: string, payload: Record<string, unknown>): ActivityRow | undefined {
+  if (eventType === 'codex.plan.updated') return codexPlanActivityRow(payload);
+
   if (eventType === 'provider.crash.retry') {
     const attempt = payload['attempt'];
     const maxRetries = payload['maxRetries'];
@@ -700,6 +702,64 @@ function runtimeEventRow(eventType: string, payload: Record<string, unknown>): A
   }
 
   return undefined;
+}
+
+function taskActivityRow(kind: 'taskcreate' | 'taskupdate', payload: Record<string, unknown>): ActivityRow {
+  const taskId = pickString(payload, ['taskId']);
+  const taskSubject = pickString(payload, ['taskSubject', 'title', 'target']);
+  const taskActiveForm = pickString(payload, ['taskActiveForm']);
+  const taskStatus = pickString(payload, ['taskStatus', 'status']);
+  const normalizedStatus = taskStatus?.replace(/[-\s]/g, '_').toLowerCase();
+  const title = kind === 'taskcreate'
+    ? 'Created task'
+    : normalizedStatus === 'completed'
+      ? 'Completed task'
+      : normalizedStatus === 'in_progress' || normalizedStatus === 'inprogress'
+        ? 'Started task'
+        : normalizedStatus === 'deleted'
+          ? 'Deleted task'
+          : 'Updated task';
+  const label = taskSubject || taskActiveForm;
+  const target = taskId && label && label !== `Task #${taskId}`
+    ? `#${taskId} · ${label}`
+    : label || (taskId ? `#${taskId}` : undefined);
+  return tool_(title, target);
+}
+
+function codexPlanActivityRow(payload: Record<string, unknown>): ActivityRow {
+  const plan = Array.isArray(payload['plan'])
+    ? payload['plan'].filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+    : [];
+  const steps = plan
+    .map((item) => ({
+      status: pickString(item, ['status']) || 'pending',
+      step: pickString(item, ['step']),
+    }))
+    .filter((item): item is { status: string; step: string } => Boolean(item.step));
+  const completed = steps.filter((item) => normalizedPlanStatus(item.status) === 'completed').length;
+  const active = steps.find((item) => normalizedPlanStatus(item.status) === 'active')
+    ?? steps.find((item) => normalizedPlanStatus(item.status) !== 'completed');
+  const progress = steps.length > 0 ? `${completed}/${steps.length} complete` : undefined;
+  const explanation = pickString(payload, ['explanation']);
+  const target = [progress, active?.step || explanation].filter(Boolean).join(' · ') || undefined;
+  const full = steps.length > 0
+    ? steps.map((item) => `[${planStatusLabel(item.status)}] ${item.step}`).join('\n')
+    : undefined;
+  return tool_('Updated plan', target, full);
+}
+
+function normalizedPlanStatus(status: string): 'active' | 'completed' | 'pending' {
+  const normalized = status.replace(/[-_\s]/g, '').toLowerCase();
+  if (normalized === 'completed' || normalized === 'done') return 'completed';
+  if (normalized === 'inprogress' || normalized === 'active') return 'active';
+  return 'pending';
+}
+
+function planStatusLabel(status: string): string {
+  const normalized = normalizedPlanStatus(status);
+  if (normalized === 'completed') return 'done';
+  if (normalized === 'active') return 'active';
+  return 'todo';
 }
 
 function idleTimeoutTarget(payload: Record<string, unknown>): string {

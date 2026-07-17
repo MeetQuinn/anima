@@ -43,6 +43,8 @@ test('isRuntimeEventNoise suppresses streaming frames and keeps lifecycle events
   assert.equal(isRuntimeEventNoise('kimi.context.stats'), true);
   assert.equal(isRuntimeEventNoise('claude.thinking.delta'), true);
   assert.equal(isRuntimeEventNoise('codex.raw_response_item.completed'), true);
+  assert.equal(isRuntimeEventNoise('codex.plan.updated'), false);
+  assert.equal(isRuntimeEventNoise('kimi.plan.updated'), true);
 
   assert.equal(isRuntimeEventNoise('claude.session.started'), false);
   assert.equal(isRuntimeEventNoise('provider.error'), false);

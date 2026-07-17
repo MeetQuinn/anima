@@ -600,14 +600,29 @@ function providerToolCallFromClaudeContent(
     ...(summary.skill ? { skill: summary.skill } : {}),
     ...(summary.args ? { args: summary.args } : {}),
     ...(summary.target ? { target: summary.target } : {}),
+    ...(summary.taskActiveForm ? { taskActiveForm: summary.taskActiveForm } : {}),
+    ...(summary.taskId ? { taskId: summary.taskId } : {}),
+    ...(summary.taskStatus ? { taskStatus: summary.taskStatus } : {}),
+    ...(summary.taskSubject ? { taskSubject: summary.taskSubject } : {}),
     tool: `claude.${name}`,
   };
+}
+
+interface ClaudeToolInputSummary {
+  args?: string;
+  command?: string;
+  skill?: string;
+  target?: string;
+  taskActiveForm?: string;
+  taskId?: string;
+  taskStatus?: string;
+  taskSubject?: string;
 }
 
 function summarizeClaudeToolInput(
   name: string,
   input: Record<string, unknown>,
-): { args?: string; command?: string; skill?: string; target?: string } {
+): ClaudeToolInputSummary {
   if (name === 'Bash') {
     const description = stringField(input, 'description');
     const command = stringField(input, 'command');
@@ -628,6 +643,20 @@ function summarizeClaudeToolInput(
       ...(args ? { args: truncateForActivity(args) } : {}),
       ...(skill ? { skill: singleLine(skill) } : {}),
       ...(target ? { target: singleLineForActivity(target) } : {}),
+    };
+  }
+  if (name === 'TaskCreate' || name === 'TaskUpdate') {
+    const taskActiveForm = stringField(input, 'activeForm') ?? stringField(input, 'active_form');
+    const taskId = stringField(input, 'taskId') ?? stringField(input, 'task_id');
+    const taskStatus = stringField(input, 'status');
+    const taskSubject = stringField(input, 'subject');
+    const target = taskSubject ?? taskActiveForm ?? (taskId ? `Task #${taskId}` : undefined);
+    return {
+      ...(target ? { target: singleLine(target) } : {}),
+      ...(taskActiveForm ? { taskActiveForm: singleLine(taskActiveForm) } : {}),
+      ...(taskId ? { taskId: singleLine(taskId) } : {}),
+      ...(taskStatus ? { taskStatus: singleLine(taskStatus) } : {}),
+      ...(taskSubject ? { taskSubject: singleLine(taskSubject) } : {}),
     };
   }
   const target =
