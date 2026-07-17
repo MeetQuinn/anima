@@ -31,10 +31,11 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { SRC_EXCLUDE } from "../docs/.vitepress/published.mjs";
+
 const EM_DASH = "—";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const docsRoot = join(repoRoot, "docs");
-const configPath = join(docsRoot, ".vitepress", "config.ts");
 
 /**
  * Count em-dashes in our prose voice, and separately the exempt glyphs.
@@ -62,29 +63,50 @@ export function classify(text) {
   let prose = 0;
   let placeholder = 0;
   let code = 0;
-  let inFence = false;
+
+  // CommonMark fenced code: the opening fence fixes both the character and the
+  // minimum length. A closing fence must use the SAME character and be at least
+  // as long. Toggling on any ``` or ~~~ is wrong in both directions: a ~~~ used
+  // as content inside a ``` block would close it (later prose then silently
+  // counts as code, a false green), and a longer fence reopening it reds.
+  let fenceChar = null;
+  let fenceLength = 0;
 
   for (const rawLine of text.split("\n")) {
-    const fenceMatch = /^\s*(```|~~~)/.exec(rawLine);
-    if (fenceMatch) {
-      inFence = !inFence;
-      code += countOf(rawLine);
-      continue;
+    const fence = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(rawLine);
+    if (fence) {
+      const [, marker, rest] = fence;
+      const char = marker[0];
+      if (fenceChar === null) {
+        // An opening backtick fence may not contain a backtick in its info
+        // string; that would be a code span, not a fence.
+        if (!(char === "`" && rest.includes("`"))) {
+          fenceChar = char;
+          fenceLength = marker.length;
+          code += countOf(rawLine);
+          continue;
+        }
+      } else if (
+        char === fenceChar &&
+        marker.length >= fenceLength &&
+        rest.trim() === ""
+      ) {
+        fenceChar = null;
+        fenceLength = 0;
+        code += countOf(rawLine);
+        continue;
+      }
     }
-    if (inFence) {
+    if (fenceChar !== null) {
       code += countOf(rawLine);
       continue;
     }
 
-    // Inline code spans are depicted, not spoken.
-    let line = rawLine;
-    line = line.replace(/`[^`]*`/g, (span) => {
-      code += countOf(span);
-      return " ".repeat(span.length);
-    });
+    const { spoken, spans } = stripCodeSpans(rawLine);
+    code += spans;
 
-    if (line.trimStart().startsWith("|")) {
-      for (const cell of line
+    if (spoken.trimStart().startsWith("|")) {
+      for (const cell of spoken
         .trim()
         .replace(/^\||\|$/g, "")
         .split("|")) {
@@ -95,10 +117,75 @@ export function classify(text) {
       continue;
     }
 
-    prose += countOf(line);
+    prose += countOf(spoken);
   }
 
   return { code, placeholder, prose };
+}
+
+/**
+ * Remove CommonMark inline code spans, returning what is left to be spoken and
+ * how many em-dashes the spans swallowed.
+ *
+ * A code span opens on a run of N backticks and closes on the next run of
+ * EXACTLY N. A run with no matching closer is literal text, not code. A
+ * backslash-escaped backtick is literal and cannot delimit anything.
+ *
+ * The naive /`[^`]*`/ this replaces got all three wrong: it could not see a
+ * ``double-backtick`` span (false red, since the content counted as prose), and
+ * it treated \`escaped backticks\` as a span (false green, hiding real prose).
+ */
+function stripCodeSpans(line) {
+  let spoken = "";
+  let spans = 0;
+  let index = 0;
+
+  while (index < line.length) {
+    const char = line[index];
+
+    if (char === "\\" && index + 1 < line.length) {
+      spoken += line.slice(index, index + 2);
+      index += 2;
+      continue;
+    }
+
+    if (char !== "`") {
+      spoken += char;
+      index += 1;
+      continue;
+    }
+
+    let openLength = 0;
+    while (line[index + openLength] === "`") openLength += 1;
+
+    const closer = findCloser(line, index + openLength, openLength);
+    if (closer === -1) {
+      // Unmatched run: literal backticks, and whatever follows is still spoken.
+      spoken += line.slice(index, index + openLength);
+      index += openLength;
+      continue;
+    }
+
+    spans += countOf(line.slice(index, closer + openLength));
+    index = closer + openLength;
+  }
+
+  return { spans, spoken };
+}
+
+function findCloser(line, from, length) {
+  let index = from;
+  while (index < line.length) {
+    if (line[index] !== "`") {
+      index += 1;
+      continue;
+    }
+    let run = 0;
+    while (line[index + run] === "`") run += 1;
+    if (run === length) return index;
+    index += run;
+  }
+  return -1;
 }
 
 function countOf(text) {
@@ -114,20 +201,11 @@ function countOf(text) {
  * on every machine.
  */
 function publishedPages() {
-  const config = readFileSync(configPath, "utf8");
-  const excludeMatch = /srcExclude:\s*\[([^\]]*)\]/.exec(config);
-  if (!excludeMatch) {
+  const excluded = SRC_EXCLUDE;
+  if (!Array.isArray(excluded) || excluded.length === 0) {
     fail(
-      `could not read srcExclude from ${relative(repoRoot, configPath)}. The ` +
-        `published set is derived from it; refusing to guess.`,
-    );
-  }
-  const excluded = [...excludeMatch[1].matchAll(/["']([^"']+)["']/g)].map(
-    (m) => m[1],
-  );
-  if (excluded.length === 0) {
-    fail(
-      `srcExclude parsed as empty. Refusing to treat every page as published.`,
+      `SRC_EXCLUDE from docs/.vitepress/published.mjs is empty or not an array. ` +
+        `Refusing to guess the published set.`,
     );
   }
 
@@ -178,6 +256,38 @@ function selfTest() {
     ],
     ["clean prose is zero", "Nothing here at all.", { prose: 0 }],
 
+    // CommonMark conformance. HTML-blindness above is a deliberate exemption;
+    // it is not a licence to implement a syntax subset here. Each of these was
+    // a real defect: a ~~~ inside a backtick fence closed it and hid every
+    // later prose em-dash (false green); a ``double-backtick`` span counted as
+    // prose (false red); an escaped \` counted as a span and hid prose (false
+    // green).
+    [
+      "a ~~~ inside a backtick fence does not close it",
+      ["```", "~~~", "```", `prose ${EM_DASH}`].join("\n"),
+      { prose: 1 },
+    ],
+    [
+      "a longer closing fence closes a shorter one",
+      ["```", `x ${EM_DASH}`, "````", `prose ${EM_DASH}`].join("\n"),
+      { code: 1, prose: 1 },
+    ],
+    [
+      "double-backtick span is code",
+      `x \`\`a ${EM_DASH} b\`\` y`,
+      { code: 1, prose: 0 },
+    ],
+    [
+      "escaped backticks are literal, not a span",
+      `\\\`not code ${EM_DASH} here\\\``,
+      { code: 0, prose: 1 },
+    ],
+    [
+      "an unmatched backtick run does not swallow the line",
+      `a \` b ${EM_DASH} c`,
+      { code: 0, prose: 1 },
+    ],
+
     // The homepage's coverage is accidental (see classify's note): index.md is
     // raw HTML plus frontmatter, and it is gated only because this classifier
     // is HTML-blind. These four lock that accident in. A comment cannot go red;
@@ -222,37 +332,40 @@ function selfTest() {
 }
 
 /**
- * Constraint 3, on the real artifact rather than a fixture: inject an em-dash
- * into a live published page and require the count to move. This is what turns
- * "it printed 0" into "it printed 0 and it can print 1".
+ * Constraint 3, on the real artifact rather than a fixture: put real published
+ * prose in front of the real classifier and require it to red.
  *
- * The candidate line is chosen by asking classify() itself, never by a second
- * opinion about what prose looks like. An earlier version picked the line with
- * its own startsWith() checks and landed on index.md line 1 (`---`, the
- * frontmatter delimiter): the control passed because classify happened to count
- * that line, not because the picker found prose. Two copies of a rule is one
- * copy that is untested by construction, and it is always the copy that runs.
+ * The injected text is a standalone Markdown paragraph appended to the real
+ * page. That is prose by Markdown's own definition, so nothing here has to
+ * guess which existing line counts as prose, and there is no second opinion to
+ * drift from classify().
+ *
+ * Two earlier versions were wrong in the same way, from opposite ends. The
+ * first picked a line with its own startsWith() checks: a second copy of the
+ * prose rule, untested by construction. Asking classify() instead fixed the
+ * duplication but not the control, because it then anchored on index.md line 1
+ * (`---`, the frontmatter delimiter) and proved only that appending a character
+ * to a delimiter is counted. Neither proved the thing that matters: that real
+ * published prose reds the gate.
  */
 function runControls(pages) {
   const anchor = pages.find((page) => page === "index.md") ?? pages[0];
   const text = readFileSync(join(docsRoot, anchor), "utf8");
   const base = classify(text).prose;
-  const lines = text.split("\n");
 
-  for (let index = 0; index < lines.length; index += 1) {
-    if (lines[index].trim().length === 0) continue;
-    const probe = [...lines];
-    probe[index] = `${probe[index]} ${EM_DASH}`;
-    if (classify(probe.join("\n")).prose === base + 1) {
-      return { anchor, base, injected: base + 1, line: index + 1 };
-    }
+  const injected = classify(
+    `${text}\n\nA control paragraph ${EM_DASH} not part of the page.\n`,
+  ).prose;
+
+  if (injected !== base + 1) {
+    fail(
+      `negative control failed on ${anchor}: appended a Markdown paragraph ` +
+        `containing one ${EM_DASH} and prose went ${base} -> ${injected}, ` +
+        `expected ${base + 1}. A gate that cannot be shown to red on real ` +
+        `published prose is not a gate.`,
+    );
   }
-
-  fail(
-    `negative control failed on ${anchor}: injected one ${EM_DASH} into every ` +
-      `non-blank line in turn and prose never moved from ${base}. A gate that ` +
-      `cannot be shown to go red on a real page is not a gate.`,
-  );
+  return { anchor, base, injected };
 }
 
 function fail(message) {
@@ -320,7 +433,7 @@ function main() {
   );
   console.log(`  pages read:        ${pages.length}`);
   console.log(
-    `  control:           ${control.anchor}:${control.line} prose ${control.base} -> ${control.injected} on injection (gate can go red)`,
+    `  control:           ${control.anchor} prose ${control.base} -> ${control.injected} on an appended prose paragraph (gate reds on real prose)`,
   );
   console.log(
     `  em-dash, prose:    ${prose}   <- gated, must be 0 (unit: occurrences)`,
