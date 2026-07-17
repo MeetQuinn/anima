@@ -256,7 +256,7 @@ pending until that worker is idle. The Anima primary session and stored Claude s
 archived, so the new process resumes the same conversation.
 
 Claude Code normally places credentials, settings, history, plugins, skills, project transcripts, and task
-state under `CLAUDE_CONFIG_DIR`. Anima keeps credentials and account metadata profile-local, while linking the
+state under `CLAUDE_CONFIG_DIR`. Anima keeps credentials and account identity profile-local, while linking the
 following durable non-account state to the default profile before a switch:
 
 - `history.jsonl`;
@@ -269,9 +269,16 @@ following durable non-account state to the default profile before a switch:
 
 Continuity setup fails closed if a profile already contains independent data that cannot be proven identical
 or a redundant overlay. It never overwrites that data: replaceable overlays are renamed to an
-`.anima-account-backup` path before the shared link is created. The mixed-purpose `.claude.json` file remains
-profile-local because it contains OAuth identity alongside CLI caches and project metadata. Ephemeral shell,
-telemetry, and session-environment caches also remain profile-local.
+`.anima-account-backup` path before the shared link is created.
+
+The mixed-purpose `.claude.json` file is handled field by field instead of linked. Before a switch, Anima copies
+only the current profile's top-level and per-project MCP server settings, including MCP enable/disable selectors,
+into the target profile. It preserves the target profile's OAuth identity and every other CLI or project-cache
+field in that same file. A changed target file is written to a temporary file and atomically renamed before the
+account selection is persisted; invalid or concurrently changed metadata fails the switch without a partial
+field merge. One restricted, account-local `.claude.json.anima-account-backup` recovery snapshot is retained and
+atomically refreshed on later MCP synchronizations instead of accumulating copies. Ephemeral shell, telemetry,
+and session-environment caches also remain profile-local.
 
 Command shape:
 

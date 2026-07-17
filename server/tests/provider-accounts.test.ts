@@ -1,5 +1,17 @@
 import assert from 'node:assert/strict';
-import { lstat, mkdir, mkdtemp, readFile, readlink, rm, writeFile, symlink } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  readlink,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -19,6 +31,7 @@ import {
   ensureClaudeAccountsContinuityWithRoot,
   ensureClaudeAccountContinuityWithRoot,
 } from '../provider-accounts/claude-account-continuity.js';
+import { synchronizeClaudeAccountMcpStateAtPaths } from '../provider-accounts/claude-account-mcp.js';
 import {
   ProviderAccountError,
   ProviderAccountService,
@@ -255,6 +268,262 @@ test('Claude account continuity preflights every profile before linking any stat
   }
 });
 
+test('Claude MCP continuity atomically replaces only MCP fields and retains one restricted recovery snapshot', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-claude-mcp-continuity-'));
+  const sourcePath = join(root, 'source.json');
+  const targetPath = join(root, 'target.json');
+  const backupPath = `${targetPath}.anima-account-backup`;
+  const source = {
+    cache: { sourceOnly: true },
+    mcpServers: { global: { command: 'source-global' } },
+    oauthAccount: { emailAddress: 'source@example.com' },
+    projects: {
+      '/new-project': {
+        mcpServers: { newProject: { command: 'source-new-project' } },
+        trust: 'source-only',
+      },
+      '/repo': {
+        disabledMcpServers: ['disabled-user-server'],
+        disabledMcpjsonServers: ['disabled-project-server'],
+        enabledMcpjsonServers: ['enabled-project-server'],
+        mcpContextUris: ['source-cache'],
+        mcpServers: { project: { command: 'source-project' } },
+        trust: 'source-trust',
+      },
+    },
+  };
+  const target = {
+    cache: { targetOnly: true },
+    mcpServers: { stale: { command: 'stale-global' } },
+    oauthAccount: { emailAddress: 'target@example.com' },
+    projects: {
+      '/repo': {
+        mcpContextUris: ['target-cache'],
+        mcpServers: { staleProject: { command: 'stale-project' } },
+        stats: { sessions: 7 },
+        trust: 'target-trust',
+      },
+      '/stale-project': {
+        mcpServers: { staleOnly: { command: 'stale-only' } },
+        stats: { sessions: 3 },
+      },
+    },
+  };
+  try {
+    await writeFile(sourcePath, `${JSON.stringify(source, null, 2)}\n`, { mode: 0o600 });
+    await writeFile(targetPath, `${JSON.stringify(target, null, 2)}\n`, { mode: 0o640 });
+    await chmod(targetPath, 0o640);
+    const originalTargetInode = (await stat(targetPath)).ino;
+
+    await synchronizeClaudeAccountMcpStateAtPaths(sourcePath, targetPath);
+
+    const next = JSON.parse(await readFile(targetPath, 'utf8')) as {
+      cache: typeof target.cache;
+      mcpServers: typeof source.mcpServers;
+      oauthAccount: typeof target.oauthAccount;
+      projects: Record<string, Record<string, unknown>>;
+    };
+    assert.deepEqual(next.oauthAccount, target.oauthAccount);
+    assert.deepEqual(next.cache, target.cache);
+    assert.deepEqual(next.mcpServers, source.mcpServers);
+    assert.deepEqual(next.projects['/repo'], {
+      disabledMcpServers: ['disabled-user-server'],
+      disabledMcpjsonServers: ['disabled-project-server'],
+      enabledMcpjsonServers: ['enabled-project-server'],
+      mcpContextUris: ['target-cache'],
+      mcpServers: { project: { command: 'source-project' } },
+      stats: { sessions: 7 },
+      trust: 'target-trust',
+    });
+    assert.deepEqual(next.projects['/new-project'], {
+      mcpServers: { newProject: { command: 'source-new-project' } },
+    });
+    assert.deepEqual(next.projects['/stale-project'], { stats: { sessions: 3 } });
+    assert.deepEqual(JSON.parse(await readFile(backupPath, 'utf8')), target);
+    const targetMode = (await stat(targetPath)).mode & 0o777;
+    const backupMode = (await stat(backupPath)).mode & 0o777;
+    if (process.platform !== 'win32') {
+      assert.equal(targetMode, 0o640);
+      assert.equal(backupMode & 0o077, 0);
+      assert.equal(backupMode & ~targetMode, 0);
+      assert.notEqual((await stat(targetPath)).ino, originalTargetInode);
+    }
+    assert.deepEqual(
+      (await readdir(root)).filter((name) => name.includes('.anima-account-backup')),
+      ['target.json.anima-account-backup'],
+    );
+    assert.deepEqual(
+      (await readdir(root)).filter((name) => name.includes('.anima-account-temp')),
+      [],
+    );
+
+    const firstSynchronizedTarget = await readFile(targetPath, 'utf8');
+    source.mcpServers.global.command = 'source-global-v2';
+    await writeFile(sourcePath, `${JSON.stringify(source, null, 2)}\n`, { mode: 0o600 });
+    await synchronizeClaudeAccountMcpStateAtPaths(sourcePath, targetPath);
+
+    assert.equal(
+      (JSON.parse(await readFile(targetPath, 'utf8')) as {
+        mcpServers: { global: { command: string } };
+      }).mcpServers.global.command,
+      'source-global-v2',
+    );
+    assert.equal(await readFile(backupPath, 'utf8'), firstSynchronizedTarget);
+    assert.deepEqual(
+      (await readdir(root)).filter((name) => name.includes('.anima-account-backup')),
+      ['target.json.anima-account-backup'],
+    );
+
+    const secondSynchronizedTarget = await readFile(targetPath, 'utf8');
+    await writeFile(
+      sourcePath,
+      JSON.stringify({ oauthAccount: { emailAddress: 'source@example.com' } }),
+      { mode: 0o600 },
+    );
+    await synchronizeClaudeAccountMcpStateAtPaths(sourcePath, targetPath);
+
+    const withoutMcp = JSON.parse(await readFile(targetPath, 'utf8')) as Record<string, unknown>;
+    assert.equal(Object.hasOwn(withoutMcp, 'mcpServers'), false);
+    assert.equal(await readFile(backupPath, 'utf8'), secondSynchronizedTarget);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('Claude MCP continuity fails closed before writing malformed mixed-purpose metadata', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-claude-mcp-malformed-'));
+  const sourcePath = join(root, 'source.json');
+  const targetPath = join(root, 'target.json');
+  try {
+    await writeFile(sourcePath, JSON.stringify({ mcpServers: {}, projects: {} }), 'utf8');
+    await writeFile(targetPath, '{"oauthAccount":', 'utf8');
+    const originalTarget = await readFile(targetPath, 'utf8');
+
+    await assert.rejects(
+      () => synchronizeClaudeAccountMcpStateAtPaths(sourcePath, targetPath),
+      /target account metadata is not valid JSON/,
+    );
+
+    assert.equal(await readFile(targetPath, 'utf8'), originalTarget);
+    await assert.rejects(() => lstat(`${targetPath}.anima-account-backup`));
+    assert.deepEqual(
+      (await readdir(root)).filter((name) => name.includes('.anima-account-temp')),
+      [],
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('Claude MCP continuity refuses metadata symlinks instead of replacing their link target', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-claude-mcp-symlink-'));
+  const sourcePath = join(root, 'source.json');
+  const targetRealPath = join(root, 'target-real.json');
+  const targetPath = join(root, 'target.json');
+  try {
+    await writeFile(sourcePath, JSON.stringify({ mcpServers: { source: {} } }), 'utf8');
+    await writeFile(
+      targetRealPath,
+      JSON.stringify({ mcpServers: { target: {} }, oauthAccount: { emailAddress: 'target@example.com' } }),
+      'utf8',
+    );
+    await symlink(targetRealPath, targetPath, 'file');
+    const originalTarget = await readFile(targetRealPath, 'utf8');
+
+    await assert.rejects(
+      () => synchronizeClaudeAccountMcpStateAtPaths(sourcePath, targetPath),
+      /target account metadata is not a regular file/,
+    );
+
+    assert.equal(await readFile(targetRealPath, 'utf8'), originalTarget);
+    assert.equal(await readlink(targetPath), targetRealPath);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('Claude MCP continuity refuses a backup symlink instead of copying mixed metadata through it', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-claude-mcp-backup-symlink-'));
+  const sourcePath = join(root, 'source.json');
+  const targetPath = join(root, 'target.json');
+  const outsidePath = join(root, 'outside.json');
+  try {
+    await writeFile(sourcePath, JSON.stringify({ mcpServers: { source: {} } }), 'utf8');
+    await writeFile(
+      targetPath,
+      JSON.stringify({ mcpServers: { target: {} }, oauthAccount: { emailAddress: 'target@example.com' } }),
+      'utf8',
+    );
+    await writeFile(outsidePath, 'outside-canary', 'utf8');
+    await symlink(outsidePath, `${targetPath}.anima-account-backup`, 'file');
+    const originalTarget = await readFile(targetPath, 'utf8');
+
+    await assert.rejects(
+      () => synchronizeClaudeAccountMcpStateAtPaths(sourcePath, targetPath),
+      /metadata backup is not a regular file/,
+    );
+
+    assert.equal(await readFile(targetPath, 'utf8'), originalTarget);
+    assert.equal(await readFile(outsidePath, 'utf8'), 'outside-canary');
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('Claude MCP continuity exposes only complete old or new metadata to concurrent readers', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-claude-mcp-readers-'));
+  const sourcePath = join(root, 'source.json');
+  const targetPath = join(root, 'target.json');
+  try {
+    await writeFile(
+      sourcePath,
+      JSON.stringify({
+        mcpServers: {
+          marker: { command: 'new' },
+          ...Object.fromEntries(
+            Array.from({ length: 2_000 }, (_, index) => [
+              `server-${index}`,
+              { args: [`argument-${index}`], command: 'node' },
+            ]),
+          ),
+        },
+      }),
+      'utf8',
+    );
+    await writeFile(
+      targetPath,
+      JSON.stringify({
+        cache: { keep: true },
+        mcpServers: { marker: { command: 'old' } },
+        oauthAccount: { emailAddress: 'target@example.com' },
+      }),
+      'utf8',
+    );
+
+    let settled = false;
+    const synchronization = synchronizeClaudeAccountMcpStateAtPaths(sourcePath, targetPath)
+      .finally(() => { settled = true; });
+    const observed = new Set<string>();
+    do {
+      const snapshot = JSON.parse(await readFile(targetPath, 'utf8')) as {
+        mcpServers: { marker: { command: string } };
+      };
+      observed.add(snapshot.mcpServers.marker.command);
+    } while (!settled);
+    await synchronization;
+    observed.add(
+      (JSON.parse(await readFile(targetPath, 'utf8')) as {
+        mcpServers: { marker: { command: string } };
+      }).mcpServers.marker.command,
+    );
+
+    assert.equal([...observed].every((value) => value === 'old' || value === 'new'), true);
+    assert.equal(observed.has('new'), true);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test('Claude usage reads credentials and account identity from the selected config dir', async () => {
   const profile = await mkdtemp(join(tmpdir(), 'anima-claude-usage-profile-'));
   const originalFetch = globalThis.fetch;
@@ -364,6 +633,26 @@ test('platform account switch persists one global target and requests idle runti
     assert.equal(state.status, 'switching');
     assert.deepEqual(state.pendingAgentIds, ['iris']);
     assert.equal(fixture.ensureContinuityCalls(), 2);
+    assert.deepEqual(fixture.mcpSynchronizations(), [['primary', 'secondary']]);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('platform account switch fails before persistence when MCP continuity cannot be established', async () => {
+  const fixture = await accountServiceFixture({ active: false, mcpFailure: true });
+  try {
+    await assert.rejects(
+      () => fixture.service.selectClaudeAccount('secondary'),
+      (error) => error instanceof ProviderAccountError
+        && error.statusCode === 409
+        && /MCP metadata conflict/.test(error.message),
+    );
+
+    assert.equal(fixture.config().claudeCode?.activeAccountId, 'primary');
+    assert.equal(fixture.writeCount(), 0);
+    assert.deepEqual(fixture.restarted, []);
+    assert.deepEqual(fixture.mcpSynchronizations(), [['primary', 'secondary']]);
   } finally {
     await fixture.cleanup();
   }
@@ -497,6 +786,7 @@ async function accountServiceFixture(input: {
   active: boolean;
   configured?: boolean;
   continuityNeedsSetup?: boolean;
+  mcpFailure?: boolean;
   queued?: boolean;
   reloadGate?: Promise<void>;
   reloadStarted?: () => void;
@@ -531,6 +821,7 @@ async function accountServiceFixture(input: {
   let restartAttempts = 0;
   let reloadFailures = input.reloadFailures ?? 0;
   let ensureContinuityCalls = 0;
+  const mcpSynchronizations: string[][] = [];
   const statuses: AgentStatusSummary[] = [{
     agentId: 'iris',
     ...(input.active ? { currentItemId: 'item-1' } : {}),
@@ -568,12 +859,17 @@ async function accountServiceFixture(input: {
     async (accounts) => { ensureContinuityCalls += accounts.length; },
     async () => [],
     async () => input.continuityNeedsSetup ?? false,
+    async (source, target) => {
+      mcpSynchronizations.push([source.id, target.id]);
+      if (input.mcpFailure) throw new ClaudeAccountContinuityError('MCP metadata conflict');
+    },
   );
 
   return {
     cleanup: () => rm(root, { force: true, recursive: true }),
     config: () => config,
     ensureContinuityCalls: () => ensureContinuityCalls,
+    mcpSynchronizations: () => mcpSynchronizations,
     restarted,
     setInterruptedSwitch() {
       const registry = config.claudeCode;

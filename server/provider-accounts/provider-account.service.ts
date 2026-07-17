@@ -14,6 +14,7 @@ import {
   ClaudeAccountContinuityError,
   ensureClaudeAccountsContinuity,
 } from './claude-account-continuity.js';
+import { synchronizeClaudeAccountMcpState } from './claude-account-mcp.js';
 import {
   applyClaudeAccountToAgent,
   claudeAccountIsConfigured,
@@ -56,6 +57,7 @@ export class ProviderAccountService {
     private readonly ensureContinuity: typeof ensureClaudeAccountsContinuity = ensureClaudeAccountsContinuity,
     private readonly discoverAccounts: typeof discoverClaudeAccounts = discoverClaudeAccounts,
     private readonly continuityNeedsSetup: typeof claudeAccountContinuityNeedsSetup = claudeAccountContinuityNeedsSetup,
+    private readonly synchronizeMcpState: typeof synchronizeClaudeAccountMcpState = synchronizeClaudeAccountMcpState,
   ) {}
 
   async list(): Promise<ProviderAccountsResponse> {
@@ -143,6 +145,7 @@ export class ProviderAccountService {
     }
     try {
       await this.ensureContinuity(continuityAccounts);
+      if (current.id !== target.id) await this.synchronizeMcpState(current, target);
     } catch (error) {
       if (error instanceof ClaudeAccountContinuityError) {
         throw new ProviderAccountError(409, error.message);
