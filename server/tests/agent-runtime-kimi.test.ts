@@ -46,7 +46,7 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
           '      send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "kimi-session-1" } });',
           '    }',
           '    if (msg.method === "session/set_model") {',
-          '      if (msg.params.modelId !== "kimi-code/kimi-for-coding") process.exit(42);',
+          '      if (msg.params.modelId !== "kimi-code/k3") process.exit(42);',
           '      send({ jsonrpc: "2.0", id: msg.id, result: {} });',
           '    }',
           '    if (msg.method === "session/prompt") {',
@@ -104,7 +104,7 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
       runtime = createAgentRuntime({
         env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
         kind: 'kimi-cli',
-        model: 'kimi-code/kimi-for-coding',
+        model: 'kimi-code/k3',
       });
       const runPromise = runtime.run(await runtimeInput(runtime, firstCtx, await loadState()));
       await waitFor(() => readFile(callsPath, 'utf8').then((text) => text.includes('"method":"session/prompt"')));
@@ -120,7 +120,15 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
       assert.equal(sessionId, 'kimi-session-1');
       const args = JSON.parse((await readFile(callsPath, 'utf8')).split('\n')[0] ?? '{}') as { argv: string[] };
       assert.deepEqual(args.argv, ['--yolo', 'acp']);
-      const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string; params?: { prompt?: Array<{ text?: string }> } });
+      const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) =>
+        JSON.parse(line) as {
+          method?: string;
+          params?: { modelId?: string; prompt?: Array<{ text?: string }> };
+        });
+      assert.deepEqual(
+        calls.filter((call) => call.method === 'session/set_model').map((call) => call.params?.modelId),
+        ['kimi-code/k3'],
+      );
       const sessionPrompts = calls.filter((call) => call.method === 'session/prompt');
       assert.equal(sessionPrompts.length, 2);
       const firstPrompt = sessionPrompts[0]?.params?.prompt?.[0]?.text ?? '';

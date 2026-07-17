@@ -283,6 +283,29 @@ test('kimi provider does not expose or retain reasoning effort', async () => {
   }
 });
 
+test('kimi-cli catalog exposes K3 and the current managed aliases without changing the default', () => {
+  const entry = providerCatalogEntry('kimi-cli');
+  assert.deepEqual(entry?.models, [
+    'kimi-code/k3',
+    'kimi-code/kimi-for-coding',
+    'kimi-code/kimi-for-coding-highspeed',
+  ]);
+  assert.equal(entry?.defaultModel, 'kimi-code/kimi-for-coding');
+
+  assert.equal(
+    AgentCreateRequest.parse({
+      name: 'Kimi K3',
+      homePath: 'agents/kimi-k3',
+      role: 'general purpose',
+      provider: {
+        kind: 'kimi-cli',
+        model: 'kimi-code/k3',
+      },
+    }).provider.model,
+    'kimi-code/k3',
+  );
+});
+
 test('claude-code catalog includes Fable without changing the default model', () => {
   const entry = providerCatalogEntry('claude-code');
   assert.deepEqual(entry?.models, ['opus', 'sonnet', 'haiku', 'fable']);

@@ -65,7 +65,11 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     label: 'Kimi CLI',
     command: 'kimi',
     installHint: 'Install Kimi CLI so `kimi --version` works.',
-    models: ['kimi-code/kimi-for-coding'],
+    models: [
+      'kimi-code/k3',
+      'kimi-code/kimi-for-coding',
+      'kimi-code/kimi-for-coding-highspeed',
+    ],
     defaultModel: 'kimi-code/kimi-for-coding',
     reasoningEfforts: [],
   },
