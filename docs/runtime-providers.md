@@ -382,7 +382,6 @@ grok
   --no-leader
   --always-approve
   [-m <model>]
-  [--effort <reasoningEffort>]
   stdio
 ```
 
@@ -392,11 +391,19 @@ Model and context authority:
   result. `grok-build` is a marketing alias and is not accepted as stored model identity. Live
   catalog examples include `grok-4.5` and `grok-composer-2.5-fast` (dynamic; not a static enum).
 - Optional `reasoningEffort` is **model-scoped** in Grok Build (ACP
-  `supportsReasoningEffort` / `reasoningEfforts` per catalog entry). Anima only
-  persists and passes `--effort` when the selected model advertises support
-  (for example `grok-4.5` offers `low`/`medium`/`high`; `grok-composer-2.5-fast`
-  does not). Unsupported combinations are rejected at config time, not silently
-  ignored at launch.
+  `supportsReasoningEffort` / `reasoningEfforts` per catalog entry), and is knowable only from the
+  live ACP catalog: never inferred from the model name. Launch argv never carries `--effort`.
+  Config writes validate only Grok's effort vocabulary (`low` / `medium` / `high`; `xhigh` is
+  rejected) and store the token as a preference. They do not decide per-model support. After
+  session init (new or loaded) and before the first prompt, the runtime sends at most one same-model
+  `session/set_model` with `_meta.reasoningEffort`, and only when the exact live current model
+  advertises that effort. Unknown current model, missing capability for that exact model, or an
+  unadvertised effort fails closed: no setter is sent and the model's own default stands.
+- A configured effort on a model that does not advertise it (for example
+  `grok-composer-2.5-fast`) is therefore **stored and silently not applied**, not rejected at config
+  time.
+- Operator effort menus come from the live `modelReasoningEfforts` snapshot. Without that data the
+  menu is empty rather than guessed.
 - Model availability and context-window size are read at runtime and carry a check timestamp. If
   the CLI cannot provide the catalog, operator surfaces say **not checked** instead of using a static
   provider enum.
