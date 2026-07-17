@@ -10,7 +10,7 @@ import type { SlackUserCandidate } from '@shared/agent-config';
 function Rationale() {
   return (
     <p className="font-sans text-[13px] leading-relaxed text-text-muted">
-      The owner is the person this agent answers to. The agent introduces itself to them and checks in — it's how it knows who it's working for.
+      The owner is the person this agent answers to. The agent introduces itself to them and checks in. It's how it knows who it's working for.
     </p>
   );
 }
@@ -400,7 +400,7 @@ export function OwnerPickerForm({
             className="w-full resize-none rounded-sm border border-border-soft bg-surface px-3 py-2 font-sans text-[13px] text-text placeholder:text-text-subtle focus:border-accent focus:outline-none"
           />
           <p className="font-sans mt-1 text-[11px] text-text-subtle">
-            Used as context for the agent's first message —{' '}
+            Used as context for the agent's first message:{' '}
             {selectedUser
               ? `so ${selectedUser.displayName} knows who set it up and why.`
               : 'so the owner knows who set it up and why.'}

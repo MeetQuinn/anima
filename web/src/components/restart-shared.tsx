@@ -93,7 +93,7 @@ export function BusyConfirmModal({
         </div>
         <div className="font-serif mt-2 text-[15px] leading-relaxed text-text-muted">
           {/* Continuity-first: named, saved, resumes — never "interrupt". */}
-          {subject} {verb} working. Their work is saved — after the {action} they&apos;ll continue
+          {subject} {verb} working. Their work is saved. After the {action} they&apos;ll continue
           right where they left off. Nothing is lost.
         </div>
         {kind === 'upgrade' && target && (

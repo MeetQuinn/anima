@@ -339,7 +339,7 @@ export function AddAgentModal({ onClose, onAdded }: { onClose: () => void; onAdd
                         <div key={provider.kind} className="font-sans text-[10px] leading-snug text-text-subtle">
                           <span className="font-semibold text-text-muted">{provider.label}</span>{' '}
                           <span>{provider.status}</span>
-                          {' — '}
+                          {': '}
                           <span>{provider.hint}</span>
                         </div>
                       ))}
