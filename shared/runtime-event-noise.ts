@@ -23,7 +23,8 @@ export function isRuntimeEventNoise(eventType: string): boolean {
   if (eventType.endsWith('.tool.call.part')) return true;
   if (eventType.endsWith('.tool_result')) return true;
   if (eventType.endsWith('.hook.triggered') || eventType.endsWith('.hook.resolved')) return true;
-  if (eventType.endsWith('.plan.display') || eventType.endsWith('.plan.updated')) return true;
+  if (eventType.endsWith('.plan.display')) return true;
+  if (eventType.endsWith('.plan.updated')) return eventType !== 'codex.plan.updated';
   if (eventType.endsWith('.diff.updated')) return true;
   if (eventType.endsWith('.subagent.event')) return true;
   if (eventType.endsWith('.mcp.progress')) return true;
