@@ -3,13 +3,11 @@ import { CheckCircle2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 
 import { fetchAgentFeishuScopeStatus } from '@/api/agents';
-import { FeishuRecommendedPermissionsChecklist } from './FeishuRecommendedPermissionsChecklist';
-import { queryKeys } from '@/lib/query-keys';
 import {
-  FEISHU_RECOMMENDED_SCOPES,
-  type AgentFeishuRecommendedScopeStatusItem,
-  type AgentFeishuScopeStatus,
-} from '@shared/agent-config';
+  FeishuRecommendedPermissionsChecklist,
+  recommendedScopesForDisplay,
+} from './FeishuRecommendedPermissionsChecklist';
+import { queryKeys } from '@/lib/query-keys';
 
 interface Props {
   agentId: string;
@@ -100,22 +98,4 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
       }
     />
   );
-}
-
-function recommendedScopesForDisplay(
-  data: AgentFeishuScopeStatus | undefined,
-): AgentFeishuRecommendedScopeStatusItem[] {
-  // Always show the full recommended set (with each scope's grant flag) so the
-  // list can mark passed vs still-missing after a recheck instead of dropping
-  // the granted rows.
-  if (data?.recommended.scopes.length) {
-    return data.recommended.scopes;
-  }
-  return FEISHU_RECOMMENDED_SCOPES.map((scope) => ({
-    capability: scope.capability,
-    description: scope.description,
-    granted: false,
-    label: scope.label,
-    scope: scope.scope,
-  }));
 }

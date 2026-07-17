@@ -2,9 +2,11 @@ import { Check, ChevronDown, CircleAlert, ExternalLink, Loader2, RotateCw, X } f
 import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import type {
-  AgentFeishuRecommendedScopeStatusItem,
-  AgentFeishuScopeAuthUrl,
+import {
+  FEISHU_RECOMMENDED_SCOPES,
+  type AgentFeishuRecommendedScopeStatusItem,
+  type AgentFeishuScopeAuthUrl,
+  type AgentFeishuScopeStatus,
 } from '@shared/agent-config';
 import { feishuOfficialScopeName } from './feishu-scope-names';
 
@@ -14,6 +16,27 @@ import { feishuOfficialScopeName } from './feishu-scope-names';
 // publish a new app version by hand, then recheck. The two surfaces differ only
 // in their wrappers (onboarding adds a Skip control + connected handoff; the
 // profile adds a connected/healthy success state and a render-null guard).
+
+// The rows both surfaces render. Lives here rather than in either caller so the
+// "behaviourally identical" promise above holds by construction: the two used to
+// keep byte-identical private copies, which is exactly how they'd drift apart.
+export function recommendedScopesForDisplay(
+  data: AgentFeishuScopeStatus | undefined,
+): AgentFeishuRecommendedScopeStatusItem[] {
+  // Always show the full recommended set (with each scope's grant flag) so the
+  // list can mark passed vs still-missing after a recheck instead of dropping
+  // the granted rows.
+  if (data?.recommended.scopes.length) {
+    return data.recommended.scopes;
+  }
+  return FEISHU_RECOMMENDED_SCOPES.map((scope) => ({
+    capability: scope.capability,
+    description: scope.description,
+    granted: false,
+    label: scope.label,
+    scope: scope.scope,
+  }));
+}
 
 // Numbered step marker. `alert` rings it red to point the user back to the step
 // that most likely needs attention (the manual publish).

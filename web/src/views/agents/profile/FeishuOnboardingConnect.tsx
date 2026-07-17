@@ -9,7 +9,10 @@ import {
   startAgentFeishuAppRegistration,
 } from '@/api/agents';
 import { Button } from '@/components/ui/button';
-import { FeishuRecommendedPermissionsChecklist } from './FeishuRecommendedPermissionsChecklist';
+import {
+  FeishuRecommendedPermissionsChecklist,
+  recommendedScopesForDisplay,
+} from './FeishuRecommendedPermissionsChecklist';
 import { queryKeys } from '@/lib/query-keys';
 import {
   isFeishuRegistrationActive,
@@ -24,7 +27,6 @@ import {
 } from './feishu-connect-shared';
 import {
   FEISHU_RECOMMENDED_SCOPES,
-  type AgentFeishuRecommendedScopeStatusItem,
   type AgentFeishuRegisterAppStatus,
   type AgentFeishuScopeStatus,
 } from '@shared/agent-config';
@@ -424,24 +426,6 @@ export function RecommendedPermissionsState({
       )}
     </>
   );
-}
-
-function recommendedScopesForDisplay(
-  data: AgentFeishuScopeStatus | undefined,
-): AgentFeishuRecommendedScopeStatusItem[] {
-  // Always show the full recommended set (with each scope's grant flag) so the
-  // list can mark passed vs still-missing after a recheck instead of dropping
-  // the granted rows.
-  if (data?.recommended.scopes.length) {
-    return data.recommended.scopes;
-  }
-  return FEISHU_RECOMMENDED_SCOPES.map((scope) => ({
-    capability: scope.capability,
-    description: scope.description,
-    granted: false,
-    label: scope.label,
-    scope: scope.scope,
-  }));
 }
 
 function previewRecommendedScopeStatus(): AgentFeishuScopeStatus {
