@@ -15,6 +15,7 @@ const AgentRestartCommandSchema = z.object({
   reason: z.literal('operator_restart'),
   requestId: z.string().min(1),
   requestedAt: z.string().min(1),
+  whenIdle: z.boolean().optional(),
 });
 
 const AgentRestartCommandStoreSchema = z.object({
@@ -55,12 +56,13 @@ export class AgentRestartCommandStore {
     await ensureDirectoryUnderRoot(this.directory(), this.animaHome());
   }
 
-  async request(agentId: string): Promise<AgentRestartCommand> {
+  async request(agentId: string, options: { whenIdle?: boolean } = {}): Promise<AgentRestartCommand> {
     const command: AgentRestartCommand = {
       agentId,
       reason: 'operator_restart',
       requestId: randomUUID(),
       requestedAt: nowIso(),
+      ...(options.whenIdle ? { whenIdle: true } : {}),
     };
     await this.store.update((current) => ({
       requests: {
@@ -73,6 +75,10 @@ export class AgentRestartCommandStore {
 
   async pendingAgentIds(): Promise<string[]> {
     return Object.keys((await this.store.read()).requests).sort();
+  }
+
+  async get(agentId: string): Promise<AgentRestartCommand | undefined> {
+    return (await this.store.read()).requests[agentId];
   }
 
   async take(agentId: string): Promise<AgentRestartCommand | undefined> {

@@ -18,6 +18,11 @@ import {
   RuntimeUpgradeUnavailableError,
 } from '../runtime-management/runtime-upgrade.js';
 import { ProviderUsageKind } from '../../shared/provider-usage.js';
+import { SelectProviderAccountRequest } from '../../shared/provider-accounts.js';
+import {
+  defaultProviderAccountService,
+  ProviderAccountError,
+} from '../provider-accounts/provider-account.service.js';
 import { SidebarOrder, WorkspacePlatform } from '../../shared/server-settings.js';
 import { defaultTeamService, TeamServiceError } from '../teams/team.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
@@ -51,6 +56,16 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
     const parsed = ProviderUsageKind.safeParse((request.params as { provider?: unknown }).provider);
     if (!parsed.success) return reply.status(400).send({ error: 'Invalid provider usage provider' });
     return defaultProviderUsageService.get(parsed.data);
+  });
+  fastify.get('/api/provider-accounts', async () => defaultProviderAccountService.list());
+  fastify.post('/api/provider-accounts/claude-code/select', async (request) => {
+    const { accountId } = SelectProviderAccountRequest.parse(request.body);
+    try {
+      return await defaultProviderAccountService.selectClaudeAccount(accountId);
+    } catch (error) {
+      if (error instanceof ProviderAccountError) throw new HttpError(error.statusCode, error.message);
+      throw error;
+    }
   });
   fastify.get('/api/provider-cli-status', async () => defaultProviderCliService.status());
   fastify.post('/api/provider-cli-status/check', async () => defaultProviderCliService.checkNow());

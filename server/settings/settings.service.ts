@@ -1,5 +1,6 @@
 import type {
   DashboardAuth,
+  ProviderAccountsConfig,
   ReleaseTrack,
   ServerTrack,
   SidebarOrder,
@@ -59,6 +60,11 @@ export class ServerSettingsService {
     return config.releaseTrack ?? 'stable';
   }
 
+  async getProviderAccounts(): Promise<ProviderAccountsConfig> {
+    const config = await this.store.read();
+    return config.providerAccounts ?? {};
+  }
+
   async getTrack(): Promise<ServerTrack> {
     const config = await this.store.read();
     return config.track ?? config.releaseTrack ?? 'stable';
@@ -91,6 +97,12 @@ export class ServerSettingsService {
     const config = await this.store.read();
     await this.store.write({ ...config, dashboardAuth });
     return dashboardAuth;
+  }
+
+  async setProviderAccounts(providerAccounts: ProviderAccountsConfig): Promise<ProviderAccountsConfig> {
+    const config = await this.store.read();
+    await this.store.write({ ...config, providerAccounts });
+    return providerAccounts;
   }
 
   async setWorkspacePlatform(workspacePlatform: WorkspacePlatform): Promise<WorkspacePlatform> {

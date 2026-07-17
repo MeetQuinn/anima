@@ -5,7 +5,9 @@ import { ArrowUp, ChevronDown, Copy, RefreshCw, X } from 'lucide-react';
 import {
   applyProviderCliUpdate,
   checkProviderClis,
+  fetchProviderAccounts,
   fetchProviderUsage,
+  selectClaudeAccount,
 } from '@/api/system';
 import { queryKeys } from '@/lib/query-keys';
 import { useNow } from '@/hooks/useNow';
@@ -18,6 +20,7 @@ import type {
   ProviderUsageWindow,
   ProviderUsageExtra,
 } from '@shared/provider-usage';
+import type { ClaudeCodeAccountState } from '@shared/provider-accounts';
 
 interface Props {
   onClose: () => void;
@@ -215,6 +218,9 @@ function ProviderUnit({
   onApply,
   onCopyCommand,
   usage,
+  accountState,
+  onRetryAccount,
+  onSelectAccount,
 }: {
   globallyLocked?: boolean;
   management: ProviderCliRow;
@@ -222,6 +228,9 @@ function ProviderUnit({
   onApply: () => void;
   onCopyCommand: () => void;
   usage?: ProviderUsageRow;
+  accountState?: ClaudeCodeAccountState;
+  onRetryAccount: () => void;
+  onSelectAccount: (accountId: string) => void;
 }) {
   const isAvailable = usage?.status === 'available';
   const errorMessage = usage ? providerUsageErrorMessage(usage) : null;
@@ -241,7 +250,14 @@ function ProviderUnit({
     operation?.status === 'succeeded' &&
     runningAgents.some((agent) => agent.runningVersion !== management.installedVersion);
   const versionCheckFailed = management.state === 'error' || Boolean(management.checkError);
-  const needsAttention = installing || operation?.status === 'failed' || updateOffer || staleSessions;
+  const accountSwitching = accountState?.status === 'switching';
+  const accountSwitchFailed = accountState?.status === 'error';
+  const needsAttention = installing
+    || operation?.status === 'failed'
+    || updateOffer
+    || staleSessions
+    || accountSwitching
+    || accountSwitchFailed;
   return (
     <div>
       {/* ── Identity row: who it is, what plan, which version. ── */}
@@ -256,11 +272,25 @@ function ProviderUnit({
               </span>
             )}
           </div>
-          {usage?.account && (
+          {accountState && accountState.accounts.length > 1 ? (
+            <select
+              aria-label="Claude account"
+              className="mt-0.5 max-w-full bg-transparent font-mono text-[10px] text-text-subtle focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50"
+              disabled={accountSwitching}
+              onChange={(event) => onSelectAccount(event.target.value)}
+              value={accountState.activeAccountId}
+            >
+              {accountState.accounts.map((account) => (
+                <option key={account.id} value={account.id} disabled={account.status !== 'available'}>
+                  {account.account ?? account.label}{account.status === 'available' ? '' : ' (Not signed in)'}
+                </option>
+              ))}
+            </select>
+          ) : usage?.account ? (
             <div className="truncate font-mono text-[10px] text-text-subtle" title={usage.account}>
               {usage.account}
             </div>
-          )}
+          ) : null}
         </div>
         {/* Exceptions only. A working provider's version number is a fact nobody
             acts on — "am I current?" is already answered by the Update line — so
@@ -279,6 +309,29 @@ function ProviderUnit({
       {needsAttention && (
         <div className="mt-2.5 space-y-1.5 pl-[38px]">
           {installing && <p className="font-sans text-[11px] text-text-muted">Installing…</p>}
+          {accountSwitching && (
+            <p className="font-sans text-[11px] text-text-muted">
+              Switching account
+              {accountState.pendingAgentIds.length > 0
+                ? ` · waiting for ${accountState.pendingAgentIds.length} agent${accountState.pendingAgentIds.length === 1 ? '' : 's'}`
+                : ''}
+            </p>
+          )}
+          {accountSwitchFailed && (
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+              <p className="font-sans text-[11px] text-health-error">
+                Account switch failed{accountState.errorAgentIds.length > 0 ? `: ${accountState.errorAgentIds.join(', ')}` : ''}
+              </p>
+              <button
+                type="button"
+                onClick={onRetryAccount}
+                className="inline-flex items-center gap-1 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              >
+                <RefreshCw className="h-3 w-3" />
+                Retry
+              </button>
+            </div>
+          )}
           {operation?.status === 'failed' && (
             <p className="font-sans text-[11px] leading-relaxed text-health-error">
               {operation.error ?? 'Update failed'}
@@ -445,6 +498,16 @@ export default function UsagePanel({ onClose }: Props) {
     queryFn: fetchProviderUsage,
     staleTime: 60_000,
   });
+  const {
+    data: accountData,
+    isFetching: accountsFetching,
+    refetch: refetchAccounts,
+  } = useQuery({
+    queryKey: queryKeys.providerAccounts(),
+    queryFn: fetchProviderAccounts,
+    refetchInterval: (query) => query.state.data?.providers.some((provider) => provider.status === 'switching') ? 1_000 : false,
+    staleTime: 30_000,
+  });
 
   // Ticks every minute — keeps reset countdowns and "updated X ago" current.
   const now = useNow();
@@ -464,8 +527,33 @@ export default function UsagePanel({ onClose }: Props) {
   }, undefined);
 
   async function refreshAll(): Promise<void> {
-    const [, status] = await Promise.all([refetchUsage(), checkProviderClis()]);
+    const [, , status] = await Promise.all([refetchUsage(), refetchAccounts(), checkProviderClis()]);
     queryClient.setQueryData(queryKeys.providerCliStatus(), status);
+  }
+
+  function requestAccountSwitch(state: ClaudeCodeAccountState, accountId: string, retry = false): void {
+    if (accountId === state.activeAccountId && !retry) return;
+    const target = state.accounts.find((account) => account.id === accountId);
+    if (!target) return;
+    confirm({
+      title: retry ? `Retry ${target.account ?? target.label}?` : `Switch to ${target.account ?? target.label}?`,
+      description: (
+        <p>
+          {retry
+            ? 'Only agents that did not reload this account will try again. Current turns continue uninterrupted.'
+            : 'Current Claude turns continue uninterrupted. Each agent reloads this account when it becomes idle; sessions, MCP servers, and shared state stay in place.'}
+        </p>
+      ),
+      variant: 'warn',
+      confirmVariant: 'default',
+      confirmLabel: retry ? 'Retry' : 'Switch account',
+      busyLabel: retry ? 'Retrying…' : 'Switching…',
+      onConfirm: async () => {
+        const next = await selectClaudeAccount(accountId);
+        queryClient.setQueryData(queryKeys.providerAccounts(), { providers: [next] });
+        await queryClient.invalidateQueries({ queryKey: queryKeys.providerUsage() });
+      },
+    });
   }
 
   function requestApply(row: ProviderCliRow): void {
@@ -497,12 +585,13 @@ export default function UsagePanel({ onClose }: Props) {
   }
 
   const usageByProvider = new Map(usageData?.providers.map((row) => [row.provider, row]) ?? []);
+  const claudeAccountState = accountData?.providers.find((row) => row.provider === 'claude-code');
   const visible = cliData?.providers ?? [];
   const checkedAt = [usageCheckedAt, ...visible.map((row) => row.checkedAt)]
     .filter((value): value is string => Boolean(value))
     .sort()
     .at(-1);
-  const fetching = usageFetching || cliFetching;
+  const fetching = usageFetching || cliFetching || accountsFetching;
 
   return (
     <Fragment>
@@ -570,6 +659,17 @@ export default function UsagePanel({ onClose }: Props) {
                           if (row.manualCommand) void navigator.clipboard.writeText(row.manualCommand);
                         }}
                         usage={usageByProvider.get(row.provider)}
+                        accountState={row.provider === 'claude-code' ? claudeAccountState : undefined}
+                        onRetryAccount={() => {
+                          if (row.provider === 'claude-code' && claudeAccountState) {
+                            requestAccountSwitch(claudeAccountState, claudeAccountState.activeAccountId, true);
+                          }
+                        }}
+                        onSelectAccount={(accountId) => {
+                          if (row.provider === 'claude-code' && claudeAccountState) {
+                            requestAccountSwitch(claudeAccountState, accountId);
+                          }
+                        }}
                       />
                     </div>
                   ))}

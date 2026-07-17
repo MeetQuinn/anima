@@ -10,6 +10,7 @@ import { JsonStore } from '../json-store.js';
 import {
   DashboardAuth,
   MemoryCoherenceConfig,
+  ProviderAccountsConfig,
   ReleaseTrack,
   ServerTrack,
   SidebarOrder,
@@ -22,6 +23,7 @@ export const ServerConfig = z.object({
   dashboardHost: z.string().min(1).optional(),
   dashboardPort: z.number().int().positive().max(65535).optional(),
   memoryCoherence: MemoryCoherenceConfig.optional(),
+  providerAccounts: ProviderAccountsConfig.optional(),
   releaseTrack: ReleaseTrack.optional(),
   sidebarOrder: SidebarOrder.optional(),
   // Team registry. Optional + never schema-defaulted, so a legacy/empty config still loads

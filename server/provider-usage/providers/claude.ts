@@ -1,10 +1,15 @@
 import { execFile } from 'node:child_process';
 import { userInfo } from 'node:os';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import type { ProviderUsageExtra, ProviderUsageRow, ProviderUsageWindow } from '../../../shared/provider-usage.js';
 import { bearer, fetchJson } from '../http.js';
 import { available, unavailable, usageError } from '../result.js';
+import {
+  claudeKeychainService,
+  normalizedConfigDir,
+} from '../../provider-accounts/claude-account-config.js';
 import {
   clampPercent,
   expiresSoon,
@@ -22,8 +27,6 @@ const execFileAsync = promisify(execFile);
 const CLAUDE_USAGE_API = 'https://api.anthropic.com/api/oauth/usage';
 const CLAUDE_REFRESH_TOKEN_API = 'https://platform.claude.com/v1/oauth/token';
 const CLAUDE_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
-const CLAUDE_CREDENTIALS_PATH = ['.claude', '.credentials.json'];
-const CLAUDE_KEYCHAIN_SERVICE = 'Claude Code-credentials';
 const CLAUDE_OAUTH_BETA_HEADER = 'oauth-2025-04-20';
 
 interface ClaudeCredentials {
@@ -33,12 +36,14 @@ interface ClaudeCredentials {
   payload: Record<string, unknown>;
   rateLimitTier?: string;
   refreshToken?: string;
-  source: { kind: 'file'; path: string } | { account: string; kind: 'keychain' };
+  source: { kind: 'file'; path: string } | { account: string; kind: 'keychain'; service: string };
   subscriptionType?: string;
 }
 
-export async function fetchClaudeUsage(): Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>> {
-  const credentials = await readClaudeCredentials();
+export async function fetchClaudeUsage(
+  input: { configDir?: string } = {},
+): Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>> {
+  const credentials = await readClaudeCredentials(input.configDir);
   if (!credentials) {
     return unavailable(usageError('not_configured', 'Claude Code OAuth token not found. Run `claude` to authenticate.'));
   }
@@ -52,7 +57,7 @@ export async function fetchClaudeUsage(): Promise<Omit<ProviderUsageRow, 'checke
 
   let result = await fetchClaudeUsageWithToken(activeCredentials.accessToken);
   if (result.error?.type === 'unauthorized' && activeCredentials.refreshToken) {
-    const latestCredentials = await readClaudeCredentials();
+    const latestCredentials = await readClaudeCredentials(input.configDir);
     if (latestCredentials && latestCredentials.accessToken !== activeCredentials.accessToken) {
       activeCredentials = latestCredentials;
     } else {
@@ -104,26 +109,34 @@ export function parseClaudeUsageResponse(
   return { extras, windows };
 }
 
-async function readClaudeCredentials(): Promise<ClaudeCredentials | undefined> {
-  const account = await readClaudeAccount();
-  const filePath = homePath(...CLAUDE_CREDENTIALS_PATH);
+async function readClaudeCredentials(configDir?: string): Promise<ClaudeCredentials | undefined> {
+  const normalizedDir = normalizedConfigDir(configDir);
+  const account = await readClaudeAccount(normalizedDir);
+  const filePath = normalizedDir
+    ? join(normalizedDir, '.credentials.json')
+    : homePath('.claude', '.credentials.json');
   const fileCredentials = extractClaudeCredentials(await readJsonFile(filePath), { kind: 'file', path: filePath }, account);
   if (fileCredentials) return fileCredentials;
   if (process.platform !== 'darwin') return undefined;
+  const service = claudeKeychainService(normalizedDir);
   try {
     const { stdout } = await execFileAsync(
       'security',
-      ['find-generic-password', '-s', CLAUDE_KEYCHAIN_SERVICE, '-w'],
+      ['find-generic-password', '-s', service, '-w'],
       { encoding: 'utf8', timeout: 5_000 },
     );
-    return extractClaudeCredentials(parseJsonOrHex(stdout), { account: userInfo().username, kind: 'keychain' }, account);
+    return extractClaudeCredentials(
+      parseJsonOrHex(stdout),
+      { account: userInfo().username, kind: 'keychain', service },
+      account,
+    );
   } catch {
     return undefined;
   }
 }
 
-async function readClaudeAccount(): Promise<string | undefined> {
-  const config = record(await readJsonFile(homePath('.claude.json')));
+async function readClaudeAccount(configDir?: string): Promise<string | undefined> {
+  const config = record(await readJsonFile(configDir ? join(configDir, '.claude.json') : homePath('.claude.json')));
   const account = record(config?.oauthAccount);
   return stringValue(account?.emailAddress) ?? stringValue(account?.displayName);
 }
@@ -230,7 +243,7 @@ async function writeClaudeCredentials(source: ClaudeCredentials['source'], paylo
       '-a',
       source.account,
       '-s',
-      CLAUDE_KEYCHAIN_SERVICE,
+      source.service,
       '-w',
       JSON.stringify(payload),
       '-U',
