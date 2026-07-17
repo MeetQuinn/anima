@@ -209,7 +209,33 @@ function publishedPages() {
     );
   }
 
-  const prefixes = excluded.map((glob) => glob.replace(/\/\*\*.*$/, "/"));
+  // Sharing the value with VitePress is not sharing its glob semantics. This
+  // matcher understands exactly one shape: a literal directory prefix followed
+  // by /**. Anything else is REFUSED rather than approximated, because the
+  // approximation silently widens the exclusion and a widened exclusion is
+  // invisible: fewer pages are read, the ones left pass, and nothing reds.
+  //
+  // Concretely, "guide/**\/drafts/**" does not exclude guide/quickstart.md from
+  // the site, but truncating it to a "guide/" prefix drops all 13 guide pages
+  // from the gate. So the day someone needs a real glob, this fails loudly and
+  // they teach both sides at once, instead of the checker quietly disagreeing
+  // with the site about what is published.
+  const SIMPLE_PREFIX_GLOB = /^([A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)\/\*\*$/;
+  const prefixes = excluded.map((glob) => {
+    const match = SIMPLE_PREFIX_GLOB.exec(glob);
+    if (!match) {
+      fail(
+        `srcExclude pattern ${JSON.stringify(glob)} is not a literal ` +
+          `"<dir>/**" prefix, and this checker only implements that shape. It ` +
+          `will not guess: an approximated glob excludes more pages than the ` +
+          `site does, and pages that are never read cannot fail. Either teach ` +
+          `this matcher the same glob semantics VitePress uses, or keep ` +
+          `srcExclude to literal directory prefixes.`,
+      );
+    }
+    return `${match[1]}/`;
+  });
+
   const pages = [];
   walk(docsRoot);
   return { excluded, pages: pages.sort() };
@@ -228,6 +254,44 @@ function publishedPages() {
       pages.push(rel);
     }
   }
+}
+
+/**
+ * The ONE place a violation is decided. Both the real run and the negative
+ * control call this, so the control exercises the enforcement decision and not
+ * merely the counter behind it.
+ *
+ * This exists because the previous control proved only that classify() could
+ * return +1. Disabling the final `if (offenders.length > 0)` left a gate that
+ * printed `prose: 1`, reported "gate reds on real prose", and exited 0. The
+ * control was green while the enforcement path was dead: constraint 3 failing
+ * in exactly the shape it was written to prevent.
+ */
+class VoiceViolation extends Error {
+  constructor(offenders) {
+    super(`em-dash in published prose (${offenders.length} page(s))`);
+    this.name = "VoiceViolation";
+    this.offenders = offenders;
+  }
+}
+
+function enforce(result) {
+  if (result.offenders.length > 0) throw new VoiceViolation(result.offenders);
+  return result;
+}
+
+/** Count a set of {page, text} without touching the filesystem. */
+function scanTexts(entries) {
+  const totals = { code: 0, placeholder: 0, prose: 0 };
+  const offenders = [];
+  for (const { page, text } of entries) {
+    const counts = classify(text);
+    totals.code += counts.code;
+    totals.placeholder += counts.placeholder;
+    totals.prose += counts.prose;
+    if (counts.prose > 0) offenders.push({ page, prose: counts.prose });
+  }
+  return { offenders, totals };
 }
 
 /**
@@ -352,17 +416,46 @@ function runControls(pages) {
   const anchor = pages.find((page) => page === "index.md") ?? pages[0];
   const text = readFileSync(join(docsRoot, anchor), "utf8");
   const base = classify(text).prose;
+  const dirty = `${text}\n\nA control paragraph ${EM_DASH} not part of the page.\n`;
 
-  const injected = classify(
-    `${text}\n\nA control paragraph ${EM_DASH} not part of the page.\n`,
-  ).prose;
+  // Positive control: the real page, through the real decision, must pass.
+  // Without this, an enforce() that always threw would look like a working gate.
+  try {
+    enforce(scanTexts([{ page: anchor, text }]));
+  } catch (error) {
+    if (!(error instanceof VoiceViolation)) throw error;
+    fail(
+      `positive control failed: ${anchor} is clean on disk, yet the enforcement ` +
+        `path flagged it. The gate reds on innocent pages and its greens mean ` +
+        `nothing.`,
+    );
+  }
 
-  if (injected !== base + 1) {
+  // Negative control: the same page plus one prose em-dash, through the SAME
+  // decision, must be refused. This is deliberately not a count comparison. It
+  // asserts the gate's verdict, so deleting or defeating the enforcement branch
+  // fails here instead of leaving a green control on a dead gate.
+  let refused = false;
+  try {
+    enforce(scanTexts([{ page: anchor, text: dirty }]));
+  } catch (error) {
+    if (!(error instanceof VoiceViolation)) throw error;
+    refused = true;
+  }
+  if (!refused) {
     fail(
       `negative control failed on ${anchor}: appended a Markdown paragraph ` +
-        `containing one ${EM_DASH} and prose went ${base} -> ${injected}, ` +
-        `expected ${base + 1}. A gate that cannot be shown to red on real ` +
-        `published prose is not a gate.`,
+        `containing one ${EM_DASH} and the enforcement path still accepted it. ` +
+        `A gate that cannot be shown to refuse real published prose is not a ` +
+        `gate, however green it prints.`,
+    );
+  }
+
+  const injected = classify(dirty).prose;
+  if (injected !== base + 1) {
+    fail(
+      `negative control failed on ${anchor}: prose went ${base} -> ${injected}, ` +
+        `expected ${base + 1}.`,
     );
   }
   return { anchor, base, injected };
@@ -398,12 +491,7 @@ function main() {
 
   const control = runControls(pages);
 
-  let prose = 0;
-  let placeholder = 0;
-  let code = 0;
-  const offenders = [];
-
-  for (const page of pages) {
+  const entries = pages.map((page) => {
     const full = join(docsRoot, page);
     const bytes = statSync(full).size;
     if (bytes === 0) {
@@ -420,12 +508,12 @@ function main() {
           `pass value.`,
       );
     }
-    const counts = classify(text);
-    prose += counts.prose;
-    placeholder += counts.placeholder;
-    code += counts.code;
-    if (counts.prose > 0) offenders.push({ page, prose: counts.prose });
-  }
+    return { page, text };
+  });
+
+  // The same scan and the same decision the controls just exercised.
+  const result = scanTexts(entries);
+  const { code, placeholder, prose } = result.totals;
 
   const scope = excluded.join(", ");
   console.log(
@@ -433,7 +521,7 @@ function main() {
   );
   console.log(`  pages read:        ${pages.length}`);
   console.log(
-    `  control:           ${control.anchor} prose ${control.base} -> ${control.injected} on an appended prose paragraph (gate reds on real prose)`,
+    `  control:           ${control.anchor} accepted clean, refused with one prose ${EM_DASH} (enforcement path exercised)`,
   );
   console.log(
     `  em-dash, prose:    ${prose}   <- gated, must be 0 (unit: occurrences)`,
@@ -442,12 +530,15 @@ function main() {
     `  em-dash, exempt:   ${placeholder} placeholder cells, ${code} in code`,
   );
 
-  if (offenders.length > 0) {
+  try {
+    enforce(result);
+  } catch (error) {
+    if (!(error instanceof VoiceViolation)) throw error;
     console.error(
       `\ncheck-docs-voice: em-dash in published prose. The writing guide says to ` +
         `use parentheses, colons, or periods.\n`,
     );
-    for (const { page, prose: n } of offenders) {
+    for (const { page, prose: n } of error.offenders) {
       console.error(`  docs/${page}: ${n} occurrence${n === 1 ? "" : "s"}`);
     }
     console.error(
