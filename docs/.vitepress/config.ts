@@ -1,5 +1,7 @@
 import { defineConfig } from "vitepress";
 
+import { SRC_EXCLUDE } from "./published.mjs";
+
 function publicBase(): string {
   const raw = process.env.DOCS_BASE ?? process.env.VITEPRESS_BASE ?? "/";
   const prefixed = raw.startsWith("/") ? raw : `/${raw}`;
@@ -9,8 +11,10 @@ function publicBase(): string {
 export default defineConfig({
   base: publicBase(),
   // Internal design/PRD material lives under docs/design/ for engineering
-  // reference; it must never be built into the public site.
-  srcExclude: ["design/**"],
+  // reference; it must never be built into the public site. Defined in
+  // ./published.mjs so the docs-voice checker gates exactly what we publish,
+  // rather than its own reading of this file.
+  srcExclude: SRC_EXCLUDE,
   description:
     "Local infrastructure for durable AI agent teams in Slack and Feishu.",
   head: [

@@ -49,6 +49,7 @@
     "docs:dev": "pnpm docs:prepare && vitepress dev docs --host 127.0.0.1 --port 14175",
     "docs:preview": "pnpm docs:prepare && vitepress preview docs --host 127.0.0.1 --port 14175",
     "prepare": "husky",
+    "check:docs-voice": "node scripts/check-docs-voice.mjs",
     "lint": "pnpm --dir web lint",
     "type-check": "pnpm --dir server type-check && pnpm --dir web type-check",
     "build:ui": "cd web && pnpm build",
