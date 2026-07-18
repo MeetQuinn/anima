@@ -817,6 +817,91 @@ test('a newer operator restart can complete an in-progress account switch', asyn
   }
 });
 
+test('an agent that left Claude Code no longer blocks an in-progress account switch', async () => {
+  const fixture = await accountServiceFixture({ active: false, agentIds: ['iris', 'nico'] });
+  try {
+    const switching = await fixture.service.selectClaudeAccount('secondary');
+    assert.equal(switching.status, 'switching');
+    assert.deepEqual(switching.pendingAgentIds, ['iris', 'nico']);
+
+    fixture.replaceAgent(kimiAgent('nico'));
+
+    const state = await fixture.service.claudeState();
+    assert.equal(state.status, 'switching');
+    assert.deepEqual(state.errorAgentIds, []);
+    assert.deepEqual(state.pendingAgentIds, ['iris']);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('a lost restart outcome does not strand a completed account switch', async () => {
+  const fixture = await accountServiceFixture({ active: false });
+  try {
+    await fixture.service.selectClaudeAccount('secondary');
+    // The switch outcome was recorded as failed and later dropped from the
+    // health record when the agent turned healthy — the exact 2026-07-18
+    // incident. The provider child running since after the request is the
+    // proof the agent already runs the target account.
+    fixture.setHealth(healthyChildHealth(new Date().toISOString()));
+
+    const state = await fixture.service.claudeState();
+    assert.equal(state.status, 'active');
+    assert.deepEqual(state.errorAgentIds, []);
+    assert.deepEqual(state.pendingAgentIds, []);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('a healthy agent without a post-switch provider child still waits out the switch', async () => {
+  const fixture = await accountServiceFixture({ active: false });
+  try {
+    await fixture.service.selectClaudeAccount('secondary');
+
+    fixture.setHealth(healthyChildHealth('2020-01-01T00:00:00.000Z'));
+    const staleChild = await fixture.service.claudeState();
+    assert.equal(staleChild.status, 'switching');
+    assert.deepEqual(staleChild.pendingAgentIds, ['iris']);
+
+    fixture.setHealth({ state: 'healthy', updatedAt: new Date().toISOString() });
+    const noChild = await fixture.service.claudeState();
+    assert.equal(noChild.status, 'switching');
+    assert.deepEqual(noChild.pendingAgentIds, ['iris']);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+function healthyChildHealth(startedAt: string): NonNullable<AgentStatusSummary['health']> {
+  return {
+    runtime: {
+      providerChild: {
+        alive: true,
+        command: 'claude',
+        exited: false,
+        label: 'claude-code',
+        startedAt,
+        stdinWritable: true,
+      },
+      providerChildExpected: true,
+    },
+    state: 'healthy',
+    updatedAt: startedAt,
+  };
+}
+
+function kimiAgent(id: string): AgentConfig {
+  const agent = claudeAgent(id);
+  return {
+    ...agent,
+    provider: {
+      kind: 'kimi-cli',
+      model: agent.provider.model,
+    },
+  };
+}
+
 async function accountServiceFixture(input: {
   active: boolean;
   configured?: boolean;
@@ -828,6 +913,7 @@ async function accountServiceFixture(input: {
   reloadFailures?: number;
   secondaryAuthenticated?: boolean;
   secondaryCredentials?: { accessToken?: string; refreshToken?: string };
+  agentIds?: string[];
 }) {
   const root = await mkdtemp(join(tmpdir(), 'anima-provider-account-service-'));
   const primaryDir = join(root, 'primary');
@@ -861,6 +947,8 @@ async function accountServiceFixture(input: {
   let reloadFailures = input.reloadFailures ?? 0;
   let ensureContinuityCalls = 0;
   const mcpSynchronizations: string[][] = [];
+  let agentConfigs = (input.agentIds ?? ['iris']).map((id) =>
+    claudeAgent(id, input.configured === false ? secondaryDir : primaryDir));
   const statuses: AgentStatusSummary[] = [{
     agentId: 'iris',
     ...(input.active ? { currentItemId: 'item-1' } : {}),
@@ -878,7 +966,7 @@ async function accountServiceFixture(input: {
     },
     {
       async listAgentConfigs() {
-        return [claudeAgent('iris', input.configured === false ? secondaryDir : primaryDir)];
+        return agentConfigs;
       },
     },
     {
@@ -909,7 +997,15 @@ async function accountServiceFixture(input: {
     config: () => config,
     ensureContinuityCalls: () => ensureContinuityCalls,
     mcpSynchronizations: () => mcpSynchronizations,
+    replaceAgent(agent: AgentConfig) {
+      agentConfigs = agentConfigs.map((current) => (current.id === agent.id ? agent : current));
+    },
     restarted,
+    setHealth(health: NonNullable<AgentStatusSummary['health']>) {
+      const status = statuses[0];
+      if (!status) throw new Error('missing fixture status');
+      statuses[0] = { ...status, health };
+    },
     setInterruptedSwitch() {
       const registry = config.claudeCode;
       if (!registry) throw new Error('missing fixture registry');

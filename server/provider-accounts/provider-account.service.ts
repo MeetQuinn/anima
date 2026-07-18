@@ -84,7 +84,7 @@ export class ProviderAccountService {
         status: await claudeAccountIsConfigured(account) ? 'available' as const : 'not_configured' as const,
       };
     }));
-    const switchState = accountSwitchState(registry, statuses);
+    const switchState = accountSwitchState(registry, statuses, agents);
     return {
       accounts,
       activeAccountId: selected.id,
@@ -115,7 +115,7 @@ export class ProviderAccountService {
       throw new ProviderAccountError(409, `Claude account ${target.label} is not authenticated`);
     }
 
-    const currentSwitchState = accountSwitchState(registry, statuses);
+    const currentSwitchState = accountSwitchState(registry, statuses, agents);
     const retryAgentIds = registry.activeAccountId === target.id && currentSwitchState.status === 'error'
       ? currentSwitchState.errorAgentIds
       : undefined;
@@ -219,15 +219,21 @@ function affectedClaudeAgent(agent: AgentConfig): boolean {
 function accountSwitchState(
   registry: ClaudeCodeAccountRegistry,
   statuses: AgentStatusSummary[],
+  agents: AgentConfig[],
 ): Pick<ClaudeCodeAccountState, 'errorAgentIds' | 'pendingAgentIds' | 'status'> {
   if (!registry.switch || registry.switch.accountId !== registry.activeAccountId) {
     return { errorAgentIds: [], pendingAgentIds: [], status: 'active' };
   }
+  // The switch was requested against the agents affected then. An agent that
+  // has since left Claude Code (or been disabled) can never produce the
+  // outcome the switch is waiting for, so it drops out of the reckoning
+  // instead of blocking it forever.
+  const affectedIds = new Set(agents.filter(affectedClaudeAgent).map((agent) => agent.id));
   const statusByAgent = new Map(statuses.map((status) => [status.agentId, status]));
-  const errorAgentIds = [...(registry.switch.failedAgentIds ?? [])];
+  const errorAgentIds = [...(registry.switch.failedAgentIds ?? [])].filter((agentId) => affectedIds.has(agentId));
   const pendingAgentIds: string[] = [];
   const restartByAgent = new Map(registry.switch.restarts.map((restart) => [restart.agentId, restart]));
-  const agentIds = registry.switch.agentIds ?? [...restartByAgent.keys()];
+  const agentIds = (registry.switch.agentIds ?? [...restartByAgent.keys()]).filter((agentId) => affectedIds.has(agentId));
   for (const agentId of agentIds) {
     if (errorAgentIds.includes(agentId)) continue;
     const restart = restartByAgent.get(agentId);
@@ -235,8 +241,10 @@ function accountSwitchState(
       errorAgentIds.push(agentId);
       continue;
     }
-    const outcome = statusByAgent.get(restart.agentId)?.health?.restart;
+    const health = statusByAgent.get(restart.agentId)?.health;
+    const outcome = health?.restart;
     if (!outcome) {
+      if (switchConvergedWithoutOutcome(health, registry.switch.requestedAt)) continue;
       pendingAgentIds.push(restart.agentId);
       continue;
     }
@@ -255,6 +263,23 @@ function accountSwitchState(
     pendingAgentIds: pendingAgentIds.sort(),
     status: errorAgentIds.length > 0 ? 'error' : pendingAgentIds.length > 0 ? 'switching' : 'active',
   };
+}
+
+// The health record's restart outcome is ephemeral — a failed outcome is
+// dropped once the agent turns healthy again — so a missing outcome cannot by
+// itself mean "still waiting". The reload's only purpose is to land the agent
+// on the account persisted before the reload commands were issued; a healthy
+// agent whose provider child started after the request is already there.
+function switchConvergedWithoutOutcome(
+  health: AgentStatusSummary['health'],
+  requestedAt: string,
+): boolean {
+  if (health?.state !== 'healthy') return false;
+  const startedAt = health.runtime?.providerChild?.startedAt;
+  if (!startedAt) return false;
+  const startedAtMs = Date.parse(startedAt);
+  const requestedAtMs = Date.parse(requestedAt);
+  return Number.isFinite(startedAtMs) && Number.isFinite(requestedAtMs) && startedAtMs >= requestedAtMs;
 }
 
 export const defaultProviderAccountService = new ProviderAccountService();
