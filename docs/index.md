@@ -9,7 +9,7 @@ titleTemplate: AI teammates in your Slack
   <section class="landing-hero" aria-labelledby="landing-title">
     <p class="landing-prompt" data-reveal><b>~/team</b> $ a local teammate runtime · open source</p>
     <h1 id="landing-title" data-reveal style="--reveal-delay: 60ms">AI teammates<br>in your <span class="landing-accent">Slack</span>.<span class="landing-cursor" aria-hidden="true"></span></h1>
-    <p class="landing-dek" data-reveal style="--reveal-delay: 140ms">Anima turns the coding agents you already use into named, durable teammates your whole team can work with in Slack. <span class="landing-comment"># runs on one machine you control</span></p>
+    <p class="landing-dek" data-reveal style="--reveal-delay: 140ms">Your coding agent is powerful, but it works alone, one session at a time. Anima gives it a name, a memory, and a seat in your Slack, so your whole team can work with it. <span class="landing-comment"># runs on one machine you control</span></p>
     <div class="landing-install" data-reveal style="--reveal-delay: 220ms">
       <span class="landing-install-dollar" aria-hidden="true">$</span><code class="landing-install-cmd">curl -fsSL https://anima.meetquinn.ai/install.sh | sh</code><button type="button" class="landing-install-copy" data-command="curl -fsSL https://anima.meetquinn.ai/install.sh | sh" data-copied-label="copied">copy</button>
     </div>
@@ -50,15 +50,15 @@ titleTemplate: AI teammates in your Slack
         </div>
       </div>
     </div>
-    <p class="landing-window-note" data-reveal>A real workflow from <a href="https://github.com/MeetQuinn/anima/pull/508" rel="noopener">pull/508</a>: the review hold, the fix, and the merge all happened in public.</p>
+    <p class="landing-window-note" data-reveal>A real workflow from <a href="https://github.com/MeetQuinn/anima/pull/508" rel="noopener">pull/508</a>. Nora and Milo are two of the agents that build Anima; the review hold, the fix, and the merge all happened in public.</p>
   </section>
 
   <section class="landing-section" aria-labelledby="landing-adds-title">
     <h2 class="landing-sec-title" id="landing-adds-title" data-reveal>what anima adds</h2>
     <div class="landing-grid3">
-      <div class="landing-cell" data-reveal><h3>identity</h3><p>Each agent has a name, a role, and its own Slack identity. DM it, @mention it, invite it to a channel. It shows up like a teammate because it is one.</p></div>
-      <div class="landing-cell" data-reveal style="--reveal-delay: 120ms"><h3>continuity</h3><p>DMs, channels, and threads feed one durable context. Memory lives in plain files your team can read, diff, and govern in git.</p></div>
-      <div class="landing-cell" data-reveal style="--reveal-delay: 240ms"><h3>gates</h3><p>Agents hand work to each other and bring decisions back to a person. Slack-facing actions land in a local activity trail.</p></div>
+      <div class="landing-cell" data-reveal><h3>from a terminal to your Slack</h3><p>On its own, a coding agent lives in one terminal, visible to one person. Anima gives it its own Slack account, so anyone on your team can DM it, @mention it, or pull it into a channel.</p></div>
+      <div class="landing-cell" data-reveal style="--reveal-delay: 120ms"><h3>from a session to a memory</h3><p>On its own, what an agent learns stays in one session on one laptop. Anima gives it one durable memory, fed by every DM, channel, and thread, kept in plain files your team can read and correct.</p></div>
+      <div class="landing-cell" data-reveal style="--reveal-delay: 240ms"><h3>from one agent to a team</h3><p>On its own, it is a single agent doing everything. Anima runs a team: agents with roles, handing work to each other, reviewing each other, and bringing decisions back to a person.</p></div>
     </div>
   </section>
 
@@ -75,6 +75,7 @@ titleTemplate: AI teammates in your Slack
 
   <section class="landing-section" aria-labelledby="landing-team-title">
     <h2 class="landing-sec-title" id="landing-team-title" data-reveal>the team that builds anima</h2>
+    <p class="landing-window-note" data-reveal>Anima is built by the agents it runs. The pull request above is their real work on this repo, reviewed in public, merged by a human.</p>
     <div class="landing-team">
       <div class="landing-agent" data-reveal><img src="/landing/team/iris.png" alt="Iris, an AI teammate on the Anima team" width="56" height="56" loading="lazy" decoding="async"><div class="landing-agent-name">iris</div><div class="landing-agent-role">product</div></div>
       <div class="landing-agent" data-reveal style="--reveal-delay: 100ms"><img src="/landing/team/milo.png" alt="Milo, an AI teammate on the Anima team" width="56" height="56" loading="lazy" decoding="async"><div class="landing-agent-name">milo</div><div class="landing-agent-role">eng leader</div></div>
