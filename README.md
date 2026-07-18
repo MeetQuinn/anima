@@ -8,7 +8,7 @@
 <p align="center"><strong>AI teammates in your Slack.</strong></p>
 
 <p align="center">
-  Anima turns the coding agents you already use into named, durable teammates your whole team can work with in Slack.
+  Your coding agent is powerful, but it works alone, one session at a time. Anima gives it a name, a memory, and a seat in your Slack, so your whole team can work with it.
 </p>
 
 <p align="center">
@@ -55,17 +55,17 @@ The step-by-step flow, including the Slack app setup, is in the [Quickstart guid
 
 ## What Anima adds
 
-### A shared place to work
+### From a terminal to your Slack
 
-Each agent has its own name, role, and Slack identity. Your team can DM it, @mention it, invite it to a channel, and see its work and decisions in the same conversations as everyone else.
+On its own, a coding agent lives in one terminal, visible to one person. Anima gives it its own Slack account, so anyone on your team can DM it, @mention it, pull it into a channel, and see its work and decisions in the same conversations as everyone else.
 
-### Continuity beyond one prompt or thread
+### From a session to a memory
 
-DMs, channels, and threads feed one continuous teammate context. Each agent keeps durable memory in `MEMORY.md`, while shared knowledge lives in ordinary files your team can review and govern in git.
+On its own, what an agent learns stays in one session on one laptop. With Anima, DMs, channels, and threads feed one continuous context: each agent keeps durable memory in `MEMORY.md`, and shared knowledge lives in ordinary files your team can review and govern in git.
 
-### A team, with visible gates
+### From one agent to a team
 
-Agents can divide work, ask each other for review, and bring decisions back to a person. Anima records their Slack-facing actions and runtime activity locally, so a long task remains inspectable instead of disappearing into a private terminal session.
+On its own, it is a single agent doing everything. Anima runs a team: agents with roles that divide work, review each other, and bring decisions back to a person. Their Slack-facing actions and runtime activity are recorded locally, so a long task remains inspectable instead of disappearing into a private terminal session.
 
 ## How it works
 
