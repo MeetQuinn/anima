@@ -19,6 +19,9 @@ export interface ProviderUsageAdapter {
   provider: ProviderUsageKind;
   source: ProviderUsageRow['source'];
   fetch: () => Promise<Array<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>>>;
+  // Single-provider GETs keep their pre-multi-account blast radius: only the
+  // account the platform currently runs on is read (and may be refreshed).
+  fetchActive?: () => Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>>;
 }
 
 export class ProviderUsageService {
@@ -43,7 +46,7 @@ export class ProviderUsageService {
         windows: [],
       };
     }
-    const rows = await this.fetchProvider(adapter);
+    const rows = await this.fetchProvider(adapter, { activeOnly: true });
     // Single-provider reads keep their pre-multi-account meaning: the account
     // the platform currently runs on, when the adapter marks one.
     const row = rows.find((candidate) => candidate.active) ?? rows[0];
@@ -60,10 +63,16 @@ export class ProviderUsageService {
     };
   }
 
-  private async fetchProvider(adapter: ProviderUsageAdapter): Promise<ProviderUsageRow[]> {
+  private async fetchProvider(
+    adapter: ProviderUsageAdapter,
+    options: { activeOnly?: boolean } = {},
+  ): Promise<ProviderUsageRow[]> {
     const checkedAt = new Date().toISOString();
     try {
-      return (await adapter.fetch()).map((row) => ({
+      const rows = options.activeOnly && adapter.fetchActive
+        ? [await adapter.fetchActive()]
+        : await adapter.fetch();
+      return rows.map((row) => ({
         checkedAt,
         label: adapter.label,
         provider: adapter.provider,
@@ -87,12 +96,7 @@ export class ProviderUsageService {
 
 export function defaultProviderUsageAdapters(): ProviderUsageAdapter[] {
   return [
-    {
-      fetch: fetchAllClaudeAccountUsages,
-      label: 'Claude Code',
-      provider: 'claude-code',
-      source: 'private-api',
-    },
+    claudeAccountUsageAdapter(),
     {
       fetch: async () => [await fetchCodexUsage()],
       label: 'Codex CLI',
@@ -119,20 +123,63 @@ export function defaultProviderUsageAdapters(): ProviderUsageAdapter[] {
 // Usage is per account, not per active account: the panel shows every
 // configured account's quota side by side, with switching left as a separate,
 // deliberate act (totoday, 2026-07-18). Discovered accounts are included so the
-// blocks match what the accounts API offers as switchable.
-async function fetchAllClaudeAccountUsages(): ReturnType<ProviderUsageAdapter['fetch']> {
-  const [providerAccounts, agents, discovered] = await Promise.all([
-    defaultServerSettingsService.getProviderAccounts(),
-    defaultAgentRegistryService.listAgentConfigs(),
-    discoverClaudeAccounts(),
-  ]);
-  const registry = effectiveClaudeAccountRegistry(providerAccounts.claudeCode, agents, discovered);
-  const selected = selectedClaudeAccount(registry);
-  return Promise.all(registry.accounts.map(async (account) => ({
-    accountId: account.id,
-    active: account.id === selected.id,
-    ...(await fetchClaudeUsage({ configDir: account.configDir })),
-  })));
+// blocks match what the accounts API offers as switchable. Isolation is
+// structural: one account's exception degrades only its own row, never the
+// provider's other accounts.
+export function claudeAccountUsageAdapter(
+  deps: {
+    discoverAccounts?: () => ReturnType<typeof discoverClaudeAccounts>;
+    fetchUsage?: typeof fetchClaudeUsage;
+    listAgentConfigs?: () => ReturnType<typeof defaultAgentRegistryService.listAgentConfigs>;
+    getProviderAccounts?: () => ReturnType<typeof defaultServerSettingsService.getProviderAccounts>;
+  } = {},
+): ProviderUsageAdapter {
+  const {
+    discoverAccounts = discoverClaudeAccounts,
+    fetchUsage = fetchClaudeUsage,
+    listAgentConfigs = () => defaultAgentRegistryService.listAgentConfigs(),
+    getProviderAccounts = () => defaultServerSettingsService.getProviderAccounts(),
+  } = deps;
+  async function effectiveRegistry() {
+    const [providerAccounts, agents, discovered] = await Promise.all([
+      getProviderAccounts(),
+      listAgentConfigs(),
+      discoverAccounts(),
+    ]);
+    return effectiveClaudeAccountRegistry(providerAccounts.claudeCode, agents, discovered);
+  }
+  return {
+    label: 'Claude Code',
+    provider: 'claude-code',
+    source: 'private-api',
+    fetch: async () => {
+      const registry = await effectiveRegistry();
+      const selected = selectedClaudeAccount(registry);
+      return Promise.all(registry.accounts.map(async (account) => {
+        const tagged = { accountId: account.id, active: account.id === selected.id };
+        try {
+          return { ...tagged, ...(await fetchUsage({ configDir: account.configDir })) };
+        } catch (error) {
+          return {
+            ...tagged,
+            error: usageError('unknown', error instanceof Error ? error.message : 'Claude usage fetch failed'),
+            extras: [],
+            status: 'unavailable' as const,
+            windows: [],
+          };
+        }
+      }));
+    },
+    fetchActive: async () => {
+      const registry = await effectiveRegistry();
+      const selected = selectedClaudeAccount(registry);
+      return {
+        accountId: selected.id,
+        active: true,
+        ...(await fetchUsage({ configDir: selected.configDir })),
+      };
+    },
+  };
 }
 
 export function selectedClaudeUsageConfigDir(

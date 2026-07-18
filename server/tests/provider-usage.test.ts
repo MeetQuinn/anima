@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ProviderUsageService } from '../provider-usage/provider-usage.service.js';
+import { ProviderUsageService, claudeAccountUsageAdapter } from '../provider-usage/provider-usage.service.js';
 import { providerUsageNetworkErrorMessage } from '../provider-usage/http.js';
 import { fetchClaudeUsage, parseClaudeUsageResponse } from '../provider-usage/providers/claude.js';
 import { fetchCodexUsage, parseCodexUsageResponse } from '../provider-usage/providers/codex.js';
@@ -457,6 +457,61 @@ test('provider usage service lists every account row and singles out the active 
   const row = await service.get('claude-code');
   assert.equal(row.accountId, 'secondary');
   assert.equal(row.status, 'available');
+});
+
+function twoAccountRegistry() {
+  return {
+    claudeCode: {
+      accounts: [
+        { configDir: '/profiles/primary', id: 'primary', label: 'Primary' },
+        { configDir: '/profiles/secondary', id: 'secondary', label: 'Secondary' },
+      ],
+      activeAccountId: 'secondary',
+    },
+  };
+}
+
+test('claude usage fan-out degrades one account without collapsing its siblings', async () => {
+  const adapter = claudeAccountUsageAdapter({
+    discoverAccounts: async () => [],
+    fetchUsage: async (input) => {
+      if (input?.configDir === '/profiles/primary') throw new Error('credential store locked');
+      return { extras: [], status: 'available' as const, windows: [{ label: '5h', remainingPercent: 88 }] };
+    },
+    getProviderAccounts: async () => twoAccountRegistry(),
+    listAgentConfigs: async () => [],
+  });
+  const service = new ProviderUsageService([adapter]);
+
+  const response = await service.list();
+  assert.equal(response.providers.length, 2);
+  const primary = response.providers.find((row) => row.accountId === 'primary');
+  const secondary = response.providers.find((row) => row.accountId === 'secondary');
+  assert.equal(primary?.status, 'unavailable');
+  assert.equal(primary?.error?.type, 'unknown');
+  assert.match(primary?.error?.message ?? '', /credential store locked/);
+  assert.equal(primary?.active, false);
+  assert.equal(secondary?.status, 'available');
+  assert.equal(secondary?.active, true);
+});
+
+test('single-provider claude usage reads only the active account', async () => {
+  const touched: Array<string | undefined> = [];
+  const adapter = claudeAccountUsageAdapter({
+    discoverAccounts: async () => [],
+    fetchUsage: async (input) => {
+      touched.push(input?.configDir);
+      return { extras: [], status: 'available' as const, windows: [{ label: '5h', remainingPercent: 88 }] };
+    },
+    getProviderAccounts: async () => twoAccountRegistry(),
+    listAgentConfigs: async () => [],
+  });
+  const service = new ProviderUsageService([adapter]);
+
+  const row = await service.get('claude-code');
+  assert.equal(row.accountId, 'secondary');
+  assert.equal(row.status, 'available');
+  assert.deepEqual(touched, ['/profiles/secondary']);
 });
 
 // Captured live response from GetGrokCreditsConfig (usedPercent=9), matching Raycast Agent Usage.

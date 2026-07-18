@@ -108,14 +108,14 @@ export const GOVERNED_ROUTES: readonly GovernedRoute[] = [
     method: 'GET',
     pattern: /^\/api\/provider-usage$/,
     evidence:
-      'Reads provider usage, and on an expiring token performs an OAuth refresh and WRITES THE CREDENTIALS BACK — to ~/.claude/.credentials.json or to the machine user\'s Keychain via `security add-generic-password` (server/provider-usage/providers/claude.ts, and the same shape in codex.ts). The response may rotate the refresh token. That credential is outside ANIMA_HOME and is shared by every live agent. A GET with a machine-scoped write is still a machine-scoped write.',
+      'Reads provider usage, and on an expiring token performs an OAuth refresh and WRITES THE CREDENTIALS BACK — for every configured or discovered Claude account, into that account\'s own store: ~/.claude or an isolated ~/.claude-profiles/* credential file, or the machine user\'s Keychain via `security add-generic-password` under the account\'s service-keyed name (server/provider-usage/providers/claude.ts, and the same shape in codex.ts). The response may rotate the refresh token. That credential is outside ANIMA_HOME and is shared by every live agent. A GET with a machine-scoped write is still a machine-scoped write.',
   },
   {
     id: 'GET /api/provider-usage/:provider',
     method: 'GET',
     pattern: /^\/api\/provider-usage\/[^/]+$/,
     evidence:
-      'Same credential refresh-and-write path as GET /api/provider-usage, for a single provider.',
+      'Same credential refresh-and-write path as GET /api/provider-usage, for a single provider — restricted to the account the platform currently runs on.',
   },
   {
     id: 'POST /api/filesystem/mkdir',
