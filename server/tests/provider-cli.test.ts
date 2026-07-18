@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
-import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -122,6 +122,84 @@ test('Codex updates use the npm paired with the active binary and block new laun
         calls.some((call) => call.command === 'npm'),
         false,
       );
+    });
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('managed Claude updates isolate updater writes from account credentials', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-provider-cli-claude-'));
+  const home = join(root, 'home');
+  const binDir = join(root, 'bin');
+  const nativeBinary = join(home, '.local', 'share', 'claude', 'versions', '2.1.211');
+  const claudeCommand = join(binDir, 'claude');
+  const activeProfile = join(home, '.claude-profiles', 'secondary');
+  const activeCredentials = join(activeProfile, '.credentials.json');
+  const updateProfile = join(root, 'runtime', 'provider-cli', 'claude-update-profile');
+  const updateCredentials = join(updateProfile, '.credentials.json');
+  let installedVersion = '2.1.211';
+  let updateCalls = 0;
+  let updateEnv: NodeJS.ProcessEnv | undefined;
+
+  await mkdir(join(home, '.local', 'share', 'claude', 'versions'), { recursive: true });
+  await mkdir(binDir, { recursive: true });
+  await mkdir(activeProfile, { recursive: true });
+  await mkdir(updateProfile, { mode: 0o777, recursive: true });
+  await writeFile(nativeBinary, '#!/bin/sh\nexit 0\n', 'utf8');
+  await chmod(nativeBinary, 0o755);
+  await symlink(nativeBinary, claudeCommand);
+  await writeFile(activeCredentials, 'account credential sentinel', 'utf8');
+
+  const runCommand: ProviderCliCommandRunner = async (_command, args, options) => {
+    if (args[0] === '--version') {
+      return { stderr: '', stdout: `Claude Code ${installedVersion}` };
+    }
+    if (args[0] === 'doctor') {
+      return {
+        stderr: '',
+        stdout: 'Auto-updates: enabled\nAuto-update channel: latest\n',
+      };
+    }
+    if (args[0] === 'update') {
+      updateCalls += 1;
+      updateEnv = options?.env;
+      const configDir = updateEnv?.CLAUDE_CONFIG_DIR ?? join(updateEnv?.HOME ?? home, '.claude');
+      await mkdir(configDir, { recursive: true });
+      await writeFile(join(configDir, '.credentials.json'), 'updater touched only this profile', 'utf8');
+      installedVersion = '2.1.214';
+      return { stderr: '', stdout: 'updated' };
+    }
+    throw new Error(`Unexpected Claude command: ${args.join(' ')}`);
+  };
+
+  try {
+    await withAnimaHome(root, async () => {
+      const service = new ProviderCliService({
+        checkStore: new ProviderCliCheckStore(),
+        env: { CLAUDE_CONFIG_DIR: activeProfile, HOME: home, PATH: binDir },
+        fetch: async () => new Response('2.1.214', { status: 200 }),
+        listAgentConfigs: async () => [],
+        listStatuses: async () => [],
+        operationStore: new ProviderCliOperationStore(),
+        runCommand,
+      });
+
+      const applied = await service.apply('claude-code');
+
+      assert.equal(applied.installedVersion, '2.1.214');
+      assert.equal(updateEnv?.CLAUDE_CONFIG_DIR, updateProfile);
+      assert.equal(updateEnv?.DISABLE_AUTOUPDATER, '1');
+      assert.equal(await readFile(activeCredentials, 'utf8'), 'account credential sentinel');
+      assert.equal(await readFile(updateCredentials, 'utf8'), 'updater touched only this profile');
+      assert.equal((await stat(updateProfile)).mode & 0o777, 0o700);
+
+      await rm(updateProfile, { force: true, recursive: true });
+      await symlink(activeProfile, updateProfile);
+      installedVersion = '2.1.211';
+      await assert.rejects(() => service.apply('claude-code'));
+      assert.equal(updateCalls, 1);
+      assert.equal(await readFile(activeCredentials, 'utf8'), 'account credential sentinel');
     });
   } finally {
     await rm(root, { force: true, recursive: true });
