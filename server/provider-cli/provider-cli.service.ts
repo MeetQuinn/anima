@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { chmod, lstat, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -264,7 +265,7 @@ export class ProviderCliService {
   }
 
   private async inspect(provider: ProviderKind): Promise<ProviderInspection> {
-    return inspectProvider(provider, this.env, this.runCommand);
+    return inspectProvider(provider, providerInspectionEnvironment(provider, this.env), this.runCommand);
   }
 
   private async latestVersion(
@@ -304,8 +305,9 @@ export class ProviderCliService {
     const update = inspection.updateCommand;
     if (!update) throw new Error(`No managed update command for ${inspection.label}`);
     const args = update.args.map((arg) => arg.replace('{targetVersion}', targetVersion));
+    const env = await providerUpdateEnvironment(inspection.provider, this.env);
     await this.runCommand(update.command, args, {
-      env: this.env,
+      env,
       timeout: COMMAND_TIMEOUT_MS,
     });
   }
@@ -324,6 +326,28 @@ export class ProviderCliService {
     await this.operationStore.write(failed);
     return failed;
   }
+}
+
+async function providerUpdateEnvironment(
+  provider: ProviderKind,
+  env: NodeJS.ProcessEnv,
+): Promise<NodeJS.ProcessEnv> {
+  if (provider !== 'claude-code') return env;
+  const configDir = join(resolveAnimaHome(), 'runtime', 'provider-cli', 'claude-update-profile');
+  await mkdir(configDir, { mode: 0o700, recursive: true });
+  const metadata = await lstat(configDir);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new Error(`Claude update profile is not a private directory: ${configDir}`);
+  }
+  await chmod(configDir, 0o700);
+  return {
+    ...providerInspectionEnvironment(provider, env),
+    CLAUDE_CONFIG_DIR: configDir,
+  };
+}
+
+function providerInspectionEnvironment(provider: ProviderKind, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return provider === 'claude-code' ? { ...env, DISABLE_AUTOUPDATER: '1' } : env;
 }
 
 async function grokVersionLookup(
