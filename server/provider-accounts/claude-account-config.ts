@@ -240,7 +240,11 @@ function credentialsPayloadHasOAuth(value: unknown): boolean {
     : undefined;
   if (!oauth || typeof oauth !== 'object') return false;
   const credentials = oauth as { accessToken?: unknown; refreshToken?: unknown };
-  return typeof credentials.accessToken === 'string' || typeof credentials.refreshToken === 'string';
+  return hasCredentialValue(credentials.accessToken) || hasCredentialValue(credentials.refreshToken);
+}
+
+function hasCredentialValue(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
 function parseJsonOrHex(text: string): unknown {
