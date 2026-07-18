@@ -219,6 +219,145 @@ test('managed Claude updates isolate updater writes from account credentials', a
   }
 });
 
+test('managed Claude updates model the Keychain-service clobber outcome (not just a file proxy)', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-provider-cli-claude-keychain-'));
+  const home = join(root, 'home');
+  const binDir = join(root, 'bin');
+  const nativeBinary = join(home, '.local', 'share', 'claude', 'versions', '2.1.211');
+  const claudeCommand = join(binDir, 'claude');
+  const activeProfile = join(home, '.claude-profiles', 'secondary');
+  const updateProfile = join(root, 'runtime', 'provider-cli', 'claude-update-profile');
+
+  // Service keys come from the PRODUCTION derivation, never from paths: the incident destroyed a
+  // logical Keychain SERVICE credential, and keying by path would silently rebuild the file proxy
+  // this test exists to retire (#567).
+  const defaultService = claudeKeychainService(undefined);
+  const activeService = claudeKeychainService(activeProfile);
+  const updateService = claudeKeychainService(updateProfile);
+  // The three logical services must be genuinely distinct, or the outcome assertions are vacuous.
+  assert.equal(new Set([defaultService, activeService, updateService]).size, 3);
+
+  const BLANK = ''; // the incident rewrote OAuth tokens to blank
+  const SEED: Record<string, string> = {
+    [defaultService]: 'default-service-oauth-token',
+    [activeService]: 'active-service-oauth-token',
+    [updateService]: 'updater-service-oauth-token',
+  };
+  const seedStore = (): Map<string, string> => new Map(Object.entries(SEED));
+
+  interface Records {
+    inspectionEnvs: NodeJS.ProcessEnv[];
+    updateEnv?: NodeJS.ProcessEnv;
+    updateCalls: number;
+  }
+  const freshRecords = (): Records => ({ inspectionEnvs: [], updateCalls: 0 });
+
+  // Hermetic disaster model in the SAME logical domain as the incident: a claude invocation that
+  // migrates credentials blanks the OAuth tokens of the Keychain SERVICE selected by its
+  // CLAUDE_CONFIG_DIR (via the production derivation). `claude update` always migrates; `--version`
+  // /`doctor` migrate only when the background auto-updater is NOT disabled. No real `security`
+  // call, no real Keychain, no live `claude update`, no account switch.
+  const handle = (
+    store: Map<string, string>,
+    records: Records,
+    args: readonly string[],
+    env: NodeJS.ProcessEnv,
+  ): { stderr: string; stdout: string } => {
+    const migrateSelectedService = (): void => {
+      store.set(claudeKeychainService(env.CLAUDE_CONFIG_DIR), BLANK);
+    };
+    if (args[0] === '--version' || args[0] === 'doctor') {
+      records.inspectionEnvs.push(env);
+      if (env.DISABLE_AUTOUPDATER !== '1') migrateSelectedService();
+      return args[0] === '--version'
+        ? { stderr: '', stdout: `Claude Code ${records.updateCalls > 0 ? '2.1.214' : '2.1.211'}` }
+        : { stderr: '', stdout: 'Auto-updates: enabled\nAuto-update channel: latest\n' };
+    }
+    if (args[0] === 'update') {
+      records.updateCalls += 1;
+      records.updateEnv = env;
+      migrateSelectedService();
+      return { stderr: '', stdout: 'updated' };
+    }
+    throw new Error(`Unexpected Claude command: ${args.join(' ')}`);
+  };
+
+  await mkdir(join(home, '.local', 'share', 'claude', 'versions'), { recursive: true });
+  await mkdir(binDir, { recursive: true });
+  await mkdir(activeProfile, { recursive: true });
+  await mkdir(updateProfile, { mode: 0o777, recursive: true });
+  await writeFile(nativeBinary, '#!/bin/sh\nexit 0\n', 'utf8');
+  await chmod(nativeBinary, 0o755);
+  await symlink(nativeBinary, claudeCommand);
+
+  try {
+    // GREEN BASELINE — drive the REAL ProviderCliService command/env seam (not a copy of its branching).
+    const store = seedStore();
+    const records = freshRecords();
+    const runCommand: ProviderCliCommandRunner = async (_command, args, options) =>
+      handle(store, records, args, options?.env ?? {});
+
+    let applied: Awaited<ReturnType<ProviderCliService['apply']>> | undefined;
+    await withAnimaHome(root, async () => {
+      const service = new ProviderCliService({
+        checkStore: new ProviderCliCheckStore(),
+        env: { CLAUDE_CONFIG_DIR: activeProfile, HOME: home, PATH: binDir },
+        fetch: async () => new Response('2.1.214', { status: 200 }),
+        listAgentConfigs: async () => [],
+        listStatuses: async () => [],
+        operationStore: new ProviderCliOperationStore(),
+        runCommand,
+      });
+      applied = await service.apply('claude-code');
+    });
+
+    // OUTCOME FIRST — the #567 disaster-domain guard, asserted ahead of the mechanism it rests on so
+    // a regression reddens HERE (in the Keychain-service domain), not only on the env-shape check the
+    // sibling #566 test already owns. Only the throwaway updater service was migrated; the default and
+    // active-account service sentinels read back BYTE-UNCHANGED (present controls, proven red-capable
+    // by the mutations below).
+    assert.equal(store.get(defaultService), SEED[defaultService]);
+    assert.equal(store.get(activeService), SEED[activeService]);
+    assert.equal(store.get(updateService), BLANK);
+
+    // The mechanism the outcome rests on (also covered by the sibling #566 test):
+    assert.equal(applied?.installedVersion, '2.1.214');
+    assert.equal(records.updateEnv?.CLAUDE_CONFIG_DIR, updateProfile);
+    assert.equal(records.updateEnv?.DISABLE_AUTOUPDATER, '1');
+    assert.equal(records.inspectionEnvs.length >= 4, true);
+    assert.equal(records.inspectionEnvs.every((e) => e.CLAUDE_CONFIG_DIR === activeProfile), true);
+    assert.equal(records.inspectionEnvs.every((e) => e.DISABLE_AUTOUPDATER === '1'), true);
+
+    // MUTATION 1 — remove the dedicated updater profile: `claude update` runs on the real active dir.
+    const m1Store = seedStore();
+    assert.equal(m1Store.get(activeService), SEED[activeService]); // green before the mutation
+    handle(m1Store, freshRecords(), ['update'], {
+      CLAUDE_CONFIG_DIR: activeProfile,
+      DISABLE_AUTOUPDATER: '1',
+      HOME: home,
+    });
+    assert.equal(m1Store.get(activeService), BLANK); // RED: a de-isolated update blanks the real service
+    assert.equal(m1Store.get(defaultService), SEED[defaultService]);
+
+    // MUTATION 2 — remove observational inspect wiring: `--version` runs without DISABLE_AUTOUPDATER.
+    const m2Store = seedStore();
+    const m2Records = freshRecords();
+    assert.equal(m2Store.get(activeService), SEED[activeService]); // green before the mutation
+    // Observational control: WITH the flag, inspecting the real profile leaves its service intact...
+    handle(m2Store, m2Records, ['--version'], {
+      CLAUDE_CONFIG_DIR: activeProfile,
+      DISABLE_AUTOUPDATER: '1',
+      HOME: home,
+    });
+    assert.equal(m2Store.get(activeService), SEED[activeService]);
+    // ...WITHOUT the flag, the auto-updater migration blanks the real service.
+    handle(m2Store, m2Records, ['--version'], { CLAUDE_CONFIG_DIR: activeProfile, HOME: home });
+    assert.equal(m2Store.get(activeService), BLANK); // RED for the intended reason
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test('machine gates serialize upgrades and provider launches across Node processes', async () => {
   const upgrade = await holdMachineGate('upgrade');
   try {
