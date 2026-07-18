@@ -838,12 +838,15 @@ test('an agent that left Claude Code no longer blocks an in-progress account swi
 test('a lost restart outcome does not strand a completed account switch', async () => {
   const fixture = await accountServiceFixture({ active: false });
   try {
+    // The agent is on its pre-switch worker when the reload is requested.
+    fixture.setHealth(healthyWorkerHealth('worker-before-switch'));
     await fixture.service.selectClaudeAccount('secondary');
-    // The switch outcome was recorded as failed and later dropped from the
-    // health record when the agent turned healthy — the exact 2026-07-18
-    // incident. The provider child running since after the request is the
-    // proof the agent already runs the target account.
-    fixture.setHealth(healthyChildHealth(new Date().toISOString()));
+    assert.equal(fixture.config().claudeCode?.switch?.restarts[0]?.workerId, 'worker-before-switch');
+
+    // The reload happened, but its outcome was recorded failed and later
+    // dropped from the health record — the exact 2026-07-18 incident. The
+    // replacement worker is the proof the agent runs the target account.
+    fixture.setHealth(healthyWorkerHealth('worker-after-reload'));
 
     const state = await fixture.service.claudeState();
     assert.equal(state.status, 'active');
@@ -854,40 +857,91 @@ test('a lost restart outcome does not strand a completed account switch', async 
   }
 });
 
-test('a healthy agent without a post-switch provider child still waits out the switch', async () => {
+test('a fresh provider child on the same pre-switch worker does not prove the switch landed', async () => {
   const fixture = await accountServiceFixture({ active: false });
   try {
+    fixture.setHealth(healthyWorkerHealth('worker-before-switch'));
     await fixture.service.selectClaudeAccount('secondary');
 
-    fixture.setHealth(healthyChildHealth('2020-01-01T00:00:00.000Z'));
-    const staleChild = await fixture.service.claudeState();
-    assert.equal(staleChild.status, 'switching');
-    assert.deepEqual(staleChild.pendingAgentIds, ['iris']);
+    // Milo's gate control on 6240111b: the controller child respawned inside
+    // the SAME pre-switch worker — it inherits the old account env, so the
+    // switch is still in flight even with a healthy post-switch child.
+    fixture.setHealth(healthyWorkerHealth('worker-before-switch', new Date().toISOString()));
 
-    fixture.setHealth({ state: 'healthy', updatedAt: new Date().toISOString() });
-    const noChild = await fixture.service.claudeState();
-    assert.equal(noChild.status, 'switching');
-    assert.deepEqual(noChild.pendingAgentIds, ['iris']);
+    const state = await fixture.service.claudeState();
+    assert.equal(state.status, 'switching');
+    assert.deepEqual(state.errorAgentIds, []);
+    assert.deepEqual(state.pendingAgentIds, ['iris']);
   } finally {
     await fixture.cleanup();
   }
 });
 
-function healthyChildHealth(startedAt: string): NonNullable<AgentStatusSummary['health']> {
+test('a healthy agent without worker evidence still waits out the switch', async () => {
+  const fixture = await accountServiceFixture({ active: false });
+  try {
+    fixture.setHealth(healthyWorkerHealth('worker-before-switch'));
+    await fixture.service.selectClaudeAccount('secondary');
+
+    // No worker identity in the health record: nothing to reconcile against.
+    fixture.setHealth({ state: 'healthy', updatedAt: new Date().toISOString() });
+    const noWorker = await fixture.service.claudeState();
+    assert.equal(noWorker.status, 'switching');
+    assert.deepEqual(noWorker.pendingAgentIds, ['iris']);
+
+    // An unhealthy replacement worker: convergence claims wait for healthy.
+    fixture.setHealth({ ...healthyWorkerHealth('worker-after-reload'), state: 'unhealthy' });
+    const unhealthy = await fixture.service.claudeState();
+    assert.equal(unhealthy.status, 'switching');
+    assert.deepEqual(unhealthy.pendingAgentIds, ['iris']);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('selecting the active account mid-switch requeues agents whose outcomes never landed', async () => {
+  const fixture = await accountServiceFixture({ active: false });
+  try {
+    await fixture.service.selectClaudeAccount('secondary');
+    assert.equal(fixture.restarted.length, 1);
+
+    // The outcome never landed: the switch reads 'switching', and
+    // re-selecting the same account requeues the reload — the operator exit
+    // from the 2026-07-18 stuck canary state.
+    const retried = await fixture.service.selectClaudeAccount('secondary');
+    assert.equal(retried.status, 'switching');
+    assert.deepEqual(retried.pendingAgentIds, ['iris']);
+    assert.deepEqual(fixture.restarted, ['iris', 'iris']);
+
+    fixture.setRestartOutcome('recovered');
+    const recovered = await fixture.service.claudeState();
+    assert.equal(recovered.status, 'active');
+    assert.deepEqual(recovered.pendingAgentIds, []);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+function healthyWorkerHealth(workerId: string, childStartedAt?: string): NonNullable<AgentStatusSummary['health']> {
   return {
     runtime: {
-      providerChild: {
-        alive: true,
-        command: 'claude',
-        exited: false,
-        label: 'claude-code',
-        startedAt,
-        stdinWritable: true,
-      },
+      ...(childStartedAt
+        ? {
+            providerChild: {
+              alive: true,
+              command: 'claude',
+              exited: false,
+              label: 'claude-code',
+              startedAt: childStartedAt,
+              stdinWritable: true,
+            },
+          }
+        : {}),
       providerChildExpected: true,
+      workerId,
     },
     state: 'healthy',
-    updatedAt: startedAt,
+    updatedAt: new Date().toISOString(),
   };
 }
 

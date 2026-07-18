@@ -116,9 +116,19 @@ export class ProviderAccountService {
     }
 
     const currentSwitchState = accountSwitchState(registry, statuses, agents);
+    // Retry engages for a switch that is not done, whatever flavour of
+    // not-done it is: 'error' retries the failed agents (the panel's Retry
+    // button), and 'switching' requeues the still-pending ones — the exit for
+    // a switch whose outcomes were lost to the ephemeral health record (the
+    // 2026-07-18 canary incident), reachable through the API even though the
+    // panel only surfaces Retry on error. Re-queuing an agent whose reload
+    // command is still pending is harmless: the fresh command simply replaces
+    // it with the same when-idle semantics.
     const retryAgentIds = registry.activeAccountId === target.id && currentSwitchState.status === 'error'
       ? currentSwitchState.errorAgentIds
-      : undefined;
+      : registry.activeAccountId === target.id && currentSwitchState.status === 'switching'
+        ? currentSwitchState.pendingAgentIds
+        : undefined;
     if (providerAccounts.claudeCode && registry.activeAccountId === target.id && !retryAgentIds?.length) {
       return this.claudeState();
     }
@@ -184,12 +194,19 @@ export class ProviderAccountService {
     await this.settings.setProviderAccounts({ ...providerAccounts, claudeCode: nextRegistry });
     if (restartAgentIds.length === 0) return this.claudeState();
 
-    const restarts: Array<{ agentId: string; requestId: string }> = [];
+    const restarts: Array<{ agentId: string; requestId: string; workerId?: string }> = [];
     const failedAgentIds: string[] = [];
+    const workerIdByAgent = new Map(statuses.map((status) => [status.agentId, status.health?.runtime?.workerId]));
     for (const agentId of restartAgentIds) {
       try {
         const restart = await this.runtime.reloadAgentWhenIdle(agentId);
-        restarts.push({ agentId, requestId: restart.requestId });
+        // Record the worker observed at request time: the account env is
+        // captured at worker construction, so a healthy agent later running a
+        // different worker is proof the reload (and with it, the account
+        // switch) actually landed — evidence that survives the health record
+        // dropping the restart outcome itself.
+        const workerId = workerIdByAgent.get(agentId);
+        restarts.push({ agentId, requestId: restart.requestId, ...(workerId ? { workerId } : {}) });
       } catch {
         failedAgentIds.push(agentId);
       }
@@ -244,7 +261,7 @@ function accountSwitchState(
     const health = statusByAgent.get(restart.agentId)?.health;
     const outcome = health?.restart;
     if (!outcome) {
-      if (switchConvergedWithoutOutcome(health, registry.switch.requestedAt)) continue;
+      if (switchConvergedWithoutOutcome(health, restart)) continue;
       pendingAgentIds.push(restart.agentId);
       continue;
     }
@@ -267,19 +284,20 @@ function accountSwitchState(
 
 // The health record's restart outcome is ephemeral — a failed outcome is
 // dropped once the agent turns healthy again — so a missing outcome cannot by
-// itself mean "still waiting". The reload's only purpose is to land the agent
-// on the account persisted before the reload commands were issued; a healthy
-// agent whose provider child started after the request is already there.
+// itself mean "still waiting". What proves convergence is the WORKER: the
+// account env (CLAUDE_CONFIG_DIR) is captured when the agent worker is
+// constructed, so a healthy agent running a different worker than the one
+// recorded when the reload was requested is necessarily on the target
+// account. The provider child's start time proves nothing — a child can
+// respawn inside the same pre-switch worker and inherit the old account env
+// (Milo's gate control on 6240111b).
 function switchConvergedWithoutOutcome(
   health: AgentStatusSummary['health'],
-  requestedAt: string,
+  restart: { workerId?: string },
 ): boolean {
   if (health?.state !== 'healthy') return false;
-  const startedAt = health.runtime?.providerChild?.startedAt;
-  if (!startedAt) return false;
-  const startedAtMs = Date.parse(startedAt);
-  const requestedAtMs = Date.parse(requestedAt);
-  return Number.isFinite(startedAtMs) && Number.isFinite(requestedAtMs) && startedAtMs >= requestedAtMs;
+  const currentWorkerId = health.runtime?.workerId;
+  return Boolean(restart.workerId && currentWorkerId && currentWorkerId !== restart.workerId);
 }
 
 export const defaultProviderAccountService = new ProviderAccountService();

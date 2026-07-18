@@ -13,6 +13,10 @@ export type ClaudeCodeAccountConfig = z.infer<typeof ClaudeCodeAccountConfig>;
 export const ProviderAccountRestartRequest = z.object({
   agentId: z.string().trim().min(1),
   requestId: z.string().trim().min(1),
+  // The agent worker observed when the reload was requested. A reload that
+  // actually happened replaces the worker; comparing against the live one is
+  // how a lost restart outcome can still be reconciled later.
+  workerId: z.string().optional(),
 }).strict();
 export type ProviderAccountRestartRequest = z.infer<typeof ProviderAccountRestartRequest>;
 
