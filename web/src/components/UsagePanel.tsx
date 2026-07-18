@@ -258,7 +258,10 @@ function AccountUsageBlock({
             <button
               type="button"
               onClick={() => onSelectAccount(usage.accountId as string)}
-              className="ml-auto shrink-0 font-sans text-[10px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              // Keep the 10px chrome look, but the click target is a deliberate
+              // account switch: expand the hit area to ~44px via a layout-neutral
+              // pseudo-element (padding here would grow the identity row).
+              className="relative ml-auto shrink-0 font-sans text-[10px] font-medium text-text-muted after:absolute after:-inset-x-2 after:-inset-y-4 after:content-[''] hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             >
               Set active
             </button>
@@ -452,15 +455,19 @@ function ProviderUnit({
           act on the block, not a side effect of looking. ── */}
       <div className="mt-4 pl-[38px]">
         {sortedUsages.length > 0 ? (
-          <div className="space-y-4">
-            {sortedUsages.map((row) => (
-              <AccountUsageBlock
+          <div>
+            {sortedUsages.map((row, i) => (
+              <div
                 key={row.accountId ?? 'single-account'}
-                accountState={accountState}
-                now={now}
-                onSelectAccount={onSelectAccount}
-                usage={row}
-              />
+                className={i > 0 ? 'mt-4 border-t border-border-soft/70 pt-4' : undefined}
+              >
+                <AccountUsageBlock
+                  accountState={accountState}
+                  now={now}
+                  onSelectAccount={onSelectAccount}
+                  usage={row}
+                />
+              </div>
             ))}
           </div>
         ) : (
