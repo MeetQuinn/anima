@@ -265,7 +265,7 @@ export class ProviderCliService {
   }
 
   private async inspect(provider: ProviderKind): Promise<ProviderInspection> {
-    return inspectProvider(provider, this.env, this.runCommand);
+    return inspectProvider(provider, providerInspectionEnvironment(provider, this.env), this.runCommand);
   }
 
   private async latestVersion(
@@ -341,10 +341,13 @@ async function providerUpdateEnvironment(
   }
   await chmod(configDir, 0o700);
   return {
-    ...env,
+    ...providerInspectionEnvironment(provider, env),
     CLAUDE_CONFIG_DIR: configDir,
-    DISABLE_AUTOUPDATER: '1',
   };
+}
+
+function providerInspectionEnvironment(provider: ProviderKind, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return provider === 'claude-code' ? { ...env, DISABLE_AUTOUPDATER: '1' } : env;
 }
 
 async function grokVersionLookup(

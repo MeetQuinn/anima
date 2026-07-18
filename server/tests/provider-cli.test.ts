@@ -15,6 +15,7 @@ import {
   ProviderCliService,
   type ProviderCliCommandRunner,
 } from '../provider-cli/provider-cli.service.js';
+import { claudeKeychainService } from '../provider-accounts/claude-account-config.js';
 import {
   providerCliUpgradeLocked,
   tryAcquireProviderCliUpgradeLease,
@@ -138,6 +139,7 @@ test('managed Claude updates isolate updater writes from account credentials', a
   const activeCredentials = join(activeProfile, '.credentials.json');
   const updateProfile = join(root, 'runtime', 'provider-cli', 'claude-update-profile');
   const updateCredentials = join(updateProfile, '.credentials.json');
+  const inspectionEnvs: NodeJS.ProcessEnv[] = [];
   let installedVersion = '2.1.211';
   let updateCalls = 0;
   let updateEnv: NodeJS.ProcessEnv | undefined;
@@ -152,14 +154,20 @@ test('managed Claude updates isolate updater writes from account credentials', a
   await writeFile(activeCredentials, 'account credential sentinel', 'utf8');
 
   const runCommand: ProviderCliCommandRunner = async (_command, args, options) => {
-    if (args[0] === '--version') {
-      return { stderr: '', stdout: `Claude Code ${installedVersion}` };
-    }
-    if (args[0] === 'doctor') {
-      return {
-        stderr: '',
-        stdout: 'Auto-updates: enabled\nAuto-update channel: latest\n',
-      };
+    if (args[0] === '--version' || args[0] === 'doctor') {
+      const inspectionEnv = options?.env ?? {};
+      inspectionEnvs.push(inspectionEnv);
+      if (inspectionEnv.DISABLE_AUTOUPDATER !== '1') {
+        const configDir = inspectionEnv.CLAUDE_CONFIG_DIR ?? join(inspectionEnv.HOME ?? home, '.claude');
+        await mkdir(configDir, { recursive: true });
+        await writeFile(join(configDir, '.credentials.json'), 'inspection touched this profile', 'utf8');
+      }
+      return args[0] === '--version'
+        ? { stderr: '', stdout: `Claude Code ${installedVersion}` }
+        : {
+            stderr: '',
+            stdout: 'Auto-updates: enabled\nAuto-update channel: latest\n',
+          };
     }
     if (args[0] === 'update') {
       updateCalls += 1;
@@ -190,6 +198,11 @@ test('managed Claude updates isolate updater writes from account credentials', a
       assert.equal(applied.installedVersion, '2.1.214');
       assert.equal(updateEnv?.CLAUDE_CONFIG_DIR, updateProfile);
       assert.equal(updateEnv?.DISABLE_AUTOUPDATER, '1');
+      assert.notEqual(claudeKeychainService(updateProfile), claudeKeychainService(undefined));
+      assert.notEqual(claudeKeychainService(updateProfile), claudeKeychainService(activeProfile));
+      assert.equal(inspectionEnvs.length >= 4, true);
+      assert.equal(inspectionEnvs.every((env) => env.CLAUDE_CONFIG_DIR === activeProfile), true);
+      assert.equal(inspectionEnvs.every((env) => env.DISABLE_AUTOUPDATER === '1'), true);
       assert.equal(await readFile(activeCredentials, 'utf8'), 'account credential sentinel');
       assert.equal(await readFile(updateCredentials, 'utf8'), 'updater touched only this profile');
       assert.equal((await stat(updateProfile)).mode & 0o777, 0o700);
