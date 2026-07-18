@@ -206,18 +206,115 @@ function WindowMeter({ w, now }: { w: ProviderUsageWindow; now: Date }) {
   );
 }
 
+// One account block: whose quota this is, how much is left, and — for Claude,
+// where more than one account exists — the deliberate act of making it active.
+// Rows without accountId come from single-account providers: same rhythm, no
+// switch affordance. Faults stay per account: an expired token dims its own
+// block instead of hiding the provider behind one shared error line.
+function AccountUsageBlock({
+  accountState,
+  now,
+  onSelectAccount,
+  usage,
+}: {
+  accountState?: ClaudeCodeAccountState;
+  now: Date;
+  onSelectAccount: (accountId: string) => void;
+  usage: ProviderUsageRow;
+}) {
+  const isAvailable = usage.status === 'available';
+  const errorMessage = providerUsageErrorMessage(usage);
+  const { plan, rest } = splitExtras(usage.extras);
+  const summary = accountState?.accounts.find((account) => account.id === usage.accountId);
+  const name = usage.account ?? summary?.account ?? summary?.label ?? usage.accountId;
+  const canSetActive = Boolean(
+    accountState
+    && usage.accountId
+    && accountState.accounts.length > 1
+    && accountState.activeAccountId !== usage.accountId
+    && summary?.status === 'available'
+    && accountState.status !== 'switching',
+  );
+  return (
+    <div>
+      {(name ?? usage.active ?? plan ?? canSetActive) && (
+        <div className="flex items-center gap-2">
+          {name && (
+            <span className="min-w-0 truncate font-mono text-[10px] text-text-subtle" title={name}>
+              {name}
+            </span>
+          )}
+          {usage.active && (
+            <span className="shrink-0 rounded-full border border-accent/40 px-1.5 py-px font-sans text-[9px] font-medium uppercase tracking-wider text-accent">
+              Active
+            </span>
+          )}
+          {plan && (
+            <span className="shrink-0 rounded-full border border-border-soft px-1.5 py-px font-sans text-[9px] font-medium uppercase tracking-wider text-text-subtle">
+              {plan}
+            </span>
+          )}
+          {canSetActive && usage.accountId && (
+            <button
+              type="button"
+              onClick={() => onSelectAccount(usage.accountId as string)}
+              className="ml-auto shrink-0 font-sans text-[10px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            >
+              Set active
+            </button>
+          )}
+        </div>
+      )}
+      {isAvailable ? (
+        <div className="mt-2 space-y-3">
+          {usage.windows.map((w, i) => (
+            <WindowMeter key={i} w={w} now={now} />
+          ))}
+          {rest.length > 0 && (
+            <div className="flex flex-wrap gap-x-4 gap-y-0.5">
+              {rest.map((e, i) => (
+                <div key={i} className="flex items-baseline gap-1.5">
+                  <span className="font-sans text-[10px] text-text-subtle">{e.label}</span>
+                  <span className="font-mono text-[11px] tabular-nums text-text-muted">{extraValue(e)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="mt-2 space-y-0.5 opacity-60">
+          <span className="font-sans text-[12px] text-text-muted">
+            {usage.error?.type === 'not_configured'
+              ? 'Not configured'
+              : usage.error?.type === 'unauthorized'
+                ? 'Auth expired'
+                : usage.error?.type === 'network_error'
+                  ? 'Unreachable'
+                  : 'Unavailable'}
+          </span>
+          {/* Prose, not an identifier: mono is reserved for IDs/paths/timestamps
+              (index.css:8). A wrapped sentence in mono reads as debug output. */}
+          {errorMessage && <p className="font-sans text-[11px] leading-relaxed text-text-subtle">{errorMessage}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Refreshing is a panel-level act, not a per-row one: the header's "Refresh
 // providers" re-reads every provider at once, and a second per-row copy of the
 // same verb bought nothing but a lone icon marooned at the right edge of every
-// identity row. Dropped deliberately (totoday, 07-15) so the row can be pure
-// identity: icon + name + plan, account beneath.
+// identity row. The row itself stays pure identity: icon + name. Accounts and
+// their plans live in the blocks below — usage is per account now, not per
+// active account, and switching is a deliberate button there, not a select
+// here (totoday, 2026-07-18).
 function ProviderUnit({
   globallyLocked = false,
   management,
   now,
   onApply,
   onCopyCommand,
-  usage,
+  usages,
   accountState,
   onRetryAccount,
   onSelectAccount,
@@ -227,14 +324,12 @@ function ProviderUnit({
   now: Date;
   onApply: () => void;
   onCopyCommand: () => void;
-  usage?: ProviderUsageRow;
+  usages: ProviderUsageRow[];
   accountState?: ClaudeCodeAccountState;
   onRetryAccount: () => void;
   onSelectAccount: (accountId: string) => void;
 }) {
-  const isAvailable = usage?.status === 'available';
-  const errorMessage = usage ? providerUsageErrorMessage(usage) : null;
-  const { plan, rest } = splitExtras(usage?.extras ?? []);
+  const sortedUsages = [...usages].sort((a, b) => Number(b.active ?? false) - Number(a.active ?? false));
   const operation = management.operation.provider === management.provider ? management.operation : undefined;
   const runningAgents = management.agents.filter((agent) => agent.runningVersion);
   const canApply = management.updateAvailable && management.updateMode === 'managed';
@@ -266,31 +361,7 @@ function ProviderUnit({
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
             <span className="truncate font-serif text-[15px] font-semibold text-text">{management.label}</span>
-            {plan && (
-              <span className="shrink-0 rounded-full border border-border-soft px-1.5 py-px font-sans text-[9px] font-medium uppercase tracking-wider text-text-subtle">
-                {plan}
-              </span>
-            )}
           </div>
-          {accountState && accountState.accounts.length > 1 ? (
-            <select
-              aria-label="Claude account"
-              className="mt-0.5 max-w-full bg-transparent font-mono text-[10px] text-text-subtle focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50"
-              disabled={accountSwitching}
-              onChange={(event) => onSelectAccount(event.target.value)}
-              value={accountState.activeAccountId}
-            >
-              {accountState.accounts.map((account) => (
-                <option key={account.id} value={account.id} disabled={account.status !== 'available'}>
-                  {account.account ?? account.label}{account.status === 'available' ? '' : ' (Not signed in)'}
-                </option>
-              ))}
-            </select>
-          ) : usage?.account ? (
-            <div className="truncate font-mono text-[10px] text-text-subtle" title={usage.account}>
-              {usage.account}
-            </div>
-          ) : null}
         </div>
         {/* Exceptions only. A working provider's version number is a fact nobody
             acts on — "am I current?" is already answered by the Update line — so
@@ -377,39 +448,27 @@ function ProviderUnit({
         </div>
       )}
 
-      {/* ── Usage meters: the reason this panel exists. ── */}
-      {isAvailable && usage ? (
-        <div className="mt-4 space-y-3 pl-[38px]">
-          {usage.windows.map((w, i) => (
-            <WindowMeter key={i} w={w} now={now} />
-          ))}
-          {rest.length > 0 && (
-            <div className="flex flex-wrap gap-x-4 gap-y-0.5">
-              {rest.map((e, i) => (
-                <div key={i} className="flex items-baseline gap-1.5">
-                  <span className="font-sans text-[10px] text-text-subtle">{e.label}</span>
-                  <span className="font-mono text-[11px] tabular-nums text-text-muted">{extraValue(e)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="mt-4 space-y-0.5 pl-[38px] opacity-60">
-          <span className="font-sans text-[12px] text-text-muted">
-            {!usage || usage.error?.type === 'not_configured'
-              ? 'Not configured'
-              : usage.error?.type === 'unauthorized'
-                ? 'Auth expired'
-                : usage.error?.type === 'network_error'
-                  ? 'Unreachable'
-                  : 'Unavailable'}
-          </span>
-          {/* Prose, not an identifier: mono is reserved for IDs/paths/timestamps
-              (index.css:8). A wrapped sentence in mono reads as debug output. */}
-          {errorMessage && <p className="font-sans text-[11px] leading-relaxed text-text-subtle">{errorMessage}</p>}
-        </div>
-      )}
+      {/* ── Account blocks: usage is per account; switching stays a deliberate
+          act on the block, not a side effect of looking. ── */}
+      <div className="mt-4 pl-[38px]">
+        {sortedUsages.length > 0 ? (
+          <div className="space-y-4">
+            {sortedUsages.map((row) => (
+              <AccountUsageBlock
+                key={row.accountId ?? 'single-account'}
+                accountState={accountState}
+                now={now}
+                onSelectAccount={onSelectAccount}
+                usage={row}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-0.5 opacity-60">
+            <span className="font-sans text-[12px] text-text-muted">Not configured</span>
+          </div>
+        )}
+      </div>
 
       {/* ── Details: install diagnostics, demoted out of the default view. ── */}
       <details className="group mt-3 pl-[38px]">
@@ -584,7 +643,12 @@ export default function UsagePanel({ onClose }: Props) {
     });
   }
 
-  const usageByProvider = new Map(usageData?.providers.map((row) => [row.provider, row]) ?? []);
+  const usageByProvider = new Map<ProviderUsageKind, ProviderUsageRow[]>();
+  for (const row of usageData?.providers ?? []) {
+    const rows = usageByProvider.get(row.provider) ?? [];
+    rows.push(row);
+    usageByProvider.set(row.provider, rows);
+  }
   const claudeAccountState = accountData?.providers.find((row) => row.provider === 'claude-code');
   const visible = cliData?.providers ?? [];
   const checkedAt = [usageCheckedAt, ...visible.map((row) => row.checkedAt)]
@@ -658,7 +722,7 @@ export default function UsagePanel({ onClose }: Props) {
                         onCopyCommand={() => {
                           if (row.manualCommand) void navigator.clipboard.writeText(row.manualCommand);
                         }}
-                        usage={usageByProvider.get(row.provider)}
+                        usages={usageByProvider.get(row.provider) ?? []}
                         accountState={row.provider === 'claude-code' ? claudeAccountState : undefined}
                         onRetryAccount={() => {
                           if (row.provider === 'claude-code' && claudeAccountState) {

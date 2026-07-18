@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ProviderUsageRow } from '@shared/provider-usage';
 import UsagePanel from './UsagePanel';
 
 const api = vi.hoisted(() => ({
@@ -36,6 +37,34 @@ const accountState = vi.hoisted(() => ({
   },
 }));
 
+const usageRows = vi.hoisted(() => ({
+  value: [
+    {
+      account: 'primary@example.com',
+      accountId: 'primary',
+      checkedAt: '2026-07-17T17:00:00.000Z',
+      extras: [],
+      label: 'Claude Code',
+      provider: 'claude-code',
+      source: 'private-api',
+      status: 'available',
+      windows: [{ label: '5h', remainingPercent: 64 }],
+    },
+    {
+      account: 'secondary@example.com',
+      accountId: 'secondary',
+      active: true,
+      checkedAt: '2026-07-17T17:00:00.000Z',
+      extras: [],
+      label: 'Claude Code',
+      provider: 'claude-code',
+      source: 'private-api',
+      status: 'available',
+      windows: [{ label: '5h', remainingPercent: 88 }],
+    },
+  ] as ProviderUsageRow[],
+}));
+
 vi.mock('@/api/system', () => ({
   applyProviderCliUpdate: vi.fn(),
   checkProviderClis: vi.fn(),
@@ -60,25 +89,23 @@ vi.mock('@/api/system', () => ({
     upgradeLocked: false,
   })),
   fetchProviderUsage: vi.fn(async () => ({
-    providers: [
-      {
-        account: 'secondary@example.com',
-        checkedAt: '2026-07-17T17:00:00.000Z',
-        extras: [],
-        label: 'Claude Code',
-        provider: 'claude-code' as const,
-        source: 'private-api' as const,
-        status: 'available' as const,
-        windows: [],
-      },
-    ],
+    providers: usageRows.value,
   })),
   fetchProviderUsageProvider: vi.fn(),
   selectClaudeAccount: api.selectClaudeAccount,
 }));
 
+function renderPanel() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <UsagePanel onClose={() => {}} />
+    </QueryClientProvider>,
+  );
+}
+
 describe('UsagePanel Claude account selection', () => {
-  it('uses the platform account state and confirms a global session-preserving switch', async () => {
+  it('shows every account with its own meters and confirms a global session-preserving switch', async () => {
     accountState.value.status = 'active';
     accountState.value.errorAgentIds = [];
     api.selectClaudeAccount.mockResolvedValueOnce({
@@ -89,17 +116,17 @@ describe('UsagePanel Claude account selection', () => {
       provider: 'claude-code',
       status: 'active',
     });
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(
-      <QueryClientProvider client={client}>
-        <UsagePanel onClose={() => {}} />
-      </QueryClientProvider>,
-    );
+    renderPanel();
 
-    const accountSelect = await screen.findByRole('combobox', { name: 'Claude account' });
-    expect((accountSelect as HTMLSelectElement).value).toBe('secondary');
+    // Both accounts render with their own numbers; the active one is badged.
+    expect(await screen.findByText('secondary@example.com')).toBeTruthy();
+    expect(screen.getByText('primary@example.com')).toBeTruthy();
+    expect(screen.getByText('Active')).toBeTruthy();
+    expect(screen.getByText('88%')).toBeTruthy();
+    expect(screen.getByText('64%')).toBeTruthy();
 
-    fireEvent.change(accountSelect, { target: { value: 'primary' } });
+    // Switching is a deliberate button on the non-active account's block.
+    fireEvent.click(screen.getByRole('button', { name: 'Set active' }));
     expect(await screen.findByText('Switch to primary@example.com?')).toBeTruthy();
     expect(screen.getByText(/Current Claude turns continue uninterrupted/)).toBeTruthy();
     expect(screen.getByText(/sessions, MCP servers, and shared state stay in place/)).toBeTruthy();
@@ -117,12 +144,7 @@ describe('UsagePanel Claude account selection', () => {
       pendingAgentIds: ['iris'],
       status: 'switching',
     });
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(
-      <QueryClientProvider client={client}>
-        <UsagePanel onClose={() => {}} />
-      </QueryClientProvider>,
-    );
+    renderPanel();
 
     expect(await screen.findByText('Account switch failed: iris')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -131,5 +153,30 @@ describe('UsagePanel Claude account selection', () => {
     fireEvent.click(retryButtons[retryButtons.length - 1]!);
 
     await waitFor(() => expect(api.selectClaudeAccount).toHaveBeenCalledWith('secondary'));
+  });
+
+  it('dims an expired account without hiding the healthy one', async () => {
+    accountState.value.status = 'active';
+    accountState.value.errorAgentIds = [];
+    usageRows.value = [
+      {
+        account: 'primary@example.com',
+        accountId: 'primary',
+        checkedAt: '2026-07-17T17:00:00.000Z',
+        error: { message: 'Provider usage request was rejected (401)', type: 'unauthorized' },
+        extras: [],
+        label: 'Claude Code',
+        provider: 'claude-code',
+        source: 'private-api',
+        status: 'unavailable',
+        windows: [],
+      },
+      usageRows.value[1]!,
+    ];
+    renderPanel();
+
+    expect(await screen.findByText('Auth expired')).toBeTruthy();
+    expect(screen.getByText('secondary@example.com')).toBeTruthy();
+    expect(screen.getByText('88%')).toBeTruthy();
   });
 });
