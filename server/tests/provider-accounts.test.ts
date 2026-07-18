@@ -712,6 +712,19 @@ test('unauthenticated Claude accounts cannot become the platform account', async
   }
 });
 
+test('refresh-only Claude OAuth credentials remain configured', async () => {
+  const fixture = await accountServiceFixture({
+    active: false,
+    secondaryCredentials: { accessToken: '', refreshToken: 'valid-refresh-token' },
+  });
+  try {
+    const state = await fixture.service.claudeState();
+    assert.equal(state.accounts.find((account) => account.id === 'secondary')?.status, 'available');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('blank Claude OAuth tokens are not configured and cannot become the platform account', async () => {
   const fixture = await accountServiceFixture({
     active: false,
