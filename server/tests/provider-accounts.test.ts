@@ -712,6 +712,41 @@ test('unauthenticated Claude accounts cannot become the platform account', async
   }
 });
 
+test('refresh-only Claude OAuth credentials remain configured', async () => {
+  const fixture = await accountServiceFixture({
+    active: false,
+    secondaryCredentials: { accessToken: '', refreshToken: 'valid-refresh-token' },
+  });
+  try {
+    const state = await fixture.service.claudeState();
+    assert.equal(state.accounts.find((account) => account.id === 'secondary')?.status, 'available');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('blank Claude OAuth tokens are not configured and cannot become the platform account', async () => {
+  const fixture = await accountServiceFixture({
+    active: false,
+    secondaryCredentials: { accessToken: '', refreshToken: '   ' },
+  });
+  try {
+    const state = await fixture.service.claudeState();
+    assert.equal(state.accounts.find((account) => account.id === 'secondary')?.status, 'not_configured');
+
+    await assert.rejects(
+      () => fixture.service.selectClaudeAccount('secondary'),
+      (error) => error instanceof ProviderAccountError
+        && error.statusCode === 409
+        && /is not authenticated/.test(error.message),
+    );
+    assert.equal(fixture.writeCount(), 0);
+    assert.deepEqual(fixture.restarted, []);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('a failed runtime reload is visible and retrying the selected account only requeues failed agents', async () => {
   const fixture = await accountServiceFixture({ active: false, reloadFailures: 1 });
   try {
@@ -792,6 +827,7 @@ async function accountServiceFixture(input: {
   reloadStarted?: () => void;
   reloadFailures?: number;
   secondaryAuthenticated?: boolean;
+  secondaryCredentials?: { accessToken?: string; refreshToken?: string };
 }) {
   const root = await mkdtemp(join(tmpdir(), 'anima-provider-account-service-'));
   const primaryDir = join(root, 'primary');
@@ -804,7 +840,10 @@ async function accountServiceFixture(input: {
   }
   await writeFile(join(primaryDir, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'primary-token' } }));
   if (input.secondaryAuthenticated !== false) {
-    await writeFile(join(secondaryDir, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'secondary-token' } }));
+    await writeFile(
+      join(secondaryDir, '.credentials.json'),
+      JSON.stringify({ claudeAiOauth: input.secondaryCredentials ?? { accessToken: 'secondary-token' } }),
+    );
   }
 
   let config: ProviderAccountsConfig = input.configured === false ? {} : {
