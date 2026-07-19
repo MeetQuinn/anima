@@ -835,92 +835,34 @@ test('an agent that left Claude Code no longer blocks an in-progress account swi
   }
 });
 
-test('a lost restart outcome does not strand a completed account switch', async () => {
+test('worker or child changes without a recorded outcome never converge a switch', async () => {
   const fixture = await accountServiceFixture({ active: false });
   try {
-    // The agent is on its pre-switch worker when the reload is requested.
-    fixture.setHealth(healthyWorkerHealth('worker-before-switch'));
-    await fixture.service.selectClaudeAccount('secondary');
-    assert.equal(fixture.config().claudeCode?.switch?.restarts[0]?.workerId, 'worker-before-switch');
-
-    // The reload happened, but its outcome was recorded failed and later
-    // dropped from the health record — the exact 2026-07-18 incident. The
-    // replacement worker is the proof the agent runs the target account.
-    fixture.setHealth(healthyWorkerHealth('worker-after-reload'));
-
-    const state = await fixture.service.claudeState();
-    assert.equal(state.status, 'active');
-    assert.deepEqual(state.errorAgentIds, []);
-    assert.deepEqual(state.pendingAgentIds, []);
-  } finally {
-    await fixture.cleanup();
-  }
-});
-
-test('a fresh provider child on the same pre-switch worker does not prove the switch landed', async () => {
-  const fixture = await accountServiceFixture({ active: false });
-  try {
-    fixture.setHealth(healthyWorkerHealth('worker-before-switch'));
+    fixture.setHealth(healthyWorkerHealth('worker-a'));
     await fixture.service.selectClaudeAccount('secondary');
 
-    // Milo's gate control on 6240111b: the controller child respawned inside
-    // the SAME pre-switch worker — it inherits the old account env, so the
-    // switch is still in flight even with a healthy post-switch child.
-    fixture.setHealth(healthyWorkerHealth('worker-before-switch', new Date().toISOString()));
+    // A different healthy worker with a fresh child but no recorded outcome:
+    // it can still carry the old account — worker construction races the
+    // registry write, and health publication races worker creation (Milo's
+    // re-gates on a573ffd4/bc6a87b5). Nothing short of an outcome or an
+    // operator requeue may mark the agent done.
+    fixture.setHealth(healthyWorkerHealth('worker-b', new Date().toISOString()));
+    const replaced = await fixture.service.claudeState();
+    assert.equal(replaced.status, 'switching');
+    assert.deepEqual(replaced.errorAgentIds, []);
+    assert.deepEqual(replaced.pendingAgentIds, ['iris']);
 
-    const state = await fixture.service.claudeState();
-    assert.equal(state.status, 'switching');
-    assert.deepEqual(state.errorAgentIds, []);
-    assert.deepEqual(state.pendingAgentIds, ['iris']);
-  } finally {
-    await fixture.cleanup();
-  }
-});
+    // Same worker with a respawned child: equally not proof.
+    fixture.setHealth(healthyWorkerHealth('worker-a', new Date().toISOString()));
+    const respawned = await fixture.service.claudeState();
+    assert.equal(respawned.status, 'switching');
+    assert.deepEqual(respawned.pendingAgentIds, ['iris']);
 
-test('a healthy agent without worker evidence still waits out the switch', async () => {
-  const fixture = await accountServiceFixture({ active: false });
-  try {
-    fixture.setHealth(healthyWorkerHealth('worker-before-switch'));
-    await fixture.service.selectClaudeAccount('secondary');
-
-    // No worker identity in the health record: nothing to reconcile against.
-    fixture.setHealth({ state: 'healthy', updatedAt: new Date().toISOString() });
-    const noWorker = await fixture.service.claudeState();
-    assert.equal(noWorker.status, 'switching');
-    assert.deepEqual(noWorker.pendingAgentIds, ['iris']);
-
-    // An unhealthy replacement worker: convergence claims wait for healthy.
-    fixture.setHealth({ ...healthyWorkerHealth('worker-after-reload'), state: 'unhealthy' });
+    // An unhealthy agent with no outcome also keeps waiting.
+    fixture.setHealth({ ...healthyWorkerHealth('worker-b'), state: 'unhealthy' });
     const unhealthy = await fixture.service.claudeState();
     assert.equal(unhealthy.status, 'switching');
     assert.deepEqual(unhealthy.pendingAgentIds, ['iris']);
-  } finally {
-    await fixture.cleanup();
-  }
-});
-
-test('a pre-persist worker replacement does not count as the switch landing', async () => {
-  const fixture = await accountServiceFixture({
-    active: false,
-    onSwitchPersist: () => {
-      // Milo's re-gate race on a573ffd4: an unrelated reconcile swaps
-      // old-account worker A for old-account worker B between the entry
-      // status read and the registry persist. The baseline must be read
-      // after the write, so B becomes the recorded baseline — and since the
-      // current worker still IS B, nothing may read as converged. (The
-      // closure runs during select, after `fixture` is assigned.)
-      fixture.setHealth(healthyWorkerHealth('worker-b-unrelated', new Date().toISOString()));
-    },
-  });
-  try {
-    fixture.setHealth(healthyWorkerHealth('worker-a-old'));
-    await fixture.service.selectClaudeAccount('secondary');
-    assert.equal(fixture.config().claudeCode?.switch?.restarts[0]?.workerId, 'worker-b-unrelated');
-
-    const state = await fixture.service.claudeState();
-    assert.equal(state.status, 'switching');
-    assert.deepEqual(state.errorAgentIds, []);
-    assert.deepEqual(state.pendingAgentIds, ['iris']);
   } finally {
     await fixture.cleanup();
   }
@@ -995,7 +937,6 @@ async function accountServiceFixture(input: {
   secondaryAuthenticated?: boolean;
   secondaryCredentials?: { accessToken?: string; refreshToken?: string };
   agentIds?: string[];
-  onSwitchPersist?: () => void;
 }) {
   const root = await mkdtemp(join(tmpdir(), 'anima-provider-account-service-'));
   const primaryDir = join(root, 'primary');
@@ -1041,10 +982,6 @@ async function accountServiceFixture(input: {
     {
       async getProviderAccounts() { return config; },
       async setProviderAccounts(next) {
-        // Hook for timing-control tests: fires when a switch record is being
-        // persisted, i.e. between the entry status read and the post-write
-        // baseline read.
-        if (next.claudeCode?.switch) input.onSwitchPersist?.();
         config = next;
         writes += 1;
         return next;

@@ -194,30 +194,12 @@ export class ProviderAccountService {
     await this.settings.setProviderAccounts({ ...providerAccounts, claudeCode: nextRegistry });
     if (restartAgentIds.length === 0) return this.claudeState();
 
-    // The worker baseline must be read AFTER the target registry lands, not
-    // from the statuses snapshot taken at entry: a worker replacement after
-    // the write necessarily loads the target account, so a later healthy
-    // worker different from this baseline proves the reload (or an equivalent
-    // post-write restart) landed on it. A pre-write baseline admits Milo's
-    // re-gate race on a573ffd4 — an unrelated restart between the entry read
-    // and this persist swaps old-account worker A for old-account worker B,
-    // and B != A would read as converged while B still serves the old
-    // account. A pre-read replacement can at worst produce a conservative
-    // false pending, never a false active.
-    const postWriteStatuses = await this.runtime.listStatuses();
-    const workerIdByAgent = new Map(postWriteStatuses.map((status) => [status.agentId, status.health?.runtime?.workerId]));
-    const restarts: Array<{ agentId: string; requestId: string; workerId?: string }> = [];
+    const restarts: Array<{ agentId: string; requestId: string }> = [];
     const failedAgentIds: string[] = [];
     for (const agentId of restartAgentIds) {
       try {
         const restart = await this.runtime.reloadAgentWhenIdle(agentId);
-        // Record the worker observed just after the account write: the
-        // account env is captured at worker construction, so a healthy agent
-        // later running a different worker is proof the reload (and with it,
-        // the account switch) actually landed — evidence that survives the
-        // health record dropping the restart outcome itself.
-        const workerId = workerIdByAgent.get(agentId);
-        restarts.push({ agentId, requestId: restart.requestId, ...(workerId ? { workerId } : {}) });
+        restarts.push({ agentId, requestId: restart.requestId });
       } catch {
         failedAgentIds.push(agentId);
       }
@@ -272,7 +254,11 @@ function accountSwitchState(
     const health = statusByAgent.get(restart.agentId)?.health;
     const outcome = health?.restart;
     if (!outcome) {
-      if (switchConvergedWithoutOutcome(health, restart)) continue;
+      // A missing outcome is never proof of convergence: the health record's
+      // restart outcome is ephemeral (a failed one drops once the agent turns
+      // healthy), and worker/child identity comparisons race with the
+      // runtime's health publication (Milo's re-gates on a573ffd4/bc6a87b5).
+      // The agent waits until an outcome lands or an operator requeues it.
       pendingAgentIds.push(restart.agentId);
       continue;
     }
@@ -291,24 +277,6 @@ function accountSwitchState(
     pendingAgentIds: pendingAgentIds.sort(),
     status: errorAgentIds.length > 0 ? 'error' : pendingAgentIds.length > 0 ? 'switching' : 'active',
   };
-}
-
-// The health record's restart outcome is ephemeral — a failed outcome is
-// dropped once the agent turns healthy again — so a missing outcome cannot by
-// itself mean "still waiting". What proves convergence is the WORKER: the
-// account env (CLAUDE_CONFIG_DIR) is captured when the agent worker is
-// constructed, so a healthy agent running a different worker than the one
-// recorded when the reload was requested is necessarily on the target
-// account. The provider child's start time proves nothing — a child can
-// respawn inside the same pre-switch worker and inherit the old account env
-// (Milo's gate control on 6240111b).
-function switchConvergedWithoutOutcome(
-  health: AgentStatusSummary['health'],
-  restart: { workerId?: string },
-): boolean {
-  if (health?.state !== 'healthy') return false;
-  const currentWorkerId = health.runtime?.workerId;
-  return Boolean(restart.workerId && currentWorkerId && currentWorkerId !== restart.workerId);
 }
 
 export const defaultProviderAccountService = new ProviderAccountService();
