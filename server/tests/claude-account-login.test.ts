@@ -15,7 +15,7 @@ import type { RunningChildProcess } from '../providers/child-process.js';
 
 test('managed Claude login isolates a new account, exposes only a trusted URL, and accepts a one-time code', async () => {
   const profilesRoot = await mkdtemp(join(tmpdir(), 'anima-claude-login-'));
-  const process = fakeChild();
+  const loginProcess = fakeChild();
   let startInput: Parameters<NonNullable<ClaudeAccountLoginServiceOptions['startChild']>>[0] | undefined;
   let configured = false;
   try {
@@ -28,7 +28,7 @@ test('managed Claude login isolates a new account, exposes only a trusted URL, a
       readAccountName: async () => 'new@example.com',
       startChild: (input) => {
         startInput = input;
-        return process.child;
+        return loginProcess.child;
       },
     });
 
@@ -40,9 +40,32 @@ test('managed Claude login isolates a new account, exposes only a trusted URL, a
     assert.equal(startInput?.env.CLAUDE_CONFIG_DIR, join(profilesRoot, 'account-2'));
     assert.equal(startInput?.env.DISABLE_AUTOUPDATER, '1');
     assert.equal(startInput?.env.ANIMA_AGENT_ID, undefined);
+    assert.equal(startInput?.env.ANTHROPIC_API_KEY, undefined);
+    assert.equal(startInput?.env.ANTHROPIC_AUTH_TOKEN, undefined);
+    assert.equal(startInput?.env.AWS_SECRET_ACCESS_KEY, undefined);
+    assert.equal(startInput?.env.DYLD_INSERT_LIBRARIES, undefined);
     assert.equal(startInput?.env.FEISHU_APP_SECRET, undefined);
+    assert.equal(startInput?.env.GOOGLE_APPLICATION_CREDENTIALS, undefined);
+    assert.equal(startInput?.env.LD_PRELOAD, undefined);
+    assert.equal(startInput?.env.NODE_OPTIONS, undefined);
+    assert.equal(startInput?.env.OPENAI_API_KEY, undefined);
     assert.equal(startInput?.env.SLACK_BOT_TOKEN, undefined);
+    assert.equal(startInput?.env.UNRELATED_SERVICE_SECRET, undefined);
+    assert.equal(startInput?.env.HOME, '/home/test');
     assert.equal(startInput?.env.HTTPS_PROXY, 'https://proxy.example');
+    assert.equal(startInput?.env.NO_PROXY, '127.0.0.1,localhost');
+    assert.equal(startInput?.env.SSL_CERT_FILE, '/etc/test-ca.pem');
+    assert.equal(startInput?.env.PATH, process.env.PATH);
+    assert.deepEqual(Object.keys(startInput?.env ?? {}).sort(), [
+      'CLAUDE_CONFIG_DIR',
+      'DISABLE_AUTOUPDATER',
+      'HOME',
+      'HTTPS_PROXY',
+      'NO_COLOR',
+      'NO_PROXY',
+      'PATH',
+      'SSL_CERT_FILE',
+    ]);
     assert.equal((await stat(join(profilesRoot, 'account-2'))).mode & 0o777, 0o700);
     assert.equal(await readFile(join(profilesRoot, 'account-2', '.anima-login-profile'), 'utf8'), '');
 
@@ -55,11 +78,11 @@ test('managed Claude login isolates a new account, exposes only a trusted URL, a
 
     const verifying = service.submitCode(started.id, '  one-time-secret  ');
     assert.equal(verifying.status, 'verifying');
-    assert.deepEqual(process.stdin, ['one-time-secret\n']);
+    assert.deepEqual(loginProcess.stdin, ['one-time-secret\n']);
     assert.equal(JSON.stringify(verifying).includes('one-time-secret'), false);
 
     configured = true;
-    process.resolve();
+    loginProcess.resolve();
     const completed = await waitForStatus(service, started.id, 'succeeded');
     assert.equal(completed.accountId, 'account-finished');
     assert.equal(completed.account, 'new@example.com');
@@ -211,11 +234,22 @@ function loginService(options: {
     discoverAccounts: options.discoverAccounts ?? (async () => []),
     env: {
       ANIMA_AGENT_ID: 'milo',
+      ANTHROPIC_API_KEY: 'anthropic-api-key-that-must-not-reach-claude',
+      ANTHROPIC_AUTH_TOKEN: 'anthropic-token-that-must-not-reach-claude',
+      AWS_SECRET_ACCESS_KEY: 'aws-secret-that-must-not-reach-claude',
+      DYLD_INSERT_LIBRARIES: '/private/evil.dylib',
       FEISHU_APP_SECRET: 'feishu-secret-that-must-not-reach-claude',
+      GOOGLE_APPLICATION_CREDENTIALS: '/private/google-credentials.json',
       HOME: '/home/test',
       HTTPS_PROXY: 'https://proxy.example',
+      LD_PRELOAD: '/private/evil.so',
+      NODE_OPTIONS: '--require /private/evil.cjs',
+      NO_PROXY: '127.0.0.1,localhost',
+      OPENAI_API_KEY: 'openai-key-that-must-not-reach-claude',
       PATH: process.env.PATH,
       SLACK_BOT_TOKEN: 'slack-secret-that-must-not-reach-claude',
+      SSL_CERT_FILE: '/etc/test-ca.pem',
+      UNRELATED_SERVICE_SECRET: 'generic-secret-that-must-not-reach-claude',
     },
     now: () => new Date('2026-07-19T13:00:00.000Z'),
     profilesRoot: options.profilesRoot,

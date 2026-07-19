@@ -13,7 +13,6 @@ import type {
 } from '../../shared/provider-accounts.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { startChildProcess, terminateChildProcess, type RunningChildProcess } from '../providers/child-process.js';
-import { cleanServiceEnv } from '../services/env.js';
 import { defaultServerSettingsService } from '../settings/settings.service.js';
 import {
   CLAUDE_CONFIG_DIR_KEY,
@@ -28,6 +27,37 @@ const LOGIN_TIMEOUT_MS = 10 * 60 * 1_000;
 const TERMINAL_OPERATION_RETENTION_MS = 10 * 60 * 1_000;
 const MAX_OUTPUT_BYTES = 64 * 1_024;
 const LOGIN_PROFILE_MARKER = '.anima-login-profile';
+const LOGIN_ENV_KEYS = [
+  'ALL_PROXY',
+  'APPDATA',
+  'ComSpec',
+  'HOME',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'LOCALAPPDATA',
+  'LOGNAME',
+  'NODE_EXTRA_CA_CERTS',
+  'NO_PROXY',
+  'PATH',
+  'PATHEXT',
+  'SHELL',
+  'SSL_CERT_DIR',
+  'SSL_CERT_FILE',
+  'SystemRoot',
+  'TEMP',
+  'TMP',
+  'TMPDIR',
+  'USER',
+  'USERNAME',
+  'USERPROFILE',
+  'all_proxy',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+] as const;
 
 type StartChild = typeof startChildProcess;
 
@@ -126,7 +156,7 @@ export class ClaudeAccountLoginService {
       this.activeOperationId = operation.id;
 
       const env: NodeJS.ProcessEnv = {
-        ...cleanServiceEnv(this.env),
+        ...loginEnvironment(this.env),
         DISABLE_AUTOUPDATER: '1',
         NO_COLOR: '1',
       };
@@ -357,6 +387,14 @@ function publicOperation(operation: LoginOperationRecord): ClaudeAccountLoginOpe
 
 function terminalStatus(status: ClaudeAccountLoginOperation['status']): boolean {
   return status === 'succeeded' || status === 'failed' || status === 'cancelled';
+}
+
+function loginEnvironment(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of LOGIN_ENV_KEYS) {
+    if (base[key] !== undefined) env[key] = base[key];
+  }
+  return env;
 }
 
 function trustedLoginUrl(output: string): string | undefined {
