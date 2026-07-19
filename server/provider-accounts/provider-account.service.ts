@@ -84,7 +84,7 @@ export class ProviderAccountService {
         status: await claudeAccountIsConfigured(account) ? 'available' as const : 'not_configured' as const,
       };
     }));
-    const switchState = accountSwitchState(registry, statuses);
+    const switchState = accountSwitchState(registry, statuses, agents);
     return {
       accounts,
       activeAccountId: selected.id,
@@ -115,10 +115,20 @@ export class ProviderAccountService {
       throw new ProviderAccountError(409, `Claude account ${target.label} is not authenticated`);
     }
 
-    const currentSwitchState = accountSwitchState(registry, statuses);
+    const currentSwitchState = accountSwitchState(registry, statuses, agents);
+    // Retry engages for a switch that is not done, whatever flavour of
+    // not-done it is: 'error' retries the failed agents (the panel's Retry
+    // button), and 'switching' requeues the still-pending ones — the exit for
+    // a switch whose outcomes were lost to the ephemeral health record (the
+    // 2026-07-18 canary incident), reachable through the API even though the
+    // panel only surfaces Retry on error. Re-queuing an agent whose reload
+    // command is still pending is harmless: the fresh command simply replaces
+    // it with the same when-idle semantics.
     const retryAgentIds = registry.activeAccountId === target.id && currentSwitchState.status === 'error'
       ? currentSwitchState.errorAgentIds
-      : undefined;
+      : registry.activeAccountId === target.id && currentSwitchState.status === 'switching'
+        ? currentSwitchState.pendingAgentIds
+        : undefined;
     if (providerAccounts.claudeCode && registry.activeAccountId === target.id && !retryAgentIds?.length) {
       return this.claudeState();
     }
@@ -219,15 +229,21 @@ function affectedClaudeAgent(agent: AgentConfig): boolean {
 function accountSwitchState(
   registry: ClaudeCodeAccountRegistry,
   statuses: AgentStatusSummary[],
+  agents: AgentConfig[],
 ): Pick<ClaudeCodeAccountState, 'errorAgentIds' | 'pendingAgentIds' | 'status'> {
   if (!registry.switch || registry.switch.accountId !== registry.activeAccountId) {
     return { errorAgentIds: [], pendingAgentIds: [], status: 'active' };
   }
+  // The switch was requested against the agents affected then. An agent that
+  // has since left Claude Code (or been disabled) can never produce the
+  // outcome the switch is waiting for, so it drops out of the reckoning
+  // instead of blocking it forever.
+  const affectedIds = new Set(agents.filter(affectedClaudeAgent).map((agent) => agent.id));
   const statusByAgent = new Map(statuses.map((status) => [status.agentId, status]));
-  const errorAgentIds = [...(registry.switch.failedAgentIds ?? [])];
+  const errorAgentIds = [...(registry.switch.failedAgentIds ?? [])].filter((agentId) => affectedIds.has(agentId));
   const pendingAgentIds: string[] = [];
   const restartByAgent = new Map(registry.switch.restarts.map((restart) => [restart.agentId, restart]));
-  const agentIds = registry.switch.agentIds ?? [...restartByAgent.keys()];
+  const agentIds = (registry.switch.agentIds ?? [...restartByAgent.keys()]).filter((agentId) => affectedIds.has(agentId));
   for (const agentId of agentIds) {
     if (errorAgentIds.includes(agentId)) continue;
     const restart = restartByAgent.get(agentId);
@@ -235,8 +251,14 @@ function accountSwitchState(
       errorAgentIds.push(agentId);
       continue;
     }
-    const outcome = statusByAgent.get(restart.agentId)?.health?.restart;
+    const health = statusByAgent.get(restart.agentId)?.health;
+    const outcome = health?.restart;
     if (!outcome) {
+      // A missing outcome is never proof of convergence: the health record's
+      // restart outcome is ephemeral (a failed one drops once the agent turns
+      // healthy), and worker/child identity comparisons race with the
+      // runtime's health publication (Milo's re-gates on a573ffd4/bc6a87b5).
+      // The agent waits until an outcome lands or an operator requeues it.
       pendingAgentIds.push(restart.agentId);
       continue;
     }
