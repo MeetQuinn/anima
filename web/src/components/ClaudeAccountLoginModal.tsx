@@ -30,12 +30,14 @@ export default function ClaudeAccountLoginModal({ account, onClose, onSucceeded 
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [pollError, setPollError] = useState<string>();
   const operationId = operation?.id;
   const operationStatus = operation?.status;
 
   const begin = useCallback(async (): Promise<void> => {
     setBusy(true);
     setError(undefined);
+    setPollError(undefined);
     setOperation(undefined);
     setCode('');
     reportedSuccess.current = false;
@@ -54,6 +56,7 @@ export default function ClaudeAccountLoginModal({ account, onClose, onSucceeded 
       closing.current = true;
       setBusy(true);
       setError(undefined);
+      setPollError(undefined);
       try {
         await cancelClaudeAccountLogin(operation.id);
       } catch {
@@ -85,10 +88,11 @@ export default function ClaudeAccountLoginModal({ account, onClose, onSucceeded 
         next = await fetchClaudeAccountLogin(operationId);
         if (disposed) return;
         setOperation(next);
-        setError(undefined);
+        setPollError(undefined);
+        if (terminal(next.status)) setError(undefined);
       } catch {
         if (disposed) return;
-        setError('Could not refresh sign-in status. Retrying…');
+        setPollError('Could not refresh sign-in status. Retrying…');
       }
       if (!disposed && (!next || !terminal(next.status))) {
         timer = window.setTimeout(() => void poll(), 750);
@@ -120,6 +124,7 @@ export default function ClaudeAccountLoginModal({ account, onClose, onSucceeded 
     if (!operation || !code.trim() || busy) return;
     setBusy(true);
     setError(undefined);
+    setPollError(undefined);
     try {
       setOperation(await submitClaudeAccountLoginCode(operation.id, code));
       setCode('');
@@ -218,10 +223,10 @@ export default function ClaudeAccountLoginModal({ account, onClose, onSucceeded 
           </div>
         )}
 
-        {(operation?.status === 'failed' || error) && (
+        {(operation?.status === 'failed' || error || pollError) && (
           <div className="mt-4 space-y-3">
             <p className="font-sans text-[11px] leading-relaxed text-health-error" role="alert">
-              {operation?.error ?? error ?? 'Claude sign-in failed.'}
+              {operation?.error ?? error ?? pollError ?? 'Claude sign-in failed.'}
             </p>
             {(operation?.status === 'failed' || !operation) && (
               <Button type="button" variant="outline" size="sm" onClick={() => void begin()} disabled={busy}>

@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import ClaudeAccountLoginModal from './ClaudeAccountLoginModal';
 
@@ -16,6 +16,10 @@ const createdAt = '2026-07-19T13:00:00.000Z';
 const id = '00000000-0000-4000-8000-000000000001';
 
 describe('ClaudeAccountLoginModal', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
   it('keeps polling after a transient read error and reports success once', async () => {
     const onSucceeded = vi.fn();
     api.startClaudeAccountLogin.mockResolvedValueOnce({ createdAt, id, status: 'starting', updatedAt: createdAt });
@@ -35,6 +39,7 @@ describe('ClaudeAccountLoginModal', () => {
     expect(document.activeElement).toBe(await screen.findByRole('dialog', { name: 'Add Claude account' }));
     expect(await screen.findByText('Could not refresh sign-in status. Retrying…')).toBeTruthy();
     expect(await screen.findByText('Signed in as new@example.com', {}, { timeout: 2_500 })).toBeTruthy();
+    expect(screen.queryByText('Could not refresh sign-in status. Retrying…')).toBeNull();
     expect(onSucceeded).toHaveBeenCalledTimes(1);
     expect(api.fetchClaudeAccountLogin).toHaveBeenCalledTimes(2);
   });
@@ -65,18 +70,37 @@ describe('ClaudeAccountLoginModal', () => {
 
   it('keeps the modal open when cancellation cannot reach the managed login process', async () => {
     const onClose = vi.fn();
-    api.startClaudeAccountLogin.mockResolvedValueOnce({
+    const operation = {
       createdAt,
       id,
       status: 'starting',
       updatedAt: createdAt,
-    });
+    } as const;
+    api.startClaudeAccountLogin.mockResolvedValueOnce(operation);
+    api.fetchClaudeAccountLogin
+      .mockResolvedValueOnce(operation)
+      .mockResolvedValueOnce({
+        ...operation,
+        status: 'cancelled',
+        updatedAt: '2026-07-19T13:00:02.000Z',
+      });
     api.cancelClaudeAccountLogin.mockRejectedValueOnce(new Error('temporary disconnect'));
 
     render(<ClaudeAccountLoginModal onClose={onClose} onSucceeded={() => {}} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
 
     expect(await screen.findByText('Could not cancel sign-in. Try again.')).toBeTruthy();
+    await waitFor(() => expect(api.fetchClaudeAccountLogin).toHaveBeenCalledWith(id), {
+      timeout: 2_000,
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    });
+    expect(screen.getByText('Could not cancel sign-in. Try again.')).toBeTruthy();
+    await waitFor(
+      () => expect(screen.queryByText('Could not cancel sign-in. Try again.')).toBeNull(),
+      { timeout: 2_000 },
+    );
     expect(screen.getByRole('dialog', { name: 'Add Claude account' })).toBeTruthy();
     expect(onClose).not.toHaveBeenCalled();
   });
