@@ -483,7 +483,8 @@ export class RuntimeHost {
 
   private async agentAfterSlackDisplayInfoSync(agent: AgentConfig): Promise<AgentConfig> {
     try {
-      return await this.syncSlackDisplayInfo(agent);
+      const synced = await this.syncSlackDisplayInfo(agent);
+      return preserveClaudeAccountSelection(agent, synced);
     } catch (error) {
       this.logger.error(`Agent ${agent.id}: Slack display-info sync failed before runtime start: ${errorMessage(error)}`);
       return agent;
@@ -747,6 +748,23 @@ export class RuntimeHost {
       forceAfterMs: this.forceRestartTimeoutMs,
     };
   }
+}
+
+function preserveClaudeAccountSelection(runtimeAgent: AgentConfig, persistedAgent: AgentConfig): AgentConfig {
+  if (runtimeAgent.provider.kind !== 'claude-code' || persistedAgent.provider.kind !== 'claude-code') {
+    return persistedAgent;
+  }
+  const env = { ...(persistedAgent.provider.env ?? {}) };
+  delete env.CLAUDE_CONFIG_DIR;
+  const selectedConfigDir = runtimeAgent.provider.env?.CLAUDE_CONFIG_DIR;
+  if (selectedConfigDir) env.CLAUDE_CONFIG_DIR = selectedConfigDir;
+  return {
+    ...persistedAgent,
+    provider: {
+      ...persistedAgent.provider,
+      ...(Object.keys(env).length > 0 ? { env } : { env: undefined }),
+    },
+  };
 }
 
 export async function loadRuntimeAgents(opts: RuntimeHostOptions = {}): Promise<AgentConfig[]> {
