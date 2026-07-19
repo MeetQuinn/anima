@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ProviderUsageService } from '../provider-usage/provider-usage.service.js';
+import { ProviderUsageService, claudeAccountUsageAdapter } from '../provider-usage/provider-usage.service.js';
 import { providerUsageNetworkErrorMessage } from '../provider-usage/http.js';
 import { fetchClaudeUsage, parseClaudeUsageResponse } from '../provider-usage/providers/claude.js';
 import { fetchCodexUsage, parseCodexUsageResponse } from '../provider-usage/providers/codex.js';
@@ -380,7 +380,7 @@ test('provider usage network errors are classified without raw fetch wording', (
 test('provider usage service isolates adapter failures per provider', async () => {
   const service = new ProviderUsageService([
     {
-      fetch: async () => ({ extras: [], status: 'available', windows: [{ label: '5h', remainingPercent: 92 }] }),
+      fetch: async () => [{ extras: [], status: 'available', windows: [{ label: '5h', remainingPercent: 92 }] }],
       label: 'Good',
       provider: 'codex-cli',
       source: 'private-api',
@@ -409,7 +409,7 @@ test('provider usage service can refresh a single provider without calling the o
     {
       fetch: async () => {
         codexCalls += 1;
-        return { extras: [], status: 'available', windows: [{ label: '5h', remainingPercent: 92 }] };
+        return [{ extras: [], status: 'available', windows: [{ label: '5h', remainingPercent: 92 }] }];
       },
       label: 'Codex',
       provider: 'codex-cli',
@@ -418,7 +418,7 @@ test('provider usage service can refresh a single provider without calling the o
     {
       fetch: async () => {
         claudeCalls += 1;
-        return { extras: [], status: 'available', windows: [{ label: '5h', remainingPercent: 88 }] };
+        return [{ extras: [], status: 'available', windows: [{ label: '5h', remainingPercent: 88 }] }];
       },
       label: 'Claude',
       provider: 'claude-code',
@@ -432,6 +432,86 @@ test('provider usage service can refresh a single provider without calling the o
   assert.equal(row.status, 'available');
   assert.equal(codexCalls, 1);
   assert.equal(claudeCalls, 0);
+});
+
+test('provider usage service lists every account row and singles out the active one', async () => {
+  const service = new ProviderUsageService([
+    {
+      fetch: async () => [
+        { accountId: 'primary', extras: [], status: 'available', windows: [{ label: '5h', remainingPercent: 64 }] },
+        { accountId: 'secondary', active: true, extras: [], status: 'available', windows: [{ label: '5h', remainingPercent: 88 }] },
+      ],
+      label: 'Claude Code',
+      provider: 'claude-code',
+      source: 'private-api',
+    },
+  ]);
+
+  const response = await service.list();
+  assert.equal(response.providers.length, 2);
+  assert.deepEqual(
+    response.providers.map((row) => [row.accountId, row.active ?? false]),
+    [['primary', false], ['secondary', true]],
+  );
+
+  const row = await service.get('claude-code');
+  assert.equal(row.accountId, 'secondary');
+  assert.equal(row.status, 'available');
+});
+
+function twoAccountRegistry() {
+  return {
+    claudeCode: {
+      accounts: [
+        { configDir: '/profiles/primary', id: 'primary', label: 'Primary' },
+        { configDir: '/profiles/secondary', id: 'secondary', label: 'Secondary' },
+      ],
+      activeAccountId: 'secondary',
+    },
+  };
+}
+
+test('claude usage fan-out degrades one account without collapsing its siblings', async () => {
+  const adapter = claudeAccountUsageAdapter({
+    discoverAccounts: async () => [],
+    fetchUsage: async (input) => {
+      if (input?.configDir === '/profiles/primary') throw new Error('credential store locked');
+      return { extras: [], status: 'available' as const, windows: [{ label: '5h', remainingPercent: 88 }] };
+    },
+    getProviderAccounts: async () => twoAccountRegistry(),
+    listAgentConfigs: async () => [],
+  });
+  const service = new ProviderUsageService([adapter]);
+
+  const response = await service.list();
+  assert.equal(response.providers.length, 2);
+  const primary = response.providers.find((row) => row.accountId === 'primary');
+  const secondary = response.providers.find((row) => row.accountId === 'secondary');
+  assert.equal(primary?.status, 'unavailable');
+  assert.equal(primary?.error?.type, 'unknown');
+  assert.match(primary?.error?.message ?? '', /credential store locked/);
+  assert.equal(primary?.active, false);
+  assert.equal(secondary?.status, 'available');
+  assert.equal(secondary?.active, true);
+});
+
+test('single-provider claude usage reads only the active account', async () => {
+  const touched: Array<string | undefined> = [];
+  const adapter = claudeAccountUsageAdapter({
+    discoverAccounts: async () => [],
+    fetchUsage: async (input) => {
+      touched.push(input?.configDir);
+      return { extras: [], status: 'available' as const, windows: [{ label: '5h', remainingPercent: 88 }] };
+    },
+    getProviderAccounts: async () => twoAccountRegistry(),
+    listAgentConfigs: async () => [],
+  });
+  const service = new ProviderUsageService([adapter]);
+
+  const row = await service.get('claude-code');
+  assert.equal(row.accountId, 'secondary');
+  assert.equal(row.status, 'available');
+  assert.deepEqual(touched, ['/profiles/secondary']);
 });
 
 // Captured live response from GetGrokCreditsConfig (usedPercent=9), matching Raycast Agent Usage.
