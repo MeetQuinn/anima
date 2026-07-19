@@ -2,6 +2,8 @@ import { apiRequest, jsonInit } from './client';
 import type { ProviderAvailability } from '@shared/provider-catalog';
 import type { ProviderUsageKind, ProviderUsageResponse, ProviderUsageRow } from '@shared/provider-usage';
 import type {
+  ClaudeAccountLoginOperation,
+  ClaudeAccountLoginStartRequest,
   ClaudeCodeAccountState,
   ProviderAccountsResponse,
 } from '@shared/provider-accounts';
@@ -66,6 +68,36 @@ export async function selectClaudeAccount(accountId: string): Promise<ClaudeCode
   return apiRequest(
     '/api/provider-accounts/claude-code/select',
     jsonInit('POST', { accountId }),
+  );
+}
+
+export async function startClaudeAccountLogin(
+  input: ClaudeAccountLoginStartRequest = {},
+): Promise<ClaudeAccountLoginOperation> {
+  return apiRequest(
+    '/api/provider-accounts/claude-code/login',
+    jsonInit('POST', input),
+  );
+}
+
+export async function fetchClaudeAccountLogin(operationId: string): Promise<ClaudeAccountLoginOperation> {
+  return apiRequest(`/api/provider-accounts/claude-code/login/${encodeURIComponent(operationId)}`);
+}
+
+export async function submitClaudeAccountLoginCode(
+  operationId: string,
+  code: string,
+): Promise<ClaudeAccountLoginOperation> {
+  return apiRequest(
+    `/api/provider-accounts/claude-code/login/${encodeURIComponent(operationId)}/code`,
+    jsonInit('POST', { code }),
+  );
+}
+
+export async function cancelClaudeAccountLogin(operationId: string): Promise<ClaudeAccountLoginOperation> {
+  return apiRequest(
+    `/api/provider-accounts/claude-code/login/${encodeURIComponent(operationId)}/cancel`,
+    jsonInit('POST'),
   );
 }
 

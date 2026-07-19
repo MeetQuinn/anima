@@ -183,11 +183,18 @@ export function redactAgentConfig(agent: AgentConfig): AgentConfig {
   };
 }
 
-// Keep the env keys visible so the UI can show what's set, but blank their values.
+// Keep operator-owned env keys visible so the UI can show what's set, but blank
+// their values. Anima-managed keys are runtime implementation details, not
+// per-agent configuration, including the platform-global Claude account selector.
 function redactProviderEnv(provider: AgentConfig['provider']): AgentConfig['provider'] {
   if (!provider.env) return provider;
-  const env = Object.fromEntries(Object.keys(provider.env).sort().map((key) => [key, '']));
-  return { ...provider, env };
+  const env = Object.fromEntries(
+    Object.keys(provider.env)
+      .filter((key) => !isAnimaManagedProviderEnvKey(key))
+      .sort()
+      .map((key) => [key, '']),
+  );
+  return { ...provider, ...(Object.keys(env).length > 0 ? { env } : { env: undefined }) };
 }
 
 // ---------------------------------------------------------------------------

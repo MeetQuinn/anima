@@ -34,6 +34,7 @@ const groups = {
     'channel-match.test.js',
     'chat-target-options.test.js',
     'chat-target-resolver.test.js',
+    'claude-account-login.test.js',
     'config.test.js',
     'default-skills.test.js',
     'docs-retired-terms.test.js',
