@@ -324,6 +324,7 @@ test('runtime host starts after Slack connection and reloads idle agents after c
 
 test('runtime host refreshes Slack display info before starting an agent', async () => {
   const scout = runtimeHostAgent('scout', { connected: true });
+  scout.provider.env = { CLAUDE_CONFIG_DIR: '/profiles/secondary' };
   const started: string[] = [];
   const synced: string[] = [];
   const stopped: string[] = [];
@@ -332,13 +333,21 @@ test('runtime host refreshes Slack display info before starting an agent', async
     loadAgents: async () => [scout],
     logger: silentLogger,
     startAgent: async (agent) => {
-      started.push(`${agent.id}:${agent.slack.botHandle ?? ''}:${agent.slack.botUserId ?? ''}`);
+      started.push([
+        agent.id,
+        agent.slack.botHandle ?? '',
+        agent.slack.botUserId ?? '',
+        agent.provider.env?.CLAUDE_CONFIG_DIR ?? 'primary',
+      ].join(':'));
       return stopHandle(agent.id, stopped);
     },
     syncSlackDisplayInfo: async (agent) => {
       synced.push(agent.id);
       return {
         ...agent,
+        // The real sync persists display fields, then returns the raw per-agent
+        // config. Global account selection is runtime-only and is absent there.
+        provider: { ...agent.provider, env: undefined },
         slack: {
           ...agent.slack,
           avatarUrl: 'https://example.test/fresh-bot.png',
@@ -356,7 +365,7 @@ test('runtime host refreshes Slack display info before starting an agent', async
   await host.reconcileOnce();
 
   assert.deepEqual(synced, ['scout']);
-  assert.deepEqual(started, ['scout:fresh-scout:U-FRESH-SCOUT']);
+  assert.deepEqual(started, ['scout:fresh-scout:U-FRESH-SCOUT:/profiles/secondary']);
   await host.stop();
   assert.deepEqual(stopped, ['scout']);
 });
@@ -387,6 +396,34 @@ test('runtime host does not block startup when Slack display-info refresh fails'
 
   assert.deepEqual(started, ['scout']);
   assert.equal(errors.some((message) => message.includes('Slack display-info sync failed before runtime start')), true);
+  await host.stop();
+});
+
+test('runtime host does not restore a stale per-agent Claude account after Slack display sync', async () => {
+  const scout = runtimeHostAgent('scout', { connected: true });
+  const startedConfigDirs: string[] = [];
+  const host = new RuntimeHost({}, {
+    animaHome: testHome,
+    loadAgents: async () => [scout],
+    logger: silentLogger,
+    startAgent: async (agent) => {
+      startedConfigDirs.push(agent.provider.env?.CLAUDE_CONFIG_DIR ?? 'primary');
+      return stopHandle(agent.id, []);
+    },
+    syncSlackDisplayInfo: async (agent) => ({
+      ...agent,
+      provider: {
+        ...agent.provider,
+        env: { CLAUDE_CONFIG_DIR: '/profiles/stale-secondary' },
+      },
+    }),
+    validateAgent: async () => {},
+  });
+
+  await host.reconcileOnce();
+  await host.reconcileOnce();
+
+  assert.deepEqual(startedConfigDirs, ['primary']);
   await host.stop();
 });
 
