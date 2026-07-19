@@ -194,17 +194,28 @@ export class ProviderAccountService {
     await this.settings.setProviderAccounts({ ...providerAccounts, claudeCode: nextRegistry });
     if (restartAgentIds.length === 0) return this.claudeState();
 
+    // The worker baseline must be read AFTER the target registry lands, not
+    // from the statuses snapshot taken at entry: a worker replacement after
+    // the write necessarily loads the target account, so a later healthy
+    // worker different from this baseline proves the reload (or an equivalent
+    // post-write restart) landed on it. A pre-write baseline admits Milo's
+    // re-gate race on a573ffd4 — an unrelated restart between the entry read
+    // and this persist swaps old-account worker A for old-account worker B,
+    // and B != A would read as converged while B still serves the old
+    // account. A pre-read replacement can at worst produce a conservative
+    // false pending, never a false active.
+    const postWriteStatuses = await this.runtime.listStatuses();
+    const workerIdByAgent = new Map(postWriteStatuses.map((status) => [status.agentId, status.health?.runtime?.workerId]));
     const restarts: Array<{ agentId: string; requestId: string; workerId?: string }> = [];
     const failedAgentIds: string[] = [];
-    const workerIdByAgent = new Map(statuses.map((status) => [status.agentId, status.health?.runtime?.workerId]));
     for (const agentId of restartAgentIds) {
       try {
         const restart = await this.runtime.reloadAgentWhenIdle(agentId);
-        // Record the worker observed at request time: the account env is
-        // captured at worker construction, so a healthy agent later running a
-        // different worker is proof the reload (and with it, the account
-        // switch) actually landed — evidence that survives the health record
-        // dropping the restart outcome itself.
+        // Record the worker observed just after the account write: the
+        // account env is captured at worker construction, so a healthy agent
+        // later running a different worker is proof the reload (and with it,
+        // the account switch) actually landed — evidence that survives the
+        // health record dropping the restart outcome itself.
         const workerId = workerIdByAgent.get(agentId);
         restarts.push({ agentId, requestId: restart.requestId, ...(workerId ? { workerId } : {}) });
       } catch {

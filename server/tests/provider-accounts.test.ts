@@ -899,6 +899,33 @@ test('a healthy agent without worker evidence still waits out the switch', async
   }
 });
 
+test('a pre-persist worker replacement does not count as the switch landing', async () => {
+  const fixture = await accountServiceFixture({
+    active: false,
+    onSwitchPersist: () => {
+      // Milo's re-gate race on a573ffd4: an unrelated reconcile swaps
+      // old-account worker A for old-account worker B between the entry
+      // status read and the registry persist. The baseline must be read
+      // after the write, so B becomes the recorded baseline — and since the
+      // current worker still IS B, nothing may read as converged. (The
+      // closure runs during select, after `fixture` is assigned.)
+      fixture.setHealth(healthyWorkerHealth('worker-b-unrelated', new Date().toISOString()));
+    },
+  });
+  try {
+    fixture.setHealth(healthyWorkerHealth('worker-a-old'));
+    await fixture.service.selectClaudeAccount('secondary');
+    assert.equal(fixture.config().claudeCode?.switch?.restarts[0]?.workerId, 'worker-b-unrelated');
+
+    const state = await fixture.service.claudeState();
+    assert.equal(state.status, 'switching');
+    assert.deepEqual(state.errorAgentIds, []);
+    assert.deepEqual(state.pendingAgentIds, ['iris']);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('selecting the active account mid-switch requeues agents whose outcomes never landed', async () => {
   const fixture = await accountServiceFixture({ active: false });
   try {
@@ -968,6 +995,7 @@ async function accountServiceFixture(input: {
   secondaryAuthenticated?: boolean;
   secondaryCredentials?: { accessToken?: string; refreshToken?: string };
   agentIds?: string[];
+  onSwitchPersist?: () => void;
 }) {
   const root = await mkdtemp(join(tmpdir(), 'anima-provider-account-service-'));
   const primaryDir = join(root, 'primary');
@@ -1013,6 +1041,10 @@ async function accountServiceFixture(input: {
     {
       async getProviderAccounts() { return config; },
       async setProviderAccounts(next) {
+        // Hook for timing-control tests: fires when a switch record is being
+        // persisted, i.e. between the entry status read and the post-write
+        // baseline read.
+        if (next.claudeCode?.switch) input.onSwitchPersist?.();
         config = next;
         writes += 1;
         return next;
@@ -1024,7 +1056,12 @@ async function accountServiceFixture(input: {
       },
     },
     {
-      async listStatuses() { return statuses; },
+      async listStatuses() {
+        // Production computes fresh status objects per call; a shared array
+        // would leak mid-flight mutations into the entry snapshot and hide
+        // the pre-persist race the timing control exists to expose.
+        return structuredClone(statuses);
+      },
       async reloadAgentWhenIdle(agentId) {
         restarted.push(agentId);
         restartAttempts += 1;
