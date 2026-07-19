@@ -312,6 +312,10 @@ test('#524 the governed table matches on method and path, and ignores the query 
   assert.ok(governedRouteFor('HEAD', '/api/provider-usage'), 'HEAD must normalize to GET');
   assert.ok(governedRouteFor('POST', '/api/provider-cli-status/claude-code/apply'));
   assert.ok(governedRouteFor('POST', '/api/provider-accounts/claude-code/select'));
+  assert.ok(governedRouteFor('POST', '/api/provider-accounts/claude-code/login'));
+  assert.ok(governedRouteFor('POST', '/api/provider-accounts/claude-code/login/op-1/code'));
+  assert.ok(governedRouteFor('POST', '/api/provider-accounts/claude-code/login/op-1/cancel'));
+  assert.equal(governedRouteFor('GET', '/api/provider-accounts/claude-code/login/op-1'), undefined);
 
   // Host-path writers, proven in Milo's inventory and re-derived from the property.
   assert.ok(governedRouteFor('POST', '/api/filesystem/mkdir'));

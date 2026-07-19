@@ -1,7 +1,7 @@
-import { Fragment, useEffect } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
-import { ArrowUp, ChevronDown, Copy, RefreshCw, X } from 'lucide-react';
+import { ArrowUp, ChevronDown, Copy, LogIn, RefreshCw, UserPlus, X } from 'lucide-react';
 import {
   applyProviderCliUpdate,
   checkProviderClis,
@@ -20,7 +20,8 @@ import type {
   ProviderUsageWindow,
   ProviderUsageExtra,
 } from '@shared/provider-usage';
-import type { ClaudeCodeAccountState } from '@shared/provider-accounts';
+import type { ClaudeCodeAccountState, ProviderAccountSummary } from '@shared/provider-accounts';
+import ClaudeAccountLoginModal from './ClaudeAccountLoginModal';
 
 interface Props {
   onClose: () => void;
@@ -214,11 +215,13 @@ function WindowMeter({ w, now }: { w: ProviderUsageWindow; now: Date }) {
 function AccountUsageBlock({
   accountState,
   now,
+  onLoginAccount,
   onSelectAccount,
   usage,
 }: {
   accountState?: ClaudeCodeAccountState;
   now: Date;
+  onLoginAccount: (account: ProviderAccountSummary) => void;
   onSelectAccount: (accountId: string) => void;
   usage: ProviderUsageRow;
 }) {
@@ -234,6 +237,10 @@ function AccountUsageBlock({
     && accountState.activeAccountId !== usage.accountId
     && summary?.status === 'available'
     && accountState.status !== 'switching',
+  );
+  const canSignIn = Boolean(
+    summary
+    && (summary.status === 'not_configured' || usage.error?.type === 'unauthorized'),
   );
   return (
     <div>
@@ -285,7 +292,7 @@ function AccountUsageBlock({
           )}
         </div>
       ) : (
-        <div className="mt-2 space-y-0.5 opacity-60">
+        <div className="mt-2 space-y-1">
           <span className="font-sans text-[12px] text-text-muted">
             {usage.error?.type === 'not_configured'
               ? 'Not configured'
@@ -298,6 +305,16 @@ function AccountUsageBlock({
           {/* Prose, not an identifier: mono is reserved for IDs/paths/timestamps
               (index.css:8). A wrapped sentence in mono reads as debug output. */}
           {errorMessage && <p className="font-sans text-[11px] leading-relaxed text-text-subtle">{errorMessage}</p>}
+          {canSignIn && summary && (
+            <button
+              type="button"
+              onClick={() => onLoginAccount(summary)}
+              className="mt-1 inline-flex min-h-[40px] items-center gap-1.5 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            >
+              <LogIn className="h-3.5 w-3.5" />
+              Sign in again
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -319,6 +336,8 @@ function ProviderUnit({
   onCopyCommand,
   usages,
   accountState,
+  onAddAccount,
+  onLoginAccount,
   onRetryAccount,
   onSelectAccount,
 }: {
@@ -329,6 +348,8 @@ function ProviderUnit({
   onCopyCommand: () => void;
   usages: ProviderUsageRow[];
   accountState?: ClaudeCodeAccountState;
+  onAddAccount: () => void;
+  onLoginAccount: (account: ProviderAccountSummary) => void;
   onRetryAccount: () => void;
   onSelectAccount: (accountId: string) => void;
 }) {
@@ -464,6 +485,7 @@ function ProviderUnit({
                 <AccountUsageBlock
                   accountState={accountState}
                   now={now}
+                  onLoginAccount={onLoginAccount}
                   onSelectAccount={onSelectAccount}
                   usage={row}
                 />
@@ -474,6 +496,16 @@ function ProviderUnit({
           <div className="space-y-0.5 opacity-60">
             <span className="font-sans text-[12px] text-text-muted">Not configured</span>
           </div>
+        )}
+        {accountState && (
+          <button
+            type="button"
+            onClick={onAddAccount}
+            className="mt-4 inline-flex min-h-[44px] items-center gap-1.5 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+            Add account
+          </button>
         )}
       </div>
 
@@ -552,6 +584,7 @@ function UsageSkeleton() {
 export default function UsagePanel({ onClose }: Props) {
   const queryClient = useQueryClient();
   const { confirm, modal } = useConfirm();
+  const [loginTarget, setLoginTarget] = useState<ProviderAccountSummary | 'new'>();
   const { data: cliData, isLoading: cliLoading, isFetching: cliFetching } = useProviderCliStatus();
 
   const {
@@ -581,11 +614,11 @@ export default function UsagePanel({ onClose }: Props) {
   // Esc to close
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && !loginTarget) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [loginTarget, onClose]);
 
   const usageCheckedAt = usageData?.providers.reduce<string | undefined>((latest, row) => {
     if (!latest) return row.checkedAt;
@@ -731,6 +764,8 @@ export default function UsagePanel({ onClose }: Props) {
                         }}
                         usages={usageByProvider.get(row.provider) ?? []}
                         accountState={row.provider === 'claude-code' ? claudeAccountState : undefined}
+                        onAddAccount={() => setLoginTarget('new')}
+                        onLoginAccount={(account) => setLoginTarget(account)}
                         onRetryAccount={() => {
                           if (row.provider === 'claude-code' && claudeAccountState) {
                             requestAccountSwitch(claudeAccountState, claudeAccountState.activeAccountId, true);
@@ -754,6 +789,18 @@ export default function UsagePanel({ onClose }: Props) {
         document.body,
       )}
       {modal}
+      {loginTarget && (
+        <ClaudeAccountLoginModal
+          account={loginTarget === 'new' ? undefined : loginTarget}
+          onClose={() => setLoginTarget(undefined)}
+          onSucceeded={() => {
+            void Promise.all([
+              queryClient.invalidateQueries({ queryKey: queryKeys.providerAccounts() }),
+              queryClient.invalidateQueries({ queryKey: queryKeys.providerUsage() }),
+            ]);
+          }}
+        />
+      )}
     </Fragment>
   );
 }

@@ -6,7 +6,11 @@ import type { ProviderUsageRow } from '@shared/provider-usage';
 import UsagePanel from './UsagePanel';
 
 const api = vi.hoisted(() => ({
+  cancelClaudeAccountLogin: vi.fn(),
+  fetchClaudeAccountLogin: vi.fn(),
   selectClaudeAccount: vi.fn(),
+  startClaudeAccountLogin: vi.fn(),
+  submitClaudeAccountLoginCode: vi.fn(),
 }));
 
 const accountState = vi.hoisted(() => ({
@@ -67,7 +71,9 @@ const usageRows = vi.hoisted(() => ({
 
 vi.mock('@/api/system', () => ({
   applyProviderCliUpdate: vi.fn(),
+  cancelClaudeAccountLogin: api.cancelClaudeAccountLogin,
   checkProviderClis: vi.fn(),
+  fetchClaudeAccountLogin: api.fetchClaudeAccountLogin,
   fetchProviderAccounts: vi.fn(async () => ({
     providers: [accountState.value],
   })),
@@ -93,6 +99,8 @@ vi.mock('@/api/system', () => ({
   })),
   fetchProviderUsageProvider: vi.fn(),
   selectClaudeAccount: api.selectClaudeAccount,
+  startClaudeAccountLogin: api.startClaudeAccountLogin,
+  submitClaudeAccountLoginCode: api.submitClaudeAccountLoginCode,
 }));
 
 function renderPanel() {
@@ -155,7 +163,7 @@ describe('UsagePanel Claude account selection', () => {
     await waitFor(() => expect(api.selectClaudeAccount).toHaveBeenCalledWith('secondary'));
   });
 
-  it('dims an expired account without hiding the healthy one', async () => {
+  it('offers reauthentication for an expired account without hiding the healthy one', async () => {
     accountState.value.status = 'active';
     accountState.value.errorAgentIds = [];
     usageRows.value = [
@@ -178,5 +186,17 @@ describe('UsagePanel Claude account selection', () => {
     expect(await screen.findByText('Auth expired')).toBeTruthy();
     expect(screen.getByText('secondary@example.com')).toBeTruthy();
     expect(screen.getByText('88%')).toBeTruthy();
+
+    api.startClaudeAccountLogin.mockResolvedValueOnce({
+      accountId: 'primary',
+      createdAt: '2026-07-19T13:00:00.000Z',
+      error: 'Claude sign-in did not complete. Try again.',
+      id: '00000000-0000-4000-8000-000000000001',
+      status: 'failed',
+      updatedAt: '2026-07-19T13:00:00.000Z',
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in again' }));
+    expect(await screen.findByRole('dialog', { name: 'Sign in to primary@example.com' })).toBeTruthy();
+    await waitFor(() => expect(api.startClaudeAccountLogin).toHaveBeenCalledWith({ accountId: 'primary' }));
   });
 });

@@ -38,6 +38,7 @@ test('agent config update writes editable fields and UI redacts secrets', async 
           },
           provider: {
             env: {
+              CLAUDE_CONFIG_DIR: '/profiles/legacy-secondary',
               SECRET_NAME: 'secret-value',
             },
             kind: 'codex-cli',
@@ -60,6 +61,7 @@ test('agent config update writes editable fields and UI redacts secrets', async 
       assert.equal(before.slack?.botToken, '');
       assert.equal(JSON.stringify(before).includes('secret-value'), false);
       assert.equal(JSON.stringify(before).includes('xoxb-secret'), false);
+      assert.equal(JSON.stringify(before).includes('CLAUDE_CONFIG_DIR'), false);
 
       await milo.updateProvider({ model: 'gpt-5.6-luna' });
       const updated = await milo.updateProfile({ displayName: 'New Name', role: 'New role' });

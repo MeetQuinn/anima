@@ -66,3 +66,26 @@ export const SelectProviderAccountRequest = z.object({
   accountId: ProviderAccountId,
 }).strict();
 export type SelectProviderAccountRequest = z.infer<typeof SelectProviderAccountRequest>;
+
+export const ClaudeAccountLoginStartRequest = z.object({
+  accountId: ProviderAccountId.optional(),
+  email: z.string().trim().email().max(320).optional(),
+}).strict();
+export type ClaudeAccountLoginStartRequest = z.infer<typeof ClaudeAccountLoginStartRequest>;
+
+export const ClaudeAccountLoginCodeRequest = z.object({
+  code: z.string().trim().min(1).max(4_096),
+}).strict();
+export type ClaudeAccountLoginCodeRequest = z.infer<typeof ClaudeAccountLoginCodeRequest>;
+
+export const ClaudeAccountLoginOperation = z.object({
+  account: z.string().max(320).optional(),
+  accountId: ProviderAccountId.optional(),
+  createdAt: z.string().datetime(),
+  error: z.string().optional(),
+  id: z.string().uuid(),
+  loginUrl: z.string().url().optional(),
+  status: z.enum(['starting', 'waiting', 'verifying', 'succeeded', 'failed', 'cancelled']),
+  updatedAt: z.string().datetime(),
+}).strict();
+export type ClaudeAccountLoginOperation = z.infer<typeof ClaudeAccountLoginOperation>;

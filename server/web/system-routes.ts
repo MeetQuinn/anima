@@ -18,11 +18,19 @@ import {
   RuntimeUpgradeUnavailableError,
 } from '../runtime-management/runtime-upgrade.js';
 import { ProviderUsageKind } from '../../shared/provider-usage.js';
-import { SelectProviderAccountRequest } from '../../shared/provider-accounts.js';
+import {
+  ClaudeAccountLoginCodeRequest,
+  ClaudeAccountLoginStartRequest,
+  SelectProviderAccountRequest,
+} from '../../shared/provider-accounts.js';
 import {
   defaultProviderAccountService,
   ProviderAccountError,
 } from '../provider-accounts/provider-account.service.js';
+import {
+  ClaudeAccountLoginError,
+  defaultClaudeAccountLoginService,
+} from '../provider-accounts/claude-account-login.service.js';
 import { SidebarOrder, WorkspacePlatform } from '../../shared/server-settings.js';
 import { defaultTeamService, TeamServiceError } from '../teams/team.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
@@ -67,6 +75,47 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
       throw error;
     }
   });
+  fastify.post('/api/provider-accounts/claude-code/login', async (request, reply) => {
+    try {
+      const operation = await defaultClaudeAccountLoginService.start(
+        ClaudeAccountLoginStartRequest.parse(request.body ?? {}),
+      );
+      return reply.status(202).send(operation);
+    } catch (error) {
+      throwClaudeAccountLoginHttpError(error);
+    }
+  });
+  fastify.get<{ Params: { operationId: string } }>(
+    '/api/provider-accounts/claude-code/login/:operationId',
+    async (request) => {
+      try {
+        return defaultClaudeAccountLoginService.get(request.params.operationId);
+      } catch (error) {
+        throwClaudeAccountLoginHttpError(error);
+      }
+    },
+  );
+  fastify.post<{ Params: { operationId: string } }>(
+    '/api/provider-accounts/claude-code/login/:operationId/code',
+    async (request) => {
+      try {
+        const { code } = ClaudeAccountLoginCodeRequest.parse(request.body);
+        return defaultClaudeAccountLoginService.submitCode(request.params.operationId, code);
+      } catch (error) {
+        throwClaudeAccountLoginHttpError(error);
+      }
+    },
+  );
+  fastify.post<{ Params: { operationId: string } }>(
+    '/api/provider-accounts/claude-code/login/:operationId/cancel',
+    async (request) => {
+      try {
+        return await defaultClaudeAccountLoginService.cancel(request.params.operationId);
+      } catch (error) {
+        throwClaudeAccountLoginHttpError(error);
+      }
+    },
+  );
   fastify.get('/api/provider-cli-status', async () => defaultProviderCliService.status());
   fastify.post('/api/provider-cli-status/check', async () => defaultProviderCliService.checkNow());
   fastify.post('/api/provider-cli-status/:provider/check', async (request, reply) => {
@@ -195,6 +244,11 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
     }
     return { platform: await defaultServerSettingsService.setWorkspacePlatform(parsed.data) };
   });
+}
+
+function throwClaudeAccountLoginHttpError(error: unknown): never {
+  if (error instanceof ClaudeAccountLoginError) throw new HttpError(error.statusCode, error.message);
+  throw error;
 }
 
 function queueAfterResponse(
