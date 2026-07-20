@@ -18,7 +18,13 @@ import { recordRuntimeEvent } from '../runtime/activity.js';
 import { AgentHealthStore } from '../runtime/agent-health.store.js';
 import { AgentHealthService } from '../runtime/agent-health.service.js';
 import { AgentRestartCommandStore } from '../runtime/agent-restart-command.store.js';
-import { managedProviderEnvForAgent, RuntimeHost, type RunningAgentHandle } from '../runtime/host.js';
+import {
+  managedProviderEnvForAgent,
+  RuntimeHost,
+  runtimeWorkerConfigForAgent,
+  type RunningAgentHandle,
+} from '../runtime/host.js';
+import { claudeAccountRuntimeFingerprint } from '../provider-accounts/claude-account-config.js';
 import { RuntimeSessionService } from '../runtime/runtime-session.service.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
 import { withAnimaHome } from './anima-home.js';
@@ -320,6 +326,15 @@ test('runtime host starts after Slack connection and reloads idle agents after c
   assert.deepEqual(host.runningAgentIds(), ['scout']);
 
   await host.stop();
+});
+
+test('runtime worker launch config captures the effective Claude account fingerprint', () => {
+  const scout = runtimeHostAgent('scout', { connected: true });
+  scout.provider.env = { CLAUDE_CONFIG_DIR: '/profiles/secondary' };
+
+  const config = runtimeWorkerConfigForAgent(scout);
+
+  assert.equal(config.claudeAccountFingerprint, claudeAccountRuntimeFingerprint(scout));
 });
 
 test('runtime host refreshes Slack display info before starting an agent', async () => {

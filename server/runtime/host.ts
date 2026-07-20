@@ -794,7 +794,6 @@ async function startAgentFromConfig(
   const server = runtimeServerConfigForAgent(agent);
   if (server.slack) await validateSlackConnectionForStart(agent.id, server.slack);
   const managedEnv = await managedProviderEnvForAgent(agent, animaHome, server.slack?.botToken);
-  const claudeAccountFingerprint = claudeAccountRuntimeFingerprint(agent);
   const outputLines = [
     server.slack ? 'Slack output: send enabled.' : undefined,
     server.feishu.connected ? 'Feishu output: send enabled.' : undefined,
@@ -810,7 +809,6 @@ async function startAgentFromConfig(
   return startRunningAgent({
     ...server.config,
     agentRuntime: createAgentRuntime(runtimeWithEnv(server.runtime, managedEnv)),
-    ...(claudeAccountFingerprint ? { claudeAccountFingerprint } : {}),
     ...(server.slack ? { appToken: server.slack.appToken, botToken: server.slack.botToken } : {}),
     feishu: server.feishu,
     ...(server.runtime.idleTimeoutMs !== undefined ? { idleTimeoutMs: server.runtime.idleTimeoutMs } : {}),
@@ -950,10 +948,12 @@ export async function managedProviderEnvForAgent(
   return env;
 }
 
-function runtimeWorkerConfigForAgent(agent: AgentConfig): RuntimeWorkerConfig {
+export function runtimeWorkerConfigForAgent(agent: AgentConfig): RuntimeWorkerConfig {
   const stateDir = resolveAnimaHome();
+  const claudeAccountFingerprint = claudeAccountRuntimeFingerprint(agent);
   return {
     agentId: agent.id,
+    ...(claudeAccountFingerprint ? { claudeAccountFingerprint } : {}),
     homePath: resolveAgentHomePath(agent),
     stateDir,
   };
