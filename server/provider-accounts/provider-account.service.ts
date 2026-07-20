@@ -18,6 +18,7 @@ import { synchronizeClaudeAccountMcpState } from './claude-account-mcp.js';
 import {
   applyClaudeAccountToAgent,
   claudeAccountIsConfigured,
+  claudeAccountRuntimeFingerprint,
   discoverClaudeAccounts,
   effectiveClaudeAccountRegistry,
   readClaudeAccountName,
@@ -239,12 +240,39 @@ function accountSwitchState(
   // outcome the switch is waiting for, so it drops out of the reckoning
   // instead of blocking it forever.
   const affectedIds = new Set(agents.filter(affectedClaudeAgent).map((agent) => agent.id));
+  const selectedRegistry = {
+    accounts: registry.accounts,
+    activeAccountId: registry.activeAccountId,
+  };
+  const expectedFingerprintByAgent = new Map(
+    agents
+      .filter(affectedClaudeAgent)
+      .map((agent) => [
+        agent.id,
+        claudeAccountRuntimeFingerprint(applyClaudeAccountToAgent(agent, selectedRegistry)),
+      ]),
+  );
   const statusByAgent = new Map(statuses.map((status) => [status.agentId, status]));
-  const errorAgentIds = [...(registry.switch.failedAgentIds ?? [])].filter((agentId) => affectedIds.has(agentId));
+  const convergedAgentIds = new Set(
+    statuses
+      .filter((status) => (
+        status.health?.state === 'healthy'
+        && status.health.runtime?.claudeAccountFingerprint
+        && status.health.runtime.claudeAccountFingerprint === expectedFingerprintByAgent.get(status.agentId)
+      ))
+      .map((status) => status.agentId),
+  );
+  const errorAgentIds = [...(registry.switch.failedAgentIds ?? [])]
+    .filter((agentId) => affectedIds.has(agentId) && !convergedAgentIds.has(agentId));
   const pendingAgentIds: string[] = [];
   const restartByAgent = new Map(registry.switch.restarts.map((restart) => [restart.agentId, restart]));
   const agentIds = (registry.switch.agentIds ?? [...restartByAgent.keys()]).filter((agentId) => affectedIds.has(agentId));
   for (const agentId of agentIds) {
+    // The account selector is captured inside the worker at construction and
+    // published with every health snapshot. Unlike worker/child timestamps,
+    // a healthy matching fingerprint proves which account this runtime
+    // actually loaded even after its original restart outcome was displaced.
+    if (convergedAgentIds.has(agentId)) continue;
     if (errorAgentIds.includes(agentId)) continue;
     const restart = restartByAgent.get(agentId);
     if (!restart) {

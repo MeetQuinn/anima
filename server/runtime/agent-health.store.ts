@@ -62,6 +62,7 @@ const ProviderChildHealthSnapshotSchema: z.ZodType<ProviderChildHealthSnapshot> 
 const AgentRuntimeHandleSnapshotSchema: z.ZodType<AgentRuntimeHandleSnapshot> = z.object({
   activeItemId: z.string().min(1).optional(),
   activeItemStartedAt: z.string().min(1).optional(),
+  claudeAccountFingerprint: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   processId: z.number().int().positive().optional(),
   providerChild: ProviderChildHealthSnapshotSchema.optional(),
   providerChildExpected: z.boolean(),

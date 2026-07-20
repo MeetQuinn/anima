@@ -3,6 +3,7 @@ import type { Session } from './runtime-session.service.js';
 
 export interface RuntimeWorkerConfig {
   agentId: string;
+  claudeAccountFingerprint?: string;
   stateDir: string;
   homePath?: string;
 }

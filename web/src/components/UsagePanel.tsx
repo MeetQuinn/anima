@@ -405,12 +405,22 @@ function ProviderUnit({
         <div className="mt-2.5 space-y-1.5 pl-[38px]">
           {installing && <p className="font-sans text-[11px] text-text-muted">Installing…</p>}
           {accountSwitching && (
-            <p className="font-sans text-[11px] text-text-muted">
-              Switching account
-              {accountState.pendingAgentIds.length > 0
-                ? ` · waiting for ${accountState.pendingAgentIds.length} agent${accountState.pendingAgentIds.length === 1 ? '' : 's'}`
-                : ''}
-            </p>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+              <p className="font-sans text-[11px] text-text-muted">
+                Switching account
+                {accountState.pendingAgentIds.length > 0
+                  ? ` · waiting for ${accountState.pendingAgentIds.length} agent${accountState.pendingAgentIds.length === 1 ? '' : 's'}`
+                  : ''}
+              </p>
+              <button
+                type="button"
+                onClick={onRetryAccount}
+                className="inline-flex min-h-[44px] items-center gap-1 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              >
+                <RefreshCw className="h-3 w-3" />
+                Retry
+              </button>
+            </div>
           )}
           {accountSwitchFailed && (
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
@@ -420,7 +430,7 @@ function ProviderUnit({
               <button
                 type="button"
                 onClick={onRetryAccount}
-                className="inline-flex items-center gap-1 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                className="inline-flex min-h-[44px] items-center gap-1 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               >
                 <RefreshCw className="h-3 w-3" />
                 Retry

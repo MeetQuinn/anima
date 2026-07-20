@@ -109,6 +109,12 @@ export function applyClaudeAccountToAgent(
   return { ...agent, provider };
 }
 
+export function claudeAccountRuntimeFingerprint(agent: AgentConfig): string | undefined {
+  if (agent.provider.kind !== 'claude-code') return undefined;
+  const configDir = normalizedConfigDir(agent.provider.env?.[CLAUDE_CONFIG_DIR_KEY]) ?? defaultClaudeConfigDir();
+  return createHash('sha256').update(`claude-code-account\0${configDir}`).digest('hex');
+}
+
 export function defaultClaudeConfigDir(): string {
   return join(homedir(), '.claude');
 }
