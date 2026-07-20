@@ -21,6 +21,7 @@ import type { ProviderAccountsConfig } from '../../shared/provider-accounts.js';
 import type { AgentStatusSummary } from '../../shared/snapshot.js';
 import {
   applyClaudeAccountToAgent,
+  claudeAccountRuntimeFingerprint,
   claudeKeychainService,
   discoverClaudeAccounts,
   effectiveClaudeAccountRegistry,
@@ -108,6 +109,23 @@ test('platform Claude account selection removes a stale per-agent profile while 
 
   assert.deepEqual(primary.provider.env, { FEATURE_FLAG: '1' });
   assert.equal(agent.provider.env?.CLAUDE_CONFIG_DIR, '/profiles/secondary');
+});
+
+test('Claude runtime account fingerprints follow only the effective account config directory', () => {
+  const primary = claudeAgent('primary');
+  const primaryWithOtherEnv = claudeAgent('primary-with-env');
+  primaryWithOtherEnv.provider.env = { FEATURE_FLAG: '1' };
+  const secondary = claudeAgent('secondary', '/profiles/secondary');
+
+  assert.equal(
+    claudeAccountRuntimeFingerprint(primary),
+    claudeAccountRuntimeFingerprint(primaryWithOtherEnv),
+  );
+  assert.notEqual(
+    claudeAccountRuntimeFingerprint(primary),
+    claudeAccountRuntimeFingerprint(secondary),
+  );
+  assert.equal(claudeAccountRuntimeFingerprint(kimiAgent('kimi')), undefined);
 });
 
 test('Claude keychain service follows Claude Code config-dir hashing', () => {
@@ -868,6 +886,41 @@ test('worker or child changes without a recorded outcome never converge a switch
   }
 });
 
+test('a healthy worker carrying the selected account fingerprint converges a lost-outcome switch', async () => {
+  const fixture = await accountServiceFixture({ active: false });
+  try {
+    await fixture.service.selectClaudeAccount('secondary');
+    const targetAgent = applyClaudeAccountToAgent(fixture.agent('iris'), fixture.config().claudeCode);
+    const targetFingerprint = claudeAccountRuntimeFingerprint(targetAgent);
+    const oldFingerprint = claudeAccountRuntimeFingerprint(fixture.agent('iris'));
+    assert.ok(targetFingerprint);
+    assert.ok(oldFingerprint);
+
+    fixture.setHealth(healthyWorkerHealth('worker-primary', undefined, oldFingerprint));
+    const wrongAccount = await fixture.service.claudeState();
+    assert.equal(wrongAccount.status, 'switching');
+    assert.deepEqual(wrongAccount.pendingAgentIds, ['iris']);
+
+    fixture.setHealth({
+      ...healthyWorkerHealth('worker-secondary', undefined, targetFingerprint),
+      state: 'unhealthy',
+    });
+    const unhealthy = await fixture.service.claudeState();
+    assert.equal(unhealthy.status, 'switching');
+    assert.deepEqual(unhealthy.pendingAgentIds, ['iris']);
+
+    fixture.config().claudeCode!.switch!.failedAgentIds = ['iris'];
+    fixture.setHealth(healthyWorkerHealth('worker-secondary', undefined, targetFingerprint));
+    const recovered = await fixture.service.claudeState();
+
+    assert.equal(recovered.status, 'active');
+    assert.deepEqual(recovered.errorAgentIds, []);
+    assert.deepEqual(recovered.pendingAgentIds, []);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('selecting the active account mid-switch requeues agents whose outcomes never landed', async () => {
   const fixture = await accountServiceFixture({ active: false });
   try {
@@ -891,7 +944,11 @@ test('selecting the active account mid-switch requeues agents whose outcomes nev
   }
 });
 
-function healthyWorkerHealth(workerId: string, childStartedAt?: string): NonNullable<AgentStatusSummary['health']> {
+function healthyWorkerHealth(
+  workerId: string,
+  childStartedAt?: string,
+  claudeAccountFingerprint?: string,
+): NonNullable<AgentStatusSummary['health']> {
   return {
     runtime: {
       ...(childStartedAt
@@ -906,6 +963,7 @@ function healthyWorkerHealth(workerId: string, childStartedAt?: string): NonNull
             },
           }
         : {}),
+      ...(claudeAccountFingerprint ? { claudeAccountFingerprint } : {}),
       providerChildExpected: true,
       workerId,
     },
@@ -1022,6 +1080,11 @@ async function accountServiceFixture(input: {
 
   return {
     cleanup: () => rm(root, { force: true, recursive: true }),
+    agent(agentId: string) {
+      const agent = agentConfigs.find((candidate) => candidate.id === agentId);
+      if (!agent) throw new Error(`missing fixture agent: ${agentId}`);
+      return agent;
+    },
     config: () => config,
     ensureContinuityCalls: () => ensureContinuityCalls,
     mcpSynchronizations: () => mcpSynchronizations,

@@ -163,6 +163,26 @@ describe('UsagePanel Claude account selection', () => {
     await waitFor(() => expect(api.selectClaudeAccount).toHaveBeenCalledWith('secondary'));
   });
 
+  it('offers the same safe retry when a switch is still waiting for agent outcomes', async () => {
+    accountState.value.status = 'switching';
+    accountState.value.errorAgentIds = [];
+    accountState.value.pendingAgentIds = ['quill', 'tide'];
+    api.selectClaudeAccount.mockResolvedValueOnce({
+      ...accountState.value,
+      pendingAgentIds: [],
+      status: 'active',
+    });
+    renderPanel();
+
+    expect(await screen.findByText('Switching account · waiting for 2 agents')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('Retry secondary@example.com?')).toBeTruthy();
+    const retryButtons = screen.getAllByRole('button', { name: 'Retry' });
+    fireEvent.click(retryButtons[retryButtons.length - 1]!);
+
+    await waitFor(() => expect(api.selectClaudeAccount).toHaveBeenCalledWith('secondary'));
+  });
+
   it('offers reauthentication for an expired account without hiding the healthy one', async () => {
     accountState.value.status = 'active';
     accountState.value.errorAgentIds = [];

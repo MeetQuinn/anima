@@ -128,6 +128,9 @@ export class AgentRuntimeWorker {
         activeItemId: active.itemId,
         activeItemStartedAt: isoFromMs(active.startedAt),
       } : {}),
+      ...(this.options.claudeAccountFingerprint
+        ? { claudeAccountFingerprint: this.options.claudeAccountFingerprint }
+        : {}),
       processId: process.pid,
       ...(provider?.child ? { providerChild: provider.child } : {}),
       providerChildExpected: provider?.childExpected ?? false,

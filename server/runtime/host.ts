@@ -20,7 +20,10 @@ import type { AgentProviderConfig } from '../providers/contract.js';
 import { isRestartDrainActive } from '../services/restart-drain.js';
 import { cacheDelete } from '../storage/json-file.js';
 import { ServerConfigStore } from '../storage/schema/server.store.js';
-import { applyClaudeAccountToAgent } from '../provider-accounts/claude-account-config.js';
+import {
+  applyClaudeAccountToAgent,
+  claudeAccountRuntimeFingerprint,
+} from '../provider-accounts/claude-account-config.js';
 import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import {
   FEISHU_OPEN_API_BASE_URL,
@@ -945,10 +948,12 @@ export async function managedProviderEnvForAgent(
   return env;
 }
 
-function runtimeWorkerConfigForAgent(agent: AgentConfig): RuntimeWorkerConfig {
+export function runtimeWorkerConfigForAgent(agent: AgentConfig): RuntimeWorkerConfig {
   const stateDir = resolveAnimaHome();
+  const claudeAccountFingerprint = claudeAccountRuntimeFingerprint(agent);
   return {
     agentId: agent.id,
+    ...(claudeAccountFingerprint ? { claudeAccountFingerprint } : {}),
     homePath: resolveAgentHomePath(agent),
     stateDir,
   };

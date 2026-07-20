@@ -25,6 +25,24 @@ import {
   waitForInboxItemStatus,
 } from './helpers/runtime-worker.js';
 
+test('runtime worker health carries the Claude account fingerprint captured at launch', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-account-fingerprint-test-'));
+  const worker = new AgentRuntimeWorker({
+    agentId: 'scout',
+    agentRuntime: new FollowupRuntime(),
+    claudeAccountFingerprint: 'a'.repeat(64),
+    queue: queueFor('scout'),
+    stateDir,
+    workerId: 'test-worker',
+  }, silentLogger);
+  try {
+    assert.equal(worker.health().claudeAccountFingerprint, 'a'.repeat(64));
+  } finally {
+    await worker.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('runtime worker appends queued follow-up messages into an active runtime', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-worker-followup-test-'));
   const runtime = new FollowupRuntime();
