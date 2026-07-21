@@ -114,6 +114,90 @@ test('web API reports provider availability', async () => {
   await rm(stateDir, { force: true, recursive: true });
 });
 
+test('web API manages global provider context limits without storing them in agent launch env', async () => {
+  const stateDir = await mkdtemp(
+    join(tmpdir(), 'anima-web-api-context-limit-'),
+  );
+  const kimiHome = join(stateDir, 'kimi-home');
+  const previousKimiHome = process.env.KIMI_CODE_HOME;
+  const previousMachineWrites = process.env.ANIMA_ALLOW_MACHINE_WRITES;
+  process.env.KIMI_CODE_HOME = kimiHome;
+  process.env.ANIMA_ALLOW_MACHINE_WRITES = '1';
+  await writeAgentConfigs(stateDir);
+  await writeFile(
+    join(stateDir, 'agents', 'anima', 'config.json'),
+    `${JSON.stringify(
+      {
+        homePath: join(stateDir, 'agent-homes', 'anima'),
+        id: 'anima',
+        provider: {
+          env: { CODEX_SECRET: 'agent-secret-sentinel' },
+          kind: 'kimi-cli',
+          model: 'kimi-code/k3',
+        },
+        slack: { appToken: 'xapp-secret-value', botToken: 'xoxb-secret-value' },
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const server = await createWebServer();
+      try {
+        server.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        const address = server.address();
+        if (!address || typeof address === 'string')
+          throw new Error('Expected TCP address');
+        const base = `http://127.0.0.1:${address.port}`;
+
+        const before = await fetch(`${base}/api/provider-context-limits`);
+        assert.equal(before.status, 200);
+        assert.equal(
+          (
+            (await before.json()) as {
+              providers: Array<{ maxTokens: number | null; provider: string }>;
+            }
+          ).providers.find((row) => row.provider === 'kimi-cli')?.maxTokens,
+          null,
+        );
+
+        const saved = await fetch(`${base}/api/provider-context-limits`, {
+          body: JSON.stringify({ maxTokens: 262144, provider: 'kimi-cli' }),
+          headers: { 'content-type': 'application/json' },
+          method: 'PUT',
+        });
+        assert.equal(saved.status, 200);
+        assert.match(
+          await readFile(join(kimiHome, 'config.toml'), 'utf8'),
+          /max_context_size = 262144/,
+        );
+
+        const persistedAgent = JSON.parse(
+          await readFile(
+            join(stateDir, 'agents', 'anima', 'config.json'),
+            'utf8',
+          ),
+        ) as { provider: { env?: Record<string, string> } };
+        assert.deepEqual(persistedAgent.provider.env, {
+          CODEX_SECRET: 'agent-secret-sentinel',
+        });
+      } finally {
+        server.close();
+      }
+    });
+  } finally {
+    if (previousKimiHome === undefined) delete process.env.KIMI_CODE_HOME;
+    else process.env.KIMI_CODE_HOME = previousKimiHome;
+    if (previousMachineWrites === undefined)
+      delete process.env.ANIMA_ALLOW_MACHINE_WRITES;
+    else process.env.ANIMA_ALLOW_MACHINE_WRITES = previousMachineWrites;
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('server-info exposes the last standalone restart result for UI echoes', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-last-restart-test-'));
   await writeAgentConfigs(stateDir);

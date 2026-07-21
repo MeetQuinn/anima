@@ -11,6 +11,7 @@ import { ingestEvent } from './helpers/inbox.js';
 import { allActivities, loadState } from './helpers/state.js';
 import { withAnimaHome } from './anima-home.js';
 import { runtimeInput, runtimeFollowupInput, assertFollowupPrompt, providerSessionStartedPayload, runtimeTestEnv } from './helpers/agent-runtime.js';
+import { defaultServerSettingsService } from '../settings/settings.service.js';
 
 test('kimi-cli ACP transport starts a turn and appends subscription follow-up input', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
@@ -24,6 +25,7 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
         [
           '#!/usr/bin/env node',
           "const fs = require('fs');",
+          "if (!fs.readFileSync(process.env.KIMI_CODE_HOME + '/config.toml', 'utf8').includes('max_context_size = 262144')) process.exit(45);",
           `fs.appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify({ argv: process.argv.slice(2) }) + '\\n');`,
           "process.stdin.setEncoding('utf8');",
           "let buffer = '';",
@@ -79,6 +81,10 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
         'utf8',
       );
       await chmod(fakeKimi, 0o755);
+      await defaultServerSettingsService.setProviderContextLimit(
+        'kimi-cli',
+        262_144,
+      );
 
       const firstCtx = await ingestEvent(
         makeSlackEvent({
@@ -102,7 +108,10 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
       );
 
       runtime = createAgentRuntime({
-        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        env: runtimeTestEnv(stateDir, {
+          CALLS_PATH: callsPath,
+          KIMI_CODE_HOME: join(stateDir, 'kimi-home'),
+        }),
         kind: 'kimi-cli',
         model: 'kimi-code/k3',
       });

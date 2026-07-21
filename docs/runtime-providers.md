@@ -161,6 +161,14 @@ The important pieces are:
 
 Provider code should not read chat credentials directly. It should call `anima message`, `anima reminder`, or `anima subscription` so the side effect is audited against the current item.
 
+Kimi and Grok context caps are server-level provider settings, not agent environment variables.
+Before starting a new child, the adapter holds the same machine advisory lease used by provider
+launches and applies the persisted cap to the provider's official user-level TOML configuration.
+Kimi receives a model-scoped `max_context_size`; Grok receives a model-scoped `context_window`.
+An explicit save adopts an existing model context key by marking and replacing only that key.
+After adoption, only Anima-marked keys are updated or removed. Running provider children are
+unchanged.
+
 ## Provider Sessions
 
 Provider session ids are stored on Anima's primary session record by provider kind. `AgentRuntimeBridge` reads the current provider session and passes it to the adapter as `providerSession`.

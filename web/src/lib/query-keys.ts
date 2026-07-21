@@ -40,6 +40,7 @@ export const queryKeys = {
     ['agent-home-file', agentId, filePath] as const,
   providerAvailability: () => ['provider-availability'] as const,
   providerCliStatus: () => ['provider-cli-status'] as const,
+  providerContextLimits: () => ['provider-context-limits'] as const,
   providerUsage: () => ['provider-usage'] as const,
   providerAccounts: () => ['provider-accounts'] as const,
   health: () => ['health'] as const,

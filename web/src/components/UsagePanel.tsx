@@ -6,7 +6,9 @@ import {
   applyProviderCliUpdate,
   checkProviderClis,
   fetchProviderAccounts,
+  fetchProviderContextLimits,
   fetchProviderUsage,
+  saveProviderContextLimit,
   selectClaudeAccount,
 } from '@/api/system';
 import { queryKeys } from '@/lib/query-keys';
@@ -21,6 +23,7 @@ import type {
   ProviderUsageExtra,
 } from '@shared/provider-usage';
 import type { ClaudeCodeAccountState, ProviderAccountSummary } from '@shared/provider-accounts';
+import type { ProviderContextLimitRow } from '@shared/provider-context-limits';
 import ClaudeAccountLoginModal from './ClaudeAccountLoginModal';
 
 interface Props {
@@ -123,6 +126,11 @@ function installSourceLabel(source: ProviderCliRow['installSource']): string {
   if (source === 'kimi-native') return 'Native';
   if (source === 'grok-native') return 'Native';
   return 'Unknown source';
+}
+
+function formatContextTokens(tokens: number): string {
+  if (tokens % 1024 === 0) return `${tokens / 1024}k`;
+  return `${Math.round(tokens / 1_000)}k`;
 }
 
 /** One quiet key/value line inside the Details disclosure. */
@@ -340,6 +348,10 @@ function ProviderUnit({
   onLoginAccount,
   onRetryAccount,
   onSelectAccount,
+  contextLimit,
+  contextLimitError,
+  contextLimitSaving = false,
+  onContextLimitChange,
 }: {
   globallyLocked?: boolean;
   management: ProviderCliRow;
@@ -352,6 +364,10 @@ function ProviderUnit({
   onLoginAccount: (account: ProviderAccountSummary) => void;
   onRetryAccount: () => void;
   onSelectAccount: (accountId: string) => void;
+  contextLimit?: ProviderContextLimitRow;
+  contextLimitError?: string;
+  contextLimitSaving?: boolean;
+  onContextLimitChange: (maxTokens: number | null) => void;
 }) {
   const sortedUsages = [...usages].sort((a, b) => Number(b.active ?? false) - Number(a.active ?? false));
   const operation = management.operation.provider === management.provider ? management.operation : undefined;
@@ -519,6 +535,40 @@ function ProviderUnit({
         )}
       </div>
 
+      {contextLimit && (
+        <div className="mt-4 space-y-1.5 pl-[38px]">
+          <label className="block font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
+            Context limit
+            <select
+              aria-label={`${management.label} context limit`}
+              className="mt-1.5 block min-h-[44px] w-full rounded-sm border border-border-soft bg-surface-elevated px-3 font-sans text-[12px] text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-wait disabled:opacity-60"
+              disabled={contextLimitSaving}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                onContextLimitChange(value === 'no-anima-limit' ? null : Number(value));
+              }}
+              value={contextLimit.maxTokens ?? 'no-anima-limit'}
+            >
+              <option value="no-anima-limit">No Anima limit</option>
+              {contextLimit.presets.map((preset) => (
+                <option key={preset} value={preset}>
+                  {formatContextTokens(preset)}
+                  {preset === contextLimit.recommended ? ' · recommended' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="font-sans text-[10px] leading-relaxed text-text-subtle">
+            Global for every agent. Applies when its provider session next starts.
+          </p>
+          {contextLimitError && (
+            <p className="font-sans text-[10px] leading-relaxed text-health-error">
+              {contextLimitError}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* ── Details: install diagnostics, demoted out of the default view. ── */}
       <details className="group mt-3 pl-[38px]">
         <summary className="flex cursor-pointer list-none items-center gap-1 font-sans text-[10px] uppercase tracking-[0.08em] text-text-subtle hover:text-text-muted">
@@ -595,6 +645,11 @@ export default function UsagePanel({ onClose }: Props) {
   const queryClient = useQueryClient();
   const { confirm, modal } = useConfirm();
   const [loginTarget, setLoginTarget] = useState<ProviderAccountSummary | 'new'>();
+  const [savingContextProvider, setSavingContextProvider] = useState<ProviderUsageKind>();
+  const [contextLimitFailure, setContextLimitFailure] = useState<{
+    message: string;
+    provider: ProviderUsageKind;
+  }>();
   const { data: cliData, isLoading: cliLoading, isFetching: cliFetching } = useProviderCliStatus();
 
   const {
@@ -606,6 +661,15 @@ export default function UsagePanel({ onClose }: Props) {
     queryKey: queryKeys.providerUsage(),
     queryFn: fetchProviderUsage,
     staleTime: 60_000,
+  });
+  const {
+    data: contextLimits,
+    isFetching: contextLimitsFetching,
+    refetch: refetchContextLimits,
+  } = useQuery({
+    queryKey: queryKeys.providerContextLimits(),
+    queryFn: fetchProviderContextLimits,
+    staleTime: 30_000,
   });
   const {
     data: accountData,
@@ -636,8 +700,32 @@ export default function UsagePanel({ onClose }: Props) {
   }, undefined);
 
   async function refreshAll(): Promise<void> {
-    const [, , status] = await Promise.all([refetchUsage(), refetchAccounts(), checkProviderClis()]);
+    const [, , , status] = await Promise.all([
+      refetchUsage(),
+      refetchAccounts(),
+      refetchContextLimits(),
+      checkProviderClis(),
+    ]);
     queryClient.setQueryData(queryKeys.providerCliStatus(), status);
+  }
+
+  async function changeContextLimit(
+    row: ProviderContextLimitRow,
+    maxTokens: number | null,
+  ): Promise<void> {
+    setSavingContextProvider(row.provider);
+    setContextLimitFailure(undefined);
+    try {
+      const next = await saveProviderContextLimit(row.provider, maxTokens);
+      queryClient.setQueryData(queryKeys.providerContextLimits(), next);
+    } catch (error) {
+      setContextLimitFailure({
+        message: error instanceof Error ? error.message : 'Could not save context limit',
+        provider: row.provider,
+      });
+    } finally {
+      setSavingContextProvider(undefined);
+    }
   }
 
   function requestAccountSwitch(state: ClaudeCodeAccountState, accountId: string, retry = false): void {
@@ -705,7 +793,7 @@ export default function UsagePanel({ onClose }: Props) {
     .filter((value): value is string => Boolean(value))
     .sort()
     .at(-1);
-  const fetching = usageFetching || cliFetching || accountsFetching;
+  const fetching = usageFetching || cliFetching || accountsFetching || contextLimitsFetching;
 
   return (
     <Fragment>
@@ -765,6 +853,15 @@ export default function UsagePanel({ onClose }: Props) {
                   {visible.map((row, i) => (
                     <div key={row.provider} className={i === 0 ? 'pb-6' : 'py-6 last:pb-1'}>
                       <ProviderUnit
+                        contextLimit={contextLimits?.providers.find(
+                          (limit) => limit.provider === row.provider,
+                        )}
+                        contextLimitError={
+                          contextLimitFailure?.provider === row.provider
+                            ? contextLimitFailure.message
+                            : undefined
+                        }
+                        contextLimitSaving={savingContextProvider === row.provider}
                         globallyLocked={cliData?.upgradeLocked}
                         management={row}
                         now={now}
@@ -776,6 +873,12 @@ export default function UsagePanel({ onClose }: Props) {
                         accountState={row.provider === 'claude-code' ? claudeAccountState : undefined}
                         onAddAccount={() => setLoginTarget('new')}
                         onLoginAccount={(account) => setLoginTarget(account)}
+                        onContextLimitChange={(maxTokens) => {
+                          const limit = contextLimits?.providers.find(
+                            (candidate) => candidate.provider === row.provider,
+                          );
+                          if (limit) void changeContextLimit(limit, maxTokens);
+                        }}
                         onRetryAccount={() => {
                           if (row.provider === 'claude-code' && claudeAccountState) {
                             requestAccountSwitch(claudeAccountState, claudeAccountState.activeAccountId, true);

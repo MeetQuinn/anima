@@ -11,6 +11,7 @@ import {
   DashboardAuth,
   MemoryCoherenceConfig,
   ProviderAccountsConfig,
+  ProviderContextLimitsConfig,
   ReleaseTrack,
   ServerTrack,
   SidebarOrder,
@@ -24,6 +25,7 @@ export const ServerConfig = z.object({
   dashboardPort: z.number().int().positive().max(65535).optional(),
   memoryCoherence: MemoryCoherenceConfig.optional(),
   providerAccounts: ProviderAccountsConfig.optional(),
+  providerContextLimits: ProviderContextLimitsConfig.optional(),
   releaseTrack: ReleaseTrack.optional(),
   sidebarOrder: SidebarOrder.optional(),
   // Team registry. Optional + never schema-defaulted, so a legacy/empty config still loads
@@ -54,6 +56,12 @@ export class ServerConfigStore {
 
   write(config: ServerConfig): Promise<void> {
     return this.file.write(config);
+  }
+
+  update(
+    op: (config: ServerConfig) => ServerConfig | Promise<ServerConfig>,
+  ): Promise<ServerConfig> {
+    return this.file.update(op);
   }
 }
 

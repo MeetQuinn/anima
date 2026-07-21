@@ -1,8 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import UsagePanel from './UsagePanel';
+
+const contextApi = vi.hoisted(() => ({
+  save: vi.fn(),
+}));
 
 // Version-slot honesty regression (#520 gate, Milo). The server has a
 // distinct reachable shape for "binary present but version unverified":
@@ -54,6 +58,16 @@ vi.mock('@/api/system', () => ({
     ],
     upgradeLocked: false,
   })),
+  fetchProviderContextLimits: vi.fn(async () => ({
+    providers: [
+      {
+        maxTokens: null,
+        presets: [131072, 262144],
+        provider: 'kimi-cli' as const,
+        recommended: 262144,
+      },
+    ],
+  })),
   fetchProviderAccounts: vi.fn(async () => ({
     providers: [
       {
@@ -100,6 +114,7 @@ vi.mock('@/api/system', () => ({
   })),
   fetchProviderUsageProvider: vi.fn(),
   selectClaudeAccount: vi.fn(),
+  saveProviderContextLimit: contextApi.save,
 }));
 
 function renderPanel() {
@@ -122,5 +137,28 @@ describe('UsagePanel version slot', () => {
     // `not installed` renders exactly once - for the genuinely absent binary.
     const notInstalled = await screen.findAllByText('not installed');
     expect(notInstalled).toHaveLength(1);
+  });
+
+  it('shows the global Kimi context limit and saves the recommended cap', async () => {
+    contextApi.save.mockResolvedValueOnce({
+      providers: [
+        {
+          maxTokens: 262144,
+          presets: [131072, 262144],
+          provider: 'kimi-cli',
+          recommended: 262144,
+        },
+      ],
+    });
+    renderPanel();
+
+    const select = await screen.findByRole('combobox', { name: 'Kimi CLI context limit' });
+    expect((select as HTMLSelectElement).value).toBe('no-anima-limit');
+    expect(screen.getByRole('option', { name: 'No Anima limit' })).toBeTruthy();
+    expect(
+      screen.getByText('Global for every agent. Applies when its provider session next starts.'),
+    ).toBeTruthy();
+    fireEvent.change(select, { target: { value: '262144' } });
+    await waitFor(() => expect(contextApi.save).toHaveBeenCalledWith('kimi-cli', 262144));
   });
 });

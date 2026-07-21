@@ -27,6 +27,7 @@ import {
 } from './helpers/runtime-worker.js';
 import { makeSlackEvent } from './helpers/slack.js';
 import { allActivities, loadState } from './helpers/state.js';
+import { defaultServerSettingsService } from '../settings/settings.service.js';
 
 test('grok-cli ACP starts, appends, dispatches agent requests, and reports actual model authority', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-grok-runtime-'));
@@ -36,6 +37,7 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
       const callsPath = join(stateDir, 'calls.jsonl');
       await installFakeGrok(stateDir, [
         "const fs = require('fs');",
+        "if (!fs.readFileSync(process.env.GROK_HOME + '/config.toml', 'utf8').includes('context_window = 200000')) process.exit(72);",
         "process.stdin.setEncoding('utf8');",
         "let buffer = '';",
         'let promptCount = 0;',
@@ -78,10 +80,18 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
         '});',
       ]);
 
+      await defaultServerSettingsService.setProviderContextLimit(
+        'grok-cli',
+        200_000,
+      );
+
       const first = await ingestGrokEvent(stateDir, 'Start Grok.', '1771000000.000001');
       const followup = await ingestGrokEvent(stateDir, 'Continue Grok.', '1771000000.000002');
       runtime = createAgentRuntime({
-        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        env: runtimeTestEnv(stateDir, {
+          CALLS_PATH: callsPath,
+          GROK_HOME: join(stateDir, 'grok-home'),
+        }),
         kind: 'grok-cli',
         model: 'grok-4.5',
         reasoningEffort: 'high',

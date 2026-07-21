@@ -1,12 +1,14 @@
 import type {
   DashboardAuth,
   ProviderAccountsConfig,
+  ProviderContextLimitsConfig,
   ReleaseTrack,
   ServerTrack,
   SidebarOrder,
   TeamConfig,
   WorkspacePlatform,
 } from '../../shared/server-settings.js';
+import type { ProviderContextLimitProvider } from '../../shared/provider-context-limits.js';
 import {
   serverConfigStore,
   type ServerConfig,
@@ -65,6 +67,11 @@ export class ServerSettingsService {
     return config.providerAccounts ?? {};
   }
 
+  async getProviderContextLimits(): Promise<ProviderContextLimitsConfig> {
+    const config = await this.store.read();
+    return config.providerContextLimits ?? {};
+  }
+
   async getTrack(): Promise<ServerTrack> {
     const config = await this.store.read();
     return config.track ?? config.releaseTrack ?? 'stable';
@@ -103,6 +110,19 @@ export class ServerSettingsService {
     const config = await this.store.read();
     await this.store.write({ ...config, providerAccounts });
     return providerAccounts;
+  }
+
+  async setProviderContextLimit(
+    provider: ProviderContextLimitProvider,
+    maxTokens: number | null,
+  ): Promise<ProviderContextLimitsConfig> {
+    const config = await this.store.update((current) => {
+      const providerContextLimits = { ...current.providerContextLimits };
+      if (maxTokens === null) delete providerContextLimits[provider];
+      else providerContextLimits[provider] = maxTokens;
+      return { ...current, providerContextLimits };
+    });
+    return config.providerContextLimits ?? {};
   }
 
   async setWorkspacePlatform(workspacePlatform: WorkspacePlatform): Promise<WorkspacePlatform> {

@@ -32,6 +32,11 @@ import {
   defaultClaudeAccountLoginService,
 } from '../provider-accounts/claude-account-login.service.js';
 import { SidebarOrder, WorkspacePlatform } from '../../shared/server-settings.js';
+import { ProviderContextLimitRequest } from '../../shared/provider-context-limits.js';
+import {
+  defaultProviderContextLimitService,
+  ProviderContextLimitError,
+} from '../provider-context/provider-context-limit.service.js';
 import { defaultTeamService, TeamServiceError } from '../teams/team.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { HttpError } from './http.js';
@@ -131,6 +136,24 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
     } catch (error) {
       if (error instanceof ProviderCliConflictError) throw new HttpError(409, error.message);
       if (error instanceof ProviderCliUnavailableError) throw new HttpError(503, error.message);
+      throw error;
+    }
+  });
+  fastify.get('/api/provider-context-limits', async () =>
+    defaultProviderContextLimitService.status(),
+  );
+  fastify.put('/api/provider-context-limits', async (request, reply) => {
+    const parsed = ProviderContextLimitRequest.safeParse(request.body);
+    if (!parsed.success) {
+      return reply
+        .status(400)
+        .send({ error: 'Invalid provider context limit payload' });
+    }
+    try {
+      return await defaultProviderContextLimitService.set(parsed.data);
+    } catch (error) {
+      if (error instanceof ProviderContextLimitError)
+        throw new HttpError(error.statusCode, error.message);
       throw error;
     }
   });
