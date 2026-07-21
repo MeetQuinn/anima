@@ -153,7 +153,8 @@ describe('UsagePanel version slot', () => {
     renderPanel();
 
     const select = await screen.findByRole('combobox', { name: 'Kimi CLI context limit' });
-    expect((select as HTMLSelectElement).value).toBe('provider-maximum');
+    expect((select as HTMLSelectElement).value).toBe('no-anima-limit');
+    expect(screen.getByRole('option', { name: 'No Anima limit' })).toBeTruthy();
     expect(
       screen.getByText('Global for every agent. Applies when its provider session next starts.'),
     ).toBeTruthy();

@@ -545,11 +545,11 @@ function ProviderUnit({
               disabled={contextLimitSaving}
               onChange={(event) => {
                 const value = event.currentTarget.value;
-                onContextLimitChange(value === 'provider-maximum' ? null : Number(value));
+                onContextLimitChange(value === 'no-anima-limit' ? null : Number(value));
               }}
-              value={contextLimit.maxTokens ?? 'provider-maximum'}
+              value={contextLimit.maxTokens ?? 'no-anima-limit'}
             >
-              <option value="provider-maximum">Provider maximum</option>
+              <option value="no-anima-limit">No Anima limit</option>
               {contextLimit.presets.map((preset) => (
                 <option key={preset} value={preset}>
                   {formatContextTokens(preset)}

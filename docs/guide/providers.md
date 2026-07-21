@@ -80,11 +80,11 @@ Anima writes the provider's supported model setting in the host user's CLI confi
 - Grok: `context_window` in the model table.
 
 The recommended choices are 256k for Kimi and 200k for Grok. A smaller window makes the provider
-compact a long session earlier; **Provider maximum** removes Anima's override. The change applies
+compact a long session earlier; **No Anima limit** removes Anima's managed cap. The change applies
 when each provider session next starts, so saving it does not interrupt current work.
 
 Anima marks the exact lines it owns and preserves the rest of each TOML file. The first explicit
-save adopts an existing context value for that model; choosing **Provider maximum** later removes
+save adopts an existing context value for that model; choosing **No Anima limit** later removes
 that adopted key.
 
 ## Troubleshooting
