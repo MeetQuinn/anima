@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { ProviderAccountsConfig } from './provider-accounts.js';
+import { ProviderContextLimitsConfig } from './provider-context-limits.js';
 
 export const SidebarOrder = z.object({
   agents: z.array(z.string()).optional(),
@@ -50,7 +51,7 @@ export type ServerTrack = z.infer<typeof ServerTrack>;
 export const WorkspacePlatform = z.enum(['slack', 'feishu']);
 export type WorkspacePlatform = z.infer<typeof WorkspacePlatform>;
 
-export { ProviderAccountsConfig };
+export { ProviderAccountsConfig, ProviderContextLimitsConfig };
 
 export const DEFAULT_MEMORY_COHERENCE_CONSOLIDATION_THRESHOLD_BYTES = 16 * 1024;
 

@@ -8,6 +8,10 @@ import type {
   ProviderAccountsResponse,
 } from '@shared/provider-accounts';
 import type { ProviderCliApplyResponse, ProviderCliStatusResponse } from '@shared/provider-cli';
+import type {
+  ProviderContextLimitProvider,
+  ProviderContextLimitsResponse,
+} from '@shared/provider-context-limits';
 import type { ServerInfo } from '@shared/server-info';
 import type { SidebarOrder, WorkspacePlatform } from '@shared/server-settings';
 import type {
@@ -117,6 +121,17 @@ export async function applyProviderCliUpdate(provider: ProviderUsageKind): Promi
     `/api/provider-cli-status/${encodeURIComponent(provider)}/apply`,
     jsonInit('POST'),
   );
+}
+
+export async function fetchProviderContextLimits(): Promise<ProviderContextLimitsResponse> {
+  return apiRequest('/api/provider-context-limits');
+}
+
+export async function saveProviderContextLimit(
+  provider: ProviderContextLimitProvider,
+  maxTokens: number | null,
+): Promise<ProviderContextLimitsResponse> {
+  return apiRequest('/api/provider-context-limits', jsonInit('PUT', { maxTokens, provider }));
 }
 
 export async function fetchServerInfo(): Promise<ServerInfo> {

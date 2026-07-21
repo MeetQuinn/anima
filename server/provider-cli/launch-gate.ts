@@ -54,6 +54,18 @@ export async function withProviderCliInstallGate<T>(
   }
 }
 
+export async function withProviderCliConfigurationGate<T>(
+  provider: ProviderUsageKind,
+  task: () => Promise<T>,
+): Promise<T> {
+  const lease = await acquireLock(`provider-${provider}`, provider);
+  try {
+    return await task();
+  } finally {
+    await lease.release();
+  }
+}
+
 export async function withProviderCliLaunchPermit<T>(
   provider: ProviderUsageKind,
   signal: AbortSignal | undefined,

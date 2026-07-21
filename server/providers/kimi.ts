@@ -7,6 +7,7 @@ import { LineBuffer } from './line-buffer.js';
 import { ControllerAgentRuntime } from './provider-runtime.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
 import { withProviderCliLaunchPermit } from '../provider-cli/launch-gate.js';
+import { defaultProviderContextLimitService } from '../provider-context/provider-context-limit.service.js';
 import {
   providerSessionPayload,
   type AgentRuntimeFollowupInput,
@@ -79,15 +80,24 @@ export class KimiCliAgentRuntime extends ControllerAgentRuntime<KimiAcpControlle
     const controller = this.slot.get() ?? await withProviderCliLaunchPermit(
       this.kind,
       input.signal,
-      () => this.slot.get() ?? this.spawnController(
-        {
-          args: ['--yolo', 'acp'],
-          command: KIMI_COMMAND,
-          label: 'Kimi ACP runtime',
-        },
-        input,
-        (child) => new KimiAcpController(child),
-      ),
+      async () => {
+        const current = this.slot.get();
+        if (current) return current;
+        await defaultProviderContextLimitService.applyForLaunch(
+          this.kind,
+          this.config.model,
+          input.env,
+        );
+        return this.spawnController(
+          {
+            args: ['--yolo', 'acp'],
+            command: KIMI_COMMAND,
+            label: 'Kimi ACP runtime',
+          },
+          input,
+          (child) => new KimiAcpController(child),
+        );
+      },
     );
     try {
       await controller.ensureSession(input, this.config.model);

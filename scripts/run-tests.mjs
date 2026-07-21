@@ -63,6 +63,7 @@ const groups = {
     'provider-launch.test.js',
     'provider-line-buffer.test.js',
     'provider-cli.test.js',
+    'provider-context-limits.test.js',
     'provider-quiescent-waiters.test.js',
     'provider-accounts.test.js',
     'provider-usage.test.js',

@@ -7,6 +7,7 @@ import { LineBuffer } from './line-buffer.js';
 import { ControllerAgentRuntime } from './provider-runtime.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
 import { withProviderCliLaunchPermit } from '../provider-cli/launch-gate.js';
+import { defaultProviderContextLimitService } from '../provider-context/provider-context-limit.service.js';
 import {
   providerSessionPayload,
   type AgentRuntimeFollowupInput,
@@ -116,21 +117,24 @@ export class GrokCliAgentRuntime extends ControllerAgentRuntime<GrokAcpControlle
     }
     const controller =
       this.slot.get() ??
-      (await withProviderCliLaunchPermit(
-        this.kind,
-        input.signal,
-        () =>
-          this.slot.get() ??
-          this.spawnController(
-            {
-              args: grokAcpLaunchArgs(this.config),
-              command: GROK_COMMAND,
-              label: 'Grok ACP runtime',
-            },
-            input,
-            (child) => new GrokAcpController(child, this.config.reasoningEffort?.trim() || undefined),
-          ),
-      ));
+      (await withProviderCliLaunchPermit(this.kind, input.signal, async () => {
+        const current = this.slot.get();
+        if (current) return current;
+        await defaultProviderContextLimitService.applyForLaunch(
+          this.kind,
+          this.config.model,
+          input.env,
+        );
+        return this.spawnController(
+          {
+            args: grokAcpLaunchArgs(this.config),
+            command: GROK_COMMAND,
+            label: 'Grok ACP runtime',
+          },
+          input,
+          (child) => new GrokAcpController(child, this.config.reasoningEffort?.trim() || undefined),
+        );
+      }));
     try {
       await controller.ensureSession(input);
       return controller;

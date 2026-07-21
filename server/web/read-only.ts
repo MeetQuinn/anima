@@ -35,7 +35,7 @@ export const READ_ONLY_REFUSAL = 'read-only runtime: machine-scoped mutation dis
 export interface GovernedRoute {
   /** Stable id, used in the refusal body and in tests. */
   readonly id: string;
-  readonly method: 'GET' | 'POST';
+  readonly method: 'GET' | 'POST' | 'PUT';
   /** Matched against the pathname only (query string stripped). */
   readonly pattern: RegExp;
   /**
@@ -66,7 +66,7 @@ export interface GovernedRoute {
  *
  * Cross-checked against Milo's source-first capability inventory
  * (anima-team @ bb0e7ad). Applying the property above independently reproduced his
- * seven. `POST /api/agents/:agentId/home` was CONSIDERED AND EXCLUDED:
+ * set. `POST /api/agents/:agentId/home` was CONSIDERED AND EXCLUDED:
  * ensureExistingAgentHome() only stats the path and throws unless it is already a
  * directory. It validates; it does not create. Over-blocking is also a failure —
  * a guard that refuses more than it can justify teaches people to route around it.
@@ -75,6 +75,13 @@ export interface GovernedRoute {
  * point of the mode.
  */
 export const GOVERNED_ROUTES: readonly GovernedRoute[] = [
+  {
+    id: 'PUT /api/provider-context-limits',
+    method: 'PUT',
+    pattern: /^\/api\/provider-context-limits$/,
+    evidence:
+      "Writes the machine user's Kimi or Grok CLI configuration outside ANIMA_HOME. Those files control every provider process owned by this machine user, including processes started by other Anima homes.",
+  },
   {
     id: 'POST /api/provider-accounts/claude-code/select',
     method: 'POST',
