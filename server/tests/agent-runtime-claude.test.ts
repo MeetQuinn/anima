@@ -514,7 +514,7 @@ test('claude-code runtime does not retry non-transient provider protocol errors'
   }
 });
 
-test('claude-code runtime resumes after transient provider errors when tool use already started', async () => {
+test('claude-code runtime resumes after a stalled mid-stream response when tool use already started', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
@@ -534,7 +534,7 @@ test('claude-code runtime resumes after transient provider errors when tool use 
         "  console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'claude-error-session', cwd: process.cwd(), claude_code_version: 'test' }));",
         "  if (count === 1) {",
         "  console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_side_effect', name: 'Bash', input: { command: 'touch /tmp/anima-side-effect' } }] }, session_id: 'claude-error-session' }));",
-        "  console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: true, api_error_status: 503, result: 'API Error: The socket connection was closed unexpectedly', session_id: 'claude-error-session', usage: { input_tokens: 0, output_tokens: 0 }, terminal_reason: 'completed' }));",
+        "  console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: 'API Error: Response stalled mid-stream. The response above may be incomplete.', session_id: 'claude-error-session', usage: { input_tokens: 0, output_tokens: 0 }, terminal_reason: 'api_error' }));",
         "    return;",
         "  }",
         "  console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'continued safely after provider error' }] }, session_id: 'claude-error-session' }));",

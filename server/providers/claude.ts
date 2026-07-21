@@ -483,6 +483,7 @@ function claudeProviderErrorReason(input: { message: string; status: unknown; su
 function isRetryableClaudeProviderError(input: { message: string; status: unknown; subtype: string | undefined }): boolean {
   if (typeof input.status === 'number') return input.status === 408 || input.status >= 500;
   if (/\b(socket|connection|timeout|timed out|network|fetch)\b/i.test(input.message)) return true;
+  if (/\bresponse stalled mid-stream\b/i.test(input.message)) return true;
   return input.subtype === 'error_during_execution';
 }
 
