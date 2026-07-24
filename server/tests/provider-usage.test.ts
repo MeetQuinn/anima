@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -15,6 +15,7 @@ import {
   parseGrpcWebFrames,
 } from '../provider-usage/providers/grok.js';
 import { fetchKimiUsage, parseKimiUsageResponse } from '../provider-usage/providers/kimi.js';
+import { fetchOpenCodeUsage, openCodeAuthPath } from '../provider-usage/providers/opencode.js';
 
 test('Claude usage parser returns remaining windows and extra usage', () => {
   const parsed = parseClaudeUsageResponse({
@@ -140,6 +141,45 @@ test('Kimi usage parser returns top-level and short-window limits', () => {
     ['5h', 99, 1],
     ['Weekly', 99, 1],
   ]);
+});
+
+test('OpenCode usage reports only global DeepSeek credential presence and never returns the secret', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-opencode-usage-home-'));
+  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
+  const originalXdgDataHome = process.env.XDG_DATA_HOME;
+  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
+  process.env.XDG_DATA_HOME = join(home, 'ambient-xdg-must-not-win');
+  try {
+    assert.equal(openCodeAuthPath(), join(home, '.local', 'share', 'opencode', 'auth.json'));
+    const missing = await fetchOpenCodeUsage();
+    assert.equal(missing.status, 'unavailable');
+    assert.equal(missing.error?.type, 'not_configured');
+    assert.match(missing.error?.message ?? '', /opencode auth login --provider deepseek/);
+
+    const authPath = openCodeAuthPath();
+    await mkdir(join(home, '.local', 'share', 'opencode'), { recursive: true });
+    await writeFile(
+      authPath,
+      JSON.stringify({
+        deepseek: { key: 'deepseek-secret-that-must-not-leak', type: 'api' },
+        other: { key: 'unrelated-secret', type: 'api' },
+      }),
+      { mode: 0o600 },
+    );
+    await chmod(authPath, 0o600);
+
+    const configured = await fetchOpenCodeUsage();
+    assert.equal(configured.status, 'available');
+    assert.equal(configured.account, 'DeepSeek');
+    assert.deepEqual(configured.extras, [{ balance: 'Configured', label: 'Credential' }]);
+    assert.equal(JSON.stringify(configured).includes('deepseek-secret-that-must-not-leak'), false);
+    assert.equal(JSON.stringify(configured).includes('unrelated-secret'), false);
+    assert.equal((await stat(authPath)).mode & 0o777, 0o600);
+  } finally {
+    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
+    restoreEnv('XDG_DATA_HOME', originalXdgDataHome);
+    await rm(home, { force: true, recursive: true });
+  }
 });
 
 test('Kimi usage reads Kimi Code credentials before legacy migrated credentials', async () => {

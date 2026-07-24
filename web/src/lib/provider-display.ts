@@ -7,6 +7,8 @@ export function providerKindLabel(kind: string, catalog: ProviderCatalogEntry[])
 export function providerValueLabel(value: string | undefined): string {
   if (!value) return '';
   if (value === 'xhigh') return 'Extra High';
+  if (value === 'deepseek/deepseek-v4-pro') return 'DeepSeek V4 Pro';
+  if (value === 'deepseek/deepseek-v4-flash') return 'DeepSeek V4 Flash';
   if (/^[a-z]+$/.test(value)) return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
   return value;
 }

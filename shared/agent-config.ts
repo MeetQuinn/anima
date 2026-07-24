@@ -323,6 +323,16 @@ export const GrokCliAgentProviderConfig = z.object({
 
 export type GrokCliAgentProviderConfig = z.infer<typeof GrokCliAgentProviderConfig>;
 
+export const OpenCodeCliAgentProviderConfig = z.object({
+  env: z.record(z.string(), z.string()).optional(),
+  idleTimeoutMs: z.number().optional(),
+  kind: z.literal('opencode-cli'),
+  model: z.string().optional(),
+  providerChildIdleTimeoutMs: z.number().nonnegative().optional(),
+});
+
+export type OpenCodeCliAgentProviderConfig = z.infer<typeof OpenCodeCliAgentProviderConfig>;
+
 export const AgentProviderConfig = z.preprocess(
   (value) => {
     const input = isRecord(value) ? value : {};
@@ -361,6 +371,7 @@ export const AgentProviderConfig = z.preprocess(
     ClaudeCodeAgentProviderConfig,
     GrokCliAgentProviderConfig,
     KimiCliAgentProviderConfig,
+    OpenCodeCliAgentProviderConfig,
   ]),
 );
 

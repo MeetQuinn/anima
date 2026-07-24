@@ -4,6 +4,7 @@ import type {
   CodexCliAgentProviderConfig,
   GrokCliAgentProviderConfig,
   KimiCliAgentProviderConfig,
+  OpenCodeCliAgentProviderConfig,
 } from '../../shared/agent-config.js';
 import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
 
@@ -13,6 +14,7 @@ export type {
   CodexCliAgentProviderConfig,
   GrokCliAgentProviderConfig,
   KimiCliAgentProviderConfig,
+  OpenCodeCliAgentProviderConfig,
 };
 
 export interface ProviderSessionRecord {

@@ -8,7 +8,7 @@ interface SlotController {
 
 // Owns a provider runtime's single long-lived controller: installs it, clears
 // the reference once the child settles, and tears it down on reset. Claude,
-// Codex, Grok, and Kimi share this lifecycle.
+// Codex, Grok, Kimi, and OpenCode share this lifecycle.
 export class ProviderControllerSlot<C extends SlotController> {
   private current?: C;
 

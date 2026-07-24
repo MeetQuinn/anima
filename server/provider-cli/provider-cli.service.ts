@@ -284,6 +284,8 @@ export class ProviderCliService {
       result = await fetchJsonVersion(this.fetchImpl, 'https://registry.npmjs.org/%40openai%2Fcodex/latest', previous);
     } else if (provider === 'kimi-cli') {
       result = await fetchJsonVersion(this.fetchImpl, 'https://code.kimi.com/kimi-code/latest.json', previous);
+    } else if (provider === 'opencode-cli') {
+      result = await fetchJsonVersion(this.fetchImpl, 'https://registry.npmjs.org/opencode-ai/latest', previous);
     } else {
       result = await grokVersionLookup(this.runCommand, this.env, previous);
     }

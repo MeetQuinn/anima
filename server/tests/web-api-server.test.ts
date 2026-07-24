@@ -102,6 +102,7 @@ test('web API reports provider availability', async () => {
         'codex-cli',
         'grok-cli',
         'kimi-cli',
+        'opencode-cli',
       ]);
       for (const provider of body.providers) {
         assert.equal(typeof provider.present, 'boolean');

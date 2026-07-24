@@ -27,6 +27,7 @@ import {
   providerUnavailableHint,
   unavailableProviderHints,
 } from '@/lib/provider-availability';
+import { providerValueLabel } from '@/lib/provider-display';
 import AnimaIcon from '@/components/AnimaIcon';
 import { StepDot, WorkspacePlatformStep } from './components';
 import { Button } from '@/components/ui/button';
@@ -185,7 +186,6 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
   // Display helpers — Base UI SelectValue shows raw value before items register;
   // use render-prop form to always resolve a human label.
   const displayProvider = (v: string) => providerOptions.find((r) => r.kind === v)?.label ?? v;
-  const displayModel = (v: string) => (v ? v.charAt(0).toUpperCase() + v.slice(1) : v);
   const displayEffort = (v: string) => (v === 'xhigh' ? 'Extra High' : v ? v.charAt(0).toUpperCase() + v.slice(1) : v);
   const currentProvider = providerOptions.find((o) => o.kind === providerKind);
   const selectedEffortOptions = effortOptionsForSelectedModel(
@@ -651,7 +651,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
               </label>
               {providerAvailability && unavailableProviders.length === providerOptions.length ? (
                 <p className="font-sans text-[12px] text-health-warn">
-                  No providers detected. Install Claude Code, Codex CLI, Kimi CLI, or Grok Build first.
+                  No providers detected. Install Claude Code, Codex CLI, Kimi CLI, Grok Build, or OpenCode first.
                 </p>
               ) : (
                 <div
@@ -697,12 +697,12 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                     }}
                   >
                     <SelectTrigger className="!h-auto w-full py-2 font-serif text-[15px]">
-                      <SelectValue>{(v: string) => displayModel(v)}</SelectValue>
+                      <SelectValue>{(v: string) => providerValueLabel(v)}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {(currentProvider?.models ?? []).map((m) => (
                         <SelectItem key={m} value={m}>
-                          {displayModel(m)}
+                          {providerValueLabel(m)}
                         </SelectItem>
                       ))}
                     </SelectContent>

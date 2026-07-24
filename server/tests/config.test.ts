@@ -306,6 +306,56 @@ test('kimi-cli catalog exposes K3 and the current managed aliases without changi
   );
 });
 
+test('opencode-cli catalog exposes only the supported DeepSeek V4 models', () => {
+  const entry = providerCatalogEntry('opencode-cli');
+  assert.deepEqual(entry?.models, [
+    'deepseek/deepseek-v4-pro',
+    'deepseek/deepseek-v4-flash',
+  ]);
+  assert.equal(entry?.defaultModel, 'deepseek/deepseek-v4-pro');
+  assert.deepEqual(entry?.reasoningEfforts, []);
+
+  assert.equal(
+    AgentCreateRequest.parse({
+      name: 'OpenCode',
+      homePath: 'agents/opencode',
+      role: 'general purpose',
+      provider: {
+        kind: 'opencode-cli',
+        model: 'deepseek/deepseek-v4-flash',
+      },
+    }).provider.model,
+    'deepseek/deepseek-v4-flash',
+  );
+  assert.throws(
+    () =>
+      AgentCreateRequest.parse({
+        name: 'OpenCode old alias',
+        homePath: 'agents/opencode-old',
+        role: 'general purpose',
+        provider: {
+          kind: 'opencode-cli',
+          model: 'deepseek/deepseek-chat',
+        },
+      }),
+    /unsupported model for opencode-cli: deepseek\/deepseek-chat/,
+  );
+  assert.throws(
+    () =>
+      AgentCreateRequest.parse({
+        name: 'OpenCode effort',
+        homePath: 'agents/opencode-effort',
+        role: 'general purpose',
+        provider: {
+          kind: 'opencode-cli',
+          model: 'deepseek/deepseek-v4-pro',
+          reasoningEffort: 'high',
+        },
+      }),
+    /unsupported reasoningEffort high/,
+  );
+});
+
 test('claude-code catalog includes Fable without changing the default model', () => {
   const entry = providerCatalogEntry('claude-code');
   assert.deepEqual(entry?.models, ['opus', 'sonnet', 'haiku', 'fable']);
@@ -417,6 +467,7 @@ test('provider turn and child idle timeouts default for all providers', async ()
     { kind: 'codex-cli', model: 'gpt-5.5' },
     { kind: 'grok-cli', model: 'grok-4.5' },
     { kind: 'kimi-cli', model: 'kimi-code/kimi-for-coding' },
+    { kind: 'opencode-cli', model: 'deepseek/deepseek-v4-pro' },
   ]) {
     const configDir = await mkdtemp(join(tmpdir(), 'anima-config-timeout-test-'));
     try {

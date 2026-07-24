@@ -82,7 +82,11 @@ function shouldPersistRuntimeEvent(payload: Record<string, unknown> | undefined)
   // Persist-side exception to the shared noise list: ACP context stats feed
   // runtime session stats (updateRuntimeStats), so they are kept on disk even
   // though the read side never renders them.
-  if (eventType === 'grok.context.stats' || eventType === 'kimi.context.stats') return true;
+  if (
+    eventType === 'grok.context.stats'
+    || eventType === 'kimi.context.stats'
+    || eventType === 'opencode.context.stats'
+  ) return true;
   return !isRuntimeEventNoise(eventType);
 }
 
@@ -93,6 +97,7 @@ function shouldUpdateRuntimeStats(payload: Record<string, unknown> | undefined):
     eventType === 'codex.session.stats' ||
     eventType === 'grok.context.stats' ||
     eventType === 'kimi.context.stats' ||
+    eventType === 'opencode.context.stats' ||
     eventType === 'claude.context.stats' ||
     eventType === 'codex.context.stats' ||
     eventType?.endsWith('.compact.completed') === true
