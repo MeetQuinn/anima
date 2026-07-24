@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
-export const ProviderUsageKind = z.enum(['claude-code', 'codex-cli', 'kimi-cli', 'grok-cli']);
+export const ProviderUsageKind = z.enum([
+  'claude-code',
+  'codex-cli',
+  'kimi-cli',
+  'grok-cli',
+  'opencode-cli',
+]);
 export type ProviderUsageKind = z.infer<typeof ProviderUsageKind>;
 
 export const ProviderUsageErrorType = z.enum([

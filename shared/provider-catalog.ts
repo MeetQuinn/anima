@@ -5,7 +5,7 @@ export interface ProviderCatalogEntry {
   defaultModel: string;
   dynamicModels?: boolean;
   installHint: string;
-  kind: 'claude-code' | 'codex-cli' | 'kimi-cli' | 'grok-cli';
+  kind: 'claude-code' | 'codex-cli' | 'kimi-cli' | 'grok-cli' | 'opencode-cli';
   label: string;
   marketingModelAliases?: string[];
   models: string[];
@@ -17,7 +17,7 @@ export type ProviderKind = ProviderCatalogEntry['kind'];
 export const ProviderAvailability = z.object({
   checkedAt: z.string().optional(),
   defaultModel: z.string().optional(),
-  kind: z.enum(['claude-code', 'codex-cli', 'kimi-cli', 'grok-cli']),
+  kind: z.enum(['claude-code', 'codex-cli', 'kimi-cli', 'grok-cli', 'opencode-cli']),
   modelCheckError: z.string().optional(),
   /**
    * Per-model reasoning effort menus (Grok Build). Missing or empty array means
@@ -85,6 +85,18 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     // Effort is model-scoped in Grok (supportsReasoningEffort / reasoningEfforts on
     // each ACP catalog entry). Do not expose a provider-wide menu; UI reads live
     // modelReasoningEfforts, and the runtime applies effort via session/set_model.
+    reasoningEfforts: [],
+  },
+  {
+    kind: 'opencode-cli',
+    label: 'OpenCode',
+    command: 'opencode',
+    installHint: 'Install OpenCode so `opencode --version` works, then add a DeepSeek credential.',
+    models: [
+      'deepseek/deepseek-v4-pro',
+      'deepseek/deepseek-v4-flash',
+    ],
+    defaultModel: 'deepseek/deepseek-v4-pro',
     reasoningEfforts: [],
   },
 ];

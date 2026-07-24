@@ -129,6 +129,80 @@ test('Codex updates use the npm paired with the active binary and block new laun
   }
 });
 
+test('OpenCode Homebrew installs use the paired brew and never invoke authentication commands', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-provider-cli-opencode-'));
+  const prefix = join(root, 'homebrew');
+  const binDir = join(prefix, 'bin');
+  const opencodeCommand = join(binDir, 'opencode');
+  const brewCommand = join(binDir, 'brew');
+  let installedVersion = '1.18.4';
+  const calls: Array<{ args: string[]; command: string }> = [];
+
+  const installVersion = async (version: string) => {
+    const binary = join(prefix, 'Cellar', 'opencode', version, 'bin', 'opencode');
+    await mkdir(join(prefix, 'Cellar', 'opencode', version, 'bin'), { recursive: true });
+    await writeFile(binary, '#!/bin/sh\nexit 0\n', 'utf8');
+    await chmod(binary, 0o755);
+    await rm(opencodeCommand, { force: true });
+    await symlink(binary, opencodeCommand);
+    installedVersion = version;
+  };
+
+  await mkdir(binDir, { recursive: true });
+  await writeFile(brewCommand, '#!/bin/sh\nexit 0\n', 'utf8');
+  await chmod(brewCommand, 0o755);
+  await installVersion(installedVersion);
+  const resolvedBrewCommand = await realpath(brewCommand);
+
+  const runCommand: ProviderCliCommandRunner = async (command, args) => {
+    calls.push({ args, command });
+    if (command === opencodeCommand && args.join(' ') === '--version') {
+      return { stderr: '', stdout: installedVersion };
+    }
+    if (command === resolvedBrewCommand && args.join(' ') === 'upgrade anomalyco/tap/opencode') {
+      await installVersion('1.19.0');
+      return { stderr: '', stdout: 'upgraded opencode' };
+    }
+    throw new Error(`Unexpected command: ${command} ${args.join(' ')}`);
+  };
+
+  try {
+    await withAnimaHome(root, async () => {
+      const service = new ProviderCliService({
+        checkStore: new ProviderCliCheckStore(),
+        env: { PATH: binDir },
+        fetch: async () => new Response(JSON.stringify({ version: '1.19.0' }), { status: 200 }),
+        listAgentConfigs: async () => [],
+        listStatuses: async () => [],
+        operationStore: new ProviderCliOperationStore(),
+        runCommand,
+      });
+
+      const checked = await service.checkNow('opencode-cli');
+      const before = checked.providers.find((row) => row.provider === 'opencode-cli');
+      assert.equal(before?.installSource, 'opencode-brew');
+      assert.equal(before?.updateMode, 'managed');
+      assert.equal(before?.installedVersion, '1.18.4');
+      assert.equal(before?.latestVersion, '1.19.0');
+      assert.equal(before?.updateAvailable, true);
+
+      const applied = await service.apply('opencode-cli');
+      assert.equal(applied.installedVersion, '1.19.0');
+      assert.equal(
+        calls.some((call) =>
+          call.command === resolvedBrewCommand && call.args.join(' ') === 'upgrade anomalyco/tap/opencode'),
+        true,
+      );
+      assert.equal(
+        calls.some((call) => call.args.includes('auth') || call.args.includes('login') || call.args.includes('logout')),
+        false,
+      );
+    });
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test('managed Claude updates isolate updater writes from account credentials', async () => {
   const root = await mkdtemp(join(tmpdir(), 'anima-provider-cli-claude-'));
   const home = join(root, 'home');
@@ -423,7 +497,13 @@ test('provider checks reuse validators and keep failures isolated by provider', 
               status: 429,
             });
           }
-          const version = url.includes('claude') ? '2.1.0' : url.includes('codex') ? '1.2.0' : '0.24.0';
+          const version = url.includes('claude')
+            ? '2.1.0'
+            : url.includes('%40openai')
+              ? '1.2.0'
+              : url.includes('opencode-ai')
+                ? '1.18.4'
+                : '0.24.0';
           const body = url.includes('claude') ? version : JSON.stringify({ version });
           return new Response(body, {
             headers: { etag: `\"${version}\"` },
@@ -438,7 +518,7 @@ test('provider checks reuse validators and keep failures isolated by provider', 
       const first = await service.checkNow();
       assert.deepEqual(
         first.providers.map((row) => row.latestVersion),
-        ['2.1.0', '1.2.0', '0.24.0', undefined],
+        ['2.1.0', '1.2.0', '0.24.0', undefined, '1.18.4'],
       );
       assert.match(first.providers[3]?.checkError?.message ?? '', /grok/i);
       round = 1;
@@ -448,9 +528,11 @@ test('provider checks reuse validators and keep failures isolated by provider', 
       assert.match(second.providers[1]?.checkError?.message ?? '', /429.*retry after 60/);
       assert.equal(second.providers[2]?.latestVersion, '0.24.0');
       assert.match(second.providers[3]?.checkError?.message ?? '', /grok/i);
+      assert.match(second.providers[4]?.checkError?.message ?? '', /429.*retry after 60/);
       assert.equal(conditionalHeaders.includes('"2.1.0"'), true);
       assert.equal(conditionalHeaders.includes('"1.2.0"'), true);
       assert.equal(conditionalHeaders.includes('"0.24.0"'), true);
+      assert.equal(conditionalHeaders.includes('"1.18.4"'), true);
     });
   } finally {
     await rm(root, { force: true, recursive: true });

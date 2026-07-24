@@ -196,7 +196,10 @@ export function tokenDeltaForActivities(activities: Activity[]): number | undefi
 
   const acpStats = latestActivity(
     activities,
-    (eventType) => eventType === 'grok.context.stats' || eventType === 'kimi.context.stats',
+    (eventType) =>
+      eventType === 'grok.context.stats'
+      || eventType === 'kimi.context.stats'
+      || eventType === 'opencode.context.stats',
   );
   return acpStats ? tokenDeltaFromPayload(acpStats.payload) : undefined;
 }
@@ -261,7 +264,11 @@ function mergeSessionStats(
   const summary = providerSessionStatsSummary(activity, runtimeKind, runtimeEnv, payload);
   const eventType = stringField(payload, 'eventType');
   const usedTokens =
-    eventType === 'grok.context.stats' || eventType === 'kimi.context.stats' ? undefined : summary.usedTokens;
+    eventType === 'grok.context.stats'
+    || eventType === 'kimi.context.stats'
+    || eventType === 'opencode.context.stats'
+      ? undefined
+      : summary.usedTokens;
   return providerStatsSummary({
     ...summary,
     contextWindow: summary.contextWindow ?? current?.contextWindow,
@@ -352,7 +359,8 @@ function providerSessionStatsPayload(
   return eventType === 'claude.session.stats' ||
     eventType === 'codex.session.stats' ||
     eventType === 'grok.context.stats' ||
-    eventType === 'kimi.context.stats'
+    eventType === 'kimi.context.stats' ||
+    eventType === 'opencode.context.stats'
     ? payload
     : undefined;
 }
@@ -364,7 +372,8 @@ function providerContextStatsPayload(
   return eventType === 'claude.context.stats' ||
     eventType === 'codex.context.stats' ||
     eventType === 'grok.context.stats' ||
-    eventType === 'kimi.context.stats'
+    eventType === 'kimi.context.stats' ||
+    eventType === 'opencode.context.stats'
     ? payload
     : undefined;
 }

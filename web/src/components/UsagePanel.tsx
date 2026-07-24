@@ -125,6 +125,7 @@ function installSourceLabel(source: ProviderCliRow['installSource']): string {
   if (source === 'codex-npm-global') return 'Global npm';
   if (source === 'kimi-native') return 'Native';
   if (source === 'grok-native') return 'Native';
+  if (source === 'opencode-brew') return 'Homebrew';
   return 'Unknown source';
 }
 

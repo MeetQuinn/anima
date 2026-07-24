@@ -31,7 +31,7 @@ export interface ProviderTurnController {
 // Shared lifecycle for provider adapters that keep one long-lived child-process
 // controller per runtime: controller slot ownership, active-run tracking,
 // close/health/drain, and the runtime.started/completed/failed envelope.
-// Claude (stream-json), Codex, Grok, and Kimi share this plumbing.
+// Claude (stream-json), Codex, Grok, Kimi, and OpenCode share this plumbing.
 export abstract class ControllerAgentRuntime<C extends ProviderTurnController> implements AgentRuntime {
   abstract readonly env: Record<string, string> | undefined;
   abstract readonly kind: string;

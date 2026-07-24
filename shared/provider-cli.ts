@@ -7,6 +7,7 @@ export const ProviderCliInstallSource = z.enum([
   'codex-npm-global',
   'kimi-native',
   'grok-native',
+  'opencode-brew',
   'unknown',
 ]);
 export type ProviderCliInstallSource = z.infer<typeof ProviderCliInstallSource>;

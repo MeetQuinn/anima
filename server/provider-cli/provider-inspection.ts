@@ -68,6 +68,9 @@ export async function inspectProvider(
   if (provider === 'kimi-cli') {
     return inspectKimi(executable, installedVersion, catalog.label, env);
   }
+  if (provider === 'opencode-cli') {
+    return inspectOpenCode(executable, installedVersion, catalog.label);
+  }
   return inspectGrok(executable, installedVersion, catalog.label, env, runCommand);
 }
 
@@ -210,6 +213,45 @@ function inspectKimi(
   };
 }
 
+async function inspectOpenCode(
+  executable: ResolvedExecutable,
+  installedVersion: string,
+  label: string,
+): Promise<ProviderInspection> {
+  const match = executable.realPath.match(
+    /^(.*)[/\\]Cellar[/\\]opencode[/\\]([^/\\]+)[/\\]bin[/\\]opencode$/,
+  );
+  const prefix = match?.[1];
+  const cellarVersion = match?.[2];
+  const brewPath = prefix ? join(prefix, 'bin', 'brew') : undefined;
+  const managed = Boolean(
+    brewPath
+      && cellarVersion === installedVersion
+      && await isAccessible(brewPath, constants.X_OK),
+  );
+  return {
+    binaryPath: executable.path,
+    installSource: managed ? 'opencode-brew' : 'unknown',
+    installedVersion,
+    label,
+    manualCommand: 'brew upgrade anomalyco/tap/opencode',
+    provider: 'opencode-cli',
+    realPath: executable.realPath,
+    sourceDetail: managed
+      ? `Homebrew install in ${prefix}`
+      : 'The active OpenCode binary is not a recognized Homebrew install',
+    ...(managed && brewPath
+      ? {
+          updateCommand: {
+            args: ['upgrade', 'anomalyco/tap/opencode'],
+            command: brewPath,
+          },
+        }
+      : {}),
+    updateMode: managed ? 'managed' : 'manual',
+  };
+}
+
 async function inspectGrok(
   executable: ResolvedExecutable,
   installedVersion: string,
@@ -294,6 +336,7 @@ function manualCommandFor(provider: ProviderKind): string {
   if (provider === 'claude-code') return 'claude update';
   if (provider === 'codex-cli') return 'npm install -g @openai/codex@latest';
   if (provider === 'kimi-cli') return 'kimi upgrade';
+  if (provider === 'opencode-cli') return 'brew upgrade anomalyco/tap/opencode';
   return 'grok update';
 }
 

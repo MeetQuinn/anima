@@ -5,6 +5,7 @@ import { fetchClaudeUsage } from './providers/claude.js';
 import { fetchCodexUsage } from './providers/codex.js';
 import { fetchGrokUsage } from './providers/grok.js';
 import { fetchKimiUsage } from './providers/kimi.js';
+import { fetchOpenCodeUsage } from './providers/opencode.js';
 import { usageError } from './result.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { defaultServerSettingsService } from '../settings/settings.service.js';
@@ -116,6 +117,12 @@ export function defaultProviderUsageAdapters(): ProviderUsageAdapter[] {
       // Account credits come from grok.com gRPC-Web billing (same path as Raycast Agent Usage),
       // not from a Grok CLI subcommand.
       source: 'private-api',
+    },
+    {
+      fetch: async () => [await fetchOpenCodeUsage()],
+      label: 'OpenCode',
+      provider: 'opencode-cli',
+      source: 'native',
     },
   ];
 }

@@ -1,6 +1,6 @@
 # Provider Layer
 
-This document explains the layer where Anima talks to an underlying provider such as Codex CLI, Claude Code, Kimi CLI, or Grok Build.
+This document explains the layer where Anima talks to an underlying provider such as Codex CLI, Claude Code, Kimi CLI, Grok Build, or OpenCode.
 
 It intentionally does not re-explain chat routing, reminder scheduling, inbox ingestion, or the web app. For the system map, start with [Architecture overview](architecture/overview.md).
 
@@ -52,7 +52,7 @@ export interface AgentRuntime {
 
 `close` is optional. It is for provider adapters that keep resources alive across items, such as a persistent child process. `AgentRuntimeCloseOptions` lets the caller choose the kill signal and a force-kill deadline.
 
-Controller-style adapters (Codex app-server, Claude stream-json, Kimi ACP, and Grok ACP) may keep a provider child warm after a turn so the next item can reuse the session. Once no item is active, `providerChildIdleTimeoutMs` bounds that warm child before Anima terminates it.
+Controller-style adapters (Codex app-server, Claude stream-json, Kimi ACP, Grok ACP, and OpenCode ACP) may keep a provider child warm after a turn so the next item can reuse the session. Once no item is active, `providerChildIdleTimeoutMs` bounds that warm child before Anima terminates it.
 
 `health` is optional. It returns a snapshot of the adapter's child-process state (whether a child is expected, and how the live one looks) for the runtime health service.
 
@@ -169,6 +169,12 @@ An explicit save adopts an existing model context key by marking and replacing o
 After adoption, only Anima-marked keys are updated or removed. Running provider children are
 unchanged.
 
+OpenCode authentication follows the same machine-level rule. The DeepSeek API key lives in
+OpenCode's own credential store after `opencode auth login --provider deepseek`. The OpenCode
+adapter pins the auth/config location (`HOME`, XDG, and custom config paths) to the Anima service
+environment and removes inline credential/config overrides from each child launch environment, so
+an agent-specific Launch env cannot silently replace the shared OpenCode identity.
+
 ## Provider Sessions
 
 Provider session ids are stored on Anima's primary session record by provider kind. `AgentRuntimeBridge` reads the current provider session and passes it to the adapter as `providerSession`.
@@ -179,6 +185,7 @@ They are used to resume the underlying tool's native context:
 - Claude: the stored id is the Claude Code session id;
 - Kimi: the stored id is the Kimi ACP session id;
 - Grok: the stored id is the Grok ACP session id.
+- OpenCode: the stored id is the OpenCode ACP session id.
 
 When a provider emits a new session id, the adapter calls `effects.persistProviderSession`. The sink updates Anima's primary session record.
 
@@ -308,18 +315,19 @@ claude
 
 Anima uses provider tools for observability only; chat side effects, reminders, subscriptions, inbox routing, and scheduling must stay Anima-owned. Claude Code currently receives a small strategic denylist through `--disallowedTools`:
 
-| Tool                                                       | Current CLI presence      | Runtime behavior                                                                                                                    | Side effect                                                                                     | Decision      |
-| ---------------------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------- |
-| `AskUserQuestion`                                          | Claude Code built-in      | Fails in the non-interactive runtime.                                                                                               | Attempts to ask the operator outside Anima.                                                     | Deny          |
-| `CronCreate` / `CronDelete` / `CronList`                   | Claude Code built-ins     | Works as Claude-native session cron management.                                                                                     | Creates or manages recurring scheduled prompts outside Anima inbox/reminder/activity ownership. | Deny          |
-| `ScheduleWakeup`                                           | Claude Code built-in      | Works as Claude-native one-off delayed wake.                                                                                        | Creates future wakeups outside Anima reminders and audit.                                       | Deny          |
-| `RemoteTrigger`                                            | Claude Code built-in      | Not needed by Anima runtime.                                                                                                        | Establishes provider-native remote triggers outside Anima routing.                              | Deny          |
-| `PushNotification`                                         | Claude Code built-in      | Not needed by Anima runtime.                                                                                                        | Sends provider-native notifications outside Anima-visible messaging.                            | Deny          |
-| `SlashCommand`                                             | Claude Code built-in      | Observe. Some commands are internal and may be valid in stream-json.                                                                | Can affect Claude session state, but not proven broken in Anima.                                | Allow/observe |
-| File, shell, search, task, todo, notebook, and skill tools | Claude Code built-ins     | Required for normal agent work.                                                                                                     | Provider work, surfaced through Anima activity mapping.                                         | Allow         |
-| Codex CLI tools                                            | Codex app-server protocol | No equivalent user-question/scheduler controls found in the current adapter surface.                                                | Tool activity is mapped by Anima.                                                               | Allow/observe |
-| Grok Build tools                                           | Grok ACP                  | Launched with `--always-approve`; ACP permission requests are approved for the session and unsupported client methods are rejected. | Tool activity is mapped by Anima.                                                               | Allow/observe |
-| Kimi CLI tools                                             | Kimi ACP                  | Anima initializes with empty client capabilities; interactive prompts are not exposed through the adapter.                          | Tool activity is mapped by Anima.                                                               | Allow/observe |
+| Tool                                                       | Current CLI presence      | Runtime behavior                                                                                                                        | Side effect                                                                                     | Decision      |
+| ---------------------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------- |
+| `AskUserQuestion`                                          | Claude Code built-in      | Fails in the non-interactive runtime.                                                                                                   | Attempts to ask the operator outside Anima.                                                     | Deny          |
+| `CronCreate` / `CronDelete` / `CronList`                   | Claude Code built-ins     | Works as Claude-native session cron management.                                                                                         | Creates or manages recurring scheduled prompts outside Anima inbox/reminder/activity ownership. | Deny          |
+| `ScheduleWakeup`                                           | Claude Code built-in      | Works as Claude-native one-off delayed wake.                                                                                            | Creates future wakeups outside Anima reminders and audit.                                       | Deny          |
+| `RemoteTrigger`                                            | Claude Code built-in      | Not needed by Anima runtime.                                                                                                            | Establishes provider-native remote triggers outside Anima routing.                              | Deny          |
+| `PushNotification`                                         | Claude Code built-in      | Not needed by Anima runtime.                                                                                                            | Sends provider-native notifications outside Anima-visible messaging.                            | Deny          |
+| `SlashCommand`                                             | Claude Code built-in      | Observe. Some commands are internal and may be valid in stream-json.                                                                    | Can affect Claude session state, but not proven broken in Anima.                                | Allow/observe |
+| File, shell, search, task, todo, notebook, and skill tools | Claude Code built-ins     | Required for normal agent work.                                                                                                         | Provider work, surfaced through Anima activity mapping.                                         | Allow         |
+| Codex CLI tools                                            | Codex app-server protocol | No equivalent user-question/scheduler controls found in the current adapter surface.                                                    | Tool activity is mapped by Anima.                                                               | Allow/observe |
+| Grok Build tools                                           | Grok ACP                  | Launched with `--always-approve`; ACP permission requests are approved for the session and unsupported client methods are rejected.     | Tool activity is mapped by Anima.                                                               | Allow/observe |
+| Kimi CLI tools                                             | Kimi ACP                  | Anima initializes with empty client capabilities; interactive prompts are not exposed through the adapter.                              | Tool activity is mapped by Anima.                                                               | Allow/observe |
+| OpenCode tools                                             | OpenCode ACP              | Launched with `--pure`; ACP permission requests prefer the provider's allow-always option, and unsupported client methods are rejected. | Tool activity is mapped by Anima.                                                               | Allow/observe |
 
 The denylist is global for now. Per-agent tool policy should be added only when there is a concrete operator need; the default policy should keep provider-native scheduling and notifications out of the runtime.
 
@@ -474,6 +482,33 @@ Evaluation boundary: earlier research made Grok Build look strongest on long ter
 did not establish that Grok Build beats Claude Code or Codex on Anima repository accuracy or
 documentation work. Adding the adapter does not move an existing agent or recommend a provider
 switch.
+
+## OpenCode Adapter
+
+Implementation: `server/providers/opencode.ts`.
+
+Current process model:
+
+- Anima starts one persistent `opencode acp --pure` process and speaks ACP over stdio.
+  `--pure` disables external OpenCode plugins for a deterministic runtime boundary; OpenCode's
+  built-in tools and first-party providers remain available.
+- Fresh work uses `session/new`. A stored provider session uses `session/resume`; only a confirmed
+  missing session falls back to `session/new`.
+- The selected DeepSeek model is applied after session creation or resume and before the first
+  prompt with `session/set_config_option` using `configId: "model"`.
+- Each item uses `session/prompt`. Compatible follow-ups are queued into the same ACP session, and
+  cancellation sends `session/cancel` before Anima tears down the child.
+- ACP thinking, assistant text, usage, tool calls, tool failures, and permission requests are mapped
+  into the same Anima activity and health surfaces as the other providers.
+
+Anima currently exposes `deepseek/deepseek-v4-pro` and `deepseek/deepseek-v4-flash` for OpenCode.
+The retired `deepseek-chat` and `deepseek-reasoner` aliases are not accepted for new agent
+configuration.
+
+OpenCode, Kimi, and Grok all use ACP, but their session and event contracts are provider-specific.
+`server/providers/acp-json-rpc.ts` shares only newline framing, JSON-RPC request correlation, and
+request/notification routing. Session methods, permission policy, model selection, and activity
+mapping remain in each adapter.
 
 ## Agent Activities
 

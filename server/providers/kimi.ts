@@ -2,8 +2,8 @@ import { nowIso } from '../ids.js';
 import { isRecord, numberField, singleLineForActivity, stringField } from '../json.js';
 import { truncateForActivity } from '../activities/format.js';
 import { type RunningChildProcess } from './child-process.js';
+import { AcpJsonRpcError, AcpJsonRpcPeer } from './acp-json-rpc.js';
 import { exposedReasoningEvent } from './reasoning-events.js';
-import { LineBuffer } from './line-buffer.js';
 import { ControllerAgentRuntime } from './provider-runtime.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
 import { withProviderCliLaunchPermit } from '../provider-cli/launch-gate.js';
@@ -19,16 +19,6 @@ import {
 
 const KIMI_COMMAND = 'kimi';
 const KIMI_RUNTIME_KIND = 'kimi-cli';
-
-class KimiJsonRpcError extends Error {
-  constructor(
-    readonly method: string,
-    readonly error: Record<string, unknown>,
-  ) {
-    super(jsonRpcErrorMessage(method, error));
-    this.name = 'KimiJsonRpcError';
-  }
-}
 
 export class KimiCliAgentRuntime extends ControllerAgentRuntime<KimiAcpController> {
   readonly env: Record<string, string> | undefined;
@@ -109,13 +99,6 @@ export class KimiCliAgentRuntime extends ControllerAgentRuntime<KimiAcpControlle
   }
 }
 
-interface PendingRpc {
-  cleanup(): void;
-  method: string;
-  reject(error: unknown): void;
-  resolve(value: Record<string, unknown> | undefined): void;
-}
-
 interface KimiTurn {
   acceptingFollowups: boolean;
   followups: string[];
@@ -133,28 +116,35 @@ interface PendingTool {
 }
 
 class KimiAcpController {
-  private readonly stdoutLines = new LineBuffer();
   private initialized?: Promise<void>;
-  private nextRequestId = 1;
-  private readonly pending = new Map<string, PendingRpc>();
   private readonly pendingTools = new Map<string, PendingTool>();
   private currentTurn?: KimiTurn;
   private readonly activeToolIds = new Set<string>();
   private readonly quiescentWaiters = new QuiescentWaiterSet();
+  private readonly rpc: AcpJsonRpcPeer;
   private latestUsage?: Record<string, unknown>;
   readonly completion: Promise<{ stdout: string; stderr: string }>;
   sessionId = '';
 
   constructor(private readonly child: RunningChildProcess) {
+    this.rpc = new AcpJsonRpcPeer(child, {
+      label: 'Kimi',
+      onNotification: (message) => this.handleNotification(message),
+      onRequest: (message) => this.handleAgentRequest(message),
+      onUnstructuredOutput: async (text) => {
+        const turn = this.currentTurn;
+        if (turn) await turn.input.effects.recordOutput('stdout', text);
+      },
+    });
     this.completion = child.completion.then(
       (result) => {
-        this.rejectAllPending(new Error('Kimi ACP runtime exited'));
+        this.rpc.rejectAll(new Error('Kimi ACP runtime exited'));
         this.rejectQuiescentWaiters(new Error('Kimi ACP runtime exited before drain reached a quiescent point'));
         this.abortCurrentTurn(new Error('Kimi ACP runtime exited before completing active turn'));
         return result;
       },
       (error) => {
-        this.rejectAllPending(error);
+        this.rpc.rejectAll(error);
         this.rejectQuiescentWaiters(error);
         this.abortCurrentTurn(error);
         throw error;
@@ -190,9 +180,7 @@ class KimiAcpController {
   }
 
   async acceptStdoutChunk(chunk: string): Promise<void> {
-    for (const line of this.stdoutLines.accept(chunk)) {
-      await this.acceptLine(line);
-    }
+    await this.rpc.acceptStdoutChunk(chunk);
   }
 
   async acceptStderrChunk(chunk: string): Promise<void> {
@@ -213,7 +201,7 @@ class KimiAcpController {
   }
 
   private async initializeSession(input: AgentRuntimeInput, model: string | undefined): Promise<void> {
-    const initResult = await this.request('initialize', {
+    const initResult = await this.rpc.request('initialize', {
       clientCapabilities: {},
       clientInfo: { name: 'anima', version: '0.1.0' },
       protocolVersion: 1,
@@ -226,7 +214,7 @@ class KimiAcpController {
     const requestedSessionId = input.providerSession?.id;
     if (requestedSessionId) {
       try {
-        const result = await this.request('session/resume', {
+        const result = await this.rpc.request('session/resume', {
           cwd: input.cwd,
           mcpServers: [],
           sessionId: requestedSessionId,
@@ -247,7 +235,7 @@ class KimiAcpController {
     }
 
     if (model) {
-      await this.request('session/set_model', {
+      await this.rpc.request('session/set_model', {
         modelId: model,
         sessionId: this.sessionId,
       });
@@ -255,7 +243,7 @@ class KimiAcpController {
   }
 
   private async createSession(input: AgentRuntimeInput): Promise<string> {
-    const result = await this.request('session/new', {
+    const result = await this.rpc.request('session/new', {
       cwd: input.cwd,
       mcpServers: [],
     });
@@ -283,7 +271,7 @@ class KimiAcpController {
       transport: 'acp',
       userInputLength: prompt.length,
     });
-    const result = await this.request('session/prompt', {
+    const result = await this.rpc.request('session/prompt', {
       prompt: [{ text: prompt, type: 'text' }],
       sessionId: this.sessionId,
     });
@@ -306,73 +294,25 @@ class KimiAcpController {
     });
   }
 
-  private async acceptLine(line: string): Promise<void> {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch {
-      await this.currentTurn?.input.effects.recordOutput('stdout', trimmed);
-      return;
-    }
-    if (!isRecord(parsed)) return;
-    if ('id' in parsed && ('result' in parsed || 'error' in parsed)) {
-      this.handleResponse(parsed);
-      return;
-    }
-    if ('id' in parsed && typeof parsed['method'] === 'string') {
-      this.handleAgentRequest(parsed);
-      return;
-    }
-    if (stringField(parsed, 'method') === 'session/update' || stringField(parsed, 'method') === 'session/notification') {
-      await this.handleNotification(parsed);
-    }
-  }
-
-  private handleResponse(message: Record<string, unknown>): void {
-    const id = rpcIdKey(message['id']);
-    if (!id) return;
-    const pending = this.pending.get(id);
-    if (!pending) return;
-    pending.cleanup();
-    this.pending.delete(id);
-    const error = isRecord(message['error']) ? message['error'] : undefined;
-    if (error) {
-      pending.reject(new KimiJsonRpcError(pending.method, error));
-      return;
-    }
-    pending.resolve(isRecord(message['result']) ? message['result'] : undefined);
-  }
-
   private handleAgentRequest(message: Record<string, unknown>): void {
     const id = message['id'];
     const method = stringField(message, 'method');
     if (id === undefined || !method) return;
     if (method === 'session/request_permission') {
-      this.writeJson({
-        id,
-        jsonrpc: '2.0',
-        result: {
-          outcome: {
-            optionId: kimiPermissionApprovalOptionId(message) ?? 'approve_for_session',
-            outcome: 'selected',
-          },
+      this.rpc.respond(id, {
+        outcome: {
+          optionId: kimiPermissionApprovalOptionId(message) ?? 'approve_for_session',
+          outcome: 'selected',
         },
       });
       return;
     }
-    this.writeJson({
-      error: {
-        code: -32601,
-        message: `method not found: ${method}`,
-      },
-      id,
-      jsonrpc: '2.0',
-    });
+    this.rpc.respondError(id, -32601, `method not found: ${method}`);
   }
 
   private async handleNotification(message: Record<string, unknown>): Promise<void> {
+    const method = stringField(message, 'method');
+    if (method !== 'session/update' && method !== 'session/notification') return;
     const params = isRecord(message['params']) ? message['params'] : undefined;
     const update = params?.['update'];
     if (!update) return;
@@ -522,28 +462,6 @@ class KimiAcpController {
     });
   }
 
-  private request(method: string, params: Record<string, unknown>): Promise<Record<string, unknown> | undefined> {
-    const id = this.nextRequestId++;
-    const idKey = String(id);
-    return new Promise((resolve, reject) => {
-      const pending: PendingRpc = {
-        cleanup: () => {
-          this.pending.delete(idKey);
-        },
-        method,
-        reject,
-        resolve,
-      };
-      this.pending.set(idKey, pending);
-      try {
-        this.writeJson({ id, jsonrpc: '2.0', method, params });
-      } catch (error) {
-        pending.cleanup();
-        reject(error);
-      }
-    });
-  }
-
   private abortCurrentTurn(error: unknown): void {
     const turn = this.currentTurn;
     if (!turn) return;
@@ -585,16 +503,6 @@ class KimiAcpController {
     this.quiescentWaiters.reject(error);
   }
 
-  private rejectAllPending(error: unknown): void {
-    for (const pending of [...this.pending.values()]) {
-      pending.cleanup();
-      pending.reject(error);
-    }
-  }
-
-  private writeJson(payload: Record<string, unknown>): void {
-    this.child.writeStdin(`${JSON.stringify(payload)}\n`);
-  }
 }
 
 function kimiPrimaryPrompt(input: AgentRuntimeInput): string {
@@ -603,7 +511,7 @@ function kimiPrimaryPrompt(input: AgentRuntimeInput): string {
 }
 
 function isKimiSessionNotFoundError(error: unknown): boolean {
-  if (!(error instanceof KimiJsonRpcError)) return false;
+  if (!(error instanceof AcpJsonRpcError)) return false;
   if (error.method !== 'session/resume') return false;
   return /unknown\s+sessionid/i.test(error.message);
 }
@@ -868,20 +776,4 @@ function kimiReplacementDiff(input: Record<string, unknown>): string | undefined
     stringField(edit, 'new');
   if (!before && !after) return undefined;
   return truncateForActivity(`--- old\n${before ?? ''}\n+++ new\n${after ?? ''}`);
-}
-
-function rpcIdKey(id: unknown): string | undefined {
-  return typeof id === 'string' || typeof id === 'number' ? String(id) : undefined;
-}
-
-function jsonRpcErrorMessage(method: string, error: Record<string, unknown>): string {
-  const message = stringField(error, 'message') ?? 'Unknown JSON-RPC error';
-  const code = numberField(error, 'code');
-  const data = error['data'];
-  const renderedData = typeof data === 'string' ? data : data === undefined ? undefined : JSON.stringify(data);
-  return [
-    `${method}: ${message}`,
-    code === undefined ? undefined : `code=${code}`,
-    renderedData ? `data=${renderedData}` : undefined,
-  ].filter(Boolean).join(' ');
 }
