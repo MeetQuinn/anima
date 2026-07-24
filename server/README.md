@@ -108,6 +108,8 @@ Some services are collections or platform-level resources rather than one-agent 
 - `AgentRegistryService` lists and creates agents. Agent creation side effects live here: home creation, default Team KB registration, seed memory, and notes directory bootstrap.
 - `KbRegistryService` owns KB collection operations: list, create, browse possible roots, default Team KB registration, and `serviceFor(id)`.
 - `KbService` owns one KB root: config read/rename/remove, tree/file/download/raw views, ignore policy, symlink/traversal safety, and response metadata.
+- `ProviderAccountService` owns machine-wide Claude account discovery and selection, account continuity and MCP synchronization, reload queuing, and switch convergence status.
+- `ProviderContextLimitService` owns machine-wide Kimi and Grok context caps, provider config adoption and removal, settings rollback, and launch-time application under the shared provider configuration gate.
 - `ServerSettingsService` owns Anima-home level settings such as dashboard host/port and sidebar order. Routes and process launch code should use it instead of reading `config.json` directly.
 - `SlackFileService` owns Slack file cache semantics: download-to-cache, cache lookup, cached file reads, cache path construction, and download size limits.
 - `SlackWorkspaceDirectoryService` owns Slack workspace lookup/cache for users, channels, DMs, and workspace events. It is scoped by Slack team, not by Anima agent.
@@ -144,11 +146,11 @@ There is no global web SSE stream. Surfaces that need freshness own their own re
 
 ## Testing Map
 
-- `tests/web-api.test.ts`: web API contracts, redaction, agent mutations, first-connect onboarding, Slack display sync.
+- `tests/web-api-*.test.ts`: web API contracts, redaction, agent mutations, first-connect onboarding, Slack display sync, and server snapshots.
 - `tests/kb.test.ts`: Knowledge Base registry, tree/file/download/raw endpoints, ignore and symlink boundaries.
 - `tests/inbox.test.ts`: inbox queue enqueue, duplicate handling, and injected stores.
-- `tests/runtime-worker.test.ts`: queue claiming, active-run follow-up append, stop, idle timeout, recovery, and reminder wakes.
-- `tests/agent-runtime.test.ts`: provider adapters, provider sessions, prompt/env behavior, and runtime events.
+- `tests/runtime-worker-*.test.ts`: queue claiming, active-run follow-up append, stop, idle timeout, recovery, coherence, and reminder wakes.
+- `tests/agent-runtime-*.test.ts`: provider adapters, provider sessions, prompt/env behavior, and runtime events.
 - `tests/reminders.test.ts`: schedule, cancel, snooze, repeat math, and reminder delivery.
 - `tests/services.test.ts`: daemon supervisor start/stop/restart/status/log behavior and generated service environment/plist contracts.
 - `tests/subscriptions.test.ts`: Slack wake rules and subscription windows.

@@ -132,7 +132,7 @@ test('Grok context limit updates and clears only Anima-owned model keys', async 
   }
 });
 
-test('an explicit save adopts an existing model context key and Provider maximum removes it', async () => {
+test('an explicit save adopts an existing model context key and No Anima limit removes it', async () => {
   const root = await mkdtemp(join(tmpdir(), 'anima-context-limit-conflict-'));
   const grokHome = join(root, 'grok');
   const configPath = join(grokHome, 'config.toml');
