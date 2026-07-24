@@ -814,7 +814,8 @@ export default function UsagePanel({ onClose }: Props) {
             style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
           >
             {/* ── Panel header ── */}
-            {/* Mobile full-screen pages share the home header height (h-14 / 56px);
+            {/* Mobile full-screen pages share the home header height (h-14 = 3.5rem,
+            which is 52.5px at the app's 15px root, not 56px);
             the desktop modal keeps its compact h-10 chrome. */}
             <div className="flex h-14 shrink-0 items-center justify-between border-b border-border-soft px-3 md:h-10">
               <span className="caps text-text">Providers</span>
