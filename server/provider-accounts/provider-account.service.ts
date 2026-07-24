@@ -121,8 +121,8 @@ export class ProviderAccountService {
     // not-done it is: 'error' retries the failed agents (the panel's Retry
     // button), and 'switching' requeues the still-pending ones — the exit for
     // a switch whose outcomes were lost to the ephemeral health record (the
-    // 2026-07-18 canary incident), reachable through the API even though the
-    // panel only surfaces Retry on error. Re-queuing an agent whose reload
+    // 2026-07-18 canary incident). Both retry paths are surfaced by the panel
+    // and remain reachable through the API. Re-queuing an agent whose reload
     // command is still pending is harmless: the fresh command simply replaces
     // it with the same when-idle semantics.
     const retryAgentIds = registry.activeAccountId === target.id && currentSwitchState.status === 'error'
