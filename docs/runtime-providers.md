@@ -164,10 +164,12 @@ Provider code should not read chat credentials directly. It should call `anima m
 Kimi and Grok context caps are server-level provider settings, not agent environment variables.
 Before starting a new child, the adapter holds the same machine advisory lease used by provider
 launches and applies the persisted cap to the provider's official user-level TOML configuration.
-Kimi receives a model-scoped `max_context_size`; Grok receives a model-scoped `context_window`.
-An explicit save adopts an existing model context key by marking and replacing only that key.
-After adoption, only Anima-marked keys are updated or removed. Running provider children are
-unchanged.
+Kimi receives a model-scoped `max_context_size`. Grok receives a session-wide
+`auto_compact_threshold_percent` calculated from the largest native context window among configured
+Grok models, so the provider's auto-compaction threshold is at or below the selected token count for
+every model. An explicit save adopts an existing value for the setting Anima manages by marking and
+replacing only that key. After adoption, only Anima-marked keys are updated or removed. Running
+provider children are unchanged.
 
 OpenCode authentication follows the same machine-level rule. The DeepSeek API key lives in
 OpenCode's own credential store after `opencode auth login --provider deepseek`. The OpenCode

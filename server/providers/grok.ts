@@ -374,9 +374,6 @@ class GrokAcpController {
         ...usage,
         ...(this.contextWindow ? { contextWindow: this.contextWindow } : {}),
         ...(model ? { model } : {}),
-        ...(numberField(usage, 'totalTokens') !== undefined
-          ? { currentContextTokens: numberField(usage, 'totalTokens') }
-          : {}),
       };
       this.latestUsage = enriched;
       await turn.input.effects.recordEvent({

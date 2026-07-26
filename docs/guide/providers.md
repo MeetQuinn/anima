@@ -82,15 +82,17 @@ Launch environment.
 Anima writes the provider's supported model setting in the host user's CLI configuration:
 
 - Kimi: `max_context_size` in the model table;
-- Grok: `context_window` in the model table.
+- Grok: `auto_compact_threshold_percent` in the session table, calculated from the installed
+  model catalog so the automatic compaction threshold is at or below the selected token count.
 
 The recommended choices are 256k for Kimi and 200k for Grok. A smaller window makes the provider
 compact a long session earlier; **No Anima limit** removes Anima's managed cap. The change applies
 when each provider session next starts, so saving it does not interrupt current work.
 
 Anima marks the exact lines it owns and preserves the rest of each TOML file. The first explicit
-save adopts an existing context value for that model; choosing **No Anima limit** later removes
-that adopted key.
+save adopts an existing value for the setting it manages; choosing **No Anima limit** later removes
+that adopted key. Older Anima-managed Grok `context_window` lines are removed when the setting is
+next saved or applied at launch.
 
 ## Troubleshooting
 
