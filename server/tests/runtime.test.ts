@@ -26,6 +26,7 @@ import {
 } from '../runtime/host.js';
 import { claudeAccountRuntimeFingerprint } from '../provider-accounts/claude-account-config.js';
 import { RuntimeSessionService } from '../runtime/runtime-session.service.js';
+import { RuntimeService } from '../runtime/runtime.service.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
 import { withAnimaHome } from './anima-home.js';
 import type { Activity } from '../../shared/activity.js';
@@ -712,6 +713,64 @@ test('runtime host keeps a when-idle reload pending until active work finishes',
     assert.deepEqual(stopped, ['alpha']);
     assert.deepEqual(stopOptions, [{ drainActive: true, forceAfterMs: 5_000 }]);
     assert.equal(await restartCommands.get('alpha'), undefined);
+    await host.stop();
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('Claude account switches request resumable restarts instead of unbounded idle reloads', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-account-switch-command-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const agent = runtimeHostAgent('alpha', { connected: true });
+      const agentDir = join(stateDir, 'agents', agent.id);
+      await mkdir(agentDir, { recursive: true });
+      await writeFile(join(agentDir, 'config.json'), `${JSON.stringify(agent, null, 2)}\n`, 'utf8');
+      const restartCommands = new AgentRestartCommandStore({ animaHome: stateDir });
+      await restartCommands.ensureDirectory();
+
+      const result = await new RuntimeService().reloadAgentForAccountSwitch(agent.id);
+      const command = await restartCommands.get(agent.id);
+
+      assert.equal(command?.requestId, result.requestId);
+      assert.equal(command?.reason, 'account_switch');
+      assert.equal(command?.whenIdle, undefined);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime host requeues active work immediately for a Claude account switch', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-account-switch-reload-test-'));
+  try {
+    const restartCommands = new AgentRestartCommandStore({ animaHome: stateDir });
+    const agents = [runtimeHostAgent('alpha', { connected: true })];
+    const started: string[] = [];
+    const stopped: string[] = [];
+    const stopOptions: Array<Parameters<RunningAgentHandle['stop']>[0]> = [];
+    const host = new RuntimeHost({}, {
+      animaHome: stateDir,
+      loadAgents: async () => agents,
+      logger: silentLogger,
+      restartCommands,
+      startAgent: async (agent) => {
+        started.push(agent.id);
+        return stopHandle(agent.id, stopped, () => true, (options) => stopOptions.push(options));
+      },
+      validateAgent: async () => {},
+    });
+
+    await host.reconcileOnce();
+    const command = await restartCommands.request('alpha', { reason: 'account_switch' });
+    await host.reconcileOnce();
+
+    assert.deepEqual(started, ['alpha', 'alpha']);
+    assert.deepEqual(stopped, ['alpha']);
+    assert.deepEqual(stopOptions, [{ abortReason: 'restart_drain', forceAfterMs: 5_000 }]);
+    assert.equal(await restartCommands.get('alpha'), undefined);
+    assert.equal(command.reason, 'account_switch');
     await host.stop();
   } finally {
     await rm(stateDir, { force: true, recursive: true });

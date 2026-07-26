@@ -738,8 +738,8 @@ export default function UsagePanel({ onClose }: Props) {
       description: (
         <p>
           {retry
-            ? 'Only agents that did not reload this account will try again. Current turns continue uninterrupted.'
-            : 'Current Claude turns continue uninterrupted. Each agent reloads this account when it becomes idle; sessions, MCP servers, and shared state stay in place.'}
+            ? 'Only agents that did not reload this account will try again. Active turns on those agents are requeued to resume after reload.'
+            : 'Active Claude turns are requeued to resume after the account reload; sessions, MCP servers, and shared state stay in place.'}
         </p>
       ),
       variant: 'warn',

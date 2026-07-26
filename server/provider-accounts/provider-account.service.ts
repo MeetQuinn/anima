@@ -45,7 +45,7 @@ interface ProviderAccountAgents {
 
 interface ProviderAccountRuntime {
   listStatuses(): ReturnType<typeof defaultRuntimeService.listStatuses>;
-  reloadAgentWhenIdle(agentId: string): ReturnType<typeof defaultRuntimeService.reloadAgentWhenIdle>;
+  reloadAgentForAccountSwitch(agentId: string): ReturnType<typeof defaultRuntimeService.reloadAgentForAccountSwitch>;
 }
 
 export class ProviderAccountService {
@@ -199,7 +199,7 @@ export class ProviderAccountService {
     const failedAgentIds: string[] = [];
     for (const agentId of restartAgentIds) {
       try {
-        const restart = await this.runtime.reloadAgentWhenIdle(agentId);
+        const restart = await this.runtime.reloadAgentForAccountSwitch(agentId);
         restarts.push({ agentId, requestId: restart.requestId });
       } catch {
         failedAgentIds.push(agentId);
