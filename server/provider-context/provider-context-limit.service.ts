@@ -124,7 +124,16 @@ export class ProviderContextLimitService {
         `A model must be configured before the global ${provider} context limit can be applied`,
       );
     }
-    await updateProviderConfig(provider, [normalizedModel], maxTokens, env);
+    const models =
+      provider === 'grok-cli'
+        ? [
+            ...new Set([
+              ...(await this.configuredModels(provider)),
+              normalizedModel,
+            ]),
+          ]
+        : [normalizedModel];
+    await updateProviderConfig(provider, models, maxTokens, env);
   }
 
   private async configuredModels(
@@ -166,13 +175,23 @@ async function updateProviderConfig(
   maxTokens: number | null,
   env: NodeJS.ProcessEnv,
 ): Promise<ConfigChange> {
+  const grokAutoCompactPercent =
+    provider === 'grok-cli' && maxTokens !== null && models.length > 0
+      ? await grokAutoCompactPercentFor(models, maxTokens, env)
+      : undefined;
   const path = providerConfigPath(provider, env);
   await ensureConfigHome(dirname(path));
   const before = await readConfigTarget(path);
   if (before === undefined && maxTokens === null)
     return { rollback: async () => undefined };
   const source = before?.text ?? '';
-  const next = patchProviderConfig(provider, source, models, maxTokens);
+  const next = patchProviderConfig(
+    provider,
+    source,
+    models,
+    maxTokens,
+    grokAutoCompactPercent,
+  );
   if (next === source) return { rollback: async () => undefined };
   await writeAtomic(path, next, before?.mode ?? 0o600);
   return {
@@ -200,6 +219,14 @@ function providerConfigPath(
   return join(env.GROK_HOME?.trim() || join(home, '.grok'), 'config.toml');
 }
 
+function grokModelsCachePath(env: NodeJS.ProcessEnv): string {
+  const home = env.HOME?.trim() || homedir();
+  return join(
+    env.GROK_HOME?.trim() || join(home, '.grok'),
+    'models_cache.json',
+  );
+}
+
 async function ensureConfigHome(path: string): Promise<void> {
   try {
     const result = await lstat(path);
@@ -217,13 +244,14 @@ async function ensureConfigHome(path: string): Promise<void> {
 
 async function readConfigTarget(
   path: string,
+  label = 'Provider config',
 ): Promise<{ mode: number; text: string } | undefined> {
   try {
     const result = await lstat(path);
     if (result.isSymbolicLink() || !result.isFile()) {
       throw new ProviderContextLimitError(
         409,
-        `Provider config is not a regular file: ${path}`,
+        `${label} is not a regular file: ${path}`,
       );
     }
     return { mode: result.mode & 0o777, text: await readFile(path, 'utf8') };
@@ -261,11 +289,27 @@ function patchProviderConfig(
   source: string,
   models: string[],
   maxTokens: number | null,
+  grokAutoCompactPercent: number | undefined,
 ): string {
   const eol = source.includes('\r\n') ? '\r\n' : '\n';
   const lines = source ? source.split(/\r?\n/) : [];
   if (maxTokens === null) {
     clearOwnedValues(provider, lines);
+    return lines.join(eol);
+  }
+  if (provider === 'grok-cli') {
+    if (grokAutoCompactPercent === undefined) return lines.join(eol);
+    // Grok's running-session compactor uses the session percentage against the
+    // native model window. Remove the older Anima-owned model override so a
+    // future CLI cannot apply both limits and compact far earlier than requested.
+    clearLegacyGrokContextWindows(lines);
+    setOwnedSectionValue(
+      lines,
+      ['session'],
+      'auto_compact_threshold_percent',
+      grokAutoCompactPercent,
+      'Grok session',
+    );
     return lines.join(eol);
   }
   for (const model of models) setOwnedValue(provider, lines, model, maxTokens);
@@ -280,10 +324,20 @@ function setOwnedValue(
 ): void {
   const section = sectionFor(provider, model);
   const key = keyFor(provider);
+  setOwnedSectionValue(lines, section, key, maxTokens, model);
+}
+
+function setOwnedSectionValue(
+  lines: string[],
+  section: string[],
+  key: string,
+  value: number,
+  subject: string,
+): void {
   const sectionStart = findSection(lines, section);
   if (sectionStart === -1) {
     if (lines.length > 0 && lines.at(-1) !== '') lines.push('');
-    lines.push(sectionHeader(section), OWNED_MARKER, `${key} = ${maxTokens}`);
+    lines.push(sectionHeader(section), OWNED_MARKER, `${key} = ${value}`);
     return;
   }
   const sectionEnd = findNextSection(lines, sectionStart + 1);
@@ -294,7 +348,7 @@ function setOwnedValue(
   if (matchingKeys.length > 1) {
     throw new ProviderContextLimitError(
       409,
-      `Provider config has duplicate ${key} values for ${model}`,
+      `Provider config has duplicate ${key} values for ${subject}`,
     );
   }
   let existing = matchingKeys[0];
@@ -304,28 +358,50 @@ function setOwnedValue(
       existing += 1;
     }
     const indent = /^\s*/.exec(lines[existing] ?? '')?.[0] ?? '';
-    lines[existing] = `${indent}${key} = ${maxTokens}`;
+    lines[existing] = `${indent}${key} = ${value}`;
     return;
   }
-  lines.splice(sectionEnd, 0, OWNED_MARKER, `${key} = ${maxTokens}`);
+  lines.splice(sectionEnd, 0, OWNED_MARKER, `${key} = ${value}`);
 }
 
 function clearOwnedValues(
   provider: ProviderContextLimitProvider,
   lines: string[],
 ): void {
-  const key = keyFor(provider);
+  clearOwnedLines(lines, (section, key) =>
+    provider === 'kimi-cli'
+      ? providerSection(provider, section) && key === 'max_context_size'
+      : (providerSection(provider, section) && key === 'context_window') ||
+        (section.length === 1 &&
+          section[0] === 'session' &&
+          key === 'auto_compact_threshold_percent'),
+  );
+}
+
+function clearLegacyGrokContextWindows(lines: string[]): void {
+  clearOwnedLines(
+    lines,
+    (section, key) =>
+      providerSection('grok-cli', section) && key === 'context_window',
+  );
+}
+
+function clearOwnedLines(
+  lines: string[],
+  matches: (section: string[], key: string) => boolean,
+): void {
   let section: string[] | undefined;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? '';
     const parsed = parseSection(line);
     if (parsed) section = parsed;
     else if (/^\s*\[/.test(line)) section = undefined;
+    const key = ownedKey(lines[index + 1] ?? '');
     if (
       lines[index]?.trim() === OWNED_MARKER &&
       section &&
-      providerSection(provider, section) &&
-      keyLine(lines[index + 1] ?? '', key)
+      key &&
+      matches(section, key)
     ) {
       lines.splice(index, 2);
       index -= 1;
@@ -427,6 +503,75 @@ function parseSection(line: string): string[] | undefined {
 
 function keyLine(line: string, key: string): boolean {
   return new RegExp(`^\\s*${key}\\s*=`).test(line);
+}
+
+function ownedKey(line: string): string | undefined {
+  return /^\s*([A-Za-z0-9_-]+)\s*=/.exec(line)?.[1];
+}
+
+async function grokAutoCompactPercentFor(
+  models: string[],
+  maxTokens: number,
+  env: NodeJS.ProcessEnv,
+): Promise<number> {
+  const path = grokModelsCachePath(env);
+  const cache = await readConfigTarget(path, 'Grok model metadata');
+  if (!cache) {
+    throw new ProviderContextLimitError(
+      409,
+      'Grok model metadata is unavailable; run Grok once before setting a context limit',
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cache.text);
+  } catch {
+    throw new ProviderContextLimitError(
+      409,
+      'Grok model metadata is invalid; refresh Grok before setting a context limit',
+    );
+  }
+  const records =
+    parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)['models']
+      : undefined;
+  if (!records || typeof records !== 'object' || Array.isArray(records)) {
+    throw new ProviderContextLimitError(
+      409,
+      'Grok model metadata is invalid; refresh Grok before setting a context limit',
+    );
+  }
+  const windows = models.map((model) => {
+    const entry = (records as Record<string, unknown>)[model];
+    const info =
+      entry && typeof entry === 'object' && !Array.isArray(entry)
+        ? (entry as Record<string, unknown>)['info']
+        : undefined;
+    const contextWindow =
+      info && typeof info === 'object' && !Array.isArray(info)
+        ? (info as Record<string, unknown>)['context_window']
+        : undefined;
+    if (
+      typeof contextWindow !== 'number' ||
+      !Number.isSafeInteger(contextWindow) ||
+      contextWindow <= 0
+    ) {
+      throw new ProviderContextLimitError(
+        409,
+        `Grok model metadata has no context window for ${model}`,
+      );
+    }
+    return contextWindow;
+  });
+  const nativeWindow = Math.max(...windows);
+  const percent = Math.floor((maxTokens * 100) / nativeWindow);
+  if (percent < 1) {
+    throw new ProviderContextLimitError(
+      409,
+      `Grok cannot represent a ${maxTokens}-token compaction threshold for the configured models`,
+    );
+  }
+  return Math.min(100, percent);
 }
 
 function isMissing(error: unknown): boolean {

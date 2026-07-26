@@ -35,9 +35,24 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
   try {
     await withAnimaHome(stateDir, async () => {
       const callsPath = join(stateDir, 'calls.jsonl');
+      const grokHome = join(stateDir, 'grok-home');
+      await mkdir(grokHome, { recursive: true });
+      await writeFile(
+        join(grokHome, 'models_cache.json'),
+        JSON.stringify({
+          models: {
+            'grok-4.5': {
+              api_key: 'secret-sentinel',
+              info: { context_window: 500_000 },
+            },
+          },
+        }),
+        'utf8',
+      );
       await installFakeGrok(stateDir, [
         "const fs = require('fs');",
-        "if (!fs.readFileSync(process.env.GROK_HOME + '/config.toml', 'utf8').includes('context_window = 200000')) process.exit(72);",
+        "const config = fs.readFileSync(process.env.GROK_HOME + '/config.toml', 'utf8');",
+        "if (!config.includes('auto_compact_threshold_percent = 40') || config.includes('context_window = 200000')) process.exit(72);",
         "process.stdin.setEncoding('utf8');",
         "let buffer = '';",
         'let promptCount = 0;',
@@ -63,7 +78,7 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
         "    if (msg.id === 'agent-request-1' && msg.error) {",
         '      if (msg.error.code !== -32601) process.exit(71);',
         "      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'first' } });",
-        "      setTimeout(() => send({ jsonrpc: '2.0', id: pendingPromptId, result: { stopReason: 'end_turn', _meta: { modelId: 'grok-4.5', inputTokens: 120, outputTokens: 30, cachedTokens: 10, reasoningTokens: 5, totalTokens: 160 } } }), 40);",
+        "      setTimeout(() => send({ jsonrpc: '2.0', id: pendingPromptId, result: { stopReason: 'end_turn', _meta: { modelId: 'grok-4.5', inputTokens: 120, outputTokens: 30, cachedTokens: 10, reasoningTokens: 5, totalTokens: 160, currentContextTokens: 140 } } }), 40);",
         '      continue;',
         '    }',
         "    if (msg.method === 'session/prompt') {",
@@ -90,7 +105,7 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
       runtime = createAgentRuntime({
         env: runtimeTestEnv(stateDir, {
           CALLS_PATH: callsPath,
-          GROK_HOME: join(stateDir, 'grok-home'),
+          GROK_HOME: grokHome,
         }),
         kind: 'grok-cli',
         model: 'grok-4.5',
@@ -151,6 +166,20 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
         ),
       );
       assert.equal(stats?.payload?.['contextWindow'], 500000);
+      assert.equal(stats?.payload?.['currentContextTokens'], undefined);
+      assert.equal(
+        allActivities(state).find(
+          (activity) =>
+            activity.payload?.['eventType'] === 'grok.context.stats' &&
+            activity.payload?.['totalTokens'] === 160,
+        )?.payload?.['currentContextTokens'],
+        140,
+      );
+      assert.equal(
+        state.sessions.anima?.latestProviderStats?.currentContextTokens,
+        undefined,
+      );
+      assert.equal(state.sessions.anima?.latestProviderStats?.totalTokens, 24);
     });
   } finally {
     await runtime?.close?.();

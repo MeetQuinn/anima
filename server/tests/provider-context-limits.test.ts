@@ -23,6 +23,27 @@ const noLock = async <T>(
   task: () => Promise<T>,
 ): Promise<T> => task();
 
+async function writeGrokModelsCache(
+  grokHome: string,
+  windows: Record<string, number>,
+): Promise<void> {
+  await writeFile(
+    join(grokHome, 'models_cache.json'),
+    JSON.stringify({
+      models: Object.fromEntries(
+        Object.entries(windows).map(([model, contextWindow]) => [
+          model,
+          {
+            api_key: 'secret-sentinel',
+            info: { context_window: contextWindow },
+          },
+        ]),
+      ),
+    }),
+    { mode: 0o600 },
+  );
+}
+
 test('Kimi context limit is global, model-scoped, and preserves the existing config byte-for-byte outside owned lines', async () => {
   const root = await mkdtemp(join(tmpdir(), 'anima-kimi-context-limit-'));
   const animaHome = join(root, 'anima');
@@ -84,7 +105,7 @@ test('Kimi context limit is global, model-scoped, and preserves the existing con
   }
 });
 
-test('Grok context limit updates and clears only Anima-owned model keys', async () => {
+test('Grok context limit uses the session compaction authority and clears only Anima-owned keys', async () => {
   const root = await mkdtemp(join(tmpdir(), 'anima-grok-context-limit-'));
   const grokHome = join(root, 'grok');
   const configPath = join(grokHome, 'config.toml');
@@ -100,6 +121,7 @@ test('Grok context limit updates and clears only Anima-owned model keys', async 
     ].join('\n'),
     'utf8',
   );
+  await writeGrokModelsCache(grokHome, { 'grok-4.5': 500_000 });
   const settings = new ServerSettingsService(
     new ServerConfigStore(join(root, 'anima')),
   );
@@ -117,13 +139,24 @@ test('Grok context limit updates and clears only Anima-owned model keys', async 
     await service.set({ maxTokens: 200_000, provider: 'grok-cli' });
     await service.set({ maxTokens: 131_072, provider: 'grok-cli' });
     let written = await readFile(configPath, 'utf8');
-    assert.equal((written.match(/context_window = 131072/g) ?? []).length, 1);
+    assert.equal(
+      (
+        written.match(
+          /# Managed by Anima: global provider context limit\.\nauto_compact_threshold_percent = 26/g,
+        ) ?? []
+      ).length,
+      1,
+    );
+    assert.doesNotMatch(written, /context_window/);
     assert.match(written, /theme = "dark"/);
     assert.match(written, /reasoning_effort = "high"/);
 
     await service.set({ maxTokens: null, provider: 'grok-cli' });
     written = await readFile(configPath, 'utf8');
-    assert.doesNotMatch(written, /Managed by Anima|context_window/);
+    assert.doesNotMatch(
+      written,
+      /Managed by Anima|auto_compact_threshold_percent|context_window/,
+    );
     assert.match(written, /theme = "dark"/);
     assert.match(written, /reasoning_effort = "high"/);
     assert.deepEqual(await settings.getProviderContextLimits(), {});
@@ -132,13 +165,21 @@ test('Grok context limit updates and clears only Anima-owned model keys', async 
   }
 });
 
-test('an explicit save adopts an existing model context key and No Anima limit removes it', async () => {
+test('an explicit save adopts an existing Grok session threshold while preserving external model config', async () => {
   const root = await mkdtemp(join(tmpdir(), 'anima-context-limit-conflict-'));
   const grokHome = join(root, 'grok');
   const configPath = join(grokHome, 'config.toml');
-  const original = '[model."grok-4.5"]\ncontext_window = 500000\n';
+  const original = [
+    '[session]',
+    'auto_compact_threshold_percent = 85',
+    '',
+    '[model."grok-4.5"]',
+    'context_window = 500000',
+    '',
+  ].join('\n');
   await mkdir(grokHome, { recursive: true });
   await writeFile(configPath, original, 'utf8');
+  await writeGrokModelsCache(grokHome, { 'grok-4.5': 500_000 });
   const settings = new ServerSettingsService(
     new ServerConfigStore(join(root, 'anima')),
   );
@@ -156,14 +197,31 @@ test('an explicit save adopts an existing model context key and No Anima limit r
     await service.set({ maxTokens: 200_000, provider: 'grok-cli' });
     assert.equal(
       await readFile(configPath, 'utf8'),
-      '[model."grok-4.5"]\n# Managed by Anima: global provider context limit.\ncontext_window = 200000\n',
+      [
+        '[session]',
+        '# Managed by Anima: global provider context limit.',
+        'auto_compact_threshold_percent = 40',
+        '',
+        '[model."grok-4.5"]',
+        'context_window = 500000',
+        '',
+      ].join('\n'),
     );
     assert.deepEqual(await settings.getProviderContextLimits(), {
       'grok-cli': 200_000,
     });
 
     await service.set({ maxTokens: null, provider: 'grok-cli' });
-    assert.equal(await readFile(configPath, 'utf8'), '[model."grok-4.5"]\n');
+    assert.equal(
+      await readFile(configPath, 'utf8'),
+      [
+        '[session]',
+        '',
+        '[model."grok-4.5"]',
+        'context_window = 500000',
+        '',
+      ].join('\n'),
+    );
     assert.deepEqual(await settings.getProviderContextLimits(), {});
   } finally {
     await rm(root, { force: true, recursive: true });
@@ -239,9 +297,24 @@ test('a persisted global limit is applied to a newly launched model before provi
   const settings = new ServerSettingsService(
     new ServerConfigStore(join(root, 'anima')),
   );
+  await mkdir(grokHome, { recursive: true });
+  await writeGrokModelsCache(grokHome, {
+    'grok-4.20': 500_000,
+    'grok-composer-2.5-fast': 1_000_000,
+  });
   await mkdir(join(root, 'anima'), { recursive: true });
   await settings.setProviderContextLimit('grok-cli', 200_000);
-  const service = new ProviderContextLimitService({ settings });
+  const service = new ProviderContextLimitService({
+    listAgentConfigs: async () => [
+      {
+        provider: {
+          kind: 'grok-cli',
+          model: 'grok-composer-2.5-fast',
+        },
+      },
+    ],
+    settings,
+  });
 
   try {
     await service.applyForLaunch('grok-cli', 'grok-4.20', {
@@ -249,8 +322,196 @@ test('a persisted global limit is applied to a newly launched model before provi
     });
     assert.match(
       await readFile(join(grokHome, 'config.toml'), 'utf8'),
-      /\[model\."grok-4\.20"\]\n# Managed by Anima: global provider context limit\.\ncontext_window = 200000/,
+      /\[session\]\n# Managed by Anima: global provider context limit\.\nauto_compact_threshold_percent = 20/,
     );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('Grok context limit migrates the legacy Anima-owned model key', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-grok-context-limit-migration-'));
+  const grokHome = join(root, 'grok');
+  const configPath = join(grokHome, 'config.toml');
+  await mkdir(grokHome, { recursive: true });
+  await writeFile(
+    configPath,
+    [
+      '[model."grok-4.5"]',
+      '# Managed by Anima: global provider context limit.',
+      'context_window = 200000',
+      'reasoning_effort = "high"',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  await writeGrokModelsCache(grokHome, { 'grok-4.5': 500_000 });
+  const settings = new ServerSettingsService(
+    new ServerConfigStore(join(root, 'anima')),
+  );
+  await mkdir(join(root, 'anima'), { recursive: true });
+  const service = new ProviderContextLimitService({
+    env: { GROK_HOME: grokHome },
+    listAgentConfigs: async () => [
+      { provider: { kind: 'grok-cli', model: 'grok-4.5' } },
+    ],
+    settings,
+    withConfigurationGate: noLock,
+  });
+
+  try {
+    await service.set({ maxTokens: 200_000, provider: 'grok-cli' });
+    const written = await readFile(configPath, 'utf8');
+    assert.doesNotMatch(written, /context_window/);
+    assert.match(written, /reasoning_effort = "high"/);
+    assert.match(
+      written,
+      /\[session\]\n# Managed by Anima: global provider context limit\.\nauto_compact_threshold_percent = 40/,
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('Grok context limit fails closed when native model metadata is unavailable', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-grok-context-limit-metadata-'));
+  const grokHome = join(root, 'grok');
+  const animaHome = join(root, 'anima');
+  await mkdir(animaHome, { recursive: true });
+  const settings = new ServerSettingsService(new ServerConfigStore(animaHome));
+  const service = new ProviderContextLimitService({
+    env: { GROK_HOME: grokHome },
+    listAgentConfigs: async () => [
+      { provider: { kind: 'grok-cli', model: 'grok-4.5' } },
+    ],
+    settings,
+    withConfigurationGate: noLock,
+  });
+
+  try {
+    await assert.rejects(
+      () => service.set({ maxTokens: 200_000, provider: 'grok-cli' }),
+      (error: unknown) =>
+        error instanceof ProviderContextLimitError &&
+        error.statusCode === 409 &&
+        /metadata is unavailable/.test(error.message),
+    );
+    assert.deepEqual(await settings.getProviderContextLimits(), {});
+    await assert.rejects(() => readFile(join(grokHome, 'config.toml'), 'utf8'), {
+      code: 'ENOENT',
+    });
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('Grok context limit fails closed when its integer percentage cannot represent the cap', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-grok-context-limit-range-'));
+  const grokHome = join(root, 'grok');
+  const animaHome = join(root, 'anima');
+  await mkdir(grokHome, { recursive: true });
+  await mkdir(animaHome, { recursive: true });
+  await writeGrokModelsCache(grokHome, { 'grok-oversized': 50_000_000 });
+  const settings = new ServerSettingsService(new ServerConfigStore(animaHome));
+  const service = new ProviderContextLimitService({
+    env: { GROK_HOME: grokHome },
+    listAgentConfigs: async () => [
+      { provider: { kind: 'grok-cli', model: 'grok-oversized' } },
+    ],
+    settings,
+    withConfigurationGate: noLock,
+  });
+
+  try {
+    await assert.rejects(
+      () => service.set({ maxTokens: 131_072, provider: 'grok-cli' }),
+      (error: unknown) =>
+        error instanceof ProviderContextLimitError &&
+        error.statusCode === 409 &&
+        /cannot represent/.test(error.message),
+    );
+    assert.deepEqual(await settings.getProviderContextLimits(), {});
+    await assert.rejects(() => readFile(join(grokHome, 'config.toml'), 'utf8'), {
+      code: 'ENOENT',
+    });
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('Grok context limit rejects duplicate session thresholds without changing config or settings', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-grok-context-limit-duplicate-'));
+  const grokHome = join(root, 'grok');
+  const animaHome = join(root, 'anima');
+  const configPath = join(grokHome, 'config.toml');
+  const original = [
+    '[session]',
+    'auto_compact_threshold_percent = 85',
+    'auto_compact_threshold_percent = 80',
+    '',
+  ].join('\n');
+  await mkdir(grokHome, { recursive: true });
+  await mkdir(animaHome, { recursive: true });
+  await writeFile(configPath, original, 'utf8');
+  await writeGrokModelsCache(grokHome, { 'grok-4.5': 500_000 });
+  const settings = new ServerSettingsService(new ServerConfigStore(animaHome));
+  const service = new ProviderContextLimitService({
+    env: { GROK_HOME: grokHome },
+    listAgentConfigs: async () => [
+      { provider: { kind: 'grok-cli', model: 'grok-4.5' } },
+    ],
+    settings,
+    withConfigurationGate: noLock,
+  });
+
+  try {
+    await assert.rejects(
+      () => service.set({ maxTokens: 200_000, provider: 'grok-cli' }),
+      (error: unknown) =>
+        error instanceof ProviderContextLimitError &&
+        error.statusCode === 409 &&
+        /duplicate auto_compact_threshold_percent/.test(error.message),
+    );
+    assert.equal(await readFile(configPath, 'utf8'), original);
+    assert.deepEqual(await settings.getProviderContextLimits(), {});
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('a Grok settings failure rolls the compaction threshold migration back exactly', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-grok-context-limit-rollback-'));
+  const grokHome = join(root, 'grok');
+  const configPath = join(grokHome, 'config.toml');
+  const original = [
+    '[model."grok-4.5"]',
+    '# Managed by Anima: global provider context limit.',
+    'context_window = 200000',
+    '',
+  ].join('\n');
+  await mkdir(grokHome, { recursive: true });
+  await writeFile(configPath, original, 'utf8');
+  await writeGrokModelsCache(grokHome, { 'grok-4.5': 500_000 });
+  const service = new ProviderContextLimitService({
+    env: { GROK_HOME: grokHome },
+    listAgentConfigs: async () => [
+      { provider: { kind: 'grok-cli', model: 'grok-4.5' } },
+    ],
+    settings: {
+      getProviderContextLimits: async () => ({}),
+      setProviderContextLimit: async () => {
+        throw new Error('settings write failed');
+      },
+    },
+    withConfigurationGate: noLock,
+  });
+
+  try {
+    await assert.rejects(
+      () => service.set({ maxTokens: 200_000, provider: 'grok-cli' }),
+      /settings write failed/,
+    );
+    assert.equal(await readFile(configPath, 'utf8'), original);
   } finally {
     await rm(root, { force: true, recursive: true });
   }

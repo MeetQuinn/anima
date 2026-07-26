@@ -269,10 +269,14 @@ function mergeSessionStats(
     || eventType === 'opencode.context.stats'
       ? undefined
       : summary.usedTokens;
+  const currentContextTokens =
+    eventType === 'grok.context.stats'
+      ? summary.currentContextTokens
+      : summary.currentContextTokens ?? current?.currentContextTokens;
   return providerStatsSummary({
     ...summary,
     contextWindow: summary.contextWindow ?? current?.contextWindow,
-    currentContextTokens: summary.currentContextTokens ?? current?.currentContextTokens,
+    currentContextTokens,
     sessionCompactionCount: current?.sessionCompactionCount,
     sessionTokenUsage: addOptional(current?.sessionTokenUsage, usedTokens),
   });
