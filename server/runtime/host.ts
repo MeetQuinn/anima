@@ -363,14 +363,22 @@ export class RuntimeHost {
       if (running) await this.reconcileRunningAgent(record, running, skipStatus);
       return;
     }
-    this.logger.log(`Agent ${agent.id}: restart requested by operator (${command.requestId}).`);
+    this.logger.log(
+      command.reason === 'account_switch'
+        ? `Agent ${agent.id}: Claude account changed; reloading runtime (${command.requestId}).`
+        : `Agent ${agent.id}: restart requested by operator (${command.requestId}).`,
+    );
     await this.writeRestartPending(agent.id, command, running?.handle.health?.());
     try {
       await this.resolveStaleRestartItem(agent.id, running?.handle.health?.());
       if (running) {
-        await running.handle.stop(command.whenIdle
-          ? { drainActive: true, forceAfterMs: this.forceRestartTimeoutMs }
-          : { abortReason: command.reason, forceAfterMs: this.forceRestartTimeoutMs });
+        await running.handle.stop(
+          command.reason === 'account_switch'
+            ? { abortReason: 'restart_drain', forceAfterMs: this.forceRestartTimeoutMs }
+            : command.whenIdle
+              ? { drainActive: true, forceAfterMs: this.forceRestartTimeoutMs }
+              : { abortReason: command.reason, forceAfterMs: this.forceRestartTimeoutMs },
+        );
         record.running = undefined;
       }
       await this.startAndStore(agent, command);

@@ -517,6 +517,55 @@ test('runtime worker drains a running item for restart without marking it failed
   }
 });
 
+test('runtime worker requeues an active item when an account switch closes its runtime', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-account-switch-requeue-test-'));
+  const runtime = new AbortableRuntime();
+  const coordinator = { agentId: 'scout', stateDir };
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        queue: queueFor('scout'),
+        pollIntervalMs: 10_000,
+        stateDir,
+        workerId: 'old-account-worker',
+      }, silentLogger);
+      const decision = await enqueueInbox(
+        makeSlackEvent({
+          channelId: 'D-user',
+          eventId: 'evt-account-switch-requeue',
+          teamId: 'T-demo',
+          text: 'continue on the selected account',
+          ts: '1770000010.000001',
+          userId: 'U1',
+        }),
+        coordinator,
+      );
+      const drain = worker.drainOnce();
+      await waitFor(() => runtime.calls.length === 1);
+
+      await worker.close({ abortReason: 'restart_drain', forceAfterMs: 123 });
+      await drain;
+
+      const item = await queueFor('scout').find(decision.ctx.item.id);
+      assert.equal(item?.handling.status, 'queued');
+      assert.equal(item?.handling.resumeReason, 'runtime_restart');
+      const activities = allActivities(await loadState());
+      assert.equal(activities.some((activity) => activity.type === 'runtime.failed'), false);
+      assert.equal(
+        activities.find((activity) => activity.type === 'runtime.aborted')?.payload?.['reason'],
+        'restart_drain',
+      );
+      worker = undefined;
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('runtime worker stops a item when queue requestStop sets stopRequestedAt', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-stop-test-'));
   const runtime = new AbortableRuntime();

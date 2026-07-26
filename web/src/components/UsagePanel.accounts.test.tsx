@@ -115,7 +115,7 @@ function renderPanel() {
 }
 
 describe('UsagePanel Claude account selection', () => {
-  it('shows every account with its own meters and confirms a global session-preserving switch', async () => {
+  it('shows every account with its own meters and confirms a global resumable switch', async () => {
     accountState.value.status = 'active';
     accountState.value.errorAgentIds = [];
     api.selectClaudeAccount.mockResolvedValueOnce({
@@ -138,7 +138,7 @@ describe('UsagePanel Claude account selection', () => {
     // Switching is a deliberate button on the non-active account's block.
     fireEvent.click(screen.getByRole('button', { name: 'Set active' }));
     expect(await screen.findByText('Switch to primary@example.com?')).toBeTruthy();
-    expect(screen.getByText(/Current Claude turns continue uninterrupted/)).toBeTruthy();
+    expect(screen.getByText(/Active Claude turns are requeued to resume after the account reload/)).toBeTruthy();
     expect(screen.getByText(/sessions, MCP servers, and shared state stay in place/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Switch account' }));
 
@@ -159,6 +159,7 @@ describe('UsagePanel Claude account selection', () => {
     expect(await screen.findByText('Account switch failed: iris')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByText('Retry secondary@example.com?')).toBeTruthy();
+    expect(screen.getByText(/Active turns on those agents are requeued to resume after reload/)).toBeTruthy();
     const retryButtons = screen.getAllByRole('button', { name: 'Retry' });
     fireEvent.click(retryButtons[retryButtons.length - 1]!);
 

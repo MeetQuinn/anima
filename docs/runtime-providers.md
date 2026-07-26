@@ -265,10 +265,12 @@ can be selected. Existing per-agent `CLAUDE_CONFIG_DIR` values are also imported
 dashboard response exposes account labels and email addresses, but not credential material or profile paths.
 
 Switching is explicit and human initiated. Anima does not rotate accounts automatically in response to quota
-or rate-limit errors. A switch writes one global target and queues a `whenIdle` runtime reload for every Claude
-agent whose effective profile changes. An active turn finishes on its current process; the reload remains
-pending until that worker is idle. The Anima primary session and stored Claude session id are not rotated or
-archived, so the new process resumes the same conversation.
+or rate-limit errors. A switch writes one global target and requests an immediate resumable reload for every
+Claude agent whose effective profile changes. An active turn is aborted and its inbox item is requeued; the
+restarted runtime resumes it under the selected account through the internal restart continuation, without
+replaying the user's task. No old-profile Claude process outlives the switch beyond the bounded stop window.
+The Anima primary session and stored Claude session id are not rotated or archived, so the new process resumes
+the same conversation.
 
 Claude Code normally places credentials, settings, history, plugins, skills, project transcripts, and task
 state under `CLAUDE_CONFIG_DIR`. Anima keeps credentials and account identity profile-local, while linking the

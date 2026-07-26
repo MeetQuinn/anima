@@ -600,7 +600,7 @@ test('Claude usage follows the same platform account selection as every agent', 
   );
 });
 
-test('platform account switch queues a runtime reload without interrupting active Claude work', async () => {
+test('platform account switch queues active Claude work for restart continuation on the selected account', async () => {
   const fixture = await accountServiceFixture({ active: true });
   try {
     const state = await fixture.service.selectClaudeAccount('secondary');
@@ -641,7 +641,7 @@ test('initial continuity migration refuses to race queued Claude work', async ()
   }
 });
 
-test('platform account switch persists one global target and requests idle runtime reloads without session rotation', async () => {
+test('platform account switch persists one global target and requests resumable runtime reloads without session rotation', async () => {
   const fixture = await accountServiceFixture({ active: false });
   try {
     const state = await fixture.service.selectClaudeAccount('secondary');
@@ -1057,7 +1057,7 @@ async function accountServiceFixture(input: {
         // the pre-persist race the timing control exists to expose.
         return structuredClone(statuses);
       },
-      async reloadAgentWhenIdle(agentId) {
+      async reloadAgentForAccountSwitch(agentId) {
         restarted.push(agentId);
         restartAttempts += 1;
         input.reloadStarted?.();

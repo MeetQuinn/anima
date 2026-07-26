@@ -12,7 +12,7 @@ const RESTART_COMMANDS_FILE = 'agent-restart-requests.json';
 
 const AgentRestartCommandSchema = z.object({
   agentId: z.string().min(1),
-  reason: z.literal('operator_restart'),
+  reason: z.enum(['account_switch', 'operator_restart']),
   requestId: z.string().min(1),
   requestedAt: z.string().min(1),
   whenIdle: z.boolean().optional(),
@@ -56,10 +56,13 @@ export class AgentRestartCommandStore {
     await ensureDirectoryUnderRoot(this.directory(), this.animaHome());
   }
 
-  async request(agentId: string, options: { whenIdle?: boolean } = {}): Promise<AgentRestartCommand> {
+  async request(
+    agentId: string,
+    options: { reason?: AgentRestartCommand['reason']; whenIdle?: boolean } = {},
+  ): Promise<AgentRestartCommand> {
     const command: AgentRestartCommand = {
       agentId,
-      reason: 'operator_restart',
+      reason: options.reason ?? 'operator_restart',
       requestId: randomUUID(),
       requestedAt: nowIso(),
       ...(options.whenIdle ? { whenIdle: true } : {}),
