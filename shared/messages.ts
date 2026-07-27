@@ -123,4 +123,7 @@ export interface AgentChannelSummary {
 
 export interface AgentChannelListResponse {
   channels: AgentChannelSummary[];
+  // Present only when the Slack membership lookup failed. Local history and
+  // subscriptions remain valid, but current membership enrichment may be incomplete.
+  slackMembershipDegraded?: true;
 }

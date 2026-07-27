@@ -297,13 +297,16 @@ test('buildAgentChannelList resolves multiple quiet subscription names in one ba
 
       let directoryCalls = 0;
       const channelNameDeps: ChannelNameEnrichmentDeps = {
-        listMemberChannels: async (agentId) => {
+        listMemberChannelsResult: async (agentId) => {
           directoryCalls += 1;
           assert.equal(agentId, 'scout');
-          return [
-            { id: 'C-one', name: 'one' },
-            { id: 'C-two', name: 'two' },
-          ];
+          return {
+            channels: [
+              { id: 'C-one', name: 'one' },
+              { id: 'C-two', name: 'two' },
+            ],
+            degraded: false,
+          };
         },
       };
 
@@ -313,13 +316,14 @@ test('buildAgentChannelList resolves multiple quiet subscription names in one ba
         res.channels.map((channel) => [channel.id, channel.name]),
         [['C-one', 'one'], ['C-two', 'two']],
       );
+      assert.equal(res.slackMembershipDegraded, undefined);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }
 });
 
-test('buildAgentChannelList keeps quiet subscriptions when directory enrichment fails', async () => {
+test('buildAgentChannelList keeps composed rows and signals degraded Slack membership', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-channels-directory-failure-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
@@ -328,13 +332,31 @@ test('buildAgentChannelList keeps quiet subscriptions when directory enrichment 
       );
 
       const res = await buildAgentChannelList('scout', undefined, {
-        listMemberChannels: async () => {
+        listMemberChannelsResult: async () => {
           throw new Error('Slack unavailable');
         },
       });
       assert.deepEqual(res.channels.map((channel) => [channel.id, channel.name]), [
         ['C-silent', undefined],
       ]);
+      assert.equal(res.slackMembershipDegraded, true);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('buildAgentChannelList signals degraded Slack membership when composed rows are empty', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-channels-directory-empty-failure-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const res = await buildAgentChannelList('scout', undefined, {
+        listMemberChannelsResult: async () => ({ channels: [], degraded: true }),
+      });
+      assert.deepEqual(res, {
+        channels: [],
+        slackMembershipDegraded: true,
+      });
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

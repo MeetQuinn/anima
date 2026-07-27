@@ -280,8 +280,8 @@ export async function fetchAgentMessages(
   );
 }
 
-// Channels tab: the Slack channels + DMs the agent is a member of (membership is
-// authoritative `is_member`, includes muted + silent; DMs folded from history).
+// Channels tab: Slack channels + DMs from local history and subscriptions,
+// enriched with current membership data when available.
 // Canonical path is /channels; /subscriptions stays as a back-compat alias.
 export async function fetchAgentChannels(agentId: string): Promise<AgentChannelListResponse> {
   return apiRequest<AgentChannelListResponse>(
