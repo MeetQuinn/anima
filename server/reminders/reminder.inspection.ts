@@ -20,6 +20,15 @@ export interface ReminderInspection {
   firedCount: number;
 }
 
+type Assert<T extends true> = T;
+export type ReminderInspectionKeysMatch = Assert<
+  [keyof Reminder] extends [keyof ReminderInspection]
+    ? [keyof ReminderInspection] extends [keyof Reminder]
+      ? true
+      : false
+    : false
+>;
+
 export function inspectReminder(reminder: Reminder): ReminderInspection {
   const inspection: ReminderInspection = {
     reminderId: reminder.reminderId,
