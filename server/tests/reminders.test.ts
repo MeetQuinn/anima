@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -12,6 +12,10 @@ import { ReminderInboxSubscriber } from '../inbox/reminder-subscriber.js';
 import { allActivities, loadAgentState, loadState } from './helpers/state.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import { reminderServiceForAgent } from '../reminders/reminder.service.js';
+import {
+  REMINDER_SCHEDULE_EXAMPLES,
+  reminderScheduleExampleCommand,
+} from '../reminders/cli.js';
 import { nextDueAtForSchedule, parseRepeatRule } from '../reminders/reminder.helper.js';
 import type {
   AgentRuntime,
@@ -96,6 +100,140 @@ test('recurring reminders can be snoozed without changing the long-term cadence'
       assert.equal(fired.status, 'scheduled');
       assert.equal(fired.firedCount, 1);
       assert.equal(fired.nextDueAt, '2026-05-15T09:00:00.000Z');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('fixed intervals preserve their initial phase across late fires and snooze', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-reminder-interval-phase-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const reminder = await reminderService.scheduleReminder({
+        delaySeconds: 30 * 60,
+        instructions: 'Review the queue.',
+        now: new Date('2026-05-14T08:00:00.000Z'),
+        repeat: 'every:1h',
+        title: 'Queue review',
+      });
+      assert.equal(reminder.nextDueAt, '2026-05-14T08:30:00.000Z');
+      assert.equal(
+        reminder.schedule.kind === 'interval' ? reminder.schedule.phaseAnchorAt : undefined,
+        '2026-05-14T08:30:00.000Z',
+      );
+
+      const late = await reminderService.completeReminderFire({
+        id: reminder.reminderId,
+        now: new Date('2026-05-14T12:45:00.000Z'),
+      });
+      assert.equal(late.nextDueAt, '2026-05-14T13:30:00.000Z');
+      assert.equal(
+        nextDueAtForSchedule(late.schedule, new Date('2026-05-14T13:30:00.000Z')),
+        '2026-05-14T14:30:00.000Z',
+      );
+
+      const snoozed = await reminderService.snoozeReminder({
+        by: '2h',
+        id: reminder.reminderId,
+        now: new Date('2026-05-14T13:00:00.000Z'),
+      });
+      assert.equal(snoozed.nextDueAt, '2026-05-14T15:00:00.000Z');
+
+      const afterSnooze = await reminderService.completeReminderFire({
+        id: reminder.reminderId,
+        now: new Date('2026-05-14T15:01:00.000Z'),
+      });
+      assert.equal(afterSnooze.nextDueAt, '2026-05-14T15:30:00.000Z');
+
+      const futureAnchor = await reminderService.scheduleReminder({
+        fireAt: '2026-05-14T18:00:00.000Z',
+        instructions: 'Review the future queue.',
+        now: new Date('2026-05-14T17:00:00.000Z'),
+        repeat: 'every:1h',
+        title: 'Future queue review',
+      });
+      const earlySnooze = await reminderService.snoozeReminder({
+        by: '10m',
+        id: futureAnchor.reminderId,
+        now: new Date('2026-05-14T17:00:00.000Z'),
+      });
+      assert.equal(earlySnooze.nextDueAt, '2026-05-14T17:10:00.000Z');
+
+      const afterEarlySnooze = await reminderService.completeReminderFire({
+        id: futureAnchor.reminderId,
+        now: new Date('2026-05-14T17:11:00.000Z'),
+      });
+      assert.equal(afterEarlySnooze.nextDueAt, '2026-05-14T18:00:00.000Z');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('repeat-only intervals use creation time as their stable phase origin', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-reminder-interval-origin-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const reminder = await reminderService.scheduleReminder({
+        instructions: 'Review the queue.',
+        now: new Date('2026-05-14T08:12:00.000Z'),
+        repeat: 'every:1h',
+        title: 'Queue review',
+      });
+      assert.equal(reminder.nextDueAt, '2026-05-14T09:12:00.000Z');
+      assert.equal(
+        reminder.schedule.kind === 'interval' ? reminder.schedule.phaseAnchorAt : undefined,
+        reminder.createdAt,
+      );
+
+      const recreated = await reminderService.scheduleReminder({
+        instructions: 'Review the queue.',
+        now: new Date('2026-05-14T08:47:00.000Z'),
+        repeat: 'every:1h',
+        title: 'Queue review',
+      });
+      assert.equal(recreated.nextDueAt, '2026-05-14T09:47:00.000Z');
+      assert.equal(
+        recreated.schedule.kind === 'interval' ? recreated.schedule.phaseAnchorAt : undefined,
+        recreated.createdAt,
+      );
+      assert.notEqual(recreated.createdAt, reminder.createdAt);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('legacy fixed intervals fall back to createdAt without rewriting on read', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-reminder-interval-legacy-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeConfig(stateDir);
+      const reminderPath = join(stateDir, 'agents', 'scout', 'reminders.json');
+      const legacy = {
+        createdAt: '2026-05-14T08:12:00.000Z',
+        firedCount: 1,
+        instructions: 'Review the queue.',
+        nextDueAt: '2026-05-14T09:12:00.000Z',
+        reminderId: 'rem_legacy_interval',
+        schedule: { intervalMs: 3_600_000, kind: 'interval', repeatRule: 'every:1h' },
+        status: 'scheduled',
+        title: 'Legacy queue review',
+        updatedAt: '2026-05-14T08:12:00.000Z',
+      };
+      await writeFile(reminderPath, `${JSON.stringify({ [legacy.reminderId]: legacy }, null, 2)}\n`, 'utf8');
+
+      const loaded = await reminderService.findReminder(legacy.reminderId);
+      assert.equal(loaded?.schedule.kind === 'interval' ? loaded.schedule.phaseAnchorAt : undefined, undefined);
+      const unchanged = await readFile(reminderPath, 'utf8');
+      assert.equal(unchanged, `${JSON.stringify({ [legacy.reminderId]: legacy }, null, 2)}\n`);
+
+      const fired = await reminderService.completeReminderFire({
+        id: legacy.reminderId,
+        now: new Date('2026-05-14T12:45:00.000Z'),
+      });
+      assert.equal(fired.nextDueAt, '2026-05-14T13:12:00.000Z');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
@@ -391,6 +529,45 @@ test('cancelReminder throws on missing id and snoozeReminder throws on cancelled
   }
 });
 
+test('reminder scheduling rejects both initial-time options and accepts either with repeat', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-reminder-contract-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await assert.rejects(
+        reminderService.scheduleReminder({
+          delaySeconds: 60,
+          fireAt: '2026-05-14T09:00:00.000Z',
+          instructions: 'Invalid schedule.',
+          now: new Date('2026-05-14T08:00:00.000Z'),
+          repeat: 'every:1h',
+          title: 'Invalid schedule',
+        }),
+        /only one of fireAt or delaySeconds/,
+      );
+
+      const delayed = await reminderService.scheduleReminder({
+        delaySeconds: 30 * 60,
+        instructions: 'Delayed recurring schedule.',
+        now: new Date('2026-05-14T08:00:00.000Z'),
+        repeat: 'every:1h',
+        title: 'Delayed recurring schedule',
+      });
+      assert.equal(delayed.nextDueAt, '2026-05-14T08:30:00.000Z');
+
+      const dated = await reminderService.scheduleReminder({
+        fireAt: '2026-05-14T10:15:00.000Z',
+        instructions: 'Dated recurring schedule.',
+        now: new Date('2026-05-14T08:00:00.000Z'),
+        repeat: 'every:1h',
+        title: 'Dated recurring schedule',
+      });
+      assert.equal(dated.nextDueAt, '2026-05-14T10:15:00.000Z');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('reminder CLI schedules, lists, snoozes, and cancels reminders', async () => {
   const root = await mkdtemp(join(tmpdir(), 'anima-reminder-cli-'));
   const configDir = join(root, '.anima');
@@ -449,6 +626,22 @@ test('reminder CLI schedules, lists, snoozes, and cancels reminders', async () =
     );
     assert.equal(cancelled.status, 0, cancelled.stderr || cancelled.stdout);
     assert.equal(cancelled.stdout.trim(), `cancelled successfully. reminder_id=${reminderId}, title=Review comments.`);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('every reminder schedule help example passes the real CLI scheduling contract', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-reminder-cli-help-'));
+  const configDir = join(root, '.anima');
+  try {
+    await writeConfig(configDir);
+    const env = { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: configDir, ANIMA_INBOX_ITEM_ID: '' };
+    for (const args of REMINDER_SCHEDULE_EXAMPLES) {
+      const result = await runNode([cliPath, 'reminder', 'schedule', ...args], { env });
+      assert.equal(result.status, 0, `${reminderScheduleExampleCommand(args)}\n${result.stderr || result.stdout}`);
+      assert.match(result.stdout, /^scheduled successfully\./);
+    }
   } finally {
     await rm(root, { force: true, recursive: true });
   }

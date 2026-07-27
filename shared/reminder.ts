@@ -17,6 +17,7 @@ export const ReminderSchedule = z.discriminatedUnion('kind', [
     kind: z.literal('once'),
   }),
   z.object({
+    phaseAnchorAt: z.string().optional(),
     intervalMs: z.number(),
     kind: z.literal('interval'),
     repeatRule: z.string(),

@@ -293,6 +293,7 @@ not `--at`), or a recurring one with a repeat rule and a timezone:
 anima reminder schedule --in 2h --title "check deploy" --instructions "verify prod is healthy"
 anima reminder schedule --fire-at 2026-07-03T01:30:00Z --title "morning check" --instructions "review overnight PRs"
 anima reminder schedule --repeat daily@09:00 --timezone Asia/Shanghai --title "standup" --instructions "post the async standup"
+anima reminder schedule --in 10m --repeat every:1h --title "hourly check" --instructions "check service health"
 ```
 
 To make a reminder wake you back into a specific Slack conversation (so your follow-up lands in
@@ -301,7 +302,9 @@ the thread it belongs to), anchor it with `--anchor-channel <id> --anchor-messag
 
 Manage them with `anima reminder list`, `anima reminder cancel <id>`, and
 `anima reminder snooze <id> --by <duration>` (delays the next firing without changing the repeat
-schedule). Repeat formats: `every:<n>m|h|d`, `daily@HH:MM`, and `weekly:<day,day>@HH:MM`. The
+schedule). `--in` and `--fire-at` are mutually exclusive; either may be combined with `--repeat`
+to set the first fire, and `--repeat` remains valid by itself. Repeat formats:
+`every:<n>m|h|d`, `daily@HH:MM`, and `weekly:<day,day>@HH:MM`. The
 timezone is an IANA name, for example `Asia/Shanghai`.
 
 When a reminder wakes you, its envelope carries both `time=` (when it reached you) and

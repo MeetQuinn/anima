@@ -67,17 +67,32 @@ export function parseRepeatRule(rule: string, timezone: string): ReminderSchedul
   throw new Error(`Invalid repeat rule: ${rule}`);
 }
 
-export function nextDueAtForSchedule(schedule: ReminderSchedule, after: Date): string {
+export function nextDueAtForSchedule(
+  schedule: ReminderSchedule,
+  after: Date,
+  intervalFallbackAnchor?: string,
+): string {
   switch (schedule.kind) {
     case 'once':
       throw new Error('One-shot reminders do not have a repeat schedule.');
-    case 'interval':
-      return new Date(after.getTime() + schedule.intervalMs).toISOString();
+    case 'interval': {
+      const anchorAt = schedule.phaseAnchorAt ?? intervalFallbackAnchor;
+      if (!anchorAt) throw new Error('Interval reminder requires a phase anchor.');
+      return nextIntervalDueAt(anchorAt, schedule.intervalMs, after);
+    }
     case 'daily':
       return nextDailyDueAt(schedule.time, schedule.timezone, after).toISOString();
     case 'weekly':
       return nextWeeklyDueAt(schedule.weekdays as Weekday[], schedule.time, schedule.timezone, after).toISOString();
   }
+}
+
+function nextIntervalDueAt(anchorAt: string, intervalMs: number, after: Date): string {
+  const anchorMs = Date.parse(anchorAt);
+  if (!Number.isFinite(anchorMs)) throw new Error(`Invalid interval phase anchor: ${anchorAt}`);
+  const elapsed = after.getTime() - anchorMs;
+  const intervals = Math.floor(elapsed / intervalMs) + 1;
+  return new Date(anchorMs + Math.max(intervals, 0) * intervalMs).toISOString();
 }
 
 export function initialDueAt(input: {
@@ -96,6 +111,9 @@ export function initialDueAt(input: {
       throw new Error('delaySeconds must be greater than 0');
     }
     return new Date(input.now.getTime() + input.delaySeconds * 1000).toISOString();
+  }
+  if (input.schedule.kind === 'interval') {
+    return new Date(input.now.getTime() + input.schedule.intervalMs).toISOString();
   }
   return nextDueAtForSchedule(input.schedule, input.now);
 }
