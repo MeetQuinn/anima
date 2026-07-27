@@ -728,6 +728,31 @@ test('reminder CLI show and JSON inspection are complete, stable, and stdout-onl
     assert.equal(shownByFlag.status, 0, shownByFlag.stderr || shownByFlag.stdout);
     assert.equal(shownByFlag.stderr, '');
     assert.equal(shownByFlag.stdout, shownByPosition.stdout);
+
+    const shownByIdenticalIds = await runNode(
+      [cliPath, 'reminder', 'show', recurringId, '--id', recurringId, '--json'],
+      { env },
+    );
+    assert.equal(
+      shownByIdenticalIds.status,
+      0,
+      shownByIdenticalIds.stderr || shownByIdenticalIds.stdout,
+    );
+    assert.equal(shownByIdenticalIds.stderr, '');
+    assert.equal(shownByIdenticalIds.stdout, shownByPosition.stdout);
+
+    const shownByConflictingIds = await runNode(
+      [cliPath, 'reminder', 'show', recurringId, '--id', intervalId, '--json'],
+      { env },
+    );
+    assert.equal(shownByConflictingIds.status, 1);
+    assert.equal(shownByConflictingIds.stdout, '');
+    assert.match(shownByConflictingIds.stderr, /error input\.invalid_options \(not retryable\)/);
+    assert.match(
+      shownByConflictingIds.stderr,
+      /Reminder id must match when passed both positionally and with --id/,
+    );
+
     const publicReminder = JSON.parse(shownByFlag.stdout) as Record<string, unknown>;
     assert.equal(publicReminder['instructions'], instructions);
     assert.equal(publicReminder['reminderId'], recurringId);

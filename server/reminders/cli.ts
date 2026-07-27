@@ -38,6 +38,19 @@ const ShowSchema = SharedFlags.extend({
   json: z.boolean().optional(),
 });
 
+const ShowInputSchema = SharedFlags.extend({
+  id: z.string().optional(),
+  json: z.boolean().optional(),
+  positionalId: z.string().optional(),
+}).superRefine((input, context) => {
+  if (input.id && input.positionalId && input.id !== input.positionalId) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Reminder id must match when passed both positionally and with --id',
+    });
+  }
+});
+
 const CancelSchema = SharedFlags.extend({
   id: z.string().min(1, 'Missing --id'),
 });
@@ -134,7 +147,8 @@ export function registerReminderCommands(program: Command): void {
     .option('--json', 'print the stable public reminder representation as JSON')
     .action(async (id: string | undefined, _, command) => {
       const raw = command.optsWithGlobals();
-      const opts = ShowSchema.parse({ ...raw, id: raw.id ?? id });
+      const input = ShowInputSchema.parse({ ...raw, positionalId: id });
+      const opts = ShowSchema.parse({ ...input, id: input.id ?? input.positionalId });
       await runShow(opts);
     });
 
