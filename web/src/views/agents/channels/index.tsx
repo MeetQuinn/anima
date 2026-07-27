@@ -313,6 +313,14 @@ export default function Channels() {
   const channels = data?.channels ?? [];
   const selected = channels.find((c) => c.id === selectedId);
   const firstChannelId = channels[0]?.id;
+  // The detail pane may never instruct an action that has no object. The list on
+  // the left is the single surface that tells the state story (empty, degraded,
+  // failed, still loading); the detail pane only offers "pick one" when there is
+  // in fact one to pick. Note this is deliberately a property of the rendered
+  // rows, not of any one state: "rows haven't arrived yet" is not "zero rows",
+  // and any future filter or search that empties the list lands under the same
+  // guard for free.
+  const hasSelectableRows = channels.length > 0;
 
   // On desktop, auto-open the most recent channel (the list is sorted by recency)
   // instead of resting on the empty state. Mobile keeps the list-first drill so
@@ -409,16 +417,16 @@ export default function Channels() {
           <div className="flex h-full items-center justify-center px-6 text-center">
             <p className="max-w-prose font-serif italic text-[15px] text-text-subtle">
               That conversation isn&apos;t in this list. The agent may have left the channel,
-              or it has no history here. Pick one from the list to read it.
+              or it has no history here.{hasSelectableRows ? ' Pick one from the list to read it.' : ''}
             </p>
           </div>
-        ) : (
+        ) : hasSelectableRows ? (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <p className="font-serif italic text-[15px] text-text-subtle">
               Select a channel to read its conversation.
             </p>
           </div>
-        )}
+        ) : null}
       </section>
     </div>
   );
