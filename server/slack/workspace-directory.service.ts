@@ -39,11 +39,7 @@ const inFlightCollectionRefresh = new Map<string, Promise<unknown>>();
 const negativeLookups = new Map<string, number>();
 
 type DirectoryEntryKind = 'channel' | 'user' | 'workspace';
-type DirectoryCollectionKind = 'channels' | 'users';
-
-function filterMemberConversations(channels: SlackConversationInfo[]): SlackConversationInfo[] {
-  return channels.filter((channel) => channel.isMember || channel.isMpim || channel.isGroup);
-}
+type DirectoryCollectionKind = 'channels' | 'users' | `memberships:${string}`;
 
 function parseConversationTypes(types: string): Set<string> {
   return new Set(types.split(',').map((type) => type.trim()).filter(Boolean));
@@ -123,7 +119,10 @@ export function normalizeSlackConversationInfo(
 }
 
 export class SlackWorkspaceDirectoryService {
+  private botUserIdPromise?: Promise<string>;
+
   constructor(private readonly input: {
+    botUserId?: string;
     client: WebClient;
     teamId?: string;
   }) {}
@@ -212,9 +211,20 @@ export class SlackWorkspaceDirectoryService {
       kind: 'channel',
       select: (cache) => {
         const conversation = cache.channels.find((entry) => entry.id === channel);
-        return conversation ? { syncedAt: conversation.syncedAt, value: conversation } : undefined;
+        return conversation
+          ? { syncedAt: conversation.syncedAt, value: workspaceConversationMetadata(conversation) }
+          : undefined;
       },
     });
+  }
+
+  /**
+   * Resolve one channel with membership from the current client's bot identity.
+   * Membership is deliberately fetched live: a workspace cache is shared by many
+   * bots, while Slack's `is_member` answer is relative to the calling bot.
+   */
+  async getConversationForCurrentBot(channel: string): Promise<SlackConversationInfo | undefined> {
+    return this.fetchConversationForCurrentBot(channel);
   }
 
   async getConversationByName(nameInput: string, types?: string): Promise<SlackConversationInfo> {
@@ -233,15 +243,37 @@ export class SlackWorkspaceDirectoryService {
     throw new Error(`Slack channel not found: #${name}`);
   }
 
+  async getConversationByNameForCurrentBot(nameInput: string, types?: string): Promise<SlackConversationInfo> {
+    const name = normalizeSlackConversationName(nameInput);
+    let conversation: SlackConversationInfo | undefined;
+    try {
+      conversation = await this.getConversationByName(name, types);
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.startsWith('Slack channel not found:')) throw error;
+      conversation = findSlackConversationByName(await this.getMemberConversations(types), name);
+    }
+    if (!conversation?.id) throw new Error(`Slack channel not found: #${name}`);
+    return (await this.getConversationForCurrentBot(conversation.id)) ?? conversation;
+  }
+
   async getMemberConversations(types = MEMBER_CONVERSATION_TYPES): Promise<SlackConversationInfo[]> {
-    const channels = await this.readCollection({
-      fetch: () => this.refreshConversations(types),
-      kind: 'channels',
-      select: (cache) => cache.channelsFullSyncAt && cacheCoversTypes(cache.channelsFullSyncTypes, types)
-        ? { items: cache.channels, syncedAt: cache.channelsFullSyncAt }
-        : undefined,
+    const botUserId = await this.resolveBotUserId();
+    return this.readCollection({
+      fetch: () => this.refreshMemberConversations(botUserId, types),
+      kind: `memberships:${botUserId}`,
+      select: (cache) => {
+        const membership = cache.memberships[botUserId];
+        if (!membership || !cacheCoversTypes(membership.syncedTypes, types)) return undefined;
+        const channelsById = new Map(cache.channels.map((channel) => [channel.id, channel]));
+        return {
+          items: membership.channelIds.map((channelId) => ({
+            ...(channelsById.get(channelId) ?? { id: channelId, syncedAt: membership.syncedAt }),
+            isMember: true,
+          })),
+          syncedAt: membership.syncedAt,
+        };
+      },
     });
-    return filterMemberConversations(channels);
   }
 
   async getWorkspaceIconUrl(teamId = this.input.teamId): Promise<string> {
@@ -295,7 +327,7 @@ export class SlackWorkspaceDirectoryService {
       && event.channel.id
     ) {
       const conversation = normalizeSlackConversationInfo(event.channel);
-      if (conversation) await this.upsertConversation(conversation, teamId);
+      if (conversation) await this.upsertConversation(workspaceConversationMetadata(conversation), teamId);
       return;
     }
     if (event.type === 'channel_deleted') {
@@ -304,6 +336,15 @@ export class SlackWorkspaceDirectoryService {
         await this.updateCache((cache) => ({
           ...cache,
           channels: cache.channels.filter((channel) => channel.id !== channelId),
+          memberships: Object.fromEntries(
+            Object.entries(cache.memberships).map(([botUserId, membership]) => [
+              botUserId,
+              {
+                ...membership,
+                channelIds: membership.channelIds.filter((id) => id !== channelId),
+              },
+            ]),
+          ),
         }), teamId);
       }
     }
@@ -378,7 +419,15 @@ export class SlackWorkspaceDirectoryService {
   private async fetchConversation(channel: string): Promise<SlackConversationInfo | undefined> {
     const conversation = (await this.input.client.conversations.info({ channel })).channel;
     const normalized = conversation?.id ? normalizeSlackConversationInfo(conversation as SlackApiConversationInfo) : undefined;
-    if (normalized) await this.upsertConversation(normalized);
+    const metadata = normalized ? workspaceConversationMetadata(normalized) : undefined;
+    if (metadata) await this.upsertConversation(metadata);
+    return metadata;
+  }
+
+  private async fetchConversationForCurrentBot(channel: string): Promise<SlackConversationInfo | undefined> {
+    const conversation = (await this.input.client.conversations.info({ channel })).channel;
+    const normalized = conversation?.id ? normalizeSlackConversationInfo(conversation as SlackApiConversationInfo) : undefined;
+    if (normalized) await this.upsertConversation(workspaceConversationMetadata(normalized));
     return normalized;
   }
 
@@ -420,7 +469,7 @@ export class SlackWorkspaceDirectoryService {
       });
       for (const channel of body.channels ?? []) {
         const normalized = normalizeSlackConversationInfo(channel as SlackApiConversationInfo, syncedAt);
-        if (normalized) channels.push(normalized);
+        if (normalized) channels.push(workspaceConversationMetadata(normalized));
       }
       cursor = body.response_metadata?.next_cursor ?? '';
       if (!cursor) break;
@@ -432,6 +481,61 @@ export class SlackWorkspaceDirectoryService {
       channelsFullSyncTypes: resolvedTypes,
     }));
     return channels;
+  }
+
+  private async refreshMemberConversations(
+    botUserId: string,
+    types: string,
+  ): Promise<SlackConversationInfo[]> {
+    if (!this.input.client.users.conversations) {
+      throw new Error('Slack users.conversations client unavailable');
+    }
+    const syncedAt = nowIso();
+    const channels: SlackConversationInfo[] = [];
+    let cursor = '';
+    for (;;) {
+      const body = await this.input.client.users.conversations({
+        user: botUserId,
+        ...(cursor ? { cursor } : {}),
+        exclude_archived: true,
+        limit: 200,
+        types,
+      });
+      for (const channel of body.channels ?? []) {
+        const normalized = normalizeSlackConversationInfo(channel as SlackApiConversationInfo, syncedAt);
+        if (normalized) channels.push(workspaceConversationMetadata(normalized));
+      }
+      cursor = body.response_metadata?.next_cursor ?? '';
+      if (!cursor) break;
+    }
+    await this.updateCache((cache) => {
+      let sharedChannels = cache.channels;
+      for (const channel of channels) sharedChannels = upsertById(sharedChannels, channel);
+      return {
+        ...cache,
+        channels: sharedChannels,
+        memberships: {
+          ...cache.memberships,
+          [botUserId]: {
+            channelIds: channels.map((channel) => channel.id),
+            syncedAt,
+            syncedTypes: types,
+          },
+        },
+      };
+    });
+    return channels.map((channel) => ({ ...channel, isMember: true }));
+  }
+
+  private async resolveBotUserId(): Promise<string> {
+    const configured = this.input.botUserId?.trim();
+    if (configured) return configured;
+    this.botUserIdPromise ??= this.input.client.auth.test().then((response) => {
+      const botUserId = response.user_id?.trim();
+      if (!botUserId) throw new Error('Slack auth.test did not return the bot user id');
+      return botUserId;
+    });
+    return this.botUserIdPromise;
   }
 
   private async fetchWorkspaceIconUrl(teamId: string | undefined): Promise<string> {
@@ -577,8 +681,19 @@ export class SlackWorkspaceDirectoryService {
     teamId = this.input.teamId,
   ): Promise<void> {
     if (!teamId) return;
-    await getSlackWorkspaceDirectoryStore(teamId).update(update);
+    await getSlackWorkspaceDirectoryStore(teamId).update((cache) => {
+      const next = update(cache);
+      return {
+        ...next,
+        channels: next.channels.map(workspaceConversationMetadata),
+      };
+    });
   }
+}
+
+function workspaceConversationMetadata(conversation: SlackConversationInfo): SlackConversationInfo {
+  const { isMember: _isMember, ...metadata } = conversation;
+  return metadata;
 }
 
 function uniqueSlackUserByHandle(users: SlackUserInfo[], handle: string): SlackUserInfo {

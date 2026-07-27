@@ -75,6 +75,12 @@ export interface SlackDirectoryConversation {
   userId?: string;
 }
 
+export interface SlackDirectoryMembership {
+  channelIds: string[];
+  syncedAt: string;
+  syncedTypes: string;
+}
+
 export interface SlackWorkspaceDirectoryFile {
   channels: SlackDirectoryConversation[];
   channelsFullSyncAt?: string;
@@ -82,6 +88,9 @@ export interface SlackWorkspaceDirectoryFile {
   // (e.g. "public_channel,private_channel,mpim"). A cache hit is only honored
   // when this coverage is a superset of what the caller asked for.
   channelsFullSyncTypes?: string;
+  // Membership is relative to one bot identity, never to the workspace. Keeping
+  // it beside the shared directory is safe only while keyed by bot user id.
+  memberships: Record<string, SlackDirectoryMembership>;
   teamId: string;
   users: SlackDirectoryUser[];
   usersFullSyncAt?: string;
@@ -148,10 +157,17 @@ const SlackDirectoryConversationSchema = z.object({
   userId: z.string().optional(),
 }).strict();
 
+const SlackDirectoryMembershipSchema = z.object({
+  channelIds: z.array(z.string()),
+  syncedAt: z.string(),
+  syncedTypes: z.string(),
+}).strict();
+
 export const SlackWorkspaceDirectoryFileSchema = z.object({
   channels: z.array(SlackDirectoryConversationSchema).default([]),
   channelsFullSyncAt: z.string().optional(),
   channelsFullSyncTypes: z.string().optional(),
+  memberships: z.record(z.string(), SlackDirectoryMembershipSchema).default({}),
   teamId: z.string(),
   users: z.array(SlackDirectoryUserSchema).default([]),
   usersFullSyncAt: z.string().optional(),
@@ -204,7 +220,7 @@ export function slackFileCacheDir(teamId: string, fileId: string): string {
 
 export const getSlackWorkspaceDirectoryStore = (teamId: string): JsonStore<SlackWorkspaceDirectoryFile> =>
   new JsonStore<SlackWorkspaceDirectoryFile>({
-    empty: () => ({ channels: [], teamId, users: [] }),
+    empty: () => ({ channels: [], memberships: {}, teamId, users: [] }),
     parse: (value) => SlackWorkspaceDirectoryFileSchema.parse(value) as SlackWorkspaceDirectoryFile,
     path: () => join(resolveAnimaHome(), 'cache', 'slack', 'teams', teamId, 'directory-v2.json'),
   });

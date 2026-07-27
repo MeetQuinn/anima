@@ -17,7 +17,7 @@ import { withAnimaHome } from './anima-home.js';
 import { waitFor } from './helpers/harness.js';
 
 // A WebClient whose conversations.list returns a fixed set and counts how many
-// times Slack was actually hit, so we can prove the hot path stays off the wire.
+// times Slack was actually hit, so channel-name tests can prove cache behavior.
 function countingClient(channels: SlackConversationInfo[], counter: { calls: number }): WebClient {
   return {
     conversations: {
@@ -29,15 +29,42 @@ function countingClient(channels: SlackConversationInfo[], counter: { calls: num
   } as unknown as WebClient;
 }
 
+// Membership is bot-relative in Slack. This client models the authoritative
+// users.conversations path without allowing shared workspace metadata to answer
+// for a different bot identity.
+function countingMembershipClient(
+  channels: SlackConversationInfo[],
+  counter: { calls: number },
+  infoById: Record<string, SlackConversationInfo> = {},
+): WebClient {
+  return {
+    conversations: {
+      info: async ({ channel }: { channel: string }) => ({
+        channel: infoById[channel],
+        ok: true,
+      }),
+      list: async () => ({ channels: [], ok: true }),
+    },
+    users: {
+      conversations: async () => {
+        counter.calls += 1;
+        return { channels, ok: true };
+      },
+    },
+  } as unknown as WebClient;
+}
+
 const STALE_ISO = '2000-01-01T00:00:00.000Z';
 
 const FULL_MEMBER_TYPES = 'public_channel,private_channel,mpim';
+const BOT_USER_ID = 'U-bot';
 
 async function seedCache(teamId: string, file: Partial<SlackWorkspaceDirectoryFile>): Promise<void> {
   await getSlackWorkspaceDirectoryStore(teamId).update((cache) => ({
     ...cache,
     teamId,
     channels: file.channels ?? [],
+    memberships: file.memberships ?? {},
     users: file.users ?? [],
     ...(file.channelsFullSyncAt ? { channelsFullSyncAt: file.channelsFullSyncAt } : {}),
     ...(file.channelsFullSyncTypes ? { channelsFullSyncTypes: file.channelsFullSyncTypes } : {}),
@@ -45,13 +72,18 @@ async function seedCache(teamId: string, file: Partial<SlackWorkspaceDirectoryFi
   }));
 }
 
-async function waitForChannelIds(teamId: string, ids: string[], timeoutMs = 2000): Promise<void> {
+async function waitForMembership(
+  teamId: string,
+  botUserId: string,
+  ids: string[],
+  timeoutMs = 2000,
+): Promise<void> {
   const expectedIds = [...ids].sort();
   await waitFor(async () => {
     const cache = await getSlackWorkspaceDirectoryStore(teamId).read();
-    const have = cache.channels.map((c) => c.id).sort();
+    const have = [...(cache.memberships[botUserId]?.channelIds ?? [])].sort();
     return have.length === expectedIds.length && have.every((id, i) => id === expectedIds[i]);
-  }, { description: `cache channels to become ${JSON.stringify(ids)}`, timeoutMs });
+  }, { description: `membership ${botUserId} to become ${JSON.stringify(ids)}`, timeoutMs });
 }
 
 test('getMemberConversations serves a fresh cache without hitting Slack', async () => {
@@ -60,17 +92,27 @@ test('getMemberConversations serves a fresh cache without hitting Slack', async 
     await withAnimaHome(stateDir, async () => {
       const teamId = 'T-fresh';
       await seedCache(teamId, {
-        channels: [{ id: 'C-1', isMember: true, name: 'one', syncedAt: nowIso() }],
-        channelsFullSyncAt: nowIso(),
-        channelsFullSyncTypes: FULL_MEMBER_TYPES,
+        channels: [{ id: 'C-1', name: 'one', syncedAt: nowIso() }],
+        memberships: {
+          [BOT_USER_ID]: {
+            channelIds: ['C-1'],
+            syncedAt: nowIso(),
+            syncedTypes: FULL_MEMBER_TYPES,
+          },
+        },
       });
       const counter = { calls: 0 };
-      const service = new SlackWorkspaceDirectoryService({ client: countingClient([], counter), teamId });
+      const service = new SlackWorkspaceDirectoryService({
+        botUserId: BOT_USER_ID,
+        client: countingMembershipClient([], counter),
+        teamId,
+      });
 
       const channels = await service.getMemberConversations();
 
-      assert.equal(counter.calls, 0, 'fresh cache with full type coverage must not call conversations.list');
+      assert.equal(counter.calls, 0, 'fresh bot-scoped membership cache must not call users.conversations');
       assert.deepEqual(channels.map((c) => c.id), ['C-1']);
+      assert.equal(channels[0]?.isMember, true);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
@@ -84,19 +126,23 @@ test('getMemberConversations on a cold cache hits Slack once and populates the c
       const teamId = 'T-cold';
       const live: SlackConversationInfo[] = [
         { id: 'C-live', name: 'live', is_member: true } as SlackConversationInfo,
-        { id: 'C-other', name: 'other', is_member: false } as SlackConversationInfo,
       ];
       const counter = { calls: 0 };
-      const service = new SlackWorkspaceDirectoryService({ client: countingClient(live, counter), teamId });
+      const service = new SlackWorkspaceDirectoryService({
+        botUserId: BOT_USER_ID,
+        client: countingMembershipClient(live, counter),
+        teamId,
+      });
 
       const channels = await service.getMemberConversations();
 
       assert.equal(counter.calls, 1, 'cold cache must fetch once');
-      assert.deepEqual(channels.map((c) => c.id), ['C-live'], 'only member channels returned');
+      assert.deepEqual(channels.map((c) => c.id), ['C-live']);
       const cache = await getSlackWorkspaceDirectoryStore(teamId).read();
-      assert.deepEqual(cache.channels.map((c) => c.id).sort(), ['C-live', 'C-other']);
-      assert.ok(cache.channelsFullSyncAt, 'cold fetch stamps channelsFullSyncAt');
-      assert.equal(cache.channelsFullSyncTypes, 'public_channel,private_channel,mpim', 'cold fetch records the type coverage');
+      assert.deepEqual(cache.channels.map((c) => c.id), ['C-live']);
+      assert.equal(cache.channels[0]?.isMember, undefined, 'shared workspace metadata never persists membership');
+      assert.deepEqual(cache.memberships[BOT_USER_ID]?.channelIds, ['C-live']);
+      assert.equal(cache.memberships[BOT_USER_ID]?.syncedTypes, FULL_MEMBER_TYPES);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
@@ -109,20 +155,29 @@ test('getMemberConversations serves a stale cache immediately and refreshes in t
     await withAnimaHome(stateDir, async () => {
       const teamId = 'T-stale';
       await seedCache(teamId, {
-        channels: [{ id: 'C-old', isMember: true, name: 'old', syncedAt: STALE_ISO }],
-        channelsFullSyncAt: STALE_ISO,
-        channelsFullSyncTypes: FULL_MEMBER_TYPES,
+        channels: [{ id: 'C-old', name: 'old', syncedAt: STALE_ISO }],
+        memberships: {
+          [BOT_USER_ID]: {
+            channelIds: ['C-old'],
+            syncedAt: STALE_ISO,
+            syncedTypes: FULL_MEMBER_TYPES,
+          },
+        },
       });
       const live: SlackConversationInfo[] = [
         { id: 'C-new', name: 'new', is_member: true } as SlackConversationInfo,
       ];
       const counter = { calls: 0 };
-      const service = new SlackWorkspaceDirectoryService({ client: countingClient(live, counter), teamId });
+      const service = new SlackWorkspaceDirectoryService({
+        botUserId: BOT_USER_ID,
+        client: countingMembershipClient(live, counter),
+        teamId,
+      });
 
       const channels = await service.getMemberConversations();
       assert.deepEqual(channels.map((c) => c.id), ['C-old'], 'stale data is returned immediately');
 
-      await waitForChannelIds(teamId, ['C-new']);
+      await waitForMembership(teamId, BOT_USER_ID, ['C-new']);
       assert.equal(counter.calls, 1, 'exactly one background refresh ran');
     });
   } finally {
@@ -135,20 +190,28 @@ test('getMemberConversations does not serve a fresh cache that lacks mpim covera
   try {
     await withAnimaHome(stateDir, async () => {
       const teamId = 'T-coverage';
-      // A prior channel-name lookup left a FRESH cache, but it was populated with
-      // only public/private channels (no mpim). The membership list must not be
-      // fooled into treating this narrow-but-fresh snapshot as authoritative.
+      // A prior member lookup left a fresh membership snapshot, but it covered
+      // only public/private channels (no mpim). The default lookup must widen it.
       await seedCache(teamId, {
-        channels: [{ id: 'C-pub', isMember: true, name: 'pub', syncedAt: nowIso() }],
-        channelsFullSyncAt: nowIso(),
-        channelsFullSyncTypes: 'public_channel,private_channel',
+        channels: [{ id: 'C-pub', name: 'pub', syncedAt: nowIso() }],
+        memberships: {
+          [BOT_USER_ID]: {
+            channelIds: ['C-pub'],
+            syncedAt: nowIso(),
+            syncedTypes: 'public_channel,private_channel',
+          },
+        },
       });
       const live: SlackConversationInfo[] = [
         { id: 'C-pub', name: 'pub', is_member: true } as SlackConversationInfo,
         { id: 'G-mpdm', name: 'mpdm-team', is_mpim: true } as SlackConversationInfo,
       ];
       const counter = { calls: 0 };
-      const service = new SlackWorkspaceDirectoryService({ client: countingClient(live, counter), teamId });
+      const service = new SlackWorkspaceDirectoryService({
+        botUserId: BOT_USER_ID,
+        client: countingMembershipClient(live, counter),
+        teamId,
+      });
 
       const channels = await service.getMemberConversations();
 
@@ -158,7 +221,7 @@ test('getMemberConversations does not serve a fresh cache that lacks mpim covera
         'the mpim member row is present after the widening fetch',
       );
       const cache = await getSlackWorkspaceDirectoryStore(teamId).read();
-      assert.ok(cache.channelsFullSyncTypes?.includes('mpim'), 'cache coverage is widened to include mpim');
+      assert.ok(cache.memberships[BOT_USER_ID]?.syncedTypes.includes('mpim'), 'membership coverage widens to include mpim');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
@@ -171,18 +234,24 @@ test('concurrent stale reads trigger only one background refresh', async () => {
     await withAnimaHome(stateDir, async () => {
       const teamId = 'T-dedupe';
       await seedCache(teamId, {
-        channels: [{ id: 'C-old', isMember: true, name: 'old', syncedAt: STALE_ISO }],
-        channelsFullSyncAt: STALE_ISO,
-        channelsFullSyncTypes: FULL_MEMBER_TYPES,
+        channels: [{ id: 'C-old', name: 'old', syncedAt: STALE_ISO }],
+        memberships: {
+          [BOT_USER_ID]: {
+            channelIds: ['C-old'],
+            syncedAt: STALE_ISO,
+            syncedTypes: FULL_MEMBER_TYPES,
+          },
+        },
       });
       const counter = { calls: 0 };
       const service = new SlackWorkspaceDirectoryService({
-        client: countingClient([{ id: 'C-new', name: 'new', is_member: true } as SlackConversationInfo], counter),
+        botUserId: BOT_USER_ID,
+        client: countingMembershipClient([{ id: 'C-new', name: 'new', is_member: true } as SlackConversationInfo], counter),
         teamId,
       });
 
       await Promise.all(Array.from({ length: 5 }, () => service.getMemberConversations()));
-      await waitForChannelIds(teamId, ['C-new']);
+      await waitForMembership(teamId, BOT_USER_ID, ['C-new']);
 
       assert.equal(counter.calls, 1, 'in-flight guard collapses concurrent refreshes to one');
     });
@@ -309,13 +378,21 @@ test('directory events do not restamp collection full-sync timestamps', async ()
     await withAnimaHome(stateDir, async () => {
       const teamId = 'T-event-stamp';
       await seedCache(teamId, {
-        channels: [{ id: 'C-old', isMember: true, name: 'old', syncedAt: STALE_ISO }],
+        channels: [{ id: 'C-old', name: 'old', syncedAt: STALE_ISO }],
         channelsFullSyncAt: STALE_ISO,
         channelsFullSyncTypes: FULL_MEMBER_TYPES,
+        memberships: {
+          [BOT_USER_ID]: {
+            channelIds: ['C-old'],
+            syncedAt: STALE_ISO,
+            syncedTypes: FULL_MEMBER_TYPES,
+          },
+        },
       });
       const counter = { calls: 0 };
       const service = new SlackWorkspaceDirectoryService({
-        client: countingClient([{ id: 'C-new', name: 'new', is_member: true } as SlackConversationInfo], counter),
+        botUserId: BOT_USER_ID,
+        client: countingMembershipClient([{ id: 'C-new', name: 'new', is_member: true } as SlackConversationInfo], counter),
         teamId,
       });
 
@@ -326,11 +403,61 @@ test('directory events do not restamp collection full-sync timestamps', async ()
       });
       const afterEvent = await getSlackWorkspaceDirectoryStore(teamId).read();
       assert.equal(afterEvent.channelsFullSyncAt, STALE_ISO, 'event upsert must not restamp full-sync time');
+      assert.equal(
+        afterEvent.channels.find((channel) => channel.id === 'C-event')?.isMember,
+        undefined,
+        'workspace events must not persist bot-relative membership',
+      );
 
       const channels = await service.getMemberConversations();
-      assert.deepEqual(channels.map((channel) => channel.id).sort(), ['C-event', 'C-old']);
-      await waitForChannelIds(teamId, ['C-new']);
-      assert.equal(counter.calls, 1, 'stale full-sync timestamp still triggers a full refresh after an event');
+      assert.deepEqual(channels.map((channel) => channel.id), ['C-old']);
+      await waitForMembership(teamId, BOT_USER_ID, ['C-new']);
+      assert.equal(counter.calls, 1, 'stale membership still refreshes from users.conversations after an event');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('channel deletion removes the channel from every bot membership snapshot', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-wd-event-delete-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const teamId = 'T-event-delete';
+      await seedCache(teamId, {
+        channels: [
+          { id: 'C-delete', name: 'delete', syncedAt: nowIso() },
+          { id: 'C-keep', name: 'keep', syncedAt: nowIso() },
+        ],
+        memberships: {
+          'U-first': {
+            channelIds: ['C-delete', 'C-keep'],
+            syncedAt: nowIso(),
+            syncedTypes: FULL_MEMBER_TYPES,
+          },
+          'U-second': {
+            channelIds: ['C-delete'],
+            syncedAt: nowIso(),
+            syncedTypes: FULL_MEMBER_TYPES,
+          },
+        },
+      });
+      const service = new SlackWorkspaceDirectoryService({
+        botUserId: BOT_USER_ID,
+        client: countingMembershipClient([], { calls: 0 }),
+        teamId,
+      });
+
+      await service.applyEvent({
+        channel: 'C-delete',
+        team: teamId,
+        type: 'channel_deleted',
+      });
+
+      const cache = await getSlackWorkspaceDirectoryStore(teamId).read();
+      assert.deepEqual(cache.channels.map((channel) => channel.id), ['C-keep']);
+      assert.deepEqual(cache.memberships['U-first']?.channelIds, ['C-keep']);
+      assert.deepEqual(cache.memberships['U-second']?.channelIds, []);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
@@ -422,7 +549,8 @@ test('cold v2 start ignores an existing old directory.json and full-syncs', asyn
       }));
       const counter = { calls: 0 };
       const service = new SlackWorkspaceDirectoryService({
-        client: countingClient([{ id: 'C-new', name: 'new', is_member: true } as SlackConversationInfo], counter),
+        botUserId: BOT_USER_ID,
+        client: countingMembershipClient([{ id: 'C-new', name: 'new', is_member: true } as SlackConversationInfo], counter),
         teamId,
       });
 
@@ -431,6 +559,141 @@ test('cold v2 start ignores an existing old directory.json and full-syncs', asyn
       assert.equal(counter.calls, 1, 'old directory.json does not satisfy the v2 replica');
       assert.deepEqual(channels.map((channel) => channel.id), ['C-new']);
       assert.deepEqual((await getSlackWorkspaceDirectoryStore(teamId).read()).channels.map((channel) => channel.id), ['C-new']);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('existing directory-v2 cache without bot memberships upgrades on first member read', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-wd-v2-membership-upgrade-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const teamId = 'T-v2-membership-upgrade';
+      const directory = join(stateDir, 'cache', 'slack', 'teams', teamId);
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, 'directory-v2.json'), JSON.stringify({
+        channels: [{ id: 'C-stale', isMember: false, name: 'stale', syncedAt: nowIso() }],
+        channelsFullSyncAt: nowIso(),
+        channelsFullSyncTypes: FULL_MEMBER_TYPES,
+        teamId,
+        users: [],
+      }));
+      const counter = { calls: 0 };
+      const service = new SlackWorkspaceDirectoryService({
+        botUserId: BOT_USER_ID,
+        client: countingMembershipClient(
+          [{ id: 'C-live', is_member: true, name: 'live' } as SlackConversationInfo],
+          counter,
+        ),
+        teamId,
+      });
+
+      assert.deepEqual((await service.getMemberConversations()).map((channel) => channel.id), ['C-live']);
+      assert.equal(counter.calls, 1);
+      const cache = await getSlackWorkspaceDirectoryStore(teamId).read();
+      assert.deepEqual(cache.memberships[BOT_USER_ID]?.channelIds, ['C-live']);
+      assert.equal(cache.channels.every((channel) => channel.isMember === undefined), true);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('membership cache is isolated by bot identity within one Slack workspace', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-wd-bot-isolation-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const teamId = 'T-shared';
+      const memberCounter = { calls: 0 };
+      const nonMemberCounter = { calls: 0 };
+      const member = new SlackWorkspaceDirectoryService({
+        botUserId: 'U-member',
+        client: countingMembershipClient(
+          [{ id: 'C-duty', is_member: true, name: 'duty' } as SlackConversationInfo],
+          memberCounter,
+        ),
+        teamId,
+      });
+      const nonMember = new SlackWorkspaceDirectoryService({
+        botUserId: 'U-nonmember',
+        client: countingMembershipClient([], nonMemberCounter),
+        teamId,
+      });
+
+      assert.deepEqual((await member.getMemberConversations()).map((channel) => channel.id), ['C-duty']);
+      assert.deepEqual(await nonMember.getMemberConversations(), []);
+      assert.deepEqual(
+        (await member.getMemberConversations()).map((channel) => channel.id),
+        ['C-duty'],
+        'a second bot writing the shared workspace cache cannot overwrite the first bot membership',
+      );
+
+      assert.equal(memberCounter.calls, 1, 'member bot reuses only its own fresh snapshot');
+      assert.equal(nonMemberCounter.calls, 1, 'non-member bot reuses only its own fresh snapshot');
+      const cache = await getSlackWorkspaceDirectoryStore(teamId).read();
+      assert.deepEqual(cache.memberships['U-member']?.channelIds, ['C-duty']);
+      assert.deepEqual(cache.memberships['U-nonmember']?.channelIds, []);
+      assert.equal(cache.channels.find((channel) => channel.id === 'C-duty')?.isMember, undefined);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('live bot conversation lookup ignores poisoned shared membership and repairs metadata only', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-wd-live-membership-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const teamId = 'T-live-membership';
+      await seedCache(teamId, {
+        channels: [{ id: 'C-duty', isMember: false, name: 'duty', syncedAt: nowIso() }],
+      });
+      const counter = { calls: 0 };
+      const service = new SlackWorkspaceDirectoryService({
+        botUserId: BOT_USER_ID,
+        client: countingMembershipClient([], counter, {
+          'C-duty': { id: 'C-duty', is_member: true, name: 'duty' } as SlackConversationInfo,
+        }),
+        teamId,
+      });
+
+      const conversation = await service.getConversationForCurrentBot('C-duty');
+
+      assert.equal(conversation?.isMember, true, 'whois reads the calling bot live instead of shared membership');
+      assert.equal(
+        (await getSlackWorkspaceDirectoryStore(teamId).read()).channels[0]?.isMember,
+        undefined,
+        'the live answer cannot poison shared workspace metadata for another bot',
+      );
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('bot-aware channel-name lookup recovers a member channel omitted from conversations.list', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-wd-member-name-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const teamId = 'T-member-name';
+      const counter = { calls: 0 };
+      const dutyChannel = {
+        id: 'C-duty',
+        is_member: true,
+        name: 'duty',
+      } as SlackConversationInfo;
+      const service = new SlackWorkspaceDirectoryService({
+        botUserId: BOT_USER_ID,
+        client: countingMembershipClient([dutyChannel], counter, { 'C-duty': dutyChannel }),
+        teamId,
+      });
+
+      const conversation = await service.getConversationByNameForCurrentBot('duty', FULL_MEMBER_TYPES);
+
+      assert.equal(conversation.id, 'C-duty');
+      assert.equal(conversation.isMember, true);
+      assert.equal(counter.calls, 1, 'the fallback uses the current bot member inventory once');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
