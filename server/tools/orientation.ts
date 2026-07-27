@@ -430,6 +430,7 @@ function liveSlackOrientationAdapter(agent: AgentConfig): SlackOrientationAdapte
   };
   const directory = () => {
     directoryPromise ??= client().then((slackClient) => new SlackWorkspaceDirectoryService({
+      botUserId: agent.slack.botUserId,
       client: slackClient,
       teamId: agent.slack.teamId,
     }));
@@ -437,10 +438,10 @@ function liveSlackOrientationAdapter(agent: AgentConfig): SlackOrientationAdapte
   };
   return {
     async getConversationById(id) {
-      return (await directory()).getConversation(id);
+      return (await directory()).getConversationForCurrentBot(id);
     },
     async getConversationByName(name) {
-      return (await directory()).getConversationByName(name, SLACK_CONVERSATION_TYPES).catch((error: unknown) => {
+      return (await directory()).getConversationByNameForCurrentBot(name, SLACK_CONVERSATION_TYPES).catch((error: unknown) => {
         if (error instanceof Error && error.message.startsWith('Slack channel not found:')) return undefined;
         throw error;
       });

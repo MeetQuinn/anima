@@ -15,17 +15,19 @@ export interface MemberChannelResult {
   degraded: boolean;
 }
 
-// The Slack channels the agent's bot is a member of (`is_member`, including muted
-// + silent), normalized to {id, name}. Cached, 10-min TTL via the directory
-// service. On a Slack-fetch failure returns `{ channels: [], degraded: true }`;
+// The Slack channels the agent's bot is a member of (`users.conversations`,
+// including muted + silent), normalized to {id, name}. Membership is cached per
+// bot identity for 10 minutes via the directory service; workspace metadata remains
+// shared. On a Slack-fetch failure returns `{ channels: [], degraded: true }`;
 // when the agent simply has no token it returns `{ channels: [], degraded: false }`.
 export async function memberChannelsResultForAgent(
-  agent: { id: string; slack?: { botToken?: string; teamId?: string } },
+  agent: { id: string; slack?: { botToken?: string; botUserId?: string; teamId?: string } },
 ): Promise<MemberChannelResult> {
   if (!agent.slack?.botToken) return { channels: [], degraded: false };
   try {
     const client = await agentSlackServiceForAgent(agent.id).getWebClient();
     const channels = await new SlackWorkspaceDirectoryService({
+      botUserId: agent.slack.botUserId,
       client,
       teamId: agent.slack.teamId,
     }).getMemberConversations();
@@ -45,7 +47,7 @@ export async function memberChannelsResultForAgent(
 // Convenience: just the channels, degrading silently to [] on any failure. Used
 // by callers (e.g. the subscriptions CLI) that don't surface a degraded signal.
 export async function memberChannelsForAgent(
-  agent: { id: string; slack?: { botToken?: string; teamId?: string } },
+  agent: { id: string; slack?: { botToken?: string; botUserId?: string; teamId?: string } },
 ): Promise<MemberChannel[]> {
   return (await memberChannelsResultForAgent(agent)).channels;
 }
