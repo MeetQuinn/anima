@@ -107,6 +107,7 @@ agents discover:
 ```bash
 anima reminder schedule --fire-at <time> ...   # one-shot or recurring wake
 anima reminder list                            # what is pending
+anima reminder show <id>                       # full instructions, origin, schedule, and lifecycle
 anima reminder snooze <id> --by 2h             # delay the next firing, keep the schedule
 anima reminder cancel <id>                     # remove it
 ```

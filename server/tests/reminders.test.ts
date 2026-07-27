@@ -647,6 +647,137 @@ test('every reminder schedule help example passes the real CLI scheduling contra
   }
 });
 
+test('reminder CLI show and JSON inspection are complete, stable, and stdout-only', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-reminder-inspection-'));
+  const configDir = join(root, '.anima');
+  try {
+    await writeConfig(configDir);
+    const env = { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: configDir, ANIMA_INBOX_ITEM_ID: '' };
+    const service = reminderServiceForAgent('scout');
+    const instructions = [
+      'Read the complete incident timeline.',
+      'Preserve this final sentinel exactly: INSPECTION_END_585',
+    ].join('\n');
+
+    let recurringId = '';
+    let intervalId = '';
+    let firedId = '';
+    let cancelledId = '';
+    await withAnimaHome(configDir, async () => {
+      const recurring = await service.scheduleReminder({
+        instructions,
+        now: new Date('2026-07-01T00:00:00.000Z'),
+        provenance: {
+          channelId: 'C012INSPECT',
+          messageTs: '1782864000.000100',
+          threadTs: '1782863900.000001',
+        },
+        repeat: 'weekly:mon,fri@10:30',
+        timezone: 'Asia/Shanghai',
+        title: 'Inspect incident follow-up',
+      });
+      recurringId = recurring.reminderId;
+
+      const interval = await service.scheduleReminder({
+        delaySeconds: 10 * 60,
+        instructions: 'Inspect the hourly queue.',
+        now: new Date('2026-07-01T00:00:00.000Z'),
+        repeat: 'every:1h',
+        title: 'Hourly inspection',
+      });
+      intervalId = interval.reminderId;
+
+      const fired = await service.scheduleReminder({
+        fireAt: '2026-07-01T01:00:00.000Z',
+        instructions: 'One-shot fired instructions.',
+        now: new Date('2026-07-01T00:00:00.000Z'),
+        title: 'Fired once',
+      });
+      firedId = fired.reminderId;
+      await service.completeReminderFire({
+        id: firedId,
+        now: new Date('2026-07-01T01:00:01.000Z'),
+      });
+
+      const cancelled = await service.scheduleReminder({
+        delaySeconds: 3600,
+        instructions: 'Cancelled instructions.',
+        now: new Date('2026-07-01T00:00:00.000Z'),
+        title: 'Cancelled once',
+      });
+      cancelledId = cancelled.reminderId;
+      await service.cancelReminder({
+        id: cancelledId,
+        now: new Date('2026-07-01T00:05:00.000Z'),
+      });
+    });
+
+    const shown = await runNode([cliPath, 'reminder', 'show', recurringId], { env });
+    assert.equal(shown.status, 0, shown.stderr || shown.stdout);
+    assert.equal(shown.stderr, '');
+    assert.match(shown.stdout, /INSPECTION_END_585/);
+    assert.match(shown.stdout, /"threadTs":"1782863900\.000001"/);
+    assert.match(shown.stdout, /"repeatRule":"weekly:mon,fri@10:30"/);
+    assert.match(shown.stdout, /fired_count: 0/);
+
+    const shownByPosition = await runNode([cliPath, 'reminder', 'show', recurringId, '--json'], { env });
+    assert.equal(shownByPosition.status, 0, shownByPosition.stderr || shownByPosition.stdout);
+    assert.equal(shownByPosition.stderr, '');
+
+    const shownByFlag = await runNode([cliPath, 'reminder', 'show', '--id', recurringId, '--json'], { env });
+    assert.equal(shownByFlag.status, 0, shownByFlag.stderr || shownByFlag.stdout);
+    assert.equal(shownByFlag.stderr, '');
+    assert.equal(shownByFlag.stdout, shownByPosition.stdout);
+    const publicReminder = JSON.parse(shownByFlag.stdout) as Record<string, unknown>;
+    assert.equal(publicReminder['instructions'], instructions);
+    assert.equal(publicReminder['reminderId'], recurringId);
+    assert.deepEqual(publicReminder['provenance'], {
+      channelId: 'C012INSPECT',
+      messageTs: '1782864000.000100',
+      threadTs: '1782863900.000001',
+    });
+    assert.deepEqual(publicReminder['schedule'], {
+      kind: 'weekly',
+      repeatRule: 'weekly:mon,fri@10:30',
+      time: '10:30',
+      timezone: 'Asia/Shanghai',
+      weekdays: ['mon', 'fri'],
+    });
+
+    const listed = await runNode(
+      [cliPath, 'reminder', 'list', '--status', 'scheduled,fired,cancelled', '--json'],
+      { env },
+    );
+    assert.equal(listed.status, 0, listed.stderr || listed.stdout);
+    assert.equal(listed.stderr, '');
+    const publicList = JSON.parse(listed.stdout) as Array<Record<string, unknown>>;
+    assert.equal(publicList.length, 4);
+    assert.deepEqual(publicList.find((item) => item['reminderId'] === recurringId), publicReminder);
+    assert.deepEqual(publicList.find((item) => item['reminderId'] === intervalId)?.['schedule'], {
+      intervalMs: 3_600_000,
+      kind: 'interval',
+      phaseAnchorAt: '2026-07-01T00:10:00.000Z',
+      repeatRule: 'every:1h',
+    });
+    assert.equal(publicList.find((item) => item['reminderId'] === firedId)?.['status'], 'fired');
+    assert.equal(publicList.find((item) => item['reminderId'] === firedId)?.['firedCount'], 1);
+    assert.equal(publicList.find((item) => item['reminderId'] === cancelledId)?.['status'], 'cancelled');
+    assert.equal(typeof publicList.find((item) => item['reminderId'] === cancelledId)?.['cancelledAt'], 'string');
+
+    const missing = await runNode([cliPath, 'reminder', 'show', 'rem_missing', '--json'], { env });
+    assert.equal(missing.status, 1);
+    assert.equal(missing.stdout, '');
+    assert.match(missing.stderr, /Reminder not found: rem_missing/);
+
+    const missingId = await runNode([cliPath, 'reminder', 'show', '--json'], { env });
+    assert.equal(missingId.status, 1);
+    assert.equal(missingId.stdout, '');
+    assert.match(missingId.stderr, /error input\.invalid_options/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 class CapturingRuntime implements AgentRuntime {
   readonly kind = 'capturing-runtime';
   readonly calls: AgentRuntimeInput[] = [];

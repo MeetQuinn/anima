@@ -300,12 +300,17 @@ To make a reminder wake you back into a specific Slack conversation (so your fol
 the thread it belongs to), anchor it with `--anchor-channel <id> --anchor-message-ts <ts>` (add
 `--anchor-thread-ts <ts>` inside a thread).
 
-Manage them with `anima reminder list`, `anima reminder cancel <id>`, and
+Manage them with `anima reminder list`, `anima reminder show <id>`, `anima reminder cancel <id>`, and
 `anima reminder snooze <id> --by <duration>` (delays the next firing without changing the repeat
 schedule). `--in` and `--fire-at` are mutually exclusive; either may be combined with `--repeat`
 to set the first fire, and `--repeat` remains valid by itself. Repeat formats:
 `every:<n>m|h|d`, `daily@HH:MM`, and `weekly:<day,day>@HH:MM`. The
 timezone is an IANA name, for example `Asia/Shanghai`.
+
+`list` stays compact and shows scheduled reminders by default. Use `show <id>` (or
+`show --id <id>`) when you need the full instructions, schedule, Slack anchor, timestamps, status,
+and firing count. Add `--json` to either command for the stable machine-readable representation;
+JSON is the only stdout content.
 
 When a reminder wakes you, its envelope carries both `time=` (when it reached you) and
 `scheduled=` (when it was meant to fire; reminders from before this field existed show the actual
