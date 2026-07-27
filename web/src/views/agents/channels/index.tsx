@@ -360,13 +360,18 @@ export default function Channels() {
             Channels &amp; DMs
           </span>
         </div>
+        {data?.slackMembershipDegraded ? (
+          <p className="border-b border-border-soft px-4 py-3 font-mono text-[11px] leading-relaxed text-text-muted">
+            Slack membership could not be refreshed. This list may be incomplete.
+          </p>
+        ) : null}
         {error ? (
           <p className="px-4 py-4 font-mono text-[11px] text-health-error">Could not load channels</p>
         ) : isLoading ? (
           <div className="flex justify-center py-8">
             <Loader2 className="h-4 w-4 animate-spin text-text-subtle" aria-label="Loading channels" />
           </div>
-        ) : channels.length === 0 ? (
+        ) : channels.length === 0 && !data?.slackMembershipDegraded ? (
           <p className="px-4 py-6 font-serif italic text-[13px] text-text-subtle">
             No local Slack conversations yet.
           </p>

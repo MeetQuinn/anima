@@ -1,7 +1,8 @@
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import {
-  memberChannelsForAgent,
+  memberChannelsResultForAgent,
   type MemberChannel,
+  type MemberChannelResult,
 } from '../inbox/member-channels.js';
 import {
   listSubscriptionsForAgent,
@@ -24,13 +25,13 @@ import type {
 export const CHANNEL_LIST_MESSAGE_WINDOW = 3_000;
 
 export interface ChannelNameEnrichmentDeps {
-  listMemberChannels: (agentId: string) => Promise<MemberChannel[]>;
+  listMemberChannelsResult: (agentId: string) => Promise<MemberChannelResult>;
 }
 
 const defaultChannelNameDeps: ChannelNameEnrichmentDeps = {
-  listMemberChannels: async (agentId) => {
+  listMemberChannelsResult: async (agentId) => {
     const agent = await defaultAgentRegistryService.serviceFor(agentId).getConfig();
-    return memberChannelsForAgent(agent);
+    return memberChannelsResultForAgent(agent);
   },
 };
 
@@ -209,12 +210,20 @@ export async function buildAgentChannelList(
   ]);
 
   const dmCounterparts = dmCounterpartsByChannel(messages);
-  const [avatarByUser, memberChannels] = await Promise.all([
+  const [avatarByUser, memberChannelsResult] = await Promise.all([
     resolveAvatarsForUsers(agentId, dmCounterparts.values(), deps),
-    channelNameDeps.listMemberChannels(agentId).catch(() => []),
+    channelNameDeps.listMemberChannelsResult(agentId).catch(() => ({
+      channels: [],
+      degraded: true,
+    })),
   ]);
 
-  const list = composeChannelList({ memberChannels, subscriptions, messages });
+  const list = composeChannelList({
+    memberChannels: memberChannelsResult.channels,
+    subscriptions,
+    messages,
+  });
+  if (memberChannelsResult.degraded) list.slackMembershipDegraded = true;
   if (avatarByUser.size > 0) {
     for (const channel of list.channels) {
       if (channel.kind !== 'dm' || channel.avatarUrl) continue;
