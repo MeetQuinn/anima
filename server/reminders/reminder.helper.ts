@@ -92,7 +92,7 @@ function nextIntervalDueAt(anchorAt: string, intervalMs: number, after: Date): s
   if (!Number.isFinite(anchorMs)) throw new Error(`Invalid interval phase anchor: ${anchorAt}`);
   const elapsed = after.getTime() - anchorMs;
   const intervals = Math.floor(elapsed / intervalMs) + 1;
-  return new Date(anchorMs + Math.max(intervals, 1) * intervalMs).toISOString();
+  return new Date(anchorMs + Math.max(intervals, 0) * intervalMs).toISOString();
 }
 
 export function initialDueAt(input: {

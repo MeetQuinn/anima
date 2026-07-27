@@ -145,6 +145,26 @@ test('fixed intervals preserve their initial phase across late fires and snooze'
         now: new Date('2026-05-14T15:01:00.000Z'),
       });
       assert.equal(afterSnooze.nextDueAt, '2026-05-14T15:30:00.000Z');
+
+      const futureAnchor = await reminderService.scheduleReminder({
+        fireAt: '2026-05-14T18:00:00.000Z',
+        instructions: 'Review the future queue.',
+        now: new Date('2026-05-14T17:00:00.000Z'),
+        repeat: 'every:1h',
+        title: 'Future queue review',
+      });
+      const earlySnooze = await reminderService.snoozeReminder({
+        by: '10m',
+        id: futureAnchor.reminderId,
+        now: new Date('2026-05-14T17:00:00.000Z'),
+      });
+      assert.equal(earlySnooze.nextDueAt, '2026-05-14T17:10:00.000Z');
+
+      const afterEarlySnooze = await reminderService.completeReminderFire({
+        id: futureAnchor.reminderId,
+        now: new Date('2026-05-14T17:11:00.000Z'),
+      });
+      assert.equal(afterEarlySnooze.nextDueAt, '2026-05-14T18:00:00.000Z');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
