@@ -42,6 +42,18 @@ type ListOptions = z.infer<typeof ListSchema>;
 type CancelOptions = z.infer<typeof CancelSchema>;
 type SnoozeOptions = z.infer<typeof SnoozeSchema>;
 
+export const REMINDER_SCHEDULE_EXAMPLES = [
+  ['--in', '1h', '--title', 'check deploy', '--instructions', 'verify prod is healthy'],
+  [
+    '--fire-at', '2026-05-24T09:00:00Z', '--repeat', 'daily@09:00',
+    '--timezone', 'Asia/Shanghai', '--title', 'standup', '--instructions', 'post the async standup',
+  ],
+] as const;
+
+export function reminderScheduleExampleCommand(args: readonly string[]): string {
+  return ['anima', 'reminder', 'schedule', ...args].map(readableShellArg).join(' ');
+}
+
 export function registerReminderCommands(program: Command): void {
   const reminder = program.command('reminder').description('Schedule and manage agent wake-up reminders.');
 
@@ -63,7 +75,7 @@ export function registerReminderCommands(program: Command): void {
       'fire after a delay from now; format: <n><unit> where unit = s/m/h/d\n' +
       'e.g. 30m, 2h, 1d')
     .option('--fire-at <iso>',
-      'fire at a specific ISO 8601 datetime (one-shot)\n' +
+      'fire first at a specific ISO 8601 datetime\n' +
       'e.g. 2026-05-24T09:00:00Z')
     .option('--repeat <rule>',
       'make this a recurring reminder; formats:\n' +
@@ -80,9 +92,9 @@ export function registerReminderCommands(program: Command): void {
       'requires --anchor-message-ts; together they set the reply context')
     .option('--anchor-message-ts <ts>', 'Slack message timestamp to anchor to (requires --anchor-channel)')
     .option('--anchor-thread-ts <ts>', 'thread root timestamp when anchoring inside a thread')
-    .addHelpText('after', '\nExamples:\n' +
-      '  anima reminder schedule --in 1h --title "check deploy" --instructions "verify prod is healthy"\n' +
-      '  anima reminder schedule --fire-at 2026-05-24T09:00:00Z --repeat daily@09:00 --timezone Asia/Shanghai --title "standup"')
+    .addHelpText('after', `\nExamples:\n${REMINDER_SCHEDULE_EXAMPLES
+      .map((args) => `  ${reminderScheduleExampleCommand(args)}`)
+      .join('\n')}`)
     .action(async (_, command) => {
       const opts = ScheduleSchema.parse(command.optsWithGlobals());
       await runSchedule(opts);
@@ -131,6 +143,10 @@ export function registerReminderCommands(program: Command): void {
       const opts = SnoozeSchema.parse({ ...raw, id: raw.id ?? id });
       await runSnooze(opts);
     });
+}
+
+function readableShellArg(value: string): string {
+  return /^[a-zA-Z0-9_@:/.,=-]+$/.test(value) ? value : JSON.stringify(value);
 }
 
 async function runSchedule(opts: ScheduleOptions): Promise<void> {

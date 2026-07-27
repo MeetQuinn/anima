@@ -44,25 +44,33 @@ export class ReminderService {
       const hasFireAt = Boolean(input.fireAt);
       const hasDelay = input.delaySeconds !== undefined;
       const hasRepeat = Boolean(input.repeat);
-      if ([hasFireAt, hasDelay, hasRepeat].filter(Boolean).length !== 1) {
-        throw new Error('Pass exactly one of fireAt, delaySeconds, or repeat');
+      if (hasFireAt && hasDelay) throw new Error('Pass only one of fireAt or delaySeconds');
+      if (!hasFireAt && !hasDelay && !hasRepeat) {
+        throw new Error('Pass fireAt, delaySeconds, or repeat');
       }
 
       const timezone = input.timezone?.trim() || systemTimezone();
-      const schedule = hasRepeat
+      let schedule = hasRepeat
         ? parseRepeatRule(input.repeat as string, timezone)
         : { kind: 'once' as const };
       const createdAt = now.toISOString();
+      const nextDueAt = initialDueAt({
+        delaySeconds: input.delaySeconds,
+        fireAt: input.fireAt,
+        now,
+        schedule,
+      });
+      if (schedule.kind === 'interval') {
+        schedule = {
+          ...schedule,
+          phaseAnchorAt: hasFireAt || hasDelay ? nextDueAt : createdAt,
+        };
+      }
       const reminder: Reminder = {
         createdAt,
         firedCount: 0,
         instructions,
-        nextDueAt: initialDueAt({
-          delaySeconds: input.delaySeconds,
-          fireAt: input.fireAt,
-          now,
-          schedule,
-        }),
+        nextDueAt,
         ...(input.provenance ? { provenance: input.provenance } : {}),
         reminderId: makeId('rem'),
         schedule,
@@ -123,7 +131,9 @@ export class ReminderService {
       delete reminder.nextDueAt;
     } else {
       reminder.status = 'scheduled';
-      reminder.nextDueAt = nextDueAtForSchedule(reminder.schedule, now);
+      // Records created before phaseAnchorAt was introduced retain their
+      // original creation-time recurrence origin without rewriting the store.
+      reminder.nextDueAt = nextDueAtForSchedule(reminder.schedule, now, reminder.createdAt);
     }
     reminder.updatedAt = firedAt;
     const updated = await this.store.update(reminder);
