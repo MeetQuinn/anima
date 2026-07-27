@@ -34,6 +34,19 @@ test('message send records an audited Slack output', async () => {
         ok: true,
       };
     }
+    if (method === 'auth.test') {
+      return {
+        ok: true,
+        team_id: 'T-demo',
+        user_id: 'U-scout',
+      };
+    }
+    if (method === 'users.conversations') {
+      return {
+        channels: [],
+        ok: true,
+      };
+    }
     if (method === 'conversations.list') {
       return {
         channels: [{ id: 'C-product', name: 'product', name_normalized: 'product' }],
@@ -126,7 +139,7 @@ test('message send records an audited Slack output', async () => {
     });
     assert.equal(list.status, 0, list.stderr || list.stdout);
     assert.match(list.stdout, /^Channels \(0\)\n  - none/m);
-    assert.ok(slackMethods.slice(methodsBeforeList).includes('conversations.list'));
+    assert.ok(slackMethods.slice(methodsBeforeList).includes('users.conversations'));
 
     const mute = await runNode([cliPath, 'subscription', 'mute', '--channel', 'C-product', '--thread-ts', '1770000200.000001'], {
       env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_INBOX_ITEM_ID: itemId, ANIMA_SLACK_API_URL: slackApi.url },
