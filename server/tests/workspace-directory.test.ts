@@ -419,6 +419,51 @@ test('directory events do not restamp collection full-sync timestamps', async ()
   }
 });
 
+test('channel deletion removes the channel from every bot membership snapshot', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-wd-event-delete-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const teamId = 'T-event-delete';
+      await seedCache(teamId, {
+        channels: [
+          { id: 'C-delete', name: 'delete', syncedAt: nowIso() },
+          { id: 'C-keep', name: 'keep', syncedAt: nowIso() },
+        ],
+        memberships: {
+          'U-first': {
+            channelIds: ['C-delete', 'C-keep'],
+            syncedAt: nowIso(),
+            syncedTypes: FULL_MEMBER_TYPES,
+          },
+          'U-second': {
+            channelIds: ['C-delete'],
+            syncedAt: nowIso(),
+            syncedTypes: FULL_MEMBER_TYPES,
+          },
+        },
+      });
+      const service = new SlackWorkspaceDirectoryService({
+        botUserId: BOT_USER_ID,
+        client: countingMembershipClient([], { calls: 0 }),
+        teamId,
+      });
+
+      await service.applyEvent({
+        channel: 'C-delete',
+        team: teamId,
+        type: 'channel_deleted',
+      });
+
+      const cache = await getSlackWorkspaceDirectoryStore(teamId).read();
+      assert.deepEqual(cache.channels.map((channel) => channel.id), ['C-keep']);
+      assert.deepEqual(cache.memberships['U-first']?.channelIds, ['C-keep']);
+      assert.deepEqual(cache.memberships['U-second']?.channelIds, []);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('stale entry reads serve local data immediately and single-flight the refresh', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-wd-entry-stale-'));
   try {

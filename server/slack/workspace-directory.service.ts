@@ -336,6 +336,15 @@ export class SlackWorkspaceDirectoryService {
         await this.updateCache((cache) => ({
           ...cache,
           channels: cache.channels.filter((channel) => channel.id !== channelId),
+          memberships: Object.fromEntries(
+            Object.entries(cache.memberships).map(([botUserId, membership]) => [
+              botUserId,
+              {
+                ...membership,
+                channelIds: membership.channelIds.filter((id) => id !== channelId),
+              },
+            ]),
+          ),
         }), teamId);
       }
     }
