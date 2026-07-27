@@ -5,6 +5,10 @@ import { resolveAgentIdFrom } from '../cli/shared.js';
 import type { Reminder, ReminderProvenance, ReminderStatus } from '../../shared/reminder.js';
 import { reminderServiceForAgent } from './reminder.service.js';
 import { parseDurationMs } from './reminder.helper.js';
+import {
+  formatReminderInspection,
+  inspectReminder,
+} from './reminder.inspection.js';
 
 const SharedFlags = z.object({
   agent: z.string().optional(),
@@ -25,7 +29,13 @@ const ScheduleSchema = SharedFlags.extend({
 });
 
 const ListSchema = SharedFlags.extend({
+  json: z.boolean().optional(),
   status: z.string().optional(),
+});
+
+const ShowSchema = SharedFlags.extend({
+  id: z.string().min(1, 'Missing reminder id'),
+  json: z.boolean().optional(),
 });
 
 const CancelSchema = SharedFlags.extend({
@@ -39,6 +49,7 @@ const SnoozeSchema = SharedFlags.extend({
 
 type ScheduleOptions = z.infer<typeof ScheduleSchema>;
 type ListOptions = z.infer<typeof ListSchema>;
+type ShowOptions = z.infer<typeof ShowSchema>;
 type CancelOptions = z.infer<typeof CancelSchema>;
 type SnoozeOptions = z.infer<typeof SnoozeSchema>;
 
@@ -107,12 +118,24 @@ export function registerReminderCommands(program: Command): void {
   reminder
     .command('list')
     .description('List reminders (default: scheduled only).')
+    .option('--json', 'print the stable public reminder representation as JSON')
     .option('--status <statuses>',
       'comma-separated status filter; values: scheduled, fired, cancelled\n' +
       'e.g. --status scheduled  or  --status scheduled,fired')
     .action(async (_, command) => {
       const opts = ListSchema.parse(command.optsWithGlobals());
       await runList(opts);
+    });
+
+  reminder
+    .command('show [id]')
+    .description('Show every persisted detail for one reminder.')
+    .option('--id <id>', 'reminder ID (from reminder list output)')
+    .option('--json', 'print the stable public reminder representation as JSON')
+    .action(async (id: string | undefined, _, command) => {
+      const raw = command.optsWithGlobals();
+      const opts = ShowSchema.parse({ ...raw, id: raw.id ?? id });
+      await runShow(opts);
     });
 
   // Input:   anima reminder cancel --id <id>
@@ -175,6 +198,10 @@ async function runList(opts: ListOptions): Promise<void> {
   const reminders = await reminderService.listReminders({
     ...(statuses ? { statuses } : {}),
   });
+  if (opts.json) {
+    console.log(JSON.stringify(reminders.map(inspectReminder)));
+    return;
+  }
   if (reminders.length === 0) {
     console.log('No reminders.');
     return;
@@ -182,6 +209,14 @@ async function runList(opts: ListOptions): Promise<void> {
   for (const reminder of reminders) {
     console.log(reminderLine(reminder));
   }
+}
+
+async function runShow(opts: ShowOptions): Promise<void> {
+  const agentId = await resolveReminderAgentId(opts);
+  const reminder = await reminderServiceForAgent(agentId).findReminder(opts.id);
+  if (!reminder) throw new Error(`Reminder not found: ${opts.id}`);
+  const inspection = inspectReminder(reminder);
+  console.log(opts.json ? JSON.stringify(inspection) : formatReminderInspection(inspection));
 }
 
 async function runCancel(opts: CancelOptions): Promise<void> {
