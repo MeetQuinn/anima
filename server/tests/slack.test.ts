@@ -98,6 +98,66 @@ test('Slack message mentions treat generic placeholders as literal text', async 
   assert.deepEqual(warnings, ['@missing was sent as plain text because it did not match a Slack user.']);
 });
 
+test('Slack message mention warnings nudge five bots without counting humans or duplicates', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-broad-mention-test-'));
+  const previousHome = process.env.ANIMA_HOME;
+  process.env.ANIMA_HOME = stateDir;
+  const allMemberIds = ['B1', 'B2', 'B3', 'B4', 'A1', 'H1', 'H2'];
+  const client = fakeSlackApi({
+    conversations: {
+      members: async () => ({ members: allMemberIds, ok: true }),
+    },
+    users: {
+      info: async ({ user }) => ({
+        ok: true,
+        user: {
+          id: user,
+          is_app_user: user === 'A1',
+          is_bot: user.startsWith('B'),
+        },
+      }),
+    },
+  });
+  const target = { channelDisplayName: '#product', channelKind: 'channel' as const };
+  const slackText = (ids: string[]) => ({
+    resolved: ids.map((id) => ({ id, label: `@${id}`, type: 'user' as const })),
+    text: ids.map((id) => `<@${id}>`).join(' '),
+    unresolved: [],
+  });
+
+  try {
+    assert.deepEqual(await mentionWarningsForTarget({
+      channelId: 'C-product',
+      client,
+      slackText: slackText(['B1', 'B2', 'B3', 'B4', 'H1', 'H2']),
+      target,
+      teamId: 'T-broad',
+    }), []);
+
+    assert.deepEqual(await mentionWarningsForTarget({
+      channelId: 'C-product',
+      client,
+      slackText: slackText(['B1', 'B2', 'B3', 'B4', 'A1', 'H1']),
+      target,
+      teamId: 'T-broad',
+    }), [
+      'This sent message mentioned 5 bots. Each mention may start a separate agent run and consume shared attention and tokens; consider whether every recipient needs to be included.',
+    ]);
+
+    assert.deepEqual(await mentionWarningsForTarget({
+      channelId: 'C-product',
+      client,
+      slackText: slackText(['B1', 'B1', 'B1', 'B1', 'B1']),
+      target,
+      teamId: 'T-broad',
+    }), []);
+  } finally {
+    if (previousHome === undefined) delete process.env.ANIMA_HOME;
+    else process.env.ANIMA_HOME = previousHome;
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('Slack workspace directory resolves username and display name handles', async () => {
   const client = fakeSlackApi({
     users: {
