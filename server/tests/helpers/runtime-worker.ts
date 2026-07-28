@@ -197,7 +197,7 @@ export class FollowupRuntime extends ControlledRuntime {
 
   async appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<{ accepted: boolean; text: string }> {
     this.followups.push(input);
-    return { accepted: true, text: `appended ${input.itemId}` };
+    return { accepted: true, text: `appended ${input.itemIds.join(',')}` };
   }
 }
 
@@ -217,7 +217,7 @@ export class FailingFollowupRuntime implements AgentRuntime {
 
   async appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<{ accepted: boolean; text: string }> {
     this.followups.push(input);
-    return { accepted: true, text: `appended ${input.itemId}` };
+    return { accepted: true, text: `appended ${input.itemIds.join(',')}` };
   }
 
   async close(): Promise<void> {
@@ -240,6 +240,15 @@ export class RejectingFollowupRuntime extends ControlledRuntime {
   }
 }
 
+export class ThrowingFollowupRuntime extends ControlledRuntime {
+  readonly followups: AgentRuntimeFollowupInput[] = [];
+
+  async appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<{ accepted: boolean }> {
+    this.followups.push(input);
+    throw new Error('follow-up append failed');
+  }
+}
+
 export class NotReadyFollowupRuntime extends ControlledRuntime {
   readonly followups: AgentRuntimeFollowupInput[] = [];
   attempts = 0;
@@ -249,7 +258,7 @@ export class NotReadyFollowupRuntime extends ControlledRuntime {
     this.attempts += 1;
     if (!this.ready) return { accepted: false, retryable: true };
     this.followups.push(input);
-    return { accepted: true, text: `appended ${input.itemId}` };
+    return { accepted: true, text: `appended ${input.itemIds.join(',')}` };
   }
 }
 

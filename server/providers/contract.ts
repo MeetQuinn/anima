@@ -62,8 +62,8 @@ export interface AgentRuntimeResult {
 
 export interface AgentRuntimeFollowupInput {
   activeItemId: string;
+  itemIds: string[];
   prompt: string;
-  itemId: string;
 }
 
 export interface AgentRuntimeFollowupResult {

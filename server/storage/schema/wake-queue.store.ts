@@ -275,18 +275,36 @@ export class WakeQueueStore {
     return this.settleAppendedTo(parentItemId, 'failed');
   }
 
-  async takeQueued(input: {
-    itemId: string;
+  async takeQueuedBatch(input: {
+    activeItemId: string;
+    itemIds: string[];
     workerId: string;
-  }): Promise<InboxItem | undefined> {
-    return this.updateItemIfPresent(input.itemId, (item, now) => {
-      if (item.handling.status !== 'queued') return undefined;
-      return withHandling(item, {
+  }): Promise<InboxItem[]> {
+    let claimed: InboxItem[] = [];
+    await this.update((current) => {
+      const active = current.items[input.activeItemId];
+      if (
+        !active ||
+        active.handling.status !== 'running' ||
+        active.handling.workerId !== input.workerId
+      ) return current;
+      const selected: InboxItem[] = [];
+      for (const itemId of input.itemIds) {
+        const item = current.items[itemId];
+        if (!item || item.handling.status !== 'queued') return current;
+        selected.push(item);
+      }
+      const now = nowIso();
+      claimed = selected.map((item) => withHandling(item, {
         startedAt: now,
         status: 'running',
         workerId: input.workerId,
-      }, now);
+      }, now));
+      const items = { ...current.items };
+      for (const item of claimed) items[item.id] = item;
+      return { items, seen: current.seen };
     });
+    return claimed;
   }
 
   async requestDrain(input: {
@@ -310,6 +328,23 @@ export class WakeQueueStore {
 
   async requeue(itemId: string, options: { resumeReason?: 'runtime_restart' } = {}): Promise<void> {
     await this.updateItem(itemId, (item, now) => requeuedItem(item, now, options));
+  }
+
+  async requeueBatch(itemIds: string[]): Promise<InboxItem[]> {
+    const updated: InboxItem[] = [];
+    const selected = new Set(itemIds);
+    await this.update((current) => {
+      const now = nowIso();
+      const items = { ...current.items };
+      for (const item of Object.values(current.items)) {
+        if (!selected.has(item.id)) continue;
+        const next = requeuedItem(item, now);
+        items[item.id] = next;
+        updated.push(next);
+      }
+      return updated.length > 0 ? { items, seen: current.seen } : current;
+    });
+    return updated;
   }
 
   async requeueAppendedTo(
@@ -347,6 +382,41 @@ export class WakeQueueStore {
       status: 'running',
       workerId: input.workerId,
     }, now));
+  }
+
+  async markAppendedBatch(input: {
+    itemIds: string[];
+    parentItemId: string;
+    workerId: string;
+  }): Promise<InboxItem[]> {
+    const updated: InboxItem[] = [];
+    await this.update((current) => {
+      const selected = input.itemIds.map((itemId) => {
+        const item = current.items[itemId];
+        if (
+          !item ||
+          item.handling.status !== 'running' ||
+          item.handling.workerId !== input.workerId ||
+          item.handling.appendedToItemId
+        ) throw new Error(`Wake queue batch changed before append commit: ${input.itemIds.join(', ')}`);
+        return item;
+      });
+      const now = nowIso();
+      const items = { ...current.items };
+      for (const item of selected) {
+        const next = withHandling(item, {
+          appendedAt: now,
+          appendedToItemId: input.parentItemId,
+          startedAt: item.handling.startedAt ?? now,
+          status: 'running',
+          workerId: input.workerId,
+        }, now);
+        items[item.id] = next;
+        updated.push(next);
+      }
+      return { items, seen: current.seen };
+    });
+    return updated;
   }
 
   async markSettled(input: {

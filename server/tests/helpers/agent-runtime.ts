@@ -20,7 +20,7 @@ export async function runtimeFollowupInput(
   context: RuntimeItemContext,
   _state?: unknown,
 ) {
-  return new AgentRuntimeBridge(runtime).followupInput({ activeContext, context });
+  return new AgentRuntimeBridge(runtime).followupInput({ activeContext, contexts: [context] });
 }
 
 export async function seedReminder(agentId: string, input: { instructions: string; reminderId: string; title: string }): Promise<void> {

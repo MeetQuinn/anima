@@ -10,6 +10,7 @@ import { makeReminderInboxItem } from './helpers/inbox.js';
 import { waitFor } from './helpers/harness.js';
 import { allActivities, loadState } from './helpers/state.js';
 import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
+import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import { addProcessingReaction, removeProcessingReactions } from '../runtime/processing-reactions.js';
 import {
   ControlledRuntime,
@@ -17,13 +18,190 @@ import {
   FollowupRuntime,
   NotReadyFollowupRuntime,
   RejectingFollowupRuntime,
+  ThrowingFollowupRuntime,
   enqueueInbox,
+  makeMemoryCoherenceInboxItem,
   queueFor,
   seedReminder,
   silentLogger,
   waitForInboxItemAppendedTo,
   waitForInboxItemStatus,
 } from './helpers/runtime-worker.js';
+
+test('runtime worker appends one ordered snapshot across Slack surfaces', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-worker-followup-batch-test-'));
+  const runtime = new FollowupRuntime();
+  const appendedIds: string[] = [];
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const coordinator = { agentId: 'scout', stateDir };
+      const first = await enqueueInbox(makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-batch-first',
+        teamId: 'T-demo',
+        text: 'active body sentinel',
+        ts: '1770000010.000001',
+        userId: 'U1',
+      }), coordinator);
+      const second = await enqueueInbox(makeSlackEvent({
+        channelId: 'C-alpha',
+        eventId: 'evt-batch-second',
+        teamId: 'T-demo',
+        text: 'alpha body sentinel',
+        threadTs: '1770000001.000001',
+        ts: '1770000011.000001',
+        userId: 'U2',
+      }), coordinator);
+      const third = await enqueueInbox(makeSlackEvent({
+        channelId: 'C-beta',
+        eventId: 'evt-batch-third',
+        teamId: 'T-demo',
+        text: 'beta body sentinel',
+        ts: '1770000012.000001',
+        userId: 'U3',
+      }), coordinator);
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        queue: queueFor('scout'),
+        onItemFollowupAppended: async (_active, context) => {
+          appendedIds.push(context.item.id);
+        },
+        pollIntervalMs: 10_000,
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+
+      const drain = worker.drainOnce();
+      await waitFor(() => runtime.followups.length === 1);
+      const followup = runtime.followups[0];
+      assert.deepEqual(followup?.itemIds, [second.ctx.item.id, third.ctx.item.id]);
+      assert.ok(followup);
+      assert.equal(
+        followup.prompt,
+        [
+          buildCodeAgentDeliveryPrompt(second.ctx.item),
+          buildCodeAgentDeliveryPrompt(third.ctx.item),
+        ].join('\n\n'),
+      );
+      await waitFor(() => appendedIds.length === 2);
+      assert.deepEqual(appendedIds, [second.ctx.item.id, third.ctx.item.id]);
+      await waitForInboxItemAppendedTo('scout', second.ctx.item.id, first.ctx.item.id);
+      await waitForInboxItemAppendedTo('scout', third.ctx.item.id, first.ctx.item.id);
+
+      runtime.finishNext();
+      assert.equal(await drain, 1);
+      assert.equal(await queueFor('scout').find(second.ctx.item.id), undefined);
+      assert.equal(await queueFor('scout').find(third.ctx.item.id), undefined);
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker follow-up snapshots enforce the item-count limit', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-followup-batch-limits-test-'));
+  const runtime = new FollowupRuntime();
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const coordinator = { agentId: 'scout', stateDir };
+      await enqueueInbox(makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-limits-active',
+        teamId: 'T-demo',
+        text: 'active',
+        ts: '1770000010.000001',
+        timestamp: '2026-07-27T00:00:00.000Z',
+        userId: 'U1',
+      }), coordinator);
+      for (let index = 0; index < 17; index += 1) {
+        await enqueueInbox(makeSlackEvent({
+          channelId: `C-${index}`,
+          eventId: `evt-count-${index}`,
+          teamId: 'T-demo',
+          text: `count-${index}`,
+          ts: `17700001${String(index + 11).padStart(2, '0')}.000001`,
+          userId: 'U2',
+        }), coordinator);
+      }
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        queue: queueFor('scout'),
+        pollIntervalMs: 10_000,
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+      const drain = worker.drainOnce();
+      await waitFor(() => runtime.followups.length === 2);
+      assert.equal(runtime.followups[0]?.itemIds.length, 16);
+      assert.equal(runtime.followups[1]?.itemIds.length, 1);
+      runtime.finishNext();
+      await drain;
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker follow-up snapshots enforce the prompt-size limit', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-followup-batch-size-limit-test-'));
+  const runtime = new FollowupRuntime();
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const coordinator = { agentId: 'scout', stateDir };
+      await enqueueInbox(makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-size-active',
+        teamId: 'T-demo',
+        text: 'active',
+        ts: '1770000010.000001',
+        timestamp: '2026-07-27T00:00:00.000Z',
+        userId: 'U1',
+      }), coordinator);
+      await enqueueInbox(makeSlackEvent({
+        channelId: 'C-large',
+        eventId: 'evt-size-large',
+        teamId: 'T-demo',
+        text: `large-${'x'.repeat(70 * 1024)}`,
+        ts: '1770000011.000001',
+        userId: 'U2',
+      }), coordinator);
+      await enqueueInbox(makeSlackEvent({
+        channelId: 'C-after-large',
+        eventId: 'evt-size-after',
+        teamId: 'T-demo',
+        text: 'after-large',
+        ts: '1770000012.000001',
+        userId: 'U3',
+      }), coordinator);
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        queue: queueFor('scout'),
+        pollIntervalMs: 10_000,
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+      const drain = worker.drainOnce();
+      await waitFor(() => runtime.followups.length === 2);
+      assert.equal(runtime.followups[0]?.itemIds.length, 1);
+      assert.match(runtime.followups[0]?.prompt ?? '', /large-/);
+      assert.equal(runtime.followups[1]?.itemIds.length, 1);
+      assert.match(runtime.followups[1]?.prompt ?? '', /after-large/);
+      runtime.finishNext();
+      await drain;
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
 
 test('runtime worker health carries the Claude account fingerprint captured at launch', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-account-fingerprint-test-'));
@@ -109,7 +287,7 @@ test('runtime worker appends queued follow-up messages into an active runtime', 
 
     await waitFor(() => runtime.followups.length === 1);
     assert.equal(runtime.followups[0]?.activeItemId, first.ctx.item.id);
-    assert.equal(runtime.followups[0]?.itemId, second.ctx.item.id);
+    assert.deepEqual(runtime.followups[0]?.itemIds, [second.ctx.item.id]);
     assert.match(runtime.followups[0]?.prompt ?? '', /second/);
     await waitForInboxItemAppendedTo('scout', second.ctx.item.id, first.ctx.item.id);
     await waitFor(() => reactionCalls.includes('add:D-user:1770000011.000001:eyes'));
@@ -133,7 +311,7 @@ test('runtime worker appends queued follow-up messages into an active runtime', 
 
     await waitFor(() => runtime.followups.length === 2);
     assert.equal(runtime.followups[1]?.activeItemId, first.ctx.item.id);
-    assert.equal(runtime.followups[1]?.itemId, third.ctx.item.id);
+    assert.deepEqual(runtime.followups[1]?.itemIds, [third.ctx.item.id]);
     assert.match(runtime.followups[1]?.prompt ?? '', /third/);
     await waitForInboxItemAppendedTo('scout', third.ctx.item.id, first.ctx.item.id);
     await waitFor(() => reactionCalls.includes('add:D-user:1770000012.000001:eyes'));
@@ -218,7 +396,7 @@ test('runtime worker appends newly queued inbound follow-ups into an active runt
     assert.equal(second.queued, true);
     await waitFor(() => runtime.followups.length === 1);
     assert.equal(runtime.followups[0]?.activeItemId, first.ctx.item.id);
-    assert.equal(runtime.followups[0]?.itemId, second.ctx.item.id);
+    assert.deepEqual(runtime.followups[0]?.itemIds, [second.ctx.item.id]);
     await waitFor(() => followupSignals.length === 1);
     assert.deepEqual(followupSignals, [`${first.ctx.item.id}:${second.ctx.item.id}`]);
     await waitForInboxItemAppendedTo('scout', second.ctx.item.id, first.ctx.item.id);
@@ -396,10 +574,24 @@ test('runtime worker records pending when follow-up append is rejected', async (
       }),
       coordinator,
     );
+    const third = await enqueueInbox(
+      makeSlackEvent({
+        channelId: 'C-other',
+        eventId: 'evt-reject-third',
+        teamId: 'T-demo',
+        text: 'third',
+        ts: '1770000012.000001',
+        userId: 'U2',
+      }),
+      coordinator,
+    );
 
     assert.equal(second.queued, true);
+    assert.equal(third.queued, true);
     await waitFor(() => runtime.followups.length === 1);
+    assert.deepEqual(runtime.followups[0]?.itemIds, [second.ctx.item.id, third.ctx.item.id]);
     await waitForInboxItemStatus('scout', second.ctx.item.id, 'queued');
+    await waitForInboxItemStatus('scout', third.ctx.item.id, 'queued');
     await waitFor(async () => allActivities(await loadState()).some((activity) => activity.type === 'runtime.pending'));
     const pending = allActivities(await loadState()).find((activity) => activity.type === 'runtime.pending');
     assert.equal(pending?.payload?.['reason'], 'followup_rejected');
@@ -407,8 +599,11 @@ test('runtime worker records pending when follow-up append is rejected', async (
     runtime.finishNext();
     await waitFor(() => runtime.calls.length === 2);
     runtime.finishNext();
-    assert.equal(await drain, 2);
+    await waitFor(() => runtime.calls.length === 3);
+    runtime.finishNext();
+    assert.equal(await drain, 3);
     assert.equal(await queueFor('scout').find(second.ctx.item.id), undefined);
+    assert.equal(await queueFor('scout').find(third.ctx.item.id), undefined);
     });
   } finally {
     await worker?.close();
@@ -459,9 +654,21 @@ test('runtime worker retries follow-ups quietly until the provider turn is ready
       }),
       coordinator,
     );
+    const third = await enqueueInbox(
+      makeSlackEvent({
+        channelId: 'C-other',
+        eventId: 'evt-not-ready-third',
+        teamId: 'T-demo',
+        text: 'third',
+        ts: '1770000012.000001',
+        userId: 'U2',
+      }),
+      coordinator,
+    );
 
     await waitFor(() => runtime.attempts >= 2);
     await waitForInboxItemStatus('scout', second.ctx.item.id, 'queued');
+    await waitForInboxItemStatus('scout', third.ctx.item.id, 'queued');
     assert.equal(
       allActivities(await loadState()).some((activity) =>
         activity.type === 'runtime.followup_failed' || activity.type === 'runtime.pending'),
@@ -470,10 +677,180 @@ test('runtime worker retries follow-ups quietly until the provider turn is ready
 
     runtime.ready = true;
     await waitFor(() => runtime.followups.length === 1);
+    assert.deepEqual(runtime.followups[0]?.itemIds, [second.ctx.item.id, third.ctx.item.id]);
     await waitForInboxItemAppendedTo('scout', second.ctx.item.id, runtime.calls[0]?.itemId ?? '');
+    await waitForInboxItemAppendedTo('scout', third.ctx.item.id, runtime.calls[0]?.itemId ?? '');
     runtime.finishNext();
     assert.equal(await drain, 1);
     assert.equal(await queueFor('scout').find(second.ctx.item.id), undefined);
+    assert.equal(await queueFor('scout').find(third.ctx.item.id), undefined);
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker requeues an entire follow-up batch when append throws', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-followup-batch-throw-test-'));
+  const runtime = new ThrowingFollowupRuntime();
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const coordinator = { agentId: 'scout', stateDir };
+      await enqueueInbox(makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-throw-active',
+        teamId: 'T-demo',
+        text: 'active',
+        ts: '1770000010.000001',
+        userId: 'U1',
+      }), coordinator);
+      const second = await enqueueInbox(makeSlackEvent({
+        channelId: 'C-one',
+        eventId: 'evt-throw-second',
+        teamId: 'T-demo',
+        text: 'second',
+        ts: '1770000011.000001',
+        userId: 'U2',
+      }), coordinator);
+      const third = await enqueueInbox(makeSlackEvent({
+        channelId: 'C-two',
+        eventId: 'evt-throw-third',
+        teamId: 'T-demo',
+        text: 'third',
+        ts: '1770000012.000001',
+        userId: 'U3',
+      }), coordinator);
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        queue: queueFor('scout'),
+        pollIntervalMs: 10_000,
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+
+      const drain = worker.drainOnce();
+      await waitFor(() => runtime.followups.length === 1);
+      assert.deepEqual(runtime.followups[0]?.itemIds, [second.ctx.item.id, third.ctx.item.id]);
+      await waitForInboxItemStatus('scout', second.ctx.item.id, 'queued');
+      await waitForInboxItemStatus('scout', third.ctx.item.id, 'queued');
+      await waitFor(async () => allActivities(await loadState()).some(
+        (activity) => activity.type === 'runtime.followup_failed',
+      ));
+      await worker.close();
+      worker = undefined;
+      assert.equal(await drain, 1);
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker requeues an entire follow-up batch when prompt construction fails', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-followup-batch-context-failure-test-'));
+  const runtime = new FollowupRuntime();
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const coordinator = { agentId: 'scout', stateDir };
+      await enqueueInbox(makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-context-active',
+        teamId: 'T-demo',
+        text: 'active',
+        ts: '1770000010.000001',
+        timestamp: '2026-07-27T00:00:00.000Z',
+        userId: 'U1',
+      }), coordinator);
+      const missingReminder = await enqueueInbox(makeReminderInboxItem({
+        eventId: 'evt-context-missing-reminder',
+        reminderId: 'missing-reminder',
+        timestamp: '2026-07-28T00:00:00.000Z',
+      }), coordinator);
+      const slack = await enqueueInbox(makeSlackEvent({
+        channelId: 'C-after-reminder',
+        eventId: 'evt-context-slack',
+        teamId: 'T-demo',
+        text: 'must remain queued too',
+        ts: '1770000012.000001',
+        userId: 'U2',
+      }), coordinator);
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        queue: queueFor('scout'),
+        pollIntervalMs: 10_000,
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+
+      const drain = worker.drainOnce();
+      await waitFor(async () => allActivities(await loadState()).some(
+        (activity) => activity.type === 'runtime.followup_failed',
+      ));
+      assert.deepEqual(runtime.followups, []);
+      await waitForInboxItemStatus('scout', missingReminder.ctx.item.id, 'queued');
+      await waitForInboxItemStatus('scout', slack.ctx.item.id, 'queued');
+      await worker.close();
+      worker = undefined;
+      assert.equal(await drain, 1);
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker excludes memory coherence from a message follow-up batch', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-followup-batch-memory-exclusion-test-'));
+  const runtime = new FollowupRuntime();
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const coordinator = { agentId: 'scout', stateDir };
+      await enqueueInbox(makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-memory-active',
+        teamId: 'T-demo',
+        text: 'active',
+        ts: '1770000010.000001',
+        timestamp: '2026-07-27T00:00:00.000Z',
+        userId: 'U1',
+      }), coordinator);
+      const memory = makeMemoryCoherenceInboxItem({
+        scheduledSlotAt: '2026-07-28T00:00:00.000Z',
+        timestamp: '2026-07-28T00:00:00.000Z',
+      });
+      await queueFor('scout').enqueue(memory);
+      const slack = await enqueueInbox(makeSlackEvent({
+        channelId: 'C-after-memory',
+        eventId: 'evt-memory-slack',
+        teamId: 'T-demo',
+        text: 'append this message',
+        ts: '1770000012.000001',
+        timestamp: '2026-07-28T00:00:01.000Z',
+        userId: 'U2',
+      }), coordinator);
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        queue: queueFor('scout'),
+        pollIntervalMs: 10_000,
+        stateDir,
+        workerId: 'test-worker',
+      }, silentLogger);
+
+      const drain = worker.drainOnce();
+      await waitFor(() => runtime.followups.length === 1);
+      assert.deepEqual(runtime.followups[0]?.itemIds, [slack.ctx.item.id]);
+      await waitForInboxItemStatus('scout', memory.id, 'queued');
+      await waitForInboxItemAppendedTo('scout', slack.ctx.item.id, runtime.calls[0]?.itemId ?? '');
+      await worker.close();
+      worker = undefined;
+      assert.equal(await drain, 1);
     });
   } finally {
     await worker?.close();
@@ -526,7 +903,7 @@ test('runtime worker appends queued reminder wakes into an active runtime', asyn
     assert.equal(reminder.queued, true);
     await waitFor(() => runtime.followups.length === 1);
     assert.equal(runtime.followups[0]?.activeItemId, first.ctx.item.id);
-    assert.equal(runtime.followups[0]?.itemId, reminder.ctx.item.id);
+    assert.deepEqual(runtime.followups[0]?.itemIds, [reminder.ctx.item.id]);
 
     runtime.finishNext();
     assert.equal(await drain, 1);
