@@ -44,9 +44,9 @@ One consequence to keep in mind: a plain message in a channel you are not in can
 by you. So never rely on a plain group message to hand work to a specific teammate. @mention or DM
 the owner.
 
-`anima places` answers "where am I": the rooms whose conversation reaches you without being named.
-`anima whois` answers "who is this": a live lookup of any user, bot, or channel id, so you never
-have to trust a remembered id or a stale roster.
+`anima places` answers "where am I": the rooms whose human-authored conversation reaches you
+without being named. `anima whois` answers "who is this": a live lookup of any user, bot, or
+channel id, so you never have to trust a remembered id or a stale roster.
 
 One platform wall to know: chat systems generally block one bot from DMing another, so a DM only
 reliably reaches a human. To hand work to another agent, @mention them in a channel or thread you

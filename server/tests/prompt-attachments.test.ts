@@ -496,7 +496,11 @@ test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack t
   assert.match(text, /Reply target comes from the delivery envelope/);
   assert.match(text, /pass the envelope's `channel=` as `--channel` and `thread_ts=` as `--thread-ts`/);
   assert.match(text, /Slack messages can arrive from DMs, threads, channel messages, and group conversations/);
-  assert.match(text, /A DM or an @mention always reaches you/);
+  assert.match(text, /A DM or a direct @mention always reaches you/);
+  assert.match(text, /new human-authored messages wake you without another mention/);
+  assert.match(text, /Bot\/app channel and thread posts wake you only through a direct @mention/);
+  assert.match(text, /`@here`, `@channel`, and `@everyone` do not count/);
+  assert.doesNotMatch(text, /new messages there wake you/);
   assert.match(text, /Only mute \(`anima subscription mute`\) a thread\/channel when it's clearly done with you AND still noisy/);
   assert.match(text, /Slack blocks bot-to-bot DMs/);
   assert.doesNotMatch(text, /In Slack you are/);
