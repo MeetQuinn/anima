@@ -16,7 +16,6 @@ import {
 
 const CODEX_COMMAND = 'codex';
 export const CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV = 'ANIMA_CODEX_AUTO_COMPACT_TOKEN_LIMIT';
-export const CODEX_DEFAULT_AUTO_COMPACT_TOKEN_LIMIT = 240000;
 export const CODEX_AUTO_COMPACT_TOKEN_LIMIT_SCOPE = 'total';
 const CODEX_TOOL_ENV_BASE_INCLUDE = [
   'COLORTERM',
@@ -147,9 +146,14 @@ export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerC
   }
 
   private threadParams(input: AgentRuntimeInput): Record<string, unknown> {
+    const autoCompactTokenLimit = codexAutoCompactTokenLimitFor(this.env);
     const config = {
-      model_auto_compact_token_limit: codexAutoCompactTokenLimitFor(this.env),
-      model_auto_compact_token_limit_scope: CODEX_AUTO_COMPACT_TOKEN_LIMIT_SCOPE,
+      ...(autoCompactTokenLimit !== undefined
+        ? {
+            model_auto_compact_token_limit: autoCompactTokenLimit,
+            model_auto_compact_token_limit_scope: CODEX_AUTO_COMPACT_TOKEN_LIMIT_SCOPE,
+          }
+        : {}),
       ...(this.config.reasoningEffort ? { model_reasoning_effort: this.config.reasoningEffort } : {}),
       model_reasoning_summary: this.config.reasoningSummary ?? 'auto',
     };
@@ -164,11 +168,12 @@ export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerC
   }
 }
 
+/** Anima-managed Codex auto-compact limit. Absent env → undefined (Codex native behavior). */
 export function codexAutoCompactTokenLimitFor(
   env: Record<string, string> | undefined,
-): number {
+): number | undefined {
   const configured = env?.[CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV];
-  if (configured === undefined) return CODEX_DEFAULT_AUTO_COMPACT_TOKEN_LIMIT;
+  if (configured === undefined) return undefined;
   if (!/^\d+$/.test(configured)) {
     throw new Error(`${CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV} must be a positive integer`);
   }

@@ -8,7 +8,6 @@ import { createAgentRuntime } from '../providers/factory.js';
 import {
   CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV,
   CODEX_AUTO_COMPACT_TOKEN_LIMIT_SCOPE,
-  CODEX_DEFAULT_AUTO_COMPACT_TOKEN_LIMIT,
   codexAppServerArgs,
   codexAutoCompactTokenLimitFor,
   codexToolEnvIncludeList,
@@ -60,9 +59,9 @@ test('codex-cli app-server launch allows managed provider env into tool shells',
   assert.equal(args.at(-1), 'stdio://');
 });
 
-test('codex-cli auto-compact limit defaults safely and accepts an explicit provider env override', () => {
-  assert.equal(codexAutoCompactTokenLimitFor(undefined), CODEX_DEFAULT_AUTO_COMPACT_TOKEN_LIMIT);
-  assert.equal(codexAutoCompactTokenLimitFor({}), CODEX_DEFAULT_AUTO_COMPACT_TOKEN_LIMIT);
+test('codex-cli auto-compact limit is opt-in only; default leaves Codex native behavior', () => {
+  assert.equal(codexAutoCompactTokenLimitFor(undefined), undefined);
+  assert.equal(codexAutoCompactTokenLimitFor({}), undefined);
   assert.equal(
     codexAutoCompactTokenLimitFor({ [CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV]: '180000' }),
     180000,
