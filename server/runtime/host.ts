@@ -55,6 +55,7 @@ import type {
   AgentRuntimeHandleSnapshot,
 } from '../../shared/snapshot.js';
 import { ensureAnimaHome } from '../storage/write-root.js';
+import { TeamRunLimiter } from './team-run-limiter.js';
 
 export interface RuntimeHostOptions {
   agent?: string;
@@ -76,6 +77,7 @@ interface ManagedAgent {
 
 export interface StartAgentOptions {
   forceStopAfterMs: number;
+  runLimiter: TeamRunLimiter;
   startTimeoutMs: number;
 }
 
@@ -122,6 +124,7 @@ export class RuntimeHost {
   private readonly healthIntervalMs: number;
   private readonly forceRestartTimeoutMs: number;
   private readonly startAgentTimeoutMs: number;
+  private readonly runLimiter = new TeamRunLimiter();
   private readonly startAgent: (agent: AgentConfig, animaHome: string, options: StartAgentOptions) => Promise<RunningAgentHandle>;
   private readonly syncSlackDisplayInfo: (agent: AgentConfig) => Promise<AgentConfig>;
   private readonly validateAgent: (agent: AgentConfig) => Promise<void> | void;
@@ -455,6 +458,7 @@ export class RuntimeHost {
       const startAgent = await this.agentAfterSlackDisplayInfoSync(agent);
       const handle = await this.startAgent(startAgent, this.animaHome, {
         forceStopAfterMs: this.forceRestartTimeoutMs,
+        runLimiter: this.runLimiter,
         startTimeoutMs: this.startAgentTimeoutMs,
       });
       return { agent: startAgent, handle };
@@ -820,6 +824,7 @@ async function startAgentFromConfig(
     ...(server.slack ? { appToken: server.slack.appToken, botToken: server.slack.botToken } : {}),
     feishu: server.feishu,
     ...(server.runtime.idleTimeoutMs !== undefined ? { idleTimeoutMs: server.runtime.idleTimeoutMs } : {}),
+    runLimiter: options.runLimiter,
     startAbortForceAfterMs: options.forceStopAfterMs,
     startTimeoutMs: options.startTimeoutMs,
   });

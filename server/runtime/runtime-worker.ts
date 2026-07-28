@@ -33,6 +33,7 @@ import { recordFinalRuntimeFailure, runProviderWithCrashRetries } from './provid
 import { defaultAgentHealthService, isProviderFailureReason } from './agent-health.service.js';
 import { runtimeSessionServiceForAgent } from './runtime-session.service.js';
 import type { AgentRuntimeHandleSnapshot } from '../../shared/snapshot.js';
+import { TeamRunLimiter } from './team-run-limiter.js';
 
 // Executor for one agent: claims queued inbox items, runs the provider runtime,
 // appends follow-up items into the active run, and settles item lifecycle state.
@@ -73,6 +74,7 @@ export class AgentRuntimeWorker {
   constructor(
     private readonly options: AgentRuntimeWorkerOptions,
     private readonly logger: Pick<Console, 'error' | 'log'> = console,
+    private readonly runLimiter = new TeamRunLimiter(),
   ) {
     this.workerIsAlive = options.workerIsAlive ?? isWorkerAlive;
     this.workerId = options.workerId ?? `${options.agentId}:${randomUUID()}:${process.pid}`;
@@ -174,10 +176,16 @@ export class AgentRuntimeWorker {
 
   private async runOne(): Promise<boolean> {
     if (await isRestartDrainActive()) return false;
-    const item = await this.takeNextRunnable();
-    if (!item) return false;
-    await this.processClaimedItem(item);
-    return true;
+    const releaseRunSlot = await this.runLimiter.acquire();
+    try {
+      if (this.closing || await isRestartDrainActive()) return false;
+      const item = await this.takeNextRunnable();
+      if (!item) return false;
+      await this.processClaimedItem(item);
+      return true;
+    } finally {
+      releaseRunSlot();
+    }
   }
 
   private async takeNextRunnable(): Promise<InboxItem | undefined> {

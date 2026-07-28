@@ -236,6 +236,29 @@ test('runtime host idles with zero agents and starts a newly runnable agent once
   assert.deepEqual(stopped, ['aria']);
 });
 
+test('runtime host shares one run limiter across every agent it starts', async () => {
+  const runLimiters: unknown[] = [];
+  const host = new RuntimeHost({}, {
+    animaHome: testHome,
+    loadAgents: async () => [
+      runtimeHostAgent('aria', { connected: true }),
+      runtimeHostAgent('milo', { connected: true }),
+    ],
+    logger: silentLogger,
+    startAgent: async (agent, _animaHome, options) => {
+      runLimiters.push(options.runLimiter);
+      return stopHandle(agent.id, []);
+    },
+    validateAgent: async () => {},
+  });
+
+  await host.reconcileOnce();
+
+  assert.equal(runLimiters.length, 2);
+  assert.equal(runLimiters[0], runLimiters[1]);
+  await host.stop();
+});
+
 test('runtime host reconciles memory coherence scheduler after agent reconciliation', async () => {
   const agents = [runtimeHostAgent('aria', { connected: true })];
   const scheduled: string[][] = [];

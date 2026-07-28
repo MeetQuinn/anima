@@ -15,6 +15,7 @@ import type { AgentRuntimeHandleSnapshot } from '../../shared/snapshot.js';
 import { AgentRuntimeWorker, type AgentRuntimeWorkerCloseOptions } from './runtime-worker.js';
 import type { RuntimeWorkerConfig } from './types.js';
 import { recordLifetimeTokenUsageForItem } from './usage.js';
+import type { TeamRunLimiter } from './team-run-limiter.js';
 
 interface RunningAgentOptions extends RuntimeWorkerConfig {
   agentRuntime: AgentRuntime;
@@ -22,6 +23,7 @@ interface RunningAgentOptions extends RuntimeWorkerConfig {
   botToken?: string;
   feishu?: FeishuConfig;
   idleTimeoutMs?: number;
+  runLimiter: TeamRunLimiter;
   startAbortForceAfterMs?: number;
   startTimeoutMs?: number;
 }
@@ -36,27 +38,31 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
   const queue = wakeQueueServiceForAgent(options.agentId);
   const reactionClient = options.botToken ? slackReactionClient(options.botToken) : undefined;
   const feishuClient = options.feishu?.connected ? feishuProcessingReactionClient(options.feishu) : undefined;
-  const worker = new AgentRuntimeWorker({
-    ...options,
-    agentRuntime: options.agentRuntime,
-    ...(options.idleTimeoutMs !== undefined ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
-    onItemStarted: async (context) => {
-      await addProcessingReaction({ context, logger: console, reactionClient });
-      await addFeishuProcessingReaction({ context, feishuClient, logger: console });
+  const worker = new AgentRuntimeWorker(
+    {
+      ...options,
+      agentRuntime: options.agentRuntime,
+      ...(options.idleTimeoutMs !== undefined ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
+      onItemStarted: async (context) => {
+        await addProcessingReaction({ context, logger: console, reactionClient });
+        await addFeishuProcessingReaction({ context, feishuClient, logger: console });
+      },
+      onItemSettled: async (context) => {
+        await recordLifetimeTokenUsageForItem(context.agentId, context.item.id).catch((error: unknown) => {
+          console.error(`Lifetime token usage update failed for item ${context.item.id}: ${errorMessage(error)}`);
+        });
+        await removeProcessingReactions({ context, logger: console, reactionClient });
+        await removeFeishuProcessingReaction({ context, feishuClient, logger: console });
+      },
+      onItemFollowupAppended: async (_activeContext, context) => {
+        await addProcessingReaction({ context, logger: console, reactionClient });
+        await addFeishuProcessingReaction({ context, feishuClient, logger: console });
+      },
+      queue,
     },
-    onItemSettled: async (context) => {
-      await recordLifetimeTokenUsageForItem(context.agentId, context.item.id).catch((error: unknown) => {
-        console.error(`Lifetime token usage update failed for item ${context.item.id}: ${errorMessage(error)}`);
-      });
-      await removeProcessingReactions({ context, logger: console, reactionClient });
-      await removeFeishuProcessingReaction({ context, feishuClient, logger: console });
-    },
-    onItemFollowupAppended: async (_activeContext, context) => {
-      await addProcessingReaction({ context, logger: console, reactionClient });
-      await addFeishuProcessingReaction({ context, feishuClient, logger: console });
-    },
-    queue,
-  });
+    console,
+    options.runLimiter,
+  );
   const subscriber = new InboxSubscriber({
     agentRuntimeKind: options.agentRuntime.kind,
     ...(options.appToken ? { appToken: options.appToken } : {}),
