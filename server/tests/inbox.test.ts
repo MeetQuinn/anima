@@ -234,6 +234,88 @@ test('wake queue claims one item for only one racing worker', async () => {
   }
 });
 
+test('wake queue claims and marks a follow-up snapshot as one batch', async () => {
+  const active = makeSlackEvent({
+    channelId: 'D-user',
+    eventId: 'evt-batch-active',
+    handling: {
+      createdAt: '2026-07-28T00:00:00.000Z',
+      queuedAt: '2026-07-28T00:00:00.000Z',
+      startedAt: '2026-07-28T00:00:01.000Z',
+      status: 'running',
+      updatedAt: '2026-07-28T00:00:01.000Z',
+      workerId: 'worker-1',
+    },
+    teamId: 'T-demo',
+    text: 'active',
+    ts: '1770000010.000001',
+    userId: 'U1',
+  });
+  const first = makeSlackEvent({
+    channelId: 'C-one',
+    eventId: 'evt-batch-one',
+    teamId: 'T-demo',
+    text: 'one',
+    timestamp: '2026-07-28T00:00:02.000Z',
+    ts: '1770000011.000001',
+    userId: 'U2',
+  });
+  const second = makeSlackEvent({
+    channelId: 'C-two',
+    eventId: 'evt-batch-two',
+    teamId: 'T-demo',
+    text: 'two',
+    timestamp: '2026-07-28T00:00:03.000Z',
+    ts: '1770000012.000001',
+    userId: 'U3',
+  });
+  const queue = new WakeQueueService(
+    'scout',
+    new WakeQueueStore('scout', memoryWakeQueueStore({
+      [active.id]: active,
+      [first.id]: first,
+      [second.id]: second,
+    })),
+    { recordInboxItem: async () => undefined },
+  );
+
+  const batches = await Promise.all([
+    queue.takeFollowupBatch({ activeItemId: active.id, limit: 16, workerId: 'worker-1' }),
+    queue.takeFollowupBatch({ activeItemId: active.id, limit: 16, workerId: 'worker-1' }),
+  ]);
+  assert.deepEqual(batches.map((batch) => batch.map((item) => item.id)).sort((a, b) => a.length - b.length), [
+    [],
+    [first.id, second.id],
+  ]);
+
+  const secondClaimed = await queue.find(second.id);
+  assert.ok(secondClaimed);
+  await queue.replaceItem({
+    ...secondClaimed,
+    handling: { ...secondClaimed.handling, workerId: 'worker-2' },
+  });
+  await assert.rejects(
+    queue.markAppendedBatch({
+      itemIds: [first.id, second.id],
+      parentItemId: active.id,
+      workerId: 'worker-1',
+    }),
+    /batch changed before append commit/,
+  );
+  assert.equal((await queue.find(first.id))?.handling.appendedToItemId, undefined);
+  assert.equal((await queue.find(second.id))?.handling.appendedToItemId, undefined);
+  await queue.replaceItem(secondClaimed);
+
+  const marked = await queue.markAppendedBatch({
+    itemIds: [first.id, second.id],
+    parentItemId: active.id,
+    workerId: 'worker-1',
+  });
+  assert.deepEqual(marked.map((item) => item.id), [first.id, second.id]);
+  assert.equal((await queue.find(first.id))?.handling.appendedToItemId, active.id);
+  assert.equal((await queue.find(second.id))?.handling.appendedToItemId, active.id);
+});
+
 test('wake queue idle poll leaves the queue file mtime unchanged', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-wake-idle-poll-test-'));
   try {

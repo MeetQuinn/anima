@@ -103,7 +103,7 @@ test('runtime bridge preserves the complete mid-turn message in a follow-up prom
   });
   const followup = await new AgentRuntimeBridge(new ControlledRuntime()).followupInput({
     activeContext: buildContext(activeEvent),
-    context: buildContext(followupEvent),
+    contexts: [buildContext(followupEvent)],
   });
   const expectedDeliveryPrompt = buildCodeAgentDeliveryPrompt(followupEvent);
 

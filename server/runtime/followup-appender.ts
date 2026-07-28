@@ -1,7 +1,6 @@
 import { errorMessage } from '../ids.js';
 import type { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { isRestartDrainActive } from '../services/restart-drain.js';
-import type { InboxItem } from '../../shared/inbox.js';
 import {
   recordRuntimeFollowupAppended,
   recordRuntimeFollowupFailed,
@@ -13,12 +12,8 @@ import type { AgentRuntimeBridge } from './runtime-bridge.js';
 import type { RuntimeItemContext, RuntimeWorkerConfig } from './types.js';
 
 const FOLLOWUP_POLL_MS = 100;
-
-type RuntimeFollowupDecision =
-  | { status: 'appended'; text?: string }
-  | { status: 'not_ready' }
-  | { status: 'rejected' }
-  | { error: string; status: 'failed' };
+export const FOLLOWUP_BATCH_MAX_ITEMS = 16;
+export const FOLLOWUP_BATCH_MAX_PROMPT_BYTES = 64 * 1024;
 
 interface RuntimeFollowupAppenderInput {
   activeContext: RuntimeItemContext;
@@ -41,57 +36,98 @@ export async function appendQueuedFollowupsUntilFinished(input: RuntimeFollowupA
       await sleep(FOLLOWUP_POLL_MS, input.itemDone);
       continue;
     }
-    const item = await input.queue.takeNextFollowup({
+    const items = await input.queue.takeFollowupBatch({
       activeItemId: input.activeContext.item.id,
       excludedItemIds: skippedItemIds,
+      limit: FOLLOWUP_BATCH_MAX_ITEMS,
       workerId: input.workerId,
     });
-    if (!item) {
+    if (items.length === 0) {
       await sleep(FOLLOWUP_POLL_MS, input.itemDone);
       continue;
     }
-    if (item.kind === 'memory_coherence') {
-      skippedItemIds.add(item.id);
-      await input.queue.requeue(item.id);
+
+    const eligible = items.filter((item) => item.kind !== 'memory_coherence');
+    const excluded = items.filter((item) => item.kind === 'memory_coherence');
+    for (const item of excluded) skippedItemIds.add(item.id);
+    if (excluded.length > 0) await input.queue.requeueBatch(excluded.map((item) => item.id));
+    if (eligible.length === 0) {
       await sleep(FOLLOWUP_POLL_MS, input.itemDone);
       continue;
     }
-    await tryOneFollowupItem(input, item, skippedItemIds);
+    await tryFollowupBatch(input, eligible.map((item) => item.id), skippedItemIds);
   }
 }
 
-async function tryOneFollowupItem(
+async function tryFollowupBatch(
   input: RuntimeFollowupAppenderInput,
-  item: InboxItem,
+  claimedItemIds: string[],
   skippedItemIds: Set<string>,
 ): Promise<void> {
-  let appended = false;
-  let context: RuntimeItemContext | undefined;
+  let contexts: RuntimeItemContext[] = [];
+  let failedItemIds = claimedItemIds;
+  let accepted = false;
   try {
-    context = await runtimeContextForItemId(item.id, input.runtimeConfig, input.queue);
-    const followup = await appendRuntimeFollowup({
+    contexts = await Promise.all(claimedItemIds.map(
+      (itemId) => runtimeContextForItemId(itemId, input.runtimeConfig, input.queue),
+    ));
+    const followupInput = await input.runtimeBridge.followupInput({
       activeContext: input.activeContext,
-      agentRuntime: input.agentRuntime,
-      context,
-      runtimeBridge: input.runtimeBridge,
+      contexts,
+      maxPromptBytes: FOLLOWUP_BATCH_MAX_PROMPT_BYTES,
     });
-    if (followup.status === 'appended') {
-      await recordFollowupAppendSuccess(input, context, followup.text);
-      appended = true;
-      return;
-    }
-    if (followup.status === 'not_ready') {
-      await input.queue.requeue(item.id);
+    contexts = contexts.slice(0, followupInput.itemIds.length);
+    const overflowIds = claimedItemIds.slice(contexts.length);
+    if (overflowIds.length > 0) await input.queue.requeueBatch(overflowIds);
+    failedItemIds = followupInput.itemIds;
+
+    const result = await input.agentRuntime.appendToActiveRun(followupInput);
+    if (!result.accepted) {
+      await input.queue.requeueBatch(contexts.map((context) => context.item.id));
+      if (result.retryable) {
+        await sleep(FOLLOWUP_POLL_MS, input.itemDone);
+        return;
+      }
+      for (const context of contexts) skippedItemIds.add(context.item.id);
+      await recordRuntimePending(
+        { agentId: input.runtimeConfig.agentId },
+        {
+          activeItemId: input.activeContext.item.id,
+          agentRuntime: input.agentRuntime.kind,
+          reason: 'followup_rejected',
+        },
+      );
       await sleep(FOLLOWUP_POLL_MS, input.itemDone);
       return;
     }
-    await recordFollowupAppendSkip(input, item, followup);
-    skippedItemIds.add(item.id);
-    await input.queue.requeue(item.id);
-    await sleep(FOLLOWUP_POLL_MS, input.itemDone);
+
+    await recordRuntimeFollowupAppended(
+      { agentId: input.runtimeConfig.agentId },
+      {
+        activeItemId: input.activeContext.item.id,
+        agentRuntime: input.agentRuntime.kind,
+        text: result.text,
+      },
+    );
+    input.onFollowupAccepted();
+    await input.queue.markAppendedBatch({
+      itemIds: contexts.map((context) => context.item.id),
+      parentItemId: input.activeContext.item.id,
+      workerId: input.workerId,
+    });
+    accepted = true;
+    await Promise.all(contexts.map((context) => input.onFollowupAppended(context, result.text)));
+    input.logger.log(JSON.stringify({
+      activeItemId: input.activeContext.item.id,
+      agentRuntime: input.agentRuntime.kind,
+      event: 'runtime.followup_appended',
+      itemIds: contexts.map((context) => context.item.id),
+      text: result.text,
+      workerId: input.workerId,
+    }, null, 2));
   } catch (error) {
-    skippedItemIds.add(item.id);
-    await input.queue.requeue(item.id);
+    if (!accepted) await input.queue.requeueBatch(failedItemIds);
+    for (const itemId of failedItemIds) skippedItemIds.add(itemId);
     await recordRuntimeFollowupFailed(
       { agentId: input.runtimeConfig.agentId },
       {
@@ -101,91 +137,19 @@ async function tryOneFollowupItem(
         reason: 'followup_failed',
       },
     );
-    input.logger.error(`Runtime worker follow-up append failed for item ${item.id}: ${errorMessage(error)}`);
+    input.logger.error(
+      `Runtime worker follow-up append failed for items ${failedItemIds.join(', ')}: ${errorMessage(error)}`,
+    );
     await sleep(FOLLOWUP_POLL_MS, input.itemDone);
   } finally {
-    const current = context && !appended ? await input.queue.find(context.item.id).catch(() => undefined) : undefined;
-    if (context && (current?.handling.status === 'completed' || current?.handling.status === 'failed')) {
-      await input.onFollowupSettled(context);
+    if (!accepted) {
+      for (const context of contexts) {
+        const current = await input.queue.find(context.item.id).catch(() => undefined);
+        if (current?.handling.status === 'completed' || current?.handling.status === 'failed') {
+          await input.onFollowupSettled(context);
+        }
+      }
     }
-  }
-}
-
-async function recordFollowupAppendSuccess(
-  input: RuntimeFollowupAppenderInput,
-  context: RuntimeItemContext,
-  text: string | undefined,
-): Promise<void> {
-  input.onFollowupAccepted();
-  await input.queue.markAppended({
-    itemId: context.item.id,
-    parentItemId: input.activeContext.item.id,
-    workerId: input.workerId,
-  });
-  await input.onFollowupAppended(context, text);
-  input.logger.log(JSON.stringify({
-    activeItemId: input.activeContext.item.id,
-    agentRuntime: input.agentRuntime.kind,
-    event: 'runtime.followup_appended',
-    itemId: context.item.id,
-    text,
-    workerId: input.workerId,
-  }, null, 2));
-}
-
-async function recordFollowupAppendSkip(
-  input: RuntimeFollowupAppenderInput,
-  item: InboxItem,
-  followup: RuntimeFollowupDecision,
-): Promise<void> {
-  if (followup.status === 'rejected') {
-    await recordRuntimePending(
-      { agentId: input.runtimeConfig.agentId },
-      {
-        activeItemId: input.activeContext.item.id,
-        agentRuntime: input.agentRuntime.kind,
-        reason: 'followup_rejected',
-      },
-    );
-  }
-  if (followup.status === 'failed') {
-    input.logger.error(`Runtime worker follow-up append failed for item ${item.id}: ${followup.error}`);
-  }
-}
-
-async function appendRuntimeFollowup(input: {
-  activeContext: RuntimeItemContext;
-  agentRuntime: AgentRuntime;
-  context: RuntimeItemContext;
-  runtimeBridge: AgentRuntimeBridge;
-}): Promise<RuntimeFollowupDecision> {
-  try {
-    const result = await input.agentRuntime.appendToActiveRun(await input.runtimeBridge.followupInput({
-      activeContext: input.activeContext,
-      context: input.context,
-    }));
-    if (!result.accepted) return { status: result.retryable ? 'not_ready' : 'rejected' };
-    await recordRuntimeFollowupAppended(
-      { agentId: input.context.agentId },
-      {
-        activeItemId: input.activeContext.item.id,
-        agentRuntime: input.agentRuntime.kind,
-        text: result.text,
-      },
-    );
-    return { status: 'appended', text: result.text };
-  } catch (error) {
-    const message = errorMessage(error);
-    await recordRuntimeFollowupFailed(
-      { agentId: input.context.agentId },
-      {
-        activeItemId: input.activeContext.item.id,
-        agentRuntime: input.agentRuntime.kind,
-        error: message,
-        reason: 'followup_failed',
-      },
-    );
-    return { error: message, status: 'failed' };
   }
 }
 

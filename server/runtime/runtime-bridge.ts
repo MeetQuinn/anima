@@ -61,13 +61,30 @@ export class AgentRuntimeBridge {
 
   async followupInput(input: {
     activeContext: RuntimeItemContext;
-    context: RuntimeItemContext;
+    contexts: RuntimeItemContext[];
+    maxPromptBytes?: number;
   }): Promise<AgentRuntimeFollowupInput> {
-    const promptContext = await this.promptContext(input.context);
+    const itemIds: string[] = [];
+    const prompts: string[] = [];
+    let promptBytes = 0;
+    for (const context of input.contexts) {
+      const promptContext = await this.promptContext(context);
+      const prompt = buildCodeAgentDeliveryPrompt(context.item, promptContext);
+      const separator = prompts.length > 0 ? '\n\n' : '';
+      const candidateBytes = promptBytes + Buffer.byteLength(`${separator}${prompt}`, 'utf8');
+      if (
+        prompts.length > 0 &&
+        input.maxPromptBytes !== undefined &&
+        candidateBytes > input.maxPromptBytes
+      ) break;
+      itemIds.push(context.item.id);
+      prompts.push(prompt);
+      promptBytes = candidateBytes;
+    }
     return {
       activeItemId: input.activeContext.item.id,
-      prompt: buildCodeAgentDeliveryPrompt(input.context.item, promptContext),
-      itemId: input.context.item.id,
+      itemIds,
+      prompt: prompts.join('\n\n'),
     };
   }
 

@@ -86,21 +86,28 @@ export class WakeQueueService {
     return (await this.store.takeNextRunnable(input)).item;
   }
 
-  async takeNextFollowup(input: {
+  async takeFollowupBatch(input: {
     activeItemId: string;
     excludedItemIds?: Iterable<string>;
+    limit: number;
     workerId: string;
-  }): Promise<InboxItem | undefined> {
+  }): Promise<InboxItem[]> {
     const items = await this.list();
     const activeItem = items.find((item) => item.id === input.activeItemId);
     if (!activeItem || activeItem.handling.status !== 'running' || activeItem.handling.workerId !== input.workerId) {
-      return undefined;
+      return [];
     }
 
     const excludedItemIds = new Set(input.excludedItemIds ?? []);
     const queued = items
-      .filter((item) => item.handling.status === 'queued' && !excludedItemIds.has(item.id));
-    return this.takeFirstQueued(input.workerId, queued);
+      .filter((item) => item.handling.status === 'queued' && !excludedItemIds.has(item.id))
+      .slice(0, input.limit);
+    if (queued.length === 0) return [];
+    return this.store.takeQueuedBatch({
+      activeItemId: input.activeItemId,
+      itemIds: queued.map((item) => item.id),
+      workerId: input.workerId,
+    });
   }
 
   async complete(itemId: string): Promise<void> {
@@ -122,6 +129,12 @@ export class WakeQueueService {
   async requeue(itemId: string, options: { resumeReason?: 'runtime_restart' } = {}): Promise<void> {
     await this.store.requeue(itemId, options);
     signalWake(this.agentId);
+  }
+
+  async requeueBatch(itemIds: string[]): Promise<InboxItem[]> {
+    const items = await this.store.requeueBatch(itemIds);
+    if (items.length > 0) signalWake(this.agentId);
+    return items;
   }
 
   async requeueAppendedTo(
@@ -164,20 +177,19 @@ export class WakeQueueService {
     return this.store.markAppended(input);
   }
 
+  markAppendedBatch(input: {
+    itemIds: string[];
+    parentItemId: string;
+    workerId: string;
+  }): Promise<InboxItem[]> {
+    return this.store.markAppendedBatch(input);
+  }
+
   async markSettled(input: {
     itemId: string;
     workerId: string;
   }): Promise<InboxItem | undefined> {
     return this.store.markSettled(input);
-  }
-
-  private async takeFirstQueued(workerId: string, items: InboxItem[]): Promise<InboxItem | undefined> {
-    for (const item of items) {
-      if (item.handling.status !== 'queued') continue;
-      const taken = await this.store.takeQueued({ itemId: item.id, workerId });
-      if (taken) return taken;
-    }
-    return undefined;
   }
 
   private async recordMessage(item: InboxItem): Promise<{ inserted: boolean } | undefined> {

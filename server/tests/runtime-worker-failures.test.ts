@@ -130,7 +130,7 @@ class CorruptAfterFollowupRuntime implements AgentRuntime {
   ): Promise<{ accepted: boolean; retryable?: boolean; text?: string }> {
     if (!this.active) return { accepted: false, retryable: true };
     this.followups.push(input);
-    return { accepted: true, text: `appended ${input.itemId}` };
+    return { accepted: true, text: `appended ${input.itemIds.join(',')}` };
   }
 
   async close(): Promise<void> {
