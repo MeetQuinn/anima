@@ -203,7 +203,7 @@ test('runtime worker passes cached Slack identity into the standing prompt', asy
       await waitFor(() => runtime.calls.length === 1);
       assert.match(
         runtime.calls[0]?.systemPrompt ?? '',
-        /In Slack you are \*\*@scout-bot\*\* \(user id `U-SCOUT`\)/,
+        /You are \*\*@scout-bot\*\* \(user id `U-SCOUT`\)/,
       );
       runtime.finishNext();
       assert.equal(await drain, 1);

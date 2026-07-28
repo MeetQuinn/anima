@@ -482,7 +482,7 @@ test('buildCodeAgentDeliveryPrompt includes Slack message previews carried by un
   assert.doesNotMatch(text, /url_private|files\.slack\.com\/private/);
 });
 
-test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack targets', () => {
+test('buildAnimaRuntimeProfile renders the concise Slack and Anima tool contract', () => {
   const text = buildAnimaRuntimeProfile({
     displayName: 'Iris',
     referencePaths: {
@@ -492,56 +492,58 @@ test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack t
     role: 'Product PM for prioritization.',
     transports: { feishu: false, slack: true },
   });
-  assert.doesNotMatch(text, /\{\{name\}\}|\{\{role\}\}/);
-  assert.match(text, /Reply target comes from the delivery envelope/);
-  assert.match(text, /pass the envelope's `channel=` as `--channel` and `thread_ts=` as `--thread-ts`/);
-  assert.match(text, /Slack messages can arrive from DMs, threads, channel messages, and group conversations/);
-  assert.match(text, /A DM or a direct @mention always reaches you/);
-  assert.match(text, /new human-authored messages wake you without another mention/);
-  assert.match(text, /Bot\/app channel and thread posts wake you only through a direct @mention/);
-  assert.match(text, /`@here`, `@channel`, and `@everyone` do not count/);
-  assert.match(text, /Your posts carry a bot identity, so a plain channel message wakes no agent/);
-  assert.doesNotMatch(text, /new messages there wake you/);
-  assert.doesNotMatch(text, /not in that channel or thread/);
-  assert.match(text, /Only mute \(`anima subscription mute`\) a thread\/channel when it's clearly done with you AND still noisy/);
-  assert.match(text, /Slack blocks bot-to-bot DMs/);
-  assert.doesNotMatch(text, /In Slack you are/);
-  assert.match(text, /anima reminder/);
-  assert.match(text, /anima message send <target flags> \[--thread-ts <thread_or_topic_id>\]/);
-  assert.match(text, /Agent platform guide: `\/opt\/anima\/docs\/agent\/guide\.md`/);
-  assert.match(text, /Read it for Anima's mental model/);
-  assert.match(text, /Agent command reference: `\/opt\/anima\/docs\/agent\/reference\.md`/);
-  assert.match(text, /Read it before using an unfamiliar `anima` command/);
-  assert.match(text, /Recipes for common moments: `\/opt\/anima\/docs\/agent\/recipes\.md`/);
-  assert.match(text, /Check it when the right move is not obvious/);
-  assert.doesNotMatch(text, /Feishu runbook/);
-  assert.match(text, /General Anima docs: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs>/);
-  assert.match(text, /local docs root: `\/opt\/anima\/docs`/);
-  assert.match(text, /Anima source: <https:\/\/github\.com\/MeetQuinn\/anima>/);
-  assert.match(text, /local checkout: `\/work\/anima`/);
-  assert.match(text, /Treat source as reference unless asked to modify Anima/);
-  assert.match(text, /For exact CLI flags: `anima <command> --help`/);
-  assert.match(text, /\$SLACK_BOT_TOKEN/);
-  assert.doesNotMatch(text, /Feishu messages can arrive|FEISHU_APP_SECRET/);
-  assert.doesNotMatch(text, /ANIMA_FEATURES/);
-  assert.doesNotMatch(text, /guide\/agent-features\.md/);
-  assert.doesNotMatch(text, /\$ANIMA_CHANNEL|\$ANIMA_THREAD/);
+  const prose = text.replace(/\s+/g, ' ');
+  assert.doesNotMatch(prose, /\{\{name\}\}|\{\{role\}\}/);
+  assert.match(prose, /Use the envelope's `channel=` when replying/);
+  assert.match(prose, /In a DM, reply on the main timeline unless the envelope already has `thread_ts=`; then keep that thread/);
+  assert.match(prose, /In a channel, keep an existing `thread_ts=`, or use a top-level message's `message_ts=` as `--thread-ts` to start a focused thread/);
+  assert.match(prose, /Post another top-level channel message only when the whole channel needs a separate announcement/);
+  assert.match(prose, /A DM or direct @mention always reaches you/);
+  assert.match(prose, /Human-authored messages also wake you through channel\/thread follows/);
+  assert.match(prose, /Bot\/app channel and thread posts wake you only through a direct @mention/);
+  assert.match(prose, /`@here`, `@channel`, and `@everyone` do not count/);
+  assert.match(prose, /Your own Slack posts carry a bot identity/);
+  assert.match(prose, /a plain channel message wakes no agent/);
+  assert.doesNotMatch(prose, /new messages there wake you/);
+  assert.doesNotMatch(prose, /not in that channel or thread/);
+  assert.match(prose, /Mute only when the conversation is done with you and still noisy/);
+  assert.match(prose, /Slack blocks bot-to-bot DMs/);
+  assert.doesNotMatch(prose, /You are \*\*@/);
+  assert.match(prose, /anima reminder/);
+  assert.match(prose, /anima message send <target flags> \[--thread-ts <thread_or_topic_id>\]/);
+  assert.match(prose, /Read the local agent guide, reference, or recipes before unfamiliar operations/);
+  assert.match(prose, /`\/opt\/anima\/docs\/agent\/`/);
+  assert.match(prose, /Treat Anima source as reference unless asked to modify it/);
+  assert.match(prose, /Use `anima <command> --help` for exact flags/);
+  assert.match(prose, /\$SLACK_BOT_TOKEN/);
+  assert.doesNotMatch(prose, /### Feishu|FEISHU_APP_SECRET/);
+  assert.doesNotMatch(prose, /ANIMA_FEATURES/);
+  assert.doesNotMatch(prose, /guide\/agent-features\.md/);
+  assert.doesNotMatch(prose, /\$ANIMA_CHANNEL|\$ANIMA_THREAD/);
+  assert.doesNotMatch(prose, /\/work\/anima/);
 });
 
-test('buildAnimaRuntimeProfile treats silence as a complete team response', () => {
+test('buildAnimaRuntimeProfile treats attention as shared cost and gives explicit stop conditions', () => {
   const text = buildAnimaRuntimeProfile({
     displayName: 'Iris',
     role: 'Product PM for prioritization.',
     transports: { feishu: false, slack: true },
   });
 
-  assert.match(text, /Coordinate, don't crowd\./);
-  assert.match(text, /Collaboration means adding signal, not proving that you were present\./);
-  assert.match(text, /If you decide to reply, your reply only exists if it goes out through an `anima message` send/);
-  assert.match(text, /Choosing not to reply is a complete end state; send nothing in that case\./);
-  assert.match(text, /Silence is a legitimate and complete response\./);
-  assert.match(text, /do not send an acknowledgement, agreement, or restatement merely to show receipt/);
-  assert.doesNotMatch(text, /Before you end a turn that a message prompted, verify your response actually went out/);
+  const prose = text.replace(/\s+/g, ' ');
+  assert.match(prose, /Your job is to move shared work forward, not to narrate every observation/);
+  assert.match(prose, /Attention is shared and expensive/);
+  assert.match(prose, /A message may wake teammates and consume time and tokens/);
+  assert.match(prose, /Silence is a complete response/);
+  assert.match(prose, /Do not send acknowledgements, repeated conclusions, or filler status/);
+  assert.match(prose, /Once a decision and owner are clear, stop/);
+  assert.match(prose, /Do not continue with agreement, post-mortems, process commentary, or cross-corrections unless they change the decision or prevent a concrete error/);
+  assert.match(prose, /When one owner is assigned to monitor or report a task, everyone else stops parallel monitoring and status updates/);
+  assert.match(prose, /Address the next owner explicitly in every handoff/);
+  assert.match(prose, /Do not infer authority for destructive or external actions/);
+  assert.match(prose, /If you reply, use an Anima action, send it to the conversation in the delivery envelope, and verify that it succeeded/);
+  assert.doesNotMatch(prose, /Before you end a turn that a message prompted, verify your response actually went out/);
+  assert.doesNotMatch(prose, /working directory is your seat/i);
 });
 
 test('buildAnimaRuntimeProfile tells the agent its own Slack identity when provided', () => {
@@ -552,8 +554,9 @@ test('buildAnimaRuntimeProfile tells the agent its own Slack identity when provi
     slackIdentity: { handle: '@iris', userId: 'U-iris' },
     transports: { feishu: false, slack: true },
   });
-  assert.match(text, /In Slack you are \*\*@iris\*\* \(user id `U-iris`\)/);
-  assert.match(text, /`<@U-iris>` means someone is addressing you/);
+  const prose = text.replace(/\s+/g, ' ');
+  assert.match(prose, /You are \*\*@iris\*\* \(user id `U-iris`\)/);
+  assert.match(prose, /`<@U-iris>` addresses you/);
 });
 
 test('buildAnimaRuntimeProfile separates Feishu-only transport instructions', () => {
@@ -566,15 +569,13 @@ test('buildAnimaRuntimeProfile separates Feishu-only transport instructions', ()
     transports: { feishu: true, slack: false },
   });
 
-  assert.match(text, /Feishu messages can arrive from chats, DMs, and message topics/);
-  assert.match(text, /anima message send --chat-id <chat_id>/);
-  assert.match(text, /anima message read --chat-id <chat_id> --thread-ts <message_or_thread_id>/);
-  assert.match(text, /<mention open_id="ou_\.\.\.">/);
-  assert.match(text, /FEISHU_TENANT_ACCESS_TOKEN/);
-  assert.match(text, /https:\/\/open\.feishu\.cn\/open-apis/);
-  assert.match(text, /Feishu runbook: `\/opt\/anima\/docs\/agent\/feishu\.md`/);
-  assert.match(text, /Read it before direct Feishu API work/);
-  assert.doesNotMatch(text, /Slack messages can arrive|Slack API|SLACK_BOT_TOKEN|FEISHU_APP_SECRET|FEISHU_API_BASE_URL/);
+  const prose = text.replace(/\s+/g, ' ');
+  assert.match(prose, /Use the envelope's `chat_id=` when replying/);
+  assert.match(prose, /use `thread_id=` when present, otherwise `message_id=`, as `--thread-ts`/);
+  assert.match(prose, /<mention open_id="ou_\.\.\.">/);
+  assert.match(prose, /FEISHU_TENANT_ACCESS_TOKEN/);
+  assert.match(prose, /Before direct Feishu API work, read `\/opt\/anima\/docs\/agent\/feishu\.md`/);
+  assert.doesNotMatch(prose, /### Slack|Slack API|SLACK_BOT_TOKEN|FEISHU_APP_SECRET|FEISHU_API_BASE_URL/);
 });
 
 test('buildAnimaRuntimeProfile includes both transport sections for mixed agents', () => {
@@ -584,8 +585,8 @@ test('buildAnimaRuntimeProfile includes both transport sections for mixed agents
     transports: { feishu: true, slack: true },
   });
 
-  assert.match(text, /Slack messages can arrive/);
-  assert.match(text, /Feishu messages can arrive/);
+  assert.match(text, /### Slack/);
+  assert.match(text, /### Feishu/);
 });
 
 test('buildAnimaRuntimeProfile falls back cleanly when bundled docs are unavailable', () => {
@@ -595,13 +596,8 @@ test('buildAnimaRuntimeProfile falls back cleanly when bundled docs are unavaila
     role: 'Product PM for prioritization.',
     transports: { feishu: false, slack: true },
   });
-  assert.match(text, /Agent platform guide: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs\/agent\/guide\.md>/);
-  assert.match(text, /Agent command reference: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs\/agent\/reference\.md>/);
-  assert.match(text, /Recipes for common moments: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs\/agent\/recipes\.md>/);
-  assert.match(text, /General Anima docs: <https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs>/);
-  assert.doesNotMatch(text, /local docs root:/);
-  assert.match(text, /Anima source: <https:\/\/github\.com\/MeetQuinn\/anima>/);
-  assert.doesNotMatch(text, /local checkout:/);
+  assert.match(text, /<https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs\/agent>/);
+  assert.doesNotMatch(text, /\/opt\/anima\/docs/);
 });
 
 test('resolveAnimaReferencePathsFromRoots finds bundled docs and source checkout roots', async () => {
@@ -628,19 +624,20 @@ test('resolveAnimaReferencePathsFromRoots finds bundled docs and source checkout
   });
 });
 
-test('buildAnimaRuntimeProfile keeps live memory guidance focused on cheap recovery capture', () => {
+test('buildAnimaRuntimeProfile keeps memory recovery guidance concise', () => {
   const text = buildAnimaRuntimeProfile({
     displayName: 'Iris',
     role: 'Product PM for prioritization.',
     transports: { feishu: false, slack: true },
   });
-  assert.match(text, /Keep `Active Context` current/);
-  assert.match(text, /decisions that would be costly to lose if the context reset/);
-  assert.match(text, /Do not turn live work into a memory-cleanup project/);
-  assert.match(text, /periodic memory pass/);
-  assert.match(text, /demotes durable detail to `notes\/`/);
+  const prose = text.replace(/\s+/g, ' ');
+  assert.match(prose, /`MEMORY\.md` is authoritative across compaction and restart/);
+  assert.match(prose, /Read it after recovery, not on every message/);
+  assert.match(prose, /Keep `Active Context` current with work, obligations, and costly decisions/);
+  assert.match(prose, /Keep the file lean; move closed history and durable detail into `notes\/`/);
   assert.doesNotMatch(text, /an index, not a corpus/);
   assert.doesNotMatch(text, /section grows past a short paragraph/);
+  assert.doesNotMatch(text, /working directory is your seat/i);
 });
 
 test('buildAnimaRuntimeProfile injects agent name and role into the opening identity line', () => {

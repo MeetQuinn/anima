@@ -7,6 +7,7 @@ import {
   extractReadableSlackUserIdMentions,
   extractReadableSlackUserMentions,
   extractSlackUserMentionIds,
+  isBotSlackUser,
   replaceReadableSlackChannelMentions,
   replaceReadableSlackUserIdMentions,
   replaceReadableSlackUserMentions,
@@ -112,13 +113,25 @@ export async function mentionWarningsForTarget(input: {
   if (input.target.channelKind !== 'channel') return warnings;
   const mentionedUsers = mentionedUserLabels(input.slackText);
   if (!mentionedUsers.size) return warnings;
+  const directory = new SlackWorkspaceDirectoryService({
+    client: input.client,
+    teamId: input.teamId,
+  });
+  if (mentionedUsers.size >= 5) {
+    const users = await Promise.all(
+      [...mentionedUsers.keys()].map((userId) => directory.getUser(userId).catch(() => undefined)),
+    );
+    const botCount = users.filter((user) => user && isBotSlackUser(user)).length;
+    if (botCount >= 5) {
+      warnings.push(
+        `This sent message mentioned ${botCount} bots. Each mention may start a separate agent run and consume shared attention and tokens; consider whether every recipient needs to be included.`,
+      );
+    }
+  }
 
   let memberIds: Set<string>;
   try {
-    memberIds = new Set(await new SlackWorkspaceDirectoryService({
-      client: input.client,
-      teamId: input.teamId,
-    }).getConversationMemberIds(input.channelId));
+    memberIds = new Set(await directory.getConversationMemberIds(input.channelId));
   } catch {
     return warnings;
   }
