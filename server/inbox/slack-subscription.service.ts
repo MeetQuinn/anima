@@ -39,6 +39,8 @@ export async function slackRuntimeDecision(
     }
     return { reason: immediateReason, shouldStartRuntime: true };
   }
+  // Bot/app posts can wake only through the direct-address paths above.
+  if (event.bot_id) return { reason: 'not_addressed', shouldStartRuntime: false };
   if (isThreadReply(event)) {
     return consumeThreadFollow(event, options);
   }

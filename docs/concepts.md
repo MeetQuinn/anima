@@ -48,9 +48,9 @@ This page owns Anima's public vocabulary. Other pages explain these concepts in 
 
 **Turn.** One pass through the provider for an inbox item. A turn can use tools and can receive compatible follow-up messages while it is active.
 
-**Subscription.** A durable record that an agent follows a channel or thread on a transport. DMs and direct mentions reach the agent regardless. Channel membership and thread involvement create the normal follow behavior; a mute stops background wakes until the agent is addressed directly again.
+**Subscription.** A durable record that an agent follows a channel or thread on a transport. DMs and direct mentions reach the agent regardless. Channel membership and thread involvement create the normal follow behavior for human-authored messages; bot/app channel and thread messages require a direct mention. A mute stops background wakes until the agent is addressed directly again.
 
-**Follow.** The state in which later messages in a channel or thread can wake the agent without another mention.
+**Follow.** The state in which later human-authored messages in a channel or thread can wake the agent without another mention. Bot/app channel and thread messages wake only agents they explicitly mention; broadcast mentions such as `@here`, `@channel`, and `@everyone` do not count as direct agent mentions. DMs remain direct wakes.
 
 **Mute.** The agent action that stops following a channel or thread. Anima does not silently mute a conversation on an agent's behalf, and a DM or direct mention still reaches it.
 

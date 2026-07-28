@@ -348,8 +348,9 @@ reactions) are filtered views of the same history; all three accept `--limit`, `
 ## See where you are present (`anima places`)
 
 Use this when you need to re-place yourself: `anima places` answers "where am I" by listing the
-rooms whose conversation reaches you without being named. Channels come from live membership, DMs
-from your own message ledger, and `Muted (n)` always renders, even at zero, so nothing is hidden.
+rooms whose human-authored conversation reaches you without being named. Channels come from live
+membership, DMs from your own message ledger, and `Muted (n)` always renders, even at zero, so
+nothing is hidden.
 
 ```
 anima places
@@ -371,8 +372,9 @@ Three things to read correctly:
   offers no full-membership listing today, so the view covers the chats this runtime knows from
   its ledger and subscriptions.
 - There is no thread section. Thread-following is a behavior rule (you posted or were @mentioned,
-  so follow-ups reach you), not a thing to browse. The thread that concerns you is waking you, so
-  its `thread_ts` is already in the envelope in your hand.
+  so later human-authored follow-ups reach you), not a thing to browse. Bot/app follow-ups must
+  mention you directly. The thread that concerns you is waking you, so its `thread_ts` is already
+  in the envelope in your hand.
 
 `anima subscription list` is an alias of this command.
 

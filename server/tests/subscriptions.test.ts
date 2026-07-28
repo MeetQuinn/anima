@@ -51,6 +51,24 @@ test('Slack routing replies to explicit channel mentions', () => {
   );
 });
 
+test('Slack bot DMs retain priority over passive-follow suppression', async () => {
+  const decision = await slackRuntimeDecision(
+    {
+      bot_id: 'B123',
+      channel: 'D123',
+      channel_type: 'im',
+      subtype: 'bot_message',
+      text: 'bot-authored DM',
+      ts: '1770000010.000002',
+      type: 'message',
+      user: 'U456',
+    },
+    { agentId: 'scout', nowMs: 1_000 },
+  );
+  assert.equal(decision.shouldStartRuntime, true);
+  assert.equal(decision.reason, 'dm');
+});
+
 test('member channel top-level messages wake unless muted', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-channel-follow-test-'));
   try {
@@ -117,6 +135,68 @@ test('member channel top-level messages wake unless muted', async () => {
       );
       assert.equal(stillMuted.shouldStartRuntime, false);
       assert.equal(stillMuted.reason, 'muted');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('Slack bot messages require an explicit app mention for channel routing', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-bot-channel-routing-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const unmentioned = await slackRuntimeDecision(
+        {
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'unmentioned bot message',
+          ts: '1770000011.000002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', nowMs: 2_000 },
+      );
+      assert.equal(unmentioned.shouldStartRuntime, false);
+      assert.equal(unmentioned.reason, 'not_addressed');
+
+      for (const [index, broadcast] of ['<!here>', '<!channel>', '<!everyone>'].entries()) {
+        const broadcastMention = await slackRuntimeDecision(
+          {
+            bot_id: 'B123',
+            channel: 'C123',
+            channel_type: 'channel',
+            subtype: 'bot_message',
+            text: `${broadcast} automated update`,
+            ts: `1770000011.00001${index + 3}`,
+            type: 'message',
+            user: 'U456',
+          },
+          { agentId: 'scout', nowMs: 2_100 + index },
+        );
+        assert.equal(broadcastMention.shouldStartRuntime, false);
+        assert.equal(broadcastMention.reason, 'not_addressed');
+      }
+      assert.deepEqual((await new SubscriptionStore('scout').list()), []);
+
+      const mentioned = await slackRuntimeDecision(
+        {
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: '<@U999> explicit bot mention',
+          ts: '1770000012.000002',
+          type: 'app_mention',
+          user: 'U456',
+        },
+        { agentId: 'scout', nowMs: 3_000 },
+      );
+      assert.equal(mentioned.shouldStartRuntime, true);
+      assert.equal(mentioned.reason, 'mention');
+      assert.equal(mentioned.subscription?.kind, 'thread');
+      assert.equal(mentioned.subscription?.status, 'following');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
@@ -300,6 +380,86 @@ test('thread follows are permanent and mute is revived by mention', async () => 
       assert.equal(thread?.mutedAt, undefined);
       assert.equal('expiresAt' in (thread ?? {}), false);
       assert.equal('remainingMessages' in (thread ?? {}), false);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('Slack bot thread replies do not consume or revive passive thread follows', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-bot-thread-routing-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await ensureThreadSubscriptionForSentMessage({
+        agentId: 'scout',
+        channelId: 'C123',
+        messageTs: '1770000020.000001',
+        nowMs: 1_000,
+      });
+      const store = new SubscriptionStore('scout');
+      const subscriptionId = threadSubscriptionId('scout', 'C123', '1770000020.000001');
+      const before = await store.find(subscriptionId);
+
+      const unmentioned = await slackRuntimeDecision(
+        {
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'unmentioned bot thread reply',
+          thread_ts: '1770000020.000001',
+          ts: '1770000021.000002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', nowMs: 2_000 },
+      );
+      assert.equal(unmentioned.shouldStartRuntime, false);
+      assert.equal(unmentioned.reason, 'not_addressed');
+      assert.deepEqual(await store.find(subscriptionId), before);
+
+      await muteSubscriptionForAgent({
+        agentId: 'scout',
+        channelId: 'C123',
+        threadTs: '1770000020.000001',
+        nowMs: 3_000,
+      });
+      const mutedBefore = await store.find(subscriptionId);
+      const suppressedWhileMuted = await slackRuntimeDecision(
+        {
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'still unmentioned',
+          thread_ts: '1770000020.000001',
+          ts: '1770000022.000002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', nowMs: 4_000 },
+      );
+      assert.equal(suppressedWhileMuted.reason, 'not_addressed');
+      assert.deepEqual(await store.find(subscriptionId), mutedBefore);
+
+      const mentioned = await slackRuntimeDecision(
+        {
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: '<@U999> explicit bot thread mention',
+          thread_ts: '1770000020.000001',
+          ts: '1770000023.000002',
+          type: 'app_mention',
+          user: 'U456',
+        },
+        { agentId: 'scout', nowMs: 5_000 },
+      );
+      assert.equal(mentioned.shouldStartRuntime, true);
+      assert.equal(mentioned.reason, 'mention');
+      assert.equal(mentioned.subscription?.status, 'following');
+      assert.equal((await store.find(subscriptionId))?.mutedAt, undefined);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
