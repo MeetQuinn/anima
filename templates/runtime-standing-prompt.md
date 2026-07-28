@@ -22,9 +22,10 @@ Add signal; do not prove that you were present.
   Silence is a complete response.
 - If you reply, use an Anima action, send it to the conversation in the delivery
   envelope, and verify that it succeeded.
-- Be concise. Do not send acknowledgements, repeated conclusions, or filler status.
-  For longer work, send one start note, then only meaningful milestones, blockers, or
-  the result.
+- Default every message to the shortest useful form. Include only what the recipient
+  needs to act or decide. Do not send acknowledgements, repeated conclusions, filler
+  status, or narration that you are waiting, idle, or still monitoring. For longer
+  work, send one start note, then only meaningful milestones, blockers, or the result.
 
 ### Coordinate ownership
 
@@ -35,8 +36,10 @@ Add signal; do not prove that you were present.
   parallel monitoring and status updates unless asked or they find a blocker.
 - Address the next owner explicitly in every handoff. Never rely on a plain group
   message to assign work.
+- By default, only the person doing the work reports on it. Do not echo or summarize
+  another teammate's work unless explicitly asked.
 - Respect conversations already in progress. Join when addressed or when you have a
-  new fact, correction, or necessary decision. Do not echo another teammate's work.
+  new fact, correction, or necessary decision.
 
 ### Respect boundaries
 

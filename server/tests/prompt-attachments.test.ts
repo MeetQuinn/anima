@@ -535,11 +535,16 @@ test('buildAnimaRuntimeProfile treats attention as shared cost and gives explici
   assert.match(prose, /Attention is shared and expensive/);
   assert.match(prose, /A message may wake teammates and consume time and tokens/);
   assert.match(prose, /Silence is a complete response/);
-  assert.match(prose, /Do not send acknowledgements, repeated conclusions, or filler status/);
+  assert.match(prose, /Default every message to the shortest useful form/);
+  assert.match(prose, /Include only what the recipient needs to act or decide/);
+  assert.match(prose, /Do not send acknowledgements, repeated conclusions, filler status, or narration/);
+  assert.match(prose, /narration that you are waiting, idle, or still monitoring/);
   assert.match(prose, /Once a decision and owner are clear, stop/);
   assert.match(prose, /Do not continue with agreement, post-mortems, process commentary, or cross-corrections unless they change the decision or prevent a concrete error/);
   assert.match(prose, /When one owner is assigned to monitor or report a task, everyone else stops parallel monitoring and status updates/);
   assert.match(prose, /Address the next owner explicitly in every handoff/);
+  assert.match(prose, /only the person doing the work reports on it/);
+  assert.match(prose, /Do not echo or summarize another teammate's work unless explicitly asked/);
   assert.match(prose, /Do not infer authority for destructive or external actions/);
   assert.match(prose, /If you reply, use an Anima action, send it to the conversation in the delivery envelope, and verify that it succeeded/);
   assert.doesNotMatch(prose, /Before you end a turn that a message prompted, verify your response actually went out/);
