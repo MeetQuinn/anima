@@ -203,14 +203,14 @@ Current process model:
 
 - Anima starts one persistent `codex app-server --listen stdio://` process for the runtime worker.
 - The Codex thread id is persisted and resumed on later items.
-- Every thread start/resume sets `model_auto_compact_token_limit=240000` with
-  `model_auto_compact_token_limit_scope=total`. This keeps long-lived Anima sessions below the
-  272K long-context pricing boundary with headroom for a large wake or tool result. Agent config
-  `provider.env.ANIMA_CODEX_AUTO_COMPACT_TOKEN_LIMIT` can override the limit with a positive
-  integer; invalid values fail the run instead of silently falling back to the model default.
+- By default Anima does **not** set `model_auto_compact_token_limit`; Codex uses its own
+  context window and auto-compact behavior. Agent config
+  `provider.env.ANIMA_CODEX_AUTO_COMPACT_TOKEN_LIMIT` can opt into an Anima-managed limit with a
+  positive integer (invalid values fail the run instead of silently falling back). When set,
+  Anima also sends `model_auto_compact_token_limit_scope=total`.
 - The process stays alive across Anima items until abort or worker shutdown.
 - Anima sends the runtime standing prompt through Codex `developerInstructions`; each item input contains only the bridge-built delivery prompt.
-- Thread start/resume explicitly sets `approvalPolicy: "never"`, `sandbox: "danger-full-access"`, optional `model`, the auto-compact config above, and optional `config.model_reasoning_effort`.
+- Thread start/resume explicitly sets `approvalPolicy: "never"`, `sandbox: "danger-full-access"`, optional `model`, optional auto-compact config above, and optional `config.model_reasoning_effort`.
 
 Protocol:
 
