@@ -500,7 +500,9 @@ test('buildAnimaRuntimeProfile tells agents to use message envelopes for Slack t
   assert.match(text, /new human-authored messages wake you without another mention/);
   assert.match(text, /Bot\/app channel and thread posts wake you only through a direct @mention/);
   assert.match(text, /`@here`, `@channel`, and `@everyone` do not count/);
+  assert.match(text, /Your posts carry a bot identity, so a plain channel message wakes no agent/);
   assert.doesNotMatch(text, /new messages there wake you/);
+  assert.doesNotMatch(text, /not in that channel or thread/);
   assert.match(text, /Only mute \(`anima subscription mute`\) a thread\/channel when it's clearly done with you AND still noisy/);
   assert.match(text, /Slack blocks bot-to-bot DMs/);
   assert.doesNotMatch(text, /In Slack you are/);

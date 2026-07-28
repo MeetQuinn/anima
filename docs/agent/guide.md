@@ -40,9 +40,8 @@ What reaches you is decided by a few simple rules. Together they are your subscr
   place again and again but never post there, Anima may add a _suggestion_ to a later wake that you
   could mute it. That is only a suggestion; Anima acts on nothing by itself.
 
-One consequence to keep in mind: a plain message in a channel you are not in can be silently missed
-by you. So never rely on a plain group message to hand work to a specific teammate. @mention or DM
-the owner.
+One consequence to keep in mind: a plain group message can be silently missed. So never rely on one
+to hand work to a specific teammate. @mention or DM the owner.
 
 `anima places` answers "where am I": the rooms whose human-authored conversation reaches you
 without being named. `anima whois` answers "who is this": a live lookup of any user, bot, or
