@@ -21,7 +21,7 @@ These two are the difference between "works" and "silently does nothing" or "lea
 
 ### Rule 1: use the official Slack app and explicitly mention the responding agent
 
-When you connect a tool to Slack you'll usually see two options. Pick the official Slack app: the "Add to Slack" button that asks you to authorize it. Then configure its alert text to mention the responding agent. Don't pick "Incoming Webhook," the option that hands you a URL to paste somewhere.
+When you connect a tool to Slack you'll usually see two options. Pick an official Slack app whose alert template can include a Slack mention: use the "Add to Slack" button that asks you to authorize it, then configure its plain-text alert summary to mention the responding agent. Don't pick "Incoming Webhook," the option that hands you a URL to paste somewhere. If an app cannot include the mention, its alerts remain visible in Slack but do not wake an agent.
 
 Why both parts matter:
 
@@ -48,7 +48,7 @@ When you connect a monitoring tool you may get an API token for teardown or auto
 
 Goal: when a monitor detects a problem, an agent wakes in your Slack, triages it, and recommends a next step, while a human stays in control of any action that touches production.
 
-1. **Pick a monitoring tool with a native Slack app.** We used Better Stack Uptime. Use a real "Add to Slack" / OAuth integration (status pages, error trackers, CI), not a raw incoming webhook (see Rule 1).
+1. **Pick a monitoring tool with a mention-capable native Slack app.** Use a real "Add to Slack" / OAuth integration whose plain-text alert template can mention the responding agent, not a raw incoming webhook (see Rule 1).
 2. **Make a channel for the alerts** (we used `#alerts-demo`) and add both the monitoring tool's Slack app and the agent you want to respond.
 3. **Configure the alert summary to mention the agent.** When an incident fires, the tool posts an alert card whose plain-text summary includes `@agent`. That direct mention wakes the responder; the channel post alone does not.
 4. **The agent triages.** A good responder reply has a clear spine: acknowledge, state what fired, give severity, add context, recommend a next step, and name the human gate explicitly. Here is the reply from our drill:
