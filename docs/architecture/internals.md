@@ -56,7 +56,7 @@ The shared decision skeleton is `server/inbox/ingest-pipeline.ts`.
 7. optional attention-suggestion activity;
 8. structured ingest log output.
 
-Slack-specific decisions live in `server/inbox/slack-subscription.service.ts`. DMs wake immediately. `app_mention` wakes immediately and follows the relevant thread when there is a channel/thread context. Thread replies wake when the agent is following that thread. Channel messages wake when a channel subscription exists and is not muted.
+Slack-specific decisions live in `server/inbox/slack-subscription.service.ts`. DMs wake immediately. `app_mention` wakes immediately and follows the relevant thread when there is a channel/thread context. Bot/app channel and thread messages stop there unless directly mentioned; broadcast mentions are not direct mentions. Human-authored thread replies wake when the agent is following that thread, and human-authored channel messages wake when a channel subscription exists and is not muted.
 
 The subscription primitives are in `server/inbox/subscription.service.ts`. That file owns channel/thread subscription ids, follow/mute state, activity timestamps, wake counters, and attention suggestions. Slack and Feishu each have a thin decision adapter: `server/inbox/slack-subscription.service.ts` and `server/inbox/feishu-subscription.service.ts`.
 

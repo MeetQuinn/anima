@@ -73,11 +73,11 @@ test('Slack wake ingest decision matrix golden logs, queue outcomes, and attenti
     },
     expectedOutcome: 'queued',
   }, {
-    name: 'bot-authored passive channel message is ignored',
+    name: 'bot-authored broadcast mentions do not bypass passive suppression',
     event: slackEvent({
       bot_id: 'B-alerts',
       subtype: 'bot_message',
-      text: 'automated channel update',
+      text: '<!here> <!channel> <!everyone> automated channel update',
       ts: '1780408800.000002',
       user: 'U-alerts',
     }),

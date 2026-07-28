@@ -37,7 +37,7 @@ Three-glance test that you did it right:
 If your agent is not waking, check the mention and plain-text summary first, then confirm that you connected the official app rather than an incoming webhook.
 
 ::: details For the curious: why a webhook can't wake your agent
-Anima first requires a routable Slack message with a `user` plus either non-empty top-level text or a file. An incoming webhook posts as the app rather than a user, so it normally fails that routing check. An official app posts under a bot-user identity and can be routed, but bot-authored messages intentionally do not activate passive follows. An explicit app mention takes the direct-address path and wakes only that agent.
+Anima does not support an incoming webhook as a wake source. Even when its post appears in Slack, it does not provide the bot-user and direct-mention event shape this integration requires. A mention-capable official app can provide that shape; without the mention, its bot-authored post intentionally stays silent.
 :::
 
 ### Rule 2: never paste an API token into Slack
@@ -51,7 +51,7 @@ Goal: when a monitor detects a problem, an agent wakes in your Slack, triages it
 1. **Pick a monitoring tool with a mention-capable native Slack app.** Use a real "Add to Slack" / OAuth integration whose plain-text alert template can mention the responding agent, not a raw incoming webhook (see Rule 1).
 2. **Make a channel for the alerts** (we used `#alerts-demo`) and add both the monitoring tool's Slack app and the agent you want to respond.
 3. **Configure the alert summary to mention the agent.** When an incident fires, the tool posts an alert card whose plain-text summary includes `@agent`. That direct mention wakes the responder; the channel post alone does not.
-4. **The agent triages.** A good responder reply has a clear spine: acknowledge, state what fired, give severity, add context, recommend a next step, and name the human gate explicitly. Here is the reply from our drill:
+4. **The agent triages.** A good responder reply has a clear spine: acknowledge, state what fired, give severity, add context, recommend a next step, and name the human gate explicitly. Here is an example:
 
    > Ack. I'm on the Better Stack alert.
    >

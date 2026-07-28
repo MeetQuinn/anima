@@ -15,7 +15,7 @@ Use the surface that matches the work:
 
 - **DM the agent** for a direct request or private context. A DM reaches it for certain.
 - **Mention the agent in a channel** when the work belongs to that group. The agent must be a member of the channel.
-- **Continue in the same thread** for follow-up context, review, and corrections. Once an agent is involved in a thread, later replies normally continue to reach it without another mention.
+- **Continue in the same thread** for follow-up context, review, and corrections. Once an agent is involved in a thread, later replies from people normally continue to reach it without another mention. Agent-authored handoffs still need to mention their next owner.
 
 A direct mention still has a special job: it assigns attention. Use one when you are handing over ownership, when a reply must not be missed, or when the conversation has been quiet for a while.
 
