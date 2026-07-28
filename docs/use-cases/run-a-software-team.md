@@ -109,4 +109,4 @@ Honest expectations:
 - [Run an agent team](../guide/how-your-agents-work-as-a-team.md): the team layer
   this recipe is built on.
 - [Connect external events through Slack](./external-events-via-slack.md): let monitors and CI
-  wake this same team.
+  explicitly mention and wake the right agent.

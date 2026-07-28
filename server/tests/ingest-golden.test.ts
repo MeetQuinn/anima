@@ -40,8 +40,15 @@ test('Slack wake ingest decision matrix golden logs, queue outcomes, and attenti
     expectedActivityPayloads?: unknown[];
     expectedApiCalls?: string[];
   }> = [{
-    name: 'mention wakes',
-    event: slackEvent({ text: '<@U-bot> review this', ts: '1780408800.000001', type: 'app_mention' }),
+    name: 'bot-authored explicit mention wakes',
+    event: slackEvent({
+      bot_id: 'B-alerts',
+      subtype: 'bot_message',
+      text: '<@U-bot> review this',
+      ts: '1780408800.000001',
+      type: 'app_mention',
+      user: 'U-alerts',
+    }),
     expectedLog: {
       agentRuntime: 'codex-cli',
       duplicate: false,
@@ -65,6 +72,52 @@ test('Slack wake ingest decision matrix golden logs, queue outcomes, and attenti
       },
     },
     expectedOutcome: 'queued',
+  }, {
+    name: 'bot-authored passive channel message is ignored',
+    event: slackEvent({
+      bot_id: 'B-alerts',
+      subtype: 'bot_message',
+      text: 'automated channel update',
+      ts: '1780408800.000002',
+      user: 'U-alerts',
+    }),
+    expectedLog: {
+      agentRuntime: 'codex-cli',
+      channel: 'C-team',
+      ignored: true,
+      ingested: false,
+      reason: 'not_addressed',
+      ts: '1780408800.000002',
+    },
+    expectedOutcome: 'suppressed',
+    expectedApiCalls: [],
+  }, {
+    name: 'bot-authored passive thread reply is ignored',
+    event: slackEvent({
+      bot_id: 'B-alerts',
+      subtype: 'bot_message',
+      text: 'automated thread update',
+      thread_ts: '1780408700.000002',
+      ts: '1780408800.000003',
+      user: 'U-alerts',
+    }),
+    async prepare() {
+      await seedSubscription({
+        channelId: 'C-team',
+        kind: 'thread',
+        threadTs: '1780408700.000002',
+      });
+    },
+    expectedLog: {
+      agentRuntime: 'codex-cli',
+      channel: 'C-team',
+      ignored: true,
+      ingested: false,
+      reason: 'not_addressed',
+      ts: '1780408800.000003',
+    },
+    expectedOutcome: 'suppressed',
+    expectedApiCalls: [],
   }, {
     name: 'dm wakes',
     event: slackEvent({ channel: 'D-owner', channel_type: 'im', text: 'hello', ts: '1780408801.000001' }),

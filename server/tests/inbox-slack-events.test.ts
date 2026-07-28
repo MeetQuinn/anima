@@ -181,7 +181,7 @@ test('normalizes optional Slack user profile metadata into actor context', () =>
   assert.equal(Object.hasOwn(event.actor ?? {}, 'avatarUrl'), false);
 });
 
-test('routes non-self bot-authored channel messages for subscription-window checks', () => {
+test('keeps bot-authored channel messages routable for direct-address decisions', () => {
   assert.equal(
     isRoutableSlackMessage(
       {
@@ -297,7 +297,7 @@ test('routes file-only messages (empty text, files present) and normalizes file 
   assert.equal(Object.hasOwn(event.files?.[0] ?? {}, 'urlPrivate'), false);
 });
 
-test('routes non-self bot-authored thread messages for subscription-window checks', () => {
+test('keeps bot-authored thread messages routable for direct-address decisions', () => {
   assert.equal(
     isRoutableSlackMessage(
       {
