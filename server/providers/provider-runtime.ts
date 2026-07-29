@@ -23,6 +23,7 @@ export interface ProviderTurnController {
   completion: Promise<unknown>;
   acceptStderrChunk(chunk: string): Promise<void>;
   acceptStdoutChunk(chunk: string): Promise<void>;
+  isQuiescent?(): boolean;
   kill(signal?: NodeJS.Signals): void;
   snapshot(): ProviderChildHealthSnapshot;
   waitForQuiescent(signal?: AbortSignal): Promise<void>;
@@ -38,6 +39,7 @@ export abstract class ControllerAgentRuntime<C extends ProviderTurnController> i
   protected readonly slot = new ProviderControllerSlot<C>();
   protected readonly activeRun = new ActiveRuntimeRun();
   private providerChildIdleReset?: NodeJS.Timeout;
+  private providerChildQuiescentWait?: AbortController;
 
   constructor(private readonly options: ControllerAgentRuntimeOptions = {}) {}
 
@@ -133,9 +135,12 @@ export abstract class ControllerAgentRuntime<C extends ProviderTurnController> i
   }
 
   private cancelProviderChildIdleReset(): void {
-    if (!this.providerChildIdleReset) return;
-    clearTimeout(this.providerChildIdleReset);
-    this.providerChildIdleReset = undefined;
+    if (this.providerChildIdleReset) {
+      clearTimeout(this.providerChildIdleReset);
+      this.providerChildIdleReset = undefined;
+    }
+    this.providerChildQuiescentWait?.abort();
+    this.providerChildQuiescentWait = undefined;
   }
 
   private scheduleProviderChildIdleReset(): void {
@@ -144,10 +149,27 @@ export abstract class ControllerAgentRuntime<C extends ProviderTurnController> i
     if (timeoutMs === undefined || timeoutMs <= 0) return;
     const controller = this.slot.get();
     if (!controller || this.activeRun.isActive()) return;
+    if (controller.isQuiescent?.() === false) {
+      const wait = new AbortController();
+      this.providerChildQuiescentWait = wait;
+      void controller.waitForQuiescent(wait.signal)
+        .then(() => {
+          if (this.providerChildQuiescentWait !== wait) return;
+          this.providerChildQuiescentWait = undefined;
+          if (this.activeRun.isActive() || this.slot.get() !== controller) return;
+          this.scheduleProviderChildIdleReset();
+        })
+        .catch(() => {});
+      return;
+    }
 
     this.providerChildIdleReset = setTimeout(() => {
       this.providerChildIdleReset = undefined;
       if (this.activeRun.isActive() || this.slot.get() !== controller) return;
+      if (controller.isQuiescent?.() === false) {
+        this.scheduleProviderChildIdleReset();
+        return;
+      }
       void this.slot.reset().catch(() => {});
     }, timeoutMs);
     this.providerChildIdleReset.unref?.();
