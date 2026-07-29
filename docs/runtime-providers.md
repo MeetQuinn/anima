@@ -402,7 +402,10 @@ Session handling:
 2. with a stored provider session id, the adapter sends `session/resume`; if the resume fails, it
    records `kimi.session.resume_missing` and falls back to `session/new`;
 3. a configured model is applied with `session/set_model`;
-4. the ACP session id is persisted as the `kimi-cli` provider session.
+4. for K3, configured `reasoningEffort` is applied before the first prompt with
+   `session/set_config_option` using `configId: "thinking"`; the managed always-thinking models do
+   not expose a graded effort;
+5. the ACP session id is persisted as the `kimi-cli` provider session.
 
 Provider `run` protocol:
 
@@ -500,14 +503,16 @@ Current process model:
   missing session falls back to `session/new`.
 - The selected DeepSeek model is applied after session creation or resume and before the first
   prompt with `session/set_config_option` using `configId: "model"`.
+- Optional `reasoningEffort` (`high` or `max`) is then applied before the first prompt with
+  `session/set_config_option` using `configId: "effort"`.
 - Each item uses `session/prompt`. Compatible follow-ups are queued into the same ACP session, and
   cancellation sends `session/cancel` before Anima tears down the child.
 - ACP thinking, assistant text, usage, tool calls, tool failures, and permission requests are mapped
   into the same Anima activity and health surfaces as the other providers.
 
 Anima currently exposes `deepseek/deepseek-v4-pro` and `deepseek/deepseek-v4-flash` for OpenCode.
-The retired `deepseek-chat` and `deepseek-reasoner` aliases are not accepted for new agent
-configuration.
+Both support `high` and `max` effort. The retired `deepseek-chat` and `deepseek-reasoner` aliases
+are not accepted for new agent configuration.
 
 OpenCode, Kimi, and Grok all use ACP, but their session and event contracts are provider-specific.
 `server/providers/acp-json-rpc.ts` shares only newline framing, JSON-RPC request correlation, and

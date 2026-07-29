@@ -21,7 +21,10 @@ import {
   PROVIDER_CHILD_IDLE_TIMEOUT_MS_DEFAULT,
   PROVIDER_IDLE_TIMEOUT_MS_DEFAULT,
 } from '../../shared/agent-config.js';
-import { providerCatalogEntry } from '../../shared/provider-catalog.js';
+import {
+  providerCatalogEntry,
+  reasoningEffortsForModel,
+} from '../../shared/provider-catalog.js';
 import { withAnimaHome } from './anima-home.js';
 
 const agentService = (agentId: string) => defaultAgentRegistryService.serviceFor(agentId);
@@ -241,8 +244,16 @@ test('config loader reads legacy runtime key as provider config', async () => {
   }
 });
 
-test('kimi provider does not expose or retain reasoning effort', async () => {
+test('kimi provider exposes and retains graded effort only for K3', async () => {
   assert.deepEqual(providerCatalogEntry('kimi-cli')?.reasoningEfforts, []);
+  assert.deepEqual(
+    reasoningEffortsForModel('kimi-cli', 'kimi-code/k3'),
+    ['low', 'high', 'max'],
+  );
+  assert.deepEqual(
+    reasoningEffortsForModel('kimi-cli', 'kimi-code/kimi-for-coding'),
+    [],
+  );
   assert.throws(
     () =>
       AgentCreateRequest.parse({
@@ -265,7 +276,7 @@ test('kimi provider does not expose or retain reasoning effort', async () => {
         id: 'kimi',
         provider: {
           kind: 'kimi-cli',
-          model: 'kimi-code/kimi-for-coding',
+          model: 'kimi-code/k3',
           reasoningEffort: 'high',
         },
         homePath: 'agents/kimi',
@@ -275,8 +286,8 @@ test('kimi provider does not expose or retain reasoning effort', async () => {
     await withAnimaHome(configDir, async () => {
       const agent = await agentService('kimi').getConfig();
       assert.equal(agent.provider.kind, 'kimi-cli');
-      assert.equal(agent.provider.model, 'kimi-code/kimi-for-coding');
-      assert.equal('reasoningEffort' in agent.provider, false);
+      assert.equal(agent.provider.model, 'kimi-code/k3');
+      assert.equal(agent.provider.reasoningEffort, 'high');
     });
   } finally {
     await rm(configDir, { force: true, recursive: true });
@@ -314,6 +325,14 @@ test('opencode-cli catalog exposes only the supported DeepSeek V4 models', () =>
   ]);
   assert.equal(entry?.defaultModel, 'deepseek/deepseek-v4-pro');
   assert.deepEqual(entry?.reasoningEfforts, []);
+  assert.deepEqual(
+    reasoningEffortsForModel('opencode-cli', 'deepseek/deepseek-v4-pro'),
+    ['high', 'max'],
+  );
+  assert.deepEqual(
+    reasoningEffortsForModel('opencode-cli', 'deepseek/deepseek-v4-flash'),
+    ['high', 'max'],
+  );
 
   assert.equal(
     AgentCreateRequest.parse({
@@ -349,10 +368,23 @@ test('opencode-cli catalog exposes only the supported DeepSeek V4 models', () =>
         provider: {
           kind: 'opencode-cli',
           model: 'deepseek/deepseek-v4-pro',
-          reasoningEffort: 'high',
+          reasoningEffort: 'low',
         },
       }),
-    /unsupported reasoningEffort high/,
+    /unsupported reasoningEffort low/,
+  );
+  assert.equal(
+    AgentCreateRequest.parse({
+      name: 'OpenCode effort',
+      homePath: 'agents/opencode-effort',
+      role: 'general purpose',
+      provider: {
+        kind: 'opencode-cli',
+        model: 'deepseek/deepseek-v4-pro',
+        reasoningEffort: 'max',
+      },
+    }).provider.reasoningEffort,
+    'max',
   );
 });
 
@@ -360,12 +392,56 @@ test('claude-code catalog includes Fable without changing the default model', ()
   const entry = providerCatalogEntry('claude-code');
   assert.deepEqual(entry?.models, ['opus', 'sonnet', 'haiku', 'fable']);
   assert.equal(entry?.defaultModel, 'opus');
+  assert.deepEqual(
+    reasoningEffortsForModel('claude-code', 'opus'),
+    ['low', 'medium', 'high', 'xhigh', 'max'],
+  );
+  assert.deepEqual(reasoningEffortsForModel('claude-code', 'haiku'), []);
+  assert.equal(
+    AgentCreateRequest.parse({
+      name: 'Claude max',
+      homePath: 'agents/claude-max',
+      role: 'general purpose',
+      provider: {
+        kind: 'claude-code',
+        model: 'fable',
+        reasoningEffort: 'max',
+      },
+    }).provider.reasoningEffort,
+    'max',
+  );
+  assert.throws(
+    () =>
+      AgentCreateRequest.parse({
+        name: 'Haiku effort',
+        homePath: 'agents/haiku-effort',
+        role: 'general purpose',
+        provider: {
+          kind: 'claude-code',
+          model: 'haiku',
+          reasoningEffort: 'low',
+        },
+      }),
+    /unsupported reasoningEffort low/,
+  );
 });
 
 test('codex-cli catalog includes current GPT-5.6 and GPT-5.5 models only', () => {
   const entry = providerCatalogEntry('codex-cli');
   assert.deepEqual(entry?.models, ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']);
   assert.equal(entry?.defaultModel, 'gpt-5.5');
+  assert.deepEqual(
+    reasoningEffortsForModel('codex-cli', 'gpt-5.6-sol'),
+    ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+  );
+  assert.deepEqual(
+    reasoningEffortsForModel('codex-cli', 'gpt-5.6-luna'),
+    ['low', 'medium', 'high', 'xhigh', 'max'],
+  );
+  assert.deepEqual(
+    reasoningEffortsForModel('codex-cli', 'gpt-5.5'),
+    ['low', 'medium', 'high', 'xhigh'],
+  );
 
   assert.equal(
     AgentCreateRequest.parse({
@@ -378,6 +454,33 @@ test('codex-cli catalog includes current GPT-5.6 and GPT-5.5 models only', () =>
       },
     }).provider.model,
     'gpt-5.6-luna',
+  );
+  assert.equal(
+    AgentCreateRequest.parse({
+      name: 'Codex Ultra',
+      homePath: 'agents/codex-ultra',
+      role: 'general purpose',
+      provider: {
+        kind: 'codex-cli',
+        model: 'gpt-5.6-terra',
+        reasoningEffort: 'ultra',
+      },
+    }).provider.reasoningEffort,
+    'ultra',
+  );
+  assert.throws(
+    () =>
+      AgentCreateRequest.parse({
+        name: 'Codex Luna Ultra',
+        homePath: 'agents/codex-luna-ultra',
+        role: 'general purpose',
+        provider: {
+          kind: 'codex-cli',
+          model: 'gpt-5.6-luna',
+          reasoningEffort: 'ultra',
+        },
+      }),
+    /unsupported reasoningEffort ultra/,
   );
 });
 

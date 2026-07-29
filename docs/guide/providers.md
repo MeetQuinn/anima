@@ -43,9 +43,24 @@ The **Providers** panel shows the account label or identifier when the provider 
 
 ## Pick the provider for an agent
 
-During agent creation, select the provider, model, and reasoning level. OpenCode agents can use
-DeepSeek V4 Pro or DeepSeek V4 Flash. Their DeepSeek API key stays in OpenCode's machine-level
-credential store; Anima does not copy it into the agent's Launch environment.
+During agent creation, select the provider, model, and reasoning level. The effort menu follows the
+selected model exactly:
+
+| Provider    | Models                                     | Reasoning effort                                 |
+| ----------- | ------------------------------------------ | ------------------------------------------------ |
+| Claude Code | Opus, Sonnet, Fable                        | `low`, `medium`, `high`, `xhigh`, `max`          |
+| Claude Code | Haiku                                      | Provider default; no adjustable effort           |
+| Codex CLI   | GPT-5.6 Sol, GPT-5.6 Terra                 | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
+| Codex CLI   | GPT-5.6 Luna                               | `low`, `medium`, `high`, `xhigh`, `max`          |
+| Codex CLI   | GPT-5.5                                    | `low`, `medium`, `high`, `xhigh`                 |
+| Kimi CLI    | K3                                         | `low`, `high`, `max`                             |
+| Kimi CLI    | Kimi for Coding, Kimi for Coding Highspeed | Always thinking; no adjustable level             |
+| OpenCode    | DeepSeek V4 Pro, DeepSeek V4 Flash         | `high`, `max`                                    |
+| Grok Build  | Live model catalog                         | Whatever the selected model advertises           |
+
+OpenCode agents can use DeepSeek V4 Pro or DeepSeek V4 Flash. Their DeepSeek API key stays in
+OpenCode's machine-level credential store; Anima does not copy it into the agent's Launch
+environment.
 
 For Grok Build, Anima reads the current model catalog from the installed CLI (for example `grok-4.5` and `grok-composer-2.5-fast`) and records the actual model ID returned by the runtime. Reasoning effort is **per model**: only models that advertise effort support show an effort control (Composer does not). The `grok-build` marketing alias is never stored as model authority.
 

@@ -90,7 +90,7 @@ export class KimiCliAgentRuntime extends ControllerAgentRuntime<KimiAcpControlle
       },
     );
     try {
-      await controller.ensureSession(input, this.config.model);
+      await controller.ensureSession(input, this.config.model, this.config.reasoningEffort);
       return controller;
     } catch (error) {
       await this.slot.reset();
@@ -152,9 +152,13 @@ class KimiAcpController {
     );
   }
 
-  async ensureSession(input: AgentRuntimeInput, model: string | undefined): Promise<void> {
+  async ensureSession(
+    input: AgentRuntimeInput,
+    model: string | undefined,
+    reasoningEffort: string | undefined,
+  ): Promise<void> {
     if (!this.initialized) {
-      this.initialized = this.initializeSession(input, model).catch((error) => {
+      this.initialized = this.initializeSession(input, model, reasoningEffort).catch((error) => {
         this.initialized = undefined;
         throw error;
       });
@@ -200,7 +204,11 @@ class KimiAcpController {
     return this.quiescentWaiters.waitUntilReady(() => this.activeToolIds.size === 0, signal);
   }
 
-  private async initializeSession(input: AgentRuntimeInput, model: string | undefined): Promise<void> {
+  private async initializeSession(
+    input: AgentRuntimeInput,
+    model: string | undefined,
+    reasoningEffort: string | undefined,
+  ): Promise<void> {
     const initResult = await this.rpc.request('initialize', {
       clientCapabilities: {},
       clientInfo: { name: 'anima', version: '0.1.0' },
@@ -238,6 +246,13 @@ class KimiAcpController {
       await this.rpc.request('session/set_model', {
         modelId: model,
         sessionId: this.sessionId,
+      });
+    }
+    if (reasoningEffort) {
+      await this.rpc.request('session/set_config_option', {
+        configId: 'thinking',
+        sessionId: this.sessionId,
+        value: reasoningEffort,
       });
     }
   }

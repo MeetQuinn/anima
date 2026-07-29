@@ -308,6 +308,7 @@ export const KimiCliAgentProviderConfig = z.object({
   kind: z.literal('kimi-cli'),
   model: z.string().optional(),
   providerChildIdleTimeoutMs: z.number().nonnegative().optional(),
+  reasoningEffort: z.string().optional(),
 });
 
 export type KimiCliAgentProviderConfig = z.infer<typeof KimiCliAgentProviderConfig>;
@@ -329,6 +330,7 @@ export const OpenCodeCliAgentProviderConfig = z.object({
   kind: z.literal('opencode-cli'),
   model: z.string().optional(),
   providerChildIdleTimeoutMs: z.number().nonnegative().optional(),
+  reasoningEffort: z.string().optional(),
 });
 
 export type OpenCodeCliAgentProviderConfig = z.infer<typeof OpenCodeCliAgentProviderConfig>;
@@ -348,9 +350,9 @@ export const AgentProviderConfig = z.preprocess(
         : undefined;
     const model = typeof input.model === 'string' ? input.model : defaultModelForProvider(kind);
     const rawEffort = typeof input.reasoningEffort === 'string' ? input.reasoningEffort : undefined;
-    // Keep a persisted effort when it is a valid token for the provider; do not infer
-    // per-model support from the model name here (Grok's per-model authority is the live
-    // ACP catalog at runtime). Kimi has no effort field, so its efforts are dropped.
+    // Keep a persisted effort when it is valid for the selected model. Grok is the
+    // exception: its per-model authority is the live ACP catalog at runtime, so only
+    // the provider's write vocabulary is checked here.
     const keepEffort =
       rawEffort && isSupportedReasoningEffort(kind, rawEffort, model) ? rawEffort : undefined;
     const { reasoningEffort: _dropEffort, ...rest } = input;
