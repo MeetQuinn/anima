@@ -67,6 +67,7 @@ test('opencode-cli ACP uses global DeepSeek auth, selects the model, and appends
         "fs.writeFileSync(process.env.LAUNCH_PATH, JSON.stringify({ argv: process.argv.slice(2), autoUpdate: process.env.OPENCODE_DISABLE_AUTOUPDATE, deepseek: process.env.DEEPSEEK_API_KEY, authContent: process.env.OPENCODE_AUTH_CONTENT, configContent: process.env.OPENCODE_CONFIG_CONTENT }));",
         "process.stdin.setEncoding('utf8');",
         "let buffer = '';",
+        'let effortSelected = false;',
         'let modelSelected = false;',
         'let promptCount = 0;',
         'let promptRequestId;',
@@ -99,13 +100,14 @@ test('opencode-cli ACP uses global DeepSeek auth, selects the model, and appends
         '      continue;',
         '    }',
         "    if (msg.method === 'session/set_config_option') {",
-        "      if (msg.params.configId !== 'model' || msg.params.value !== 'deepseek/deepseek-v4-pro') process.exit(41);",
-        '      modelSelected = true;',
+        "      if (msg.params.configId === 'model' && msg.params.value === 'deepseek/deepseek-v4-pro') modelSelected = true;",
+        "      else if (msg.params.configId === 'effort' && msg.params.value === 'max' && modelSelected) effortSelected = true;",
+        '      else process.exit(41);',
         "      send({ jsonrpc: '2.0', id: msg.id, result: {} });",
         '      continue;',
         '    }',
         "    if (msg.method === 'session/prompt') {",
-        '      if (!modelSelected) process.exit(42);',
+        '      if (!modelSelected || !effortSelected) process.exit(42);',
         '      promptCount += 1;',
         '      if (promptCount === 1) {',
         '        promptRequestId = msg.id;',
@@ -132,6 +134,7 @@ test('opencode-cli ACP uses global DeepSeek auth, selects the model, and appends
         }),
         kind: 'opencode-cli',
         model: 'deepseek/deepseek-v4-pro',
+        reasoningEffort: 'max',
       });
 
       const runPromise = runtime.run(await runtimeInput(runtime, firstCtx, await loadState()));
@@ -159,12 +162,30 @@ test('opencode-cli ACP uses global DeepSeek auth, selects the model, and appends
       const methods = calls
         .filter((call) => typeof call.method === 'string')
         .map((call) => call.method);
-      assert.deepEqual(methods.slice(0, 4), [
+      assert.deepEqual(methods.slice(0, 5), [
         'initialize',
         'session/new',
         'session/set_config_option',
+        'session/set_config_option',
         'session/prompt',
       ]);
+      assert.deepEqual(
+        calls
+          .filter((call) => call.method === 'session/set_config_option')
+          .map((call) => call.params),
+        [
+          {
+            configId: 'model',
+            sessionId: 'opencode-session-1',
+            value: 'deepseek/deepseek-v4-pro',
+          },
+          {
+            configId: 'effort',
+            sessionId: 'opencode-session-1',
+            value: 'max',
+          },
+        ],
+      );
       const prompts = calls.filter((call) => call.method === 'session/prompt');
       assert.equal(prompts.length, 2);
       const firstPrompt = ((prompts[0]?.params as Record<string, unknown>)?.prompt as Array<{ text?: string }>)[0]?.text ?? '';

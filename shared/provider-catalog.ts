@@ -8,6 +8,7 @@ export interface ProviderCatalogEntry {
   kind: 'claude-code' | 'codex-cli' | 'kimi-cli' | 'grok-cli' | 'opencode-cli';
   label: string;
   marketingModelAliases?: string[];
+  modelReasoningEfforts?: Record<string, string[]>;
   models: string[];
   reasoningEfforts: string[];
 }
@@ -20,7 +21,7 @@ export const ProviderAvailability = z.object({
   kind: z.enum(['claude-code', 'codex-cli', 'kimi-cli', 'grok-cli', 'opencode-cli']),
   modelCheckError: z.string().optional(),
   /**
-   * Per-model reasoning effort menus (Grok Build). Missing or empty array means
+   * Per-model reasoning effort menus. Missing or empty array means
    * the model does not support effort. When present, UI/config must not show a
    * provider-global effort control for that model.
    */
@@ -32,7 +33,8 @@ export type ProviderAvailability = z.infer<typeof ProviderAvailability>;
 
 export const DEFAULT_PROVIDER_KIND: ProviderCatalogEntry['kind'] = 'claude-code';
 export const DEFAULT_REASONING_EFFORT = 'xhigh';
-const STANDARD_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh'];
+const CLAUDE_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const CODEX_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 /**
  * Effort tokens a Grok model may support. This is the write-time vocabulary only:
  * whether a *specific* model actually supports an effort is decided at runtime by
@@ -49,7 +51,13 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     installHint: 'Install Claude Code so `claude --version` works.',
     models: ['opus', 'sonnet', 'haiku', 'fable'],
     defaultModel: 'opus',
-    reasoningEfforts: STANDARD_REASONING_EFFORTS,
+    modelReasoningEfforts: {
+      opus: CLAUDE_REASONING_EFFORTS,
+      sonnet: CLAUDE_REASONING_EFFORTS,
+      haiku: [],
+      fable: CLAUDE_REASONING_EFFORTS,
+    },
+    reasoningEfforts: [],
   },
   {
     kind: 'codex-cli',
@@ -58,7 +66,13 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     installHint: 'Install Codex CLI so `codex --version` works.',
     models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
     defaultModel: 'gpt-5.5',
-    reasoningEfforts: STANDARD_REASONING_EFFORTS,
+    modelReasoningEfforts: {
+      'gpt-5.6-sol': CODEX_REASONING_EFFORTS,
+      'gpt-5.6-terra': CODEX_REASONING_EFFORTS,
+      'gpt-5.6-luna': ['low', 'medium', 'high', 'xhigh', 'max'],
+      'gpt-5.5': ['low', 'medium', 'high', 'xhigh'],
+    },
+    reasoningEfforts: [],
   },
   {
     kind: 'kimi-cli',
@@ -71,6 +85,11 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
       'kimi-code/kimi-for-coding-highspeed',
     ],
     defaultModel: 'kimi-code/kimi-for-coding',
+    modelReasoningEfforts: {
+      'kimi-code/k3': ['low', 'high', 'max'],
+      'kimi-code/kimi-for-coding': [],
+      'kimi-code/kimi-for-coding-highspeed': [],
+    },
     reasoningEfforts: [],
   },
   {
@@ -97,17 +116,34 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
       'deepseek/deepseek-v4-flash',
     ],
     defaultModel: 'deepseek/deepseek-v4-pro',
+    modelReasoningEfforts: {
+      'deepseek/deepseek-v4-pro': ['high', 'max'],
+      'deepseek/deepseek-v4-flash': ['high', 'max'],
+    },
     reasoningEfforts: [],
   },
 ];
 
 export function providerCatalog(): ProviderCatalogEntry[] {
-  return PROVIDER_CATALOG.map((entry) => ({
-    ...entry,
-    ...(entry.marketingModelAliases ? { marketingModelAliases: [...entry.marketingModelAliases] } : {}),
-    models: [...entry.models],
-    reasoningEfforts: [...entry.reasoningEfforts],
-  }));
+  return PROVIDER_CATALOG.map((entry) => {
+    const copy: ProviderCatalogEntry = {
+      ...entry,
+      models: [...entry.models],
+      reasoningEfforts: [...entry.reasoningEfforts],
+    };
+    if (entry.marketingModelAliases) {
+      copy.marketingModelAliases = [...entry.marketingModelAliases];
+    }
+    if (entry.modelReasoningEfforts) {
+      copy.modelReasoningEfforts = Object.fromEntries(
+        Object.entries(entry.modelReasoningEfforts).map(([model, efforts]) => [
+          model,
+          [...efforts],
+        ]),
+      );
+    }
+    return copy;
+  });
 }
 
 export function providerCatalogEntry(kind: string): ProviderCatalogEntry | undefined {
@@ -136,17 +172,17 @@ export function isSupportedProviderModel(kind: string, model: string): boolean {
  * made at runtime against the live ACP catalog, so writes never infer support from
  * the model name (which could disagree with what the model actually advertises).
  */
-export function isSupportedReasoningEffort(kind: string, effort: string, _model?: string): boolean {
+export function isSupportedReasoningEffort(kind: string, effort: string, model?: string): boolean {
   if (kind === 'grok-cli') {
     return GROK_REASONING_EFFORTS.includes(effort);
   }
-  return providerCatalogEntry(kind)?.reasoningEfforts.includes(effort) ?? false;
+  return reasoningEffortsForModel(kind, model).includes(effort);
 }
 
 /**
- * Effort menu to show for the selected model. Grok is live-only: the ACP catalog
- * (`modelReasoningEfforts`) is the single authority, so absent that data the menu is
- * empty rather than guessed from the model name.
+ * Effort menu to show for the selected model. Static providers use their catalog's
+ * exact model menu. Grok is live-only: the ACP catalog (`modelReasoningEfforts`) is
+ * the single authority, so absent that data the menu is empty rather than guessed.
  */
 export function reasoningEffortsForModel(
   kind: string,
@@ -159,5 +195,10 @@ export function reasoningEffortsForModel(
     }
     return [];
   }
-  return [...(providerCatalogEntry(kind)?.reasoningEfforts ?? [])];
+  const entry = providerCatalogEntry(kind);
+  if (!entry) return [];
+  if (model && entry.modelReasoningEfforts && model in entry.modelReasoningEfforts) {
+    return [...(entry.modelReasoningEfforts[model] ?? [])];
+  }
+  return [...entry.reasoningEfforts];
 }

@@ -176,7 +176,7 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
         "    if (msg.params.model !== 'gpt-test') process.exit(32);",
         `    if (msg.params.config.model_auto_compact_token_limit !== ${autoCompactTokenLimit}) process.exit(320);`,
         `    if (msg.params.config.model_auto_compact_token_limit_scope !== '${CODEX_AUTO_COMPACT_TOKEN_LIMIT_SCOPE}') process.exit(321);`,
-        "    if (msg.params.config.model_reasoning_effort !== 'xhigh') process.exit(33);",
+        "    if (msg.params.config.model_reasoning_effort !== 'ultra') process.exit(33);",
         "    if (msg.params.config.model_reasoning_summary !== 'auto') process.exit(330);",
         "    if (!msg.params.developerInstructions.includes('You are Anima, general-purpose Anima agent.')) process.exit(34);",
         "    if (!msg.params.developerInstructions.includes('anima message send <target flags>')) process.exit(35);",
@@ -190,7 +190,7 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
         "      if (msg.params.model !== 'gpt-test') process.exit(363);",
         `      if (msg.params.config.model_auto_compact_token_limit !== ${autoCompactTokenLimit}) process.exit(364);`,
         `      if (msg.params.config.model_auto_compact_token_limit_scope !== '${CODEX_AUTO_COMPACT_TOKEN_LIMIT_SCOPE}') process.exit(365);`,
-        "      if (msg.params.config.model_reasoning_effort !== 'xhigh') process.exit(366);",
+        "      if (msg.params.config.model_reasoning_effort !== 'ultra') process.exit(366);",
         "      if (msg.params.config.model_reasoning_summary !== 'auto') process.exit(367);",
         "      if (typeof msg.params.cwd !== 'string' || msg.params.cwd.length === 0) process.exit(368);",
         "      if (!msg.params.developerInstructions.includes('You are Anima, general-purpose Anima agent.')) process.exit(369);",
@@ -296,7 +296,7 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
       }),
       kind: 'codex-cli',
       model: 'gpt-test',
-      reasoningEffort: 'xhigh',
+      reasoningEffort: 'ultra',
     });
     const runPromise = runtime.run(await runtimeInput(runtime, firstCtx, await loadState()));
     await waitFor(async () => (await readFile(callsPath, 'utf8')).includes('"method":"thread/start"'));
@@ -417,7 +417,7 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
       }),
       kind: 'codex-cli',
       model: 'gpt-test',
-      reasoningEffort: 'xhigh',
+      reasoningEffort: 'ultra',
     });
     assert.equal((await runtime.run(await runtimeInput(runtime, thirdCtx, await loadState()))).text, 'handled third');
     const finalCalls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string });

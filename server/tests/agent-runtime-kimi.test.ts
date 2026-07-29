@@ -29,6 +29,8 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
           `fs.appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify({ argv: process.argv.slice(2) }) + '\\n');`,
           "process.stdin.setEncoding('utf8');",
           "let buffer = '';",
+          'let effortSelected = false;',
+          'let modelSelected = false;',
           "let promptCount = 0;",
           'function send(message) { process.stdout.write(JSON.stringify(message) + "\\n"); }',
           'function update(update) { send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "kimi-session-1", update } }); }',
@@ -49,9 +51,17 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
           '    }',
           '    if (msg.method === "session/set_model") {',
           '      if (msg.params.modelId !== "kimi-code/k3") process.exit(42);',
+          '      modelSelected = true;',
+          '      send({ jsonrpc: "2.0", id: msg.id, result: {} });',
+          '    }',
+          '    if (msg.method === "session/set_config_option") {',
+          '      if (!modelSelected) process.exit(46);',
+          '      if (msg.params.configId !== "thinking" || msg.params.value !== "max") process.exit(47);',
+          '      effortSelected = true;',
           '      send({ jsonrpc: "2.0", id: msg.id, result: {} });',
           '    }',
           '    if (msg.method === "session/prompt") {',
+          '      if (!modelSelected || !effortSelected) process.exit(48);',
           '      promptCount += 1;',
           '      if (msg.params.sessionId !== "kimi-session-1") process.exit(43);',
           '      if (promptCount === 1) {',
@@ -114,6 +124,7 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
         }),
         kind: 'kimi-cli',
         model: 'kimi-code/k3',
+        reasoningEffort: 'max',
       });
       const runPromise = runtime.run(await runtimeInput(runtime, firstCtx, await loadState()));
       await waitFor(() => readFile(callsPath, 'utf8').then((text) => text.includes('"method":"session/prompt"')));
@@ -132,11 +143,25 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
       const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) =>
         JSON.parse(line) as {
           method?: string;
-          params?: { modelId?: string; prompt?: Array<{ text?: string }> };
+          params?: {
+            configId?: string;
+            modelId?: string;
+            prompt?: Array<{ text?: string }>;
+            value?: string;
+          };
         });
       assert.deepEqual(
         calls.filter((call) => call.method === 'session/set_model').map((call) => call.params?.modelId),
         ['kimi-code/k3'],
+      );
+      assert.deepEqual(
+        calls
+          .filter((call) => call.method === 'session/set_config_option')
+          .map((call) => ({
+            configId: call.params?.configId,
+            value: call.params?.value,
+          })),
+        [{ configId: 'thinking', value: 'max' }],
       );
       const sessionPrompts = calls.filter((call) => call.method === 'session/prompt');
       assert.equal(sessionPrompts.length, 2);

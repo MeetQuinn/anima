@@ -65,7 +65,7 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
         'if (argv[argv.indexOf("--output-format") + 1] !== "stream-json") process.exit(43);',
         'if (argv[argv.indexOf("--permission-mode") + 1] !== "bypassPermissions") process.exit(44);',
         'if (argv[argv.indexOf("--model") + 1] !== "opus") process.exit(56);',
-        'if (argv[argv.indexOf("--effort") + 1] !== "xhigh") process.exit(57);',
+        'if (argv[argv.indexOf("--effort") + 1] !== "max") process.exit(57);',
         'if (process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== "272000") process.exit(59);',
         'if (!systemPrompt.includes("You are Anima, general-purpose Anima agent.")) process.exit(53);',
         'if (!systemPrompt.includes("anima message send <target flags>")) process.exit(54);',
@@ -158,7 +158,7 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
       },
       kind: 'claude-code',
       model: 'opus',
-      reasoningEffort: 'xhigh',
+      reasoningEffort: 'max',
     });
 
     assert.equal(

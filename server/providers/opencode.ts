@@ -129,7 +129,7 @@ export class OpenCodeCliAgentRuntime extends ControllerAgentRuntime<OpenCodeAcpC
       });
 
     try {
-      await controller.ensureSession(input, this.config.model);
+      await controller.ensureSession(input, this.config.model, this.config.reasoningEffort);
       return controller;
     } catch (error) {
       await this.slot.reset();
@@ -186,9 +186,13 @@ class OpenCodeAcpController {
     );
   }
 
-  async ensureSession(input: AgentRuntimeInput, model: string | undefined): Promise<void> {
+  async ensureSession(
+    input: AgentRuntimeInput,
+    model: string | undefined,
+    reasoningEffort: string | undefined,
+  ): Promise<void> {
     if (!this.initialized) {
-      this.initialized = this.initializeSession(input, model).catch((error) => {
+      this.initialized = this.initializeSession(input, model, reasoningEffort).catch((error) => {
         this.initialized = undefined;
         throw error;
       });
@@ -258,7 +262,11 @@ class OpenCodeAcpController {
     return this.quiescentWaiters.waitUntilReady(() => this.activeToolIds.size === 0, signal);
   }
 
-  private async initializeSession(input: AgentRuntimeInput, model: string | undefined): Promise<void> {
+  private async initializeSession(
+    input: AgentRuntimeInput,
+    model: string | undefined,
+    reasoningEffort: string | undefined,
+  ): Promise<void> {
     const initResult = await this.rpc.request('initialize', {
       clientCapabilities: {},
       clientInfo: { name: 'anima', version: '0.1.0' },
@@ -293,6 +301,7 @@ class OpenCodeAcpController {
     }
 
     if (model) await this.selectModel(model);
+    if (reasoningEffort) await this.selectEffort(reasoningEffort);
   }
 
   private async createSession(input: AgentRuntimeInput): Promise<string> {
@@ -318,6 +327,14 @@ class OpenCodeAcpController {
         `OpenCode could not select ${model}. Configure DeepSeek with \`opencode auth login --provider deepseek\`. ${error.message}`,
       );
     }
+  }
+
+  private async selectEffort(reasoningEffort: string): Promise<void> {
+    await this.rpc.request('session/set_config_option', {
+      configId: 'effort',
+      sessionId: this.sessionId,
+      value: reasoningEffort,
+    });
   }
 
   private async runTurnQueue(firstPrompt: string): Promise<void> {

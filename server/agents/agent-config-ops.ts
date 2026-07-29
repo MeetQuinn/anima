@@ -18,7 +18,7 @@ import {
   isSupportedProviderKind,
   isSupportedProviderModel,
   providerCatalogEntry,
-  type ProviderCatalogEntry,
+  reasoningEffortsForModel,
 } from '../../shared/provider-catalog.js';
 import { resolveAnimaHome } from '../anima-home.js';
 import { AGENT_ID } from '../storage/schema/agent.store.js';
@@ -131,7 +131,7 @@ function mergeProviderSelection(
     throw new AgentConfigError(400, `unsupported transport for ${entry.kind}: ${update.transport}`);
   }
   const model = update.model ?? entry.defaultModel;
-  const reasoningEffort = update.reasoningEffort ?? defaultReasoningEffort(entry);
+  const reasoningEffort = update.reasoningEffort ?? defaultReasoningEffort(entry.kind, model);
   validateProviderShape(entry.kind, model, reasoningEffort);
 
   const next: Record<string, unknown> = { kind: entry.kind, model };
@@ -159,11 +159,12 @@ function mergeProviderEnv(
   return Object.keys(env).length > 0 ? env : undefined;
 }
 
-function defaultReasoningEffort(entry: ProviderCatalogEntry): string | undefined {
-  if (entry.reasoningEfforts.length === 0) return undefined;
-  return entry.reasoningEfforts.includes(DEFAULT_REASONING_EFFORT)
+function defaultReasoningEffort(kind: string, model: string | undefined): string | undefined {
+  const efforts = reasoningEffortsForModel(kind, model);
+  if (efforts.length === 0) return undefined;
+  return efforts.includes(DEFAULT_REASONING_EFFORT)
     ? DEFAULT_REASONING_EFFORT
-    : entry.reasoningEfforts[0];
+    : efforts[0];
 }
 
 function isAnimaManagedProviderEnvKey(key: string): boolean {
