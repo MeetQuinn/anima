@@ -1,5 +1,5 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { waitFor, withTimeout } from './helpers/harness.js';
+import { sleep, waitFor, withTimeout } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -301,6 +301,78 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
     await runtime?.close?.();
     if (previousClaudeProjectsDir === undefined) delete process.env.CLAUDE_PROJECTS_DIR;
     else process.env.CLAUDE_PROJECTS_DIR = previousClaudeProjectsDir;
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('claude-code keeps the provider child until background work finishes plus the idle window', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+    const releasePath = join(stateDir, 'claude-background-release');
+    const fakeClaude = join(stateDir, 'claude');
+    await writeFile(
+      fakeClaude,
+      [
+        '#!/usr/bin/env node',
+        "import { existsSync } from 'node:fs';",
+        "import readline from 'node:readline';",
+        "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
+        "send({ type: 'system', subtype: 'init', session_id: 'claude-background-session', cwd: process.cwd(), claude_code_version: 'test' });",
+        "const rl = readline.createInterface({ input: process.stdin });",
+        "rl.once('line', () => {",
+        "  send({ type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'background-agent-1', task_type: 'local_agent', description: 'Background agent' }], session_id: 'claude-background-session' });",
+        "  send({ type: 'result', subtype: 'success', result: 'main turn done', session_id: 'claude-background-session' });",
+        "  const release = setInterval(() => {",
+        "    if (!existsSync(process.env.RELEASE_PATH)) return;",
+        "    clearInterval(release);",
+        "    send({ type: 'system', subtype: 'background_tasks_changed', tasks: [], session_id: 'claude-background-session' });",
+        "  }, 5);",
+        "});",
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await chmod(fakeClaude, 0o755);
+
+    const ctx = await ingestEvent(
+      makeSlackEvent({
+        channelId: 'D-anima',
+        teamId: 'T-demo',
+        text: 'Run work in the background.',
+        userId: 'U1',
+      }),
+      { agentId: 'anima', stateDir },
+    );
+    runtime = createAgentRuntime({
+      env: runtimeTestEnv(stateDir, { RELEASE_PATH: releasePath }),
+      kind: 'claude-code',
+      providerChildIdleTimeoutMs: 50,
+    });
+
+    assert.equal(
+      (await runtime.run(await runtimeInput(runtime, ctx, await loadState()))).text,
+      'main turn done',
+    );
+    const backgroundStartedAt = runtime.health?.().child?.lastStdoutAt;
+    await sleep(100);
+    assert.ok(runtime.health?.().child?.alive);
+
+    await writeFile(releasePath, '1', 'utf8');
+    await waitFor(
+      () => runtime?.health?.().child?.lastStdoutAt !== backgroundStartedAt,
+      { description: 'Claude background completion event', timeoutMs: 1_000 },
+    );
+    await sleep(20);
+    assert.ok(runtime.health?.().child?.alive);
+    await waitFor(
+      () => runtime?.health?.().child === undefined,
+      { description: 'Claude provider child idle reset after background completion', timeoutMs: 1_000 },
+    );
+    });
+  } finally {
+    await runtime?.close?.();
     await rm(stateDir, { force: true, recursive: true });
   }
 });

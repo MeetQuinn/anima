@@ -214,6 +214,7 @@ function claudeSessionNotFound(stderr: string): boolean {
 
 class ClaudeStreamJsonController {
   private readonly activeToolUseIds = new Set<string>();
+  private backgroundTasksActive = false;
   private readonly stdoutLines = new LineBuffer();
   private compacting = false;
   private stderrText = '';
@@ -310,7 +311,11 @@ class ClaudeStreamJsonController {
   }
 
   waitForQuiescent(signal?: AbortSignal): Promise<void> {
-    return this.quiescentWaiters.waitUntilReady(() => !this.inputGateClosed(), signal);
+    return this.quiescentWaiters.waitUntilReady(() => this.isQuiescent(), signal);
+  }
+
+  isQuiescent(): boolean {
+    return !this.inputGateClosed() && !this.backgroundTasksActive;
   }
 
   async acceptStdoutChunk(chunk: string): Promise<void> {
@@ -414,6 +419,10 @@ class ClaudeStreamJsonController {
   private updateInputGate(value: Record<string, unknown>): void {
     const type = stringField(value, 'type');
     const subtype = stringField(value, 'subtype');
+    if (type === 'system' && subtype === 'background_tasks_changed' && Array.isArray(value['tasks'])) {
+      // Claude defines this as a replace-all level signal, so missed task edge events cannot leave stale state.
+      this.backgroundTasksActive = value['tasks'].length > 0;
+    }
     if (type === 'system' && subtype === 'status') {
       if (stringField(value, 'status') === 'compacting') this.compacting = true;
       if (stringField(value, 'compact_result') === 'failed') this.compacting = false;
@@ -437,7 +446,7 @@ class ClaudeStreamJsonController {
   }
 
   private resolveQuiescentWaitersIfReady(): void {
-    this.quiescentWaiters.resolveIfReady(() => !this.inputGateClosed());
+    this.quiescentWaiters.resolveIfReady(() => this.isQuiescent());
   }
 
   private rejectQuiescentWaiters(error: unknown): void {
