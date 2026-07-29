@@ -41,13 +41,13 @@ test('claude common args carry the shared launch flags and optional config flags
   ]);
   assert.deepEqual(
     claudeCommonArgs(
-      { kind: 'claude-code', model: 'opus', reasoningEffort: 'max' },
+      { kind: 'claude-code', model: 'claude-opus-4-8', reasoningEffort: 'max' },
       '/tmp/system-prompt.md',
     ),
     [
       '--permission-mode', 'bypassPermissions',
       '--disallowedTools', CLAUDE_DISALLOWED_TOOLS.join(','),
-      '--model', 'opus',
+      '--model', 'claude-opus-4-8',
       '--effort', 'max',
       '--system-prompt-file', '/tmp/system-prompt.md',
     ],

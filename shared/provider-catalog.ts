@@ -34,6 +34,7 @@ export type ProviderAvailability = z.infer<typeof ProviderAvailability>;
 export const DEFAULT_PROVIDER_KIND: ProviderCatalogEntry['kind'] = 'claude-code';
 export const DEFAULT_REASONING_EFFORT = 'xhigh';
 const CLAUDE_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const CLAUDE_4_6_REASONING_EFFORTS = ['low', 'medium', 'high', 'max'];
 const CODEX_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 /**
  * Effort tokens a Grok model may support. This is the write-time vocabulary only:
@@ -49,13 +50,24 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     label: 'Claude Code',
     command: 'claude',
     installHint: 'Install Claude Code so `claude --version` works.',
-    models: ['opus', 'sonnet', 'haiku', 'fable'],
+    models: [
+      'opus',
+      'sonnet',
+      'haiku',
+      'fable',
+      'claude-opus-4-8',
+      'claude-opus-4-6',
+      'claude-sonnet-4-6',
+    ],
     defaultModel: 'opus',
     modelReasoningEfforts: {
       opus: CLAUDE_REASONING_EFFORTS,
       sonnet: CLAUDE_REASONING_EFFORTS,
       haiku: [],
       fable: CLAUDE_REASONING_EFFORTS,
+      'claude-opus-4-8': CLAUDE_REASONING_EFFORTS,
+      'claude-opus-4-6': CLAUDE_4_6_REASONING_EFFORTS,
+      'claude-sonnet-4-6': CLAUDE_4_6_REASONING_EFFORTS,
     },
     reasoningEfforts: [],
   },
