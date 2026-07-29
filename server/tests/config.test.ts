@@ -388,15 +388,50 @@ test('opencode-cli catalog exposes only the supported DeepSeek V4 models', () =>
   );
 });
 
-test('claude-code catalog includes Fable without changing the default model', () => {
+test('claude-code catalog keeps family aliases and adds version-pinned models', () => {
   const entry = providerCatalogEntry('claude-code');
-  assert.deepEqual(entry?.models, ['opus', 'sonnet', 'haiku', 'fable']);
+  assert.deepEqual(entry?.models, [
+    'opus',
+    'sonnet',
+    'haiku',
+    'fable',
+    'claude-opus-4-8',
+    'claude-opus-4-6',
+    'claude-sonnet-4-6',
+  ]);
   assert.equal(entry?.defaultModel, 'opus');
   assert.deepEqual(
     reasoningEffortsForModel('claude-code', 'opus'),
     ['low', 'medium', 'high', 'xhigh', 'max'],
   );
   assert.deepEqual(reasoningEffortsForModel('claude-code', 'haiku'), []);
+  assert.deepEqual(
+    reasoningEffortsForModel('claude-code', 'claude-opus-4-8'),
+    ['low', 'medium', 'high', 'xhigh', 'max'],
+  );
+  assert.deepEqual(
+    reasoningEffortsForModel('claude-code', 'claude-opus-4-6'),
+    ['low', 'medium', 'high', 'max'],
+  );
+  assert.deepEqual(
+    reasoningEffortsForModel('claude-code', 'claude-sonnet-4-6'),
+    ['low', 'medium', 'high', 'max'],
+  );
+  for (const model of ['claude-opus-4-8', 'claude-opus-4-6', 'claude-sonnet-4-6']) {
+    assert.equal(
+      AgentCreateRequest.parse({
+        name: model,
+        homePath: `agents/${model}`,
+        role: 'general purpose',
+        provider: {
+          kind: 'claude-code',
+          model,
+          reasoningEffort: 'max',
+        },
+      }).provider.model,
+      model,
+    );
+  }
   assert.equal(
     AgentCreateRequest.parse({
       name: 'Claude max',
@@ -424,6 +459,22 @@ test('claude-code catalog includes Fable without changing the default model', ()
       }),
     /unsupported reasoningEffort low/,
   );
+  for (const model of ['claude-opus-4-6', 'claude-sonnet-4-6']) {
+    assert.throws(
+      () =>
+        AgentCreateRequest.parse({
+          name: `${model} xhigh`,
+          homePath: `agents/${model}-xhigh`,
+          role: 'general purpose',
+          provider: {
+            kind: 'claude-code',
+            model,
+            reasoningEffort: 'xhigh',
+          },
+        }),
+      /unsupported reasoningEffort xhigh/,
+    );
+  }
 });
 
 test('codex-cli catalog includes current GPT-5.6 and GPT-5.5 models only', () => {
