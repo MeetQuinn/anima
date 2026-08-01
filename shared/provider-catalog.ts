@@ -77,7 +77,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     command: 'codex',
     installHint: 'Install Codex CLI so `codex --version` works.',
     models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
-    defaultModel: 'gpt-5.5',
+    defaultModel: 'gpt-5.6-sol',
     modelReasoningEfforts: {
       'gpt-5.6-sol': CODEX_REASONING_EFFORTS,
       'gpt-5.6-terra': CODEX_REASONING_EFFORTS,
