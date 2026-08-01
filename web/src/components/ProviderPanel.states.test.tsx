@@ -175,4 +175,55 @@ describe('ProviderPanel version slot', () => {
     // Save-on-change is the same Select → onContextLimitChange path used by Profile;
     // Base UI Select does not reliably fire item activation under fireEvent in jsdom.
   });
+
+  it('does not treat Update available as collapsed Needs attention', async () => {
+    const { fetchProviderCliStatus, fetchProviderUsage } = await import('@/api/system');
+    vi.mocked(fetchProviderCliStatus).mockResolvedValueOnce({
+      operation: { status: 'idle' as const },
+      providers: [
+        {
+          agents: [],
+          binaryPath: '/Users/op/.local/bin/claude',
+          installSource: 'npm' as const,
+          installedVersion: '1.0.0',
+          label: 'Claude Code',
+          latestVersion: '1.1.0',
+          operation: { status: 'idle' as const },
+          provider: 'claude-code' as const,
+          realPath: '/Users/op/.local/share/claude/claude',
+          state: 'ok' as const,
+          updateAvailable: true,
+          updateMode: 'managed' as const,
+        },
+      ],
+      upgradeLocked: false,
+    });
+    vi.mocked(fetchProviderUsage).mockResolvedValueOnce({
+      providers: [
+        {
+          account: 'op@example.com',
+          checkedAt: '2026-07-13T04:00:00.000Z',
+          extras: [],
+          label: 'Claude Code',
+          provider: 'claude-code' as const,
+          source: 'private-api' as const,
+          status: 'available' as const,
+          windows: [
+            {
+              label: '5h',
+              remainingPercent: 80,
+              resetsAt: '2026-07-13T09:00:00.000Z',
+              usedPercent: 20,
+            },
+          ],
+        },
+      ],
+    });
+
+    renderPanel();
+
+    // Collapsed: usage summary, not attention — Update is expanded-only chrome.
+    expect(await screen.findByText(/5h 80%/i)).toBeTruthy();
+    expect(screen.queryByText('Needs attention')).toBeNull();
+  });
 });

@@ -71,7 +71,6 @@ interface GrokCredentials {
   refreshToken?: string;
   scope: string;
   sourcePath: string;
-  teamId?: string;
 }
 
 export async function fetchGrokUsage(): Promise<
@@ -201,7 +200,6 @@ async function readGrokCredentials(): Promise<GrokCredentials | undefined> {
       refreshToken: stringValue(entry?.refresh_token) ?? stringValue(entry?.refreshToken),
       scope,
       sourcePath,
-      teamId: stringValue(entry?.team_id) ?? stringValue(entry?.teamId),
     };
   }
   return undefined;
