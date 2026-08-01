@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import ProviderPanel from './ProviderPanel';
@@ -146,7 +146,8 @@ describe('ProviderPanel version slot', () => {
     fireEvent.click(screen.getByRole('button', { name: /Claude Code/i }));
     expect(await screen.findByText('op@example.com')).toBeTruthy();
     expect(screen.getByText('80%')).toBeTruthy();
-    expect(screen.getByText('cached')).toBeTruthy();
+    // Usage-row `stale` must not surface as "cached" (confusing to operators).
+    expect(screen.queryByText('cached')).toBeNull();
   });
 
   it('shows the global Kimi context limit and saves the recommended cap', async () => {

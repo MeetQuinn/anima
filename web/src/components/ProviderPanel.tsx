@@ -194,7 +194,7 @@ function windowSummary(windows: ProviderUsageWindow[], max = 2): string {
 }
 
 /** Fixed-slot meters: label sits tight next to %, columns align across rows. */
-function OtherAccountMeters({ windows, stale }: { windows: ProviderUsageWindow[]; stale?: boolean }) {
+function OtherAccountMeters({ windows }: { windows: ProviderUsageWindow[] }) {
   const items = windows
     .map((w) => {
       const pct = remainingOf(w);
@@ -226,7 +226,6 @@ function OtherAccountMeters({ windows, stale }: { windows: ProviderUsageWindow[]
           <span className={pctColor(long.pct)}>{long.pct}%</span>
         </>
       )}
-      {stale ? <span className="col-span-4 text-[10px] text-text-subtle">cached</span> : null}
     </span>
   );
 }
@@ -242,8 +241,8 @@ function providerCollapsedSummary(usages: ProviderUsageRow[]): string {
   }
   const sum = windowSummary(active.windows, 2);
   const n = usages.length;
-  const summary = n > 1 ? (sum ? `${sum} · ${n} accounts` : `${n} accounts`) : (sum || 'Available');
-  return active.stale ? `${summary} · cached` : summary;
+  // Intentionally ignore usage-row `stale`: surfacing "cached" confuses operators.
+  return n > 1 ? (sum ? `${sum} · ${n} accounts` : `${n} accounts`) : (sum || 'Available');
 }
 
 /** One quiet key/value line inside the Details disclosure. */
@@ -363,7 +362,7 @@ function ActiveAccountCard({
 
   return (
     <div className="rounded-md border border-border-soft bg-surface-raised px-3.5 py-3 shadow-lift">
-      {(name || plan || usage.stale) && (
+      {(name || plan) && (
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {name && (
             <span className="min-w-0 truncate font-mono text-[12px] text-text" title={name}>
@@ -374,9 +373,6 @@ function ActiveAccountCard({
             <span className="shrink-0 rounded-full border border-border-soft px-2 py-0.5 font-sans text-[10px] font-medium uppercase tracking-wide text-text-muted">
               {plan}
             </span>
-          )}
-          {usage.stale && (
-            <span className="shrink-0 font-sans text-[10px] text-text-subtle">cached</span>
           )}
         </div>
       )}
@@ -479,7 +475,7 @@ function OtherAccountRow({
       {/* 1.75+2.25+3.25+2.25 + gaps ≈ 10.5rem */}
       <div className="hidden w-[11rem] shrink-0 sm:block">
         {usage.status === 'available' ? (
-          <OtherAccountMeters windows={usage.windows} stale={usage.stale} />
+          <OtherAccountMeters windows={usage.windows} />
         ) : (
           <span className="font-mono text-[11px] text-text-subtle">—</span>
         )}
