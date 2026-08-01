@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ProviderUsageRow } from '@shared/provider-usage';
 import UsagePanel from './UsagePanel';
@@ -114,7 +114,23 @@ function renderPanel() {
   );
 }
 
+async function expandClaude(): Promise<void> {
+  // Cold start collapses every provider; open Claude to reach account rows.
+  const toggle = await screen.findByRole('button', { name: /Claude Code/i });
+  if (toggle.getAttribute('aria-expanded') !== 'true') {
+    fireEvent.click(toggle);
+  }
+  expect(toggle.getAttribute('aria-expanded')).toBe('true');
+}
+
 describe('UsagePanel Claude account selection', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    accountState.value.status = 'active';
+    accountState.value.errorAgentIds = [];
+    accountState.value.pendingAgentIds = [];
+  });
+
   it('shows every account with its own meters and confirms a global resumable switch', async () => {
     accountState.value.status = 'active';
     accountState.value.errorAgentIds = [];
@@ -127,16 +143,17 @@ describe('UsagePanel Claude account selection', () => {
       status: 'active',
     });
     renderPanel();
+    await expandClaude();
 
-    // Both accounts render with their own numbers; the active one is badged.
+    // Featured active account + other account row (no Active chip).
     expect(await screen.findByText('secondary@example.com')).toBeTruthy();
     expect(screen.getByText('primary@example.com')).toBeTruthy();
-    expect(screen.getByText('Active')).toBeTruthy();
+    expect(screen.queryByText('Active')).toBeNull();
     expect(screen.getByText('88%')).toBeTruthy();
-    expect(screen.getByText('64%')).toBeTruthy();
+    expect(screen.getAllByText(/5h 64%/).length).toBeGreaterThan(0);
 
-    // Switching is a deliberate button on the non-active account's block.
-    fireEvent.click(screen.getByRole('button', { name: 'Set active' }));
+    // Use is inline on the non-active account row.
+    fireEvent.click(screen.getByRole('button', { name: 'Use' }));
     expect(await screen.findByText('Switch to primary@example.com?')).toBeTruthy();
     expect(screen.getByText(/Active Claude turns are requeued to resume after the account reload/)).toBeTruthy();
     expect(screen.getByText(/sessions, MCP servers, and shared state stay in place/)).toBeTruthy();
@@ -205,6 +222,7 @@ describe('UsagePanel Claude account selection', () => {
       usageRows.value[1]!,
     ];
     renderPanel();
+    await expandClaude();
 
     expect(await screen.findByText('Auth expired')).toBeTruthy();
     expect(screen.getByText('secondary@example.com')).toBeTruthy();
@@ -218,7 +236,7 @@ describe('UsagePanel Claude account selection', () => {
       status: 'failed',
       updatedAt: '2026-07-19T13:00:00.000Z',
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Sign in again' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     expect(await screen.findByRole('dialog', { name: 'Sign in to primary@example.com' })).toBeTruthy();
     await waitFor(() => expect(api.startClaudeAccountLogin).toHaveBeenCalledWith({ accountId: 'primary' }));
   });

@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import UsagePanel from './UsagePanel';
 
@@ -127,16 +127,23 @@ function renderPanel() {
 }
 
 describe('UsagePanel version slot', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
   it('says "version unknown", not "not installed", when a binary exists but its version is unverified', async () => {
     renderPanel();
 
-    // Binary-present/version-unverified row: honest wording, meters intact.
+    // Collapsed rows surface version honesty without expanding.
     expect(await screen.findByText('version unknown')).toBeTruthy();
-    expect(await screen.findByText('op@example.com')).toBeTruthy();
-
     // `not installed` renders exactly once - for the genuinely absent binary.
     const notInstalled = await screen.findAllByText('not installed');
     expect(notInstalled).toHaveLength(1);
+
+    // Expand Claude to confirm meters still sit next to the unverified binary.
+    fireEvent.click(screen.getByRole('button', { name: /Claude Code/i }));
+    expect(await screen.findByText('op@example.com')).toBeTruthy();
+    expect(screen.getByText('80%')).toBeTruthy();
   });
 
   it('shows the global Kimi context limit and saves the recommended cap', async () => {
@@ -151,6 +158,10 @@ describe('UsagePanel version slot', () => {
       ],
     });
     renderPanel();
+
+    // Context limit lives under the provider accordion → Settings disclosure.
+    fireEvent.click(await screen.findByRole('button', { name: /Kimi CLI/i }));
+    fireEvent.click(screen.getByText(/Settings & details/i));
 
     const select = await screen.findByRole('combobox', { name: 'Kimi CLI context limit' });
     expect((select as HTMLSelectElement).value).toBe('no-anima-limit');
