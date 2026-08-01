@@ -538,8 +538,9 @@ function ProviderUnit({
     || staleSessions
     || accountSwitching
     || accountSwitchFailed;
-  // Attention forces open so switch/update errors are never trapped behind a fold.
-  const open = expanded || needsAttention;
+  // Attention does not force-open: collapsed state is user-controlled. When
+  // folded, the header summary shows "Needs attention" instead (below).
+  const open = expanded;
   const collapsedSummary = providerCollapsedSummary(sortedUsages);
 
   return (
