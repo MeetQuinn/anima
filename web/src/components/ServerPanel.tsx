@@ -15,7 +15,7 @@ interface Props {
 
 /**
  * Server panel — the static server-identity facts. Provider usage moved to its
- * own UsagePanel (see #server-usage-split); what remains is a status hero plus
+ * own ProviderPanel (see #server-usage-split); what remains is a status hero plus
  * a key-value meta list:
  *
  *   Status hero — health + uptime, with Restart as the hero action

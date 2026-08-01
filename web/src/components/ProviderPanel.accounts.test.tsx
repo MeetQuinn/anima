@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ProviderUsageRow } from '@shared/provider-usage';
-import UsagePanel from './UsagePanel';
+import ProviderPanel from './ProviderPanel';
 
 const api = vi.hoisted(() => ({
   cancelClaudeAccountLogin: vi.fn(),
@@ -111,7 +111,7 @@ function renderPanel() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <UsagePanel onClose={() => {}} />
+      <ProviderPanel onClose={() => {}} />
     </QueryClientProvider>,
   );
 }
@@ -125,7 +125,7 @@ async function expandClaude(): Promise<void> {
   expect(toggle.getAttribute('aria-expanded')).toBe('true');
 }
 
-describe('UsagePanel Claude account selection', () => {
+describe('ProviderPanel Claude account selection', () => {
   beforeEach(() => {
     window.localStorage.clear();
     accountState.value.status = 'active';
@@ -176,6 +176,7 @@ describe('UsagePanel Claude account selection', () => {
       status: 'switching',
     });
     renderPanel();
+    await expandClaude();
 
     expect(await screen.findByText('Account switch failed: iris')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -197,6 +198,7 @@ describe('UsagePanel Claude account selection', () => {
       status: 'active',
     });
     renderPanel();
+    await expandClaude();
 
     expect(await screen.findByText('Switching account · waiting for 2 agents')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));

@@ -121,25 +121,20 @@ function splitExtras(extras: ProviderUsageExtra[]): {
   };
 }
 
-function installSourceLabel(source: ProviderCliRow['installSource']): string {
-  if (source === 'claude-native') return 'Native';
-  if (source === 'codex-npm-global') return 'Global npm';
-  if (source === 'kimi-native') return 'Native';
-  if (source === 'grok-native') return 'Native';
-  if (source === 'opencode-brew') return 'Homebrew';
-  return 'Unknown source';
-}
 
 function formatContextTokens(tokens: number): string {
   if (tokens % 1024 === 0) return `${tokens / 1024}k`;
   return `${Math.round(tokens / 1_000)}k`;
 }
 
-const EXPANDED_PROVIDERS_KEY = 'anima.usagePanel.expandedProviders';
+const EXPANDED_PROVIDERS_KEY = 'anima.providerPanel.expandedProviders';
+const LEGACY_EXPANDED_PROVIDERS_KEY = 'anima.usagePanel.expandedProviders';
 
 function loadExpandedProviders(): Record<string, true> {
   try {
-    const raw = window.localStorage.getItem(EXPANDED_PROVIDERS_KEY);
+    const raw =
+      window.localStorage.getItem(EXPANDED_PROVIDERS_KEY)
+      ?? window.localStorage.getItem(LEGACY_EXPANDED_PROVIDERS_KEY);
     if (!raw) return {};
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
@@ -207,19 +202,6 @@ function providerCollapsedSummary(usages: ProviderUsageRow[]): string {
 }
 
 /** One quiet key/value line inside the Details disclosure. */
-function DetailRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex min-w-0 items-baseline gap-2">
-      <span className="w-20 shrink-0 font-sans text-[10px] text-text-subtle">{label}</span>
-      <span
-        className={`min-w-0 truncate text-[10px] text-text-muted ${mono ? 'font-mono' : 'font-sans'}`}
-        title={value}
-      >
-        {value}
-      </span>
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Brand marks — official simple-icons path data (24×24 viewBox), vendored so
@@ -529,7 +511,6 @@ function ProviderUnit({
   const staleSessions =
     operation?.status === 'succeeded' &&
     runningAgents.some((agent) => agent.runningVersion !== management.installedVersion);
-  const versionCheckFailed = management.state === 'error' || Boolean(management.checkError);
   const accountSwitching = accountState?.status === 'switching';
   const accountSwitchFailed = accountState?.status === 'error';
   // "Update available" is routine maintenance, not attention — keep it out of
@@ -695,97 +676,46 @@ function ProviderUnit({
             </div>
           )}
 
-          <details className="group">
-            <summary className="flex cursor-pointer list-none items-center gap-1 font-sans text-[10px] uppercase tracking-[0.08em] text-text-subtle hover:text-text-muted">
-              <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
-              Settings & details
-              {management.agents.length > 0 && (
-                <span className="normal-case tracking-normal">
-                  · {management.agents.length} {management.agents.length === 1 ? 'agent' : 'agents'}
-                </span>
-              )}
-            </summary>
-            <div className="mt-2 space-y-4 border-l border-border-soft pl-3">
-              {accountState && (
-                <button
-                  type="button"
-                  onClick={onAddAccount}
-                  className="inline-flex min-h-[40px] items-center gap-1.5 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          {accountState && (
+            <button
+              type="button"
+              onClick={onAddAccount}
+              className="inline-flex min-h-[36px] items-center gap-1.5 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            >
+              <UserPlus className="h-3.5 w-3.5" />
+              Add account
+            </button>
+          )}
+          {contextLimit && (
+            <div className="space-y-1">
+              <label className="block font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
+                Context limit
+                <select
+                  aria-label={`${management.label} context limit`}
+                  className="mt-1.5 block min-h-[40px] w-full rounded-sm border border-border-soft bg-surface-elevated px-3 font-sans text-[12px] text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-wait disabled:opacity-60"
+                  disabled={contextLimitSaving}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    onContextLimitChange(value === 'no-anima-limit' ? null : Number(value));
+                  }}
+                  value={contextLimit.maxTokens ?? 'no-anima-limit'}
                 >
-                  <UserPlus className="h-3.5 w-3.5" />
-                  Add account
-                </button>
+                  <option value="no-anima-limit">No Anima limit</option>
+                  {contextLimit.presets.map((preset) => (
+                    <option key={preset} value={preset}>
+                      {formatContextTokens(preset)}
+                      {preset === contextLimit.recommended ? ' · recommended' : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {contextLimitError && (
+                <p className="font-sans text-[10px] leading-relaxed text-health-error">
+                  {contextLimitError}
+                </p>
               )}
-              {contextLimit && (
-                <div className="space-y-1.5">
-                  <label className="block font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
-                    Context limit
-                    <select
-                      aria-label={`${management.label} context limit`}
-                      className="mt-1.5 block min-h-[44px] w-full rounded-sm border border-border-soft bg-surface-elevated px-3 font-sans text-[12px] text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-wait disabled:opacity-60"
-                      disabled={contextLimitSaving}
-                      onChange={(event) => {
-                        const value = event.currentTarget.value;
-                        onContextLimitChange(value === 'no-anima-limit' ? null : Number(value));
-                      }}
-                      value={contextLimit.maxTokens ?? 'no-anima-limit'}
-                    >
-                      <option value="no-anima-limit">No Anima limit</option>
-                      {contextLimit.presets.map((preset) => (
-                        <option key={preset} value={preset}>
-                          {formatContextTokens(preset)}
-                          {preset === contextLimit.recommended ? ' · recommended' : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <p className="font-sans text-[10px] leading-relaxed text-text-subtle">
-                    Global for every agent. Applies when its provider session next starts.
-                  </p>
-                  {contextLimitError && (
-                    <p className="font-sans text-[10px] leading-relaxed text-health-error">
-                      {contextLimitError}
-                    </p>
-                  )}
-                </div>
-              )}
-              <div className="space-y-1.5">
-                {management.installedVersion && <DetailRow label="Version" value={`v${management.installedVersion}`} mono />}
-                {management.binaryPath && <DetailRow label="Binary" value={management.binaryPath} mono />}
-                {management.binaryPath && <DetailRow label="Source" value={installSourceLabel(management.installSource)} />}
-                {management.autoUpdatesEnabled !== undefined && (
-                  <DetailRow
-                    label="Auto-update"
-                    value={`${management.autoUpdatesEnabled ? 'on' : 'off'}${management.autoUpdateChannel ? ` · ${management.autoUpdateChannel}` : ''}`}
-                  />
-                )}
-                {management.sourceDetail && management.updateMode !== 'managed' && (
-                  <p className="font-sans text-[10px] leading-relaxed text-text-muted">{management.sourceDetail}</p>
-                )}
-                {versionCheckFailed && (
-                  <p className="font-sans text-[10px] leading-relaxed text-text-muted">
-                    Version check failed{management.checkError ? ` · ${management.checkError.message}` : ''}
-                  </p>
-                )}
-                {management.agents.length > 0 && (
-                  <div className="space-y-1 pt-0.5">
-                    {management.agents.map((agent) => (
-                      <div key={agent.id} className="flex min-w-0 items-baseline justify-between gap-3">
-                        <span className="truncate font-sans text-[11px] text-text-muted">{agent.name}</span>
-                        <span className="shrink-0 font-mono text-[10px] text-text-subtle">
-                          {agent.runningVersion
-                            ? `running v${agent.runningVersion}`
-                            : agent.enabled
-                              ? 'next session'
-                              : 'disabled'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
             </div>
-          </details>
+          )}
         </div>
       )}
     </div>
@@ -808,10 +738,10 @@ function UsageSkeleton() {
 }
 
 // ---------------------------------------------------------------------------
-// UsagePanel
+// ProviderPanel
 // ---------------------------------------------------------------------------
 
-export default function UsagePanel({ onClose }: Props) {
+export default function ProviderPanel({ onClose }: Props) {
   const queryClient = useQueryClient();
   const { confirm, modal } = useConfirm();
   const [loginTarget, setLoginTarget] = useState<ProviderAccountSummary | 'new'>();

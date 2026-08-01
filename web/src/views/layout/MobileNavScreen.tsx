@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, Gauge, GripVertical, Pencil, Plus, Server } from 'lucide-react';
+import { Boxes, Check, ChevronDown, GripVertical, Pencil, Plus, Server } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DndContext, closestCenter } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -11,9 +11,8 @@ import { useAgentStatuses } from '@/hooks/useAgentDirectory';
 import { useSidebarOrder } from '@/hooks/useSidebarOrder';
 import { useCurrentTeam, useTeams } from '@/hooks/useTeams';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
-import { useProviderCliStatus } from '@/hooks/useProviderCliStatus';
 import ServerPanel from '@/components/ServerPanel';
-import UsagePanel from '@/components/UsagePanel';
+import ProviderPanel from '@/components/ProviderPanel';
 import { AgentCreateModal, AddKbModal } from './Sidebar';
 import { AgentRow } from './sidebar/AgentRow';
 import { KbRow, isKbActive } from './sidebar/KbRow';
@@ -74,7 +73,7 @@ export default function MobileNavScreen({
   const [showCreateTeamModal, setShowCreateTeamModal] = useState(false);
   const [editTeam, setEditTeam] = useState<TeamConfig | null>(null);
   const [serverPanelOpen, setServerPanelOpen] = useState(false);
-  const [usagePanelOpen, setUsagePanelOpen] = useState(false);
+  const [providerPanelOpen, setProviderPanelOpen] = useState(false);
   const multiTeam = teams.length > 1;
   const currentTeam = teams.find((t) => t.id === currentTeamId) ?? teams[0];
   // Resting indicator — accent dot on the Server footer when a system update is
@@ -83,8 +82,6 @@ export default function MobileNavScreen({
   // resting hint that an update exists. Reuses the panel's deduped query (no extra
   // request); clears once the user upgrades.
   const updateAvailable = useUpdateAvailable();
-  const { data: providerCliStatus } = useProviderCliStatus();
-  const providerUpdateAvailable = providerCliStatus?.providers.some((row) => row.updateAvailable) ?? false;
   // Restore scroll position when returning from detail screen.
   useEffect(() => {
     const saved = sessionStorage.getItem(MOBILE_SCROLL_KEY);
@@ -343,15 +340,12 @@ export default function MobileNavScreen({
         style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 0.25rem)' }}
       >
         <button
-          onClick={() => setUsagePanelOpen(true)}
-          title={providerUpdateAvailable ? 'Providers — update available' : 'Providers'}
+          onClick={() => setProviderPanelOpen(true)}
+          title="Providers"
           className="chrome flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-sm px-2.5 text-[11px] uppercase tracking-[0.1em] text-text-on-spine-muted transition-colors hover:bg-spine-elevated hover:text-text-on-spine"
         >
-          <Gauge className="h-3.5 w-3.5" />
+          <Boxes className="h-3.5 w-3.5" />
           <span>Providers</span>
-          {providerUpdateAvailable && (
-            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-accent" />
-          )}
         </button>
         <button
           onClick={() => setServerPanelOpen(true)}
@@ -388,7 +382,7 @@ export default function MobileNavScreen({
         />
       )}
       {serverPanelOpen && <ServerPanel onClose={() => setServerPanelOpen(false)} />}
-      {usagePanelOpen && <UsagePanel onClose={() => setUsagePanelOpen(false)} />}
+      {providerPanelOpen && <ProviderPanel onClose={() => setProviderPanelOpen(false)} />}
 
       {showCreateTeamModal && (
         <CreateTeamModal

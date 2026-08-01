@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronLeft, Gauge, Plus, Server } from 'lucide-react';
+import { Boxes, ChevronLeft, Plus, Server } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -14,7 +14,7 @@ import { parseLocation } from '@/lib/url-state';
 import { useLocation, useNavigate } from 'react-router-dom';
 import AnimaIcon from '@/components/AnimaIcon';
 import ServerPanel from '@/components/ServerPanel';
-import UsagePanel from '@/components/UsagePanel';
+import ProviderPanel from '@/components/ProviderPanel';
 import { removeKb, renameKb } from '@/api/kb';
 import { queryClient } from '@/query-client';
 import { queryKeys } from '@/lib/query-keys';
@@ -25,7 +25,6 @@ import type { TeamConfig } from '@/api/teams';
 import { TeamSwitcher } from './sidebar/TeamSwitcher';
 import { CreateTeamModal, EditTeamModal } from './sidebar/TeamModals';
 import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
-import { useProviderCliStatus } from '@/hooks/useProviderCliStatus';
 import { agentColor, initialOf } from '@/lib/avatars';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
@@ -157,15 +156,13 @@ export default function Sidebar({
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
 
-  // Server + Usage panels
+  // Server + Providers panels
   const [serverPanelOpen, setServerPanelOpen] = useState(false);
-  const [usagePanelOpen, setUsagePanelOpen] = useState(false);
+  const [providerPanelOpen, setProviderPanelOpen] = useState(false);
   // Resting indicator — a subtle accent dot on the Server trigger when a system
   // update is available. Reuses the panel's query (deduped by key), so no extra
   // request; the dot disappears once the user opens the panel and upgrades.
   const updateAvailable = useUpdateAvailable();
-  const { data: providerCliStatus } = useProviderCliStatus();
-  const providerUpdateAvailable = providerCliStatus?.providers.some((row) => row.updateAvailable) ?? false;
 
   function openKebab(e: React.MouseEvent<HTMLButtonElement>, id: string) {
     e.stopPropagation();
@@ -362,14 +359,11 @@ export default function Sidebar({
           {/* Footer — Providers above Server. */}
           <div className="shrink-0 border-t border-spine-border py-1.5 flex flex-col items-center gap-1">
             <button
-              onClick={() => setUsagePanelOpen((v) => !v)}
-              title={providerUpdateAvailable ? 'Providers — update available' : 'Providers'}
+              onClick={() => setProviderPanelOpen((v) => !v)}
+              title="Providers"
               className="relative flex h-8 w-8 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             >
-              <Gauge className="h-3.5 w-3.5" />
-              {providerUpdateAvailable && (
-                <span aria-hidden className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-accent ring-1 ring-spine-border" />
-              )}
+              <Boxes className="h-3.5 w-3.5" />
             </button>
             <button
               data-server-panel-trigger
@@ -535,15 +529,12 @@ export default function Sidebar({
           {/* Footer — Providers above Server. */}
           <div className="border-t border-spine-border p-2 space-y-0.5">
             <button
-              onClick={() => setUsagePanelOpen((v) => !v)}
+              onClick={() => setProviderPanelOpen((v) => !v)}
               className="chrome flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-2.5 text-left text-[11px] uppercase tracking-[0.1em] text-text-on-spine-muted transition-colors hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              title={providerUpdateAvailable ? 'Providers — update available' : 'Providers'}
+              title="Providers"
             >
-              <Gauge className="h-3.5 w-3.5" />
+              <Boxes className="h-3.5 w-3.5" />
               <span>Providers</span>
-              {providerUpdateAvailable && (
-                <span aria-hidden className="ml-auto h-1.5 w-1.5 rounded-full bg-accent" />
-              )}
             </button>
             <button
               data-server-panel-trigger
@@ -644,7 +635,7 @@ export default function Sidebar({
       )}
 
       {serverPanelOpen && <ServerPanel onClose={() => setServerPanelOpen(false)} />}
-      {usagePanelOpen && <UsagePanel onClose={() => setUsagePanelOpen(false)} />}
+      {providerPanelOpen && <ProviderPanel onClose={() => setProviderPanelOpen(false)} />}
     </>
   );
 }

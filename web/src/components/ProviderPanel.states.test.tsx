@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import UsagePanel from './UsagePanel';
+import ProviderPanel from './ProviderPanel';
 
 const contextApi = vi.hoisted(() => ({
   save: vi.fn(),
@@ -123,12 +123,12 @@ function renderPanel() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <UsagePanel onClose={() => {}} />
+      <ProviderPanel onClose={() => {}} />
     </QueryClientProvider>,
   );
 }
 
-describe('UsagePanel version slot', () => {
+describe('ProviderPanel version slot', () => {
   beforeEach(() => {
     window.localStorage.clear();
   });
@@ -162,16 +162,12 @@ describe('UsagePanel version slot', () => {
     });
     renderPanel();
 
-    // Context limit lives under the provider accordion → Settings disclosure.
+    // Context limit is shown when the provider accordion is expanded.
     fireEvent.click(await screen.findByRole('button', { name: /Kimi CLI/i }));
-    fireEvent.click(screen.getByText(/Settings & details/i));
 
     const select = await screen.findByRole('combobox', { name: 'Kimi CLI context limit' });
     expect((select as HTMLSelectElement).value).toBe('no-anima-limit');
     expect(screen.getByRole('option', { name: 'No Anima limit' })).toBeTruthy();
-    expect(
-      screen.getByText('Global for every agent. Applies when its provider session next starts.'),
-    ).toBeTruthy();
     fireEvent.change(select, { target: { value: '262144' } });
     await waitFor(() => expect(contextApi.save).toHaveBeenCalledWith('kimi-cli', 262144));
   });
