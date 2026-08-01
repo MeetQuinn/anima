@@ -982,7 +982,7 @@ export default function UsagePanel({ onClose }: Props) {
             className={[
               'relative flex h-full w-full flex-col bg-surface',
               'md:absolute md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2',
-              'md:h-auto md:max-h-[calc(100dvh-4rem)] md:w-[min(32.5rem,calc(100vw-2rem))] md:max-w-none md:rounded-sm md:border md:border-border-soft md:shadow-deep',
+              'md:h-auto md:max-h-[calc(100dvh-4rem)] md:w-[min(520px,calc(100vw-2rem))] md:max-w-none md:rounded-sm md:border md:border-border-soft md:shadow-deep',
             ].join(' ')}
             style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
           >
