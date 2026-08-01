@@ -26,6 +26,13 @@ import type {
 import type { ClaudeCodeAccountState, ProviderAccountSummary } from '@shared/provider-accounts';
 import type { ProviderContextLimitRow } from '@shared/provider-context-limits';
 import ClaudeAccountLoginModal from './ClaudeAccountLoginModal';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 interface Props {
   onClose: () => void;
@@ -752,28 +759,49 @@ function ProviderUnit({
             </button>
           )}
           {contextLimit && (
-            <div className="space-y-1">
-              <label className="block font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
+            <div className="space-y-1.5">
+              <span className="block font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
                 Context limit
-                <select
+              </span>
+              <Select
+                value={
+                  contextLimit.maxTokens === null || contextLimit.maxTokens === undefined
+                    ? 'no-anima-limit'
+                    : String(contextLimit.maxTokens)
+                }
+                onValueChange={(value) => {
+                  if (value == null) return;
+                  onContextLimitChange(value === 'no-anima-limit' ? null : Number(value));
+                }}
+                disabled={contextLimitSaving}
+              >
+                <SelectTrigger
                   aria-label={`${management.label} context limit`}
-                  className="mt-1.5 block min-h-[40px] w-full rounded-sm border border-border-soft bg-surface-elevated px-3 font-sans text-[12px] text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-wait disabled:opacity-60"
-                  disabled={contextLimitSaving}
-                  onChange={(event) => {
-                    const value = event.currentTarget.value;
-                    onContextLimitChange(value === 'no-anima-limit' ? null : Number(value));
-                  }}
-                  value={contextLimit.maxTokens ?? 'no-anima-limit'}
+                  className="h-9 w-full min-w-0 border-border-soft bg-surface-elevated font-sans text-[12px] text-text shadow-none"
                 >
-                  <option value="no-anima-limit">No Anima limit</option>
+                  <SelectValue>
+                    {(value: string | null) => {
+                      if (!value || value === 'no-anima-limit') return 'No Anima limit';
+                      const n = Number(value);
+                      if (!Number.isFinite(n)) return value;
+                      return `${formatContextTokens(n)}${
+                        n === contextLimit.recommended ? ' · recommended' : ''
+                      }`;
+                    }}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent align="start" className="z-[80]">
+                  <SelectItem value="no-anima-limit" className="font-sans text-[12px]">
+                    No Anima limit
+                  </SelectItem>
                   {contextLimit.presets.map((preset) => (
-                    <option key={preset} value={preset}>
+                    <SelectItem key={preset} value={String(preset)} className="font-sans text-[12px]">
                       {formatContextTokens(preset)}
                       {preset === contextLimit.recommended ? ' · recommended' : ''}
-                    </option>
+                    </SelectItem>
                   ))}
-                </select>
-              </label>
+                </SelectContent>
+              </Select>
               {contextLimitError && (
                 <p className="font-sans text-[10px] leading-relaxed text-health-error">
                   {contextLimitError}
