@@ -153,7 +153,9 @@ describe('ProviderPanel Claude account selection', () => {
     expect(screen.getByText('primary@example.com')).toBeTruthy();
     expect(screen.queryByText('Active')).toBeNull();
     expect(screen.getByText('88%')).toBeTruthy();
-    expect(screen.getAllByText(/5h 64%/).length).toBeGreaterThan(0);
+    // Meter labels and percents are separate fixed slots (aligned across rows).
+    expect(screen.getAllByText('5h').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('64%').length).toBeGreaterThan(0);
 
     // Use is inline on the non-active account row.
     fireEvent.click(screen.getByRole('button', { name: 'Use' }));

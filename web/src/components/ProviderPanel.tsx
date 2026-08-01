@@ -186,6 +186,31 @@ function windowSummary(windows: ProviderUsageWindow[], max = 2): string {
   return parts.join(' · ');
 }
 
+/** Fixed-slot meter cells so "5h" / "Weekly" line up across other-account rows. */
+function OtherAccountMeters({ windows, stale }: { windows: ProviderUsageWindow[]; stale?: boolean }) {
+  const items = windows
+    .slice(0, 2)
+    .map((w) => {
+      const pct = remainingOf(w);
+      return pct === undefined ? null : { label: w.label, pct };
+    })
+    .filter((item): item is { label: string; pct: number } => item !== null);
+  if (items.length === 0) {
+    return <span className="font-mono text-[11px] text-text-subtle">—</span>;
+  }
+  return (
+    <span className="inline-flex items-baseline gap-x-3 font-mono text-[11px] tabular-nums">
+      {items.map((item) => (
+        <span key={item.label} className="inline-grid grid-cols-[2.5rem_2.75rem] items-baseline gap-x-1">
+          <span className="truncate text-text-subtle">{item.label}</span>
+          <span className={pctColor(item.pct)}>{item.pct}%</span>
+        </span>
+      ))}
+      {stale ? <span className="text-text-subtle">cached</span> : null}
+    </span>
+  );
+}
+
 function providerCollapsedSummary(usages: ProviderUsageRow[]): string {
   const active = usages.find((u) => u.active) ?? usages[0];
   if (!active) return 'Not configured';
@@ -411,45 +436,95 @@ function OtherAccountRow({
     summary
     && (summary.status === 'not_configured' || usage.error?.type === 'unauthorized'),
   );
-  const meterSummary = usage.status === 'available' ? windowSummary(usage.windows, 2) : null;
-  const meters = meterSummary && usage.stale ? `${meterSummary} · cached` : meterSummary;
-
+  // Parent OtherAccountsList owns the shared grid so "5h" lines up across rows.
+  const cellBorder = 'border-b border-border-soft/60 last-of-type:border-b-0';
   return (
-    <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(5.5rem,1fr)_auto_auto] items-center gap-x-3 gap-y-1 rounded-md px-2 py-2 hover:bg-surface-elevated/70 sm:grid-cols-[minmax(0,1.2fr)_minmax(8rem,1.2fr)_auto_auto]">
-      <span className="min-w-0 truncate font-mono text-[11px] text-text" title={name}>
+    <div className="contents">
+      <span
+        className={`min-w-0 truncate px-2 py-2 font-mono text-[11px] text-text ${cellBorder}`}
+        title={name}
+      >
         {name}
       </span>
-      <span className="min-w-0 truncate font-sans text-[11px] text-text-muted" title={plan ?? undefined}>
-        {plan ?? (usage.status !== 'available' ? (
-          usage.error?.type === 'unauthorized' ? 'Auth expired' : 'Unavailable'
-        ) : '—')}
+      <span
+        className={`min-w-0 truncate px-1 py-2 font-sans text-[11px] text-text-muted ${cellBorder}`}
+        title={plan ?? undefined}
+      >
+        {plan ??
+          (usage.status !== 'available'
+            ? usage.error?.type === 'unauthorized'
+              ? 'Auth expired'
+              : 'Unavailable'
+            : '—')}
       </span>
-      <span className="hidden font-mono text-[11px] tabular-nums text-text-subtle sm:inline">
-        {meters ?? '—'}
+      <span className={`hidden py-2 sm:inline ${cellBorder}`}>
+        {usage.status === 'available' ? (
+          <OtherAccountMeters windows={usage.windows} stale={usage.stale} />
+        ) : (
+          <span className="font-mono text-[11px] text-text-subtle">—</span>
+        )}
       </span>
-      {canSignIn && summary ? (
-        <button
-          type="button"
-          onClick={() => onLoginAccount(summary)}
-          className="relative shrink-0 justify-self-end font-sans text-[11px] font-semibold text-text-muted after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[''] hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-        >
-          Sign in
-        </button>
-      ) : canSetActive && usage.accountId ? (
-        <button
-          type="button"
-          onClick={() => onSelectAccount(usage.accountId as string)}
-          className="relative shrink-0 justify-self-end font-sans text-[11px] font-semibold text-text-muted after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[''] hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-        >
-          Use
-        </button>
-      ) : (
-        <span className="w-8" />
-      )}
+      <span className={`flex items-center justify-end px-2 py-2 ${cellBorder}`}>
+        {canSignIn && summary ? (
+          <button
+            type="button"
+            onClick={() => onLoginAccount(summary)}
+            className="relative shrink-0 font-sans text-[11px] font-semibold text-text-muted after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[''] hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            Sign in
+          </button>
+        ) : canSetActive && usage.accountId ? (
+          <button
+            type="button"
+            onClick={() => onSelectAccount(usage.accountId as string)}
+            className="relative shrink-0 font-sans text-[11px] font-semibold text-text-muted after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[''] hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            Use
+          </button>
+        ) : (
+          <span className="w-8" />
+        )}
+      </span>
       {/* Mobile: meters under email */}
-      <span className="col-span-full font-mono text-[11px] tabular-nums text-text-subtle sm:hidden">
-        {meters}
+      <span
+        className={`col-span-full px-2 pb-2 font-mono text-[11px] tabular-nums text-text-subtle sm:hidden ${cellBorder}`}
+      >
+        {usage.status === 'available' ? (
+          <OtherAccountMeters windows={usage.windows} stale={usage.stale} />
+        ) : null}
       </span>
+    </div>
+  );
+}
+
+function OtherAccountsList({
+  accountState,
+  onLoginAccount,
+  onSelectAccount,
+  others,
+}: {
+  accountState?: ClaudeCodeAccountState;
+  onLoginAccount: (account: ProviderAccountSummary) => void;
+  onSelectAccount: (accountId: string) => void;
+  others: ProviderUsageRow[];
+}) {
+  return (
+    <div>
+      <div className="mb-1 font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
+        Other accounts
+      </div>
+      {/* One shared grid so email / plan / 5h columns align across rows. */}
+      <div className="grid grid-cols-[minmax(0,1.3fr)_minmax(7.5rem,1fr)_auto_auto] items-center gap-x-2 overflow-hidden rounded-md border border-border-soft/80 sm:grid-cols-[minmax(0,1.3fr)_minmax(9rem,1fr)_auto_auto]">
+        {others.map((row) => (
+          <OtherAccountRow
+            key={row.accountId ?? row.account}
+            accountState={accountState}
+            onLoginAccount={onLoginAccount}
+            onSelectAccount={onSelectAccount}
+            usage={row}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -652,22 +727,12 @@ function ProviderUnit({
                 usage={featured}
               />
               {others.length > 0 && (
-                <div>
-                  <div className="mb-1 font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
-                    Other accounts
-                  </div>
-                  <div className="divide-y divide-border-soft/60 rounded-md border border-border-soft/80">
-                    {others.map((row) => (
-                      <OtherAccountRow
-                        key={row.accountId ?? row.account}
-                        accountState={accountState}
-                        onLoginAccount={onLoginAccount}
-                        onSelectAccount={onSelectAccount}
-                        usage={row}
-                      />
-                    ))}
-                  </div>
-                </div>
+                <OtherAccountsList
+                  accountState={accountState}
+                  onLoginAccount={onLoginAccount}
+                  onSelectAccount={onSelectAccount}
+                  others={others}
+                />
               )}
             </div>
           ) : (
