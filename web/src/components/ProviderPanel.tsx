@@ -208,8 +208,12 @@ function OtherAccountMeters({ windows, stale }: { windows: ProviderUsageWindow[]
   return (
     <span className="inline-flex items-baseline gap-x-3 font-mono text-[11px] tabular-nums">
       {items.map((item) => (
-        <span key={item.label} className="inline-grid grid-cols-[2.5rem_2.75rem] items-baseline gap-x-1">
-          <span className="truncate text-text-subtle">{item.label}</span>
+        // Fixed label widths: "5h" fits ~1.75rem; "Weekly" needs ~3.25rem — never truncate.
+        <span
+          key={item.label}
+          className="inline-grid grid-cols-[3.25rem_2.5rem] items-baseline gap-x-1"
+        >
+          <span className="text-text-subtle">{item.label}</span>
           <span className={pctColor(item.pct)}>{item.pct}%</span>
         </span>
       ))}
@@ -463,7 +467,8 @@ function OtherAccountRow({
           </div>
         )}
       </div>
-      <div className="hidden w-[11.5rem] shrink-0 sm:block">
+      {/* ~3.25+2.5+gap twice ≈ 13.5rem — room for "5h" + "Weekly" without clip */}
+      <div className="hidden w-[14rem] shrink-0 sm:block">
         {usage.status === 'available' ? (
           <OtherAccountMeters windows={usage.windows} stale={usage.stale} />
         ) : (
