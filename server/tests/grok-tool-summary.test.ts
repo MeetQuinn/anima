@@ -71,3 +71,69 @@ test('Grok Shell still prefers command and description', () => {
     { command: 'ls -la', target: 'List files' },
   );
 });
+
+test('Grok TodoWrite summarizes count and status mix into target', () => {
+  assert.deepEqual(
+    summarizeGrokToolInput('TodoWrite', {
+      todos: [
+        { content: 'Fix path extract', status: 'completed' },
+        { content: 'Wire UI', status: 'in_progress' },
+        { content: 'Open PR', status: 'pending' },
+      ],
+    }),
+    { target: '3 items · 1 in progress · 1 pending · 1 done' },
+  );
+  // Meta input + title count fallback when rawInput is empty.
+  assert.deepEqual(
+    summarizeGrokToolInput(
+      'TodoWrite',
+      {},
+      {
+        title: 'Update todos (2 items)',
+        _meta: {
+          'x.ai/tool': {
+            input: {
+              todos: [{ content: 'A', status: 'pending' }, { content: 'B', status: 'pending' }],
+            },
+          },
+        },
+      },
+    ),
+    { target: '2 items · 2 pending' },
+  );
+  assert.deepEqual(
+    summarizeGrokToolInput('TodoWrite', {}, { title: 'Update todos (4 items)' }),
+    { target: '4 items' },
+  );
+});
+
+test('Grok StrReplaceFile recovers path from content diffs / locations when input omits it', () => {
+  assert.deepEqual(
+    summarizeGrokToolInput(
+      'StrReplaceFile',
+      { old_string: 'a', new_string: 'b' },
+      {
+        content: [
+          { type: 'diff', path: 'server/providers/grok.ts', oldText: 'a', newText: 'b' },
+        ],
+      },
+    ),
+    {
+      target: 'server/providers/grok.ts',
+      diff: '--- old\na\n+++ new\nb',
+    },
+  );
+  assert.deepEqual(
+    summarizeGrokToolInput(
+      'StrReplaceFile',
+      {},
+      { locations: [{ path: 'web/src/lib/activities.ts' }], title: 'Edit `other.ts`' },
+    ),
+    { target: 'web/src/lib/activities.ts' },
+  );
+  // Bare title without backticks.
+  assert.deepEqual(
+    summarizeGrokToolInput('StrReplaceFile', {}, { title: 'Edit path/to/file.ts' }),
+    { target: 'path/to/file.ts' },
+  );
+});

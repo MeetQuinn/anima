@@ -238,6 +238,36 @@ describe('activityRow', () => {
     });
   });
 
+  it('shows Grok TodoWrite / StrReplaceFile params in the narrative step row', () => {
+    const todos = activity({
+      providerToolName: 'TodoWrite',
+      target: '3 items · 1 in progress · 2 pending',
+      tool: 'grok.TodoWrite',
+    });
+    expect(isNarrativeStep(todos)).toBe(true);
+    expect(activityRow(todos)).toEqual({
+      title: 'Updated todos',
+      target: '3 items · 1 in progress · 2 pending',
+      color: 'var(--color-activity-tool)',
+      kind: 'tool',
+    });
+
+    const edited = activity({
+      diff: '--- old\nfoo\n+++ new\nbar',
+      providerToolName: 'StrReplaceFile',
+      target: 'server/providers/grok.ts',
+      tool: 'grok.StrReplaceFile',
+    });
+    expect(isNarrativeStep(edited)).toBe(true);
+    expect(activityRow(edited)).toEqual({
+      title: 'Edited',
+      target: 'server/providers/grok.ts',
+      targetFull: '--- old\nfoo\n+++ new\nbar',
+      color: 'var(--color-activity-tool)',
+      kind: 'tool',
+    });
+  });
+
   it('shows Codex web search query from nested action payloads', () => {
     expect(activityRow(activity({
       action: { query: 'activity tab\nsearched row query' },
