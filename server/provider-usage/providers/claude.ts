@@ -42,8 +42,26 @@ interface ClaudeCredentials {
   subscriptionType?: string;
 }
 
+const claudeUsageInFlight = new Map<
+  string,
+  Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>>
+>();
+
 export async function fetchClaudeUsage(
   input: { configDir?: string } = {},
+): Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>> {
+  const key = normalizedConfigDir(input.configDir) ?? homePath('.claude');
+  const existing = claudeUsageInFlight.get(key);
+  if (existing) return existing;
+  const pending = fetchClaudeUsageOnce(input).finally(() => {
+    if (claudeUsageInFlight.get(key) === pending) claudeUsageInFlight.delete(key);
+  });
+  claudeUsageInFlight.set(key, pending);
+  return pending;
+}
+
+async function fetchClaudeUsageOnce(
+  input: { configDir?: string },
 ): Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>> {
   const credentials = await readClaudeCredentials(input.configDir);
   if (!credentials) {
@@ -190,6 +208,7 @@ async function fetchClaudeUsageWithToken(token: string): ReturnType<typeof fetch
       'Content-Type': 'application/json',
       'anthropic-beta': CLAUDE_OAUTH_BETA_HEADER,
     },
+    telemetryLabel: 'claude-code',
     url: CLAUDE_USAGE_API,
   });
 }
@@ -213,6 +232,7 @@ async function refreshClaudeCredentials(
       'anthropic-beta': CLAUDE_OAUTH_BETA_HEADER,
     },
     method: 'POST',
+    telemetryLabel: 'claude-code',
     url: CLAUDE_REFRESH_TOKEN_API,
   });
   if (result.error) return { error: result.error };

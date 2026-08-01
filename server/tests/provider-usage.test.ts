@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { ProviderUsageService, claudeAccountUsageAdapter } from '../provider-usage/provider-usage.service.js';
-import { providerUsageNetworkErrorMessage } from '../provider-usage/http.js';
+import { fetchJson, providerUsageNetworkErrorMessage } from '../provider-usage/http.js';
 import { fetchClaudeUsage, parseClaudeUsageResponse } from '../provider-usage/providers/claude.js';
 import { fetchCodexUsage, parseCodexUsageResponse } from '../provider-usage/providers/codex.js';
 import {
@@ -438,6 +438,55 @@ test('Claude usage refreshes expired file credentials before fetching usage', as
   }
 });
 
+test('Claude usage coalesces concurrent refreshes for the same credential store', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-claude-singleflight-home-'));
+  await mkdir(join(home, '.claude'), { recursive: true });
+  await writeFile(
+    join(home, '.claude', '.credentials.json'),
+    JSON.stringify({
+      claudeAiOauth: {
+        accessToken: 'expired-concurrent-access',
+        expiresAt: Date.now() - 60_000,
+        refreshToken: 'rotating-refresh-token',
+      },
+    }),
+    'utf8',
+  );
+
+  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
+  const originalFetch = globalThis.fetch;
+  let refreshCalls = 0;
+  let usageCalls = 0;
+  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
+  globalThis.fetch = (async (url) => {
+    if (String(url) === 'https://platform.claude.com/v1/oauth/token') {
+      refreshCalls += 1;
+      return jsonResponse({
+        access_token: 'fresh-concurrent-access',
+        expires_in: 3600,
+        refresh_token: 'fresh-rotated-token',
+      });
+    }
+    usageCalls += 1;
+    return jsonResponse({
+      five_hour: { utilization: 7 },
+      limits: [],
+      seven_day: { utilization: 4 },
+    });
+  }) as typeof fetch;
+
+  try {
+    const [first, second] = await Promise.all([fetchClaudeUsage(), fetchClaudeUsage()]);
+    assert.equal(first.status, 'available');
+    assert.equal(second.status, 'available');
+    assert.equal(refreshCalls, 1);
+    assert.equal(usageCalls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
+  }
+});
+
 test('provider usage network errors are classified without raw fetch wording', () => {
   const abortError = new Error('This operation was aborted');
   abortError.name = 'AbortError';
@@ -451,6 +500,104 @@ test('provider usage network errors are classified without raw fetch wording', (
     providerUsageNetworkErrorMessage(new Error('fetch failed')),
     'Provider usage request could not reach the provider service.',
   );
+});
+
+test('provider usage HTTP retries transient GET failures and recovers', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    if (calls < 3) return jsonResponse({ error: 'busy' }, 503);
+    return jsonResponse({ ok: true });
+  }) as typeof fetch;
+
+  try {
+    const result = await fetchJson({
+      maxAttempts: 3,
+      retryBaseDelayMs: 1,
+      retryMaxDelayMs: 5,
+      timeoutMs: 100,
+      url: 'https://example.test/usage',
+    });
+    assert.equal(calls, 3);
+    assert.equal(result.error, undefined);
+    assert.deepEqual(result.data, { ok: true });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('provider usage HTTP does not retry before a long Retry-After window', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ error: 'rate limited' }), {
+      headers: { 'content-type': 'application/json', 'retry-after': '120' },
+      status: 429,
+    });
+  }) as typeof fetch;
+
+  try {
+    const result = await fetchJson({
+      maxAttempts: 3,
+      retryBaseDelayMs: 1,
+      retryMaxDelayMs: 5,
+      timeoutMs: 100,
+      url: 'https://example.test/usage',
+    });
+    assert.equal(calls, 1);
+    assert.equal(result.error?.attempts, 1);
+    assert.equal(result.error?.status, 429);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('provider usage HTTP timeout covers a body that stalls after headers', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(new ReadableStream({
+    start() {
+      // Headers arrive, but the body never produces bytes or closes.
+    },
+  }), { status: 200 })) as typeof fetch;
+
+  try {
+    const started = Date.now();
+    const result = await fetchJson({
+      maxAttempts: 1,
+      timeoutMs: 40,
+      url: 'https://example.test/usage',
+    });
+    assert.equal(result.error?.type, 'network_error');
+    assert.equal(result.error?.message, 'Provider usage request timed out.');
+    assert.ok(Date.now() - started < 2_000);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('provider usage HTTP classifies invalid JSON without retrying it', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return new Response('{not-json', { status: 200 });
+  }) as typeof fetch;
+
+  try {
+    const result = await fetchJson({
+      maxAttempts: 3,
+      retryBaseDelayMs: 1,
+      retryMaxDelayMs: 5,
+      timeoutMs: 100,
+      url: 'https://example.test/usage',
+    });
+    assert.equal(calls, 1);
+    assert.equal(result.error?.type, 'parse_error');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('provider usage service isolates adapter failures per provider', async () => {
@@ -476,6 +623,153 @@ test('provider usage service isolates adapter failures per provider', async () =
   assert.equal(response.providers[0]?.status, 'available');
   assert.equal(response.providers[1]?.status, 'unavailable');
   assert.equal(response.providers[1]?.error?.type, 'unknown');
+});
+
+test('provider usage service coalesces concurrent reads and caches the fresh result', async () => {
+  let calls = 0;
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const service = new ProviderUsageService([{
+    fetch: async () => {
+      calls += 1;
+      await gate;
+      return [{ extras: [], status: 'available', windows: [{ label: '5h', remainingPercent: 90 }] }];
+    },
+    label: 'Claude',
+    provider: 'claude-code',
+    source: 'private-api',
+  }]);
+
+  const first = service.list();
+  const second = service.list();
+  release?.();
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+  const cached = await service.list();
+
+  assert.equal(calls, 1);
+  assert.equal(firstResult.providers[0]?.windows[0]?.remainingPercent, 90);
+  assert.equal(secondResult.providers[0]?.windows[0]?.remainingPercent, 90);
+  assert.equal(cached.providers[0]?.windows[0]?.remainingPercent, 90);
+});
+
+test('provider usage service force refresh bypasses TTL cache', async () => {
+  let calls = 0;
+  const service = new ProviderUsageService([{
+    fetch: async () => {
+      calls += 1;
+      return [{ extras: [], status: 'available', windows: [{ label: '5h', remainingPercent: 90 - calls }] }];
+    },
+    label: 'Codex',
+    provider: 'codex-cli',
+    source: 'private-api',
+  }]);
+
+  assert.equal((await service.list()).providers[0]?.windows[0]?.remainingPercent, 89);
+  assert.equal((await service.list()).providers[0]?.windows[0]?.remainingPercent, 89);
+  assert.equal((await service.list({ force: true })).providers[0]?.windows[0]?.remainingPercent, 88);
+  assert.equal(calls, 2);
+});
+
+test('provider usage service serves recent last-good data for a transient failure', async () => {
+  let calls = 0;
+  let nowMs = Date.parse('2026-08-01T04:00:00.000Z');
+  const logs: string[] = [];
+  const service = new ProviderUsageService([{
+    fetch: async () => {
+      calls += 1;
+      if (calls === 1) {
+        return [{
+          account: 'must-not-appear@example.com',
+          accountId: 'primary',
+          extras: [],
+          status: 'available',
+          windows: [{ label: '5h', remainingPercent: 77 }],
+        }];
+      }
+      return [{
+        accountId: 'primary',
+        error: { attempts: 3, message: 'Provider usage request timed out.', type: 'network_error' },
+        extras: [],
+        status: 'unavailable',
+        windows: [],
+      }];
+    },
+    label: 'Claude',
+    provider: 'claude-code',
+    source: 'private-api',
+  }], {
+    cacheTtlMs: 30_000,
+    failureTtlMs: 5_000,
+    log: (message) => logs.push(message),
+    now: () => nowMs,
+    staleMaxAgeMs: 60_000,
+  });
+
+  await service.list();
+  nowMs += 31_000;
+  const fallback = await service.list();
+
+  assert.equal(fallback.providers[0]?.status, 'available');
+  assert.equal(fallback.providers[0]?.stale, true);
+  assert.equal(fallback.providers[0]?.windows[0]?.remainingPercent, 77);
+  assert.match(logs.at(-1) ?? '', /outcome=stale/);
+  assert.match(logs.at(-1) ?? '', /attempts=3/);
+  assert.equal(logs.join('\n').includes('must-not-appear@example.com'), false);
+});
+
+test('provider usage service never masks an authorization failure with cached quota', async () => {
+  let calls = 0;
+  const service = new ProviderUsageService([{
+    fetch: async () => {
+      calls += 1;
+      if (calls === 1) {
+        return [{ extras: [], status: 'available', windows: [{ label: '5h', remainingPercent: 77 }] }];
+      }
+      return [{
+        error: { message: 'Provider usage request was rejected (401)', status: 401, type: 'unauthorized' },
+        extras: [],
+        status: 'unavailable',
+        windows: [],
+      }];
+    },
+    label: 'Claude',
+    provider: 'claude-code',
+    source: 'private-api',
+  }]);
+
+  await service.list();
+  const unauthorized = await service.list({ force: true });
+  assert.equal(unauthorized.providers[0]?.status, 'unavailable');
+  assert.equal(unauthorized.providers[0]?.error?.type, 'unauthorized');
+  assert.equal(unauthorized.providers[0]?.stale, undefined);
+});
+
+test('provider usage service stops serving last-good data after the stale budget', async () => {
+  let calls = 0;
+  let nowMs = Date.parse('2026-08-01T04:00:00.000Z');
+  const service = new ProviderUsageService([{
+    fetch: async () => {
+      calls += 1;
+      if (calls === 1) {
+        return [{ extras: [], status: 'available', windows: [{ label: '5h', remainingPercent: 77 }] }];
+      }
+      return [{
+        error: { message: 'Provider usage request timed out.', type: 'network_error' },
+        extras: [],
+        status: 'unavailable',
+        windows: [],
+      }];
+    },
+    label: 'Claude',
+    provider: 'claude-code',
+    source: 'private-api',
+  }], { now: () => nowMs, staleMaxAgeMs: 10_000 });
+
+  await service.list();
+  nowMs += 11_000;
+  const expired = await service.list({ force: true });
+  assert.equal(expired.providers[0]?.status, 'unavailable');
+  assert.equal(expired.providers[0]?.stale, undefined);
 });
 
 test('provider usage service can refresh a single provider without calling the others', async () => {

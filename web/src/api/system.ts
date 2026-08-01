@@ -60,6 +60,10 @@ export async function fetchProviderUsage(): Promise<ProviderUsageResponse> {
   return apiRequest('/api/provider-usage');
 }
 
+export async function refreshProviderUsage(): Promise<ProviderUsageResponse> {
+  return apiRequest('/api/provider-usage?refresh=1');
+}
+
 export async function fetchProviderUsageProvider(provider: ProviderUsageKind): Promise<ProviderUsageRow> {
   return apiRequest(`/api/provider-usage/${encodeURIComponent(provider)}`);
 }

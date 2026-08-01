@@ -8,6 +8,7 @@ import {
   fetchProviderAccounts,
   fetchProviderContextLimits,
   fetchProviderUsage,
+  refreshProviderUsage,
   saveProviderContextLimit,
   selectClaudeAccount,
 } from '@/api/system';
@@ -201,8 +202,8 @@ function providerCollapsedSummary(usages: ProviderUsageRow[]): string {
   }
   const sum = windowSummary(active.windows, 2);
   const n = usages.length;
-  if (n > 1) return sum ? `${sum} · ${n} accounts` : `${n} accounts`;
-  return sum || 'Available';
+  const summary = n > 1 ? (sum ? `${sum} · ${n} accounts` : `${n} accounts`) : (sum || 'Available');
+  return active.stale ? `${summary} · cached` : summary;
 }
 
 /** One quiet key/value line inside the Details disclosure. */
@@ -335,7 +336,7 @@ function ActiveAccountCard({
 
   return (
     <div className="rounded-md border border-border-soft bg-surface-raised px-3.5 py-3 shadow-lift">
-      {(name || plan) && (
+      {(name || plan || usage.stale) && (
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {name && (
             <span className="min-w-0 truncate font-mono text-[12px] text-text" title={name}>
@@ -346,6 +347,9 @@ function ActiveAccountCard({
             <span className="shrink-0 rounded-full border border-border-soft px-2 py-0.5 font-sans text-[10px] font-medium uppercase tracking-wide text-text-muted">
               {plan}
             </span>
+          )}
+          {usage.stale && (
+            <span className="shrink-0 font-sans text-[10px] text-text-subtle">cached</span>
           )}
         </div>
       )}
@@ -425,7 +429,8 @@ function OtherAccountRow({
     summary
     && (summary.status === 'not_configured' || usage.error?.type === 'unauthorized'),
   );
-  const meters = usage.status === 'available' ? windowSummary(usage.windows, 2) : null;
+  const meterSummary = usage.status === 'available' ? windowSummary(usage.windows, 2) : null;
+  const meters = meterSummary && usage.stale ? `${meterSummary} · cached` : meterSummary;
 
   return (
     <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(5.5rem,1fr)_auto_auto] items-center gap-x-3 gap-y-1 rounded-md px-2 py-2 hover:bg-surface-elevated/70 sm:grid-cols-[minmax(0,1.2fr)_minmax(8rem,1.2fr)_auto_auto]">
@@ -819,7 +824,6 @@ export default function UsagePanel({ onClose }: Props) {
     data: usageData,
     isLoading: usageLoading,
     isFetching: usageFetching,
-    refetch: refetchUsage,
   } = useQuery({
     queryKey: queryKeys.providerUsage(),
     queryFn: fetchProviderUsage,
@@ -863,12 +867,13 @@ export default function UsagePanel({ onClose }: Props) {
   }, undefined);
 
   async function refreshAll(): Promise<void> {
-    const [, , , status] = await Promise.all([
-      refetchUsage(),
+    const [usage, , , status] = await Promise.all([
+      refreshProviderUsage(),
       refetchAccounts(),
       refetchContextLimits(),
       checkProviderClis(),
     ]);
+    queryClient.setQueryData(queryKeys.providerUsage(), usage);
     queryClient.setQueryData(queryKeys.providerCliStatus(), status);
   }
 
@@ -921,7 +926,7 @@ export default function UsagePanel({ onClose }: Props) {
       onConfirm: async () => {
         const next = await selectClaudeAccount(accountId);
         queryClient.setQueryData(queryKeys.providerAccounts(), { providers: [next] });
-        await queryClient.invalidateQueries({ queryKey: queryKeys.providerUsage() });
+        queryClient.setQueryData(queryKeys.providerUsage(), await refreshProviderUsage());
       },
     });
   }
@@ -1085,7 +1090,9 @@ export default function UsagePanel({ onClose }: Props) {
           onSucceeded={() => {
             void Promise.all([
               queryClient.invalidateQueries({ queryKey: queryKeys.providerAccounts() }),
-              queryClient.invalidateQueries({ queryKey: queryKeys.providerUsage() }),
+              refreshProviderUsage().then((usage) => {
+                queryClient.setQueryData(queryKeys.providerUsage(), usage);
+              }),
             ]);
           }}
         />

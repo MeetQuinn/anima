@@ -8,6 +8,7 @@ import UsagePanel from './UsagePanel';
 const api = vi.hoisted(() => ({
   cancelClaudeAccountLogin: vi.fn(),
   fetchClaudeAccountLogin: vi.fn(),
+  refreshProviderUsage: vi.fn(),
   selectClaudeAccount: vi.fn(),
   startClaudeAccountLogin: vi.fn(),
   submitClaudeAccountLoginCode: vi.fn(),
@@ -99,6 +100,7 @@ vi.mock('@/api/system', () => ({
     providers: usageRows.value,
   })),
   fetchProviderUsageProvider: vi.fn(),
+  refreshProviderUsage: api.refreshProviderUsage,
   selectClaudeAccount: api.selectClaudeAccount,
   saveProviderContextLimit: vi.fn(),
   startClaudeAccountLogin: api.startClaudeAccountLogin,
@@ -129,6 +131,7 @@ describe('UsagePanel Claude account selection', () => {
     accountState.value.status = 'active';
     accountState.value.errorAgentIds = [];
     accountState.value.pendingAgentIds = [];
+    api.refreshProviderUsage.mockResolvedValue({ providers: usageRows.value });
   });
 
   it('shows every account with its own meters and confirms a global resumable switch', async () => {
@@ -160,6 +163,7 @@ describe('UsagePanel Claude account selection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Switch account' }));
 
     await waitFor(() => expect(api.selectClaudeAccount).toHaveBeenCalledWith('primary'));
+    expect(api.refreshProviderUsage).toHaveBeenCalledOnce();
   });
 
   it('retries failed agents without asking the operator to select another account', async () => {
