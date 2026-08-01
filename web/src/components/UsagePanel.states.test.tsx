@@ -100,6 +100,7 @@ vi.mock('@/api/system', () => ({
         label: 'Claude Code',
         provider: 'claude-code' as const,
         source: 'private-api' as const,
+        stale: true,
         status: 'available' as const,
         windows: [
           {
@@ -113,6 +114,7 @@ vi.mock('@/api/system', () => ({
     ],
   })),
   fetchProviderUsageProvider: vi.fn(),
+  refreshProviderUsage: vi.fn(async () => ({ providers: [] })),
   selectClaudeAccount: vi.fn(),
   saveProviderContextLimit: contextApi.save,
 }));
@@ -144,6 +146,7 @@ describe('UsagePanel version slot', () => {
     fireEvent.click(screen.getByRole('button', { name: /Claude Code/i }));
     expect(await screen.findByText('op@example.com')).toBeTruthy();
     expect(screen.getByText('80%')).toBeTruthy();
+    expect(screen.getByText('cached')).toBeTruthy();
   });
 
   it('shows the global Kimi context limit and saves the recommended cap', async () => {

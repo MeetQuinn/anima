@@ -139,6 +139,7 @@ function kimiCredentialPaths(): string[] {
 async function fetchKimiUsageWithToken(token: string): ReturnType<typeof fetchJson> {
   return fetchJson({
     headers: { Accept: 'application/json', Authorization: bearer(token) },
+    telemetryLabel: 'kimi-cli',
     url: KIMI_USAGE_API,
   });
 }
@@ -163,6 +164,7 @@ async function refreshKimiCredentials(
       ...(await kimiOauthHeaders()),
     },
     method: 'POST',
+    telemetryLabel: 'kimi-cli',
     url: `${kimiOauthHost()}/api/oauth/token`,
   });
   if (result.error) return { error: result.error };

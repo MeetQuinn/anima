@@ -38,7 +38,9 @@ export const ProviderUsageExtra = z.object({
 export type ProviderUsageExtra = z.infer<typeof ProviderUsageExtra>;
 
 export const ProviderUsageError = z.object({
+  attempts: z.number().int().positive().optional(),
   message: z.string(),
+  status: z.number().int().min(100).max(599).optional(),
   type: ProviderUsageErrorType,
 });
 export type ProviderUsageError = z.infer<typeof ProviderUsageError>;
@@ -53,6 +55,7 @@ export const ProviderUsageRow = z.object({
   label: z.string(),
   provider: ProviderUsageKind,
   source: z.enum(['native', 'private-api']),
+  stale: z.boolean().optional(),
   status: z.enum(['available', 'unavailable']),
   windows: z.array(ProviderUsageWindow),
 });

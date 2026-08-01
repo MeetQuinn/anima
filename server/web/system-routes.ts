@@ -64,11 +64,15 @@ const ANIMACTL_SCRIPT = join(PROJECT_ROOT, 'dist/server/cli/animactl.js');
 export function registerSystemRoutes(fastify: FastifyInstance): void {
   fastify.get('/api/health', async () => ({ ok: true }));
   fastify.get('/api/provider-availability', async () => defaultSystemService.providerAvailability());
-  fastify.get('/api/provider-usage', async () => defaultProviderUsageService.list());
+  fastify.get('/api/provider-usage', async (request) => defaultProviderUsageService.list({
+    force: providerUsageRefreshRequested(request.query),
+  }));
   fastify.get('/api/provider-usage/:provider', async (request, reply) => {
     const parsed = ProviderUsageKind.safeParse((request.params as { provider?: unknown }).provider);
     if (!parsed.success) return reply.status(400).send({ error: 'Invalid provider usage provider' });
-    return defaultProviderUsageService.get(parsed.data);
+    return defaultProviderUsageService.get(parsed.data, {
+      force: providerUsageRefreshRequested(request.query),
+    });
   });
   fastify.get('/api/provider-accounts', async () => defaultProviderAccountService.list());
   fastify.post('/api/provider-accounts/claude-code/select', async (request) => {
@@ -267,6 +271,12 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
     }
     return { platform: await defaultServerSettingsService.setWorkspacePlatform(parsed.data) };
   });
+}
+
+function providerUsageRefreshRequested(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const refresh = (value as { refresh?: unknown }).refresh;
+  return refresh === '1' || refresh === 'true';
 }
 
 function throwClaudeAccountLoginHttpError(error: unknown): never {

@@ -121,6 +121,7 @@ function codexAccount(tokens: Record<string, unknown> | undefined): string | und
 async function fetchCodexUsageWithToken(token: string): ReturnType<typeof fetchJson> {
   return fetchJson({
     headers: { ...CODEX_HEADERS, Authorization: bearer(token) },
+    telemetryLabel: 'codex-cli',
     url: CODEX_USAGE_API,
   });
 }
@@ -140,6 +141,7 @@ async function refreshCodexCredentials(
     }),
     headers: { ...CODEX_HEADERS, 'Content-Type': 'application/json' },
     method: 'POST',
+    telemetryLabel: 'codex-cli',
     url: process.env.CODEX_REFRESH_TOKEN_URL_OVERRIDE?.trim() || CODEX_REFRESH_TOKEN_API,
   });
   if (result.error) return { error: result.error };
