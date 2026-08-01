@@ -416,7 +416,7 @@ function ActiveAccountCard({
   );
 }
 
-/** Non-active multi-account row: one line, Use inline (not a second row). */
+/** Non-active multi-account row: identity stack + fixed-width meters + Use. */
 function OtherAccountRow({
   accountState,
   onLoginAccount,
@@ -443,40 +443,39 @@ function OtherAccountRow({
     summary
     && (summary.status === 'not_configured' || usage.error?.type === 'unauthorized'),
   );
-  // Parent OtherAccountsList owns the shared grid so "5h" lines up across rows.
-  const cellBorder = 'border-b border-border-soft/60 last-of-type:border-b-0';
+  const statusLabel =
+    usage.status !== 'available'
+      ? usage.error?.type === 'unauthorized'
+        ? 'Auth expired'
+        : 'Unavailable'
+      : undefined;
+  const secondary = plan ?? statusLabel;
+
   return (
-    <div className="contents">
-      <span
-        className={`min-w-0 truncate px-2 py-2 font-mono text-[11px] text-text ${cellBorder}`}
-        title={name}
-      >
-        {name}
-      </span>
-      <span
-        className={`min-w-0 truncate px-1 py-2 font-sans text-[11px] text-text-muted ${cellBorder}`}
-        title={plan ?? undefined}
-      >
-        {plan ??
-          (usage.status !== 'available'
-            ? usage.error?.type === 'unauthorized'
-              ? 'Auth expired'
-              : 'Unavailable'
-            : '—')}
-      </span>
-      <span className={`hidden py-2 sm:inline ${cellBorder}`}>
+    <div className="flex items-center gap-3 rounded-md px-2 py-2 hover:bg-surface-elevated/60">
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-mono text-[11px] text-text" title={name}>
+          {name}
+        </div>
+        {secondary && (
+          <div className="truncate font-sans text-[10px] text-text-subtle" title={secondary}>
+            {secondary}
+          </div>
+        )}
+      </div>
+      <div className="hidden w-[11.5rem] shrink-0 sm:block">
         {usage.status === 'available' ? (
           <OtherAccountMeters windows={usage.windows} stale={usage.stale} />
         ) : (
           <span className="font-mono text-[11px] text-text-subtle">—</span>
         )}
-      </span>
-      <span className={`flex items-center justify-end px-2 py-2 ${cellBorder}`}>
+      </div>
+      <div className="flex w-10 shrink-0 justify-end">
         {canSignIn && summary ? (
           <button
             type="button"
             onClick={() => onLoginAccount(summary)}
-            className="relative shrink-0 font-sans text-[11px] font-semibold text-text-muted after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[''] hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            className="relative font-sans text-[11px] font-semibold text-text-muted after:absolute after:-inset-x-2 after:-inset-y-2 after:content-[''] hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
             Sign in
           </button>
@@ -484,22 +483,12 @@ function OtherAccountRow({
           <button
             type="button"
             onClick={() => onSelectAccount(usage.accountId as string)}
-            className="relative shrink-0 font-sans text-[11px] font-semibold text-text-muted after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[''] hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            className="relative font-sans text-[11px] font-semibold text-text-muted after:absolute after:-inset-x-2 after:-inset-y-2 after:content-[''] hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
             Use
           </button>
-        ) : (
-          <span className="w-8" />
-        )}
-      </span>
-      {/* Mobile: meters under email */}
-      <span
-        className={`col-span-full px-2 pb-2 font-mono text-[11px] tabular-nums text-text-subtle sm:hidden ${cellBorder}`}
-      >
-        {usage.status === 'available' ? (
-          <OtherAccountMeters windows={usage.windows} stale={usage.stale} />
         ) : null}
-      </span>
+      </div>
     </div>
   );
 }
@@ -516,12 +505,12 @@ function OtherAccountsList({
   others: ProviderUsageRow[];
 }) {
   return (
-    <div>
-      <div className="mb-1 font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
+    <div className="space-y-1">
+      <div className="px-2 font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
         Other accounts
       </div>
-      {/* One shared grid so email / plan / 5h columns align across rows. */}
-      <div className="grid grid-cols-[minmax(0,1.3fr)_minmax(7.5rem,1fr)_auto_auto] items-center gap-x-2 overflow-hidden rounded-md border border-border-soft/80 sm:grid-cols-[minmax(0,1.3fr)_minmax(9rem,1fr)_auto_auto]">
+      {/* No box / no rules — soft hover rows; meters share a fixed width for 5h align. */}
+      <div className="space-y-0.5">
         {others.map((row) => (
           <OtherAccountRow
             key={row.accountId ?? row.account}
