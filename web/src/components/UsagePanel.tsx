@@ -532,9 +532,10 @@ function ProviderUnit({
   const versionCheckFailed = management.state === 'error' || Boolean(management.checkError);
   const accountSwitching = accountState?.status === 'switching';
   const accountSwitchFailed = accountState?.status === 'error';
+  // "Update available" is routine maintenance, not attention — keep it out of
+  // the collapsed "Needs attention" badge (totoday 2026-08-01).
   const needsAttention = installing
     || operation?.status === 'failed'
-    || updateOffer
     || staleSessions
     || accountSwitching
     || accountSwitchFailed;
@@ -542,6 +543,7 @@ function ProviderUnit({
   // folded, the header summary shows "Needs attention" instead (below).
   const open = expanded;
   const collapsedSummary = providerCollapsedSummary(sortedUsages);
+  const showStatusBanners = needsAttention || updateOffer;
 
   return (
     <div>
@@ -579,7 +581,7 @@ function ProviderUnit({
 
       {open && (
         <div className="mt-2 space-y-3 pl-[42px]">
-          {needsAttention && (
+          {showStatusBanners && (
             <div className="space-y-1.5">
               {installing && <p className="font-sans text-[11px] text-text-muted">Installing…</p>}
               {accountSwitching && (
