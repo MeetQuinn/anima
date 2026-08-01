@@ -193,10 +193,9 @@ function windowSummary(windows: ProviderUsageWindow[], max = 2): string {
   return parts.join(' · ');
 }
 
-/** Fixed-slot meter cells so "5h" / "Weekly" line up across other-account rows. */
+/** Fixed-slot meters: label sits tight next to %, columns align across rows. */
 function OtherAccountMeters({ windows, stale }: { windows: ProviderUsageWindow[]; stale?: boolean }) {
   const items = windows
-    .slice(0, 2)
     .map((w) => {
       const pct = remainingOf(w);
       return pct === undefined ? null : { label: w.label, pct };
@@ -205,19 +204,29 @@ function OtherAccountMeters({ windows, stale }: { windows: ProviderUsageWindow[]
   if (items.length === 0) {
     return <span className="font-mono text-[11px] text-text-subtle">—</span>;
   }
+  // Prefer short session window in the narrow slot; weekly-ish in the wider slot.
+  const short =
+    items.find((i) => /^5h$/i.test(i.label) || /session/i.test(i.label)) ?? items[0];
+  const long =
+    items.find((i) => i !== short && (/week/i.test(i.label) || /7d/i.test(i.label)))
+    ?? items.find((i) => i !== short);
+
+  // Track: [5h][%] [Weekly][%] — short label col is narrow so % hugs "5h".
   return (
-    <span className="inline-flex items-baseline gap-x-3 font-mono text-[11px] tabular-nums">
-      {items.map((item) => (
-        // Fixed label widths: "5h" fits ~1.75rem; "Weekly" needs ~3.25rem — never truncate.
-        <span
-          key={item.label}
-          className="inline-grid grid-cols-[3.25rem_2.5rem] items-baseline gap-x-1"
-        >
-          <span className="text-text-subtle">{item.label}</span>
-          <span className={pctColor(item.pct)}>{item.pct}%</span>
-        </span>
-      ))}
-      {stale ? <span className="text-text-subtle">cached</span> : null}
+    <span className="grid grid-cols-[1.75rem_2.25rem_3.25rem_2.25rem] items-baseline gap-x-1 font-mono text-[11px] tabular-nums">
+      {short && (
+        <>
+          <span className="text-text-subtle">{short.label}</span>
+          <span className={pctColor(short.pct)}>{short.pct}%</span>
+        </>
+      )}
+      {long && (
+        <>
+          <span className="text-text-subtle">{long.label}</span>
+          <span className={pctColor(long.pct)}>{long.pct}%</span>
+        </>
+      )}
+      {stale ? <span className="col-span-4 text-[10px] text-text-subtle">cached</span> : null}
     </span>
   );
 }
@@ -467,8 +476,8 @@ function OtherAccountRow({
           </div>
         )}
       </div>
-      {/* ~3.25+2.5+gap twice ≈ 13.5rem — room for "5h" + "Weekly" without clip */}
-      <div className="hidden w-[14rem] shrink-0 sm:block">
+      {/* 1.75+2.25+3.25+2.25 + gaps ≈ 10.5rem */}
+      <div className="hidden w-[11rem] shrink-0 sm:block">
         {usage.status === 'available' ? (
           <OtherAccountMeters windows={usage.windows} stale={usage.stale} />
         ) : (
