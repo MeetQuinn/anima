@@ -480,7 +480,7 @@ test('claude-code catalog keeps family aliases and adds version-pinned models', 
 test('codex-cli catalog includes current GPT-5.6 and GPT-5.5 models only', () => {
   const entry = providerCatalogEntry('codex-cli');
   assert.deepEqual(entry?.models, ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']);
-  assert.equal(entry?.defaultModel, 'gpt-5.5');
+  assert.equal(entry?.defaultModel, 'gpt-5.6-sol');
   assert.deepEqual(
     reasoningEffortsForModel('codex-cli', 'gpt-5.6-sol'),
     ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
