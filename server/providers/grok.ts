@@ -1140,18 +1140,28 @@ export function summarizeGrokToolInput(
           : {}),
     };
   }
+  if (normalized === 'todowrite' || normalized.includes('todo')) {
+    const target = grokTodoSummary(input, data);
+    return target ? { target: singleLineForActivity(target) } : {};
+  }
   const target = grokToolTarget(input, data);
+  const diff =
+    normalized === 'strreplacefile' || normalized === 'writefile' || normalized === 'edit'
+      ? grokReplacementDiff(input) ?? grokDiffFromContent(data?.['content'])
+      : undefined;
   return {
     ...(target ? { target: singleLineForActivity(target) } : {}),
-    ...(normalized === 'strreplacefile' ? { diff: grokReplacementDiff(input) } : {}),
+    ...(diff ? { diff } : {}),
   };
 }
 
 /**
  * Grok Build ACP uses `target_file` / `target_directory` (not Claude's file_path).
- * Later tool_call_update frames also carry locations[] and titled paths in backticks.
+ * Later tool_call_update frames also carry locations[], content diffs, and titled paths.
  */
 function grokToolTarget(input: Record<string, unknown>, data?: Record<string, unknown>): string | undefined {
+  const nestedFile = isRecord(input['file']) ? input['file'] : undefined;
+  const nestedEdit = isRecord(input['edit']) ? input['edit'] : undefined;
   const fromInput =
     stringField(input, 'target_file') ??
     stringField(input, 'targetFile') ??
@@ -1162,6 +1172,14 @@ function grokToolTarget(input: Record<string, unknown>, data?: Record<string, un
     stringField(input, 'filePath') ??
     stringField(input, 'absolute_path') ??
     stringField(input, 'absolutePath') ??
+    stringField(input, 'relative_path') ??
+    stringField(input, 'relativePath') ??
+    stringField(input, 'filename') ??
+    stringField(input, 'file_name') ??
+    stringField(nestedFile, 'path') ??
+    stringField(nestedFile, 'target_file') ??
+    stringField(nestedEdit, 'path') ??
+    stringField(nestedEdit, 'target_file') ??
     stringField(input, 'pattern') ??
     stringField(input, 'query') ??
     stringField(input, 'glob') ??
@@ -1171,9 +1189,16 @@ function grokToolTarget(input: Record<string, unknown>, data?: Record<string, un
   const locations = Array.isArray(data?.['locations']) ? data['locations'] : [];
   for (const location of locations) {
     if (!isRecord(location)) continue;
-    const path = stringField(location, 'path');
-    if (path) return path;
+    const path =
+      stringField(location, 'path') ??
+      stringField(location, 'file') ??
+      stringField(location, 'filePath') ??
+      stringField(location, 'uri');
+    if (path) return path.replace(/^file:\/\//, '');
   }
+
+  const fromContent = pathFromAcpContent(data?.['content']);
+  if (fromContent) return fromContent;
 
   const meta = isRecord(data?.['_meta']) ? data['_meta'] : undefined;
   const xaiTool = isRecord(meta?.['x.ai/tool']) ? meta['x.ai/tool'] : undefined;
@@ -1181,15 +1206,114 @@ function grokToolTarget(input: Record<string, unknown>, data?: Record<string, un
   const metaPath =
     stringField(metaInput, 'path') ??
     stringField(metaInput, 'target_file') ??
-    stringField(metaInput, 'target_directory');
+    stringField(metaInput, 'target_directory') ??
+    stringField(metaInput, 'file_path');
   if (metaPath) return metaPath;
 
-  // e.g. title: Read `PROBE.txt`
+  // e.g. title: Read `PROBE.txt` / Edit `src/a.ts`
   const title = stringField(data, 'title') ?? '';
   const tick = title.match(/`([^`]+)`/);
   if (tick?.[1]?.trim()) return tick[1].trim();
+  // e.g. title: "Edit path/to/file.ts" without backticks
+  const titledPath = title.match(
+    /^(?:read|edit(?:ed)?|write|patch|str\s*replace(?:\s*file)?|update)\s+(.+?)\s*$/i,
+  );
+  if (titledPath?.[1]?.trim() && /[\/./]/.test(titledPath[1])) {
+    return titledPath[1].trim().replace(/^["']|["']$/g, '');
+  }
 
   return undefined;
+}
+
+function pathFromAcpContent(content: unknown): string | undefined {
+  if (!Array.isArray(content)) return undefined;
+  for (const block of content) {
+    if (!isRecord(block)) continue;
+    if (block['type'] === 'diff') {
+      const path = stringField(block, 'path');
+      if (path) return path;
+    }
+    if (block['type'] === 'content') {
+      const inner = block['content'];
+      if (isRecord(inner)) {
+        const path = stringField(inner, 'path') ?? stringField(inner, 'target_file');
+        if (path) return path;
+      }
+    }
+  }
+  return undefined;
+}
+
+function grokDiffFromContent(content: unknown): string | undefined {
+  if (!Array.isArray(content)) return undefined;
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!isRecord(block) || block['type'] !== 'diff') continue;
+    const path = stringField(block, 'path') ?? 'file';
+    const oldText = typeof block['oldText'] === 'string' ? block['oldText'] : '';
+    const newText = typeof block['newText'] === 'string' ? block['newText'] : '';
+    parts.push(
+      `--- ${path}\n+++ ${path}\n${oldText ? `(edited: ${oldText.length} -> ${newText.length} bytes)` : `(new file, ${newText.length} bytes)`}`,
+    );
+  }
+  if (parts.length === 0) return undefined;
+  return truncateForActivity(parts.join('\n'));
+}
+
+/** Compact Activity target for TodoWrite — count + status mix or first item. */
+function grokTodoSummary(
+  input: Record<string, unknown>,
+  data?: Record<string, unknown>,
+): string | undefined {
+  const meta = isRecord(data?.['_meta']) ? data['_meta'] : undefined;
+  const xaiTool = isRecord(meta?.['x.ai/tool']) ? meta['x.ai/tool'] : undefined;
+  const metaInput = isRecord(xaiTool?.['input']) ? xaiTool['input'] : undefined;
+  const source = [input, metaInput].find((row) => row && Array.isArray(row['todos'] || row['items'] || row['todo_list']));
+  const list = source
+    ? (Array.isArray(source['todos'])
+        ? source['todos']
+        : Array.isArray(source['items'])
+          ? source['items']
+          : Array.isArray(source['todo_list'])
+            ? source['todo_list']
+            : undefined)
+    : undefined;
+  if (!list || list.length === 0) {
+    // title sometimes carries a count: "Update todos (3)"
+    const title = stringField(data, 'title') ?? '';
+    const count = title.match(/(\d+)\s*(?:item|todo)/i);
+    if (count) return `${count[1]} items`;
+    return undefined;
+  }
+
+  let done = 0;
+  let inProgress = 0;
+  let pending = 0;
+  let firstLabel: string | undefined;
+  for (const item of list) {
+    if (!isRecord(item)) continue;
+    const label =
+      stringField(item, 'content') ??
+      stringField(item, 'title') ??
+      stringField(item, 'text') ??
+      stringField(item, 'description');
+    if (!firstLabel && label) firstLabel = label;
+    const status = (stringField(item, 'status') ?? '').toLowerCase();
+    if (status === 'completed' || status === 'done' || status === 'complete') done += 1;
+    else if (status === 'in_progress' || status === 'in-progress' || status === 'doing') inProgress += 1;
+    else pending += 1;
+  }
+
+  const n = list.length;
+  const parts: string[] = [`${n} item${n === 1 ? '' : 's'}`];
+  if (done || inProgress || pending) {
+    if (inProgress) parts.push(`${inProgress} in progress`);
+    if (pending) parts.push(`${pending} pending`);
+    if (done) parts.push(`${done} done`);
+  } else if (firstLabel) {
+    parts.push(firstLabel);
+  }
+  return parts.join(' · ');
 }
 
 function grokReplacementDiff(input: Record<string, unknown>): string | undefined {

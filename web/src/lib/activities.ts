@@ -219,7 +219,8 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     return tool_('Listed', pickString(payload, ['target']));
   if (normalized === 'webfetch' || normalized === 'fetchurl') return tool_('Fetched', pickString(payload, ['target']));
   if (normalized === 'websearch' || normalized === 'searchweb') return tool_('Searched', webSearchTarget(payload));
-  if (normalized === 'todowrite' || normalized === 'settodolist') return tool_('Updated todos');
+  if (normalized === 'todowrite' || normalized === 'settodolist')
+    return tool_('Updated todos', pickString(payload, ['target']));
   if (normalized === 'toolsearch') return tool_('Searched tools', pickString(payload, ['target']));
 
   if (normalized === 'bash' || normalized === 'shell') {
