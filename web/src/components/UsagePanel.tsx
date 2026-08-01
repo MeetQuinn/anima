@@ -134,6 +134,77 @@ function formatContextTokens(tokens: number): string {
   return `${Math.round(tokens / 1_000)}k`;
 }
 
+const EXPANDED_PROVIDERS_KEY = 'anima.usagePanel.expandedProviders';
+
+function loadExpandedProviders(): Record<string, true> {
+  try {
+    const raw = window.localStorage.getItem(EXPANDED_PROVIDERS_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, true> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (value === true) out[key] = true;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function persistExpandedProviders(map: Record<string, true>): void {
+  try {
+    window.localStorage.setItem(EXPANDED_PROVIDERS_KEY, JSON.stringify(map));
+  } catch {
+    // private mode: in-session state still works
+  }
+}
+
+function remainingOf(w: ProviderUsageWindow | undefined): number | undefined {
+  if (!w || w.remainingPercent === undefined) return undefined;
+  return Math.round(w.remainingPercent);
+}
+
+/** Prefer the short operational window (5h) as the featured meter. */
+function pickPrimaryWindow(windows: ProviderUsageWindow[]): {
+  primary?: ProviderUsageWindow;
+  secondary: ProviderUsageWindow[];
+} {
+  if (windows.length === 0) return { secondary: [] };
+  const idx = windows.findIndex((w) => /^5h$/i.test(w.label) || /session/i.test(w.label));
+  const primaryIndex = idx >= 0 ? idx : 0;
+  return {
+    primary: windows[primaryIndex],
+    secondary: windows.filter((_, i) => i !== primaryIndex),
+  };
+}
+
+function windowSummary(windows: ProviderUsageWindow[], max = 2): string {
+  const parts: string[] = [];
+  for (const w of windows.slice(0, max)) {
+    const pct = remainingOf(w);
+    if (pct === undefined) continue;
+    // Full labels (Weekly, not W) — width is the clarity budget (totoday 2026-08-01).
+    parts.push(`${w.label} ${pct}%`);
+  }
+  return parts.join(' · ');
+}
+
+function providerCollapsedSummary(usages: ProviderUsageRow[]): string {
+  const active = usages.find((u) => u.active) ?? usages[0];
+  if (!active) return 'Not configured';
+  if (active.status !== 'available') {
+    if (active.error?.type === 'unauthorized') return 'Auth expired';
+    if (active.error?.type === 'not_configured') return 'Not configured';
+    if (active.error?.type === 'network_error') return 'Unreachable';
+    return 'Unavailable';
+  }
+  const sum = windowSummary(active.windows, 2);
+  const n = usages.length;
+  if (n > 1) return sum ? `${sum} · ${n} accounts` : `${n} accounts`;
+  return sum || 'Available';
+}
+
 /** One quiet key/value line inside the Details disclosure. */
 function DetailRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return (
@@ -198,7 +269,7 @@ function WindowMeter({ w, now }: { w: ProviderUsageWindow; now: Date }) {
   return (
     <div className="space-y-1.5">
       <div className="flex items-baseline justify-between gap-3">
-        <span className="font-sans text-[12px] text-text-muted">{w.label}</span>
+        <span className="font-sans text-[12px] font-medium text-text-muted">{w.label}</span>
         <div className="flex items-baseline gap-2">
           <span className={`font-mono text-[13px] tabular-nums ${pctColor(pct)}`}>{pct}%</span>
           {w.resetsAt && (
@@ -206,7 +277,7 @@ function WindowMeter({ w, now }: { w: ProviderUsageWindow; now: Date }) {
           )}
         </div>
       </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">
+      <div className="h-2 w-full overflow-hidden rounded-full bg-surface-elevated">
         <div
           className={`h-full rounded-full transition-[width] duration-300 ${barColor(pct)}`}
           style={{ width: `${pct}%` }}
@@ -216,22 +287,39 @@ function WindowMeter({ w, now }: { w: ProviderUsageWindow; now: Date }) {
   );
 }
 
-// One account block: whose quota this is, how much is left, and — for Claude,
-// where more than one account exists — the deliberate act of making it active.
-// Rows without accountId come from single-account providers: same rhythm, no
-// switch affordance. Faults stay per account: an expired token dims its own
-// block instead of hiding the provider behind one shared error line.
-function AccountUsageBlock({
+function MiniWindowMeter({ w }: { w: ProviderUsageWindow }) {
+  const pct = Math.round(w.remainingPercent);
+  return (
+    <span className="inline-flex items-center gap-2 font-sans text-[11px] text-text-muted">
+      <span>{w.label}</span>
+      <span
+        role="meter"
+        aria-label={`${w.label} remaining`}
+        aria-valuenow={pct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        className="h-1 w-14 overflow-hidden rounded-full bg-surface-elevated"
+      >
+        <span
+          className={`block h-full rounded-full transition-[width] duration-300 ${barColor(pct)}`}
+          style={{ width: `${pct}%` }}
+        />
+      </span>
+      <span className={`font-mono text-[11px] tabular-nums ${pctColor(pct)}`}>{pct}%</span>
+    </span>
+  );
+}
+
+/** Featured active (or sole) account — structure marks it; no Active chip. */
+function ActiveAccountCard({
   accountState,
   now,
   onLoginAccount,
-  onSelectAccount,
   usage,
 }: {
   accountState?: ClaudeCodeAccountState;
   now: Date;
   onLoginAccount: (account: ProviderAccountSummary) => void;
-  onSelectAccount: (accountId: string) => void;
   usage: ProviderUsageRow;
 }) {
   const isAvailable = usage.status === 'available';
@@ -239,62 +327,44 @@ function AccountUsageBlock({
   const { plan, rest } = splitExtras(usage.extras);
   const summary = accountState?.accounts.find((account) => account.id === usage.accountId);
   const name = usage.account ?? summary?.account ?? summary?.label ?? usage.accountId;
-  const canSetActive = Boolean(
-    accountState
-    && usage.accountId
-    && accountState.accounts.length > 1
-    && accountState.activeAccountId !== usage.accountId
-    && summary?.status === 'available'
-    && accountState.status !== 'switching',
-  );
   const canSignIn = Boolean(
     summary
     && (summary.status === 'not_configured' || usage.error?.type === 'unauthorized'),
   );
+  const { primary, secondary } = pickPrimaryWindow(usage.windows);
+
   return (
-    <div>
-      {(name ?? usage.active ?? plan ?? canSetActive) && (
-        <div className="flex items-center gap-2">
+    <div className="rounded-md border border-border-soft bg-surface-raised px-3.5 py-3 shadow-lift">
+      {(name || plan) && (
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           {name && (
-            <span className="min-w-0 truncate font-mono text-[10px] text-text-subtle" title={name}>
+            <span className="min-w-0 truncate font-mono text-[12px] text-text" title={name}>
               {name}
             </span>
           )}
-          {usage.active && (
-            <span className="shrink-0 rounded-full border border-accent/40 px-1.5 py-px font-sans text-[9px] font-medium uppercase tracking-wider text-accent">
-              Active
-            </span>
-          )}
           {plan && (
-            <span className="shrink-0 rounded-full border border-border-soft px-1.5 py-px font-sans text-[9px] font-medium uppercase tracking-wider text-text-subtle">
+            <span className="shrink-0 rounded-full border border-border-soft px-2 py-0.5 font-sans text-[10px] font-medium uppercase tracking-wide text-text-muted">
               {plan}
             </span>
-          )}
-          {canSetActive && usage.accountId && (
-            <button
-              type="button"
-              onClick={() => onSelectAccount(usage.accountId as string)}
-              // Keep the 10px chrome look, but the click target is a deliberate
-              // account switch: expand the hit area to ~44px via a layout-neutral
-              // pseudo-element (padding here would grow the identity row).
-              className="relative ml-auto shrink-0 font-sans text-[10px] font-medium text-text-muted after:absolute after:-inset-x-2 after:-inset-y-4 after:content-[''] hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-            >
-              Set active
-            </button>
           )}
         </div>
       )}
       {isAvailable ? (
-        <div className="mt-2 space-y-3">
-          {usage.windows.map((w, i) => (
-            <WindowMeter key={i} w={w} now={now} />
-          ))}
+        <div className={name || plan ? 'mt-3 space-y-3' : 'space-y-3'}>
+          {primary && <WindowMeter w={primary} now={now} />}
+          {secondary.length > 0 && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border-soft/70 pt-2.5">
+              {secondary.map((w, i) => (
+                <MiniWindowMeter key={i} w={w} />
+              ))}
+            </div>
+          )}
           {rest.length > 0 && (
             <div className="flex flex-wrap gap-x-4 gap-y-0.5">
               {rest.map((e, i) => (
                 <div key={i} className="flex items-baseline gap-1.5">
-                  <span className="font-sans text-[10px] text-text-subtle">{e.label}</span>
-                  <span className="font-mono text-[11px] tabular-nums text-text-muted">{extraValue(e)}</span>
+                  <span className="font-sans text-[11px] text-text-subtle">{e.label}</span>
+                  <span className="font-mono text-[12px] tabular-nums text-text-muted">{extraValue(e)}</span>
                 </div>
               ))}
             </div>
@@ -311,8 +381,6 @@ function AccountUsageBlock({
                   ? 'Unreachable'
                   : 'Unavailable'}
           </span>
-          {/* Prose, not an identifier: mono is reserved for IDs/paths/timestamps
-              (index.css:8). A wrapped sentence in mono reads as debug output. */}
           {errorMessage && <p className="font-sans text-[11px] leading-relaxed text-text-subtle">{errorMessage}</p>}
           {canSignIn && summary && (
             <button
@@ -330,6 +398,75 @@ function AccountUsageBlock({
   );
 }
 
+/** Non-active multi-account row: one line, Use inline (not a second row). */
+function OtherAccountRow({
+  accountState,
+  onLoginAccount,
+  onSelectAccount,
+  usage,
+}: {
+  accountState?: ClaudeCodeAccountState;
+  onLoginAccount: (account: ProviderAccountSummary) => void;
+  onSelectAccount: (accountId: string) => void;
+  usage: ProviderUsageRow;
+}) {
+  const summary = accountState?.accounts.find((account) => account.id === usage.accountId);
+  const name = usage.account ?? summary?.account ?? summary?.label ?? usage.accountId ?? 'Account';
+  const { plan } = splitExtras(usage.extras);
+  const canSetActive = Boolean(
+    accountState
+    && usage.accountId
+    && accountState.accounts.length > 1
+    && accountState.activeAccountId !== usage.accountId
+    && summary?.status === 'available'
+    && accountState.status !== 'switching',
+  );
+  const canSignIn = Boolean(
+    summary
+    && (summary.status === 'not_configured' || usage.error?.type === 'unauthorized'),
+  );
+  const meters = usage.status === 'available' ? windowSummary(usage.windows, 2) : null;
+
+  return (
+    <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(5.5rem,1fr)_auto_auto] items-center gap-x-3 gap-y-1 rounded-md px-2 py-2 hover:bg-surface-elevated/70 sm:grid-cols-[minmax(0,1.2fr)_minmax(8rem,1.2fr)_auto_auto]">
+      <span className="min-w-0 truncate font-mono text-[11px] text-text" title={name}>
+        {name}
+      </span>
+      <span className="min-w-0 truncate font-sans text-[11px] text-text-muted" title={plan ?? undefined}>
+        {plan ?? (usage.status !== 'available' ? (
+          usage.error?.type === 'unauthorized' ? 'Auth expired' : 'Unavailable'
+        ) : '—')}
+      </span>
+      <span className="hidden font-mono text-[11px] tabular-nums text-text-subtle sm:inline">
+        {meters ?? '—'}
+      </span>
+      {canSignIn && summary ? (
+        <button
+          type="button"
+          onClick={() => onLoginAccount(summary)}
+          className="relative shrink-0 justify-self-end font-sans text-[11px] font-semibold text-text-muted after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[''] hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          Sign in
+        </button>
+      ) : canSetActive && usage.accountId ? (
+        <button
+          type="button"
+          onClick={() => onSelectAccount(usage.accountId as string)}
+          className="relative shrink-0 justify-self-end font-sans text-[11px] font-semibold text-text-muted after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[''] hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          Use
+        </button>
+      ) : (
+        <span className="w-8" />
+      )}
+      {/* Mobile: meters under email */}
+      <span className="col-span-full font-mono text-[11px] tabular-nums text-text-subtle sm:hidden">
+        {meters}
+      </span>
+    </div>
+  );
+}
+
 // Refreshing is a panel-level act, not a per-row one: the header's "Refresh
 // providers" re-reads every provider at once, and a second per-row copy of the
 // same verb bought nothing but a lone icon marooned at the right edge of every
@@ -338,11 +475,13 @@ function AccountUsageBlock({
 // active account, and switching is a deliberate button there, not a select
 // here (totoday, 2026-07-18).
 function ProviderUnit({
+  expanded,
   globallyLocked = false,
   management,
   now,
   onApply,
   onCopyCommand,
+  onToggleExpanded,
   usages,
   accountState,
   onAddAccount,
@@ -354,11 +493,13 @@ function ProviderUnit({
   contextLimitSaving = false,
   onContextLimitChange,
 }: {
+  expanded: boolean;
   globallyLocked?: boolean;
   management: ProviderCliRow;
   now: Date;
   onApply: () => void;
   onCopyCommand: () => void;
+  onToggleExpanded: () => void;
   usages: ProviderUsageRow[];
   accountState?: ClaudeCodeAccountState;
   onAddAccount: () => void;
@@ -371,16 +512,14 @@ function ProviderUnit({
   onContextLimitChange: (maxTokens: number | null) => void;
 }) {
   const sortedUsages = [...usages].sort((a, b) => Number(b.active ?? false) - Number(a.active ?? false));
+  const featured = sortedUsages.find((row) => row.active) ?? sortedUsages[0];
+  const others = sortedUsages.filter((row) => row !== featured);
   const operation = management.operation.provider === management.provider ? management.operation : undefined;
   const runningAgents = management.agents.filter((agent) => agent.runningVersion);
   const canApply = management.updateAvailable && management.updateMode === 'managed';
   const updateLocked = globallyLocked || management.operation.status === 'running';
   const installing = operation?.status === 'running';
   const manualUpdate = !installing && management.updateAvailable && management.updateMode === 'manual';
-  // Both update flavours announce themselves in the attention strip, in the same
-  // words, and only differ in the affordance that follows. Previously `managed`
-  // put a filled button in the identity row while `manual` put a sentence down
-  // here: one concept, two registers, two places to look.
   const updateOffer = !installing && management.updateAvailable && (canApply || manualUpdate);
   const staleSessions =
     operation?.status === 'succeeded' &&
@@ -394,231 +533,253 @@ function ProviderUnit({
     || staleSessions
     || accountSwitching
     || accountSwitchFailed;
+  // Attention forces open so switch/update errors are never trapped behind a fold.
+  const open = expanded || needsAttention;
+  const collapsedSummary = providerCollapsedSummary(sortedUsages);
+
   return (
     <div>
-      {/* ── Identity row: who it is, what plan, which version. ── */}
-      <div className="flex items-center gap-2.5">
+      <button
+        type="button"
+        onClick={onToggleExpanded}
+        aria-expanded={open}
+        className="-mx-1 flex w-[calc(100%+0.5rem)] items-center gap-2.5 rounded-md px-1 py-1.5 text-left hover:bg-surface-elevated/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        <ChevronDown
+          className={`h-3.5 w-3.5 shrink-0 text-text-subtle transition-transform ${open ? 'rotate-0' : '-rotate-90'}`}
+          aria-hidden
+        />
         <BrandIcon provider={management.provider} label={management.label} />
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate font-serif text-[15px] font-semibold text-text">{management.label}</span>
-          </div>
-        </div>
-        {/* Exceptions only. A working provider's version number is a fact nobody
-            acts on — "am I current?" is already answered by the Update line — so
-            it demotes to Details and this slot stays empty. What CANNOT go quiet
-            is the abnormal pair: `not installed` is reserved for the server's
-            not_installed state, and a resolvable binary whose --version fails
-            arrives as state 'unknown' and must not claim absence (#520). */}
-        {!management.installedVersion && (
+        <span className="min-w-0 flex-1 truncate font-serif text-[16px] font-semibold text-text">
+          {management.label}
+        </span>
+        {!open && (
+          <span className="max-w-[13rem] shrink-0 text-right font-sans text-[12px] leading-snug text-text-muted">
+            {needsAttention ? (
+              <span className="text-health-warn">Needs attention</span>
+            ) : !management.installedVersion ? (
+              management.state === 'not_installed' ? 'not installed' : 'version unknown'
+            ) : (
+              collapsedSummary
+            )}
+          </span>
+        )}
+        {open && !management.installedVersion && (
           <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-subtle">
             {management.state === 'not_installed' ? 'not installed' : 'version unknown'}
           </span>
         )}
-      </div>
+      </button>
 
-      {/* ── Attention strip: rendered only when the operator can act on it. ── */}
-      {needsAttention && (
-        <div className="mt-2.5 space-y-1.5 pl-[38px]">
-          {installing && <p className="font-sans text-[11px] text-text-muted">Installing…</p>}
-          {accountSwitching && (
-            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-              <p className="font-sans text-[11px] text-text-muted">
-                Switching account
-                {accountState.pendingAgentIds.length > 0
-                  ? ` · waiting for ${accountState.pendingAgentIds.length} agent${accountState.pendingAgentIds.length === 1 ? '' : 's'}`
-                  : ''}
-              </p>
-              <button
-                type="button"
-                onClick={onRetryAccount}
-                className="inline-flex min-h-[44px] items-center gap-1 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              >
-                <RefreshCw className="h-3 w-3" />
-                Retry
-              </button>
-            </div>
-          )}
-          {accountSwitchFailed && (
-            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-              <p className="font-sans text-[11px] text-health-error">
-                Account switch failed{accountState.errorAgentIds.length > 0 ? `: ${accountState.errorAgentIds.join(', ')}` : ''}
-              </p>
-              <button
-                type="button"
-                onClick={onRetryAccount}
-                className="inline-flex min-h-[44px] items-center gap-1 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              >
-                <RefreshCw className="h-3 w-3" />
-                Retry
-              </button>
-            </div>
-          )}
-          {operation?.status === 'failed' && (
-            <p className="font-sans text-[11px] leading-relaxed text-health-error">
-              {operation.error ?? 'Update failed'}
-            </p>
-          )}
-          {updateOffer && (
-            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-              <span className="shrink-0 font-sans text-[11px] text-health-warn">
-                Update available{management.latestVersion ? ` ${management.latestVersion}` : ''}
-              </span>
-              {canApply ? (
-                <button
-                  type="button"
-                  onClick={onApply}
-                  disabled={updateLocked}
-                  title={management.latestVersion ? `Update to v${management.latestVersion}` : 'Update'}
-                  className="flex h-6 shrink-0 items-center gap-1 rounded-sm bg-accent px-2 font-sans text-[10px] font-semibold text-white hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <ArrowUp className="h-3 w-3" />
-                  Update
-                </button>
-              ) : (
-                management.manualCommand && (
+      {open && (
+        <div className="mt-2 space-y-3 pl-[42px]">
+          {needsAttention && (
+            <div className="space-y-1.5">
+              {installing && <p className="font-sans text-[11px] text-text-muted">Installing…</p>}
+              {accountSwitching && (
+                <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                  <p className="font-sans text-[11px] text-text-muted">
+                    Switching account
+                    {accountState.pendingAgentIds.length > 0
+                      ? ` · waiting for ${accountState.pendingAgentIds.length} agent${accountState.pendingAgentIds.length === 1 ? '' : 's'}`
+                      : ''}
+                  </p>
                   <button
                     type="button"
-                    onClick={onCopyCommand}
-                    className="flex min-w-0 items-center gap-1.5 text-left font-mono text-[10px] text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-                    title="Copy update command"
+                    onClick={onRetryAccount}
+                    className="inline-flex min-h-[44px] items-center gap-1 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                   >
-                    <Copy className="h-3 w-3 shrink-0" />
-                    <span className="truncate">{management.manualCommand}</span>
+                    <RefreshCw className="h-3 w-3" />
+                    Retry
                   </button>
-                )
+                </div>
+              )}
+              {accountSwitchFailed && (
+                <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                  <p className="font-sans text-[11px] text-health-error">
+                    Account switch failed{accountState.errorAgentIds.length > 0 ? `: ${accountState.errorAgentIds.join(', ')}` : ''}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={onRetryAccount}
+                    className="inline-flex min-h-[44px] items-center gap-1 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                    Retry
+                  </button>
+                </div>
+              )}
+              {operation?.status === 'failed' && (
+                <p className="font-sans text-[11px] leading-relaxed text-health-error">
+                  {operation.error ?? 'Update failed'}
+                </p>
+              )}
+              {updateOffer && (
+                <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="shrink-0 font-sans text-[11px] text-health-warn">
+                    Update available{management.latestVersion ? ` ${management.latestVersion}` : ''}
+                  </span>
+                  {canApply ? (
+                    <button
+                      type="button"
+                      onClick={onApply}
+                      disabled={updateLocked}
+                      title={management.latestVersion ? `Update to v${management.latestVersion}` : 'Update'}
+                      className="flex h-6 shrink-0 items-center gap-1 rounded-sm bg-accent px-2 font-sans text-[10px] font-semibold text-white hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <ArrowUp className="h-3 w-3" />
+                      Update
+                    </button>
+                  ) : (
+                    management.manualCommand && (
+                      <button
+                        type="button"
+                        onClick={onCopyCommand}
+                        className="flex min-w-0 items-center gap-1.5 text-left font-mono text-[10px] text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                        title="Copy update command"
+                      >
+                        <Copy className="h-3 w-3 shrink-0" />
+                        <span className="truncate">{management.manualCommand}</span>
+                      </button>
+                    )
+                  )}
+                </div>
+              )}
+              {staleSessions && (
+                <p className="font-sans text-[11px] leading-relaxed text-text-muted">
+                  New sessions use v{management.installedVersion}. Existing sessions keep their current version until
+                  restart.
+                </p>
               )}
             </div>
           )}
-          {staleSessions && (
-            <p className="font-sans text-[11px] leading-relaxed text-text-muted">
-              New sessions use v{management.installedVersion}. Existing sessions keep their current version until
-              restart.
-            </p>
-          )}
-        </div>
-      )}
 
-      {/* ── Account blocks: usage is per account; switching stays a deliberate
-          act on the block, not a side effect of looking. ── */}
-      <div className="mt-4 pl-[38px]">
-        {sortedUsages.length > 0 ? (
-          <div>
-            {sortedUsages.map((row, i) => (
-              <div
-                key={row.accountId ?? 'single-account'}
-                className={i > 0 ? 'mt-4 border-t border-border-soft/70 pt-4' : undefined}
-              >
-                <AccountUsageBlock
-                  accountState={accountState}
-                  now={now}
-                  onLoginAccount={onLoginAccount}
-                  onSelectAccount={onSelectAccount}
-                  usage={row}
-                />
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="space-y-0.5 opacity-60">
-            <span className="font-sans text-[12px] text-text-muted">Not configured</span>
-          </div>
-        )}
-        {accountState && (
-          <button
-            type="button"
-            onClick={onAddAccount}
-            className="mt-4 inline-flex min-h-[44px] items-center gap-1.5 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-          >
-            <UserPlus className="h-3.5 w-3.5" />
-            Add account
-          </button>
-        )}
-      </div>
-
-      {contextLimit && (
-        <div className="mt-4 space-y-1.5 pl-[38px]">
-          <label className="block font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
-            Context limit
-            <select
-              aria-label={`${management.label} context limit`}
-              className="mt-1.5 block min-h-[44px] w-full rounded-sm border border-border-soft bg-surface-elevated px-3 font-sans text-[12px] text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-wait disabled:opacity-60"
-              disabled={contextLimitSaving}
-              onChange={(event) => {
-                const value = event.currentTarget.value;
-                onContextLimitChange(value === 'no-anima-limit' ? null : Number(value));
-              }}
-              value={contextLimit.maxTokens ?? 'no-anima-limit'}
-            >
-              <option value="no-anima-limit">No Anima limit</option>
-              {contextLimit.presets.map((preset) => (
-                <option key={preset} value={preset}>
-                  {formatContextTokens(preset)}
-                  {preset === contextLimit.recommended ? ' · recommended' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-          <p className="font-sans text-[10px] leading-relaxed text-text-subtle">
-            Global for every agent. Applies when its provider session next starts.
-          </p>
-          {contextLimitError && (
-            <p className="font-sans text-[10px] leading-relaxed text-health-error">
-              {contextLimitError}
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* ── Details: install diagnostics, demoted out of the default view. ── */}
-      <details className="group mt-3 pl-[38px]">
-        <summary className="flex cursor-pointer list-none items-center gap-1 font-sans text-[10px] uppercase tracking-[0.08em] text-text-subtle hover:text-text-muted">
-          <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
-          Details
-          {management.agents.length > 0 && (
-            <span className="normal-case tracking-normal">
-              · {management.agents.length} {management.agents.length === 1 ? 'agent' : 'agents'}
-            </span>
-          )}
-        </summary>
-        <div className="mt-2 space-y-1.5 border-l border-border-soft pl-3">
-          {/* Demoted out of the identity row, not deleted: still the first thing
-              you want when something looks wrong. */}
-          {management.installedVersion && <DetailRow label="Version" value={`v${management.installedVersion}`} mono />}
-          {management.binaryPath && <DetailRow label="Binary" value={management.binaryPath} mono />}
-          {management.binaryPath && <DetailRow label="Source" value={installSourceLabel(management.installSource)} />}
-          {management.autoUpdatesEnabled !== undefined && (
-            <DetailRow
-              label="Auto-update"
-              value={`${management.autoUpdatesEnabled ? 'on' : 'off'}${management.autoUpdateChannel ? ` · ${management.autoUpdateChannel}` : ''}`}
-            />
-          )}
-          {management.sourceDetail && management.updateMode !== 'managed' && (
-            <p className="font-sans text-[10px] leading-relaxed text-text-muted">{management.sourceDetail}</p>
-          )}
-          {versionCheckFailed && (
-            <p className="font-sans text-[10px] leading-relaxed text-text-muted">
-              Version check failed{management.checkError ? ` · ${management.checkError.message}` : ''}
-            </p>
-          )}
-          {management.agents.length > 0 && (
-            <div className="space-y-1 pt-0.5">
-              {management.agents.map((agent) => (
-                <div key={agent.id} className="flex min-w-0 items-baseline justify-between gap-3">
-                  <span className="truncate font-sans text-[11px] text-text-muted">{agent.name}</span>
-                  <span className="shrink-0 font-mono text-[10px] text-text-subtle">
-                    {agent.runningVersion
-                      ? `running v${agent.runningVersion}`
-                      : agent.enabled
-                        ? 'next session'
-                        : 'disabled'}
-                  </span>
+          {featured ? (
+            <div className="space-y-3">
+              <ActiveAccountCard
+                accountState={accountState}
+                now={now}
+                onLoginAccount={onLoginAccount}
+                usage={featured}
+              />
+              {others.length > 0 && (
+                <div>
+                  <div className="mb-1 font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
+                    Other accounts
+                  </div>
+                  <div className="divide-y divide-border-soft/60 rounded-md border border-border-soft/80">
+                    {others.map((row) => (
+                      <OtherAccountRow
+                        key={row.accountId ?? row.account}
+                        accountState={accountState}
+                        onLoginAccount={onLoginAccount}
+                        onSelectAccount={onSelectAccount}
+                        usage={row}
+                      />
+                    ))}
+                  </div>
                 </div>
-              ))}
+              )}
+            </div>
+          ) : (
+            <div className="space-y-0.5 opacity-60">
+              <span className="font-sans text-[12px] text-text-muted">Not configured</span>
             </div>
           )}
+
+          <details className="group">
+            <summary className="flex cursor-pointer list-none items-center gap-1 font-sans text-[10px] uppercase tracking-[0.08em] text-text-subtle hover:text-text-muted">
+              <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
+              Settings & details
+              {management.agents.length > 0 && (
+                <span className="normal-case tracking-normal">
+                  · {management.agents.length} {management.agents.length === 1 ? 'agent' : 'agents'}
+                </span>
+              )}
+            </summary>
+            <div className="mt-2 space-y-4 border-l border-border-soft pl-3">
+              {accountState && (
+                <button
+                  type="button"
+                  onClick={onAddAccount}
+                  className="inline-flex min-h-[40px] items-center gap-1.5 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                >
+                  <UserPlus className="h-3.5 w-3.5" />
+                  Add account
+                </button>
+              )}
+              {contextLimit && (
+                <div className="space-y-1.5">
+                  <label className="block font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
+                    Context limit
+                    <select
+                      aria-label={`${management.label} context limit`}
+                      className="mt-1.5 block min-h-[44px] w-full rounded-sm border border-border-soft bg-surface-elevated px-3 font-sans text-[12px] text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-wait disabled:opacity-60"
+                      disabled={contextLimitSaving}
+                      onChange={(event) => {
+                        const value = event.currentTarget.value;
+                        onContextLimitChange(value === 'no-anima-limit' ? null : Number(value));
+                      }}
+                      value={contextLimit.maxTokens ?? 'no-anima-limit'}
+                    >
+                      <option value="no-anima-limit">No Anima limit</option>
+                      {contextLimit.presets.map((preset) => (
+                        <option key={preset} value={preset}>
+                          {formatContextTokens(preset)}
+                          {preset === contextLimit.recommended ? ' · recommended' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="font-sans text-[10px] leading-relaxed text-text-subtle">
+                    Global for every agent. Applies when its provider session next starts.
+                  </p>
+                  {contextLimitError && (
+                    <p className="font-sans text-[10px] leading-relaxed text-health-error">
+                      {contextLimitError}
+                    </p>
+                  )}
+                </div>
+              )}
+              <div className="space-y-1.5">
+                {management.installedVersion && <DetailRow label="Version" value={`v${management.installedVersion}`} mono />}
+                {management.binaryPath && <DetailRow label="Binary" value={management.binaryPath} mono />}
+                {management.binaryPath && <DetailRow label="Source" value={installSourceLabel(management.installSource)} />}
+                {management.autoUpdatesEnabled !== undefined && (
+                  <DetailRow
+                    label="Auto-update"
+                    value={`${management.autoUpdatesEnabled ? 'on' : 'off'}${management.autoUpdateChannel ? ` · ${management.autoUpdateChannel}` : ''}`}
+                  />
+                )}
+                {management.sourceDetail && management.updateMode !== 'managed' && (
+                  <p className="font-sans text-[10px] leading-relaxed text-text-muted">{management.sourceDetail}</p>
+                )}
+                {versionCheckFailed && (
+                  <p className="font-sans text-[10px] leading-relaxed text-text-muted">
+                    Version check failed{management.checkError ? ` · ${management.checkError.message}` : ''}
+                  </p>
+                )}
+                {management.agents.length > 0 && (
+                  <div className="space-y-1 pt-0.5">
+                    {management.agents.map((agent) => (
+                      <div key={agent.id} className="flex min-w-0 items-baseline justify-between gap-3">
+                        <span className="truncate font-sans text-[11px] text-text-muted">{agent.name}</span>
+                        <span className="shrink-0 font-mono text-[10px] text-text-subtle">
+                          {agent.runningVersion
+                            ? `running v${agent.runningVersion}`
+                            : agent.enabled
+                              ? 'next session'
+                              : 'disabled'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </details>
         </div>
-      </details>
+      )}
     </div>
   );
 }
@@ -646,6 +807,7 @@ export default function UsagePanel({ onClose }: Props) {
   const queryClient = useQueryClient();
   const { confirm, modal } = useConfirm();
   const [loginTarget, setLoginTarget] = useState<ProviderAccountSummary | 'new'>();
+  const [expandedProviders, setExpandedProviders] = useState<Record<string, true>>(loadExpandedProviders);
   const [savingContextProvider, setSavingContextProvider] = useState<ProviderUsageKind>();
   const [contextLimitFailure, setContextLimitFailure] = useState<{
     message: string;
@@ -708,6 +870,16 @@ export default function UsagePanel({ onClose }: Props) {
       checkProviderClis(),
     ]);
     queryClient.setQueryData(queryKeys.providerCliStatus(), status);
+  }
+
+  function toggleProviderExpanded(provider: ProviderUsageKind): void {
+    setExpandedProviders((prev) => {
+      const next = { ...prev };
+      if (next[provider]) delete next[provider];
+      else next[provider] = true;
+      persistExpandedProviders(next);
+      return next;
+    });
   }
 
   async function changeContextLimit(
@@ -810,7 +982,7 @@ export default function UsagePanel({ onClose }: Props) {
             className={[
               'relative flex h-full w-full flex-col bg-surface',
               'md:absolute md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2',
-              'md:h-auto md:max-h-[calc(100dvh-4rem)] md:max-w-xl md:rounded-sm md:border md:border-border-soft md:shadow-deep',
+              'md:h-auto md:max-h-[calc(100dvh-4rem)] md:w-[min(520px,calc(100vw-2rem))] md:max-w-none md:rounded-sm md:border md:border-border-soft md:shadow-deep',
             ].join(' ')}
             style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
           >
@@ -853,7 +1025,7 @@ export default function UsagePanel({ onClose }: Props) {
               ) : visible.length > 0 ? (
                 <div className="divide-y divide-border-soft">
                   {visible.map((row, i) => (
-                    <div key={row.provider} className={i === 0 ? 'pb-6' : 'py-6 last:pb-1'}>
+                    <div key={row.provider} className={i === 0 ? 'pb-4' : 'py-4 last:pb-1'}>
                       <ProviderUnit
                         contextLimit={contextLimits?.providers.find(
                           (limit) => limit.provider === row.provider,
@@ -864,6 +1036,7 @@ export default function UsagePanel({ onClose }: Props) {
                             : undefined
                         }
                         contextLimitSaving={savingContextProvider === row.provider}
+                        expanded={Boolean(expandedProviders[row.provider])}
                         globallyLocked={cliData?.upgradeLocked}
                         management={row}
                         now={now}
@@ -871,6 +1044,7 @@ export default function UsagePanel({ onClose }: Props) {
                         onCopyCommand={() => {
                           if (row.manualCommand) void navigator.clipboard.writeText(row.manualCommand);
                         }}
+                        onToggleExpanded={() => toggleProviderExpanded(row.provider)}
                         usages={usageByProvider.get(row.provider) ?? []}
                         accountState={row.provider === 'claude-code' ? claudeAccountState : undefined}
                         onAddAccount={() => setLoginTarget('new')}
