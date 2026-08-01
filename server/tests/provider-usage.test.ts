@@ -168,15 +168,28 @@ test('Kimi usage parser returns top-level and short-window limits', () => {
       },
     ],
     usage: { limit: 100, remaining: 99, resetTime: '2026-06-01T00:00:00.000Z', used: 1 },
+    // Opaque userId alone is not a useful panel identity — omit account.
     user: { userId: 'kimi-user-1' },
+    subType: 'TYPE_PURCHASE',
   });
 
   assert.equal(parsed.error, undefined);
-  assert.equal(parsed.account, 'kimi-user-1');
+  assert.equal(parsed.account, undefined);
+  assert.deepEqual(
+    parsed.extras.find((e) => e.label === 'Plan'),
+    { label: 'Plan', balance: 'Paid' },
+  );
   assert.deepEqual(parsed.windows.map(({ label, remainingPercent, usedPercent }) => [label, remainingPercent, usedPercent]), [
     ['5h', 99, 1],
     ['Weekly', 99, 1],
   ]);
+
+  const withEmail = parseKimiUsageResponse({
+    limits: [],
+    usage: { limit: 100, remaining: 50, resetTime: '2026-06-01T00:00:00.000Z', used: 50 },
+    user: { userId: 'kimi-user-1', email: 'kimi@example.com' },
+  });
+  assert.equal(withEmail.account, 'kimi@example.com');
 });
 
 test('OpenCode usage reports only global DeepSeek credential presence and never returns the secret', async () => {
@@ -250,7 +263,8 @@ test('Kimi usage reads Kimi Code credentials before legacy migrated credentials'
   try {
     const result = await fetchKimiUsage();
     assert.equal(result.status, 'available');
-    assert.equal(result.account, 'kimi-user-2');
+    // Opaque usage userId is not shown as the account identity.
+    assert.equal(result.account, undefined);
     assert.deepEqual(authorizations, ['Bearer new-kimi-code-token']);
   } finally {
     globalThis.fetch = originalFetch;
