@@ -55,6 +55,42 @@ test('Claude usage parser returns remaining windows and extra usage', () => {
   ]);
 });
 
+test('Claude plan prefers team subscription over max rate-limit tier', () => {
+  // Team seats often use rateLimitTier like default_claude_max_5x; the old
+  // substring order matched "max" first and painted every seat Claude Max.
+  const parsed = parseClaudeUsageResponse({
+    five_hour: { utilization: 0 },
+    seven_day: { utilization: 0 },
+  }, {
+    organizationName: 'Quinn',
+    organizationType: 'claude_team',
+    rateLimitTier: 'default_claude_max_5x',
+    subscriptionType: 'team',
+  });
+
+  assert.equal(parsed.error, undefined);
+  assert.deepEqual(parsed.extras, [
+    { balance: 'Claude Team · 5x · Quinn', label: 'Plan' },
+  ]);
+});
+
+test('Claude plan labels personal Max with rate-limit multiplier', () => {
+  const parsed = parseClaudeUsageResponse({
+    five_hour: { utilization: 0 },
+    seven_day: { utilization: 0 },
+  }, {
+    organizationName: "user@example.com's Organization",
+    organizationType: 'claude_max',
+    rateLimitTier: 'default_claude_max_20x',
+    subscriptionType: 'max',
+  });
+
+  assert.equal(parsed.error, undefined);
+  assert.deepEqual(parsed.extras, [
+    { balance: 'Claude Max · 20x', label: 'Plan' },
+  ]);
+});
+
 test('Codex usage parser returns rate-limit windows and credits', () => {
   const parsed = parseCodexUsageResponse({
     credits: { balance: '0', has_credits: false, unlimited: false },
