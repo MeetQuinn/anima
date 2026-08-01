@@ -576,10 +576,13 @@ class GrokAcpController {
     const name = grokToolName(data);
     this.activeToolIds.add(id);
     if (rawInput) {
-      // Emit immediately when we can show a useful target/command; otherwise wait
-      // for tool_call_update which often carries target_file / locations / title.
+      // Emit immediately only when the start frame already has a path/command
+      // identity. Diff-only StrReplace frames (old/new text, no path) must wait
+      // for tool_call_update — path often arrives only then via content diffs /
+      // locations / title. Emitting early with summary.diff alone permanently
+      // drops the path (emitDeferredToolStarted no-ops once emitted=true).
       const summary = summarizeGrokToolInput(name, rawInput, data);
-      if (summary.target || summary.command || summary.diff) {
+      if (summary.target || summary.command) {
         this.pendingTools.set(id, { emitted: true, input: rawInput, name });
         await this.emitToolStarted(input, id, name, rawInput, data);
         return;

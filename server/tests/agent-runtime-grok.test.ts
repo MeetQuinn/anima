@@ -454,6 +454,64 @@ test('grok-cli surfaces ListDir from live ACP meta/title as narrative ListDir', 
   }
 });
 
+test('grok-cli defers StrReplace until terminal frame supplies path (diff-only start)', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-grok-strreplace-path-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      await installFakeGrok(stateDir, [
+        "const fs = require('fs');",
+        "process.stdin.setEncoding('utf8');",
+        "let buffer = '';",
+        "function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }",
+        "function update(value) { send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'grok-session-strreplace', update: value } }); }",
+        "process.stdin.on('data', (chunk) => {",
+        '  buffer += chunk;',
+        '  const lines = buffer.split(/\\r?\\n/);',
+        "  buffer = lines.pop() || '';",
+        '  for (const line of lines) {',
+        '    if (!line.trim()) continue;',
+        '    const msg = JSON.parse(line);',
+        "    fs.appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + '\\n');",
+        "    if (msg.method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, _meta: { agentVersion: '0.2.93', modelState: { currentModelId: 'grok-4.5', availableModels: [] } } } });",
+        "    if (msg.method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'grok-session-strreplace' } });",
+        "    if (msg.method === 'session/prompt') {",
+        // Live two-frame edit: start has old/new text only; path arrives on terminal content diff.
+        "      update({ sessionUpdate: 'tool_call', toolCallId: 'call-edit-1', title: 'str_replace_file', kind: 'edit', rawInput: { old_string: 'a', new_string: 'b' }, _meta: { 'x.ai/tool': { name: 'str_replace_file' } } });",
+        "      update({ sessionUpdate: 'tool_call_update', toolCallId: 'call-edit-1', status: 'completed', content: [{ type: 'diff', path: 'server/providers/grok.ts', oldText: 'a', newText: 'b' }] });",
+        "      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'edited' } });",
+        "      send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn', _meta: { modelId: 'grok-4.5', totalTokens: 9 } } });",
+        '    }',
+        '  }',
+        '});',
+      ]);
+
+      const ctx = await ingestGrokEvent(stateDir, 'Edit a file.', '1771000099.000004');
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'grok-cli',
+        model: 'grok-4.5',
+      });
+      assert.equal((await withTimeout(runtime.run(await runtimeInput(runtime, ctx, await loadState())), 2_000)).text, 'edited');
+
+      const started = allActivities(await loadState()).find(
+        (activity) =>
+          activity.type === 'tool.call.started' &&
+          activity.payload?.['providerToolId'] === 'call-edit-1',
+      );
+      assert.equal(started?.payload?.['providerToolName'], 'StrReplaceFile');
+      assert.equal(started?.payload?.['tool'], 'grok.StrReplaceFile');
+      // Path must come from the terminal content diff, not stay blank after a diff-only start.
+      assert.equal(started?.payload?.['target'], 'server/providers/grok.ts');
+      assert.ok(typeof started?.payload?.['diff'] === 'string' && String(started?.payload?.['diff']).length > 0);
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('grok-cli keeps the start-frame tool identity when the terminal update has none', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-grok-defer-identity-'));
   let runtime: AgentRuntime | undefined;
