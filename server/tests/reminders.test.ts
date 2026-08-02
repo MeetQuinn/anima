@@ -16,7 +16,14 @@ import {
   REMINDER_SCHEDULE_EXAMPLES,
   reminderScheduleExampleCommand,
 } from '../reminders/cli.js';
-import { nextDueAtForSchedule, parseRepeatRule } from '../reminders/reminder.helper.js';
+import {
+  buildWindowedIntervalSchedule,
+  nextDueAtForSchedule,
+  parseRepeatRule,
+  parseWindowRule,
+  windowedSlotsOnLocalDay,
+} from '../reminders/reminder.helper.js';
+import { zonedDateTime } from '../schedule/local-time.js';
 import type {
   AgentRuntime,
   AgentRuntimeFollowupInput,
@@ -488,6 +495,267 @@ test('parseRepeatRule rejects zero-interval and malformed rules', () => {
   assert.throws(() => parseRepeatRule('weekly:@09:00', 'UTC'), /Invalid repeat rule/);
   assert.throws(() => parseRepeatRule('weekly:funday@09:00', 'UTC'), /Invalid weekly repeat weekdays/);
 });
+
+test('windowed interval mon-fri@08:00-18:30 / 30m has 22 inclusive grid slots per day', () => {
+  const schedule = buildWindowedIntervalSchedule({
+    repeatRule: 'every:30m',
+    timezone: 'America/New_York',
+    windowRule: 'mon-fri@08:00-18:30',
+  });
+  assert.equal(schedule.kind, 'windowed_interval');
+  assert.deepEqual(schedule.weekdays, ['mon', 'tue', 'wed', 'thu', 'fri']);
+  // Monday 2026-05-18 in America/New_York
+  const monday = zonedDateTime(new Date('2026-05-18T12:00:00.000Z'), 'America/New_York').startOf('day');
+  const slots = windowedSlotsOnLocalDay(schedule, monday);
+  assert.equal(slots.length, 22);
+  assert.equal(slots[0]?.toFormat('HH:mm'), '08:00');
+  assert.equal(slots[slots.length - 1]?.toFormat('HH:mm'), '18:30');
+});
+
+test('windowed interval next-due: before/inside/end/after window and weekend skip', () => {
+  const schedule = buildWindowedIntervalSchedule({
+    repeatRule: 'every:30m',
+    timezone: 'America/New_York',
+    windowRule: 'mon-fri@08:00-18:30',
+  });
+  // Monday 2026-05-18: before window → 08:00 ET = 12:00Z (EDT)
+  assert.equal(
+    nextDueAtForSchedule(schedule, new Date('2026-05-18T11:00:00.000Z')),
+    '2026-05-18T12:00:00.000Z',
+  );
+  // Inside window just after 10:00 ET (14:00Z) → next is 10:30 ET = 14:30Z
+  assert.equal(
+    nextDueAtForSchedule(schedule, new Date('2026-05-18T14:00:00.000Z')),
+    '2026-05-18T14:30:00.000Z',
+  );
+  // Exactly on a grid tick: strictly after → next slot
+  assert.equal(
+    nextDueAtForSchedule(schedule, new Date('2026-05-18T14:30:00.000Z')),
+    '2026-05-18T15:00:00.000Z',
+  );
+  // At inclusive end 18:30 ET = 22:30Z → next weekday morning
+  assert.equal(
+    nextDueAtForSchedule(schedule, new Date('2026-05-18T22:30:00.000Z')),
+    '2026-05-19T12:00:00.000Z',
+  );
+  // After window Friday → Monday
+  assert.equal(
+    nextDueAtForSchedule(schedule, new Date('2026-05-22T23:00:00.000Z')),
+    '2026-05-25T12:00:00.000Z',
+  );
+  // Saturday → Monday
+  assert.equal(
+    nextDueAtForSchedule(schedule, new Date('2026-05-23T15:00:00.000Z')),
+    '2026-05-25T12:00:00.000Z',
+  );
+});
+
+test('windowed interval late fire does not replay missed ticks', () => {
+  const schedule = buildWindowedIntervalSchedule({
+    repeatRule: 'every:30m',
+    timezone: 'America/New_York',
+    windowRule: 'mon-fri@08:00-18:30',
+  });
+  // Fire late at 11:07 ET (15:07Z) → next grid is 11:30 ET = 15:30Z, not catch-up of 11:00
+  assert.equal(
+    nextDueAtForSchedule(schedule, new Date('2026-05-18T15:07:00.000Z')),
+    '2026-05-18T15:30:00.000Z',
+  );
+});
+
+test('windowed interval DST: one wake per local label on spring/fall transition Sundays', () => {
+  // Contract: skip nonexistent spring labels; no duplicate fall-back labels.
+  const schedule = buildWindowedIntervalSchedule({
+    repeatRule: 'every:30m',
+    timezone: 'America/New_York',
+    windowRule: 'sun@00:00-04:00',
+  });
+
+  // 2026-03-08 spring forward: 02:00–02:59 do not exist.
+  const springDay = zonedDateTime(new Date('2026-03-08T12:00:00.000Z'), 'America/New_York').startOf('day');
+  const springSlots = windowedSlotsOnLocalDay(schedule, springDay);
+  const springLabels = springSlots.map((s) => s.toFormat('HH:mm'));
+  assert.deepEqual(springLabels, ['00:00', '00:30', '01:00', '01:30', '03:00', '03:30', '04:00']);
+  assert.ok(!springLabels.includes('02:00') && !springLabels.includes('02:30'));
+  // Exact instants (EST → EDT):
+  assert.equal(springSlots[3]?.toUTC().toISO(), '2026-03-08T06:30:00.000Z'); // 01:30 EST
+  assert.equal(springSlots[4]?.toUTC().toISO(), '2026-03-08T07:00:00.000Z'); // 03:00 EDT
+  // Next-due from just after 01:30 EST skips the gap to 03:00 EDT
+  assert.equal(
+    nextDueAtForSchedule(schedule, new Date('2026-03-08T06:30:00.000Z')),
+    '2026-03-08T07:00:00.000Z',
+  );
+
+  // 2026-11-01 fall back: 01:00–01:59 repeat; emit each label once (earlier offset).
+  const fallDay = zonedDateTime(new Date('2026-11-01T12:00:00.000Z'), 'America/New_York').startOf('day');
+  const fallSlots = windowedSlotsOnLocalDay(schedule, fallDay);
+  const fallLabels = fallSlots.map((s) => s.toFormat('HH:mm'));
+  assert.deepEqual(fallLabels, ['00:00', '00:30', '01:00', '01:30', '02:00', '02:30', '03:00', '03:30', '04:00']);
+  assert.equal(fallLabels.filter((l) => l === '01:00').length, 1);
+  assert.equal(fallLabels.filter((l) => l === '01:30').length, 1);
+  // 01:00 / 01:30 resolve to first (EDT) occurrence, not the EST repeat.
+  assert.equal(fallSlots[2]?.toUTC().toISO(), '2026-11-01T05:00:00.000Z'); // 01:00 EDT
+  assert.equal(fallSlots[3]?.toUTC().toISO(), '2026-11-01T05:30:00.000Z'); // 01:30 EDT
+  assert.equal(fallSlots[4]?.toUTC().toISO(), '2026-11-01T07:00:00.000Z'); // 02:00 EST
+  assert.equal(
+    nextDueAtForSchedule(schedule, new Date('2026-11-01T05:00:00.000Z')),
+    '2026-11-01T05:30:00.000Z',
+  );
+});
+
+test('windowed interval schedule, snooze, fire resume grid without drift', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-reminder-windowed-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const now = new Date('2026-05-18T11:00:00.000Z'); // Mon before 08:00 ET
+      const reminder = await reminderService.scheduleReminder({
+        instructions: 'Work-hours poll',
+        now,
+        repeat: 'every:30m',
+        timezone: 'America/New_York',
+        title: 'Work-hours poll',
+        window: 'mon-fri@08:00-18:30',
+      });
+      assert.equal(reminder.schedule.kind, 'windowed_interval');
+      assert.equal(reminder.nextDueAt, '2026-05-18T12:00:00.000Z');
+      if (reminder.schedule.kind !== 'windowed_interval') throw new Error('expected windowed');
+      assert.equal(reminder.schedule.windowRule, 'mon-fri@08:00-18:30');
+      assert.equal(reminder.schedule.timezone, 'America/New_York');
+
+      const snoozed = await reminderService.snoozeReminder({
+        by: '45m',
+        id: reminder.reminderId,
+        now: new Date('2026-05-18T12:05:00.000Z'),
+      });
+      assert.equal(snoozed.nextDueAt, '2026-05-18T12:50:00.000Z');
+
+      const afterSnooze = await reminderService.completeReminderFire({
+        id: reminder.reminderId,
+        now: new Date('2026-05-18T12:50:00.000Z'),
+      });
+      // Back on window grid strictly after fire: 09:00 ET = 13:00Z
+      assert.equal(afterSnooze.nextDueAt, '2026-05-18T13:00:00.000Z');
+      assert.equal(afterSnooze.schedule.kind, 'windowed_interval');
+
+      // Reload store: schedule + next due unchanged (no drift)
+      const reloaded = await reminderService.findReminder(reminder.reminderId);
+      assert.equal(reloaded?.nextDueAt, '2026-05-18T13:00:00.000Z');
+      assert.equal(reloaded?.schedule.kind, 'windowed_interval');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('windowed interval rejects invalid combinations and preserves legacy interval', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-reminder-windowed-contract-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await assert.rejects(
+        reminderService.scheduleReminder({
+          instructions: 'x',
+          now: new Date('2026-05-18T12:00:00.000Z'),
+          title: 'bad',
+          window: 'mon-fri@08:00-18:30',
+        }),
+        /--window requires --repeat/,
+      );
+      await assert.rejects(
+        reminderService.scheduleReminder({
+          instructions: 'x',
+          now: new Date('2026-05-18T12:00:00.000Z'),
+          repeat: 'daily@09:00',
+          title: 'bad',
+          timezone: 'UTC',
+          window: 'mon-fri@08:00-18:30',
+        }),
+        /only allowed with every/,
+      );
+      // --fire-at / --in must not bypass the window (e.g. Saturday fire with mon-fri).
+      await assert.rejects(
+        reminderService.scheduleReminder({
+          fireAt: '2026-05-23T15:00:00.000Z', // Saturday
+          instructions: 'x',
+          now: new Date('2026-05-18T12:00:00.000Z'),
+          repeat: 'every:30m',
+          timezone: 'America/New_York',
+          title: 'bad-fire-at',
+          window: 'mon-fri@08:00-18:30',
+        }),
+        /cannot be combined with --fire-at or --in/,
+      );
+      await assert.rejects(
+        reminderService.scheduleReminder({
+          delaySeconds: 3600,
+          instructions: 'x',
+          now: new Date('2026-05-23T15:00:00.000Z'), // Saturday
+          repeat: 'every:30m',
+          timezone: 'America/New_York',
+          title: 'bad-in',
+          window: 'mon-fri@08:00-18:30',
+        }),
+        /cannot be combined with --fire-at or --in/,
+      );
+      // Long intervals would restart each eligible day while UI says every 1d/12h.
+      assert.throws(
+        () => buildWindowedIntervalSchedule({
+          repeatRule: 'every:1d',
+          timezone: 'America/New_York',
+          windowRule: 'mon-fri@08:00-18:30',
+        }),
+        /longer than the same-day window/,
+      );
+      assert.throws(
+        () => buildWindowedIntervalSchedule({
+          repeatRule: 'every:12h',
+          timezone: 'America/New_York',
+          windowRule: 'mon-fri@08:00-18:30',
+        }),
+        /longer than the same-day window/,
+      );
+      assert.throws(() => parseWindowRule('mon-fri@18:30-08:00'), /overnight|after start/i);
+      assert.throws(() => parseWindowRule('mon-fri@08:00-08:00'), /overnight|after start/i);
+      assert.throws(
+        () => buildWindowedIntervalSchedule({
+          repeatRule: 'every:30m',
+          timezone: 'Not/AZone',
+          windowRule: 'mon-fri@08:00-18:30',
+        }),
+        /Invalid timezone/,
+      );
+      assert.throws(() => parseWindowRule('funday@08:00-18:30'), /Invalid window weekdays/);
+
+      // Legacy plain interval still works
+      const legacy = await reminderService.scheduleReminder({
+        instructions: 'legacy',
+        now: new Date('2026-05-18T12:00:00.000Z'),
+        repeat: 'every:30m',
+        title: 'legacy',
+      });
+      assert.equal(legacy.schedule.kind, 'interval');
+      assert.equal(legacy.nextDueAt, '2026-05-18T12:30:00.000Z');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('windowed next-due is red-controlled: removing window awareness breaks the 22-slot grid', () => {
+  // If nextWindowedIntervalDueAt were replaced by plain interval math, this
+  // Monday→weekend skip and inclusive end count would not hold.
+  const schedule = buildWindowedIntervalSchedule({
+    repeatRule: 'every:30m',
+    timezone: 'America/New_York',
+    windowRule: 'mon-fri@08:00-18:30',
+  });
+  const monday = zonedDateTime(new Date('2026-05-18T12:00:00.000Z'), 'America/New_York').startOf('day');
+  assert.equal(windowedSlotsOnLocalDay(schedule, monday).length, 22);
+  // After Friday end, plain every:30m would stay on the weekend continuum.
+  const afterFridayEnd = nextDueAtForSchedule(schedule, new Date('2026-05-22T22:30:00.000Z'));
+  assert.equal(afterFridayEnd, '2026-05-25T12:00:00.000Z');
+  assert.match(afterFridayEnd, /^2026-05-25/);
+});
+
 
 test('recurring reminder rules respect IANA timezones', () => {
   const daily = parseRepeatRule('daily@09:00', 'Asia/Shanghai');

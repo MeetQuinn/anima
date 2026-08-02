@@ -31,17 +31,29 @@ function describeSchedule(schedule: ReminderSchedule, nextDueAt?: string): strin
       minute: '2-digit',
     });
   }
-  if (schedule.kind === 'interval') {
+  if (schedule.kind === 'interval' || schedule.kind === 'windowed_interval') {
     const minutes = Math.round(schedule.intervalMs / 60000);
-    if (minutes < 60) return `Every ${minutes} minute${minutes === 1 ? '' : 's'}`;
-    const hours = Math.round(minutes / 60);
-    if (hours < 24) return `Every ${hours} hour${hours === 1 ? '' : 's'}`;
-    const days = Math.round(hours / 24);
-    return `Every ${days} day${days === 1 ? '' : 's'}`;
+    let every: string;
+    if (minutes < 60) every = `Every ${minutes} minute${minutes === 1 ? '' : 's'}`;
+    else {
+      const hours = Math.round(minutes / 60);
+      if (hours < 24) every = `Every ${hours} hour${hours === 1 ? '' : 's'}`;
+      else {
+        const days = Math.round(hours / 24);
+        every = `Every ${days} day${days === 1 ? '' : 's'}`;
+      }
+    }
+    if (schedule.kind === 'windowed_interval') {
+      return `${every} · ${schedule.windowRule} (${schedule.timezone})`;
+    }
+    return every;
   }
   if (schedule.kind === 'daily') return `Daily at ${schedule.time}`;
-  const days = schedule.weekdays.map((d) => d.charAt(0).toUpperCase() + d.slice(1, 3)).join(', ');
-  return `Weekly ${days} at ${schedule.time}`;
+  if (schedule.kind === 'weekly') {
+    const days = schedule.weekdays.map((d) => d.charAt(0).toUpperCase() + d.slice(1, 3)).join(', ');
+    return `Weekly ${days} at ${schedule.time}`;
+  }
+  return 'Scheduled';
 }
 
 function ExpandedDetail({

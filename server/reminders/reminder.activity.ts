@@ -12,6 +12,7 @@ interface ScheduleReminderActivityInput {
   fireAt?: string;
   repeat?: string;
   title: string;
+  window?: string;
 }
 
 interface ReminderIdActivityInput {
@@ -32,6 +33,7 @@ export class ReminderActivityRecorder {
       startedPayload: {
         title: input.title,
         ...(input.repeat ? { repeat: input.repeat } : {}),
+        ...(input.window ? { window: input.window } : {}),
         ...(input.fireAt ? { fireAt: input.fireAt } : {}),
         ...(input.delaySeconds !== undefined ? { delaySeconds: input.delaySeconds } : {}),
       },

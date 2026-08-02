@@ -2,6 +2,7 @@ import { errorMessage, makeId } from '../ids.js';
 import type { Reminder, ReminderProvenance, ReminderStatus } from '../../shared/reminder.js';
 import { ReminderStore } from '../storage/schema/reminder.store.js';
 import {
+  buildWindowedIntervalSchedule,
   initialDueAt,
   nextDueAtForSchedule,
   parseDurationMs,
@@ -24,6 +25,8 @@ export interface ScheduleReminderInput {
   repeat?: string;
   timezone?: string;
   title: string;
+  /** Local weekday+time window; only valid with every:* intervals. */
+  window?: string;
 }
 
 export class ReminderService {
@@ -44,6 +47,16 @@ export class ReminderService {
       const hasFireAt = Boolean(input.fireAt);
       const hasDelay = input.delaySeconds !== undefined;
       const hasRepeat = Boolean(input.repeat);
+      const windowRule = input.window?.trim();
+      if (windowRule && !hasRepeat) {
+        throw new Error('--window requires --repeat every:<n><m|h|d>');
+      }
+      // v1: first wake is always the next eligible grid slot — never fire outside the window.
+      if (windowRule && (hasFireAt || hasDelay)) {
+        throw new Error(
+          '--window cannot be combined with --fire-at or --in; first wake is the next eligible grid slot',
+        );
+      }
       if (hasFireAt && hasDelay) throw new Error('Pass only one of fireAt or delaySeconds');
       if (!hasFireAt && !hasDelay && !hasRepeat) {
         throw new Error('Pass fireAt, delaySeconds, or repeat');
@@ -53,6 +66,13 @@ export class ReminderService {
       let schedule = hasRepeat
         ? parseRepeatRule(input.repeat as string, timezone)
         : { kind: 'once' as const };
+      if (windowRule) {
+        schedule = buildWindowedIntervalSchedule({
+          repeatRule: input.repeat as string,
+          timezone,
+          windowRule,
+        });
+      }
       const createdAt = now.toISOString();
       const nextDueAt = initialDueAt({
         delaySeconds: input.delaySeconds,
