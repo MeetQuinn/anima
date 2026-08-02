@@ -109,6 +109,27 @@ test('Grok WebSearch recovers query from title when rawInput is backend-only', (
   );
 });
 
+test('Grok WebSearch never treats tool result content as the query', () => {
+  // Terminal backend-only frame: content is search output, not call input.
+  assert.deepEqual(
+    summarizeGrokToolInput(
+      'WebSearch',
+      { variant: 'WebSearch', backend: true },
+      {
+        title: 'Web search:',
+        content: [
+          {
+            type: 'content',
+            content: { type: 'text', text: 'Private internal result line that must not become target' },
+          },
+        ],
+        status: 'completed',
+      },
+    ),
+    {},
+  );
+});
+
 test('Grok ListDir tool name comes from live ACP meta/title, not ListServerProviders', () => {
   // Live Grok shape (tool_calls.rs): title List `path`, kind Other, meta name list_dir.
   assert.equal(

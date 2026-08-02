@@ -1257,8 +1257,8 @@ function grokWebSearchSummary(
     return title.replace(/^web\s*search:\s*/i, '').trim() || undefined;
   }
 
-  const contentText = extractAcpToolCallText(data?.['content']).trim();
-  if (contentText) return contentText.split('\n')[0]?.trim() || undefined;
+  // Never fall back to ACP `content` — on terminal frames that is tool
+  // result/output, not the query (Milo #617). Unrecoverable input stays empty.
   return undefined;
 }
 
