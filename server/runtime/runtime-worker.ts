@@ -12,7 +12,7 @@ import {
   recordMemoryCoherenceCompleted,
   recordMemoryCoherenceFailed,
 } from '../memory/memory-coherence-outcome.js';
-import { isIntakeBlocked } from './intake-gate.js';
+import { readRestartDrainActive } from './intake-gate.js';
 import type {
   ItemStopReason,
   RuntimeWorkerConfig,
@@ -190,15 +190,24 @@ export class AgentRuntimeWorker {
   }
 
   private async runOne(): Promise<boolean> {
-    if (await this.intakeBlocked()) return false;
+    // Await drain only, then sync pause/closing in this same continuation.
+    {
+      const drainActive = await this.readDrainActive();
+      if (this.closing || this.intakePaused || drainActive) return false;
+    }
     const releaseRunSlot = await this.runLimiter.acquire();
     try {
-      if (await this.intakeBlocked()) return false;
+      {
+        const drainActive = await this.readDrainActive();
+        if (this.closing || this.intakePaused || drainActive) return false;
+      }
       const item = await this.takeNextRunnable();
       if (!item) return false;
-      // Fail-closed: pause may flip while takeNextRunnable awaits storage. Drain
-      // probe first, then sync re-read pause/closing with no await before process.
-      if (await this.intakeBlocked()) {
+      // Fail-closed after claim: drain probe, sync pause/closing, then either
+      // requeue or invoke processClaimedItem with no await between the pause
+      // read and starting processClaimedItem.
+      const drainActive = await this.readDrainActive();
+      if (this.closing || this.intakePaused || drainActive) {
         await this.queue.requeue(item.id);
         return false;
       }
@@ -209,14 +218,8 @@ export class AgentRuntimeWorker {
     }
   }
 
-  private intakeBlocked(): Promise<boolean> {
-    return isIntakeBlocked({
-      isClosing: () => this.closing,
-      isPaused: () => this.intakePaused,
-      ...(this.options.isRestartDrainActive
-        ? { isRestartDrainActive: this.options.isRestartDrainActive }
-        : {}),
-    });
+  private readDrainActive(): Promise<boolean> {
+    return readRestartDrainActive(this.options.isRestartDrainActive);
   }
 
   private async takeNextRunnable(): Promise<InboxItem | undefined> {

@@ -1,21 +1,13 @@
 import { isRestartDrainActive as defaultIsRestartDrainActive } from '../services/restart-drain.js';
 
 /**
- * Fail-closed intake gate for config-reload pause / restart-drain.
- *
- * Always awaits the restart-drain probe first, then re-reads pause/closing
- * synchronously with **no further await**. That closes the race where
- * `if (paused || await drain)` samples pause before the drain await and can
- * still proceed after pause flips mid-flight.
+ * Await the restart-drain probe only. Callers must then **synchronously**
+ * re-read closing/intakePaused and start run/append/requeue in the same
+ * continuation — no further `await` of a helper that already sampled pause
+ * (that would open a second microtask slot for pause to flip).
  */
-export async function isIntakeBlocked(input: {
-  isPaused: () => boolean;
-  isClosing?: () => boolean;
-  isRestartDrainActive?: () => Promise<boolean>;
-}): Promise<boolean> {
-  const drainActive = await (input.isRestartDrainActive ?? defaultIsRestartDrainActive)();
-  // Synchronous re-read only from here to return.
-  if (input.isClosing?.()) return true;
-  if (input.isPaused()) return true;
-  return drainActive;
+export async function readRestartDrainActive(
+  isRestartDrainActive: () => Promise<boolean> = defaultIsRestartDrainActive,
+): Promise<boolean> {
+  return isRestartDrainActive();
 }
