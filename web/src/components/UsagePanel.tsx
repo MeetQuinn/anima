@@ -539,7 +539,9 @@ function ProviderUnit({
 
       {open && (
         <div className="mt-2 space-y-3 pl-[42px]">
-          {needsAttention && (
+          {/* Status/action block: attention states force the accordion open;
+              an update offer renders here too but only once manually expanded. */}
+          {(needsAttention || updateOffer) && (
             <div className="space-y-1.5">
               {installing && <p className="font-sans text-[11px] text-text-muted">Installing…</p>}
               {accountSwitching && (

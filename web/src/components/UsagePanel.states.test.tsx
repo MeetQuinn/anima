@@ -157,9 +157,8 @@ describe('UsagePanel version slot', () => {
     expect(screen.queryByText('Grok CLI')).toBeNull();
     expect(screen.queryByText('not installed')).toBeNull();
     // An available update alone must not auto-expand a provider (totoday 08-02).
-    expect(
-      screen.getByRole('button', { name: /Kimi CLI/i }).getAttribute('aria-expanded'),
-    ).toBe('false');
+    const kimiToggle = screen.getByRole('button', { name: /Kimi CLI/i });
+    expect(kimiToggle.getAttribute('aria-expanded')).toBe('false');
 
     // Expand Claude to confirm meters still sit next to the unverified binary.
     fireEvent.click(screen.getByRole('button', { name: /Claude Code/i }));
@@ -171,6 +170,11 @@ describe('UsagePanel version slot', () => {
     expect(screen.queryByText('Binary')).toBeNull();
     expect(screen.queryByText(/Settings/i)).toBeNull();
     expect(screen.getByRole('button', { name: /Add account/i })).toBeTruthy();
+
+    // Manually expanding a collapsed provider must still surface its update
+    // offer (#615 gate blocker: the offer block was guarded by needsAttention).
+    fireEvent.click(kimiToggle);
+    expect(await screen.findByText(/Update available/)).toBeTruthy();
   });
 
   it('shows the global Kimi context limit and saves the recommended cap', async () => {
