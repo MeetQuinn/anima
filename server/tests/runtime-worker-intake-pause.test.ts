@@ -419,65 +419,113 @@ test('follow-up appender requeues when pause flips during deferred restart-drain
 });
 
 /**
- * Red-control for the removed boolean-helper hop.
+ * Regression pin on real `appendQueuedFollowupsUntilFinished` (not a reimplemented gate).
  *
- * Schedule the pause flip from the final `isIntakePaused` read when it returns
- * false. Record pause when the guarded action starts:
- * - old `await isBlockedHelper()`: caller resume is a second microtask → flip
- *   already ran → start sees pause true
- * - inlined drain + sync pause + start: action starts in the same continuation
- *   while pause is still false
+ * Bridge marks pre-append. The production `isIntakePaused` callback queues the
+ * pause flip only on its final pre-append false read. Record `paused` at entry
+ * to real `appendToActiveRun`:
+ * - inlined production: starts with false (same continuation as the false read)
+ * - restoring `await isIntakeBlocked()` before append: starts with true (flip
+ *   runs in the microtask before caller resume) — this assertion goes red
  */
-test('intake gate red-control: inlined start sees pause false; old helper hop sees true', async () => {
-  let paused = false;
-  const readPauseSchedulingFlip = (): boolean => {
-    const value = paused;
-    if (!value) {
-      queueMicrotask(() => {
-        paused = true;
+test('appender: pre-append isIntakePaused false-read flip leaves append start unpaused', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-intake-pause-appender-red-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const parent = await enqueueInbox(makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-appender-red-parent',
+        teamId: 'T-demo',
+        text: 'parent body',
+        ts: '1770000700.000001',
+        userId: 'U1',
+      }), { agentId: 'scout', stateDir });
+      const child = await enqueueInbox(makeSlackEvent({
+        channelId: 'C-alpha',
+        eventId: 'evt-appender-red-child',
+        teamId: 'T-demo',
+        text: 'follow-up body',
+        ts: '1770000701.000001',
+        userId: 'U2',
+      }), { agentId: 'scout', stateDir });
+
+      const queue = queueFor('scout');
+      const claimedParent = await queue.takeNextRunnable({
+        currentWorkerId: 'test-worker-appender-red',
+        isWorkerAlive: () => true,
+        staleRunningMs: 30 * 60 * 1000,
+        workerId: 'test-worker-appender-red',
       });
-    }
-    return value;
-  };
+      assert.equal(claimedParent?.id, parent.ctx.item.id);
 
-  // --- Old pattern (removed): await helper that already sampled pause ---
-  paused = false;
-  let pauseAtOldActionStart: boolean | undefined;
-  {
-    async function oldIsIntakeBlocked(drain: () => Promise<boolean>): Promise<boolean> {
-      const drainActive = await drain();
-      if (readPauseSchedulingFlip()) return true;
-      return drainActive;
-    }
-    const blocked = await oldIsIntakeBlocked(async () => false);
-    // Caller resume after await helper — flip microtask has already run.
-    pauseAtOldActionStart = paused;
-    assert.equal(blocked, false);
-  }
-  assert.equal(
-    pauseAtOldActionStart,
-    true,
-    'old helper hop: pause flip runs before caller starts the action',
-  );
+      let intakePaused = false;
+      let preAppend = false;
+      let pauseAtAppendStart: boolean | undefined;
+      const appends: AgentRuntimeFollowupInput[] = [];
+      const runtime: AgentRuntime = {
+        kind: 'appender-red-control',
+        async run(): Promise<AgentRuntimeResult> {
+          return { text: 'parent' };
+        },
+        async appendToActiveRun(input) {
+          // Real production entry — record pause at the guarded action start.
+          pauseAtAppendStart = intakePaused;
+          appends.push(input);
+          return { accepted: true, text: 'appended' };
+        },
+      };
 
-  // --- New pattern (production): drain await, sync pause, start immediately ---
-  paused = false;
-  let pauseAtNewActionStart: boolean | undefined;
-  {
-    const drainActive = await (async () => false)();
-    if (readPauseSchedulingFlip() || drainActive) {
-      assert.fail('inlined path must not block on first false read');
-    }
-    // processClaimedItem / appendToActiveRun would start here, same continuation.
-    pauseAtNewActionStart = paused;
+      const bridge = new AgentRuntimeBridge(runtime);
+      const originalFollowupInput = bridge.followupInput.bind(bridge);
+      bridge.followupInput = async (input) => {
+        const built = await originalFollowupInput(input);
+        // Mark pre-append so only the final production pause read queues the flip.
+        preAppend = true;
+        return built;
+      };
+
+      const itemDone = new AbortController();
+      const loop = appendQueuedFollowupsUntilFinished({
+        activeContext: parent.ctx,
+        agentRuntime: runtime,
+        isIntakePaused: () => {
+          const value = intakePaused;
+          if (!value && preAppend) {
+            queueMicrotask(() => {
+              intakePaused = true;
+            });
+          }
+          return value;
+        },
+        itemDone: itemDone.signal,
+        logger: silentLogger,
+        onFollowupAccepted: () => {},
+        onFollowupAppended: async () => {},
+        onFollowupSettled: async () => {},
+        queue,
+        runtimeBridge: bridge,
+        runtimeConfig: { agentId: 'scout', stateDir },
+        workerId: 'test-worker-appender-red',
+      });
+
+      await waitFor(() => appends.length === 1, {
+        description: 'real appendToActiveRun invoked',
+        timeoutMs: 2_000,
+      });
+      assert.equal(
+        pauseAtAppendStart,
+        false,
+        'production inlined path must start append while pause still false; '
+          + 'old await-helper hop would observe true after the queued flip',
+      );
+      assert.deepEqual(appends[0]?.itemIds, [child.ctx.item.id]);
+      assert.equal(preAppend, true);
+
+      itemDone.abort();
+      await loop;
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
   }
-  assert.equal(
-    pauseAtNewActionStart,
-    false,
-    'inlined path: action starts synchronously while pause still false',
-  );
-  // Flip runs after this turn.
-  await new Promise<void>((resolve) => queueMicrotask(resolve));
-  assert.equal(paused, true);
 });
 
