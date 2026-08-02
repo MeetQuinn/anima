@@ -53,7 +53,10 @@ const usageRows = vi.hoisted(() => ({
       provider: 'claude-code',
       source: 'private-api',
       status: 'available',
-      windows: [{ label: '5h', remainingPercent: 64 }],
+      windows: [
+        { label: '5h', remainingPercent: 64, resetsAt: '2030-01-01T05:00:00.000Z' },
+        { label: 'Weekly', remainingPercent: 41, resetsAt: '2030-01-03T05:00:00.000Z' },
+      ],
     },
     {
       account: 'secondary@example.com',
@@ -65,7 +68,10 @@ const usageRows = vi.hoisted(() => ({
       provider: 'claude-code',
       source: 'private-api',
       status: 'available',
-      windows: [{ label: '5h', remainingPercent: 88 }],
+      windows: [
+        { label: '5h', remainingPercent: 88, resetsAt: '2030-01-01T05:00:00.000Z' },
+        { label: 'Weekly', remainingPercent: 62, resetsAt: '2030-01-03T05:00:00.000Z' },
+      ],
     },
   ] as ProviderUsageRow[],
 }));
@@ -148,12 +154,16 @@ describe('UsagePanel Claude account selection', () => {
     renderPanel();
     await expandClaude();
 
-    // Featured active account + other account row (no Active chip).
+    // Every account renders as a full card; only the active one carries the marker.
     expect(await screen.findByText('secondary@example.com')).toBeTruthy();
     expect(screen.getByText('primary@example.com')).toBeTruthy();
-    expect(screen.queryByText('Active')).toBeNull();
+    expect(screen.getAllByText('Active')).toHaveLength(1);
     expect(screen.getByText('88%')).toBeTruthy();
-    expect(screen.getAllByText(/5h 64%/).length).toBeGreaterThan(0);
+    // The #159 fix: every window row — Weekly included, other accounts included —
+    // shows its own percent AND reset time. 2 accounts × 2 windows = 4 resets.
+    expect(screen.getByText('64%')).toBeTruthy();
+    expect(screen.getAllByText('Weekly')).toHaveLength(2);
+    expect(screen.getAllByText(/^resets /)).toHaveLength(4);
 
     // Use is inline on the non-active account row.
     fireEvent.click(screen.getByRole('button', { name: 'Use' }));
