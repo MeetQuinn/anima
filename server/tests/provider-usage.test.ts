@@ -168,15 +168,28 @@ test('Kimi usage parser returns top-level and short-window limits', () => {
       },
     ],
     usage: { limit: 100, remaining: 99, resetTime: '2026-06-01T00:00:00.000Z', used: 1 },
+    // Opaque userId alone is not a useful panel identity — omit account.
     user: { userId: 'kimi-user-1' },
+    subType: 'TYPE_PURCHASE',
   });
 
   assert.equal(parsed.error, undefined);
-  assert.equal(parsed.account, 'kimi-user-1');
+  assert.equal(parsed.account, undefined);
+  assert.deepEqual(
+    parsed.extras.find((e) => e.label === 'Plan'),
+    { label: 'Plan', balance: 'Paid' },
+  );
   assert.deepEqual(parsed.windows.map(({ label, remainingPercent, usedPercent }) => [label, remainingPercent, usedPercent]), [
     ['5h', 99, 1],
     ['Weekly', 99, 1],
   ]);
+
+  const withEmail = parseKimiUsageResponse({
+    limits: [],
+    usage: { limit: 100, remaining: 50, resetTime: '2026-06-01T00:00:00.000Z', used: 50 },
+    user: { userId: 'kimi-user-1', email: 'kimi@example.com' },
+  });
+  assert.equal(withEmail.account, 'kimi@example.com');
 });
 
 test('OpenCode usage reports only global DeepSeek credential presence and never returns the secret', async () => {
@@ -250,7 +263,8 @@ test('Kimi usage reads Kimi Code credentials before legacy migrated credentials'
   try {
     const result = await fetchKimiUsage();
     assert.equal(result.status, 'available');
-    assert.equal(result.account, 'kimi-user-2');
+    // Opaque usage userId is not shown as the account identity.
+    assert.equal(result.account, undefined);
     assert.deepEqual(authorizations, ['Bearer new-kimi-code-token']);
   } finally {
     globalThis.fetch = originalFetch;
@@ -981,6 +995,10 @@ test('Grok usage reads ~/.grok/auth.json key and calls billing endpoint', async 
     const result = await fetchGrokUsage();
     assert.equal(result.status, 'available');
     assert.equal(result.account, 'operator@example.com');
+    assert.deepEqual(result.extras, []);
+    // Opaque team/user ids must not leak into account/extras even when present in auth.json.
+    assert.notEqual(result.account, 'team-1');
+    assert.ok(!JSON.stringify(result).includes('team-1'));
     assert.equal(result.windows[0]?.usedPercent, 9);
     assert.equal(result.windows[0]?.remainingPercent, 91);
     // Label is Weekly/Monthly/Credits based on reset distance; fixture resets are multi-day.
@@ -988,6 +1006,58 @@ test('Grok usage reads ~/.grok/auth.json key and calls billing endpoint', async 
     assert.equal(seen.length, 1);
     assert.match(seen[0]?.url ?? '', /GetGrokCreditsConfig/);
     assert.equal(seen[0]?.auth, 'Bearer grok-access-token');
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
+    restoreEnv('GROK_HOME', originalGrokHome);
+  }
+});
+
+test('Grok usage prefers first_name when email is absent and skips opaque ids', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-grok-name-only-'));
+  await mkdir(join(home, '.grok'), { recursive: true });
+  const authPath = join(home, '.grok', 'auth.json');
+  await writeFile(
+    authPath,
+    JSON.stringify({
+      'https://auth.x.ai::test-client': {
+        auth_mode: 'oidc',
+        // No email — live auth often leaves this null.
+        first_name: 'totoday',
+        key: 'grok-access-token',
+        oidc_client_id: 'test-client',
+        oidc_issuer: 'https://auth.x.ai',
+        refresh_token: 'grok-refresh',
+        team_id: 'team-uuid-not-for-ui',
+        user_id: 'user-uuid-not-for-ui',
+      },
+    }),
+    'utf8',
+  );
+
+  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
+  const originalGrokHome = process.env.GROK_HOME;
+  const originalFetch = globalThis.fetch;
+  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
+  delete process.env.GROK_HOME;
+  globalThis.fetch = (async (url) => {
+    if (String(url).includes('GetGrokCreditsConfig')) {
+      return new Response(GROK_BILLING_FIXTURE, {
+        headers: { 'content-type': 'application/grpc-web+proto' },
+        status: 200,
+      });
+    }
+    return new Response('unexpected', { status: 500 });
+  }) as typeof fetch;
+
+  try {
+    const result = await fetchGrokUsage();
+    assert.equal(result.status, 'available');
+    assert.equal(result.account, 'totoday');
+    assert.deepEqual(result.extras, []);
+    const serialized = JSON.stringify(result);
+    assert.ok(!serialized.includes('team-uuid-not-for-ui'));
+    assert.ok(!serialized.includes('user-uuid-not-for-ui'));
   } finally {
     globalThis.fetch = originalFetch;
     restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);

@@ -71,7 +71,6 @@ interface GrokCredentials {
   refreshToken?: string;
   scope: string;
   sourcePath: string;
-  teamId?: string;
 }
 
 export async function fetchGrokUsage(): Promise<
@@ -109,7 +108,7 @@ export async function fetchGrokUsage(): Promise<
 
   const extras: ProviderUsageExtra[] = [];
   // Plan name is not always present in auth.json; SuperGrok/Heavy are account-side labels.
-  if (active.teamId) extras.push({ label: 'Team', balance: active.teamId });
+  // Do not surface raw team UUIDs — they look like opaque account ids in the panel.
 
   return available(windows, extras, active.account);
 }
@@ -180,9 +179,19 @@ async function readGrokCredentials(): Promise<GrokCredentials | undefined> {
     const accessToken = stringValue(entry?.key) ?? stringValue(entry?.accessToken) ?? stringValue(entry?.access_token);
     if (!accessToken) continue;
     const email = stringValue(entry?.email);
+    const firstName = stringValue(entry?.first_name) ?? stringValue(entry?.firstName);
+    const lastName = stringValue(entry?.last_name) ?? stringValue(entry?.lastName);
+    const displayName = [firstName, lastName].filter(Boolean).join(' ').trim();
+    // Prefer email; fall back to first/last name. Skip raw user_id UUIDs — not useful in UI.
+    const account =
+      email && email.includes('@')
+        ? email
+        : displayName
+          ? displayName
+          : undefined;
     return {
       accessToken,
-      ...(email ? { account: email } : {}),
+      ...(account ? { account } : {}),
       expiresAt: stringValue(entry?.expires_at) ?? stringValue(entry?.expiresAt),
       oidcClientId: stringValue(entry?.oidc_client_id)
         ?? stringValue(entry?.oidcClientId)
@@ -191,7 +200,6 @@ async function readGrokCredentials(): Promise<GrokCredentials | undefined> {
       refreshToken: stringValue(entry?.refresh_token) ?? stringValue(entry?.refreshToken),
       scope,
       sourcePath,
-      teamId: stringValue(entry?.team_id) ?? stringValue(entry?.teamId),
     };
   }
   return undefined;
