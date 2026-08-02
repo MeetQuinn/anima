@@ -51,6 +51,12 @@ export class ReminderService {
       if (windowRule && !hasRepeat) {
         throw new Error('--window requires --repeat every:<n><m|h|d>');
       }
+      // v1: first wake is always the next eligible grid slot — never fire outside the window.
+      if (windowRule && (hasFireAt || hasDelay)) {
+        throw new Error(
+          '--window cannot be combined with --fire-at or --in; first wake is the next eligible grid slot',
+        );
+      }
       if (hasFireAt && hasDelay) throw new Error('Pass only one of fireAt or delaySeconds');
       if (!hasFireAt && !hasDelay && !hasRepeat) {
         throw new Error('Pass fireAt, delaySeconds, or repeat');

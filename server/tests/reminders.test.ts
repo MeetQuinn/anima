@@ -563,22 +563,43 @@ test('windowed interval late fire does not replay missed ticks', () => {
   );
 });
 
-test('windowed interval respects DST spring forward and fall back wall clocks', () => {
+test('windowed interval DST: one wake per local label on spring/fall transition Sundays', () => {
+  // Contract: skip nonexistent spring labels; no duplicate fall-back labels.
   const schedule = buildWindowedIntervalSchedule({
     repeatRule: 'every:30m',
     timezone: 'America/New_York',
-    windowRule: 'mon-fri@01:00-04:00',
+    windowRule: 'sun@00:00-04:00',
   });
-  // Monday 2026-03-09 after spring forward (clocks jumped 02:00→03:00 on Sunday).
-  // 05:00Z = 01:00 EDT → next grid 01:30 EDT = 05:30Z
+
+  // 2026-03-08 spring forward: 02:00–02:59 do not exist.
+  const springDay = zonedDateTime(new Date('2026-03-08T12:00:00.000Z'), 'America/New_York').startOf('day');
+  const springSlots = windowedSlotsOnLocalDay(schedule, springDay);
+  const springLabels = springSlots.map((s) => s.toFormat('HH:mm'));
+  assert.deepEqual(springLabels, ['00:00', '00:30', '01:00', '01:30', '03:00', '03:30', '04:00']);
+  assert.ok(!springLabels.includes('02:00') && !springLabels.includes('02:30'));
+  // Exact instants (EST → EDT):
+  assert.equal(springSlots[3]?.toUTC().toISO(), '2026-03-08T06:30:00.000Z'); // 01:30 EST
+  assert.equal(springSlots[4]?.toUTC().toISO(), '2026-03-08T07:00:00.000Z'); // 03:00 EDT
+  // Next-due from just after 01:30 EST skips the gap to 03:00 EDT
   assert.equal(
-    nextDueAtForSchedule(schedule, new Date('2026-03-09T05:00:00.000Z')),
-    '2026-03-09T05:30:00.000Z',
+    nextDueAtForSchedule(schedule, new Date('2026-03-08T06:30:00.000Z')),
+    '2026-03-08T07:00:00.000Z',
   );
-  // Monday 2026-11-02 after fall back. 06:15Z = 01:15 EST → next 01:30 EST = 06:30Z
+
+  // 2026-11-01 fall back: 01:00–01:59 repeat; emit each label once (earlier offset).
+  const fallDay = zonedDateTime(new Date('2026-11-01T12:00:00.000Z'), 'America/New_York').startOf('day');
+  const fallSlots = windowedSlotsOnLocalDay(schedule, fallDay);
+  const fallLabels = fallSlots.map((s) => s.toFormat('HH:mm'));
+  assert.deepEqual(fallLabels, ['00:00', '00:30', '01:00', '01:30', '02:00', '02:30', '03:00', '03:30', '04:00']);
+  assert.equal(fallLabels.filter((l) => l === '01:00').length, 1);
+  assert.equal(fallLabels.filter((l) => l === '01:30').length, 1);
+  // 01:00 / 01:30 resolve to first (EDT) occurrence, not the EST repeat.
+  assert.equal(fallSlots[2]?.toUTC().toISO(), '2026-11-01T05:00:00.000Z'); // 01:00 EDT
+  assert.equal(fallSlots[3]?.toUTC().toISO(), '2026-11-01T05:30:00.000Z'); // 01:30 EDT
+  assert.equal(fallSlots[4]?.toUTC().toISO(), '2026-11-01T07:00:00.000Z'); // 02:00 EST
   assert.equal(
-    nextDueAtForSchedule(schedule, new Date('2026-11-02T06:15:00.000Z')),
-    '2026-11-02T06:30:00.000Z',
+    nextDueAtForSchedule(schedule, new Date('2026-11-01T05:00:00.000Z')),
+    '2026-11-01T05:30:00.000Z',
   );
 });
 
@@ -649,6 +670,48 @@ test('windowed interval rejects invalid combinations and preserves legacy interv
           window: 'mon-fri@08:00-18:30',
         }),
         /only allowed with every/,
+      );
+      // --fire-at / --in must not bypass the window (e.g. Saturday fire with mon-fri).
+      await assert.rejects(
+        reminderService.scheduleReminder({
+          fireAt: '2026-05-23T15:00:00.000Z', // Saturday
+          instructions: 'x',
+          now: new Date('2026-05-18T12:00:00.000Z'),
+          repeat: 'every:30m',
+          timezone: 'America/New_York',
+          title: 'bad-fire-at',
+          window: 'mon-fri@08:00-18:30',
+        }),
+        /cannot be combined with --fire-at or --in/,
+      );
+      await assert.rejects(
+        reminderService.scheduleReminder({
+          delaySeconds: 3600,
+          instructions: 'x',
+          now: new Date('2026-05-23T15:00:00.000Z'), // Saturday
+          repeat: 'every:30m',
+          timezone: 'America/New_York',
+          title: 'bad-in',
+          window: 'mon-fri@08:00-18:30',
+        }),
+        /cannot be combined with --fire-at or --in/,
+      );
+      // Long intervals would restart each eligible day while UI says every 1d/12h.
+      assert.throws(
+        () => buildWindowedIntervalSchedule({
+          repeatRule: 'every:1d',
+          timezone: 'America/New_York',
+          windowRule: 'mon-fri@08:00-18:30',
+        }),
+        /longer than the same-day window/,
+      );
+      assert.throws(
+        () => buildWindowedIntervalSchedule({
+          repeatRule: 'every:12h',
+          timezone: 'America/New_York',
+          windowRule: 'mon-fri@08:00-18:30',
+        }),
+        /longer than the same-day window/,
       );
       assert.throws(() => parseWindowRule('mon-fri@18:30-08:00'), /overnight|after start/i);
       assert.throws(() => parseWindowRule('mon-fri@08:00-08:00'), /overnight|after start/i);

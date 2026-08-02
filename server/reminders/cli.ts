@@ -116,7 +116,8 @@ export function registerReminderCommands(program: Command): void {
     .option('--window <spec>',
       'restrict every:* to local weekdays + inclusive wall-clock hours\n' +
       'format: <days>@HH:MM-HH:MM  e.g. mon-fri@08:00-18:30 or mon,wed@09:00-17:00\n' +
-      'only valid with --repeat every:*; overnight windows are rejected (v1)')
+      'only valid with --repeat every:*; not combinable with --fire-at or --in\n' +
+      'interval must fit inside the same-day window span; overnight windows rejected (v1)')
     .option('--timezone <tz>',
       'IANA timezone name for --fire-at, --repeat, and --window interpretation\n' +
       'e.g. America/Los_Angeles, Asia/Shanghai\n' +

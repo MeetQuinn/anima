@@ -1,4 +1,4 @@
-import type { DateTime } from 'luxon';
+import { DateTime } from 'luxon';
 
 import type { Reminder, ReminderSchedule } from '../../shared/reminder.js';
 import { parseTimeOfDay, timeOnLocalDay, zonedDateTime } from '../schedule/local-time.js';
@@ -113,6 +113,16 @@ export function buildWindowedIntervalSchedule(input: {
   }
   const window = parseWindowRule(input.windowRule);
   const windowRule = input.windowRule.trim().toLowerCase();
+  // v1: grid restarts at windowStart each eligible day. Intervals longer than the
+  // same-day span would fire once per eligible day while list/UI still shows the
+  // long cadence — reject so display matches behavior.
+  const spanMs = sameDayWindowSpanMs(window.windowStart, window.windowEnd);
+  if (base.intervalMs > spanMs) {
+    throw new Error(
+      `Interval ${base.repeatRule} is longer than the same-day window ${windowRule}. ` +
+        'v1 requires every:* to fit inside one local window span (no cross-day phase).',
+    );
+  }
   return {
     intervalMs: base.intervalMs,
     kind: 'windowed_interval',
@@ -147,21 +157,39 @@ export function nextDueAtForSchedule(
   }
 }
 
-/** Exported for tests — local wall-clock grid slots for one calendar day (inclusive). */
+/**
+ * Local wall-clock grid slots for one calendar day (inclusive).
+ *
+ * Contract: one wake per valid local grid *label* (HH:mm).
+ * - Spring forward: skip nonexistent labels (e.g. 02:00–02:59 on US DST start).
+ * - Fall back: do not emit duplicate labels for the repeated hour; resolve each
+ *   label once (Luxon default = earlier offset).
+ * Built by stepping labels from windowStart, not by UTC/`plus` continuum walks
+ * that re-visit fallback labels.
+ */
 export function windowedSlotsOnLocalDay(
   schedule: Extract<ReminderSchedule, { kind: 'windowed_interval' }>,
   day: DateTime,
 ): DateTime[] {
-  const start = timeOnLocalDay(day, schedule.windowStart, schedule.timezone, 'window start');
-  const end = timeOnLocalDay(day, schedule.windowEnd, schedule.timezone, 'window end');
+  if (schedule.intervalMs % 60_000 !== 0) {
+    throw new Error('Windowed intervals must be whole minutes (every:<n>m|h|d).');
+  }
+  const stepMinutes = schedule.intervalMs / 60_000;
+  const [startH, startM] = parseTimeOfDay(schedule.windowStart);
+  const [endH, endM] = parseTimeOfDay(schedule.windowEnd);
+  const startMinutes = startH * 60 + startM;
+  const endMinutes = endH * 60 + endM;
   const slots: DateTime[] = [];
-  let cursor = start;
-  while (cursor.toMillis() <= end.toMillis()) {
-    slots.push(cursor);
-    if (slots.length > MAX_SLOTS_PER_DAY) {
-      throw new Error('Windowed interval produced too many slots in one day.');
+  for (let minutes = startMinutes; minutes <= endMinutes; minutes += stepMinutes) {
+    const hour = Math.floor(minutes / 60);
+    const minute = minutes % 60;
+    const slot = resolveLocalGridLabel(day, hour, minute, schedule.timezone);
+    if (slot) {
+      slots.push(slot);
+      if (slots.length > MAX_SLOTS_PER_DAY) {
+        throw new Error('Windowed interval produced too many slots in one day.');
+      }
     }
-    cursor = advanceLocalByInterval(cursor, schedule.intervalMs);
   }
   return slots;
 }
@@ -188,12 +216,35 @@ function nextWindowedIntervalDueAt(
   throw new Error('Unable to calculate next windowed interval reminder time.');
 }
 
-function advanceLocalByInterval(cursor: DateTime, intervalMs: number): DateTime {
-  // Prefer whole-minute wall-clock steps so DST keeps local grid alignment.
-  if (intervalMs % 60_000 === 0) {
-    return cursor.plus({ minutes: intervalMs / 60_000 });
-  }
-  return cursor.plus({ milliseconds: intervalMs });
+/** Resolve one local HH:mm label; null when the label does not exist that day. */
+function resolveLocalGridLabel(
+  day: DateTime,
+  hour: number,
+  minute: number,
+  timezone: string,
+): DateTime | null {
+  const result = DateTime.fromObject(
+    {
+      day: day.day,
+      hour,
+      millisecond: 0,
+      minute,
+      month: day.month,
+      second: 0,
+      year: day.year,
+    },
+    { zone: timezone },
+  );
+  if (!result.isValid) return null;
+  // Spring gap: Luxon may shift into the next valid wall time — reject shifted labels.
+  if (result.hour !== hour || result.minute !== minute) return null;
+  return result;
+}
+
+function sameDayWindowSpanMs(windowStart: string, windowEnd: string): number {
+  const [startH, startM] = parseTimeOfDay(windowStart);
+  const [endH, endM] = parseTimeOfDay(windowEnd);
+  return ((endH * 60 + endM) - (startH * 60 + startM)) * 60_000;
 }
 
 function nextIntervalDueAt(anchorAt: string, intervalMs: number, after: Date): string {
