@@ -260,6 +260,15 @@ function scheduleLabel(schedule: ReminderSchedule): string {
       if (ms < 86_400_000) return `every ${Math.round(ms / 3_600_000)}h`;
       return `every ${Math.round(ms / 86_400_000)}d`;
     }
+    case 'windowed_interval': {
+      const ms = schedule.intervalMs;
+      const every = ms < 3_600_000
+        ? `every ${Math.round(ms / 60_000)}m`
+        : ms < 86_400_000
+          ? `every ${Math.round(ms / 3_600_000)}h`
+          : `every ${Math.round(ms / 86_400_000)}d`;
+      return `${every} ${schedule.windowRule}`;
+    }
   }
 }
 

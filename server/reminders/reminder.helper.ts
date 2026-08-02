@@ -8,6 +8,9 @@ export { systemTimezone } from '../schedule/local-time.js';
 const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 type Weekday = (typeof WEEKDAYS)[number];
 
+const WINDOWED_LOOKAHEAD_DAYS = 21;
+const MAX_SLOTS_PER_DAY = 10_000;
+
 export function parseDurationMs(value: string): number {
   const match = value.trim().match(/^(\d+)\s*(s|m|h|d)$/i);
   if (!match) throw new Error(`Invalid duration: ${value}`);
@@ -67,6 +70,61 @@ export function parseRepeatRule(rule: string, timezone: string): ReminderSchedul
   throw new Error(`Invalid repeat rule: ${rule}`);
 }
 
+/**
+ * Parse `--window mon-fri@08:00-18:30` (or explicit weekday lists).
+ * v1 rejects overnight windows (end must be strictly after start on the same day).
+ */
+export function parseWindowRule(windowRule: string): {
+  weekdays: Weekday[];
+  windowEnd: string;
+  windowStart: string;
+} {
+  const normalized = windowRule.trim().toLowerCase();
+  const match = normalized.match(/^([a-z0-9,-]+)@(\d{2}:\d{2})-(\d{2}:\d{2})$/);
+  if (!match) {
+    throw new Error(
+      `Invalid window: ${windowRule}. Expected e.g. mon-fri@08:00-18:30 or mon,wed@09:00-17:00`,
+    );
+  }
+  const weekdays = expandWeekdaySpec(match[1] ?? '');
+  const windowStart = match[2] as string;
+  const windowEnd = match[3] as string;
+  assertValidTime(windowStart);
+  assertValidTime(windowEnd);
+  const [startH, startM] = parseTimeOfDay(windowStart);
+  const [endH, endM] = parseTimeOfDay(windowEnd);
+  if (endH * 60 + endM <= startH * 60 + startM) {
+    throw new Error(
+      `Invalid window: ${windowRule}. End must be after start on the same day (overnight windows are not supported).`,
+    );
+  }
+  return { weekdays, windowEnd, windowStart };
+}
+
+export function buildWindowedIntervalSchedule(input: {
+  repeatRule: string;
+  timezone: string;
+  windowRule: string;
+}): Extract<ReminderSchedule, { kind: 'windowed_interval' }> {
+  assertValidTimezone(input.timezone);
+  const base = parseRepeatRule(input.repeatRule, input.timezone);
+  if (base.kind !== 'interval') {
+    throw new Error('--window is only allowed with every:<n><m|h|d> intervals');
+  }
+  const window = parseWindowRule(input.windowRule);
+  const windowRule = input.windowRule.trim().toLowerCase();
+  return {
+    intervalMs: base.intervalMs,
+    kind: 'windowed_interval',
+    repeatRule: base.repeatRule,
+    timezone: input.timezone,
+    weekdays: window.weekdays,
+    windowEnd: window.windowEnd,
+    windowRule,
+    windowStart: window.windowStart,
+  };
+}
+
 export function nextDueAtForSchedule(
   schedule: ReminderSchedule,
   after: Date,
@@ -84,7 +142,58 @@ export function nextDueAtForSchedule(
       return nextDailyDueAt(schedule.time, schedule.timezone, after).toISOString();
     case 'weekly':
       return nextWeeklyDueAt(schedule.weekdays as Weekday[], schedule.time, schedule.timezone, after).toISOString();
+    case 'windowed_interval':
+      return nextWindowedIntervalDueAt(schedule, after);
   }
+}
+
+/** Exported for tests — local wall-clock grid slots for one calendar day (inclusive). */
+export function windowedSlotsOnLocalDay(
+  schedule: Extract<ReminderSchedule, { kind: 'windowed_interval' }>,
+  day: DateTime,
+): DateTime[] {
+  const start = timeOnLocalDay(day, schedule.windowStart, schedule.timezone, 'window start');
+  const end = timeOnLocalDay(day, schedule.windowEnd, schedule.timezone, 'window end');
+  const slots: DateTime[] = [];
+  let cursor = start;
+  while (cursor.toMillis() <= end.toMillis()) {
+    slots.push(cursor);
+    if (slots.length > MAX_SLOTS_PER_DAY) {
+      throw new Error('Windowed interval produced too many slots in one day.');
+    }
+    cursor = advanceLocalByInterval(cursor, schedule.intervalMs);
+  }
+  return slots;
+}
+
+function nextWindowedIntervalDueAt(
+  schedule: Extract<ReminderSchedule, { kind: 'windowed_interval' }>,
+  after: Date,
+): string {
+  const afterMs = after.getTime();
+  const current = zonedDateTime(after, schedule.timezone);
+  const wanted = new Set(schedule.weekdays.map((day) => WEEKDAYS.indexOf(day as Weekday)));
+  for (let offset = 0; offset <= WINDOWED_LOOKAHEAD_DAYS; offset += 1) {
+    const day = current.plus({ days: offset });
+    if (!wanted.has(luxonWeekdayToSundayFirst(day.weekday))) continue;
+    for (const slot of windowedSlotsOnLocalDay(schedule, day)) {
+      // Late fire: strictly after `after` — never replay missed grid ticks.
+      if (slot.toMillis() > afterMs) {
+        const iso = slot.toUTC().toISO();
+        if (!iso) throw new Error('Unable to serialize windowed reminder due time.');
+        return iso;
+      }
+    }
+  }
+  throw new Error('Unable to calculate next windowed interval reminder time.');
+}
+
+function advanceLocalByInterval(cursor: DateTime, intervalMs: number): DateTime {
+  // Prefer whole-minute wall-clock steps so DST keeps local grid alignment.
+  if (intervalMs % 60_000 === 0) {
+    return cursor.plus({ minutes: intervalMs / 60_000 });
+  }
+  return cursor.plus({ milliseconds: intervalMs });
 }
 
 function nextIntervalDueAt(anchorAt: string, intervalMs: number, after: Date): string {
@@ -115,6 +224,7 @@ export function initialDueAt(input: {
   if (input.schedule.kind === 'interval') {
     return new Date(input.now.getTime() + input.schedule.intervalMs).toISOString();
   }
+  // windowed_interval / daily / weekly: first eligible grid after now
   return nextDueAtForSchedule(input.schedule, input.now);
 }
 
@@ -134,6 +244,20 @@ export function reminderActivityFields(reminder: Reminder): Record<string, unkno
     ...(reminder.lastFiredAt ? { lastFiredAt: reminder.lastFiredAt } : {}),
     ...(reminder.nextDueAt ? { nextDueAt: reminder.nextDueAt } : {}),
   };
+}
+
+/** Human-facing schedule fragment for list/activity (includes window when present). */
+export function scheduleDisplayRule(schedule: ReminderSchedule): string | undefined {
+  switch (schedule.kind) {
+    case 'once':
+      return undefined;
+    case 'interval':
+    case 'daily':
+    case 'weekly':
+      return schedule.repeatRule;
+    case 'windowed_interval':
+      return `${schedule.repeatRule} window=${schedule.windowRule}`;
+  }
 }
 
 const DAILY_LOOKAHEAD_DAYS = 8;
@@ -166,6 +290,46 @@ function localTimeOnDay(day: DateTime, time: string, timezone: string): DateTime
 
 function luxonWeekdayToSundayFirst(weekday: number): number {
   return weekday === 7 ? 0 : weekday;
+}
+
+function expandWeekdaySpec(spec: string): Weekday[] {
+  const parts = spec.split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 0) throw new Error(`Invalid window weekdays: ${spec}`);
+  const days: Weekday[] = [];
+  for (const part of parts) {
+    const range = part.match(/^([a-z]{3})-([a-z]{3})$/);
+    if (range) {
+      const start = range[1] as string;
+      const end = range[2] as string;
+      if (!isWeekday(start) || !isWeekday(end)) {
+        throw new Error(`Invalid window weekdays: ${spec}`);
+      }
+      const startIdx = WEEKDAYS.indexOf(start);
+      const endIdx = WEEKDAYS.indexOf(end);
+      if (endIdx < startIdx) {
+        throw new Error(`Invalid window weekdays: ${spec}. Ranges must not wrap (v1).`);
+      }
+      for (let i = startIdx; i <= endIdx; i += 1) {
+        days.push(WEEKDAYS[i] as Weekday);
+      }
+      continue;
+    }
+    if (!isWeekday(part)) throw new Error(`Invalid window weekdays: ${spec}`);
+    days.push(part);
+  }
+  // Dedupe preserving order
+  const seen = new Set<string>();
+  const unique: Weekday[] = [];
+  for (const day of days) {
+    if (seen.has(day)) continue;
+    seen.add(day);
+    unique.push(day);
+  }
+  return unique;
+}
+
+function assertValidTimezone(timezone: string): void {
+  zonedDateTime(new Date(), timezone);
 }
 
 function assertValidTime(time: string): void {

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { resolveAgentIdFrom } from '../cli/shared.js';
 import type { Reminder, ReminderProvenance, ReminderStatus } from '../../shared/reminder.js';
 import { reminderServiceForAgent } from './reminder.service.js';
-import { parseDurationMs } from './reminder.helper.js';
+import { parseDurationMs, scheduleDisplayRule } from './reminder.helper.js';
 import {
   formatReminderInspection,
   inspectReminder,
@@ -26,6 +26,7 @@ const ScheduleSchema = SharedFlags.extend({
   repeat: z.string().optional(),
   timezone: z.string().optional(),
   title: z.string().optional(),
+  window: z.string().optional(),
 });
 
 const ListSchema = SharedFlags.extend({
@@ -72,6 +73,11 @@ export const REMINDER_SCHEDULE_EXAMPLES = [
     '--fire-at', '2026-05-24T09:00:00Z', '--repeat', 'daily@09:00',
     '--timezone', 'Asia/Shanghai', '--title', 'standup', '--instructions', 'post the async standup',
   ],
+  [
+    '--repeat', 'every:30m', '--window', 'mon-fri@08:00-18:30',
+    '--timezone', 'America/New_York', '--title', 'Work-hours poll',
+    '--instructions', 'poll the work queue during business hours',
+  ],
 ] as const;
 
 export function reminderScheduleExampleCommand(args: readonly string[]): string {
@@ -107,10 +113,14 @@ export function registerReminderCommands(program: Command): void {
       '  daily@HH:MM                 daily at a time, e.g. daily@09:00\n' +
       '  weekly:<day[,day]>@HH:MM    weekly on days, e.g. weekly:mon,fri@10:00\n' +
       'days: sun mon tue wed thu fri sat')
+    .option('--window <spec>',
+      'restrict every:* to local weekdays + inclusive wall-clock hours\n' +
+      'format: <days>@HH:MM-HH:MM  e.g. mon-fri@08:00-18:30 or mon,wed@09:00-17:00\n' +
+      'only valid with --repeat every:*; overnight windows are rejected (v1)')
     .option('--timezone <tz>',
-      'IANA timezone name for --fire-at and --repeat time interpretation\n' +
+      'IANA timezone name for --fire-at, --repeat, and --window interpretation\n' +
       'e.g. America/Los_Angeles, Asia/Shanghai\n' +
-      'defaults to UTC if omitted')
+      'defaults to the host timezone if omitted')
     .option('--anchor-channel <id>',
       'Slack channel ID or name to return to when this reminder fires\n' +
       'requires --anchor-message-ts; together they set the reply context')
@@ -200,6 +210,7 @@ async function runSchedule(opts: ScheduleOptions): Promise<void> {
     ...(opts.fireAt ? { fireAt: opts.fireAt } : {}),
     ...(opts.repeat ? { repeat: opts.repeat } : {}),
     ...(opts.timezone ? { timezone: opts.timezone } : {}),
+    ...(opts.window ? { window: opts.window } : {}),
     ...(provenance ? { provenance } : {}),
   });
   printReminderResult('scheduled', reminder);
@@ -265,7 +276,8 @@ function printReminderResult(verb: 'scheduled' | 'cancelled' | 'snoozed', remind
 
 function reminderLine(reminder: Reminder): string {
   const next = reminder.nextDueAt ? ` next=${truncateToMinutes(reminder.nextDueAt)}` : '';
-  const repeat = reminder.schedule.kind === 'once' ? '' : ` repeat=${reminder.schedule.repeatRule}`;
+  const display = scheduleDisplayRule(reminder.schedule);
+  const repeat = display ? ` repeat=${display}` : '';
   return `${reminder.reminderId} [${reminder.status}]${next}${repeat} ${reminder.title}`;
 }
 

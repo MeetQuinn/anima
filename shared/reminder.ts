@@ -35,6 +35,18 @@ export const ReminderSchedule = z.discriminatedUnion('kind', [
     timezone: z.string(),
     weekdays: z.array(z.string()),
   }),
+  // every:* interval constrained to local weekdays + inclusive wall-clock window.
+  // Only valid with every:*; legacy once/interval/daily/weekly records unchanged.
+  z.object({
+    intervalMs: z.number(),
+    kind: z.literal('windowed_interval'),
+    repeatRule: z.string(),
+    timezone: z.string(),
+    weekdays: z.array(z.string()),
+    windowEnd: z.string(),
+    windowRule: z.string(),
+    windowStart: z.string(),
+  }),
 ]);
 
 export type ReminderSchedule = z.infer<typeof ReminderSchedule>;
