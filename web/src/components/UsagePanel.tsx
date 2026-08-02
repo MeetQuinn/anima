@@ -121,15 +121,6 @@ function splitExtras(extras: ProviderUsageExtra[]): {
   };
 }
 
-function installSourceLabel(source: ProviderCliRow['installSource']): string {
-  if (source === 'claude-native') return 'Native';
-  if (source === 'codex-npm-global') return 'Global npm';
-  if (source === 'kimi-native') return 'Native';
-  if (source === 'grok-native') return 'Native';
-  if (source === 'opencode-brew') return 'Homebrew';
-  return 'Unknown source';
-}
-
 function formatContextTokens(tokens: number): string {
   if (tokens % 1024 === 0) return `${tokens / 1024}k`;
   return `${Math.round(tokens / 1_000)}k`;
@@ -192,25 +183,11 @@ function providerCollapsedSummary(usages: ProviderUsageRow[]): string {
   return active.stale ? `${summary} · cached` : summary;
 }
 
-/** One quiet key/value line inside the Details disclosure. */
-function DetailRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex min-w-0 items-baseline gap-2">
-      <span className="w-20 shrink-0 font-sans text-[10px] text-text-subtle">{label}</span>
-      <span
-        className={`min-w-0 truncate text-[10px] text-text-muted ${mono ? 'font-mono' : 'font-sans'}`}
-        title={value}
-      >
-        {value}
-      </span>
-    </div>
-  );
-}
-
 // ---------------------------------------------------------------------------
-// Brand marks — official simple-icons path data (24×24 viewBox), vendored so
-// the glyphs cost no dependency. Kinds without a usable mark fall back to a
-// letter tile.
+// Brand marks — official path data (24×24 viewBox) vendored so the glyphs cost
+// no dependency. Sources: simple-icons (Claude, OpenAI, Moonshot, OpenCode)
+// and MIT-licensed lobe-icons (Grok — absent from simple-icons). Kinds without
+// a usable mark fall back to a letter tile.
 // ---------------------------------------------------------------------------
 
 const CLAUDE_PATH =
@@ -222,11 +199,21 @@ const OPENAI_PATH =
 const MOONSHOT_PATH =
   'm1.053 16.91 9.538 2.55a21 20.981 0 0 0 .06 2.031l5.956 1.592a12 11.99 0 0 1-15.554-6.172m-1.02-5.79 11.352 3.035a21 20.981 0 0 0-.469 2.01l10.817 2.89a12 11.99 0 0 1-1.845 2.004L.658 15.918a12 11.99 0 0 1-.625-4.796m1.593-5.146L13.573 9.17a21 20.981 0 0 0-1.01 1.874l11.297 3.02a21 20.981 0 0 1-.67 2.362l-11.55-3.087L.125 10.26a12 11.99 0 0 1 1.499-4.285ZM6.067 1.58l11.285 3.016a21 20.981 0 0 0-1.688 1.719l7.824 2.091a21 20.981 0 0 1 .513 2.664L2.107 5.218a12 11.99 0 0 1 3.96-3.638M21.68 4.866 7.222 1.003A12 11.99 0 0 1 21.68 4.866';
 
-const BRAND_MARKS: Partial<Record<ProviderUsageKind, { path: string; fill: string }>> = {
-  // Claude keeps its brand terracotta; OpenAI and Moonshot take the text color.
+const GROK_PATH =
+  'M9.27 15.29l7.978-5.897c.391-.29.95-.177 1.137.272.98 2.369.542 5.215-1.41 7.169-1.951 1.954-4.667 2.382-7.149 1.406l-2.711 1.257c3.889 2.661 8.611 2.003 11.562-.953 2.341-2.344 3.066-5.539 2.388-8.42l.006.007c-.983-4.232.242-5.924 2.75-9.383.06-.082.12-.164.179-.248l-3.301 3.305v-.01L9.267 15.292M7.623 16.723c-2.792-2.67-2.31-6.801.071-9.184 1.761-1.763 4.647-2.483 7.166-1.425l2.705-1.25a7.808 7.808 0 00-1.829-1A8.975 8.975 0 005.984 5.83c-2.533 2.536-3.33 6.436-1.962 9.764 1.022 2.487-.653 4.246-2.34 6.022-.599.63-1.199 1.259-1.682 1.925l7.62-6.815';
+
+const OPENCODE_PATH = 'M22 24H2V0h20zM17 4.8H7v14.4h10z';
+
+const BRAND_MARKS: Partial<
+  Record<ProviderUsageKind, { path: string; fill: string; fillRule?: 'evenodd' }>
+> = {
+  // Claude keeps its brand terracotta; the rest take the text color.
   'claude-code': { path: CLAUDE_PATH, fill: '#D97757' },
   'codex-cli': { path: OPENAI_PATH, fill: 'currentColor' },
   'kimi-cli': { path: MOONSHOT_PATH, fill: 'currentColor' },
+  'grok-cli': { path: GROK_PATH, fill: 'currentColor', fillRule: 'evenodd' },
+  // evenodd punches the frame's inner window out of the solid rect.
+  'opencode-cli': { path: OPENCODE_PATH, fill: 'currentColor', fillRule: 'evenodd' },
 };
 
 function BrandIcon({ provider, label }: { provider: ProviderUsageKind; label: string }) {
@@ -238,7 +225,7 @@ function BrandIcon({ provider, label }: { provider: ProviderUsageKind; label: st
     >
       {mark ? (
         <svg viewBox="0 0 24 24" className="h-4 w-4" fill={mark.fill}>
-          <path d={mark.path} />
+          <path d={mark.path} fillRule={mark.fillRule} />
         </svg>
       ) : (
         <span className="font-mono text-[12px] font-semibold text-text-muted">{label.charAt(0).toUpperCase()}</span>
@@ -502,16 +489,17 @@ function ProviderUnit({
   const staleSessions =
     operation?.status === 'succeeded' &&
     runningAgents.some((agent) => agent.runningVersion !== management.installedVersion);
-  const versionCheckFailed = management.state === 'error' || Boolean(management.checkError);
   const accountSwitching = accountState?.status === 'switching';
   const accountSwitchFailed = accountState?.status === 'error';
+  // Errors and in-flight operations force open so they are never trapped
+  // behind a fold. A mere update offer does NOT auto-expand (totoday 08-02) —
+  // it renders when the user opens the provider, and the footer dot still
+  // signals it globally.
   const needsAttention = installing
     || operation?.status === 'failed'
-    || updateOffer
     || staleSessions
     || accountSwitching
     || accountSwitchFailed;
-  // Attention forces open so switch/update errors are never trapped behind a fold.
   const open = expanded || needsAttention;
   const collapsedSummary = providerCollapsedSummary(sortedUsages);
 
@@ -532,7 +520,7 @@ function ProviderUnit({
           {management.label}
         </span>
         {!open && (
-          <span className="max-w-[13rem] shrink-0 text-right font-sans text-[12px] leading-snug text-text-muted">
+          <span className="max-w-[18rem] shrink-0 text-right font-sans text-[12px] leading-snug text-text-muted">
             {needsAttention ? (
               <span className="text-health-warn">Needs attention</span>
             ) : !management.installedVersion ? (
@@ -551,7 +539,9 @@ function ProviderUnit({
 
       {open && (
         <div className="mt-2 space-y-3 pl-[42px]">
-          {needsAttention && (
+          {/* Status/action block: attention states force the accordion open;
+              an update offer renders here too but only once manually expanded. */}
+          {(needsAttention || updateOffer) && (
             <div className="space-y-1.5">
               {installing && <p className="font-sans text-[11px] text-text-muted">Installing…</p>}
               {accountSwitching && (
@@ -661,28 +651,26 @@ function ProviderUnit({
             </div>
           )}
 
-          <details className="group">
-            <summary className="flex cursor-pointer list-none items-center gap-1 font-sans text-[10px] uppercase tracking-[0.08em] text-text-subtle hover:text-text-muted">
-              <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
-              Settings & details
-              {management.agents.length > 0 && (
-                <span className="normal-case tracking-normal">
-                  · {management.agents.length} {management.agents.length === 1 ? 'agent' : 'agents'}
-                </span>
-              )}
-            </summary>
-            <div className="mt-2 space-y-4 border-l border-border-soft pl-3">
-              {accountState && (
-                <button
-                  type="button"
-                  onClick={onAddAccount}
-                  className="inline-flex min-h-[40px] items-center gap-1.5 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-                >
-                  <UserPlus className="h-3.5 w-3.5" />
-                  Add account
-                </button>
-              )}
-              {contextLimit && (
+          {accountState && (
+            <button
+              type="button"
+              onClick={onAddAccount}
+              className="inline-flex min-h-[40px] items-center gap-1.5 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            >
+              <UserPlus className="h-3.5 w-3.5" />
+              Add account
+            </button>
+          )}
+
+          {/* Settings keeps ONLY the context-window limit (totoday 08-02): version,
+              binary path, install source, auto-update, and per-agent details are gone. */}
+          {contextLimit && (
+            <details className="group">
+              <summary className="flex cursor-pointer list-none items-center gap-1 font-sans text-[10px] uppercase tracking-[0.08em] text-text-subtle hover:text-text-muted">
+                <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
+                Settings
+              </summary>
+              <div className="mt-2 border-l border-border-soft pl-3">
                 <div className="space-y-1.5">
                   <label className="block font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
                     Context limit
@@ -714,44 +702,9 @@ function ProviderUnit({
                     </p>
                   )}
                 </div>
-              )}
-              <div className="space-y-1.5">
-                {management.installedVersion && <DetailRow label="Version" value={`v${management.installedVersion}`} mono />}
-                {management.binaryPath && <DetailRow label="Binary" value={management.binaryPath} mono />}
-                {management.binaryPath && <DetailRow label="Source" value={installSourceLabel(management.installSource)} />}
-                {management.autoUpdatesEnabled !== undefined && (
-                  <DetailRow
-                    label="Auto-update"
-                    value={`${management.autoUpdatesEnabled ? 'on' : 'off'}${management.autoUpdateChannel ? ` · ${management.autoUpdateChannel}` : ''}`}
-                  />
-                )}
-                {management.sourceDetail && management.updateMode !== 'managed' && (
-                  <p className="font-sans text-[10px] leading-relaxed text-text-muted">{management.sourceDetail}</p>
-                )}
-                {versionCheckFailed && (
-                  <p className="font-sans text-[10px] leading-relaxed text-text-muted">
-                    Version check failed{management.checkError ? ` · ${management.checkError.message}` : ''}
-                  </p>
-                )}
-                {management.agents.length > 0 && (
-                  <div className="space-y-1 pt-0.5">
-                    {management.agents.map((agent) => (
-                      <div key={agent.id} className="flex min-w-0 items-baseline justify-between gap-3">
-                        <span className="truncate font-sans text-[11px] text-text-muted">{agent.name}</span>
-                        <span className="shrink-0 font-mono text-[10px] text-text-subtle">
-                          {agent.runningVersion
-                            ? `running v${agent.runningVersion}`
-                            : agent.enabled
-                              ? 'next session'
-                              : 'disabled'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
-            </div>
-          </details>
+            </details>
+          )}
         </div>
       )}
     </div>
@@ -935,7 +888,10 @@ export default function UsagePanel({ onClose }: Props) {
     usageByProvider.set(row.provider, rows);
   }
   const claudeAccountState = accountData?.providers.find((row) => row.provider === 'claude-code');
-  const visible = cliData?.providers ?? [];
+  // A provider whose binary genuinely isn't on this machine has nothing to show
+  // or act on — hide it. State 'unknown' (binary present, version unverified)
+  // still renders, with the honest 'version unknown' label (#520).
+  const visible = (cliData?.providers ?? []).filter((row) => row.state !== 'not_installed');
   const checkedAt = [usageCheckedAt, ...visible.map((row) => row.checkedAt)]
     .filter((value): value is string => Boolean(value))
     .sort()
@@ -956,7 +912,7 @@ export default function UsagePanel({ onClose }: Props) {
             className={[
               'relative flex h-full w-full flex-col bg-surface',
               'md:absolute md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2',
-              'md:h-auto md:max-h-[calc(100dvh-4rem)] md:w-[min(520px,calc(100vw-2rem))] md:max-w-none md:rounded-sm md:border md:border-border-soft md:shadow-deep',
+              'md:h-auto md:max-h-[calc(100dvh-4rem)] md:w-[min(640px,calc(100vw-2rem))] md:max-w-none md:rounded-sm md:border md:border-border-soft md:shadow-deep',
             ].join(' ')}
             style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
           >

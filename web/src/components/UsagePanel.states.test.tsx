@@ -45,12 +45,26 @@ vi.mock('@/api/system', () => ({
         updateMode: 'manual' as const,
       },
       {
-        // Genuinely absent binary: the only state allowed to say so.
+        // Installed provider with a context limit — carries the Settings disclosure.
+        // Has an update available: that must NOT auto-expand the accordion.
         agents: [],
-        installSource: 'unknown' as const,
+        installedVersion: '1.0.0',
+        installSource: 'kimi-native' as const,
         label: 'Kimi CLI',
+        latestVersion: '1.1.0',
         operation: { status: 'idle' as const },
         provider: 'kimi-cli' as const,
+        state: 'ready' as const,
+        updateAvailable: true,
+        updateMode: 'manual' as const,
+      },
+      {
+        // Genuinely absent binary: the provider is hidden from the panel entirely.
+        agents: [],
+        installSource: 'unknown' as const,
+        label: 'Grok CLI',
+        operation: { status: 'idle' as const },
+        provider: 'grok-cli' as const,
         state: 'not_installed' as const,
         updateAvailable: false,
         updateMode: 'unavailable' as const,
@@ -133,20 +147,34 @@ describe('UsagePanel version slot', () => {
     window.localStorage.clear();
   });
 
-  it('says "version unknown", not "not installed", when a binary exists but its version is unverified', async () => {
+  it('says "version unknown" for an unverified binary and hides not-installed providers entirely', async () => {
     renderPanel();
 
     // Collapsed rows surface version honesty without expanding.
     expect(await screen.findByText('version unknown')).toBeTruthy();
-    // `not installed` renders exactly once - for the genuinely absent binary.
-    const notInstalled = await screen.findAllByText('not installed');
-    expect(notInstalled).toHaveLength(1);
+    // A provider whose binary isn't on this machine renders nothing at all
+    // (totoday 08-02) — no row, no `not installed` claim.
+    expect(screen.queryByText('Grok CLI')).toBeNull();
+    expect(screen.queryByText('not installed')).toBeNull();
+    // An available update alone must not auto-expand a provider (totoday 08-02).
+    const kimiToggle = screen.getByRole('button', { name: /Kimi CLI/i });
+    expect(kimiToggle.getAttribute('aria-expanded')).toBe('false');
 
     // Expand Claude to confirm meters still sit next to the unverified binary.
     fireEvent.click(screen.getByRole('button', { name: /Claude Code/i }));
     expect(await screen.findByText('op@example.com')).toBeTruthy();
     expect(screen.getByText('80%')).toBeTruthy();
     expect(screen.getByText('· cached')).toBeTruthy();
+    // Details rows are gone; Claude has no context limit, so no Settings either —
+    // but Add account stays reachable outside any disclosure.
+    expect(screen.queryByText('Binary')).toBeNull();
+    expect(screen.queryByText(/Settings/i)).toBeNull();
+    expect(screen.getByRole('button', { name: /Add account/i })).toBeTruthy();
+
+    // Manually expanding a collapsed provider must still surface its update
+    // offer (#615 gate blocker: the offer block was guarded by needsAttention).
+    fireEvent.click(kimiToggle);
+    expect(await screen.findByText(/Update available/)).toBeTruthy();
   });
 
   it('shows the global Kimi context limit and saves the recommended cap', async () => {
@@ -162,9 +190,9 @@ describe('UsagePanel version slot', () => {
     });
     renderPanel();
 
-    // Context limit lives under the provider accordion → Settings disclosure.
+    // Context limit is the ONLY thing left under the Settings disclosure.
     fireEvent.click(await screen.findByRole('button', { name: /Kimi CLI/i }));
-    fireEvent.click(screen.getByText(/Settings & details/i));
+    fireEvent.click(screen.getByText(/Settings/i));
 
     const select = await screen.findByRole('combobox', { name: 'Kimi CLI context limit' });
     expect((select as HTMLSelectElement).value).toBe('no-anima-limit');
