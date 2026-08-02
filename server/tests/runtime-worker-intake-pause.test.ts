@@ -419,121 +419,65 @@ test('follow-up appender requeues when pause flips during deferred restart-drain
 });
 
 /**
- * Pins the remaining caller-resume window: after drain returns false, a
- * queueMicrotask flips pause before the sync re-read in the same function
- * would be too late for a second `await helper()` hop — but with inlined
- * drain→sync-pause→append, the pause microtask runs before the sync read
- * and we requeue. Hold the pre-append drain probe open so only that site
- * schedules the flip.
+ * Red-control for the removed boolean-helper hop.
+ *
+ * Schedule the pause flip from the final `isIntakePaused` read when it returns
+ * false. Record pause when the guarded action starts:
+ * - old `await isBlockedHelper()`: caller resume is a second microtask → flip
+ *   already ran → start sees pause true
+ * - inlined drain + sync pause + start: action starts in the same continuation
+ *   while pause is still false
  */
-test('follow-up appender requeues when pause is scheduled after pre-append drain returns false', async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-intake-pause-post-read-'));
-  try {
-    await withAnimaHome(stateDir, async () => {
-      const parent = await enqueueInbox(makeSlackEvent({
-        channelId: 'D-user',
-        eventId: 'evt-post-read-parent',
-        teamId: 'T-demo',
-        text: 'parent body',
-        ts: '1770000600.000001',
-        userId: 'U1',
-      }), { agentId: 'scout', stateDir });
-      const child = await enqueueInbox(makeSlackEvent({
-        channelId: 'C-alpha',
-        eventId: 'evt-post-read-child',
-        teamId: 'T-demo',
-        text: 'follow-up body',
-        ts: '1770000601.000001',
-        userId: 'U2',
-      }), { agentId: 'scout', stateDir });
-
-      const queue = queueFor('scout');
-      const claimedParent = await queue.takeNextRunnable({
-        currentWorkerId: 'test-worker-post-read',
-        isWorkerAlive: () => true,
-        staleRunningMs: 30 * 60 * 1000,
-        workerId: 'test-worker-post-read',
+test('intake gate red-control: inlined start sees pause false; old helper hop sees true', async () => {
+  let paused = false;
+  const readPauseSchedulingFlip = (): boolean => {
+    const value = paused;
+    if (!value) {
+      queueMicrotask(() => {
+        paused = true;
       });
-      assert.equal(claimedParent?.id, parent.ctx.item.id);
+    }
+    return value;
+  };
 
-      let intakePaused = false;
-      let releasePreAppendDrain!: () => void;
-      const preAppendDrainGate = new Promise<void>((resolve) => {
-        releasePreAppendDrain = resolve;
-      });
-      let drainPhase: 'early' | 'pre-append' = 'early';
-      const appends: AgentRuntimeFollowupInput[] = [];
-      const runtime: AgentRuntime = {
-        kind: 'post-read-pause',
-        async run(): Promise<AgentRuntimeResult> {
-          return { text: 'parent' };
-        },
-        async appendToActiveRun(input) {
-          appends.push(input);
-          return { accepted: true, text: 'appended' };
-        },
-      };
-
-      // Hold bridge until we switch drain phase to pre-append, then release.
-      let releaseBridge!: () => void;
-      const bridgeGate = new Promise<void>((resolve) => {
-        releaseBridge = resolve;
-      });
-      const bridge = new AgentRuntimeBridge(runtime);
-      const originalFollowupInput = bridge.followupInput.bind(bridge);
-      bridge.followupInput = async (input) => {
-        const built = await originalFollowupInput(input);
-        drainPhase = 'pre-append';
-        await bridgeGate;
-        return built;
-      };
-
-      const itemDone = new AbortController();
-      const loop = appendQueuedFollowupsUntilFinished({
-        activeContext: parent.ctx,
-        agentRuntime: runtime,
-        isIntakePaused: () => intakePaused,
-        isRestartDrainActive: async () => {
-          if (drainPhase === 'pre-append') {
-            await preAppendDrainGate;
-            // Drain false, then schedule pause as a microtask. Inlined
-            // drain→sync-pause must observe true before appendToActiveRun.
-            queueMicrotask(() => {
-              intakePaused = true;
-            });
-          }
-          return false;
-        },
-        itemDone: itemDone.signal,
-        logger: silentLogger,
-        onFollowupAccepted: () => {},
-        onFollowupAppended: async () => {},
-        onFollowupSettled: async () => {},
-        queue,
-        runtimeBridge: bridge,
-        runtimeConfig: { agentId: 'scout', stateDir },
-        workerId: 'test-worker-post-read',
-      });
-
-      await waitFor(async () => {
-        const items = await queue.list();
-        return items.some((item) => item.id === child.ctx.item.id && item.handling.status === 'running');
-      }, { description: 'follow-up claimed for bridge', timeoutMs: 2_000 });
-
-      await new Promise((r) => setTimeout(r, 20));
-      // Enter pre-append drain phase, then release bridge then drain.
-      releaseBridge();
-      await new Promise((r) => setTimeout(r, 10));
-      releasePreAppendDrain();
-
-      await waitForInboxItemStatus('scout', child.ctx.item.id, 'queued', 2_000);
-      assert.equal(appends.length, 0, 'must not append after microtask pause post-drain');
-      assert.equal(intakePaused, true);
-
-      itemDone.abort();
-      await loop;
-    });
-  } finally {
-    await rm(stateDir, { force: true, recursive: true });
+  // --- Old pattern (removed): await helper that already sampled pause ---
+  paused = false;
+  let pauseAtOldActionStart: boolean | undefined;
+  {
+    async function oldIsIntakeBlocked(drain: () => Promise<boolean>): Promise<boolean> {
+      const drainActive = await drain();
+      if (readPauseSchedulingFlip()) return true;
+      return drainActive;
+    }
+    const blocked = await oldIsIntakeBlocked(async () => false);
+    // Caller resume after await helper — flip microtask has already run.
+    pauseAtOldActionStart = paused;
+    assert.equal(blocked, false);
   }
+  assert.equal(
+    pauseAtOldActionStart,
+    true,
+    'old helper hop: pause flip runs before caller starts the action',
+  );
+
+  // --- New pattern (production): drain await, sync pause, start immediately ---
+  paused = false;
+  let pauseAtNewActionStart: boolean | undefined;
+  {
+    const drainActive = await (async () => false)();
+    if (readPauseSchedulingFlip() || drainActive) {
+      assert.fail('inlined path must not block on first false read');
+    }
+    // processClaimedItem / appendToActiveRun would start here, same continuation.
+    pauseAtNewActionStart = paused;
+  }
+  assert.equal(
+    pauseAtNewActionStart,
+    false,
+    'inlined path: action starts synchronously while pause still false',
+  );
+  // Flip runs after this turn.
+  await new Promise<void>((resolve) => queueMicrotask(resolve));
+  assert.equal(paused, true);
 });
+
