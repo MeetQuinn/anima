@@ -66,6 +66,23 @@ export abstract class ControllerAgentRuntime<C extends ProviderTurnController> i
     await controller.waitForQuiescent(input.signal);
   }
 
+  /**
+   * Only controllers that implement `isQuiescent` (Claude background tasks)
+   * participate in config-reload quiescence. Others return `undefined` so the
+   * host keeps active-item-only reload deferral.
+   */
+  isProviderQuiescent(): boolean | undefined {
+    const controller = this.slot.get();
+    if (!controller || typeof controller.isQuiescent !== 'function') return undefined;
+    return controller.isQuiescent();
+  }
+
+  async waitForProviderQuiescent(signal?: AbortSignal): Promise<void> {
+    const controller = this.slot.get();
+    if (!controller || typeof controller.isQuiescent !== 'function') return;
+    await controller.waitForQuiescent(signal);
+  }
+
   protected spawnController(
     spawn: { args: string[]; command: string; label: string },
     input: AgentRuntimeInput,

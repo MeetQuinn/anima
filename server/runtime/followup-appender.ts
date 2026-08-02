@@ -1,6 +1,5 @@
 import { errorMessage } from '../ids.js';
 import type { WakeQueueService } from '../inbox/wake-queue.service.js';
-import { isRestartDrainActive } from '../services/restart-drain.js';
 import {
   recordRuntimeFollowupAppended,
   recordRuntimeFollowupFailed,
@@ -9,6 +8,7 @@ import {
 import { runtimeContextForItemId } from './context.js';
 import type { AgentRuntime } from '../providers/contract.js';
 import type { AgentRuntimeBridge } from './runtime-bridge.js';
+import { readRestartDrainActive } from './intake-gate.js';
 import type { RuntimeItemContext, RuntimeWorkerConfig } from './types.js';
 
 const FOLLOWUP_POLL_MS = 100;
@@ -18,6 +18,10 @@ export const FOLLOWUP_BATCH_MAX_PROMPT_BYTES = 64 * 1024;
 interface RuntimeFollowupAppenderInput {
   activeContext: RuntimeItemContext;
   agentRuntime: AgentRuntime;
+  /** When true, leave follow-ups queued for a post-reload runtime (config pending). */
+  isIntakePaused?: () => boolean;
+  /** Test seam: inject a deferred restart-drain probe. */
+  isRestartDrainActive?: () => Promise<boolean>;
   itemDone: AbortSignal;
   logger: Pick<Console, 'error' | 'log'>;
   onFollowupAccepted: () => void;
@@ -29,10 +33,23 @@ interface RuntimeFollowupAppenderInput {
   workerId: string;
 }
 
+/**
+ * Await drain only. Caller must sync-read pause in the same continuation and
+ * act (append/requeue/sleep) without an intermediate await of a boolean helper.
+ */
+async function probeRestartDrain(input: RuntimeFollowupAppenderInput): Promise<boolean> {
+  return readRestartDrainActive(input.isRestartDrainActive);
+}
+
+function isPaused(input: RuntimeFollowupAppenderInput): boolean {
+  return input.isIntakePaused?.() === true;
+}
+
 export async function appendQueuedFollowupsUntilFinished(input: RuntimeFollowupAppenderInput): Promise<void> {
   const skippedItemIds = new Set<string>();
   while (!input.itemDone.aborted) {
-    if (await isRestartDrainActive()) {
+    const drainActive = await probeRestartDrain(input);
+    if (isPaused(input) || drainActive) {
       await sleep(FOLLOWUP_POLL_MS, input.itemDone);
       continue;
     }
@@ -43,6 +60,15 @@ export async function appendQueuedFollowupsUntilFinished(input: RuntimeFollowupA
       workerId: input.workerId,
     });
     if (items.length === 0) {
+      await sleep(FOLLOWUP_POLL_MS, input.itemDone);
+      continue;
+    }
+
+    // Fail-closed after claim: drain probe, sync pause, requeue or continue —
+    // no await between pause read and the branch that skips append.
+    const drainAfterClaim = await probeRestartDrain(input);
+    if (isPaused(input) || drainAfterClaim) {
+      await input.queue.requeueBatch(items.map((item) => item.id));
       await sleep(FOLLOWUP_POLL_MS, input.itemDone);
       continue;
     }
@@ -71,6 +97,11 @@ async function tryFollowupBatch(
     contexts = await Promise.all(claimedItemIds.map(
       (itemId) => runtimeContextForItemId(itemId, input.runtimeConfig, input.queue),
     ));
+    const drainAfterContext = await probeRestartDrain(input);
+    if (isPaused(input) || drainAfterContext) {
+      await input.queue.requeueBatch(claimedItemIds);
+      return;
+    }
     const followupInput = await input.runtimeBridge.followupInput({
       activeContext: input.activeContext,
       contexts,
@@ -80,6 +111,14 @@ async function tryFollowupBatch(
     const overflowIds = claimedItemIds.slice(contexts.length);
     if (overflowIds.length > 0) await input.queue.requeueBatch(overflowIds);
     failedItemIds = followupInput.itemIds;
+
+    // Pre-append: drain probe, sync pause, then appendToActiveRun starts in this
+    // same continuation (no await of a helper that already sampled pause).
+    const drainBeforeAppend = await probeRestartDrain(input);
+    if (isPaused(input) || drainBeforeAppend) {
+      await input.queue.requeueBatch(failedItemIds);
+      return;
+    }
 
     const result = await input.agentRuntime.appendToActiveRun(followupInput);
     if (!result.accepted) {

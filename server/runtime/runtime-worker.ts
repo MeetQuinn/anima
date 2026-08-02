@@ -12,7 +12,7 @@ import {
   recordMemoryCoherenceCompleted,
   recordMemoryCoherenceFailed,
 } from '../memory/memory-coherence-outcome.js';
-import { isRestartDrainActive } from '../services/restart-drain.js';
+import { readRestartDrainActive } from './intake-gate.js';
 import type {
   ItemStopReason,
   RuntimeWorkerConfig,
@@ -43,6 +43,8 @@ const STALE_RUNNING_RECOVERY_MS = 30 * 60 * 1000;
 interface AgentRuntimeWorkerOptions extends RuntimeWorkerConfig {
   agentRuntime: AgentRuntime;
   idleTimeoutMs?: number;
+  /** Test seam: inject a deferred restart-drain probe. */
+  isRestartDrainActive?: () => Promise<boolean>;
   onItemStarted?: (context: RuntimeItemContext) => Promise<void>;
   onItemFollowupAppended?: (activeContext: RuntimeItemContext, context: RuntimeItemContext) => Promise<void>;
   onItemSettled?: (context: RuntimeItemContext) => Promise<void>;
@@ -67,6 +69,7 @@ export class AgentRuntimeWorker {
   private activeItem?: ActiveRunHandle;
   private activeDrain?: Promise<number>;
   private closing = false;
+  private intakePaused = false;
   private pendingWake = false;
   private pollTimer?: NodeJS.Timeout;
   private unsubscribeWake?: () => void;
@@ -122,6 +125,18 @@ export class AgentRuntimeWorker {
     return Boolean(this.activeItem);
   }
 
+  isProviderQuiescent(): boolean | undefined {
+    return this.options.agentRuntime.isProviderQuiescent?.();
+  }
+
+  setIntakePaused(paused: boolean): void {
+    this.intakePaused = paused;
+  }
+
+  waitForProviderQuiescent(signal?: AbortSignal): Promise<void> {
+    return this.options.agentRuntime.waitForProviderQuiescent?.(signal) ?? Promise.resolve();
+  }
+
   health(): AgentRuntimeHandleSnapshot {
     const active = this.activeItem;
     const provider = this.options.agentRuntime.health?.();
@@ -175,17 +190,36 @@ export class AgentRuntimeWorker {
   }
 
   private async runOne(): Promise<boolean> {
-    if (await isRestartDrainActive()) return false;
+    // Await drain only, then sync pause/closing in this same continuation.
+    {
+      const drainActive = await this.readDrainActive();
+      if (this.closing || this.intakePaused || drainActive) return false;
+    }
     const releaseRunSlot = await this.runLimiter.acquire();
     try {
-      if (this.closing || await isRestartDrainActive()) return false;
+      {
+        const drainActive = await this.readDrainActive();
+        if (this.closing || this.intakePaused || drainActive) return false;
+      }
       const item = await this.takeNextRunnable();
       if (!item) return false;
+      // Fail-closed after claim: drain probe, sync pause/closing, then either
+      // requeue or invoke processClaimedItem with no await between the pause
+      // read and starting processClaimedItem.
+      const drainActive = await this.readDrainActive();
+      if (this.closing || this.intakePaused || drainActive) {
+        await this.queue.requeue(item.id);
+        return false;
+      }
       await this.processClaimedItem(item);
       return true;
     } finally {
       releaseRunSlot();
     }
+  }
+
+  private readDrainActive(): Promise<boolean> {
+    return readRestartDrainActive(this.options.isRestartDrainActive);
   }
 
   private async takeNextRunnable(): Promise<InboxItem | undefined> {
@@ -214,6 +248,10 @@ export class AgentRuntimeWorker {
       followupLoop = appendQueuedFollowupsUntilFinished({
         activeContext,
         agentRuntime: this.options.agentRuntime,
+        isIntakePaused: () => this.intakePaused,
+        ...(this.options.isRestartDrainActive
+          ? { isRestartDrainActive: this.options.isRestartDrainActive }
+          : {}),
         itemDone: itemAbort.signal,
         logger: this.logger,
         onFollowupAccepted: () => handle.noteActivity(),

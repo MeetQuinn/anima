@@ -113,6 +113,7 @@ const groups = {
     'runtime-worker-coherence.test.js',
     'runtime-worker-failures.test.js',
     'runtime-worker-followups.test.js',
+    'runtime-worker-intake-pause.test.js',
     'team-run-limit.test.js',
     'runtime-worker-wake.test.js',
     'services.test.js',

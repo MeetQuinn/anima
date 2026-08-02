@@ -76,6 +76,66 @@ export class NullReadEnqueueQueue extends WakeQueueService {
   }
 }
 
+/**
+ * Holds after the store claims a primary item so tests can flip intakePaused
+ * mid-flight (config-reload race).
+ */
+export class DeferredPrimaryClaimQueue extends WakeQueueService {
+  readonly claimedIds: string[] = [];
+  private releaseClaim!: () => void;
+  private claimGate = new Promise<void>((resolve) => {
+    this.releaseClaim = resolve;
+  });
+  private holdNextClaim = true;
+
+  override async takeNextRunnable(
+    input: Parameters<WakeQueueService['takeNextRunnable']>[0],
+  ): Promise<InboxItem | undefined> {
+    const item = await super.takeNextRunnable(input);
+    if (!item) return undefined;
+    this.claimedIds.push(item.id);
+    if (this.holdNextClaim) {
+      this.holdNextClaim = false;
+      await this.claimGate;
+    }
+    return item;
+  }
+
+  releaseHeldClaim(): void {
+    this.releaseClaim();
+  }
+}
+
+/**
+ * Holds after claiming a follow-up batch so tests can flip intakePaused before
+ * the worker returns from takeFollowupBatch.
+ */
+export class DeferredFollowupClaimQueue extends WakeQueueService {
+  readonly claimedBatches: string[][] = [];
+  private releaseBatch!: () => void;
+  private batchGate = new Promise<void>((resolve) => {
+    this.releaseBatch = resolve;
+  });
+  private holdNextBatch = true;
+
+  override async takeFollowupBatch(
+    input: Parameters<WakeQueueService['takeFollowupBatch']>[0],
+  ): Promise<InboxItem[]> {
+    const items = await super.takeFollowupBatch(input);
+    if (items.length === 0) return items;
+    this.claimedBatches.push(items.map((item) => item.id));
+    if (this.holdNextBatch) {
+      this.holdNextBatch = false;
+      await this.batchGate;
+    }
+    return items;
+  }
+
+  releaseHeldBatch(): void {
+    this.releaseBatch();
+  }
+}
+
 export class ControlledRuntime implements AgentRuntime {
   readonly kind = 'controlled';
   readonly calls: AgentRuntimeInput[] = [];
