@@ -12,7 +12,7 @@ import {
   recordMemoryCoherenceCompleted,
   recordMemoryCoherenceFailed,
 } from '../memory/memory-coherence-outcome.js';
-import { isRestartDrainActive } from '../services/restart-drain.js';
+import { isIntakeBlocked } from './intake-gate.js';
 import type {
   ItemStopReason,
   RuntimeWorkerConfig,
@@ -43,6 +43,8 @@ const STALE_RUNNING_RECOVERY_MS = 30 * 60 * 1000;
 interface AgentRuntimeWorkerOptions extends RuntimeWorkerConfig {
   agentRuntime: AgentRuntime;
   idleTimeoutMs?: number;
+  /** Test seam: inject a deferred restart-drain probe. */
+  isRestartDrainActive?: () => Promise<boolean>;
   onItemStarted?: (context: RuntimeItemContext) => Promise<void>;
   onItemFollowupAppended?: (activeContext: RuntimeItemContext, context: RuntimeItemContext) => Promise<void>;
   onItemSettled?: (context: RuntimeItemContext) => Promise<void>;
@@ -188,15 +190,15 @@ export class AgentRuntimeWorker {
   }
 
   private async runOne(): Promise<boolean> {
-    if (this.intakePaused || await isRestartDrainActive()) return false;
+    if (await this.intakeBlocked()) return false;
     const releaseRunSlot = await this.runLimiter.acquire();
     try {
-      if (this.closing || this.intakePaused || await isRestartDrainActive()) return false;
+      if (await this.intakeBlocked()) return false;
       const item = await this.takeNextRunnable();
       if (!item) return false;
-      // Fail-closed: pause may flip while takeNextRunnable awaits storage. Never
-      // start a newly claimed primary on the old runtime — requeue for post-reload.
-      if (this.closing || this.intakePaused || await isRestartDrainActive()) {
+      // Fail-closed: pause may flip while takeNextRunnable awaits storage. Drain
+      // probe first, then sync re-read pause/closing with no await before process.
+      if (await this.intakeBlocked()) {
         await this.queue.requeue(item.id);
         return false;
       }
@@ -205,6 +207,16 @@ export class AgentRuntimeWorker {
     } finally {
       releaseRunSlot();
     }
+  }
+
+  private intakeBlocked(): Promise<boolean> {
+    return isIntakeBlocked({
+      isClosing: () => this.closing,
+      isPaused: () => this.intakePaused,
+      ...(this.options.isRestartDrainActive
+        ? { isRestartDrainActive: this.options.isRestartDrainActive }
+        : {}),
+    });
   }
 
   private async takeNextRunnable(): Promise<InboxItem | undefined> {
@@ -234,6 +246,9 @@ export class AgentRuntimeWorker {
         activeContext,
         agentRuntime: this.options.agentRuntime,
         isIntakePaused: () => this.intakePaused,
+        ...(this.options.isRestartDrainActive
+          ? { isRestartDrainActive: this.options.isRestartDrainActive }
+          : {}),
         itemDone: itemAbort.signal,
         logger: this.logger,
         onFollowupAccepted: () => handle.noteActivity(),

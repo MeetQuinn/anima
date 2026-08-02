@@ -1,6 +1,5 @@
 import { errorMessage } from '../ids.js';
 import type { WakeQueueService } from '../inbox/wake-queue.service.js';
-import { isRestartDrainActive } from '../services/restart-drain.js';
 import {
   recordRuntimeFollowupAppended,
   recordRuntimeFollowupFailed,
@@ -9,6 +8,7 @@ import {
 import { runtimeContextForItemId } from './context.js';
 import type { AgentRuntime } from '../providers/contract.js';
 import type { AgentRuntimeBridge } from './runtime-bridge.js';
+import { isIntakeBlocked } from './intake-gate.js';
 import type { RuntimeItemContext, RuntimeWorkerConfig } from './types.js';
 
 const FOLLOWUP_POLL_MS = 100;
@@ -20,6 +20,8 @@ interface RuntimeFollowupAppenderInput {
   agentRuntime: AgentRuntime;
   /** When true, leave follow-ups queued for a post-reload runtime (config pending). */
   isIntakePaused?: () => boolean;
+  /** Test seam: inject a deferred restart-drain probe. */
+  isRestartDrainActive?: () => Promise<boolean>;
   itemDone: AbortSignal;
   logger: Pick<Console, 'error' | 'log'>;
   onFollowupAccepted: () => void;
@@ -31,10 +33,17 @@ interface RuntimeFollowupAppenderInput {
   workerId: string;
 }
 
+function followupIntakeBlocked(input: RuntimeFollowupAppenderInput): Promise<boolean> {
+  return isIntakeBlocked({
+    isPaused: () => input.isIntakePaused?.() === true,
+    ...(input.isRestartDrainActive ? { isRestartDrainActive: input.isRestartDrainActive } : {}),
+  });
+}
+
 export async function appendQueuedFollowupsUntilFinished(input: RuntimeFollowupAppenderInput): Promise<void> {
   const skippedItemIds = new Set<string>();
   while (!input.itemDone.aborted) {
-    if (input.isIntakePaused?.() || await isRestartDrainActive()) {
+    if (await followupIntakeBlocked(input)) {
       await sleep(FOLLOWUP_POLL_MS, input.itemDone);
       continue;
     }
@@ -49,9 +58,9 @@ export async function appendQueuedFollowupsUntilFinished(input: RuntimeFollowupA
       continue;
     }
 
-    // Fail-closed: pause may flip while takeFollowupBatch awaits. Requeue the
-    // claimed batch so it is not appended on the old controller.
-    if (input.isIntakePaused?.() || await isRestartDrainActive()) {
+    // Fail-closed: pause may flip while takeFollowupBatch awaits. Drain probe
+    // first, then sync pause re-read; requeue claimed batch if blocked.
+    if (await followupIntakeBlocked(input)) {
       await input.queue.requeueBatch(items.map((item) => item.id));
       await sleep(FOLLOWUP_POLL_MS, input.itemDone);
       continue;
@@ -81,8 +90,8 @@ async function tryFollowupBatch(
     contexts = await Promise.all(claimedItemIds.map(
       (itemId) => runtimeContextForItemId(itemId, input.runtimeConfig, input.queue),
     ));
-    // Pause may flip during context load.
-    if (input.isIntakePaused?.() || await isRestartDrainActive()) {
+    // Pause may flip during context load — drain then sync pause re-read.
+    if (await followupIntakeBlocked(input)) {
       await input.queue.requeueBatch(claimedItemIds);
       return;
     }
@@ -96,8 +105,8 @@ async function tryFollowupBatch(
     if (overflowIds.length > 0) await input.queue.requeueBatch(overflowIds);
     failedItemIds = followupInput.itemIds;
 
-    // Immediate pre-append guard after bridge build awaits.
-    if (input.isIntakePaused?.() || await isRestartDrainActive()) {
+    // Pre-append: drain probe then sync pause; no await until append starts.
+    if (await followupIntakeBlocked(input)) {
       await input.queue.requeueBatch(failedItemIds);
       return;
     }

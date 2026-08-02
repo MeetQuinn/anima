@@ -262,3 +262,158 @@ test('follow-up appender requeues after context build when pause flips before ap
     await rm(stateDir, { force: true, recursive: true });
   }
 });
+
+test('runtime worker requeues primary when pause flips during deferred restart-drain probe', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-intake-pause-drain-primary-'));
+  const runtime = new ControlledRuntime();
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const first = await enqueueInbox(makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-drain-probe-primary',
+        teamId: 'T-demo',
+        text: 'primary body',
+        ts: '1770000400.000001',
+        userId: 'U1',
+      }), { agentId: 'scout', stateDir });
+
+      let releaseDrain!: () => void;
+      const drainGate = new Promise<void>((resolve) => {
+        releaseDrain = resolve;
+      });
+      let drainProbeStarted = 0;
+      const queue = new DeferredPrimaryClaimQueue('scout');
+      // Claim without hold so we land on the post-claim intake gate.
+      queue.releaseHeldClaim();
+
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        isRestartDrainActive: async () => {
+          drainProbeStarted += 1;
+          // Only hold the post-claim probe (after takeNextRunnable).
+          if (drainProbeStarted >= 3) {
+            await drainGate;
+          }
+          return false;
+        },
+        pollIntervalMs: 10_000,
+        queue,
+        stateDir,
+        workerId: 'test-worker-drain-primary',
+      }, silentLogger);
+
+      const drain = worker.drainOnce();
+      await waitFor(() => drainProbeStarted >= 3, {
+        description: 'post-claim restart-drain probe held',
+        timeoutMs: 2_000,
+      });
+      assert.equal(runtime.calls.length, 0);
+
+      // Pause flips while the drain probe is still awaiting — old code sampled
+      // pause before that await and would still proceed.
+      worker.setIntakePaused(true);
+      releaseDrain();
+
+      assert.equal(await drain, 0);
+      assert.equal(runtime.calls.length, 0, 'must not run after pause during drain probe');
+      await waitForInboxItemStatus('scout', first.ctx.item.id, 'queued', 2_000);
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('follow-up appender requeues when pause flips during deferred restart-drain probe before append', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-intake-pause-drain-followup-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const parent = await enqueueInbox(makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-drain-probe-parent',
+        teamId: 'T-demo',
+        text: 'parent body',
+        ts: '1770000500.000001',
+        userId: 'U1',
+      }), { agentId: 'scout', stateDir });
+      const child = await enqueueInbox(makeSlackEvent({
+        channelId: 'C-alpha',
+        eventId: 'evt-drain-probe-child',
+        teamId: 'T-demo',
+        text: 'follow-up body',
+        ts: '1770000501.000001',
+        userId: 'U2',
+      }), { agentId: 'scout', stateDir });
+
+      const queue = queueFor('scout');
+      const claimedParent = await queue.takeNextRunnable({
+        currentWorkerId: 'test-worker-drain-followup',
+        isWorkerAlive: () => true,
+        staleRunningMs: 30 * 60 * 1000,
+        workerId: 'test-worker-drain-followup',
+      });
+      assert.equal(claimedParent?.id, parent.ctx.item.id);
+
+      let releaseDrain!: () => void;
+      const drainGate = new Promise<void>((resolve) => {
+        releaseDrain = resolve;
+      });
+      let drainProbeStarted = 0;
+      let intakePaused = false;
+      const appends: AgentRuntimeFollowupInput[] = [];
+      const runtime: AgentRuntime = {
+        kind: 'drain-probe-followup',
+        async run(): Promise<AgentRuntimeResult> {
+          return { text: 'parent' };
+        },
+        async appendToActiveRun(input) {
+          appends.push(input);
+          return { accepted: true, text: 'appended' };
+        },
+      };
+
+      const itemDone = new AbortController();
+      const loop = appendQueuedFollowupsUntilFinished({
+        activeContext: parent.ctx,
+        agentRuntime: runtime,
+        isIntakePaused: () => intakePaused,
+        isRestartDrainActive: async () => {
+          drainProbeStarted += 1;
+          // Hold only the pre-append probe (after batch claim + context/bridge).
+          if (drainProbeStarted >= 3) {
+            await drainGate;
+          }
+          return false;
+        },
+        itemDone: itemDone.signal,
+        logger: silentLogger,
+        onFollowupAccepted: () => {},
+        onFollowupAppended: async () => {},
+        onFollowupSettled: async () => {},
+        queue,
+        runtimeBridge: new AgentRuntimeBridge(runtime),
+        runtimeConfig: { agentId: 'scout', stateDir },
+        workerId: 'test-worker-drain-followup',
+      });
+
+      await waitFor(() => drainProbeStarted >= 3, {
+        description: 'pre-append restart-drain probe held',
+        timeoutMs: 2_000,
+      });
+      assert.equal(appends.length, 0);
+
+      intakePaused = true;
+      releaseDrain();
+
+      await waitForInboxItemStatus('scout', child.ctx.item.id, 'queued', 2_000);
+      assert.equal(appends.length, 0, 'must not append after pause during drain probe');
+
+      itemDone.abort();
+      await loop;
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
