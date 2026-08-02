@@ -46,14 +46,16 @@ vi.mock('@/api/system', () => ({
       },
       {
         // Installed provider with a context limit — carries the Settings disclosure.
+        // Has an update available: that must NOT auto-expand the accordion.
         agents: [],
         installedVersion: '1.0.0',
         installSource: 'kimi-native' as const,
         label: 'Kimi CLI',
+        latestVersion: '1.1.0',
         operation: { status: 'idle' as const },
         provider: 'kimi-cli' as const,
         state: 'ready' as const,
-        updateAvailable: false,
+        updateAvailable: true,
         updateMode: 'manual' as const,
       },
       {
@@ -154,6 +156,10 @@ describe('UsagePanel version slot', () => {
     // (totoday 08-02) — no row, no `not installed` claim.
     expect(screen.queryByText('Grok CLI')).toBeNull();
     expect(screen.queryByText('not installed')).toBeNull();
+    // An available update alone must not auto-expand a provider (totoday 08-02).
+    expect(
+      screen.getByRole('button', { name: /Kimi CLI/i }).getAttribute('aria-expanded'),
+    ).toBe('false');
 
     // Expand Claude to confirm meters still sit next to the unverified binary.
     fireEvent.click(screen.getByRole('button', { name: /Claude Code/i }));
