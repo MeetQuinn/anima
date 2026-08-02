@@ -92,10 +92,17 @@ export function parseKimiUsageResponse(
 
   const extras: ProviderUsageExtra[] = [];
   const subType = stringValue(root.subType);
-  if (subType) extras.push({ label: 'Plan', balance: subType });
+  if (subType) extras.push({ label: 'Plan', balance: humanizeKimiSubType(subType) });
   const totalQuota = numberValue(root.totalQuota);
   if (totalQuota !== undefined) extras.push({ label: 'Total Quota', limit: totalQuota });
-  const account = stringValue(record(root.user)?.userId);
+  // Prefer a human identity over opaque API userIds (e.g. d73omigl3dc3ms2e3oig).
+  // Kimi's usage payload and JWT typically only carry userId/sub — no email today.
+  const user = record(root.user);
+  const account = kimiDisplayAccount({
+    email: stringValue(user?.email) ?? stringValue(user?.emailAddress),
+    name: stringValue(user?.name) ?? stringValue(user?.displayName),
+    userId: stringValue(user?.userId) ?? stringValue(user?.user_id),
+  });
   return { ...(account ? { account } : {}), extras, windows };
 }
 
@@ -124,7 +131,49 @@ async function readKimiCredentials(): Promise<KimiCredentials | undefined> {
 
 function kimiAccount(accessToken: string): string | undefined {
   const claims = record(decodeJwtPayload(accessToken));
-  return stringValue(claims?.email) ?? stringValue(claims?.user_id) ?? stringValue(claims?.sub);
+  return kimiDisplayAccount({
+    email: stringValue(claims?.email),
+    name: stringValue(claims?.name) ?? stringValue(claims?.preferred_username),
+    userId: stringValue(claims?.user_id) ?? stringValue(claims?.sub),
+  });
+}
+
+/** Surface email/name when present; hide opaque id-only tokens from the UI. */
+export function kimiDisplayAccount(parts: {
+  email?: string;
+  name?: string;
+  userId?: string;
+}): string | undefined {
+  if (parts.email && parts.email.includes('@')) return parts.email;
+  if (parts.name && !looksLikeOpaqueId(parts.name)) return parts.name;
+  // Opaque userIds are not useful in the Providers panel identity slot.
+  return undefined;
+}
+
+function humanizeKimiSubType(subType: string): string {
+  const key = subType.trim().toUpperCase();
+  const map: Record<string, string> = {
+    TYPE_PURCHASE: 'Paid',
+    TYPE_FREE: 'Free',
+    TYPE_PRO: 'Pro',
+    TYPE_ENTERPRISE: 'Enterprise',
+    TYPE_MEMBERSHIP: 'Membership',
+  };
+  if (map[key]) return map[key];
+  return subType
+    .replace(/^TYPE_/i, '')
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function looksLikeOpaqueId(value: string): boolean {
+  const v = value.trim();
+  if (!v || v.includes('@') || v.includes(' ')) return false;
+  // UUIDs and long alnum ids (Kimi userId / JWT sub).
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)) return true;
+  if (/^[a-z0-9]{16,}$/i.test(v)) return true;
+  return false;
 }
 
 function kimiCredentialPaths(): string[] {
