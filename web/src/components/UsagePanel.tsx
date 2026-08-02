@@ -121,15 +121,6 @@ function splitExtras(extras: ProviderUsageExtra[]): {
   };
 }
 
-function installSourceLabel(source: ProviderCliRow['installSource']): string {
-  if (source === 'claude-native') return 'Native';
-  if (source === 'codex-npm-global') return 'Global npm';
-  if (source === 'kimi-native') return 'Native';
-  if (source === 'grok-native') return 'Native';
-  if (source === 'opencode-brew') return 'Homebrew';
-  return 'Unknown source';
-}
-
 function formatContextTokens(tokens: number): string {
   if (tokens % 1024 === 0) return `${tokens / 1024}k`;
   return `${Math.round(tokens / 1_000)}k`;
@@ -190,21 +181,6 @@ function providerCollapsedSummary(usages: ProviderUsageRow[]): string {
   const n = usages.length;
   const summary = n > 1 ? (sum ? `${sum} · ${n} accounts` : `${n} accounts`) : (sum || 'Available');
   return active.stale ? `${summary} · cached` : summary;
-}
-
-/** One quiet key/value line inside the Details disclosure. */
-function DetailRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex min-w-0 items-baseline gap-2">
-      <span className="w-20 shrink-0 font-sans text-[10px] text-text-subtle">{label}</span>
-      <span
-        className={`min-w-0 truncate text-[10px] text-text-muted ${mono ? 'font-mono' : 'font-sans'}`}
-        title={value}
-      >
-        {value}
-      </span>
-    </div>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -502,7 +478,6 @@ function ProviderUnit({
   const staleSessions =
     operation?.status === 'succeeded' &&
     runningAgents.some((agent) => agent.runningVersion !== management.installedVersion);
-  const versionCheckFailed = management.state === 'error' || Boolean(management.checkError);
   const accountSwitching = accountState?.status === 'switching';
   const accountSwitchFailed = accountState?.status === 'error';
   const needsAttention = installing
@@ -532,7 +507,7 @@ function ProviderUnit({
           {management.label}
         </span>
         {!open && (
-          <span className="max-w-[13rem] shrink-0 text-right font-sans text-[12px] leading-snug text-text-muted">
+          <span className="max-w-[18rem] shrink-0 text-right font-sans text-[12px] leading-snug text-text-muted">
             {needsAttention ? (
               <span className="text-health-warn">Needs attention</span>
             ) : !management.installedVersion ? (
@@ -661,28 +636,26 @@ function ProviderUnit({
             </div>
           )}
 
-          <details className="group">
-            <summary className="flex cursor-pointer list-none items-center gap-1 font-sans text-[10px] uppercase tracking-[0.08em] text-text-subtle hover:text-text-muted">
-              <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
-              Settings & details
-              {management.agents.length > 0 && (
-                <span className="normal-case tracking-normal">
-                  · {management.agents.length} {management.agents.length === 1 ? 'agent' : 'agents'}
-                </span>
-              )}
-            </summary>
-            <div className="mt-2 space-y-4 border-l border-border-soft pl-3">
-              {accountState && (
-                <button
-                  type="button"
-                  onClick={onAddAccount}
-                  className="inline-flex min-h-[40px] items-center gap-1.5 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-                >
-                  <UserPlus className="h-3.5 w-3.5" />
-                  Add account
-                </button>
-              )}
-              {contextLimit && (
+          {accountState && (
+            <button
+              type="button"
+              onClick={onAddAccount}
+              className="inline-flex min-h-[40px] items-center gap-1.5 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            >
+              <UserPlus className="h-3.5 w-3.5" />
+              Add account
+            </button>
+          )}
+
+          {/* Settings keeps ONLY the context-window limit (totoday 08-02): version,
+              binary path, install source, auto-update, and per-agent details are gone. */}
+          {contextLimit && (
+            <details className="group">
+              <summary className="flex cursor-pointer list-none items-center gap-1 font-sans text-[10px] uppercase tracking-[0.08em] text-text-subtle hover:text-text-muted">
+                <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
+                Settings
+              </summary>
+              <div className="mt-2 border-l border-border-soft pl-3">
                 <div className="space-y-1.5">
                   <label className="block font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
                     Context limit
@@ -714,44 +687,9 @@ function ProviderUnit({
                     </p>
                   )}
                 </div>
-              )}
-              <div className="space-y-1.5">
-                {management.installedVersion && <DetailRow label="Version" value={`v${management.installedVersion}`} mono />}
-                {management.binaryPath && <DetailRow label="Binary" value={management.binaryPath} mono />}
-                {management.binaryPath && <DetailRow label="Source" value={installSourceLabel(management.installSource)} />}
-                {management.autoUpdatesEnabled !== undefined && (
-                  <DetailRow
-                    label="Auto-update"
-                    value={`${management.autoUpdatesEnabled ? 'on' : 'off'}${management.autoUpdateChannel ? ` · ${management.autoUpdateChannel}` : ''}`}
-                  />
-                )}
-                {management.sourceDetail && management.updateMode !== 'managed' && (
-                  <p className="font-sans text-[10px] leading-relaxed text-text-muted">{management.sourceDetail}</p>
-                )}
-                {versionCheckFailed && (
-                  <p className="font-sans text-[10px] leading-relaxed text-text-muted">
-                    Version check failed{management.checkError ? ` · ${management.checkError.message}` : ''}
-                  </p>
-                )}
-                {management.agents.length > 0 && (
-                  <div className="space-y-1 pt-0.5">
-                    {management.agents.map((agent) => (
-                      <div key={agent.id} className="flex min-w-0 items-baseline justify-between gap-3">
-                        <span className="truncate font-sans text-[11px] text-text-muted">{agent.name}</span>
-                        <span className="shrink-0 font-mono text-[10px] text-text-subtle">
-                          {agent.runningVersion
-                            ? `running v${agent.runningVersion}`
-                            : agent.enabled
-                              ? 'next session'
-                              : 'disabled'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
-            </div>
-          </details>
+            </details>
+          )}
         </div>
       )}
     </div>
@@ -935,7 +873,10 @@ export default function UsagePanel({ onClose }: Props) {
     usageByProvider.set(row.provider, rows);
   }
   const claudeAccountState = accountData?.providers.find((row) => row.provider === 'claude-code');
-  const visible = cliData?.providers ?? [];
+  // A provider whose binary genuinely isn't on this machine has nothing to show
+  // or act on — hide it. State 'unknown' (binary present, version unverified)
+  // still renders, with the honest 'version unknown' label (#520).
+  const visible = (cliData?.providers ?? []).filter((row) => row.state !== 'not_installed');
   const checkedAt = [usageCheckedAt, ...visible.map((row) => row.checkedAt)]
     .filter((value): value is string => Boolean(value))
     .sort()
@@ -956,7 +897,7 @@ export default function UsagePanel({ onClose }: Props) {
             className={[
               'relative flex h-full w-full flex-col bg-surface',
               'md:absolute md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2',
-              'md:h-auto md:max-h-[calc(100dvh-4rem)] md:w-[min(520px,calc(100vw-2rem))] md:max-w-none md:rounded-sm md:border md:border-border-soft md:shadow-deep',
+              'md:h-auto md:max-h-[calc(100dvh-4rem)] md:w-[min(640px,calc(100vw-2rem))] md:max-w-none md:rounded-sm md:border md:border-border-soft md:shadow-deep',
             ].join(' ')}
             style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
           >
