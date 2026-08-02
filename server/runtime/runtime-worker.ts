@@ -67,6 +67,7 @@ export class AgentRuntimeWorker {
   private activeItem?: ActiveRunHandle;
   private activeDrain?: Promise<number>;
   private closing = false;
+  private intakePaused = false;
   private pendingWake = false;
   private pollTimer?: NodeJS.Timeout;
   private unsubscribeWake?: () => void;
@@ -122,6 +123,18 @@ export class AgentRuntimeWorker {
     return Boolean(this.activeItem);
   }
 
+  isProviderQuiescent(): boolean | undefined {
+    return this.options.agentRuntime.isProviderQuiescent?.();
+  }
+
+  setIntakePaused(paused: boolean): void {
+    this.intakePaused = paused;
+  }
+
+  waitForProviderQuiescent(signal?: AbortSignal): Promise<void> {
+    return this.options.agentRuntime.waitForProviderQuiescent?.(signal) ?? Promise.resolve();
+  }
+
   health(): AgentRuntimeHandleSnapshot {
     const active = this.activeItem;
     const provider = this.options.agentRuntime.health?.();
@@ -175,10 +188,10 @@ export class AgentRuntimeWorker {
   }
 
   private async runOne(): Promise<boolean> {
-    if (await isRestartDrainActive()) return false;
+    if (this.intakePaused || await isRestartDrainActive()) return false;
     const releaseRunSlot = await this.runLimiter.acquire();
     try {
-      if (this.closing || await isRestartDrainActive()) return false;
+      if (this.closing || this.intakePaused || await isRestartDrainActive()) return false;
       const item = await this.takeNextRunnable();
       if (!item) return false;
       await this.processClaimedItem(item);
@@ -214,6 +227,7 @@ export class AgentRuntimeWorker {
       followupLoop = appendQueuedFollowupsUntilFinished({
         activeContext,
         agentRuntime: this.options.agentRuntime,
+        isIntakePaused: () => this.intakePaused,
         itemDone: itemAbort.signal,
         logger: this.logger,
         onFollowupAccepted: () => handle.noteActivity(),

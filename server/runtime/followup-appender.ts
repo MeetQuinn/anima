@@ -18,6 +18,8 @@ export const FOLLOWUP_BATCH_MAX_PROMPT_BYTES = 64 * 1024;
 interface RuntimeFollowupAppenderInput {
   activeContext: RuntimeItemContext;
   agentRuntime: AgentRuntime;
+  /** When true, leave follow-ups queued for a post-reload runtime (config pending). */
+  isIntakePaused?: () => boolean;
   itemDone: AbortSignal;
   logger: Pick<Console, 'error' | 'log'>;
   onFollowupAccepted: () => void;
@@ -32,7 +34,7 @@ interface RuntimeFollowupAppenderInput {
 export async function appendQueuedFollowupsUntilFinished(input: RuntimeFollowupAppenderInput): Promise<void> {
   const skippedItemIds = new Set<string>();
   while (!input.itemDone.aborted) {
-    if (await isRestartDrainActive()) {
+    if (input.isIntakePaused?.() || await isRestartDrainActive()) {
       await sleep(FOLLOWUP_POLL_MS, input.itemDone);
       continue;
     }

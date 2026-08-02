@@ -69,8 +69,15 @@ interface RunningAgentRecord {
   handle: RunningAgentHandle;
 }
 
+interface ConfigReloadWait {
+  abort: AbortController;
+  generation: number;
+  handle: RunningAgentHandle;
+}
+
 interface ManagedAgent {
   config: AgentConfig;
+  configReloadWait?: ConfigReloadWait;
   lastLoggedStatus?: string;
   running?: RunningAgentRecord;
 }
@@ -212,7 +219,9 @@ export class RuntimeHost {
     await this.healthPublish?.catch((error: unknown) => {
       this.logger.error(`Runtime host health publish failed while stopping: ${errorMessage(error)}`);
     });
-    const handles = [...this.agents.values()].flatMap((record) => record.running ? [record.running.handle] : []);
+    const records = [...this.agents.values()];
+    for (const record of records) this.clearConfigReloadWait(record);
+    const handles = records.flatMap((record) => record.running ? [record.running.handle] : []);
     this.agents.clear();
     const stopOptions = await this.shutdownStopOptions();
     await Promise.allSettled(handles.map((handle) => handle.stop(stopOptions)));
@@ -253,10 +262,14 @@ export class RuntimeHost {
         const pendingRestart = pendingRestartAgentIds.has(agent.id)
           ? await this.restartCommands.get(agent.id)
           : undefined;
-        if (pendingRestart?.whenIdle && running && isHandleActive(running.handle)) {
+        if (pendingRestart?.whenIdle && running && isConfigReloadBlocked(running.handle)) {
+          running.handle.setIntakePaused?.(true);
           this.logAgentStatus(record, `pending-idle-reload:${pendingRestart.requestId}`, () => {
-            this.logger.log(`Agent ${agent.id}: account changed; will reload after the active item finishes.`);
+            this.logger.log(
+              `Agent ${agent.id}: account changed; will reload after the runtime is quiescent.`,
+            );
           });
+          this.armConfigReloadWait(record, running);
           continue;
         }
         const restartCommand = pendingRestart ? await this.restartCommands.take(agent.id) : undefined;
@@ -356,6 +369,7 @@ export class RuntimeHost {
     skipStatus: string | undefined,
     command: AgentRestartCommand,
   ): Promise<void> {
+    this.clearConfigReloadWait(record);
     const agent = record.config;
     const running = record.running;
     if (skipStatus) {
@@ -414,14 +428,27 @@ export class RuntimeHost {
     }
 
     const nextFingerprint = runtimeFingerprint(agent);
-    if (running.fingerprint === nextFingerprint) return;
-    if (isHandleActive(running.handle)) {
-      this.logAgentStatus(record, 'pending-restart', () => {
-        this.logger.log(`Agent ${agent.id}: config changed; will reload after the active item finishes.`);
-      });
+    if (running.fingerprint === nextFingerprint) {
+      this.clearConfigReloadWait(record);
+      running.handle.setIntakePaused?.(false);
       return;
     }
 
+    // Provider-affecting config change: pause intake on the old runtime so new
+    // work stays queued until the latest config is live. Wait for active turn
+    // and (when exposed) provider background-task quiescence before reload.
+    running.handle.setIntakePaused?.(true);
+    if (isConfigReloadBlocked(running.handle)) {
+      this.logAgentStatus(record, 'pending-restart', () => {
+        this.logger.log(
+          `Agent ${agent.id}: config changed; will reload after the runtime is quiescent.`,
+        );
+      });
+      this.armConfigReloadWait(record, running);
+      return;
+    }
+
+    this.clearConfigReloadWait(record);
     this.logger.log(`Agent ${agent.id}: config changed; reloading runtime.`);
     await running.handle.stop({
       drainActive: true,
@@ -431,10 +458,59 @@ export class RuntimeHost {
     await this.startAndStore(agent);
   }
 
+  /**
+   * When a config/account reload is blocked on active work or Claude background
+   * tasks, wait for provider quiescence (and poll for active-item clearance),
+   * then re-reconcile. Stale waiters re-check handle identity + generation so
+   * they cannot stop a newer runtime.
+   */
+  private armConfigReloadWait(record: ManagedAgent, running: RunningAgentRecord): void {
+    const handle = running.handle;
+    const existing = record.configReloadWait;
+    if (existing && existing.handle === handle && !existing.abort.signal.aborted) {
+      return;
+    }
+    this.clearConfigReloadWait(record);
+    const abort = new AbortController();
+    const generation = (existing?.generation ?? 0) + 1;
+    record.configReloadWait = { abort, generation, handle };
+
+    void (async () => {
+      try {
+        while (!abort.signal.aborted) {
+          if (!isConfigReloadBlocked(handle)) break;
+          if (handle.isProviderQuiescent?.() === false) {
+            await handle.waitForProviderQuiescent?.(abort.signal);
+            continue;
+          }
+          // Active Anima item only: short poll until idle or aborted.
+          await abortableSleep(50, abort.signal);
+        }
+        if (abort.signal.aborted) return;
+        const current = this.agents.get(record.config.id);
+        if (current !== record) return;
+        if (current.configReloadWait?.generation !== generation) return;
+        if (current.running?.handle !== handle) return;
+        await this.reconcileOnce();
+      } catch {
+        // Abort or wait rejection — a newer wait / stop / force-restart owns the next step.
+      }
+    })();
+  }
+
+  private clearConfigReloadWait(record: ManagedAgent): void {
+    const wait = record.configReloadWait;
+    if (!wait) return;
+    wait.abort.abort();
+    record.configReloadWait = undefined;
+  }
+
   private async startAndStore(
     agent: AgentConfig,
     restartCommand?: AgentRestartCommand,
   ): Promise<void> {
+    const record = this.managedAgent(agent);
+    this.clearConfigReloadWait(record);
     await this.health.writeHealth({
       agentId: agent.id,
       ...(restartCommand ? {
@@ -445,10 +521,11 @@ export class RuntimeHost {
       updatedAt: nowIso(),
     });
     const started = await this.startAgentWithTimeout(agent);
-    const record = this.managedAgent(started.agent);
-    record.running = { fingerprint: runtimeFingerprint(started.agent), handle: started.handle };
-    record.lastLoggedStatus = undefined;
-    await this.publishHealthForAgent(record, restartCommand);
+    const startedRecord = this.managedAgent(started.agent);
+    this.clearConfigReloadWait(startedRecord);
+    startedRecord.running = { fingerprint: runtimeFingerprint(started.agent), handle: started.handle };
+    startedRecord.lastLoggedStatus = undefined;
+    await this.publishHealthForAgent(startedRecord, restartCommand);
   }
 
   private async startAgentWithTimeout(agent: AgentConfig): Promise<{ agent: AgentConfig; handle: RunningAgentHandle }> {
@@ -832,6 +909,32 @@ async function startAgentFromConfig(
 
 function isHandleActive(handle: RunningAgentHandle): boolean {
   return handle.isActive?.() ?? false;
+}
+
+/** Active Anima item, or provider background work when the runtime exposes it. */
+function isConfigReloadBlocked(handle: RunningAgentHandle): boolean {
+  if (isHandleActive(handle)) return true;
+  // Only Claude (and any future provider with isQuiescent) participates.
+  // Runtimes without isProviderQuiescent keep active-item-only deferral.
+  return handle.isProviderQuiescent?.() === false;
+}
+
+function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason instanceof Error ? signal.reason : new Error('aborted'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason instanceof Error ? signal.reason : new Error('aborted'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function runtimeFingerprint(agent: AgentConfig): string {

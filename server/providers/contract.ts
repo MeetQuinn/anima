@@ -92,7 +92,15 @@ export interface AgentRuntime {
   readonly kind: string;
   close?(options?: AgentRuntimeCloseOptions): Promise<void>;
   health?(): AgentRuntimeHealth;
+  /**
+   * Provider-owned background work (e.g. Claude background Bash tasks).
+   * `undefined` means this runtime does not expose quiescence beyond the active
+   * Anima item — config reload keeps the previous active-item-only behavior.
+   */
+  isProviderQuiescent?(): boolean | undefined;
   run(input: AgentRuntimeInput): Promise<AgentRuntimeResult>;
   appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<AgentRuntimeFollowupResult>;
   requestDrain?(input: AgentRuntimeDrainInput): Promise<void>;
+  /** Resolves when `isProviderQuiescent()` is true (or immediately if unsupported). */
+  waitForProviderQuiescent?(signal?: AbortSignal): Promise<void>;
 }

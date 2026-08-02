@@ -573,6 +573,162 @@ test('runtime host defers config reload until the running agent is idle', async 
   await host.stop();
 });
 
+test('runtime host defers config reload until provider background work is quiescent', async () => {
+  let scout = runtimeHostAgent('scout', { connected: true, homePath: '/tmp/home-a', model: 'opus' });
+  let active = true;
+  let quiescent = false;
+  let resolveQuiescent!: () => void;
+  const quiescentGate = new Promise<void>((resolve) => {
+    resolveQuiescent = resolve;
+  });
+  const started: string[] = [];
+  const stopped: string[] = [];
+  const intakePaused: boolean[] = [];
+  const host = new RuntimeHost({}, {
+    animaHome: testHome,
+    loadAgents: async () => [scout],
+    logger: silentLogger,
+    startAgent: async (agent) => {
+      started.push(`${agent.id}:${agent.provider.model ?? ''}`);
+      return {
+        ...stopHandle(agent.id, stopped, () => active),
+        isProviderQuiescent: () => quiescent,
+        setIntakePaused(paused: boolean) {
+          intakePaused.push(paused);
+        },
+        waitForProviderQuiescent(signal?: AbortSignal) {
+          return new Promise<void>((resolve, reject) => {
+            if (quiescent) {
+              resolve();
+              return;
+            }
+            const onAbort = () => reject(signal?.reason instanceof Error ? signal.reason : new Error('aborted'));
+            signal?.addEventListener('abort', onAbort, { once: true });
+            void quiescentGate.then(() => {
+              signal?.removeEventListener('abort', onAbort);
+              if (!signal?.aborted) resolve();
+            });
+          });
+        },
+      };
+    },
+    validateAgent: async () => {},
+  });
+
+  await host.reconcileOnce();
+  assert.deepEqual(started, ['scout:opus']);
+
+  // Active turn + background tasks; model change must not kill the child yet.
+  scout = runtimeHostAgent('scout', { connected: true, homePath: '/tmp/home-a', model: 'sonnet' });
+  await host.reconcileOnce();
+  assert.deepEqual(stopped, []);
+  assert.deepEqual(started, ['scout:opus']);
+  assert.ok(intakePaused.includes(true));
+
+  // Main turn finishes but background tasks remain — still one runtime.
+  active = false;
+  await host.reconcileOnce();
+  assert.deepEqual(stopped, []);
+  assert.deepEqual(started, ['scout:opus']);
+
+  // Background tasks clear → exactly one reload with the latest model.
+  quiescent = true;
+  resolveQuiescent();
+  await sleep(100);
+  await host.reconcileOnce();
+  assert.deepEqual(stopped, ['scout']);
+  assert.deepEqual(started, ['scout:opus', 'scout:sonnet']);
+
+  await host.stop();
+});
+
+test('runtime host config reload while pending applies latest config only once', async () => {
+  let scout = runtimeHostAgent('scout', { connected: true, homePath: '/tmp/home-a', model: 'opus' });
+  let active = true;
+  let quiescent = false;
+  let resolveQuiescent!: () => void;
+  const quiescentGate = new Promise<void>((resolve) => {
+    resolveQuiescent = resolve;
+  });
+  const started: string[] = [];
+  const stopped: string[] = [];
+  const host = new RuntimeHost({}, {
+    animaHome: testHome,
+    loadAgents: async () => [scout],
+    logger: silentLogger,
+    startAgent: async (agent) => {
+      started.push(`${agent.id}:${agent.provider.model ?? ''}`);
+      return {
+        ...stopHandle(agent.id, stopped, () => active),
+        isProviderQuiescent: () => quiescent,
+        setIntakePaused() {},
+        waitForProviderQuiescent(signal?: AbortSignal) {
+          return new Promise<void>((resolve, reject) => {
+            if (quiescent) {
+              resolve();
+              return;
+            }
+            const onAbort = () => reject(signal?.reason instanceof Error ? signal.reason : new Error('aborted'));
+            signal?.addEventListener('abort', onAbort, { once: true });
+            void quiescentGate.then(() => {
+              signal?.removeEventListener('abort', onAbort);
+              if (!signal?.aborted) resolve();
+            });
+          });
+        },
+      };
+    },
+    validateAgent: async () => {},
+  });
+
+  await host.reconcileOnce();
+
+  scout = runtimeHostAgent('scout', { connected: true, homePath: '/tmp/home-a', model: 'sonnet' });
+  await host.reconcileOnce();
+  // Second change while still blocked — must not apply the intermediate model.
+  scout = runtimeHostAgent('scout', { connected: true, homePath: '/tmp/home-a', model: 'haiku' });
+  await host.reconcileOnce();
+  assert.deepEqual(started, ['scout:opus']);
+  assert.deepEqual(stopped, []);
+
+  active = false;
+  quiescent = true;
+  resolveQuiescent();
+  await sleep(100);
+  await host.reconcileOnce();
+  assert.deepEqual(stopped, ['scout']);
+  assert.deepEqual(started, ['scout:opus', 'scout:haiku']);
+
+  await host.stop();
+});
+
+test('runtime host without provider quiescence still reloads when only the active item clears', async () => {
+  let scout = runtimeHostAgent('scout', { connected: true, homePath: '/tmp/home-a', model: 'opus' });
+  let active = true;
+  const started: string[] = [];
+  const stopped: string[] = [];
+  const host = new RuntimeHost({}, {
+    animaHome: testHome,
+    loadAgents: async () => [scout],
+    logger: silentLogger,
+    startAgent: async (agent) => {
+      started.push(`${agent.id}:${agent.provider.model ?? ''}`);
+      // No isProviderQuiescent — non-Claude style.
+      return stopHandle(agent.id, stopped, () => active);
+    },
+    validateAgent: async () => {},
+  });
+
+  await host.reconcileOnce();
+  scout = runtimeHostAgent('scout', { connected: true, homePath: '/tmp/home-a', model: 'sonnet' });
+  await host.reconcileOnce();
+  assert.deepEqual(started, ['scout:opus']);
+  active = false;
+  await host.reconcileOnce();
+  assert.deepEqual(started, ['scout:opus', 'scout:sonnet']);
+  await host.stop();
+});
+
 test('runtime host bounds idle config reload shutdown with a force timeout', async () => {
   let scout = runtimeHostAgent('scout', { connected: true, homePath: '/tmp/home-a', model: 'opus' });
   const stopped: string[] = [];

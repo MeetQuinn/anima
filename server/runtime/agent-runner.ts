@@ -31,7 +31,12 @@ interface RunningAgentOptions extends RuntimeWorkerConfig {
 export interface RunningAgentHandle {
   health?(): AgentRuntimeHandleSnapshot;
   isActive?(): boolean;
+  /** `undefined` = provider does not expose background-task quiescence. */
+  isProviderQuiescent?(): boolean | undefined;
+  /** While true, the worker claims no new items and does not append follow-ups. */
+  setIntakePaused?(paused: boolean): void;
   stop(options?: AgentRuntimeWorkerCloseOptions): Promise<void>;
+  waitForProviderQuiescent?(signal?: AbortSignal): Promise<void>;
 }
 
 export async function startRunningAgent(options: RunningAgentOptions): Promise<RunningAgentHandle> {
@@ -90,11 +95,20 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
     isActive() {
       return worker.isActive();
     },
+    isProviderQuiescent() {
+      return worker.isProviderQuiescent();
+    },
+    setIntakePaused(paused: boolean) {
+      worker.setIntakePaused(paused);
+    },
     async stop(stopOptions: AgentRuntimeWorkerCloseOptions = {}) {
       await Promise.allSettled([
         subscriber.stop(),
         worker.close(stopOptions),
       ]);
+    },
+    waitForProviderQuiescent(signal?: AbortSignal) {
+      return worker.waitForProviderQuiescent(signal);
     },
   };
 }
