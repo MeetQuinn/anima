@@ -49,6 +49,14 @@ export async function appendQueuedFollowupsUntilFinished(input: RuntimeFollowupA
       continue;
     }
 
+    // Fail-closed: pause may flip while takeFollowupBatch awaits. Requeue the
+    // claimed batch so it is not appended on the old controller.
+    if (input.isIntakePaused?.() || await isRestartDrainActive()) {
+      await input.queue.requeueBatch(items.map((item) => item.id));
+      await sleep(FOLLOWUP_POLL_MS, input.itemDone);
+      continue;
+    }
+
     const eligible = items.filter((item) => item.kind !== 'memory_coherence');
     const excluded = items.filter((item) => item.kind === 'memory_coherence');
     for (const item of excluded) skippedItemIds.add(item.id);
@@ -73,6 +81,11 @@ async function tryFollowupBatch(
     contexts = await Promise.all(claimedItemIds.map(
       (itemId) => runtimeContextForItemId(itemId, input.runtimeConfig, input.queue),
     ));
+    // Pause may flip during context load.
+    if (input.isIntakePaused?.() || await isRestartDrainActive()) {
+      await input.queue.requeueBatch(claimedItemIds);
+      return;
+    }
     const followupInput = await input.runtimeBridge.followupInput({
       activeContext: input.activeContext,
       contexts,
@@ -82,6 +95,12 @@ async function tryFollowupBatch(
     const overflowIds = claimedItemIds.slice(contexts.length);
     if (overflowIds.length > 0) await input.queue.requeueBatch(overflowIds);
     failedItemIds = followupInput.itemIds;
+
+    // Immediate pre-append guard after bridge build awaits.
+    if (input.isIntakePaused?.() || await isRestartDrainActive()) {
+      await input.queue.requeueBatch(failedItemIds);
+      return;
+    }
 
     const result = await input.agentRuntime.appendToActiveRun(followupInput);
     if (!result.accepted) {

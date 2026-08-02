@@ -194,6 +194,12 @@ export class AgentRuntimeWorker {
       if (this.closing || this.intakePaused || await isRestartDrainActive()) return false;
       const item = await this.takeNextRunnable();
       if (!item) return false;
+      // Fail-closed: pause may flip while takeNextRunnable awaits storage. Never
+      // start a newly claimed primary on the old runtime — requeue for post-reload.
+      if (this.closing || this.intakePaused || await isRestartDrainActive()) {
+        await this.queue.requeue(item.id);
+        return false;
+      }
       await this.processClaimedItem(item);
       return true;
     } finally {
