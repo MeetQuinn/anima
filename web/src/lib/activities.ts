@@ -213,15 +213,21 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   if (normalized === 'edit') return tool_('Edited', pickString(payload, ['target']), pickString(payload, ['diff']));
   if (normalized === 'multiedit')
     return tool_('Edited', pickString(payload, ['target']), pickString(payload, ['diff']));
-  if (normalized === 'grep') return tool_('Searched', pickString(payload, ['target']));
-  if (normalized === 'glob') return tool_('Listed', pickString(payload, ['target']));
-  if (normalized === 'ls' || normalized === 'listdir' || normalized === 'list_dir')
+  // Match bare and provider-prefixed tool ids (grok.Grep, kimi.ListDir, …).
+  const bareTool = normalized.replace(/^(claude|codex|grok|kimi|anima|opencode)\./, '');
+  if (bareTool === 'grep' || bareTool === 'search' || bareTool === 'rg')
+    return tool_('Searched', pickString(payload, ['target']));
+  if (bareTool === 'glob' || bareTool === 'globfilesearch' || bareTool === 'glob_file_search')
     return tool_('Listed', pickString(payload, ['target']));
-  if (normalized === 'webfetch' || normalized === 'fetchurl') return tool_('Fetched', pickString(payload, ['target']));
-  if (normalized === 'websearch' || normalized === 'searchweb') return tool_('Searched', webSearchTarget(payload));
-  if (normalized === 'todowrite' || normalized === 'settodolist')
+  if (bareTool === 'ls' || bareTool === 'listdir' || bareTool === 'list_dir')
+    return tool_('Listed', pickString(payload, ['target']));
+  if (bareTool === 'webfetch' || bareTool === 'fetchurl' || bareTool === 'fetch')
+    return tool_('Fetched', pickString(payload, ['target']));
+  if (bareTool === 'websearch' || bareTool === 'searchweb' || bareTool === 'web_search')
+    return tool_('Searched', webSearchTarget(payload));
+  if (bareTool === 'todowrite' || bareTool === 'settodolist')
     return tool_('Updated todos', pickString(payload, ['target']));
-  if (normalized === 'toolsearch') return tool_('Searched tools', pickString(payload, ['target']));
+  if (bareTool === 'toolsearch') return tool_('Searched tools', pickString(payload, ['target']));
 
   if (normalized === 'bash' || normalized === 'shell') {
     const cmd = stripShellWrapper(pickString(payload, ['command', 'target']));

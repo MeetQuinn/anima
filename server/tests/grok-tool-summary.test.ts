@@ -49,6 +49,66 @@ test('Grok ListDir uses target_directory', () => {
   );
 });
 
+test('Grok Grep surfaces pattern + path + glob, not path alone', () => {
+  // Live ACP Grep rawInput (sessions): pattern/path/glob — path-only targets hide the query.
+  assert.deepEqual(
+    summarizeGrokToolInput('Grep', {
+      pattern: 'config.?reload|isQuiescent',
+      path: '/Users/totoday/anima',
+      glob: '**/*.{ts,js}',
+      head_limit: 50,
+    }),
+    { target: 'config.?reload|isQuiescent in /Users/totoday/anima (**/*.{ts,js})' },
+  );
+  assert.deepEqual(
+    summarizeGrokToolInput('Grep', { pattern: 'foo', path: 'server' }),
+    { target: 'foo in server' },
+  );
+  // Meta input fill-in when the outer rawInput is thin.
+  assert.deepEqual(
+    summarizeGrokToolInput(
+      'Grep',
+      {},
+      {
+        title: 'grep',
+        _meta: { 'x.ai/tool': { input: { pattern: 'from-meta', path: 'notes' } } },
+      },
+    ),
+    { target: 'from-meta in notes' },
+  );
+});
+
+test('Grok Glob and ListDir recover params from input / title', () => {
+  assert.deepEqual(
+    summarizeGrokToolInput('Glob', { glob_pattern: '**/*.ts', path: 'server' }),
+    { target: '**/*.ts in server' },
+  );
+  assert.deepEqual(
+    summarizeGrokToolInput('Glob', {}, { title: 'Glob `web/src/**/*.tsx`' }),
+    { target: 'web/src/**/*.tsx' },
+  );
+  assert.deepEqual(
+    summarizeGrokToolInput('ListDir', {}, { title: 'List `notes`' }),
+    { target: 'notes' },
+  );
+});
+
+test('Grok WebSearch recovers query from title when rawInput is backend-only', () => {
+  // Live empty WebSearch frames often only have { variant, backend: true }.
+  assert.deepEqual(
+    summarizeGrokToolInput(
+      'WebSearch',
+      { variant: 'WebSearch', backend: true },
+      { title: 'Web search: Claude background task quiescence' },
+    ),
+    { target: 'Claude background task quiescence' },
+  );
+  assert.deepEqual(
+    summarizeGrokToolInput('WebSearch', { query: 'explicit query' }),
+    { target: 'explicit query' },
+  );
+});
+
 test('Grok ListDir tool name comes from live ACP meta/title, not ListServerProviders', () => {
   // Live Grok shape (tool_calls.rs): title List `path`, kind Other, meta name list_dir.
   assert.equal(

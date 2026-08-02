@@ -238,6 +238,37 @@ describe('activityRow', () => {
     });
   });
 
+  it('shows Grok Grep / Glob search params as Searched / Listed', () => {
+    // Server now packs pattern · path · glob into target for Grep.
+    expect(activityRow(activity({
+      providerToolName: 'Grep',
+      target: 'isQuiescent in server (**/*.ts)',
+      tool: 'grok.Grep',
+    }))).toEqual({
+      title: 'Searched',
+      target: 'isQuiescent in server (**/*.ts)',
+      color: 'var(--color-activity-tool)',
+      kind: 'tool',
+    });
+
+    expect(activityRow(activity({
+      providerToolName: 'Glob',
+      target: '**/*.tsx in web/src',
+      tool: 'grok.Glob',
+    }))).toEqual({
+      title: 'Listed',
+      target: '**/*.tsx in web/src',
+      color: 'var(--color-activity-tool)',
+      kind: 'tool',
+    });
+
+    // Prefixed tool id without providerToolName still maps.
+    expect(activityRow(activity({
+      target: 'notes',
+      tool: 'grok.ListDir',
+    })).title).toBe('Listed');
+  });
+
   it('shows Grok TodoWrite / StrReplaceFile params in the narrative step row', () => {
     const todos = activity({
       providerToolName: 'TodoWrite',

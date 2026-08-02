@@ -1116,8 +1116,12 @@ function grokCanonicalToolName(raw: string): string | undefined {
     case 'websearch':
       return 'WebSearch';
     case 'grep':
+    case 'search':
+    case 'rg':
       return 'Grep';
     case 'glob':
+    case 'glob_file_search':
+    case 'globfilesearch':
       return 'Glob';
     default:
       return undefined;
@@ -1130,10 +1134,11 @@ export function summarizeGrokToolInput(
   input: Record<string, unknown>,
   data?: Record<string, unknown>,
 ): { command?: string; diff?: string; target?: string } {
+  const effective = mergeGrokToolInput(input, data);
   const normalized = name.toLowerCase();
   if (normalized === 'shell' || normalized === 'bash') {
-    const command = stringField(input, 'command') ?? stringField(input, 'cmd');
-    const description = stringField(input, 'description');
+    const command = stringField(effective, 'command') ?? stringField(effective, 'cmd');
+    const description = stringField(effective, 'description');
     return {
       ...(command ? { command: singleLineForActivity(command) } : {}),
       ...(description
@@ -1144,18 +1149,153 @@ export function summarizeGrokToolInput(
     };
   }
   if (normalized === 'todowrite' || normalized.includes('todo')) {
-    const target = grokTodoSummary(input, data);
+    const target = grokTodoSummary(effective, data);
     return target ? { target: singleLineForActivity(target) } : {};
   }
-  const target = grokToolTarget(input, data);
+  // Grep / Search: pattern is the real param — path alone is not enough.
+  if (
+    normalized === 'grep'
+    || normalized === 'search'
+    || normalized === 'rg'
+    || normalized === 'toolsearch'
+  ) {
+    const target = grokGrepSearchSummary(effective, data);
+    return target ? { target: singleLineForActivity(target) } : {};
+  }
+  if (normalized === 'websearch' || normalized === 'searchweb' || normalized === 'web_search') {
+    const target = grokWebSearchSummary(effective, data);
+    return target ? { target: singleLineForActivity(target) } : {};
+  }
+  if (normalized === 'glob' || normalized === 'globfile' || normalized === 'glob_file_search') {
+    const target = grokGlobSummary(effective, data);
+    return target ? { target: singleLineForActivity(target) } : {};
+  }
+  if (normalized === 'listdir' || normalized === 'list_dir' || normalized === 'ls') {
+    const target = grokListDirSummary(effective, data);
+    return target ? { target: singleLineForActivity(target) } : {};
+  }
+  const target = grokToolTarget(effective, data);
   const diff =
     normalized === 'strreplacefile' || normalized === 'writefile' || normalized === 'edit'
-      ? grokReplacementDiff(input) ?? grokDiffFromContent(data?.['content'])
+      ? grokReplacementDiff(effective) ?? grokDiffFromContent(data?.['content'])
       : undefined;
   return {
     ...(target ? { target: singleLineForActivity(target) } : {}),
     ...(diff ? { diff } : {}),
   };
+}
+
+/** Prefer frame input, fill gaps from `_meta['x.ai/tool'].input`. */
+function mergeGrokToolInput(
+  input: Record<string, unknown>,
+  data?: Record<string, unknown>,
+): Record<string, unknown> {
+  const meta = isRecord(data?.['_meta']) ? data['_meta'] : undefined;
+  const xaiTool = isRecord(meta?.['x.ai/tool']) ? meta['x.ai/tool'] : undefined;
+  const metaInput = isRecord(xaiTool?.['input']) ? xaiTool['input'] : undefined;
+  if (!metaInput) return input;
+  return { ...metaInput, ...input };
+}
+
+/**
+ * Live Grep rawInput: `{ pattern, path, glob?, head_limit?, ... }`.
+ * Activity should show the search expression, not only the root path.
+ */
+function grokGrepSearchSummary(
+  input: Record<string, unknown>,
+  data?: Record<string, unknown>,
+): string | undefined {
+  const pattern =
+    stringField(input, 'pattern')
+    ?? stringField(input, 'query')
+    ?? stringField(input, 'regex')
+    ?? stringField(input, 'search');
+  const path =
+    stringField(input, 'path')
+    ?? stringField(input, 'target_directory')
+    ?? stringField(input, 'targetDirectory')
+    ?? stringField(input, 'directory');
+  const glob =
+    stringField(input, 'glob')
+    ?? stringField(input, 'glob_pattern')
+    ?? stringField(input, 'globPattern')
+    ?? stringField(input, 'include');
+  const parts: string[] = [];
+  if (pattern) parts.push(pattern);
+  if (path) parts.push(`in ${path}`);
+  if (glob) parts.push(`(${glob})`);
+  if (parts.length > 0) return parts.join(' ');
+
+  // Title often becomes the pattern once the call is enriched (kind: search).
+  const title = (stringField(data, 'title') ?? '').trim();
+  if (title && !/^(grep|search|rg)$/i.test(title)) {
+    const tick = title.match(/`([^`]+)`/);
+    if (tick?.[1]?.trim()) return tick[1].trim();
+    return title;
+  }
+  return grokToolTarget(input, data);
+}
+
+/** WebSearch frames often only carry `{ backend: true }`; query lives in the title. */
+function grokWebSearchSummary(
+  input: Record<string, unknown>,
+  data?: Record<string, unknown>,
+): string | undefined {
+  const query =
+    stringField(input, 'query')
+    ?? stringField(input, 'q')
+    ?? stringField(input, 'search_term')
+    ?? stringField(input, 'searchTerm')
+    ?? stringField(input, 'text');
+  if (query) return query;
+
+  const title = (stringField(data, 'title') ?? '').trim();
+  const labeled = title.match(/^web\s*search:\s*(.+)$/i);
+  if (labeled?.[1]?.trim()) return labeled[1].trim();
+  // Some frames put the bare query in title after the first update.
+  if (title && !/^web\s*search:?\s*$/i.test(title) && !/^websearch$/i.test(title)) {
+    return title.replace(/^web\s*search:\s*/i, '').trim() || undefined;
+  }
+
+  const contentText = extractAcpToolCallText(data?.['content']).trim();
+  if (contentText) return contentText.split('\n')[0]?.trim() || undefined;
+  return undefined;
+}
+
+function grokGlobSummary(
+  input: Record<string, unknown>,
+  data?: Record<string, unknown>,
+): string | undefined {
+  const pattern =
+    stringField(input, 'glob_pattern')
+    ?? stringField(input, 'globPattern')
+    ?? stringField(input, 'pattern')
+    ?? stringField(input, 'glob')
+    ?? stringField(input, 'include');
+  const path =
+    stringField(input, 'path')
+    ?? stringField(input, 'target_directory')
+    ?? stringField(input, 'targetDirectory')
+    ?? stringField(input, 'directory');
+  if (pattern && path) return `${pattern} in ${path}`;
+  if (pattern) return pattern;
+  if (path) return path;
+  return grokToolTarget(input, data);
+}
+
+function grokListDirSummary(
+  input: Record<string, unknown>,
+  data?: Record<string, unknown>,
+): string | undefined {
+  const dir =
+    stringField(input, 'target_directory')
+    ?? stringField(input, 'targetDirectory')
+    ?? stringField(input, 'path')
+    ?? stringField(input, 'directory')
+    ?? stringField(input, 'file_path')
+    ?? stringField(input, 'filePath');
+  if (dir) return dir;
+  return grokToolTarget(input, data);
 }
 
 /**
@@ -1179,12 +1319,15 @@ function grokToolTarget(input: Record<string, unknown>, data?: Record<string, un
     stringField(input, 'relativePath') ??
     stringField(input, 'filename') ??
     stringField(input, 'file_name') ??
+    stringField(input, 'directory') ??
     stringField(nestedFile, 'path') ??
     stringField(nestedFile, 'target_file') ??
     stringField(nestedEdit, 'path') ??
     stringField(nestedEdit, 'target_file') ??
     stringField(input, 'pattern') ??
     stringField(input, 'query') ??
+    stringField(input, 'glob_pattern') ??
+    stringField(input, 'globPattern') ??
     stringField(input, 'glob') ??
     stringField(input, 'url');
   if (fromInput) return fromInput;
@@ -1203,25 +1346,15 @@ function grokToolTarget(input: Record<string, unknown>, data?: Record<string, un
   const fromContent = pathFromAcpContent(data?.['content']);
   if (fromContent) return fromContent;
 
-  const meta = isRecord(data?.['_meta']) ? data['_meta'] : undefined;
-  const xaiTool = isRecord(meta?.['x.ai/tool']) ? meta['x.ai/tool'] : undefined;
-  const metaInput = isRecord(xaiTool?.['input']) ? xaiTool['input'] : undefined;
-  const metaPath =
-    stringField(metaInput, 'path') ??
-    stringField(metaInput, 'target_file') ??
-    stringField(metaInput, 'target_directory') ??
-    stringField(metaInput, 'file_path');
-  if (metaPath) return metaPath;
-
-  // e.g. title: Read `PROBE.txt` / Edit `src/a.ts`
+  // e.g. title: Read `PROBE.txt` / Edit `src/a.ts` / List `notes` / Glob `**/*.ts`
   const title = stringField(data, 'title') ?? '';
   const tick = title.match(/`([^`]+)`/);
   if (tick?.[1]?.trim()) return tick[1].trim();
-  // e.g. title: "Edit path/to/file.ts" without backticks
+  // e.g. title: "Edit path/to/file.ts" / "List notes" without backticks
   const titledPath = title.match(
-    /^(?:read|edit(?:ed)?|write|patch|str\s*replace(?:\s*file)?|update)\s+(.+?)\s*$/i,
+    /^(?:read|edit(?:ed)?|write|patch|str\s*replace(?:\s*file)?|update|list|glob|search|grep)\s+(.+?)\s*$/i,
   );
-  if (titledPath?.[1]?.trim() && /[\/./]/.test(titledPath[1])) {
+  if (titledPath?.[1]?.trim() && /[\/.*`']/.test(titledPath[1])) {
     return titledPath[1].trim().replace(/^["']|["']$/g, '');
   }
 
