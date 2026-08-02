@@ -372,7 +372,7 @@ test('Kimi usage refreshes and retries once after a usage 401', async () => {
   }
 });
 
-test('Claude usage refreshes expired file credentials before fetching usage', async () => {
+test('Claude usage never refreshes or rewrites expired credentials', async () => {
   const home = await mkdtemp(join(tmpdir(), 'anima-claude-refresh-home-'));
   await mkdir(join(home, '.claude'), { recursive: true });
   await writeFile(
@@ -397,48 +397,36 @@ test('Claude usage refreshes expired file credentials before fetching usage', as
 
   const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
   const originalFetch = globalThis.fetch;
-  const authorizations: string[] = [];
+  const originalCredentials = await readFile(credentialPath, 'utf8');
+  const requests: Array<{ authorization: string; method: string; url: string }> = [];
   process.env.ANIMA_PROVIDER_USAGE_HOME = home;
   globalThis.fetch = (async (url, init) => {
-    if (String(url) === 'https://platform.claude.com/v1/oauth/token') {
-      assert.deepEqual(JSON.parse(String(init?.body)), {
-        client_id: '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
-        grant_type: 'refresh_token',
-        refresh_token: 'old-claude-refresh',
-      });
-      assert.equal((init?.headers as Record<string, string>)['anthropic-beta'], 'oauth-2025-04-20');
-      return jsonResponse({
-        access_token: 'fresh-claude-access',
-        expires_in: 3600,
-        refresh_token: 'fresh-claude-refresh',
-        refresh_token_expires_in: 2_592_000,
-      });
-    }
-    authorizations.push(String((init?.headers as Record<string, string> | undefined)?.Authorization ?? ''));
-    return jsonResponse({
-      five_hour: { utilization: 7 },
-      limits: [],
-      seven_day: { utilization: 4 },
+    requests.push({
+      authorization: String((init?.headers as Record<string, string> | undefined)?.Authorization ?? ''),
+      method: init?.method ?? 'GET',
+      url: String(url),
     });
+    return jsonResponse({ error: 'expired' }, 401);
   }) as typeof fetch;
 
   try {
     const result = await fetchClaudeUsage();
-    assert.equal(result.status, 'available');
+    assert.equal(result.status, 'unavailable');
+    assert.equal(result.error?.type, 'unauthorized');
     assert.equal(result.account, 'claude@example.com');
-    assert.deepEqual(authorizations, ['Bearer fresh-claude-access']);
-    const stored = JSON.parse(await readFile(credentialPath, 'utf8')) as { claudeAiOauth: Record<string, unknown> };
-    assert.equal(stored.claudeAiOauth.accessToken, 'fresh-claude-access');
-    assert.equal(stored.claudeAiOauth.refreshToken, 'fresh-claude-refresh');
-    assert.equal(typeof stored.claudeAiOauth.expiresAt, 'number');
-    assert.equal(typeof stored.claudeAiOauth.refreshTokenExpiresAt, 'number');
+    assert.deepEqual(requests, [{
+      authorization: 'Bearer expired-claude-access',
+      method: 'GET',
+      url: 'https://api.anthropic.com/api/oauth/usage',
+    }]);
+    assert.equal(await readFile(credentialPath, 'utf8'), originalCredentials);
   } finally {
     globalThis.fetch = originalFetch;
     restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
   }
 });
 
-test('Claude usage coalesces concurrent refreshes for the same credential store', async () => {
+test('Claude usage coalesces concurrent read-only requests without refreshing credentials', async () => {
   const home = await mkdtemp(join(tmpdir(), 'anima-claude-singleflight-home-'));
   await mkdir(join(home, '.claude'), { recursive: true });
   await writeFile(
@@ -455,19 +443,69 @@ test('Claude usage coalesces concurrent refreshes for the same credential store'
 
   const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
   const originalFetch = globalThis.fetch;
-  let refreshCalls = 0;
   let usageCalls = 0;
+  const originalCredentials = await readFile(join(home, '.claude', '.credentials.json'), 'utf8');
   process.env.ANIMA_PROVIDER_USAGE_HOME = home;
-  globalThis.fetch = (async (url) => {
-    if (String(url) === 'https://platform.claude.com/v1/oauth/token') {
-      refreshCalls += 1;
-      return jsonResponse({
-        access_token: 'fresh-concurrent-access',
-        expires_in: 3600,
-        refresh_token: 'fresh-rotated-token',
-      });
-    }
+  globalThis.fetch = (async (url, init) => {
+    assert.equal(String(url), 'https://api.anthropic.com/api/oauth/usage');
+    assert.equal(init?.method, 'GET');
     usageCalls += 1;
+    return jsonResponse({ error: 'expired' }, 401);
+  }) as typeof fetch;
+
+  try {
+    const [first, second] = await Promise.all([fetchClaudeUsage(), fetchClaudeUsage()]);
+    assert.equal(first.status, 'unavailable');
+    assert.equal(second.status, 'unavailable');
+    assert.equal(first.error?.type, 'unauthorized');
+    assert.equal(second.error?.type, 'unauthorized');
+    assert.equal(usageCalls, 1);
+    assert.equal(await readFile(join(home, '.claude', '.credentials.json'), 'utf8'), originalCredentials);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
+  }
+});
+
+test('Claude usage adopts credentials refreshed concurrently by Claude Code', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-claude-reread-home-'));
+  await mkdir(join(home, '.claude'), { recursive: true });
+  const credentialPath = join(home, '.claude', '.credentials.json');
+  await writeFile(
+    credentialPath,
+    JSON.stringify({
+      claudeAiOauth: {
+        accessToken: 'stale-claude-access',
+        expiresAt: Date.now() - 60_000,
+        refreshToken: 'claude-owned-refresh',
+      },
+    }),
+    'utf8',
+  );
+
+  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
+  const originalFetch = globalThis.fetch;
+  const authorizations: string[] = [];
+  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
+  globalThis.fetch = (async (url, init) => {
+    assert.equal(String(url), 'https://api.anthropic.com/api/oauth/usage');
+    assert.equal(init?.method, 'GET');
+    const authorization = String((init?.headers as Record<string, string> | undefined)?.Authorization ?? '');
+    authorizations.push(authorization);
+    if (authorization === 'Bearer stale-claude-access') {
+      await writeFile(
+        credentialPath,
+        JSON.stringify({
+          claudeAiOauth: {
+            accessToken: 'claude-refreshed-access',
+            expiresAt: Date.now() + 3_600_000,
+            refreshToken: 'claude-rotated-refresh',
+          },
+        }),
+        'utf8',
+      );
+      return jsonResponse({ error: 'expired' }, 401);
+    }
     return jsonResponse({
       five_hour: { utilization: 7 },
       limits: [],
@@ -476,11 +514,12 @@ test('Claude usage coalesces concurrent refreshes for the same credential store'
   }) as typeof fetch;
 
   try {
-    const [first, second] = await Promise.all([fetchClaudeUsage(), fetchClaudeUsage()]);
-    assert.equal(first.status, 'available');
-    assert.equal(second.status, 'available');
-    assert.equal(refreshCalls, 1);
-    assert.equal(usageCalls, 1);
+    const result = await fetchClaudeUsage();
+    assert.equal(result.status, 'available');
+    assert.deepEqual(authorizations, ['Bearer stale-claude-access', 'Bearer claude-refreshed-access']);
+    const stored = JSON.parse(await readFile(credentialPath, 'utf8')) as { claudeAiOauth: Record<string, unknown> };
+    assert.equal(stored.claudeAiOauth.accessToken, 'claude-refreshed-access');
+    assert.equal(stored.claudeAiOauth.refreshToken, 'claude-rotated-refresh');
   } finally {
     globalThis.fetch = originalFetch;
     restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
