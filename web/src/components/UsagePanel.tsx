@@ -166,20 +166,6 @@ function remainingOf(w: ProviderUsageWindow | undefined): number | undefined {
   return Math.round(w.remainingPercent);
 }
 
-/** Prefer the short operational window (5h) as the featured meter. */
-function pickPrimaryWindow(windows: ProviderUsageWindow[]): {
-  primary?: ProviderUsageWindow;
-  secondary: ProviderUsageWindow[];
-} {
-  if (windows.length === 0) return { secondary: [] };
-  const idx = windows.findIndex((w) => /^5h$/i.test(w.label) || /session/i.test(w.label));
-  const primaryIndex = idx >= 0 ? idx : 0;
-  return {
-    primary: windows[primaryIndex],
-    secondary: windows.filter((_, i) => i !== primaryIndex),
-  };
-}
-
 function windowSummary(windows: ProviderUsageWindow[], max = 2): string {
   const parts: string[] = [];
   for (const w of windows.slice(0, max)) {
@@ -265,53 +251,41 @@ function BrandIcon({ provider, label }: { provider: ProviderUsageKind; label: st
 // Provider unit
 // ---------------------------------------------------------------------------
 
-function WindowMeter({ w, now }: { w: ProviderUsageWindow; now: Date }) {
+/**
+ * One aligned meter row: label · bar · % · resets-in. Every window gets the
+ * same treatment — the reset time is part of the row, never dropped.
+ */
+function WindowRow({ w, now }: { w: ProviderUsageWindow; now: Date }) {
   const pct = Math.round(w.remainingPercent);
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="font-sans text-[12px] font-medium text-text-muted">{w.label}</span>
-        <div className="flex items-baseline gap-2">
-          <span className={`font-mono text-[13px] tabular-nums ${pctColor(pct)}`}>{pct}%</span>
-          {w.resetsAt && (
-            <span className="font-sans text-[10px] text-text-subtle">resets in {formatReset(w.resetsAt, now)}</span>
-          )}
-        </div>
-      </div>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-surface-elevated">
-        <div
-          className={`h-full rounded-full transition-[width] duration-300 ${barColor(pct)}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function MiniWindowMeter({ w }: { w: ProviderUsageWindow }) {
-  const pct = Math.round(w.remainingPercent);
-  return (
-    <span className="inline-flex items-center gap-2 font-sans text-[11px] text-text-muted">
-      <span>{w.label}</span>
+    // Mobile: label · % · reset on one line, full-width bar below.
+    // sm+: one aligned row — label | bar | % | reset.
+    <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-1 sm:grid-cols-[5.75rem_minmax(0,1fr)_2.5rem_5.5rem] sm:gap-x-3">
+      <span className="min-w-0 truncate font-sans text-[12px] font-medium text-text-muted" title={w.label}>
+        {w.label}
+      </span>
+      <span className={`text-right font-mono text-[12px] tabular-nums sm:col-start-3 ${pctColor(pct)}`}>{pct}%</span>
+      <span className="text-right font-sans text-[10px] tabular-nums text-text-subtle sm:col-start-4">
+        {w.resetsAt ? `resets ${formatReset(w.resetsAt, now)}` : ''}
+      </span>
       <span
         role="meter"
         aria-label={`${w.label} remaining`}
         aria-valuenow={pct}
         aria-valuemin={0}
         aria-valuemax={100}
-        className="h-1 w-14 overflow-hidden rounded-full bg-surface-elevated"
+        className="col-span-full h-1.5 min-w-0 overflow-hidden rounded-full bg-surface-elevated sm:col-span-1 sm:col-start-2 sm:row-start-1"
       >
         <span
           className={`block h-full rounded-full transition-[width] duration-300 ${barColor(pct)}`}
           style={{ width: `${pct}%` }}
         />
       </span>
-      <span className={`font-mono text-[11px] tabular-nums ${pctColor(pct)}`}>{pct}%</span>
-    </span>
+    </div>
   );
 }
 
-/** Featured active (or sole) account — structure marks it; no Active chip. */
+/** Featured active (or sole) account — first card in the account stack. */
 function ActiveAccountCard({
   accountState,
   now,
@@ -332,37 +306,34 @@ function ActiveAccountCard({
     summary
     && (summary.status === 'not_configured' || usage.error?.type === 'unauthorized'),
   );
-  const { primary, secondary } = pickPrimaryWindow(usage.windows);
 
   return (
     <div className="rounded-md border border-border-soft bg-surface-raised px-3.5 py-3 shadow-lift">
       {(name || plan || usage.stale) && (
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
           {name && (
             <span className="min-w-0 truncate font-mono text-[12px] text-text" title={name}>
               {name}
             </span>
           )}
           {plan && (
-            <span className="shrink-0 rounded-full border border-border-soft px-2 py-0.5 font-sans text-[10px] font-medium uppercase tracking-wide text-text-muted">
-              {plan}
-            </span>
+            <span className="shrink-0 font-sans text-[11px] text-text-subtle">{plan}</span>
           )}
           {usage.stale && (
-            <span className="shrink-0 font-sans text-[10px] text-text-subtle">cached</span>
+            <span className="shrink-0 font-sans text-[10px] text-text-subtle">· cached</span>
           )}
+          <span className="min-w-0 flex-1" />
+          <span className="flex shrink-0 items-center gap-1.5 font-sans text-[10px] font-medium text-text-muted">
+            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-health-ok" />
+            Active
+          </span>
         </div>
       )}
       {isAvailable ? (
-        <div className={name || plan ? 'mt-3 space-y-3' : 'space-y-3'}>
-          {primary && <WindowMeter w={primary} now={now} />}
-          {secondary.length > 0 && (
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border-soft/70 pt-2.5">
-              {secondary.map((w, i) => (
-                <MiniWindowMeter key={i} w={w} />
-              ))}
-            </div>
-          )}
+        <div className={name || plan ? 'mt-3 space-y-2' : 'space-y-2'}>
+          {usage.windows.map((w, i) => (
+            <WindowRow key={i} w={w} now={now} />
+          ))}
           {rest.length > 0 && (
             <div className="flex flex-wrap gap-x-4 gap-y-0.5">
               {rest.map((e, i) => (
@@ -405,11 +376,13 @@ function ActiveAccountCard({
 /** Non-active multi-account row: one line, Use inline (not a second row). */
 function OtherAccountRow({
   accountState,
+  now,
   onLoginAccount,
   onSelectAccount,
   usage,
 }: {
   accountState?: ClaudeCodeAccountState;
+  now: Date;
   onLoginAccount: (account: ProviderAccountSummary) => void;
   onSelectAccount: (accountId: string) => void;
   usage: ProviderUsageRow;
@@ -429,45 +402,45 @@ function OtherAccountRow({
     summary
     && (summary.status === 'not_configured' || usage.error?.type === 'unauthorized'),
   );
-  const meterSummary = usage.status === 'available' ? windowSummary(usage.windows, 2) : null;
-  const meters = meterSummary && usage.stale ? `${meterSummary} · cached` : meterSummary;
+  const statusText = usage.status !== 'available'
+    ? (usage.error?.type === 'unauthorized' ? 'Auth expired' : 'Unavailable')
+    : null;
 
   return (
-    <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(5.5rem,1fr)_auto_auto] items-center gap-x-3 gap-y-1 rounded-md px-2 py-2 hover:bg-surface-elevated/70 sm:grid-cols-[minmax(0,1.2fr)_minmax(8rem,1.2fr)_auto_auto]">
-      <span className="min-w-0 truncate font-mono text-[11px] text-text" title={name}>
-        {name}
-      </span>
-      <span className="min-w-0 truncate font-sans text-[11px] text-text-muted" title={plan ?? undefined}>
-        {plan ?? (usage.status !== 'available' ? (
-          usage.error?.type === 'unauthorized' ? 'Auth expired' : 'Unavailable'
-        ) : '—')}
-      </span>
-      <span className="hidden font-mono text-[11px] tabular-nums text-text-subtle sm:inline">
-        {meters ?? '—'}
-      </span>
-      {canSignIn && summary ? (
-        <button
-          type="button"
-          onClick={() => onLoginAccount(summary)}
-          className="relative shrink-0 justify-self-end font-sans text-[11px] font-semibold text-text-muted after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[''] hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-        >
-          Sign in
-        </button>
-      ) : canSetActive && usage.accountId ? (
-        <button
-          type="button"
-          onClick={() => onSelectAccount(usage.accountId as string)}
-          className="relative shrink-0 justify-self-end font-sans text-[11px] font-semibold text-text-muted after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[''] hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-        >
-          Use
-        </button>
-      ) : (
-        <span className="w-8" />
+    <div className="rounded-md border border-border-soft/80 bg-surface px-3.5 py-3">
+      <div className="flex min-w-0 items-baseline gap-2">
+        <span className="min-w-0 truncate font-mono text-[11px] text-text-muted" title={name}>
+          {name}
+        </span>
+        {plan && <span className="shrink-0 font-sans text-[10px] text-text-subtle">{plan}</span>}
+        {usage.stale && <span className="shrink-0 font-sans text-[10px] text-text-subtle">· cached</span>}
+        {statusText && <span className="shrink-0 font-sans text-[10px] text-health-warn">{statusText}</span>}
+        <span className="min-w-0 flex-1" />
+        {canSignIn && summary ? (
+          <button
+            type="button"
+            onClick={() => onLoginAccount(summary)}
+            className="relative shrink-0 font-sans text-[11px] font-semibold text-text-muted after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[''] hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            Sign in
+          </button>
+        ) : canSetActive && usage.accountId ? (
+          <button
+            type="button"
+            onClick={() => onSelectAccount(usage.accountId as string)}
+            className="relative shrink-0 font-sans text-[11px] font-semibold text-text-muted after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[''] hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            Use
+          </button>
+        ) : null}
+      </div>
+      {usage.status === 'available' && usage.windows.length > 0 && (
+        <div className="mt-2.5 space-y-1.5 opacity-80">
+          {usage.windows.map((w, i) => (
+            <WindowRow key={i} w={w} now={now} />
+          ))}
+        </div>
       )}
-      {/* Mobile: meters under email */}
-      <span className="col-span-full font-mono text-[11px] tabular-nums text-text-subtle sm:hidden">
-        {meters}
-      </span>
     </div>
   );
 }
@@ -668,21 +641,17 @@ function ProviderUnit({
                 usage={featured}
               />
               {others.length > 0 && (
-                <div>
-                  <div className="mb-1 font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
-                    Other accounts
-                  </div>
-                  <div className="divide-y divide-border-soft/60 rounded-md border border-border-soft/80">
-                    {others.map((row) => (
-                      <OtherAccountRow
-                        key={row.accountId ?? row.account}
-                        accountState={accountState}
-                        onLoginAccount={onLoginAccount}
-                        onSelectAccount={onSelectAccount}
-                        usage={row}
-                      />
-                    ))}
-                  </div>
+                <div className="space-y-2">
+                  {others.map((row) => (
+                    <OtherAccountRow
+                      key={row.accountId ?? row.account}
+                      accountState={accountState}
+                      now={now}
+                      onLoginAccount={onLoginAccount}
+                      onSelectAccount={onSelectAccount}
+                      usage={row}
+                    />
+                  ))}
                 </div>
               )}
             </div>
