@@ -162,6 +162,28 @@ test('literal/code mentions do not count as agent address; real entities and mar
     }, agentId),
     false,
   );
+
+  // plain_text never parses entities — even with literal `<@U…>` after canonicalize
+  for (const block of [
+    { type: 'section', text: { type: 'plain_text', text: `literal <@${agentId}>` } },
+    { type: 'header', text: { type: 'plain_text', text: `literal <@${agentId}>` } },
+  ]) {
+    const plain = withCanonicalSlackVisibleText({
+      blocks: [block],
+      text: 'fallback without mention',
+    });
+    assert.match(plain.text ?? '', new RegExp(`<@${agentId}>`));
+    assert.equal(slackEventMentionsUserId(plain, agentId), false);
+  }
+
+  // Controls-only blocks: no renderable body → raw fallback may still address
+  assert.equal(
+    slackEventMentionsUserId({
+      blocks: [{ type: 'actions', elements: [{ type: 'button', value: 'approve' }] }],
+      text: `please <@${agentId}>`,
+    }, agentId),
+    true,
+  );
 });
 
 test('Slack visible message text restores complete rich text and tables from blocks', () => {

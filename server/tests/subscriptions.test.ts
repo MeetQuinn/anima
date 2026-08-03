@@ -354,6 +354,47 @@ test('Slack bot messages require an explicit app mention for channel routing', a
       assert.equal(mixedCode.shouldStartRuntime, false);
       assert.equal(mixedCode.reason, 'not_addressed');
 
+      // plain_text section/header: structured body with no entity semantics → no wake
+      for (const [index, block] of [
+        { type: 'section', text: { type: 'plain_text', text: 'literal <@U999>' } },
+        { type: 'header', text: { type: 'plain_text', text: 'literal <@U999>' } },
+      ].entries()) {
+        const plain = await slackRuntimeDecision(
+          {
+            blocks: [block],
+            bot_id: 'B123',
+            channel: 'C123',
+            channel_type: 'channel',
+            subtype: 'bot_message',
+            text: 'literal <@U999>',
+            ts: `1770000014.9${index}0002`,
+            type: 'message',
+            user: 'U456',
+          },
+          { agentId: 'scout', botUserId: 'U999', nowMs: 5_900 + index },
+        );
+        assert.equal(plain.shouldStartRuntime, false, block.type);
+        assert.equal(plain.reason, 'not_addressed', block.type);
+      }
+
+      // Controls-only: no renderable body → raw fallback text may still address
+      const actionsFallback = await slackRuntimeDecision(
+        {
+          blocks: [{ type: 'actions', elements: [{ type: 'button', value: 'x' }] }],
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'please <@U999>',
+          ts: '1770000015.100002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', botUserId: 'U999', nowMs: 6_100 },
+      );
+      assert.equal(actionsFallback.shouldStartRuntime, true);
+      assert.equal(actionsFallback.reason, 'mention');
+
       // Without threaded botUserId, message-type text mention cannot address the agent.
       const missingIdentity = await slackRuntimeDecision(
         {

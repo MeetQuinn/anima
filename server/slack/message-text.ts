@@ -23,13 +23,13 @@ export function withCanonicalSlackVisibleText<T extends SlackMessageTextInput>(i
 /**
  * True when the event **addresses** `userId` as a Slack mention entity.
  *
- * Per-block protocol (not message-global):
- * - `rich_text`: only structured `type: "user"` elements (never plain text nodes,
- *   never the canonical rendering of rich_text).
- * - Textual mrkdwn: top-level `markdown` blocks and nested `{ type: "mrkdwn" }`
- *   text objects (section/context/…): `<@U…>` tokens outside inline/fenced code.
- * - Raw top-level fallback: only when no authoritative structured body supplies
- *   address semantics (no rich_text and no mrkdwn-protocol blocks).
+ * 1. Scan blocks per protocol: `rich_text` → `user` entities; mrkdwn sources →
+ *    `<@U…>` tokens outside code (`markdown` blocks + nested `{ type: "mrkdwn" }`).
+ * 2. If blocks produced any visible structured text and no structured mention was
+ *    found, return false — never regex the canonical rendering (covers plain_text
+ *    section/header, rich_text literals, image alt, future structured types).
+ * 3. Scan top-level fallback only when blocks supplied no renderable body
+ *    (e.g. actions/controls-only).
  */
 export function slackEventMentionsUserId(
   input: SlackMessageTextInput,
@@ -39,8 +39,8 @@ export function slackEventMentionsUserId(
   if (Array.isArray(input.blocks) && input.blocks.length > 0) {
     if (blocksContainUserEntity(input.blocks, userId)) return true;
     if (mrkdwnProtocolMentionsUserOutsideCode(input.blocks, userId)) return true;
-    // Structured body already defined address protocol — do not regex its render.
-    if (blocksSupplyAddressProtocol(input.blocks)) return false;
+    // Visible structured body is authoritative for address; do not re-regex it.
+    if (slackMessageTextFromBlocks(input.blocks) !== undefined) return false;
   }
   return slackMrkdwnMentionsUserIdOutsideCode(input.text, userId);
 }
@@ -106,23 +106,6 @@ function blocksContainUserEntity(blocks: unknown[], userId: string): boolean {
     // Containers only — do not treat `text` fields as mention entities.
     if (walk(node['elements'])) return true;
     if (walk(node['rows'])) return true;
-    if (walk(node['fields'])) return true;
-    if (walk(node['accessory'])) return true;
-    return false;
-  };
-  return walk(blocks);
-}
-
-/** rich_text and/or mrkdwn-protocol blocks already define how address is read. */
-function blocksSupplyAddressProtocol(blocks: unknown[]): boolean {
-  const walk = (value: unknown): boolean => {
-    if (Array.isArray(value)) return value.some(walk);
-    const node = record(value);
-    if (!node) return false;
-    const type = node['type'];
-    if (type === 'rich_text' || type === 'markdown' || type === 'mrkdwn') return true;
-    if (walk(node['text'])) return true;
-    if (walk(node['elements'])) return true;
     if (walk(node['fields'])) return true;
     if (walk(node['accessory'])) return true;
     return false;
