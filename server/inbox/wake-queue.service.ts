@@ -1,4 +1,5 @@
 import type { InboxItem } from '../../shared/inbox.js';
+import { isClaimableQueuedInboxItem } from '../../shared/inbox.js';
 import { errorMessage } from '../ids.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import { WakeQueueStore, type TakeNextRunnableInput } from '../storage/schema/wake-queue.store.js';
@@ -10,6 +11,8 @@ export interface WakeQueueEnqueueResult {
   duplicate: boolean;
   item: InboxItem;
   queued: boolean;
+  /** True when the item is durable but not yet claimable (preflight publish path). */
+  staged?: boolean;
 }
 
 export interface WakeQueueMessageRecorder {
@@ -57,8 +60,53 @@ export class WakeQueueService {
   }
 
   /**
-   * Remove a still-queued (unclaimed) item. Used when a preflight success
-   * enqueued a wake that must be discarded after a concurrent cancel/snooze.
+   * Durable insert that workers cannot claim yet (`handling.stagedAt` set).
+   * No wake signal. Pair with `publishQueued` after side-effect CAS, or
+   * `withdrawQueued` to abandon. Reuses an existing still-staged row for the
+   * same id (crash recovery mid publish).
+   */
+  async enqueueStaged(event: InboxItem): Promise<WakeQueueEnqueueResult> {
+    const receivedAt = event.receivedAt;
+    const staged: InboxItem = {
+      ...event,
+      handling: {
+        ...event.handling,
+        stagedAt: event.handling.stagedAt ?? receivedAt,
+        status: 'queued',
+      },
+    };
+    const result = await this.store.insertIfAbsent(staged);
+    if (!result.inserted) {
+      await this.recordMessage(staged);
+      const existing = result.item;
+      // Prior crash left the same fire id staged — continue the publish path.
+      if (existing.handling.status === 'queued' && existing.handling.stagedAt && !existing.handling.workerId) {
+        return { duplicate: false, item: existing, queued: true, staged: true };
+      }
+      return { duplicate: true, item: existing, queued: false, staged: false };
+    }
+    const recorded = await this.recordMessage(staged);
+    if (recorded?.inserted === false) {
+      const withdrawn = await this.store.withdrawQueued(staged.id);
+      if (withdrawn) return { duplicate: true, item: withdrawn, queued: false, staged: false };
+    }
+    // Intentionally no signalWake — staged rows are not claimable.
+    return { duplicate: false, item: result.item, queued: true, staged: true };
+  }
+
+  /**
+   * Publish a staged row for claim and signal the worker. Returns false when
+   * the item is missing, already published, or no longer queued.
+   */
+  async publishQueued(itemId: string): Promise<boolean> {
+    const published = await this.store.publishStaged(itemId);
+    if (!published) return false;
+    signalWake(this.agentId);
+    return true;
+  }
+
+  /**
+   * Remove a still-queued (unclaimed) item, including staged unpublished rows.
    */
   async withdrawQueued(itemId: string): Promise<InboxItem | undefined> {
     return this.store.withdrawQueued(itemId);
@@ -108,7 +156,7 @@ export class WakeQueueService {
 
     const excludedItemIds = new Set(input.excludedItemIds ?? []);
     const queued = items
-      .filter((item) => item.handling.status === 'queued' && !excludedItemIds.has(item.id))
+      .filter((item) => isClaimableQueuedInboxItem(item) && !excludedItemIds.has(item.id))
       .slice(0, input.limit);
     if (queued.length === 0) return [];
     return this.store.takeQueuedBatch({

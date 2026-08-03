@@ -5,7 +5,12 @@ import { z } from 'zod';
 import { nowIso } from '../../ids.js';
 import { agentsDir } from './agent.store.js';
 import { JsonStore } from '../json-store.js';
-import { isPrimaryRunningInboxItem, InboxItemSchema, type InboxItem } from '../../../shared/inbox.js';
+import {
+  isClaimableQueuedInboxItem,
+  isPrimaryRunningInboxItem,
+  InboxItemSchema,
+  type InboxItem,
+} from '../../../shared/inbox.js';
 
 // The wake queue file has two sections:
 // - `items`: active work only — `queued` items and unsettled `running` items (#377).
@@ -166,9 +171,27 @@ export class WakeQueueStore {
   }
 
   /**
+   * Clear `stagedAt` so workers may claim. No-op if missing, claimed, or already published.
+   */
+  async publishStaged(itemId: string): Promise<InboxItem | undefined> {
+    let published: InboxItem | undefined;
+    await this.update((current) => {
+      const item = current.items[itemId];
+      if (!item || item.handling.status !== 'queued' || item.handling.workerId) return current;
+      if (!item.handling.stagedAt) return current;
+      const now = nowIso();
+      const handling = { ...item.handling, updatedAt: now };
+      delete handling.stagedAt;
+      published = { ...item, handling };
+      return { items: { ...current.items, [itemId]: published }, seen: current.seen };
+    });
+    return published;
+  }
+
+  /**
    * Remove an unclaimed queued item and record it as seen. Used to compensate
    * an enqueue that later turns out to be a duplicate (legacy ledger horizon).
-   * Returns undefined when the item is absent or already claimed.
+   * Also withdraws staged (unpublished) rows. Returns undefined when absent or claimed.
    */
   async withdrawQueued(itemId: string): Promise<InboxItem | undefined> {
     let withdrawn: InboxItem | undefined;
@@ -240,7 +263,7 @@ export class WakeQueueStore {
       }
 
       const item = Object.values(next)
-        .filter((candidate) => candidate.handling.status === 'queued')
+        .filter((candidate) => isClaimableQueuedInboxItem(candidate))
         .sort((a, b) => itemSortAt(a).localeCompare(itemSortAt(b)))[0];
       if (!item) {
         result = { recovered };
@@ -252,6 +275,8 @@ export class WakeQueueStore {
         status: 'running',
         workerId: input.workerId,
       }, nowText);
+      // Claim always publishes: stagedAt must not survive onto a running item.
+      if (claimed.handling.stagedAt) delete claimed.handling.stagedAt;
       next[item.id] = claimed;
       result = { item: claimed, recovered };
       return { items: next, seen: current.seen };
@@ -291,7 +316,7 @@ export class WakeQueueStore {
       const selected: InboxItem[] = [];
       for (const itemId of input.itemIds) {
         const item = current.items[itemId];
-        if (!item || item.handling.status !== 'queued') return current;
+        if (!item || !isClaimableQueuedInboxItem(item)) return current;
         selected.push(item);
       }
       const now = nowIso();
@@ -648,7 +673,7 @@ function hasPotentialRunnableWork(
   nowMs: number,
 ): boolean {
   return Object.values(file.items).some((item) => (
-    item.handling.status === 'queued' ||
+    isClaimableQueuedInboxItem(item) ||
     (item.handling.status === 'running' && shouldRecoverRunningItem(item, input, nowMs))
   ));
 }

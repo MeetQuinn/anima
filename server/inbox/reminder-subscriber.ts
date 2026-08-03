@@ -216,9 +216,10 @@ export class ReminderInboxSubscriber {
       title: reminder.title,
     };
 
+    // Stage durable wake first (not claimable, no signal). CAS, then publish.
     let decision;
     try {
-      decision = await this.queue.enqueue(event);
+      decision = await this.queue.enqueueStaged(event);
     } catch (error) {
       // Leave reminder scheduled with original nextDueAt so the wake is not lost.
       console.error(
@@ -226,8 +227,15 @@ export class ReminderInboxSubscriber {
       );
       return;
     }
+    if (decision.duplicate && !decision.staged) {
+      // Same fire id already active/settled — do not re-complete.
+      console.log(
+        `reminder preflight skipped duplicate wake reminderId=${reminder.reminderId} eventId=${event.id}`,
+      );
+      return;
+    }
 
-    // CAS complete inside store lock; if stale after enqueue, withdraw the wake.
+    // CAS complete inside store lock; if stale, withdraw still-unclaimed staged wake.
     const transition = await this.reminderService.completeReminderFire({
       clearPreflightError: hadError,
       expected,
@@ -238,9 +246,17 @@ export class ReminderInboxSubscriber {
     if (!transition.applied) {
       const withdrawn = await this.queue.withdrawQueued(event.id);
       console.log(
-        `reminder preflight discarded after enqueue reminderId=${reminder.reminderId} withdrawn=${Boolean(withdrawn)}`,
+        `reminder preflight discarded after staged enqueue reminderId=${reminder.reminderId} withdrawn=${Boolean(withdrawn)}`,
       );
       return;
+    }
+
+    const published = await this.queue.publishQueued(event.id);
+    if (!published) {
+      // Rare: staged row vanished between CAS and publish. Log; fire already counted.
+      console.error(
+        `reminder preflight publish missed reminderId=${reminder.reminderId} eventId=${event.id}`,
+      );
     }
     if (hadError) await this.recordPreflightRecovery(reminder, result.status);
     if (!decision.duplicate) {
@@ -250,7 +266,7 @@ export class ReminderInboxSubscriber {
       });
     }
     console.log(
-      `reminder fired reminderId=${transition.reminder.reminderId} eventId=${event.id} duplicate=${Boolean(decision.duplicate)} queued=${Boolean(decision.queued)} firedAt=${completedAt.toISOString()} preflight=succeeded`,
+      `reminder fired reminderId=${transition.reminder.reminderId} eventId=${event.id} duplicate=${Boolean(decision.duplicate)} queued=${Boolean(decision.queued)} published=${published} firedAt=${completedAt.toISOString()} preflight=succeeded`,
     );
   }
 
@@ -315,7 +331,7 @@ export class ReminderInboxSubscriber {
     );
   }
 
-  /** Classic path: enqueue wake then complete fire (original ordering). */
+  /** Classic path: stage wake, complete fire, then publish (cancel-safe). */
   private async enqueueAndComplete(reminder: Reminder, firedAt: Date): Promise<void> {
     const receivedAt = firedAt.toISOString();
     const event: ReminderInboxItem = {
@@ -332,7 +348,8 @@ export class ReminderInboxSubscriber {
       ...(reminder.nextDueAt ? { scheduledAt: reminder.nextDueAt } : {}),
       title: reminder.title,
     };
-    const decision = await this.queue.enqueue(event);
+    const decision = await this.queue.enqueueStaged(event);
+    if (decision.duplicate && !decision.staged) return;
     const transition = await this.reminderService.completeReminderFire({
       id: reminder.reminderId,
       now: firedAt,
@@ -341,6 +358,7 @@ export class ReminderInboxSubscriber {
       await this.queue.withdrawQueued(event.id);
       return;
     }
+    await this.queue.publishQueued(event.id);
     if (!decision.duplicate) {
       await this.reminderService.recordReminderFire({
         firedAt,

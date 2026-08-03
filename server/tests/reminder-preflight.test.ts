@@ -514,7 +514,7 @@ test('queue failure before complete leaves reminder scheduled (wake not lost)', 
     });
     const originalDue = retry.nextDueAt;
     let enqueueAttempts = 0;
-    queue.enqueue = async () => {
+    queue.enqueueStaged = async () => {
       enqueueAttempts += 1;
       throw new Error('synthetic enqueue failure');
     };
@@ -656,19 +656,19 @@ test('cancel during post-enqueue complete withdraws real queued wake', async () 
       preflight: { command: 'exit 0' },
       title: 'enqueue-then-cancel',
     });
-    const realEnqueue = queue.enqueue.bind(queue);
+    const realEnqueueStaged = queue.enqueueStaged.bind(queue);
     let enqueueDone = false;
-    queue.enqueue = async (event) => {
-      const result = await realEnqueue(event);
+    queue.enqueueStaged = async (event) => {
+      const result = await realEnqueueStaged(event);
       enqueueDone = true;
-      // Cancel at the exact post-enqueue boundary before complete CAS.
+      // Cancel at the exact post-stage boundary before complete CAS.
       await service.cancelReminder({ id: rem.reminderId });
       return result;
     };
     const subscriber = new ReminderInboxSubscriber(queue, service);
     subscriber.start();
     await waitFor(async () => enqueueDone, {
-      description: 'real enqueue completed',
+      description: 'real staged enqueue completed',
       timeoutMs: 5_000,
     });
     await waitFor(async () => {
@@ -683,6 +683,96 @@ test('cancel during post-enqueue complete withdraws real queued wake', async () 
       (i) => i.kind === 'reminder' && i.reminderId === rem.reminderId,
     );
     assert.equal(wakes.length, 0, 'queued wake must be withdrawn after cancel');
+  });
+});
+
+test('staged wake cannot be claimed before publish; cancel after attempted claim withdraws', async () => {
+  await withAgentHome(async (_home, agentId) => {
+    const service = reminderServiceForAgent(agentId);
+    const queue = new WakeQueueService(agentId);
+    const rem = await service.scheduleReminder({
+      fireAt: '2020-04-01T00:00:00.000Z',
+      instructions: 'claimed-boundary',
+      now: new Date(),
+      preflight: { command: 'exit 0' },
+      title: 'stage-claim-cancel',
+    });
+    const realEnqueueStaged = queue.enqueueStaged.bind(queue);
+    let sawStaged = false;
+    let claimDuringStage: Awaited<ReturnType<WakeQueueService['takeNextRunnable']>>;
+    queue.enqueueStaged = async (event) => {
+      const result = await realEnqueueStaged(event);
+      assert.equal(result.staged, true);
+      assert.ok(result.item.handling.stagedAt, 'row must be staged');
+      // Deterministic red-control from prior head: claim before stage returns.
+      // Staged rows must not be claimable.
+      claimDuringStage = await queue.takeNextRunnable({
+        isWorkerAlive: () => true,
+        workerId: 'attacker-worker',
+      });
+      assert.equal(
+        claimDuringStage,
+        undefined,
+        'takeNextRunnable must not claim staged wake',
+      );
+      sawStaged = true;
+      await service.cancelReminder({ id: rem.reminderId });
+      return result;
+    };
+    const subscriber = new ReminderInboxSubscriber(queue, service);
+    subscriber.start();
+    await waitFor(async () => sawStaged, {
+      description: 'staged enqueue + claim probe',
+      timeoutMs: 5_000,
+    });
+    await waitFor(async () => {
+      const { isPreflightRunning } = await import('../reminders/preflight.js');
+      return !isPreflightRunning(rem.reminderId);
+    }, { description: 'preflight job settled after cancel', timeoutMs: 5_000 });
+    await subscriber.stop();
+
+    assert.equal((await service.findReminder(rem.reminderId))?.status, 'cancelled');
+    assert.equal((await service.findReminder(rem.reminderId))?.firedCount, 0);
+    const wakes = (await queue.list()).filter(
+      (i) => i.kind === 'reminder' && i.reminderId === rem.reminderId,
+    );
+    assert.equal(wakes.length, 0, 'staged wake withdrawn; no running claim');
+    assert.equal(claimDuringStage, undefined);
+  });
+});
+
+test('successful preflight publishes staged wake so workers can claim', async () => {
+  await withAgentHome(async (_home, agentId) => {
+    const service = reminderServiceForAgent(agentId);
+    const queue = new WakeQueueService(agentId);
+    const rem = await service.scheduleReminder({
+      fireAt: '2020-05-01T00:00:00.000Z',
+      instructions: 'publish-ok',
+      now: new Date(),
+      preflight: { command: 'exit 0' },
+      title: 'publish-path',
+    });
+    const subscriber = new ReminderInboxSubscriber(queue, service);
+    subscriber.start();
+    try {
+      await waitFor(async () => {
+        const item = (await queue.list()).find(
+          (i) => i.kind === 'reminder' && i.reminderId === rem.reminderId,
+        );
+        return Boolean(item && !item.handling.stagedAt && item.handling.status === 'queued');
+      }, { description: 'wake published (unstaged queued)', timeoutMs: 5_000 });
+    } finally {
+      await subscriber.stop();
+    }
+    const claimed = await queue.takeNextRunnable({
+      isWorkerAlive: () => true,
+      workerId: 'worker-1',
+    });
+    assert.ok(claimed);
+    assert.equal(claimed.kind, 'reminder');
+    assert.equal((claimed as { reminderId: string }).reminderId, rem.reminderId);
+    assert.equal(claimed.handling.status, 'running');
+    assert.equal(claimed.handling.stagedAt, undefined);
   });
 });
 
