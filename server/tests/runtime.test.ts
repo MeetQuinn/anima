@@ -361,6 +361,49 @@ test('runtime worker launch config captures the effective Claude account fingerp
   assert.equal(config.claudeAccountFingerprint, claudeAccountRuntimeFingerprint(scout));
 });
 
+test('a per-agent Claude account config change reloads only that agent', async () => {
+  let agents = [
+    runtimeHostAgent('alpha', { connected: true }),
+    runtimeHostAgent('beta', { connected: true }),
+  ];
+  const started: string[] = [];
+  const stopped: string[] = [];
+  const host = new RuntimeHost({}, {
+    animaHome: testHome,
+    loadAgents: async () => agents,
+    logger: silentLogger,
+    startAgent: async (agent) => {
+      started.push(`${agent.id}:${agent.provider.env?.CLAUDE_CONFIG_DIR ?? 'primary'}`);
+      return stopHandle(agent.id, stopped);
+    },
+    validateAgent: async () => {},
+  });
+
+  await host.reconcileOnce();
+  const alpha = agents[0]!;
+  if (alpha.provider.kind !== 'claude-code') assert.fail('expected Claude agent');
+  agents = [
+    {
+      ...alpha,
+      provider: {
+        ...alpha.provider,
+        accountId: 'secondary',
+        env: { CLAUDE_CONFIG_DIR: '/profiles/secondary' },
+      },
+    },
+    agents[1]!,
+  ];
+  await host.reconcileOnce();
+
+  assert.deepEqual(started, [
+    'alpha:primary',
+    'beta:primary',
+    'alpha:/profiles/secondary',
+  ]);
+  assert.deepEqual(stopped, ['alpha']);
+  await host.stop();
+});
+
 test('runtime host refreshes Slack display info before starting an agent', async () => {
   const scout = runtimeHostAgent('scout', { connected: true });
   scout.provider.env = { CLAUDE_CONFIG_DIR: '/profiles/secondary' };

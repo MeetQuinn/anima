@@ -90,6 +90,13 @@ export const GOVERNED_ROUTES: readonly GovernedRoute[] = [
       'Switches every Claude runtime to a different machine-user credential profile and creates shared-state links under the machine user\'s Claude configuration directories. Those directories and Keychain credentials live outside ANIMA_HOME and are shared with Claude Code processes this runtime does not own.',
   },
   {
+    id: 'POST /api/agents/:agentId/provider/claude-account',
+    method: 'POST',
+    pattern: /^\/api\/agents\/[^/]+\/provider\/claude-account$/,
+    evidence:
+      'Assigns a machine-user Claude credential profile to one agent and can create shared-state links under machine-user Claude configuration directories outside ANIMA_HOME.',
+  },
+  {
     id: 'POST /api/provider-accounts/claude-code/login',
     method: 'POST',
     pattern: /^\/api\/provider-accounts\/claude-code\/login$/,

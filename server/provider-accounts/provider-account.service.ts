@@ -2,6 +2,7 @@ import type { AgentConfig } from '../../shared/agent-config.js';
 import type {
   ClaudeCodeAccountRegistry,
   ClaudeCodeAccountState,
+  ProviderAccountId,
   ProviderAccountsResponse,
 } from '../../shared/provider-accounts.js';
 import type { AgentStatusSummary } from '../../shared/snapshot.js';
@@ -23,6 +24,7 @@ import {
   effectiveClaudeAccountRegistry,
   readClaudeAccountName,
   selectedClaudeAccount,
+  selectedClaudeAccountForAgent,
 } from './claude-account-config.js';
 
 export class ProviderAccountError extends Error {
@@ -59,6 +61,12 @@ export class ProviderAccountService {
     private readonly discoverAccounts: typeof discoverClaudeAccounts = discoverClaudeAccounts,
     private readonly continuityNeedsSetup: typeof claudeAccountContinuityNeedsSetup = claudeAccountContinuityNeedsSetup,
     private readonly synchronizeMcpState: typeof synchronizeClaudeAccountMcpState = synchronizeClaudeAccountMcpState,
+    private readonly saveAgentClaudeAccount: (
+      agentId: string,
+      accountId: ProviderAccountId | null,
+    ) => Promise<AgentConfig> = (agentId, accountId) => (
+      defaultAgentRegistryService.serviceFor(agentId).setClaudeAccount(accountId)
+    ),
   ) {}
 
   async list(): Promise<ProviderAccountsResponse> {
@@ -102,6 +110,79 @@ export class ProviderAccountService {
     return selection;
   }
 
+  assignClaudeAccount(agentId: string, accountId: ProviderAccountId | null): Promise<AgentConfig> {
+    const assignment = this.selectionTail.then(() => this.performClaudeAccountAssignment(agentId, accountId));
+    this.selectionTail = assignment.then(() => undefined, () => undefined);
+    return assignment;
+  }
+
+  private async performClaudeAccountAssignment(
+    agentId: string,
+    accountId: ProviderAccountId | null,
+  ): Promise<AgentConfig> {
+    const [providerAccounts, agents, statuses, discovered] = await Promise.all([
+      this.settings.getProviderAccounts(),
+      this.agents.listAgentConfigs(),
+      this.runtime.listStatuses(),
+      this.discoverAccounts(),
+    ]);
+    const agent = agents.find((candidate) => candidate.id === agentId);
+    if (!agent) throw new ProviderAccountError(404, `Agent not found: ${agentId}`);
+    if (agent.provider.kind !== 'claude-code') {
+      throw new ProviderAccountError(409, `Claude account assignment is unavailable for ${agent.provider.kind}`);
+    }
+
+    const registry = effectiveClaudeAccountRegistry(providerAccounts.claudeCode, agents, discovered);
+    const target = accountId
+      ? registry.accounts.find((account) => account.id === accountId)
+      : selectedClaudeAccount(registry);
+    if (!target) throw new ProviderAccountError(404, `Claude account not found: ${accountId}`);
+
+    let current: ReturnType<typeof selectedClaudeAccountForAgent> | undefined;
+    try {
+      current = selectedClaudeAccountForAgent(agent, registry);
+    } catch {
+      // A stale manual assignment must remain repairable: selecting a valid
+      // account (or returning to the machine default) replaces it fail closed.
+    }
+    const effectiveChanged = current?.id !== target.id;
+    if (effectiveChanged && !await claudeAccountIsConfigured(target)) {
+      throw new ProviderAccountError(409, `Claude account ${target.label} is not authenticated`);
+    }
+
+    if (effectiveChanged) {
+      const continuityAccounts = [current, target]
+        .filter((account): account is NonNullable<typeof account> => Boolean(account?.configDir))
+        .filter((account, index, values) => values.findIndex((value) => value.id === account.id) === index);
+      const needsContinuitySetup = (await Promise.all(
+        continuityAccounts.map((account) => this.continuityNeedsSetup(account)),
+      )).some(Boolean);
+      const status = statuses.find((candidate) => candidate.agentId === agent.id);
+      if (needsContinuitySetup && (status?.currentItemId || (status?.queueDepth ?? 0) > 0)) {
+        throw new ProviderAccountError(
+          409,
+          `Initial Claude account continuity setup requires idle agent: ${agent.id}`,
+        );
+      }
+      try {
+        await this.ensureContinuity(continuityAccounts);
+        if (current && current.id !== target.id) await this.synchronizeMcpState(current, target);
+      } catch (error) {
+        if (error instanceof ClaudeAccountContinuityError) {
+          throw new ProviderAccountError(409, error.message);
+        }
+        throw error;
+      }
+    }
+
+    // Runtime loading is intentionally cheap and reads the persisted registry.
+    // Pin a discovered account before the agent config references its id.
+    if (accountId && !providerAccounts.claudeCode?.accounts.some((account) => account.id === accountId)) {
+      await this.settings.setProviderAccounts({ ...providerAccounts, claudeCode: registry });
+    }
+    return this.saveAgentClaudeAccount(agent.id, accountId);
+  }
+
   private async performClaudeAccountSelection(accountId: string): Promise<ClaudeCodeAccountState> {
     const [providerAccounts, agents, statuses, discovered] = await Promise.all([
       this.settings.getProviderAccounts(),
@@ -134,7 +215,7 @@ export class ProviderAccountService {
       return this.claudeState();
     }
 
-    const affectedAgents = agents.filter((agent) => affectedClaudeAgent(agent));
+    const affectedAgents = agents.filter((agent) => machineDefaultClaudeAgent(agent));
     const current = selectedClaudeAccount(registry);
     const continuityAccounts = [current, target]
       .filter((account, index, values) => account.configDir && values.findIndex((value) => value.id === account.id) === index);
@@ -223,8 +304,11 @@ export class ProviderAccountService {
   }
 }
 
-function affectedClaudeAgent(agent: AgentConfig): boolean {
-  return agent.enabled !== false && agent.provider.kind === 'claude-code' && isAgentRunnable(agent);
+function machineDefaultClaudeAgent(agent: AgentConfig): boolean {
+  return agent.enabled !== false
+    && agent.provider.kind === 'claude-code'
+    && !agent.provider.accountId
+    && isAgentRunnable(agent);
 }
 
 function accountSwitchState(
@@ -239,14 +323,14 @@ function accountSwitchState(
   // has since left Claude Code (or been disabled) can never produce the
   // outcome the switch is waiting for, so it drops out of the reckoning
   // instead of blocking it forever.
-  const affectedIds = new Set(agents.filter(affectedClaudeAgent).map((agent) => agent.id));
+  const affectedIds = new Set(agents.filter(machineDefaultClaudeAgent).map((agent) => agent.id));
   const selectedRegistry = {
     accounts: registry.accounts,
     activeAccountId: registry.activeAccountId,
   };
   const expectedFingerprintByAgent = new Map(
     agents
-      .filter(affectedClaudeAgent)
+      .filter(machineDefaultClaudeAgent)
       .map((agent) => [
         agent.id,
         claudeAccountRuntimeFingerprint(applyClaudeAccountToAgent(agent, selectedRegistry)),

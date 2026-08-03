@@ -41,6 +41,12 @@ All Anima agents launched under the same host user can reach the same provider c
 
 The **Providers** panel shows the account label or identifier when the provider exposes one safely. It never stores or displays access tokens. An unavailable usage check can still show the last account Anima identified from local credentials.
 
+When more than one Claude Code account is authenticated on the host, **Providers** selects the
+machine default. A Claude agent can instead pin one available account from its Profile tab. The
+agent config stores only the account id; credentials remain in Claude Code's machine-user profile.
+Choosing **Machine default** removes the pin. Only that agent reloads, after its active turn and
+Claude background work are quiescent. Team-level account defaults are not supported.
+
 ## Pick the provider for an agent
 
 During agent creation, select the provider, model, and reasoning level. The effort menu follows the
@@ -121,6 +127,10 @@ Open the provider CLI directly under the same host user and complete its login f
 
 ### The account shown is not the one you expected
 
-The label reflects the provider credential store available to the Anima host user. Resolve the account choice inside the provider CLI. Logging out can clear shared credentials, configuration, MCP servers, plugins, skills, or history, so review the provider's behavior before changing a shared machine login.
+The label reflects the provider credential store available to the Anima host user. For Claude Code,
+check both the machine default in **Providers** and the optional account pin on the agent's Profile
+tab. For other providers, resolve the account choice inside the provider CLI. Logging out can clear
+shared credentials, configuration, MCP servers, plugins, skills, or history, so review the
+provider's behavior before changing a shared machine login.
 
 For data and credential boundaries, see [Security and data](../security-and-data.md). For adapter implementation details, see [Provider layer](../runtime-providers.md).

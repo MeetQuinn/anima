@@ -20,6 +20,7 @@ import {
   providerCatalogEntry,
   reasoningEffortsForModel,
 } from '../../shared/provider-catalog.js';
+import { ProviderAccountId } from '../../shared/provider-accounts.js';
 import { resolveAnimaHome } from '../anima-home.js';
 import { AGENT_ID } from '../storage/schema/agent.store.js';
 
@@ -84,6 +85,19 @@ export function agentConfigWithProviderUpdate(
   const env = mergeProviderEnv(current.provider.env, update.env);
   if (env) selection.env = env;
   return { ...current, provider: AgentProviderConfig.parse(selection) };
+}
+
+export function agentConfigWithClaudeAccount(
+  current: AgentConfig,
+  accountId: ProviderAccountId | null,
+): AgentConfig {
+  if (current.provider.kind !== 'claude-code') {
+    throw new AgentConfigError(409, `Claude account assignment is unavailable for ${current.provider.kind}`);
+  }
+  const provider = { ...current.provider };
+  if (accountId === null) delete provider.accountId;
+  else provider.accountId = ProviderAccountId.parse(accountId);
+  return { ...current, provider: AgentProviderConfig.parse(provider) };
 }
 
 // Returns the provider's kind/model/effort (and any kind-specific fields), env stripped.
@@ -186,7 +200,8 @@ export function redactAgentConfig(agent: AgentConfig): AgentConfig {
 
 // Keep operator-owned env keys visible so the UI can show what's set, but blank
 // their values. Anima-managed keys are runtime implementation details, not
-// per-agent configuration, including the platform-global Claude account selector.
+// per-agent launch configuration. Claude account selection has its own typed id;
+// the resulting CLAUDE_CONFIG_DIR remains a runtime implementation detail.
 function redactProviderEnv(provider: AgentConfig['provider']): AgentConfig['provider'] {
   if (!provider.env) return provider;
   const env = Object.fromEntries(

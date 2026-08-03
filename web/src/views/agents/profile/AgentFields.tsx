@@ -21,6 +21,7 @@ import {
   providerUnavailableLabel,
 } from '@/lib/provider-availability';
 import { providerKindLabel, providerValueLabel } from '@/lib/provider-display';
+import type { ClaudeCodeAccountState, ProviderAccountSummary } from '@shared/provider-accounts';
 
 const RESERVED_ENV_KEYS = new Set<string>(ANIMA_MANAGED_PROVIDER_ENV_KEYS);
 
@@ -555,6 +556,139 @@ function defaultEffortForModel(
     : (options[0] ?? '');
 }
 
+// ── ClaudeAccountRow ────────────────────────────────────────────────────────
+
+const MACHINE_DEFAULT_ACCOUNT = '__machine_default__';
+
+export function ClaudeAccountRow({
+  accountId,
+  accountState,
+  loading = false,
+  onRequestSave,
+}: {
+  accountId?: string;
+  accountState?: ClaudeCodeAccountState;
+  loading?: boolean;
+  onRequestSave: (accountId: string | null) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(MACHINE_DEFAULT_ACCOUNT);
+  const machineDefault = accountState?.accounts.find(
+    (account) => account.id === accountState.activeAccountId,
+  );
+  const assigned = accountId
+    ? accountState?.accounts.find((account) => account.id === accountId)
+    : machineDefault;
+
+  function begin() {
+    setDraft(accountId ?? MACHINE_DEFAULT_ACCOUNT);
+    setEditing(true);
+  }
+
+  function save() {
+    const next = draft === MACHINE_DEFAULT_ACCOUNT ? null : draft;
+    if ((next ?? undefined) === accountId) {
+      setEditing(false);
+      return;
+    }
+    setEditing(false);
+    onRequestSave(next);
+  }
+
+  if (loading) {
+    return (
+      <Field label="Claude account">
+        <span className="font-serif text-[13px] text-text-subtle">Loading accounts…</span>
+      </Field>
+    );
+  }
+
+  const draftAccount = draft === MACHINE_DEFAULT_ACCOUNT
+    ? machineDefault
+    : accountState?.accounts.find((account) => account.id === draft);
+  const saveBlocked = !accountState || !draftAccount || draftAccount.status !== 'available';
+  const currentLabel = accountId
+    ? assigned
+      ? accountOptionLabel(assigned)
+      : `Unavailable · ${accountId}`
+    : machineDefault
+      ? `Machine default · ${accountOptionLabel(machineDefault)}`
+      : 'Machine default unavailable';
+
+  return (
+    <Field label="Claude account">
+      {editing && accountState ? (
+        <div className="flex flex-col gap-2.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={draft} onValueChange={(value) => value && setDraft(value)}>
+              <SelectTrigger className="h-8 w-80 max-w-full font-serif text-[14px]">
+                <span className="min-w-0 flex-1 truncate text-left">
+                  {draft === MACHINE_DEFAULT_ACCOUNT
+                    ? `Machine default · ${machineDefault ? accountLabel(machineDefault) : 'Unavailable'}`
+                    : draftAccount
+                      ? accountLabel(draftAccount)
+                      : `Unavailable · ${draft}`}
+                </span>
+              </SelectTrigger>
+              <SelectContent className="w-80 max-w-[calc(100vw-2rem)]">
+                <SelectItem
+                  value={MACHINE_DEFAULT_ACCOUNT}
+                  disabled={!machineDefault || machineDefault.status !== 'available'}
+                  className="font-serif text-[14px]"
+                >
+                  Machine default · {machineDefault ? accountOptionLabel(machineDefault) : 'Unavailable'}
+                </SelectItem>
+                {accountState.accounts.map((account) => (
+                  <SelectItem
+                    key={account.id}
+                    value={account.id}
+                    disabled={account.status !== 'available'}
+                    className="font-serif text-[14px]"
+                  >
+                    {accountOptionLabel(account)}
+                  </SelectItem>
+                ))}
+                {accountId && !accountState.accounts.some((account) => account.id === accountId) && (
+                  <SelectItem value={accountId} disabled className="font-serif text-[14px]">
+                    Unavailable · {accountId}
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+            <Button size="xs" disabled={saveBlocked} onClick={save}>
+              <Check />
+              Save
+            </Button>
+            <Button size="xs" variant="ghost" onClick={() => setEditing(false)}>
+              <X />
+              Cancel
+            </Button>
+          </div>
+          <div className="max-w-xl font-sans text-[11px] leading-snug text-text-muted">
+            This changes only this agent. Machine default follows the account selected in Providers.
+          </div>
+        </div>
+      ) : (
+        accountState ? (
+          <EditAffordance onEdit={begin}>
+            <span className="font-serif text-[13px] md:text-[15px] text-text">{currentLabel}</span>
+          </EditAffordance>
+        ) : (
+          <span className="font-serif text-[13px] md:text-[15px] text-text-muted">{currentLabel}</span>
+        )
+      )}
+    </Field>
+  );
+}
+
+function accountLabel(account: ProviderAccountSummary): string {
+  return account.account ? `${account.label} · ${account.account}` : account.label;
+}
+
+function accountOptionLabel(account: ProviderAccountSummary): string {
+  return `${accountLabel(account)}${account.status === 'available' ? '' : ' · Sign in required'}`;
+}
+
 // ── ProviderEnvRow ──────────────────────────────────────────────────────────
 
 interface EnvDraftRow {
@@ -719,12 +853,14 @@ export function ProviderEnvRow({
 
 // Confirms changes that require this agent provider to reload before they apply.
 export function ConfirmRestartModal({
+  accountChanged = false,
   isActive,
   sessionBoundaryChanged = false,
   saving,
   onConfirm,
   onCancel,
 }: {
+  accountChanged?: boolean;
   isActive: boolean;
   sessionBoundaryChanged?: boolean;
   saving: boolean;
@@ -734,14 +870,17 @@ export function ConfirmRestartModal({
   const sessionCopy = sessionBoundaryChanged
     ? ' Switching provider or Claude Code session mode starts a fresh provider session; MEMORY.md, notes, and activity history stay intact.'
     : '';
+  const accountCopy = accountChanged
+    ? ' Only this agent changes; other agents keep their current account. The provider reload waits for active and background work to finish.'
+    : '';
   return (
     <ConfirmModal
       open={true}
       title={isActive ? 'Save and apply when idle?' : 'Apply provider change?'}
       description={
         isActive
-          ? `Anima is mid-item. Save this config now; this agent will reload itself after the item finishes.${sessionCopy}`
-          : `Save this config now; this agent will reload itself automatically.${sessionCopy}`
+          ? `Anima is mid-item. Save this config now; this agent will reload itself after the item finishes.${sessionCopy}${accountCopy}`
+          : `Save this config now; this agent will reload itself automatically.${sessionCopy}${accountCopy}`
       }
       variant="warn"
       busy={saving}

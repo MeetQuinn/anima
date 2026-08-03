@@ -111,6 +111,38 @@ test('platform Claude account selection removes a stale per-agent profile while 
   assert.equal(agent.provider.env?.CLAUDE_CONFIG_DIR, '/profiles/secondary');
 });
 
+test('a per-agent Claude account overrides the machine default without changing persisted launch env', () => {
+  const agent = claudeAgent('iris');
+  if (agent.provider.kind !== 'claude-code') assert.fail('expected Claude agent');
+  agent.provider.accountId = 'secondary';
+  agent.provider.env = { FEATURE_FLAG: '1' };
+
+  const applied = applyClaudeAccountToAgent(agent, {
+    accounts: [
+      { id: 'primary', label: 'Primary' },
+      { configDir: '/profiles/secondary', id: 'secondary', label: 'Secondary' },
+    ],
+    activeAccountId: 'primary',
+  });
+
+  assert.deepEqual(applied.provider.env, {
+    CLAUDE_CONFIG_DIR: '/profiles/secondary',
+    FEATURE_FLAG: '1',
+  });
+  assert.deepEqual(agent.provider.env, { FEATURE_FLAG: '1' });
+});
+
+test('a persisted per-agent account fails closed without a machine registry', () => {
+  const agent = claudeAgent('iris');
+  if (agent.provider.kind !== 'claude-code') assert.fail('expected Claude agent');
+  agent.provider.accountId = 'secondary';
+
+  assert.throws(
+    () => applyClaudeAccountToAgent(agent, undefined),
+    /Claude account registry is missing for agent iris: secondary/,
+  );
+});
+
 test('Claude runtime account fingerprints follow only the effective account config directory', () => {
   const primary = claudeAgent('primary');
   const primaryWithOtherEnv = claudeAgent('primary-with-env');
@@ -853,6 +885,74 @@ test('an agent that left Claude Code no longer blocks an in-progress account swi
   }
 });
 
+test('a machine account switch reloads only Claude agents that inherit the machine default', async () => {
+  const fixture = await accountServiceFixture({ active: false, agentIds: ['iris', 'nico'] });
+  try {
+    const nico = fixture.agent('nico');
+    if (nico.provider.kind !== 'claude-code') assert.fail('expected Claude agent');
+    fixture.replaceAgent({
+      ...nico,
+      provider: { ...nico.provider, accountId: 'secondary' },
+    });
+
+    const state = await fixture.service.selectClaudeAccount('secondary');
+
+    assert.deepEqual(fixture.restarted, ['iris']);
+    assert.deepEqual(state.pendingAgentIds, ['iris']);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('per-agent assignment pins one Claude account and can restore machine-default inheritance', async () => {
+  const fixture = await accountServiceFixture({ active: false });
+  try {
+    const assigned = await fixture.service.assignClaudeAccount('iris', 'secondary');
+    assert.equal(assigned.provider.kind, 'claude-code');
+    assert.equal(assigned.provider.accountId, 'secondary');
+    assert.equal(fixture.config().claudeCode?.activeAccountId, 'primary');
+    assert.deepEqual(fixture.restarted, []);
+    assert.deepEqual(fixture.mcpSynchronizations(), [['primary', 'secondary']]);
+
+    const inherited = await fixture.service.assignClaudeAccount('iris', null);
+    assert.equal(inherited.provider.kind, 'claude-code');
+    assert.equal(inherited.provider.accountId, undefined);
+    assert.deepEqual(fixture.mcpSynchronizations(), [
+      ['primary', 'secondary'],
+      ['secondary', 'primary'],
+    ]);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('per-agent assignment rejects signed-out accounts and non-Claude agents', async () => {
+  const signedOut = await accountServiceFixture({ active: false, secondaryAuthenticated: false });
+  try {
+    await assert.rejects(
+      signedOut.service.assignClaudeAccount('iris', 'secondary'),
+      /Claude account Secondary is not authenticated/,
+    );
+    const unchanged = signedOut.agent('iris');
+    assert.equal(unchanged.provider.kind, 'claude-code');
+    if (unchanged.provider.kind !== 'claude-code') assert.fail('expected Claude agent');
+    assert.equal(unchanged.provider.accountId, undefined);
+  } finally {
+    await signedOut.cleanup();
+  }
+
+  const nonClaude = await accountServiceFixture({ active: false });
+  try {
+    nonClaude.replaceAgent(kimiAgent('iris'));
+    await assert.rejects(
+      nonClaude.service.assignClaudeAccount('iris', 'secondary'),
+      /Claude account assignment is unavailable for kimi-cli/,
+    );
+  } finally {
+    await nonClaude.cleanup();
+  }
+});
+
 test('worker or child changes without a recorded outcome never converge a switch', async () => {
   const fixture = await accountServiceFixture({ active: false });
   try {
@@ -1024,6 +1124,7 @@ async function accountServiceFixture(input: {
   };
   let writes = 0;
   const restarted: string[] = [];
+  const assigned: Array<{ accountId: string | null; agentId: string }> = [];
   let restartAttempts = 0;
   let reloadFailures = input.reloadFailures ?? 0;
   let ensureContinuityCalls = 0;
@@ -1076,6 +1177,20 @@ async function accountServiceFixture(input: {
       mcpSynchronizations.push([source.id, target.id]);
       if (input.mcpFailure) throw new ClaudeAccountContinuityError('MCP metadata conflict');
     },
+    async (agentId, accountId) => {
+      const current = agentConfigs.find((candidate) => candidate.id === agentId);
+      if (!current) throw new Error(`missing fixture agent: ${agentId}`);
+      if (current.provider.kind !== 'claude-code') {
+        throw new Error(`Claude account assignment is unavailable for ${current.provider.kind}`);
+      }
+      const provider = { ...current.provider };
+      if (accountId === null) delete provider.accountId;
+      else provider.accountId = accountId;
+      const next = { ...current, provider };
+      agentConfigs = agentConfigs.map((candidate) => candidate.id === agentId ? next : candidate);
+      assigned.push({ accountId, agentId });
+      return next;
+    },
   );
 
   return {
@@ -1085,6 +1200,7 @@ async function accountServiceFixture(input: {
       if (!agent) throw new Error(`missing fixture agent: ${agentId}`);
       return agent;
     },
+    assigned,
     config: () => config,
     ensureContinuityCalls: () => ensureContinuityCalls,
     mcpSynchronizations: () => mcpSynchronizations,
