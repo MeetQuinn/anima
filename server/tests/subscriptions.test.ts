@@ -242,6 +242,58 @@ test('Slack bot messages require an explicit app mention for channel routing', a
       assert.equal(codeOnly.shouldStartRuntime, false);
       assert.equal(codeOnly.reason, 'not_addressed');
 
+      // Plain rich-text text element with literal `<@U…>` must not wake (no user entity).
+      // Simulate post-canonicalize text that contains the rendered literal.
+      const plainLiteral = await slackRuntimeDecision(
+        {
+          blocks: [{
+            type: 'rich_text',
+            elements: [{
+              type: 'rich_text_section',
+              elements: [{ type: 'text', text: 'literal <@U999>' }],
+            }],
+          }],
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'literal <@U999>',
+          ts: '1770000014.500002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', botUserId: 'U999', nowMs: 5_500 },
+      );
+      assert.equal(plainLiteral.shouldStartRuntime, false);
+      assert.equal(plainLiteral.reason, 'not_addressed');
+
+      // Same shape with a real user entity must wake.
+      const plainEntity = await slackRuntimeDecision(
+        {
+          blocks: [{
+            type: 'rich_text',
+            elements: [{
+              type: 'rich_text_section',
+              elements: [
+                { type: 'text', text: 'please ' },
+                { type: 'user', user_id: 'U999' },
+              ],
+            }],
+          }],
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'please <@U999>',
+          ts: '1770000014.600002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', botUserId: 'U999', nowMs: 5_600 },
+      );
+      assert.equal(plainEntity.shouldStartRuntime, true);
+      assert.equal(plainEntity.reason, 'mention');
+
       // Without threaded botUserId, message-type text mention cannot address the agent.
       const missingIdentity = await slackRuntimeDecision(
         {

@@ -96,6 +96,22 @@ test('literal/code mentions do not count as agent address; real entities and mar
     true,
   );
 
+  // Plain rich-text text node with literal `<@U…>` — NOT a user entity, even after
+  // blocks→text canonicalization would put that string in input.text.
+  const literalRichText = {
+    blocks: [{
+      type: 'rich_text',
+      elements: [{
+        type: 'rich_text_section',
+        elements: [{ type: 'text', text: `literal <@${agentId}>` }],
+      }],
+    }],
+    text: 'truncated …',
+  };
+  const canonicalLiteral = withCanonicalSlackVisibleText(literalRichText);
+  assert.match(canonicalLiteral.text ?? '', new RegExp(`<@${agentId}>`));
+  assert.equal(slackEventMentionsUserId(canonicalLiteral, agentId), false);
+
   // Markdown mention token outside code
   assert.equal(
     slackEventMentionsUserId({

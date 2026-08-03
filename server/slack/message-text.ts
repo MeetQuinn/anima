@@ -21,9 +21,13 @@ export function withCanonicalSlackVisibleText<T extends SlackMessageTextInput>(i
 }
 
 /**
- * True when the event **addresses** `userId` as a Slack mention entity — not when the
- * id only appears inside code (markdown/rich-text). Prefer structured `user` elements
- * in blocks; for markdown/fallback, only count `<@U…>` tokens outside inline/fenced code.
+ * True when the event **addresses** `userId` as a Slack mention entity.
+ *
+ * - Structured `rich_text`: only `type: "user"` elements count — never rendered
+ *   plain `text` nodes (even when they contain a literal `<@U…>` string). After
+ *   blocks→text canonicalization, do **not** regex the rich-text rendering.
+ * - Textual mrkdwn (`markdown` blocks) and raw fallback (no structured body):
+ *   count `<@U…>` tokens outside inline/fenced code only.
  */
 export function slackEventMentionsUserId(
   input: SlackMessageTextInput,
@@ -33,7 +37,10 @@ export function slackEventMentionsUserId(
   if (Array.isArray(input.blocks) && input.blocks.length > 0) {
     if (blocksContainUserEntity(input.blocks, userId)) return true;
     if (markdownBlocksMentionUserOutsideCode(input.blocks, userId)) return true;
+    // Authoritative rich_text body: address is user entities only.
+    if (blocksContainRichText(input.blocks)) return false;
   }
+  // No structured rich_text body — scan raw/top-level mrkdwn fallback.
   return slackMrkdwnMentionsUserIdOutsideCode(input.text, userId);
 }
 
@@ -80,6 +87,13 @@ function blocksContainUserEntity(blocks: unknown[], userId: string): boolean {
     return false;
   };
   return walk(blocks);
+}
+
+function blocksContainRichText(blocks: unknown[]): boolean {
+  for (const block of blocks) {
+    if (record(block)?.['type'] === 'rich_text') return true;
+  }
+  return false;
 }
 
 /** Remove fenced and inline code so literal `<@U…>` inside code cannot false-wake. */
