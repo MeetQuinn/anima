@@ -10,6 +10,23 @@ export function slackVisibleMessageText(input: SlackMessageTextInput): string | 
   return slackMessageTextFromBlocks(input.blocks) ?? input.text;
 }
 
+/**
+ * Apply blocks→visible text before routing/decide so mention detection and the
+ * final inbox item share one canonical representation. No Slack API fetch.
+ */
+export function withCanonicalSlackVisibleText<T extends SlackMessageTextInput>(input: T): T {
+  const visible = slackVisibleMessageText(input);
+  if (visible === undefined || visible === input.text) return input;
+  return { ...input, text: visible };
+}
+
+/** True when mrkdwn text includes a direct user mention of `userId` (`<@U…>` or `<@U…|label>`). */
+export function slackTextMentionsUserId(text: string | undefined, userId: string | undefined): boolean {
+  if (!text || !userId) return false;
+  const escaped = userId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`<@${escaped}(?:\\|[^>]*)?>`, 'i').test(text);
+}
+
 export function slackMessageTextFromBlocks(blocks: unknown): string | undefined {
   if (!Array.isArray(blocks) || blocks.length === 0) return undefined;
   const rendered: string[] = [];

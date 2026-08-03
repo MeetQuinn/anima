@@ -2,7 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { slackMessagePreviewsFromAttachments } from '../slack/message-previews.js';
-import { slackVisibleMessageText } from '../slack/message-text.js';
+import {
+  slackTextMentionsUserId,
+  slackVisibleMessageText,
+  withCanonicalSlackVisibleText,
+} from '../slack/message-text.js';
 import { slackTranscriptOutput } from '../tools/slack-transcript.js';
 import { slackMessageContentForText } from '../tools/slack-message-format.js';
 
@@ -18,6 +22,30 @@ test('Slack markdown block content enforces body and fallback limits', () => {
     () => slackMessageContentForText('X'.repeat(12_001)),
     /message is too long for Slack markdown block: 12001 characters, Slack allows 12000; send a file instead/,
   );
+});
+
+test('canonical Slack text restores trailing user mention past fallback cutoff', () => {
+  const agentId = 'U0B3ZB0NCLA';
+  const prefix = '界'.repeat(1_200);
+  const fullBody = `${prefix}\nPlease take this <@${agentId}>`;
+  const fallback = slackMessageContentForText(fullBody).text;
+  assert.ok(fallback.endsWith('…'));
+  assert.equal(slackTextMentionsUserId(fallback, agentId), false, 'fallback must cut off before the mention');
+
+  const blocks = [{
+    type: 'rich_text',
+    elements: [{
+      type: 'rich_text_section',
+      elements: [
+        { type: 'text', text: `${prefix}\nPlease take this ` },
+        { type: 'user', user_id: agentId },
+      ],
+    }],
+  }];
+  const canonical = withCanonicalSlackVisibleText({ blocks, text: fallback });
+  assert.equal(slackTextMentionsUserId(canonical.text, agentId), true);
+  assert.match(canonical.text ?? '', new RegExp(`<@${agentId}>$`));
+  assert.ok((canonical.text ?? '').includes(prefix.slice(0, 20)));
 });
 
 test('Slack visible message text restores complete rich text and tables from blocks', () => {

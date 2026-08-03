@@ -20,6 +20,8 @@ import {
 } from '../slack-interactions/shortcut-ids.js';
 import { SlackWorkspaceDirectoryService, type SlackWorkspaceDirectoryEvent } from '../slack/workspace-directory.service.js';
 import { SlackProfileResolver } from '../slack/profiles.js';
+import { withCanonicalSlackVisibleText } from '../slack/message-text.js';
+import { AgentStore } from '../storage/schema/agent.store.js';
 import {
   isSlackEvent,
   isRoutableSlackMessage,
@@ -221,7 +223,10 @@ export class SlackInboxSubscriber {
   }
 
   private async handleSlackEvent(body: unknown, event: unknown, client?: WebClient): Promise<void> {
-    const rawEvent = event as SlackRawMessageEvent;
+    // blocks → canonical visible text BEFORE decide/routing. Slack's top-level
+    // `text` can truncate before a trailing user mention; enrichment after an
+    // ignore never runs, so mention detection must see the full body first.
+    const rawEvent = withCanonicalSlackVisibleText(event as SlackRawMessageEvent);
     if (!isRoutableSlackMessage(rawEvent)) return;
 
     const envelope = body as SlackMessageEnvelope;
@@ -230,8 +235,12 @@ export class SlackInboxSubscriber {
     await runIngestPipeline<SlackInboxItem, SlackRuntimeDecision>({
       agentId: this.options.queue.agentId,
       attentionSuggestionPayload: slackAttentionSuggestionPayload,
-      decide: ({ duplicate }) =>
-        slackRuntimeDecision(rawEvent, { agentId: this.options.queue.agentId, duplicate }),
+      decide: async ({ duplicate }) =>
+        slackRuntimeDecision(rawEvent, {
+          agentId: this.options.queue.agentId,
+          botUserId: await agentSlackBotUserId(this.options.queue.agentId),
+          duplicate,
+        }),
       enrich: async () => {
         const webClient = client ?? createSlackWebClient(this.options.botToken);
         this.maybeSyncBotDisplayInfo(webClient);
@@ -371,4 +380,15 @@ function interactiveAskUserId(body: unknown): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+async function agentSlackBotUserId(agentId: string): Promise<string | undefined> {
+  try {
+    const store = new AgentStore(agentId);
+    if (!store.exists()) return undefined;
+    const botUserId = (await store.read()).slack?.botUserId?.trim();
+    return botUserId || undefined;
+  } catch {
+    return undefined;
+  }
 }

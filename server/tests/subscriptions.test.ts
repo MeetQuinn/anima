@@ -156,7 +156,7 @@ test('Slack bot messages require an explicit app mention for channel routing', a
           type: 'message',
           user: 'U456',
         },
-        { agentId: 'scout', nowMs: 2_000 },
+        { agentId: 'scout', botUserId: 'U999', nowMs: 2_000 },
       );
       assert.equal(unmentioned.shouldStartRuntime, false);
       assert.equal(unmentioned.reason, 'not_addressed');
@@ -173,7 +173,7 @@ test('Slack bot messages require an explicit app mention for channel routing', a
             type: 'message',
             user: 'U456',
           },
-          { agentId: 'scout', nowMs: 2_100 + index },
+          { agentId: 'scout', botUserId: 'U999', nowMs: 2_100 + index },
         );
         assert.equal(broadcastMention.shouldStartRuntime, false);
         assert.equal(broadcastMention.reason, 'not_addressed');
@@ -191,12 +191,29 @@ test('Slack bot messages require an explicit app mention for channel routing', a
           type: 'app_mention',
           user: 'U456',
         },
-        { agentId: 'scout', nowMs: 3_000 },
+        { agentId: 'scout', botUserId: 'U999', nowMs: 3_000 },
       );
       assert.equal(mentioned.shouldStartRuntime, true);
       assert.equal(mentioned.reason, 'mention');
       assert.equal(mentioned.subscription?.kind, 'thread');
       assert.equal(mentioned.subscription?.status, 'following');
+
+      // Bot-authored `message` (no separate app_mention) with direct <@agent> must wake.
+      const messageTypeMention = await slackRuntimeDecision(
+        {
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'long body… <@U999>',
+          ts: '1770000013.000002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', botUserId: 'U999', nowMs: 4_000 },
+      );
+      assert.equal(messageTypeMention.shouldStartRuntime, true);
+      assert.equal(messageTypeMention.reason, 'mention');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
