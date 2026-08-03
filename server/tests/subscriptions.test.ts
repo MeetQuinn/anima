@@ -294,6 +294,66 @@ test('Slack bot messages require an explicit app mention for channel routing', a
       assert.equal(plainEntity.shouldStartRuntime, true);
       assert.equal(plainEntity.reason, 'mention');
 
+      // Mixed rich_text (no mention) + section/mrkdwn real mention must wake.
+      const mixedSection = await slackRuntimeDecision(
+        {
+          blocks: [
+            {
+              type: 'rich_text',
+              elements: [{
+                type: 'rich_text_section',
+                elements: [{ type: 'text', text: 'context only' }],
+              }],
+            },
+            {
+              type: 'section',
+              text: { type: 'mrkdwn', text: 'please handle <@U999>' },
+            },
+          ],
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'context only\n\nplease handle <@U999>',
+          ts: '1770000014.700002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', botUserId: 'U999', nowMs: 5_700 },
+      );
+      assert.equal(mixedSection.shouldStartRuntime, true);
+      assert.equal(mixedSection.reason, 'mention');
+
+      // Mixed with code-only section mention must not wake.
+      const mixedCode = await slackRuntimeDecision(
+        {
+          blocks: [
+            {
+              type: 'rich_text',
+              elements: [{
+                type: 'rich_text_section',
+                elements: [{ type: 'text', text: 'context only' }],
+              }],
+            },
+            {
+              type: 'section',
+              text: { type: 'mrkdwn', text: 'please handle `<@U999>`' },
+            },
+          ],
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'context only\n\nplease handle `<@U999>`',
+          ts: '1770000014.800002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', botUserId: 'U999', nowMs: 5_800 },
+      );
+      assert.equal(mixedCode.shouldStartRuntime, false);
+      assert.equal(mixedCode.reason, 'not_addressed');
+
       // Without threaded botUserId, message-type text mention cannot address the agent.
       const missingIdentity = await slackRuntimeDecision(
         {

@@ -120,6 +120,48 @@ test('literal/code mentions do not count as agent address; real entities and mar
     }, agentId),
     true,
   );
+
+  // Mixed: rich_text body without mention + section/mrkdwn real mention → wake
+  assert.equal(
+    slackEventMentionsUserId({
+      blocks: [
+        {
+          type: 'rich_text',
+          elements: [{
+            type: 'rich_text_section',
+            elements: [{ type: 'text', text: 'context only' }],
+          }],
+        },
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: `please handle <@${agentId}>` },
+        },
+      ],
+      text: 'context only…',
+    }, agentId),
+    true,
+  );
+
+  // Mixed: rich_text + section/mrkdwn with mention only inside code → no wake
+  assert.equal(
+    slackEventMentionsUserId({
+      blocks: [
+        {
+          type: 'rich_text',
+          elements: [{
+            type: 'rich_text_section',
+            elements: [{ type: 'text', text: 'context only' }],
+          }],
+        },
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: `please handle \`<@${agentId}>\`` },
+        },
+      ],
+      text: 'context only…',
+    }, agentId),
+    false,
+  );
 });
 
 test('Slack visible message text restores complete rich text and tables from blocks', () => {

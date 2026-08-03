@@ -23,11 +23,13 @@ export function withCanonicalSlackVisibleText<T extends SlackMessageTextInput>(i
 /**
  * True when the event **addresses** `userId` as a Slack mention entity.
  *
- * - Structured `rich_text`: only `type: "user"` elements count — never rendered
- *   plain `text` nodes (even when they contain a literal `<@U…>` string). After
- *   blocks→text canonicalization, do **not** regex the rich-text rendering.
- * - Textual mrkdwn (`markdown` blocks) and raw fallback (no structured body):
- *   count `<@U…>` tokens outside inline/fenced code only.
+ * Per-block protocol (not message-global):
+ * - `rich_text`: only structured `type: "user"` elements (never plain text nodes,
+ *   never the canonical rendering of rich_text).
+ * - Textual mrkdwn: top-level `markdown` blocks and nested `{ type: "mrkdwn" }`
+ *   text objects (section/context/…): `<@U…>` tokens outside inline/fenced code.
+ * - Raw top-level fallback: only when no authoritative structured body supplies
+ *   address semantics (no rich_text and no mrkdwn-protocol blocks).
  */
 export function slackEventMentionsUserId(
   input: SlackMessageTextInput,
@@ -36,11 +38,10 @@ export function slackEventMentionsUserId(
   if (!userId) return false;
   if (Array.isArray(input.blocks) && input.blocks.length > 0) {
     if (blocksContainUserEntity(input.blocks, userId)) return true;
-    if (markdownBlocksMentionUserOutsideCode(input.blocks, userId)) return true;
-    // Authoritative rich_text body: address is user entities only.
-    if (blocksContainRichText(input.blocks)) return false;
+    if (mrkdwnProtocolMentionsUserOutsideCode(input.blocks, userId)) return true;
+    // Structured body already defined address protocol — do not regex its render.
+    if (blocksSupplyAddressProtocol(input.blocks)) return false;
   }
-  // No structured rich_text body — scan raw/top-level mrkdwn fallback.
   return slackMrkdwnMentionsUserIdOutsideCode(input.text, userId);
 }
 
@@ -58,17 +59,40 @@ function slackMrkdwnMentionsUserIdOutsideCode(
   return mentionTokenPattern(userId).test(stripSlackCodeRegions(text));
 }
 
-function markdownBlocksMentionUserOutsideCode(blocks: unknown[], userId: string): boolean {
-  for (const block of blocks) {
-    const node = record(block);
-    if (!node || node['type'] !== 'markdown') continue;
-    const body = stringField(node, 'text');
-    if (slackMrkdwnMentionsUserIdOutsideCode(body, userId)) return true;
-  }
-  return false;
+/**
+ * Scan textual mrkdwn sources only: `markdown` blocks and nested `{ type: "mrkdwn" }`
+ * objects. Never treat rich_text text nodes as mrkdwn.
+ */
+function mrkdwnProtocolMentionsUserOutsideCode(blocks: unknown[], userId: string): boolean {
+  const walk = (value: unknown, insideRichText: boolean): boolean => {
+    if (Array.isArray(value)) {
+      return value.some((item) => walk(item, insideRichText));
+    }
+    const node = record(value);
+    if (!node) return false;
+    if (node['type'] === 'rich_text') {
+      return walk(node['elements'], true);
+    }
+    if (!insideRichText) {
+      if (node['type'] === 'markdown') {
+        if (slackMrkdwnMentionsUserIdOutsideCode(stringField(node, 'text'), userId)) return true;
+      }
+      if (node['type'] === 'mrkdwn') {
+        if (slackMrkdwnMentionsUserIdOutsideCode(stringField(node, 'text'), userId)) return true;
+      }
+    }
+    // Nested containers (section.text, context.elements, fields, accessory…).
+    if (walk(node['text'], insideRichText)) return true;
+    if (walk(node['elements'], insideRichText)) return true;
+    if (walk(node['fields'], insideRichText)) return true;
+    if (walk(node['accessory'], insideRichText)) return true;
+    if (walk(node['rows'], insideRichText)) return true;
+    return false;
+  };
+  return walk(blocks, false);
 }
 
-/** Structured rich-text `user` elements only — never text/code content. */
+/** Structured rich_text `user` elements only — never text/code content. */
 function blocksContainUserEntity(blocks: unknown[], userId: string): boolean {
   const wanted = userId.toUpperCase();
   const walk = (value: unknown): boolean => {
@@ -89,11 +113,21 @@ function blocksContainUserEntity(blocks: unknown[], userId: string): boolean {
   return walk(blocks);
 }
 
-function blocksContainRichText(blocks: unknown[]): boolean {
-  for (const block of blocks) {
-    if (record(block)?.['type'] === 'rich_text') return true;
-  }
-  return false;
+/** rich_text and/or mrkdwn-protocol blocks already define how address is read. */
+function blocksSupplyAddressProtocol(blocks: unknown[]): boolean {
+  const walk = (value: unknown): boolean => {
+    if (Array.isArray(value)) return value.some(walk);
+    const node = record(value);
+    if (!node) return false;
+    const type = node['type'];
+    if (type === 'rich_text' || type === 'markdown' || type === 'mrkdwn') return true;
+    if (walk(node['text'])) return true;
+    if (walk(node['elements'])) return true;
+    if (walk(node['fields'])) return true;
+    if (walk(node['accessory'])) return true;
+    return false;
+  };
+  return walk(blocks);
 }
 
 /** Remove fenced and inline code so literal `<@U…>` inside code cannot false-wake. */
