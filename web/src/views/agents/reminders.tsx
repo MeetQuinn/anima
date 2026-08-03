@@ -71,6 +71,24 @@ function ExpandedDetail({
       <div className="font-serif whitespace-pre-wrap break-words text-[14px] leading-[1.6] text-text">
         {reminder.instructions}
       </div>
+      {reminder.preflight && (
+        <div className="font-sans text-[12px] text-text-muted">
+          <span className="chrome uppercase tracking-[0.12em] text-text-subtle">Run only when</span>
+          <div className="mt-1 font-mono text-[12px] break-all text-text">{reminder.preflight.command}</div>
+          {reminder.preflightLastResult && (
+            <div className="mt-1 text-[11px]">
+              Last preflight: <span className="font-mono">{reminder.preflightLastResult.status}</span>
+              {reminder.preflightLastResult.exitCode !== undefined
+                ? ` · exit ${reminder.preflightLastResult.exitCode}`
+                : ''}
+              {reminder.preflightLastResult.timedOut ? ' · timed out' : ''}
+            </div>
+          )}
+          {reminder.preflightError && (
+            <div className="mt-1 text-[11px] text-health-warn">Needs attention · preflight-error</div>
+          )}
+        </div>
+      )}
       <div className="font-sans flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px] tracking-wide text-text-muted">
         <span>
           Fired <span className="font-mono">{reminder.firedCount}</span>

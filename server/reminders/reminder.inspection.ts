@@ -1,5 +1,8 @@
 import type {
   Reminder,
+  ReminderPreflight,
+  ReminderPreflightErrorState,
+  ReminderPreflightLastResult,
   ReminderProvenance,
   ReminderSchedule,
   ReminderStatus,
@@ -12,6 +15,9 @@ export interface ReminderInspection {
   status: ReminderStatus;
   schedule: ReminderSchedule;
   provenance?: ReminderProvenance;
+  preflight?: ReminderPreflight;
+  preflightError?: ReminderPreflightErrorState;
+  preflightLastResult?: ReminderPreflightLastResult;
   createdAt: string;
   updatedAt: string;
   nextDueAt?: string;
@@ -41,6 +47,9 @@ export function inspectReminder(reminder: Reminder): ReminderInspection {
     firedCount: reminder.firedCount,
   };
   if (reminder.provenance) inspection.provenance = reminder.provenance;
+  if (reminder.preflight) inspection.preflight = reminder.preflight;
+  if (reminder.preflightError) inspection.preflightError = reminder.preflightError;
+  if (reminder.preflightLastResult) inspection.preflightLastResult = reminder.preflightLastResult;
   if (reminder.nextDueAt) inspection.nextDueAt = reminder.nextDueAt;
   if (reminder.lastFiredAt) inspection.lastFiredAt = reminder.lastFiredAt;
   if (reminder.cancelledAt) inspection.cancelledAt = reminder.cancelledAt;
@@ -48,11 +57,27 @@ export function inspectReminder(reminder: Reminder): ReminderInspection {
 }
 
 export function formatReminderInspection(reminder: ReminderInspection): string {
+  const preflightLabel = reminder.preflight
+    ? `command=${JSON.stringify(reminder.preflight.command)}`
+      + (reminder.preflight.timeoutMs !== undefined ? ` timeoutMs=${reminder.preflight.timeoutMs}` : '')
+    : '-';
+  const last = reminder.preflightLastResult
+    ? JSON.stringify({
+        status: reminder.preflightLastResult.status,
+        exitCode: reminder.preflightLastResult.exitCode,
+        timedOut: reminder.preflightLastResult.timedOut,
+        signal: reminder.preflightLastResult.signal,
+        durationMs: reminder.preflightLastResult.durationMs,
+      })
+    : '-';
   return [
     `reminder_id: ${JSON.stringify(reminder.reminderId)}`,
     `title: ${JSON.stringify(reminder.title)}`,
     `status: ${reminder.status}`,
     `schedule: ${JSON.stringify(reminder.schedule)}`,
+    `run_only_when: ${preflightLabel}`,
+    `preflight_last: ${last}`,
+    `preflight_error: ${reminder.preflightError ? JSON.stringify(reminder.preflightError) : '-'}`,
     `provenance: ${reminder.provenance ? JSON.stringify(reminder.provenance) : '-'}`,
     `created_at: ${reminder.createdAt}`,
     `updated_at: ${reminder.updatedAt}`,

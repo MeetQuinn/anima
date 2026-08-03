@@ -16,6 +16,11 @@ export const InboxItemHandling = z.object({
   queuedAt: z.string().optional(),
   resumeReason: z.enum(['runtime_restart']).optional(),
   settledAt: z.string().optional(),
+  /**
+   * When set, the item is durable in the queue but not claimable by workers.
+   * Used for cancellation-safe publish: stage → commit side effects → clear.
+   */
+  stagedAt: z.string().optional(),
   startedAt: z.string().optional(),
   status: InboxItemStatus,
   stopRequestedAt: z.string().optional(),
@@ -160,6 +165,8 @@ export type FeishuOnboardingInboxItem = z.infer<typeof FeishuOnboardingInboxItem
 
 export const ReminderInboxItem = InboxItemBase.extend({
   kind: z.literal('reminder'),
+  /** Bounded preflight stdout evidence attached on succeeded gates (optional). */
+  preflightEvidence: z.string().optional(),
   reminderId: z.string(),
   // The reminder's intended fire moment (nextDueAt at fire time), as opposed
   // to receivedAt (the poll tick that noticed it was due). Optional because
@@ -230,4 +237,9 @@ export function isAppendedRunningInboxItem(item: InboxItem): boolean {
 
 export function isPrimaryRunningInboxItem(item: InboxItem): boolean {
   return item.handling.status === 'running' && !item.handling.appendedToItemId;
+}
+
+/** Queued and published — workers may claim. Staged rows are durable but not runnable. */
+export function isClaimableQueuedInboxItem(item: InboxItem): boolean {
+  return item.handling.status === 'queued' && !item.handling.stagedAt;
 }

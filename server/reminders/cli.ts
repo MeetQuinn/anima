@@ -27,6 +27,8 @@ const ScheduleSchema = SharedFlags.extend({
   timezone: z.string().optional(),
   title: z.string().optional(),
   window: z.string().optional(),
+  preflight: z.string().optional(),
+  preflightTimeout: z.string().optional(),
 });
 
 const ListSchema = SharedFlags.extend({
@@ -118,6 +120,13 @@ export function registerReminderCommands(program: Command): void {
       'format: <days>@HH:MM-HH:MM  e.g. mon-fri@08:00-18:30 or mon,wed@09:00-17:00\n' +
       'only valid with --repeat every:*; not combinable with --fire-at or --in\n' +
       'interval must fit inside the same-day window span; overnight windows rejected (v1)')
+    .option('--preflight <command>',
+      'Run only when: shell command before the agent wakes (CWD = Agent Home)\n' +
+      'exit 0 = wake, exit 1 = skip; exit >=2 / signal / timeout = errored (Needs attention)\n' +
+      'do not inline secrets — the command is persisted and shown in list/show/UI')
+    .option('--preflight-timeout <duration>',
+      'preflight timeout (default 30m, hard cap 24h); format: <n><s|m|h|d>\n' +
+      'e.g. 30m, 2h — on timeout the process group is killed')
     .option('--timezone <tz>',
       'IANA timezone name for --fire-at, --repeat, and --window interpretation\n' +
       'e.g. America/Los_Angeles, Asia/Shanghai\n' +
@@ -204,6 +213,17 @@ async function runSchedule(opts: ScheduleOptions): Promise<void> {
   const delaySeconds = opts.in ? Math.ceil(parseDurationMs(opts.in) / 1000) : undefined;
   const provenance = anchorProvenance(opts);
 
+  const preflight = opts.preflight
+    ? {
+        command: opts.preflight,
+        ...(opts.preflightTimeout
+          ? { timeoutMs: parseDurationMs(opts.preflightTimeout) }
+          : {}),
+      }
+    : undefined;
+  if (opts.preflightTimeout && !opts.preflight) {
+    throw new Error('--preflight-timeout requires --preflight');
+  }
   const reminder = await reminderService.scheduleReminder({
     instructions,
     title: opts.title ?? defaultReminderTitle(instructions),
@@ -212,6 +232,7 @@ async function runSchedule(opts: ScheduleOptions): Promise<void> {
     ...(opts.repeat ? { repeat: opts.repeat } : {}),
     ...(opts.timezone ? { timezone: opts.timezone } : {}),
     ...(opts.window ? { window: opts.window } : {}),
+    ...(preflight ? { preflight } : {}),
     ...(provenance ? { provenance } : {}),
   });
   printReminderResult('scheduled', reminder);
@@ -279,7 +300,10 @@ function reminderLine(reminder: Reminder): string {
   const next = reminder.nextDueAt ? ` next=${truncateToMinutes(reminder.nextDueAt)}` : '';
   const display = scheduleDisplayRule(reminder.schedule);
   const repeat = display ? ` repeat=${display}` : '';
-  return `${reminder.reminderId} [${reminder.status}]${next}${repeat} ${reminder.title}`;
+  const runOnly = reminder.preflight ? ' run_only_when' : '';
+  const err = reminder.preflightError ? ' preflight-error' : '';
+  const last = reminder.preflightLastResult ? ` preflight=${reminder.preflightLastResult.status}` : '';
+  return `${reminder.reminderId} [${reminder.status}]${next}${repeat}${runOnly}${err}${last} ${reminder.title}`;
 }
 
 function reminderStatuses(opts: ListOptions): ReminderStatus[] | undefined {

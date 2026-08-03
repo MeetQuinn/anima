@@ -100,7 +100,7 @@ test('recurring reminders can be snoozed without changing the long-term cadence'
       });
       assert.equal(snoozed.nextDueAt, '2026-05-14T10:30:00.000Z');
 
-      const fired = await reminderService.completeReminderFire({
+      const { reminder: fired } = await reminderService.completeReminderFire({
         id: reminder.reminderId,
         now: new Date('2026-05-14T10:31:00.000Z'),
       });
@@ -130,7 +130,7 @@ test('fixed intervals preserve their initial phase across late fires and snooze'
         '2026-05-14T08:30:00.000Z',
       );
 
-      const late = await reminderService.completeReminderFire({
+      const { reminder: late } = await reminderService.completeReminderFire({
         id: reminder.reminderId,
         now: new Date('2026-05-14T12:45:00.000Z'),
       });
@@ -147,7 +147,7 @@ test('fixed intervals preserve their initial phase across late fires and snooze'
       });
       assert.equal(snoozed.nextDueAt, '2026-05-14T15:00:00.000Z');
 
-      const afterSnooze = await reminderService.completeReminderFire({
+      const { reminder: afterSnooze } = await reminderService.completeReminderFire({
         id: reminder.reminderId,
         now: new Date('2026-05-14T15:01:00.000Z'),
       });
@@ -167,7 +167,7 @@ test('fixed intervals preserve their initial phase across late fires and snooze'
       });
       assert.equal(earlySnooze.nextDueAt, '2026-05-14T17:10:00.000Z');
 
-      const afterEarlySnooze = await reminderService.completeReminderFire({
+      const { reminder: afterEarlySnooze } = await reminderService.completeReminderFire({
         id: futureAnchor.reminderId,
         now: new Date('2026-05-14T17:11:00.000Z'),
       });
@@ -236,7 +236,7 @@ test('legacy fixed intervals fall back to createdAt without rewriting on read', 
       const unchanged = await readFile(reminderPath, 'utf8');
       assert.equal(unchanged, `${JSON.stringify({ [legacy.reminderId]: legacy }, null, 2)}\n`);
 
-      const fired = await reminderService.completeReminderFire({
+      const { reminder: fired } = await reminderService.completeReminderFire({
         id: legacy.reminderId,
         now: new Date('2026-05-14T12:45:00.000Z'),
       });
@@ -274,7 +274,7 @@ test('due reminder delivery enters the inbox and records fire activity', async (
         timestamp: firedAt.toISOString(),
       });
       const decision = await queue.enqueue(event);
-      const firedReminder = await reminderService.completeReminderFire({
+      const { reminder: firedReminder } = await reminderService.completeReminderFire({
         id: dueReminder.reminderId,
         now: firedAt,
       });
@@ -629,7 +629,7 @@ test('windowed interval schedule, snooze, fire resume grid without drift', async
       });
       assert.equal(snoozed.nextDueAt, '2026-05-18T12:50:00.000Z');
 
-      const afterSnooze = await reminderService.completeReminderFire({
+      const { reminder: afterSnooze } = await reminderService.completeReminderFire({
         id: reminder.reminderId,
         now: new Date('2026-05-18T12:50:00.000Z'),
       });

@@ -10,6 +10,7 @@ interface ScheduleReminderActivityInput {
   agentId: string;
   delaySeconds?: number;
   fireAt?: string;
+  preflight?: { command: string; timeoutMs?: number };
   repeat?: string;
   title: string;
   window?: string;
@@ -34,6 +35,7 @@ export class ReminderActivityRecorder {
         title: input.title,
         ...(input.repeat ? { repeat: input.repeat } : {}),
         ...(input.window ? { window: input.window } : {}),
+        ...(input.preflight ? { preflight: true } : {}),
         ...(input.fireAt ? { fireAt: input.fireAt } : {}),
         ...(input.delaySeconds !== undefined ? { delaySeconds: input.delaySeconds } : {}),
       },
@@ -43,6 +45,7 @@ export class ReminderActivityRecorder {
         schedule: reminder.schedule,
         status: reminder.status,
         title: reminder.title,
+        ...(reminder.preflight ? { preflight: reminder.preflight } : {}),
       }),
       tool: 'anima.reminder.schedule',
     });

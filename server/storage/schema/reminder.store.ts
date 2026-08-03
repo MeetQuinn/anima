@@ -62,6 +62,38 @@ export class ReminderStore {
     return reminder;
   }
 
+  /**
+   * Atomically read-modify-write one reminder under the JsonStore lock.
+   * Return `null` from `mutate` to no-op (stale/CAS miss). Mutate must not
+   * rely on mutating `current` in place when returning null.
+   */
+  async updateMatching(
+    reminderId: string,
+    mutate: (current: Reminder) => Reminder | null,
+  ): Promise<{ applied: boolean; reminder: Reminder | undefined }> {
+    let applied = false;
+    let result: Reminder | undefined;
+    await this.file.update((stored) => {
+      const current = stored[reminderId];
+      if (!current) {
+        result = undefined;
+        return stored;
+      }
+      const next = mutate(structuredClone(current));
+      if (!next) {
+        result = current;
+        return stored;
+      }
+      applied = true;
+      result = next;
+      return {
+        ...stored,
+        [reminderId]: next,
+      };
+    });
+    return { applied, reminder: result };
+  }
+
   async pruneSettledBefore(cutoffIso: string): Promise<number> {
     let pruned = 0;
     await this.file.update((stored) => {
