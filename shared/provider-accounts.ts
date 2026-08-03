@@ -67,6 +67,12 @@ export const SelectProviderAccountRequest = z.object({
 }).strict();
 export type SelectProviderAccountRequest = z.infer<typeof SelectProviderAccountRequest>;
 
+export const AssignAgentClaudeAccountRequest = z.object({
+  // null restores inheritance from the machine-wide active Claude account.
+  accountId: ProviderAccountId.nullable(),
+}).strict();
+export type AssignAgentClaudeAccountRequest = z.infer<typeof AssignAgentClaudeAccountRequest>;
+
 export const ClaudeAccountLoginStartRequest = z.object({
   accountId: ProviderAccountId.optional(),
   email: z.string().trim().email().max(320).optional(),

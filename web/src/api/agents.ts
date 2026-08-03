@@ -33,6 +33,7 @@ import type {
   AgentSlackManifestUpdateInfo,
   AgentSlackManifestUpgradeRequest,
 } from '@shared/slack-manifest';
+import type { AssignAgentClaudeAccountRequest } from '@shared/provider-accounts';
 
 // ---------------------------------------------------------------------------
 // Agents
@@ -61,6 +62,16 @@ export async function updateAgentProvider(
   input: AgentUpdateProviderRequest,
 ): Promise<AgentConfig> {
   return apiRequest(`/api/agents/${encodeURIComponent(id)}/provider`, jsonInit('POST', input));
+}
+
+export async function assignAgentClaudeAccount(
+  id: string,
+  input: AssignAgentClaudeAccountRequest,
+): Promise<AgentConfig> {
+  return apiRequest(
+    `/api/agents/${encodeURIComponent(id)}/provider/claude-account`,
+    jsonInit('POST', input),
+  );
 }
 
 export async function enableAgent(id: string): Promise<AgentConfig> {

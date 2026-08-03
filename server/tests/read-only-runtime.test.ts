@@ -313,6 +313,7 @@ test('#524 the governed table matches on method and path, and ignores the query 
   assert.ok(governedRouteFor('POST', '/api/provider-cli-status/claude-code/apply'));
   assert.ok(governedRouteFor('PUT', '/api/provider-context-limits'));
   assert.ok(governedRouteFor('POST', '/api/provider-accounts/claude-code/select'));
+  assert.ok(governedRouteFor('POST', '/api/agents/mira/provider/claude-account'));
   assert.ok(governedRouteFor('POST', '/api/provider-accounts/claude-code/login'));
   assert.ok(governedRouteFor('POST', '/api/provider-accounts/claude-code/login/op-1/code'));
   assert.ok(governedRouteFor('POST', '/api/provider-accounts/claude-code/login/op-1/cancel'));

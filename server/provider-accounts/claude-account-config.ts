@@ -92,12 +92,31 @@ export function selectedClaudeAccount(registry: ClaudeCodeAccountRegistry): Clau
   return account;
 }
 
+export function selectedClaudeAccountForAgent(
+  agent: AgentConfig,
+  registry: ClaudeCodeAccountRegistry,
+): ClaudeCodeAccountConfig {
+  if (agent.provider.kind !== 'claude-code') {
+    throw new Error(`Agent ${agent.id} is not configured for Claude Code`);
+  }
+  const accountId = agent.provider.accountId ?? registry.activeAccountId;
+  const account = registry.accounts.find((candidate) => candidate.id === accountId);
+  if (!account) throw new Error(`Claude account not found for agent ${agent.id}: ${accountId}`);
+  return account;
+}
+
 export function applyClaudeAccountToAgent(
   agent: AgentConfig,
   registry: ClaudeCodeAccountRegistry | undefined,
 ): AgentConfig {
-  if (!registry || agent.provider.kind !== 'claude-code') return agent;
-  const account = selectedClaudeAccount(validateClaudeAccountRegistry(registry));
+  if (agent.provider.kind !== 'claude-code') return agent;
+  if (!registry) {
+    if (agent.provider.accountId) {
+      throw new Error(`Claude account registry is missing for agent ${agent.id}: ${agent.provider.accountId}`);
+    }
+    return agent;
+  }
+  const account = selectedClaudeAccountForAgent(agent, validateClaudeAccountRegistry(registry));
   const env = { ...(agent.provider.env ?? {}) };
   delete env[CLAUDE_CONFIG_DIR_KEY];
   const configDir = normalizedConfigDir(account.configDir);

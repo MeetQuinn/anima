@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   fetchAgent,
   fetchAgentSession,
+  assignAgentClaudeAccount,
   refreshAgentData,
   syncAgentAvatar,
   syncAgentFeishuAvatar,
@@ -11,7 +12,7 @@ import {
   updateAgentProfile,
   updateAgentProvider,
 } from '@/api/agents';
-import { fetchProviderAvailability, fetchWorkspacePlatform } from '@/api/system';
+import { fetchProviderAccounts, fetchProviderAvailability, fetchWorkspacePlatform } from '@/api/system';
 import { queryClient } from '@/query-client';
 import { queryKeys } from '@/lib/query-keys';
 import { useAgentStatuses } from '@/hooks/useAgentDirectory';
@@ -22,7 +23,14 @@ import { providerCatalog } from '@shared/provider-catalog';
 import { useParams } from 'react-router-dom';
 import { formatRelative, shortIso } from '@/lib/format';
 import { EditAffordance, Field, ReadonlyValue, Section, extractError } from './Primitives';
-import { HomeRow, TeamRow, ProviderInlineRow, ProviderEnvRow, ConfirmRestartModal } from './AgentFields';
+import {
+  ClaudeAccountRow,
+  ConfirmRestartModal,
+  HomeRow,
+  ProviderEnvRow,
+  ProviderInlineRow,
+  TeamRow,
+} from './AgentFields';
 import { ProfileHero } from './ProfileHero';
 import { useTeams, useTeamWarnings } from '@/hooks/useTeams';
 import { assignAgentTeam } from '@/api/teams';
@@ -80,6 +88,14 @@ export default function Profile() {
     queryKey: queryKeys.providerAvailability(),
     queryFn: fetchProviderAvailability,
   });
+  const {
+    data: providerAccounts,
+    isLoading: providerAccountsLoading,
+  } = useQuery({
+    queryKey: queryKeys.providerAccounts(),
+    queryFn: fetchProviderAccounts,
+    enabled: agent?.provider.kind === 'claude-code',
+  });
 
   const currentItemId = agentStatuses.find((s) => s.agentId === agentId)?.currentItemId;
 
@@ -103,6 +119,7 @@ export default function Profile() {
 
   // Provider-bound changes are applied by the agent host without bouncing other agents.
   const [pendingRestart, setPendingRestart] = useState<PendingRestart | null>(null);
+  const [pendingClaudeAccountId, setPendingClaudeAccountId] = useState<string | null | undefined>();
   const [restartSaving, setRestartSaving] = useState(false);
   const [restartSaveError, setRestartSaveError] = useState<string | null>(null);
 
@@ -250,6 +267,23 @@ export default function Profile() {
     }
   }
 
+  async function handleConfirmClaudeAccount() {
+    if (pendingClaudeAccountId === undefined || restartSaving || !agentId) return;
+    setRestartSaving(true);
+    setRestartSaveError(null);
+    try {
+      await assignAgentClaudeAccount(agentId, { accountId: pendingClaudeAccountId });
+      setPendingClaudeAccountId(undefined);
+      showApplyNoticeIfActive();
+      refreshAgentData(agentId);
+    } catch (e) {
+      setRestartSaveError(extractError(e));
+      setPendingClaudeAccountId(undefined);
+    } finally {
+      setRestartSaving(false);
+    }
+  }
+
   return (
     <div ref={containerRef} className="absolute inset-0 overflow-y-auto bg-surface px-6 py-8 md:px-10 md:py-8">
       <div className="max-w-3xl">
@@ -326,6 +360,14 @@ export default function Profile() {
               providerAvailability={providerAvailability}
               onRequestSave={(kind, model, effort) => setPendingRestart({ kind, model, effort })}
             />
+            {agent.provider.kind === 'claude-code' && (
+              <ClaudeAccountRow
+                accountId={agent.provider.accountId}
+                accountState={providerAccounts?.providers.find((provider) => provider.provider === 'claude-code')}
+                loading={providerAccountsLoading}
+                onRequestSave={setPendingClaudeAccountId}
+              />
+            )}
             <ProviderEnvRow env={agent.provider.env} onCommit={commitProviderEnv} />
             <Field label="Owner">
               {agent.owner ? (
@@ -549,6 +591,16 @@ export default function Profile() {
           saving={restartSaving}
           onConfirm={() => void handleConfirmRestart()}
           onCancel={() => setPendingRestart(null)}
+        />
+      )}
+
+      {pendingClaudeAccountId !== undefined && (
+        <ConfirmRestartModal
+          accountChanged
+          isActive={isActive}
+          saving={restartSaving}
+          onConfirm={() => void handleConfirmClaudeAccount()}
+          onCancel={() => setPendingClaudeAccountId(undefined)}
         />
       )}
 
