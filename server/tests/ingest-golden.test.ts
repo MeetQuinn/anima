@@ -16,7 +16,9 @@ import type { SlackMessageEnvelope, SlackRawMessageEvent } from '../inbox/slack-
 import { muteSubscriptionForAgent } from '../inbox/subscription.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { SubscriptionStore } from '../storage/schema/subscription.store.js';
+import { slackMessageContentForText } from '../tools/slack-message-format.js';
 import { withAnimaHome } from './anima-home.js';
+import { waitFor } from './helpers/harness.js';
 import { allActivities, loadState } from './helpers/state.js';
 
 const AGENT_ID = 'scout';
@@ -28,6 +30,7 @@ interface CapturedIngest {
   log: unknown;
   outcome: 'queued' | 'suppressed';
   queuedItem?: unknown;
+  subscriptionAddPayloads: unknown[];
 }
 
 test('Slack wake ingest decision matrix golden logs, queue outcomes, and attention records', async () => {
@@ -38,6 +41,7 @@ test('Slack wake ingest decision matrix golden logs, queue outcomes, and attenti
     expectedOutcome: CapturedIngest['outcome'];
     prepare?(queue: WakeQueueService): Promise<void>;
     expectedActivityPayloads?: unknown[];
+    expectedSubscriptionAddPayloads?: unknown[];
     expectedApiCalls?: string[];
   }> = [{
     name: 'bot-authored explicit mention wakes',
@@ -72,6 +76,11 @@ test('Slack wake ingest decision matrix golden logs, queue outcomes, and attenti
       },
     },
     expectedOutcome: 'queued',
+    expectedSubscriptionAddPayloads: [{
+      channelId: 'C-team',
+      channelName: 'team',
+      kind: 'thread',
+    }],
   }, {
     name: 'bot-authored broadcast mentions do not bypass passive suppression',
     event: slackEvent({
@@ -239,11 +248,44 @@ test('Slack wake ingest decision matrix golden logs, queue outcomes, and attenti
       },
     },
     expectedOutcome: 'suppressed',
+  }, {
+    name: 'bot long blocks trailing mention wakes without app_mention',
+    event: longBotTrailingMentionEvent('1780408806.000001'),
+    expectedLog: {
+      agentRuntime: 'codex-cli',
+      duplicate: false,
+      subscription: {
+        kind: 'thread',
+        status: 'following',
+        subscriptionId: 'slack-subscription:scout:C-team:thread:1780408806.000001',
+        threadTs: '1780408806.000001',
+      },
+      ingested: true,
+      queued: true,
+      reason: 'mention',
+      itemId: 'slack:T-golden:C-team:1780408806.000001',
+      surface: {
+        channelId: 'C-team',
+        channelName: 'team',
+        id: 'slack:T-golden:C-team',
+        kind: 'channel',
+        teamId: 'T-golden',
+        visibility: 'public',
+      },
+    },
+    expectedOutcome: 'queued',
+    expectedSubscriptionAddPayloads: [{
+      channelId: 'C-team',
+      channelName: 'team',
+      kind: 'thread',
+    }],
   }];
 
   for (const item of cases) {
     await withIngestHome('slack', async (stateDir) => {
-      await writeAgentConfig(stateDir, { slack: { botProfileSyncedAt: '2099-01-01T00:00:00.000Z' } });
+      await writeAgentConfig(stateDir, {
+        slack: { botProfileSyncedAt: '2099-01-01T00:00:00.000Z', botUserId: 'U-bot' },
+      });
       const queue = new WakeQueueService(AGENT_ID);
       await item.prepare?.(queue);
 
@@ -252,9 +294,49 @@ test('Slack wake ingest decision matrix golden logs, queue outcomes, and attenti
       assert.deepEqual(result.log, item.expectedLog, item.name);
       assert.equal(result.outcome, item.expectedOutcome, item.name);
       assert.deepEqual(result.activities.map((activity) => (activity as { payload?: unknown }).payload), item.expectedActivityPayloads ?? [], item.name);
+      assert.deepEqual(
+        result.subscriptionAddPayloads,
+        item.expectedSubscriptionAddPayloads ?? [],
+        item.name,
+      );
       if (item.expectedApiCalls) assert.deepEqual(result.apiCalls, item.expectedApiCalls, item.name);
+      if (item.name === 'bot long blocks trailing mention wakes without app_mention') {
+        const queued = result.queuedItem as SlackInboxItem | undefined;
+        assert.ok(queued, item.name);
+        // decide saw raw <@U-bot> on canonical text; inbox may resolve to @handle.
+        assert.match(queued.text, /TAIL AFTER CUTOFF/);
+        assert.match(queued.text, /@anima|<@U-bot>/);
+        assert.ok(!queued.text.includes('…'), 'full block body must replace the truncated fallback');
+      }
     });
   }
+});
+
+test('Slack message + app_mention for same ts share item id and enqueue once', async () => {
+  await withIngestHome('slack', async (stateDir) => {
+    await writeAgentConfig(stateDir, {
+      slack: { botProfileSyncedAt: '2099-01-01T00:00:00.000Z', botUserId: 'U-bot' },
+    });
+    const queue = new WakeQueueService(AGENT_ID);
+    const ts = '1780408810.000001';
+    const messageEvent = slackEvent({
+      bot_id: 'B-alerts',
+      subtype: 'bot_message',
+      text: '<@U-bot> once',
+      ts,
+      type: 'message',
+      user: 'U-alerts',
+    });
+    const appMentionEvent = { ...messageEvent, type: 'app_mention' as const };
+
+    const first = await captureSlackIngest(queue, messageEvent);
+    assert.equal(first.outcome, 'queued');
+    const second = await captureSlackIngest(queue, appMentionEvent);
+    assert.equal(second.outcome, 'suppressed');
+    assert.equal((second.log as { duplicate?: boolean }).duplicate, true);
+    assert.equal((second.log as { itemId?: string }).itemId, `slack:T-golden:C-team:${ts}`);
+    assert.equal((await queue.list()).filter((item) => item.id.endsWith(`:${ts}`)).length, 1);
+  });
 });
 
 test('Feishu wake ingest decision matrix golden logs, queue outcomes, and attention records', async () => {
@@ -464,6 +546,7 @@ async function captureSlackIngest(
   const logs: string[] = [];
   const calls: string[] = [];
   const originalLog = console.log;
+  const subscriptionAddsBefore = (await subscriptionAddActivities()).length;
   try {
     console.log = (...args: unknown[]) => {
       logs.push(args.map(String).join(' '));
@@ -472,6 +555,7 @@ async function captureSlackIngest(
     subscriber['options'] = {
       agentRuntimeKind: 'codex-cli',
       appToken: 'xapp-test',
+      botUserId: 'U-bot',
       botToken: 'xoxb-test',
       queue,
     };
@@ -485,12 +569,19 @@ async function captureSlackIngest(
   }
   const queued = await queue.list();
   const log = parseSingleJsonLog(logs);
+  // Production fire-and-forgets anima.subscription.add on mention follow; own that
+  // write before temp-home cleanup so activity.jsonl cannot race rmdir.
+  await settleMentionSubscriptionAdd(log, subscriptionAddsBefore);
+  const subscriptionAddPayloads = (await subscriptionAddActivities())
+    .slice(subscriptionAddsBefore)
+    .map((activity) => (activity as { payload?: unknown }).payload);
   return {
     activities: await attentionActivities(),
     apiCalls: calls,
     log,
     outcome: isQueuedLog(log) ? 'queued' : 'suppressed',
     queuedItem: queued.find((item) => item.id.endsWith(`:${event.ts}`)),
+    subscriptionAddPayloads,
   };
 }
 
@@ -528,11 +619,30 @@ async function captureFeishuIngest(
     log,
     outcome: isQueuedLog(log) ? 'queued' : 'suppressed',
     queuedItem: queued.find((item) => item.id === expectedId),
+    subscriptionAddPayloads: [],
   };
 }
 
 async function attentionActivities(): Promise<unknown[]> {
   return allActivities(await loadState()).filter((activity) => activity.type === 'anima.attention.suggestion');
+}
+
+async function subscriptionAddActivities(): Promise<unknown[]> {
+  return allActivities(await loadState()).filter((activity) => activity.type === 'anima.subscription.add');
+}
+
+/** Await production's fire-and-forget subscription.add when this event should have written one. */
+async function settleMentionSubscriptionAdd(log: unknown, previousCount: number): Promise<void> {
+  if (!log || typeof log !== 'object') return;
+  const row = log as { duplicate?: unknown; queued?: unknown; reason?: unknown };
+  if (row.reason !== 'mention' || row.duplicate === true || row.queued !== true) return;
+  await waitFor(
+    async () => (await subscriptionAddActivities()).length > previousCount,
+    {
+      description: 'anima.subscription.add activity from mention follow',
+      timeoutMs: 2_000,
+    },
+  );
 }
 
 function parseSingleJsonLog(logs: string[]): unknown {
@@ -556,6 +666,34 @@ function slackEvent(overrides: Partial<SlackRawMessageEvent>): SlackRawMessageEv
     user: 'U-alice',
     ...overrides,
   };
+}
+
+/** Real shape: long rich-text body; Slack fallback text cuts off before trailing <@agent>. */
+function longBotTrailingMentionEvent(ts: string): SlackRawMessageEvent {
+  const agentId = 'U-bot';
+  const prefix = '界'.repeat(1_200);
+  const tail = 'TAIL AFTER CUTOFF please handle';
+  const full = `${prefix}\n${tail} `;
+  // Approximate Slack notification fallback truncation (same helper used for outbound).
+  const fallback = slackMessageContentForText(`${full}<@${agentId}>`).text;
+  return slackEvent({
+    blocks: [{
+      type: 'rich_text',
+      elements: [{
+        type: 'rich_text_section',
+        elements: [
+          { type: 'text', text: full },
+          { type: 'user', user_id: agentId },
+        ],
+      }],
+    }],
+    bot_id: 'B-alerts',
+    subtype: 'bot_message',
+    text: fallback,
+    ts,
+    type: 'message',
+    user: 'U-alerts',
+  });
 }
 
 function slackClient(calls: string[]): WebClient {

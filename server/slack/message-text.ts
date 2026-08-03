@@ -10,6 +10,121 @@ export function slackVisibleMessageText(input: SlackMessageTextInput): string | 
   return slackMessageTextFromBlocks(input.blocks) ?? input.text;
 }
 
+/**
+ * Apply blocks→visible text before routing/decide so mention detection and the
+ * final inbox item share one canonical representation. No Slack API fetch.
+ */
+export function withCanonicalSlackVisibleText<T extends SlackMessageTextInput>(input: T): T {
+  const visible = slackVisibleMessageText(input);
+  if (visible === undefined || visible === input.text) return input;
+  return { ...input, text: visible };
+}
+
+/**
+ * True when the event **addresses** `userId` as a Slack mention entity.
+ *
+ * 1. Scan blocks per protocol: `rich_text` → `user` entities; mrkdwn sources →
+ *    `<@U…>` tokens outside code (`markdown` blocks + nested `{ type: "mrkdwn" }`).
+ * 2. If blocks produced any visible structured text and no structured mention was
+ *    found, return false — never regex the canonical rendering (covers plain_text
+ *    section/header, rich_text literals, image alt, future structured types).
+ * 3. Scan top-level fallback only when blocks supplied no renderable body
+ *    (e.g. actions/controls-only).
+ */
+export function slackEventMentionsUserId(
+  input: SlackMessageTextInput,
+  userId: string | undefined,
+): boolean {
+  if (!userId) return false;
+  if (Array.isArray(input.blocks) && input.blocks.length > 0) {
+    if (blocksContainUserEntity(input.blocks, userId)) return true;
+    if (mrkdwnProtocolMentionsUserOutsideCode(input.blocks, userId)) return true;
+    // Visible structured body is authoritative for address; do not re-regex it.
+    if (slackMessageTextFromBlocks(input.blocks) !== undefined) return false;
+  }
+  return slackMrkdwnMentionsUserIdOutsideCode(input.text, userId);
+}
+
+/** Mention tokens in mrkdwn outside inline/fenced code (`<@U…>` only). */
+export function slackTextMentionsUserId(text: string | undefined, userId: string | undefined): boolean {
+  if (!userId) return false;
+  return slackMrkdwnMentionsUserIdOutsideCode(text, userId);
+}
+
+function slackMrkdwnMentionsUserIdOutsideCode(
+  text: string | undefined,
+  userId: string,
+): boolean {
+  if (!text) return false;
+  return mentionTokenPattern(userId).test(stripSlackCodeRegions(text));
+}
+
+/**
+ * Scan textual mrkdwn sources only: `markdown` blocks and nested `{ type: "mrkdwn" }`
+ * objects. Never treat rich_text text nodes as mrkdwn.
+ */
+function mrkdwnProtocolMentionsUserOutsideCode(blocks: unknown[], userId: string): boolean {
+  const walk = (value: unknown, insideRichText: boolean): boolean => {
+    if (Array.isArray(value)) {
+      return value.some((item) => walk(item, insideRichText));
+    }
+    const node = record(value);
+    if (!node) return false;
+    if (node['type'] === 'rich_text') {
+      return walk(node['elements'], true);
+    }
+    if (!insideRichText) {
+      if (node['type'] === 'markdown') {
+        if (slackMrkdwnMentionsUserIdOutsideCode(stringField(node, 'text'), userId)) return true;
+      }
+      if (node['type'] === 'mrkdwn') {
+        if (slackMrkdwnMentionsUserIdOutsideCode(stringField(node, 'text'), userId)) return true;
+      }
+    }
+    // Nested containers (section.text, context.elements, fields, accessory…).
+    if (walk(node['text'], insideRichText)) return true;
+    if (walk(node['elements'], insideRichText)) return true;
+    if (walk(node['fields'], insideRichText)) return true;
+    if (walk(node['accessory'], insideRichText)) return true;
+    if (walk(node['rows'], insideRichText)) return true;
+    return false;
+  };
+  return walk(blocks, false);
+}
+
+/** Structured rich_text `user` elements only — never text/code content. */
+function blocksContainUserEntity(blocks: unknown[], userId: string): boolean {
+  const wanted = userId.toUpperCase();
+  const walk = (value: unknown): boolean => {
+    if (Array.isArray(value)) return value.some(walk);
+    const node = record(value);
+    if (!node) return false;
+    if (node['type'] === 'user') {
+      const id = stringField(node, 'user_id');
+      return Boolean(id && id.toUpperCase() === wanted);
+    }
+    // Containers only — do not treat `text` fields as mention entities.
+    if (walk(node['elements'])) return true;
+    if (walk(node['rows'])) return true;
+    if (walk(node['fields'])) return true;
+    if (walk(node['accessory'])) return true;
+    return false;
+  };
+  return walk(blocks);
+}
+
+/** Remove fenced and inline code so literal `<@U…>` inside code cannot false-wake. */
+function stripSlackCodeRegions(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`[^`]*`/g, ' ');
+}
+
+function mentionTokenPattern(userId: string): RegExp {
+  const escaped = userId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`<@${escaped}(?:\\|[^>]*)?>`, 'i');
+}
+
 export function slackMessageTextFromBlocks(blocks: unknown): string | undefined {
   if (!Array.isArray(blocks) || blocks.length === 0) return undefined;
   const rendered: string[] = [];

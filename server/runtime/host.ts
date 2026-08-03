@@ -898,7 +898,13 @@ async function startAgentFromConfig(
   return startRunningAgent({
     ...server.config,
     agentRuntime: createAgentRuntime(runtimeWithEnv(server.runtime, managedEnv)),
-    ...(server.slack ? { appToken: server.slack.appToken, botToken: server.slack.botToken } : {}),
+    ...(server.slack
+      ? {
+          appToken: server.slack.appToken,
+          botToken: server.slack.botToken,
+          ...(server.slack.botUserId ? { botUserId: server.slack.botUserId } : {}),
+        }
+      : {}),
     feishu: server.feishu,
     ...(server.runtime.idleTimeoutMs !== undefined ? { idleTimeoutMs: server.runtime.idleTimeoutMs } : {}),
     runLimiter: options.runLimiter,
@@ -1016,16 +1022,17 @@ function runtimeServerConfigForAgent(agent: AgentConfig): {
   config: RuntimeWorkerConfig;
   feishu: AgentConfig['feishu'];
   runtime: AgentProviderConfig;
-  slack?: { appToken: string; botToken: string };
+  slack?: { appToken: string; botToken: string; botUserId?: string };
 } {
   const slack = agent.slack;
   const config = runtimeWorkerConfigForAgent(agent);
   const botToken = slack.botToken;
   const appToken = slack.appToken;
+  const botUserId = slack.botUserId?.trim() || undefined;
   const runtime = agent.provider;
   if (!runtime) throw new Error(`Agent ${agent.id}: provider is required`);
   const connectedSlack = slack.connected && botToken && appToken
-    ? { appToken, botToken }
+    ? { appToken, botToken, ...(botUserId ? { botUserId } : {}) }
     : undefined;
   return {
     config,

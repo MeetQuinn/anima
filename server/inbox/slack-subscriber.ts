@@ -20,6 +20,7 @@ import {
 } from '../slack-interactions/shortcut-ids.js';
 import { SlackWorkspaceDirectoryService, type SlackWorkspaceDirectoryEvent } from '../slack/workspace-directory.service.js';
 import { SlackProfileResolver } from '../slack/profiles.js';
+import { withCanonicalSlackVisibleText } from '../slack/message-text.js';
 import {
   isSlackEvent,
   isRoutableSlackMessage,
@@ -40,6 +41,8 @@ import { WakeQueueService, type WakeQueueEnqueueResult } from './wake-queue.serv
 export interface SlackInboxSubscriberOptions {
   agentRuntimeKind: string;
   appToken: string;
+  /** Synced agent Slack bot user id — threaded from runtime start; never re-read from disk per event. */
+  botUserId?: string;
   botToken: string;
   queue: WakeQueueService;
 }
@@ -221,7 +224,10 @@ export class SlackInboxSubscriber {
   }
 
   private async handleSlackEvent(body: unknown, event: unknown, client?: WebClient): Promise<void> {
-    const rawEvent = event as SlackRawMessageEvent;
+    // blocks → canonical visible text BEFORE decide/routing. Slack's top-level
+    // `text` can truncate before a trailing user mention; enrichment after an
+    // ignore never runs, so mention detection must see the full body first.
+    const rawEvent = withCanonicalSlackVisibleText(event as SlackRawMessageEvent);
     if (!isRoutableSlackMessage(rawEvent)) return;
 
     const envelope = body as SlackMessageEnvelope;
@@ -231,7 +237,11 @@ export class SlackInboxSubscriber {
       agentId: this.options.queue.agentId,
       attentionSuggestionPayload: slackAttentionSuggestionPayload,
       decide: ({ duplicate }) =>
-        slackRuntimeDecision(rawEvent, { agentId: this.options.queue.agentId, duplicate }),
+        slackRuntimeDecision(rawEvent, {
+          agentId: this.options.queue.agentId,
+          botUserId: this.options.botUserId,
+          duplicate,
+        }),
       enrich: async () => {
         const webClient = client ?? createSlackWebClient(this.options.botToken);
         this.maybeSyncBotDisplayInfo(webClient);

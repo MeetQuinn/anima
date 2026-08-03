@@ -8,6 +8,8 @@ import { SlackMessageTransport } from '../transports/slack-message-transport.js'
 export interface InboxSubscriberOptions {
   agentRuntimeKind: string;
   appToken?: string;
+  /** Agent Slack bot user id from the synced start-time config (not re-read per event). */
+  botUserId?: string;
   botToken?: string;
   feishu?: FeishuConfig;
   queue: WakeQueueService;
@@ -23,6 +25,7 @@ export class InboxSubscriber {
       ...(options.appToken && options.botToken ? [new SlackMessageTransport({
         agentRuntimeKind: options.agentRuntimeKind,
         appToken: options.appToken,
+        ...(options.botUserId ? { botUserId: options.botUserId } : {}),
         botToken: options.botToken,
         queue: options.queue,
       })] : []),

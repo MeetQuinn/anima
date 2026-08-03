@@ -156,7 +156,7 @@ test('Slack bot messages require an explicit app mention for channel routing', a
           type: 'message',
           user: 'U456',
         },
-        { agentId: 'scout', nowMs: 2_000 },
+        { agentId: 'scout', botUserId: 'U999', nowMs: 2_000 },
       );
       assert.equal(unmentioned.shouldStartRuntime, false);
       assert.equal(unmentioned.reason, 'not_addressed');
@@ -173,7 +173,7 @@ test('Slack bot messages require an explicit app mention for channel routing', a
             type: 'message',
             user: 'U456',
           },
-          { agentId: 'scout', nowMs: 2_100 + index },
+          { agentId: 'scout', botUserId: 'U999', nowMs: 2_100 + index },
         );
         assert.equal(broadcastMention.shouldStartRuntime, false);
         assert.equal(broadcastMention.reason, 'not_addressed');
@@ -191,12 +191,226 @@ test('Slack bot messages require an explicit app mention for channel routing', a
           type: 'app_mention',
           user: 'U456',
         },
-        { agentId: 'scout', nowMs: 3_000 },
+        { agentId: 'scout', botUserId: 'U999', nowMs: 3_000 },
       );
       assert.equal(mentioned.shouldStartRuntime, true);
       assert.equal(mentioned.reason, 'mention');
       assert.equal(mentioned.subscription?.kind, 'thread');
       assert.equal(mentioned.subscription?.status, 'following');
+
+      // Bot-authored `message` (no separate app_mention) with direct <@agent> must wake.
+      const messageTypeMention = await slackRuntimeDecision(
+        {
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'long body… <@U999>',
+          ts: '1770000013.000002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', botUserId: 'U999', nowMs: 4_000 },
+      );
+      assert.equal(messageTypeMention.shouldStartRuntime, true);
+      assert.equal(messageTypeMention.reason, 'mention');
+
+      // Code-only mention tokens must not false-wake bots.
+      const codeOnly = await slackRuntimeDecision(
+        {
+          blocks: [{
+            type: 'rich_text',
+            elements: [{
+              type: 'rich_text_section',
+              elements: [
+                { type: 'text', text: 'snippet ' },
+                { type: 'text', text: '<@U999>', style: { code: true } },
+              ],
+            }],
+          }],
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'snippet `<@U999>`',
+          ts: '1770000014.000002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', botUserId: 'U999', nowMs: 5_000 },
+      );
+      assert.equal(codeOnly.shouldStartRuntime, false);
+      assert.equal(codeOnly.reason, 'not_addressed');
+
+      // Plain rich-text text element with literal `<@U…>` must not wake (no user entity).
+      // Simulate post-canonicalize text that contains the rendered literal.
+      const plainLiteral = await slackRuntimeDecision(
+        {
+          blocks: [{
+            type: 'rich_text',
+            elements: [{
+              type: 'rich_text_section',
+              elements: [{ type: 'text', text: 'literal <@U999>' }],
+            }],
+          }],
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'literal <@U999>',
+          ts: '1770000014.500002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', botUserId: 'U999', nowMs: 5_500 },
+      );
+      assert.equal(plainLiteral.shouldStartRuntime, false);
+      assert.equal(plainLiteral.reason, 'not_addressed');
+
+      // Same shape with a real user entity must wake.
+      const plainEntity = await slackRuntimeDecision(
+        {
+          blocks: [{
+            type: 'rich_text',
+            elements: [{
+              type: 'rich_text_section',
+              elements: [
+                { type: 'text', text: 'please ' },
+                { type: 'user', user_id: 'U999' },
+              ],
+            }],
+          }],
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'please <@U999>',
+          ts: '1770000014.600002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', botUserId: 'U999', nowMs: 5_600 },
+      );
+      assert.equal(plainEntity.shouldStartRuntime, true);
+      assert.equal(plainEntity.reason, 'mention');
+
+      // Mixed rich_text (no mention) + section/mrkdwn real mention must wake.
+      const mixedSection = await slackRuntimeDecision(
+        {
+          blocks: [
+            {
+              type: 'rich_text',
+              elements: [{
+                type: 'rich_text_section',
+                elements: [{ type: 'text', text: 'context only' }],
+              }],
+            },
+            {
+              type: 'section',
+              text: { type: 'mrkdwn', text: 'please handle <@U999>' },
+            },
+          ],
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'context only\n\nplease handle <@U999>',
+          ts: '1770000014.700002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', botUserId: 'U999', nowMs: 5_700 },
+      );
+      assert.equal(mixedSection.shouldStartRuntime, true);
+      assert.equal(mixedSection.reason, 'mention');
+
+      // Mixed with code-only section mention must not wake.
+      const mixedCode = await slackRuntimeDecision(
+        {
+          blocks: [
+            {
+              type: 'rich_text',
+              elements: [{
+                type: 'rich_text_section',
+                elements: [{ type: 'text', text: 'context only' }],
+              }],
+            },
+            {
+              type: 'section',
+              text: { type: 'mrkdwn', text: 'please handle `<@U999>`' },
+            },
+          ],
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'context only\n\nplease handle `<@U999>`',
+          ts: '1770000014.800002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', botUserId: 'U999', nowMs: 5_800 },
+      );
+      assert.equal(mixedCode.shouldStartRuntime, false);
+      assert.equal(mixedCode.reason, 'not_addressed');
+
+      // plain_text section/header: structured body with no entity semantics → no wake
+      for (const [index, block] of [
+        { type: 'section', text: { type: 'plain_text', text: 'literal <@U999>' } },
+        { type: 'header', text: { type: 'plain_text', text: 'literal <@U999>' } },
+      ].entries()) {
+        const plain = await slackRuntimeDecision(
+          {
+            blocks: [block],
+            bot_id: 'B123',
+            channel: 'C123',
+            channel_type: 'channel',
+            subtype: 'bot_message',
+            text: 'literal <@U999>',
+            ts: `1770000014.9${index}0002`,
+            type: 'message',
+            user: 'U456',
+          },
+          { agentId: 'scout', botUserId: 'U999', nowMs: 5_900 + index },
+        );
+        assert.equal(plain.shouldStartRuntime, false, block.type);
+        assert.equal(plain.reason, 'not_addressed', block.type);
+      }
+
+      // Controls-only: no renderable body → raw fallback text may still address
+      const actionsFallback = await slackRuntimeDecision(
+        {
+          blocks: [{ type: 'actions', elements: [{ type: 'button', value: 'x' }] }],
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'please <@U999>',
+          ts: '1770000015.100002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', botUserId: 'U999', nowMs: 6_100 },
+      );
+      assert.equal(actionsFallback.shouldStartRuntime, true);
+      assert.equal(actionsFallback.reason, 'mention');
+
+      // Without threaded botUserId, message-type text mention cannot address the agent.
+      const missingIdentity = await slackRuntimeDecision(
+        {
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'please <@U999>',
+          ts: '1770000015.000002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', nowMs: 6_000 },
+      );
+      assert.equal(missingIdentity.shouldStartRuntime, false);
+      assert.equal(missingIdentity.reason, 'not_addressed');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
