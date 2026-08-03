@@ -55,6 +55,34 @@ test('JsonFile recovers a stale ownerless lock without replacing current data', 
   }
 });
 
+test('JsonFile preserves a fresh ownerless lock until the stale grace expires', { timeout: 5_000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-jsonfile-fresh-ownerless-lock-'));
+  try {
+    const path = join(dir, 'value.json');
+    const lockDir = `${path}.lock`;
+    const file = new JsonFile<{ count: number }>(path, () => ({ count: 0 }));
+    await file.write({ count: 1 });
+    await mkdir(lockDir);
+
+    let settled = false;
+    const update = file.update((current) => ({ count: current.count + 1 })).then((value) => {
+      settled = true;
+      return value;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(settled, false, 'the mkdir/owner-write grace window must not be stolen');
+    assert.equal((await stat(lockDir)).isDirectory(), true);
+
+    const staleAt = new Date(Date.now() - (6 * 60 * 1000));
+    await utimes(lockDir, staleAt, staleAt);
+    assert.deepEqual(await update, { count: 2 });
+    assert.deepEqual(await file.read(), { count: 2 });
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
 test('JsonlAppendLog cache invalidates when another writer appends to the file on disk', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'anima-jsonl-cache-'));
   try {
