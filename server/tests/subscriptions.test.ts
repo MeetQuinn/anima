@@ -214,6 +214,50 @@ test('Slack bot messages require an explicit app mention for channel routing', a
       );
       assert.equal(messageTypeMention.shouldStartRuntime, true);
       assert.equal(messageTypeMention.reason, 'mention');
+
+      // Code-only mention tokens must not false-wake bots.
+      const codeOnly = await slackRuntimeDecision(
+        {
+          blocks: [{
+            type: 'rich_text',
+            elements: [{
+              type: 'rich_text_section',
+              elements: [
+                { type: 'text', text: 'snippet ' },
+                { type: 'text', text: '<@U999>', style: { code: true } },
+              ],
+            }],
+          }],
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'snippet `<@U999>`',
+          ts: '1770000014.000002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', botUserId: 'U999', nowMs: 5_000 },
+      );
+      assert.equal(codeOnly.shouldStartRuntime, false);
+      assert.equal(codeOnly.reason, 'not_addressed');
+
+      // Without threaded botUserId, message-type text mention cannot address the agent.
+      const missingIdentity = await slackRuntimeDecision(
+        {
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'please <@U999>',
+          ts: '1770000015.000002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', nowMs: 6_000 },
+      );
+      assert.equal(missingIdentity.shouldStartRuntime, false);
+      assert.equal(missingIdentity.reason, 'not_addressed');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

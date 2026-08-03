@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { slackMessagePreviewsFromAttachments } from '../slack/message-previews.js';
 import {
-  slackTextMentionsUserId,
+  slackEventMentionsUserId,
   slackVisibleMessageText,
   withCanonicalSlackVisibleText,
 } from '../slack/message-text.js';
@@ -30,7 +30,7 @@ test('canonical Slack text restores trailing user mention past fallback cutoff',
   const fullBody = `${prefix}\nPlease take this <@${agentId}>`;
   const fallback = slackMessageContentForText(fullBody).text;
   assert.ok(fallback.endsWith('…'));
-  assert.equal(slackTextMentionsUserId(fallback, agentId), false, 'fallback must cut off before the mention');
+  assert.equal(slackEventMentionsUserId({ text: fallback }, agentId), false, 'fallback must cut off before the mention');
 
   const blocks = [{
     type: 'rich_text',
@@ -43,9 +43,67 @@ test('canonical Slack text restores trailing user mention past fallback cutoff',
     }],
   }];
   const canonical = withCanonicalSlackVisibleText({ blocks, text: fallback });
-  assert.equal(slackTextMentionsUserId(canonical.text, agentId), true);
+  assert.equal(slackEventMentionsUserId(canonical, agentId), true);
   assert.match(canonical.text ?? '', new RegExp(`<@${agentId}>$`));
   assert.ok((canonical.text ?? '').includes(prefix.slice(0, 20)));
+});
+
+test('literal/code mentions do not count as agent address; real entities and markdown tokens do', () => {
+  const agentId = 'U0B3ZB0NCLA';
+
+  // Markdown block: mention token only inside inline code
+  assert.equal(
+    slackEventMentionsUserId({
+      blocks: [{ type: 'markdown', text: `example literal \`<@${agentId}>\`` }],
+      text: `example literal \`<@${agentId}>\``,
+    }, agentId),
+    false,
+  );
+
+  // Rich-text code-styled text containing a mention token (renders as `…`)
+  assert.equal(
+    slackEventMentionsUserId({
+      blocks: [{
+        type: 'rich_text',
+        elements: [{
+          type: 'rich_text_section',
+          elements: [
+            { type: 'text', text: 'example literal ' },
+            { type: 'text', text: `<@${agentId}>`, style: { code: true } },
+          ],
+        }],
+      }],
+      text: `example literal \`<@${agentId}>\``,
+    }, agentId),
+    false,
+  );
+
+  // Real rich-text user entity (trailing mention after long body)
+  assert.equal(
+    slackEventMentionsUserId({
+      blocks: [{
+        type: 'rich_text',
+        elements: [{
+          type: 'rich_text_section',
+          elements: [
+            { type: 'text', text: 'please handle ' },
+            { type: 'user', user_id: agentId },
+          ],
+        }],
+      }],
+      text: 'please handle …',
+    }, agentId),
+    true,
+  );
+
+  // Markdown mention token outside code
+  assert.equal(
+    slackEventMentionsUserId({
+      blocks: [{ type: 'markdown', text: `please handle <@${agentId}>` }],
+      text: 'please handle …',
+    }, agentId),
+    true,
+  );
 });
 
 test('Slack visible message text restores complete rich text and tables from blocks', () => {

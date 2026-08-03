@@ -1,4 +1,4 @@
-import { slackTextMentionsUserId } from '../slack/message-text.js';
+import { slackEventMentionsUserId } from '../slack/message-text.js';
 import { SubscriptionStore } from '../storage/schema/subscription.store.js';
 import type { SlackRawMessageEvent } from './slack-events.js';
 import {
@@ -65,8 +65,8 @@ function immediateSlackRuntimeReason(
   if (event.channel_type === 'im') return 'dm';
   if (event.type === 'app_mention') return 'mention';
   // Bot-authored `message` events often never get a separate app_mention.
-  // After blocks→text canonicalization, a trailing <@agent> must still wake.
-  if (slackTextMentionsUserId(event.text, options.botUserId)) return 'mention';
+  // Entity-aware: structured rich_text `user` elements, or `<@U…>` outside code.
+  if (slackEventMentionsUserId(event, options.botUserId)) return 'mention';
   return undefined;
 }
 

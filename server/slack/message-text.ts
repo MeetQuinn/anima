@@ -20,11 +20,78 @@ export function withCanonicalSlackVisibleText<T extends SlackMessageTextInput>(i
   return { ...input, text: visible };
 }
 
-/** True when mrkdwn text includes a direct user mention of `userId` (`<@U…>` or `<@U…|label>`). */
+/**
+ * True when the event **addresses** `userId` as a Slack mention entity — not when the
+ * id only appears inside code (markdown/rich-text). Prefer structured `user` elements
+ * in blocks; for markdown/fallback, only count `<@U…>` tokens outside inline/fenced code.
+ */
+export function slackEventMentionsUserId(
+  input: SlackMessageTextInput,
+  userId: string | undefined,
+): boolean {
+  if (!userId) return false;
+  if (Array.isArray(input.blocks) && input.blocks.length > 0) {
+    if (blocksContainUserEntity(input.blocks, userId)) return true;
+    if (markdownBlocksMentionUserOutsideCode(input.blocks, userId)) return true;
+  }
+  return slackMrkdwnMentionsUserIdOutsideCode(input.text, userId);
+}
+
+/** Mention tokens in mrkdwn outside inline/fenced code (`<@U…>` only). */
 export function slackTextMentionsUserId(text: string | undefined, userId: string | undefined): boolean {
-  if (!text || !userId) return false;
+  if (!userId) return false;
+  return slackMrkdwnMentionsUserIdOutsideCode(text, userId);
+}
+
+function slackMrkdwnMentionsUserIdOutsideCode(
+  text: string | undefined,
+  userId: string,
+): boolean {
+  if (!text) return false;
+  return mentionTokenPattern(userId).test(stripSlackCodeRegions(text));
+}
+
+function markdownBlocksMentionUserOutsideCode(blocks: unknown[], userId: string): boolean {
+  for (const block of blocks) {
+    const node = record(block);
+    if (!node || node['type'] !== 'markdown') continue;
+    const body = stringField(node, 'text');
+    if (slackMrkdwnMentionsUserIdOutsideCode(body, userId)) return true;
+  }
+  return false;
+}
+
+/** Structured rich-text `user` elements only — never text/code content. */
+function blocksContainUserEntity(blocks: unknown[], userId: string): boolean {
+  const wanted = userId.toUpperCase();
+  const walk = (value: unknown): boolean => {
+    if (Array.isArray(value)) return value.some(walk);
+    const node = record(value);
+    if (!node) return false;
+    if (node['type'] === 'user') {
+      const id = stringField(node, 'user_id');
+      return Boolean(id && id.toUpperCase() === wanted);
+    }
+    // Containers only — do not treat `text` fields as mention entities.
+    if (walk(node['elements'])) return true;
+    if (walk(node['rows'])) return true;
+    if (walk(node['fields'])) return true;
+    if (walk(node['accessory'])) return true;
+    return false;
+  };
+  return walk(blocks);
+}
+
+/** Remove fenced and inline code so literal `<@U…>` inside code cannot false-wake. */
+function stripSlackCodeRegions(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`[^`]*`/g, ' ');
+}
+
+function mentionTokenPattern(userId: string): RegExp {
   const escaped = userId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`<@${escaped}(?:\\|[^>]*)?>`, 'i').test(text);
+  return new RegExp(`<@${escaped}(?:\\|[^>]*)?>`, 'i');
 }
 
 export function slackMessageTextFromBlocks(blocks: unknown): string | undefined {

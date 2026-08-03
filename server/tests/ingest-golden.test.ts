@@ -536,6 +536,7 @@ async function captureSlackIngest(
     subscriber['options'] = {
       agentRuntimeKind: 'codex-cli',
       appToken: 'xapp-test',
+      botUserId: 'U-bot',
       botToken: 'xoxb-test',
       queue,
     };

@@ -21,7 +21,6 @@ import {
 import { SlackWorkspaceDirectoryService, type SlackWorkspaceDirectoryEvent } from '../slack/workspace-directory.service.js';
 import { SlackProfileResolver } from '../slack/profiles.js';
 import { withCanonicalSlackVisibleText } from '../slack/message-text.js';
-import { AgentStore } from '../storage/schema/agent.store.js';
 import {
   isSlackEvent,
   isRoutableSlackMessage,
@@ -42,6 +41,8 @@ import { WakeQueueService, type WakeQueueEnqueueResult } from './wake-queue.serv
 export interface SlackInboxSubscriberOptions {
   agentRuntimeKind: string;
   appToken: string;
+  /** Synced agent Slack bot user id — threaded from runtime start; never re-read from disk per event. */
+  botUserId?: string;
   botToken: string;
   queue: WakeQueueService;
 }
@@ -235,10 +236,10 @@ export class SlackInboxSubscriber {
     await runIngestPipeline<SlackInboxItem, SlackRuntimeDecision>({
       agentId: this.options.queue.agentId,
       attentionSuggestionPayload: slackAttentionSuggestionPayload,
-      decide: async ({ duplicate }) =>
+      decide: ({ duplicate }) =>
         slackRuntimeDecision(rawEvent, {
           agentId: this.options.queue.agentId,
-          botUserId: await agentSlackBotUserId(this.options.queue.agentId),
+          botUserId: this.options.botUserId,
           duplicate,
         }),
       enrich: async () => {
@@ -380,15 +381,4 @@ function interactiveAskUserId(body: unknown): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-}
-
-async function agentSlackBotUserId(agentId: string): Promise<string | undefined> {
-  try {
-    const store = new AgentStore(agentId);
-    if (!store.exists()) return undefined;
-    const botUserId = (await store.read()).slack?.botUserId?.trim();
-    return botUserId || undefined;
-  } catch {
-    return undefined;
-  }
 }

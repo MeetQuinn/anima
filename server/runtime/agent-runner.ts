@@ -20,6 +20,8 @@ import type { TeamRunLimiter } from './team-run-limiter.js';
 interface RunningAgentOptions extends RuntimeWorkerConfig {
   agentRuntime: AgentRuntime;
   appToken?: string;
+  /** Synced Slack bot user id for mention routing (start-time authority). */
+  botUserId?: string;
   botToken?: string;
   feishu?: FeishuConfig;
   idleTimeoutMs?: number;
@@ -71,6 +73,7 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
   const subscriber = new InboxSubscriber({
     agentRuntimeKind: options.agentRuntime.kind,
     ...(options.appToken ? { appToken: options.appToken } : {}),
+    ...(options.botUserId ? { botUserId: options.botUserId } : {}),
     ...(options.botToken ? { botToken: options.botToken } : {}),
     ...(options.feishu ? { feishu: options.feishu } : {}),
     queue,
