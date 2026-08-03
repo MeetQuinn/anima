@@ -8,6 +8,7 @@ import UsagePanel from './UsagePanel';
 const api = vi.hoisted(() => ({
   cancelClaudeAccountLogin: vi.fn(),
   fetchClaudeAccountLogin: vi.fn(),
+  removeClaudeAccount: vi.fn(),
   refreshProviderUsage: vi.fn(),
   selectClaudeAccount: vi.fn(),
   startClaudeAccountLogin: vi.fn(),
@@ -76,6 +77,9 @@ const usageRows = vi.hoisted(() => ({
   ] as ProviderUsageRow[],
 }));
 
+const defaultAccountState = structuredClone(accountState.value);
+const defaultUsageRows = structuredClone(usageRows.value);
+
 vi.mock('@/api/system', () => ({
   applyProviderCliUpdate: vi.fn(),
   cancelClaudeAccountLogin: api.cancelClaudeAccountLogin,
@@ -106,6 +110,7 @@ vi.mock('@/api/system', () => ({
     providers: usageRows.value,
   })),
   fetchProviderUsageProvider: vi.fn(),
+  removeClaudeAccount: api.removeClaudeAccount,
   refreshProviderUsage: api.refreshProviderUsage,
   selectClaudeAccount: api.selectClaudeAccount,
   saveProviderContextLimit: vi.fn(),
@@ -133,10 +138,10 @@ async function expandClaude(): Promise<void> {
 
 describe('UsagePanel Claude account selection', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     window.localStorage.clear();
-    accountState.value.status = 'active';
-    accountState.value.errorAgentIds = [];
-    accountState.value.pendingAgentIds = [];
+    accountState.value = structuredClone(defaultAccountState);
+    usageRows.value = structuredClone(defaultUsageRows);
     api.refreshProviderUsage.mockResolvedValue({ providers: usageRows.value });
   });
 
@@ -215,6 +220,44 @@ describe('UsagePanel Claude account selection', () => {
     fireEvent.click(retryButtons[retryButtons.length - 1]!);
 
     await waitFor(() => expect(api.selectClaudeAccount).toHaveBeenCalledWith('secondary'));
+  });
+
+  it('keeps account removal in an overflow menu and requires destructive confirmation', async () => {
+    accountState.value.activeAccountId = 'primary';
+    accountState.value.accounts[0]!.selected = true;
+    accountState.value.accounts[1]!.selected = false;
+    usageRows.value = usageRows.value.map((row) => ({
+      ...row,
+      active: row.accountId === 'primary' ? true : undefined,
+    }));
+    api.removeClaudeAccount.mockResolvedValueOnce({
+      accounts: [accountState.value.accounts[0]!],
+      activeAccountId: 'primary',
+      errorAgentIds: [],
+      pendingAgentIds: [],
+      provider: 'claude-code',
+      status: 'active',
+    });
+    api.refreshProviderUsage.mockResolvedValueOnce({ providers: [usageRows.value[0]!] });
+    renderPanel();
+    await expandClaude();
+
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for primary@example.com' }));
+    expect(
+      screen.getByRole('menuitem', { name: /Remove account.*Primary account cannot be removed/ })
+        .getAttribute('aria-disabled'),
+    ).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for primary@example.com' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for secondary@example.com' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove account' }));
+    expect(await screen.findByText('Remove secondary@example.com?')).toBeTruthy();
+    expect(screen.getByText(/removes the local Claude sign-in and archives its isolated profile/)).toBeTruthy();
+    expect(screen.getByText(/Shared Claude projects and history stay in place/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove account' }));
+    await waitFor(() => expect(api.removeClaudeAccount).toHaveBeenCalledWith('secondary'));
+    expect(api.refreshProviderUsage).toHaveBeenCalledOnce();
   });
 
   it('offers reauthentication for an expired account without hiding the healthy one', async () => {

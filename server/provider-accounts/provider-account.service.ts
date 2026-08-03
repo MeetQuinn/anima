@@ -1,3 +1,5 @@
+import { realpath } from 'node:fs/promises';
+
 import type { AgentConfig } from '../../shared/agent-config.js';
 import type {
   ClaudeCodeAccountRegistry,
@@ -23,10 +25,16 @@ import {
   claudePlanFamily,
   discoverClaudeAccounts,
   effectiveClaudeAccountRegistry,
+  normalizedConfigDir,
   readClaudeAccountMetadata,
   selectedClaudeAccount,
   selectedClaudeAccountForAgent,
 } from './claude-account-config.js';
+import {
+  ClaudeAccountRemovalError,
+  stageClaudeAccountRemoval,
+  type StagedClaudeAccountRemoval,
+} from './claude-account-removal.js';
 
 export class ProviderAccountError extends Error {
   constructor(readonly statusCode: number, message: string) {
@@ -52,7 +60,7 @@ interface ProviderAccountRuntime {
 }
 
 export class ProviderAccountService {
-  private selectionTail: Promise<void> = Promise.resolve();
+  private mutationTail: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly settings: ProviderAccountSettings = defaultServerSettingsService,
@@ -68,6 +76,9 @@ export class ProviderAccountService {
     ) => Promise<AgentConfig> = (agentId, accountId) => (
       defaultAgentRegistryService.serviceFor(agentId).setClaudeAccount(accountId)
     ),
+    private readonly stageAccountRemoval: (
+      account: Parameters<typeof stageClaudeAccountRemoval>[0],
+    ) => Promise<StagedClaudeAccountRemoval> = stageClaudeAccountRemoval,
   ) {}
 
   async list(): Promise<ProviderAccountsResponse> {
@@ -108,14 +119,14 @@ export class ProviderAccountService {
   }
 
   selectClaudeAccount(accountId: string): Promise<ClaudeCodeAccountState> {
-    const selection = this.selectionTail.then(() => this.performClaudeAccountSelection(accountId));
-    this.selectionTail = selection.then(() => undefined, () => undefined);
+    const selection = this.mutationTail.then(() => this.performClaudeAccountSelection(accountId));
+    this.mutationTail = selection.then(() => undefined, () => undefined);
     return selection;
   }
 
   assignClaudeAccount(agentId: string, accountId: ProviderAccountId | null): Promise<AgentConfig> {
-    const assignment = this.selectionTail.then(() => this.performClaudeAccountAssignment(agentId, accountId));
-    this.selectionTail = assignment.then(() => undefined, () => undefined);
+    const assignment = this.mutationTail.then(() => this.performClaudeAccountAssignment(agentId, accountId));
+    this.mutationTail = assignment.then(() => undefined, () => undefined);
     return assignment;
   }
 
@@ -184,6 +195,90 @@ export class ProviderAccountService {
       await this.settings.setProviderAccounts({ ...providerAccounts, claudeCode: registry });
     }
     return this.saveAgentClaudeAccount(agent.id, accountId);
+  }
+
+  removeClaudeAccount(accountId: string): Promise<ClaudeCodeAccountState> {
+    const removal = this.mutationTail.then(() => this.performClaudeAccountRemoval(accountId));
+    this.mutationTail = removal.then(() => undefined, () => undefined);
+    return removal;
+  }
+
+  private async performClaudeAccountRemoval(accountId: string): Promise<ClaudeCodeAccountState> {
+    const [providerAccounts, agents, discovered] = await Promise.all([
+      this.settings.getProviderAccounts(),
+      this.agents.listAgentConfigs(),
+      this.discoverAccounts(),
+    ]);
+    const registry = effectiveClaudeAccountRegistry(providerAccounts.claudeCode, agents, discovered);
+    const target = registry.accounts.find((account) => account.id === accountId);
+    if (!target) throw new ProviderAccountError(404, `Claude account not found: ${accountId}`);
+    if (target.id === registry.activeAccountId) {
+      throw new ProviderAccountError(409, 'Switch to another Claude account before removing this one');
+    }
+    if (!target.configDir) {
+      throw new ProviderAccountError(409, 'The Primary Claude account cannot be removed');
+    }
+
+    const targetDir = normalizedConfigDir(target.configDir);
+    if (!targetDir) throw new ProviderAccountError(409, 'The Primary Claude account cannot be removed');
+    const targetRealDir = await realConfigDir(targetDir);
+    const referencedAgentIds = (await Promise.all(agents.map(async (agent) => {
+      if (agent.provider.kind !== 'claude-code') return undefined;
+      // provider.accountId is the canonical post-#623 reference. Keep the
+      // legacy path check as well so older configs and manually-authored env
+      // cannot leave a live agent pointing at an archived profile.
+      if (agent.provider.accountId === target.id) return agent.id;
+      const configuredDir = normalizedConfigDir(agent.provider.env?.CLAUDE_CONFIG_DIR);
+      if (!configuredDir) return undefined;
+      if (configuredDir === targetDir) return agent.id;
+      return targetRealDir && await realConfigDir(configuredDir) === targetRealDir
+        ? agent.id
+        : undefined;
+    }))).filter((id): id is string => Boolean(id)).sort();
+    if (referencedAgentIds.length > 0) {
+      throw new ProviderAccountError(
+        409,
+        `Claude account is still configured on agents: ${referencedAgentIds.join(', ')}`,
+      );
+    }
+
+    let staged: StagedClaudeAccountRemoval;
+    try {
+      staged = await this.stageAccountRemoval(target);
+    } catch (error) {
+      if (error instanceof ClaudeAccountRemovalError) {
+        throw new ProviderAccountError(409, error.message);
+      }
+      throw error;
+    }
+
+    const nextRegistry: ClaudeCodeAccountRegistry = {
+      ...registry,
+      accounts: registry.accounts.filter((account) => account.id !== target.id),
+    };
+    const nextProviderAccounts = { ...providerAccounts, claudeCode: nextRegistry };
+    let settingsChanged = false;
+    try {
+      await this.settings.setProviderAccounts(nextProviderAccounts);
+      settingsChanged = true;
+      await staged.finalize();
+    } catch (error) {
+      const rollbackErrors: unknown[] = [];
+      if (settingsChanged) {
+        await this.settings.setProviderAccounts(providerAccounts).catch((rollbackError) => {
+          rollbackErrors.push(rollbackError);
+        });
+      }
+      await staged.restore().catch((rollbackError) => {
+        rollbackErrors.push(rollbackError);
+      });
+      if (rollbackErrors.length > 0) {
+        throw new AggregateError([error, ...rollbackErrors], 'Claude account removal could not be rolled back');
+      }
+      throw error;
+    }
+
+    return this.claudeState();
   }
 
   private async performClaudeAccountSelection(accountId: string): Promise<ClaudeCodeAccountState> {
@@ -312,6 +407,15 @@ function machineDefaultClaudeAgent(agent: AgentConfig): boolean {
     && agent.provider.kind === 'claude-code'
     && !agent.provider.accountId
     && isAgentRunnable(agent);
+}
+
+async function realConfigDir(path: string): Promise<string | undefined> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
 }
 
 function accountSwitchState(

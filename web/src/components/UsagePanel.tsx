@@ -1,13 +1,22 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
-import { ArrowUp, ChevronDown, Copy, LogIn, RefreshCw, UserPlus, X } from 'lucide-react';
+import {
+  ArrowUp,
+  ChevronDown,
+  Copy,
+  LogIn,
+  RefreshCw,
+  UserPlus,
+  X,
+} from 'lucide-react';
 import {
   applyProviderCliUpdate,
   checkProviderClis,
   fetchProviderAccounts,
   fetchProviderContextLimits,
   fetchProviderUsage,
+  removeClaudeAccount,
   refreshProviderUsage,
   saveProviderContextLimit,
   selectClaudeAccount,
@@ -26,6 +35,7 @@ import type {
 import type { ClaudeCodeAccountState, ProviderAccountSummary } from '@shared/provider-accounts';
 import type { ProviderContextLimitRow } from '@shared/provider-context-limits';
 import ClaudeAccountLoginModal from './ClaudeAccountLoginModal';
+import ProviderAccountActionsMenu from './ProviderAccountActionsMenu';
 
 interface Props {
   onClose: () => void;
@@ -277,11 +287,13 @@ function ActiveAccountCard({
   accountState,
   now,
   onLoginAccount,
+  onRemoveAccount,
   usage,
 }: {
   accountState?: ClaudeCodeAccountState;
   now: Date;
   onLoginAccount: (account: ProviderAccountSummary) => void;
+  onRemoveAccount: (account: ProviderAccountSummary) => void;
   usage: ProviderUsageRow;
 }) {
   const isAvailable = usage.status === 'available';
@@ -314,6 +326,13 @@ function ActiveAccountCard({
             <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-health-ok" />
             Active
           </span>
+          {summary && (
+            <ProviderAccountActionsMenu
+              account={summary}
+              name={name ?? summary.account ?? summary.label}
+              onRemove={onRemoveAccount}
+            />
+          )}
         </div>
       )}
       {isAvailable ? (
@@ -365,12 +384,14 @@ function OtherAccountRow({
   accountState,
   now,
   onLoginAccount,
+  onRemoveAccount,
   onSelectAccount,
   usage,
 }: {
   accountState?: ClaudeCodeAccountState;
   now: Date;
   onLoginAccount: (account: ProviderAccountSummary) => void;
+  onRemoveAccount: (account: ProviderAccountSummary) => void;
   onSelectAccount: (accountId: string) => void;
   usage: ProviderUsageRow;
 }) {
@@ -420,6 +441,7 @@ function OtherAccountRow({
             Use
           </button>
         ) : null}
+        {summary && <ProviderAccountActionsMenu account={summary} name={name} onRemove={onRemoveAccount} />}
       </div>
       {usage.status === 'available' && usage.windows.length > 0 && (
         <div className="mt-2.5 space-y-1.5 opacity-80">
@@ -451,6 +473,7 @@ function ProviderUnit({
   accountState,
   onAddAccount,
   onLoginAccount,
+  onRemoveAccount,
   onRetryAccount,
   onSelectAccount,
   contextLimit,
@@ -469,6 +492,7 @@ function ProviderUnit({
   accountState?: ClaudeCodeAccountState;
   onAddAccount: () => void;
   onLoginAccount: (account: ProviderAccountSummary) => void;
+  onRemoveAccount: (account: ProviderAccountSummary) => void;
   onRetryAccount: () => void;
   onSelectAccount: (accountId: string) => void;
   contextLimit?: ProviderContextLimitRow;
@@ -628,6 +652,7 @@ function ProviderUnit({
                 accountState={accountState}
                 now={now}
                 onLoginAccount={onLoginAccount}
+                onRemoveAccount={onRemoveAccount}
                 usage={featured}
               />
               {others.length > 0 && (
@@ -638,6 +663,7 @@ function ProviderUnit({
                       accountState={accountState}
                       now={now}
                       onLoginAccount={onLoginAccount}
+                      onRemoveAccount={onRemoveAccount}
                       onSelectAccount={onSelectAccount}
                       usage={row}
                     />
@@ -853,6 +879,34 @@ export default function UsagePanel({ onClose }: Props) {
     });
   }
 
+  function requestAccountRemoval(account: ProviderAccountSummary): void {
+    const name = account.account ?? account.label;
+    confirm({
+      title: `Remove ${name}?`,
+      description: (
+        <div className="space-y-2">
+          <p>This removes the local Claude sign-in and archives its isolated profile.</p>
+          <p>Shared Claude projects and history stay in place. To use this account again, add it and sign in.</p>
+        </div>
+      ),
+      variant: 'warn',
+      confirmVariant: 'destructive',
+      confirmLabel: 'Remove account',
+      busyLabel: 'Removing…',
+      onConfirm: async () => {
+        const next = await removeClaudeAccount(account.id);
+        queryClient.setQueryData(queryKeys.providerAccounts(), { providers: [next] });
+        try {
+          queryClient.setQueryData(queryKeys.providerUsage(), await refreshProviderUsage());
+        } catch {
+          // The account removal already committed. Avoid presenting a refresh
+          // failure as a failed destructive action; retry usage in the background.
+          void queryClient.invalidateQueries({ queryKey: queryKeys.providerUsage() });
+        }
+      },
+    });
+  }
+
   function requestApply(row: ProviderCliRow): void {
     const enabledAgents = row.agents.filter((agent) => agent.enabled);
     confirm({
@@ -979,6 +1033,7 @@ export default function UsagePanel({ onClose }: Props) {
                         accountState={row.provider === 'claude-code' ? claudeAccountState : undefined}
                         onAddAccount={() => setLoginTarget('new')}
                         onLoginAccount={(account) => setLoginTarget(account)}
+                        onRemoveAccount={requestAccountRemoval}
                         onContextLimitChange={(maxTokens) => {
                           const limit = contextLimits?.providers.find(
                             (candidate) => candidate.provider === row.provider,

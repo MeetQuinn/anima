@@ -79,6 +79,13 @@ export async function selectClaudeAccount(accountId: string): Promise<ClaudeCode
   );
 }
 
+export async function removeClaudeAccount(accountId: string): Promise<ClaudeCodeAccountState> {
+  return apiRequest(
+    `/api/provider-accounts/claude-code/${encodeURIComponent(accountId)}`,
+    { method: 'DELETE' },
+  );
+}
+
 export async function startClaudeAccountLogin(
   input: ClaudeAccountLoginStartRequest = {},
 ): Promise<ClaudeAccountLoginOperation> {
