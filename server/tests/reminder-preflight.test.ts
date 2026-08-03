@@ -791,15 +791,31 @@ test('stagedReminderWakeAction distinguishes committed vs uncommitted stages', a
   };
   assert.equal(
     stagedReminderWakeAction({ fireIndex: 1, nowMs, reminder: undefined }),
-    'withdraw',
+    'abandon',
   );
+  // Uncommitted cancel → abandon (no tombstone path)
   assert.equal(
     stagedReminderWakeAction({
       fireIndex: 1,
       nowMs,
       reminder: { ...base, status: 'cancelled', cancelledAt: base.updatedAt },
     }),
-    'withdraw',
+    'abandon',
+  );
+  // Committed then cancelled → still publish (commit ordinal authoritative)
+  assert.equal(
+    stagedReminderWakeAction({
+      fireIndex: 1,
+      nowMs,
+      reminder: {
+        ...base,
+        cancelledAt: '2026-08-03T11:30:00.000Z',
+        firedCount: 1,
+        lastFiredAt: '2026-08-03T11:00:00.000Z',
+        status: 'cancelled',
+      },
+    }),
+    'publish',
   );
   // Uncommitted, still due
   assert.equal(
@@ -817,7 +833,7 @@ test('stagedReminderWakeAction distinguishes committed vs uncommitted stages', a
       nowMs,
       reminder: { ...base, nextDueAt: '2030-01-01T00:00:00.000Z' },
     }),
-    'withdraw',
+    'abandon',
   );
   // Committed: CAS counted this fire
   assert.equal(
@@ -962,6 +978,141 @@ test('restart after stage before CAS finishes via due path (uncommitted leave)',
     const claimed = await queue2.takeNextRunnable({
       isWorkerAlive: () => true,
       workerId: 'worker-retry',
+    });
+    assert.ok(claimed);
+    assert.equal((claimed as { reminderId: string }).reminderId, rem.reminderId);
+  });
+});
+
+test('uncommitted stage abandon keeps fire id reusable after snooze retry', async () => {
+  await withAgentHome(async (_home, agentId) => {
+    const service = reminderServiceForAgent(agentId);
+    const queue = new WakeQueueService(agentId);
+    const rem = await service.scheduleReminder({
+      fireAt: '2020-08-01T00:00:00.000Z',
+      instructions: 'retry-after-snooze',
+      now: new Date(),
+      preflight: { command: 'exit 0' },
+      repeat: 'every:1h',
+      title: 'abandon-reuse',
+    });
+    const eventId = `reminder:${rem.reminderId}:fire:1`;
+    // stage → snooze (CAS miss) → abandon without seen tombstone.
+    const realEnqueueStaged = queue.enqueueStaged.bind(queue);
+    let abandonedOnce = false;
+    queue.enqueueStaged = async (event) => {
+      const result = await realEnqueueStaged(event);
+      if (!abandonedOnce) {
+        abandonedOnce = true;
+        await service.snoozeReminder({
+          by: '2h',
+          id: rem.reminderId,
+          now: new Date('2026-08-03T00:00:00.000Z'),
+        });
+      }
+      return result;
+    };
+    const first = new ReminderInboxSubscriber(queue, service);
+    first.start();
+    await waitFor(async () => {
+      const live = await service.findReminder(rem.reminderId);
+      return (
+        abandonedOnce
+        && live?.firedCount === 0
+        && live?.status === 'scheduled'
+        && (await queue.list()).every((i) => i.id !== eventId)
+      );
+    }, { description: 'CAS miss abandoned staged fire:1', timeoutMs: 5_000 });
+    await first.stop();
+
+    // hasSeen covers queue seen markers + message ledger — must stay clear for fire:1.
+    assert.equal(await queue.hasSeen(eventId), false, 'fire:1 must not be tombstoned in seen/ledger');
+    assert.equal((await queue.list()).length, 0);
+
+    // Make due again: snooze from the past so nextDueAt is immediately due.
+    await service.snoozeReminder({
+      by: '1s',
+      id: rem.reminderId,
+      now: new Date('2020-08-01T00:00:00.000Z'),
+    });
+    // Healthy enqueue path for the retry.
+    queue.enqueueStaged = realEnqueueStaged;
+    const second = new ReminderInboxSubscriber(queue, service);
+    second.start();
+    try {
+      await waitFor(async () => {
+        const item = (await queue.list()).find((i) => i.id === eventId);
+        const after = await service.findReminder(rem.reminderId);
+        return after?.firedCount === 1 && Boolean(item && !item.handling.stagedAt);
+      }, { description: 'retry reuses fire:1 and publishes claimable wake', timeoutMs: 5_000 });
+    } finally {
+      await second.stop();
+    }
+
+    const claimed = await queue.takeNextRunnable({
+      isWorkerAlive: () => true,
+      workerId: 'retry-worker',
+    });
+    assert.ok(claimed);
+    assert.equal(claimed.id, eventId);
+    assert.equal((await service.findReminder(rem.reminderId))?.firedCount, 1);
+  });
+});
+
+test('committed then cancelled still publishes staged wake on reconcile', async () => {
+  await withAgentHome(async (_home, agentId) => {
+    const service = reminderServiceForAgent(agentId);
+    const queue = new WakeQueueService(agentId);
+    const rem = await service.scheduleReminder({
+      fireAt: '2020-09-01T00:00:00.000Z',
+      instructions: 'commit-then-cancel',
+      now: new Date(),
+      preflight: { command: 'exit 0' },
+      title: 'commit-cancel',
+    });
+    // CAS applies; publish fails so staged+committed remains.
+    queue.publishQueued = async () => false;
+    const first = new ReminderInboxSubscriber(queue, service);
+    first.start();
+    await waitFor(async () => {
+      const live = await service.findReminder(rem.reminderId);
+      const item = (await queue.list()).find((i) => i.kind === 'reminder' && i.reminderId === rem.reminderId);
+      return live?.firedCount === 1 && Boolean(item?.handling.stagedAt);
+    }, { description: 'committed staged wake after publish miss', timeoutMs: 5_000 });
+    await first.stop();
+
+    // Cancel after commit, before restart reconcile.
+    await service.cancelReminder({ id: rem.reminderId });
+    assert.equal((await service.findReminder(rem.reminderId))?.status, 'cancelled');
+    assert.equal((await service.findReminder(rem.reminderId))?.firedCount, 1);
+
+    const { stagedReminderWakeAction } = await import('../inbox/reminder-subscriber.js');
+    const cancelled = await service.findReminder(rem.reminderId);
+    assert.equal(
+      stagedReminderWakeAction({
+        fireIndex: 1,
+        nowMs: Date.now(),
+        reminder: cancelled,
+      }),
+      'publish',
+    );
+
+    const queue2 = new WakeQueueService(agentId);
+    const second = new ReminderInboxSubscriber(queue2, service);
+    second.start();
+    try {
+      await waitFor(async () => {
+        const item = (await queue2.list()).find(
+          (i) => i.kind === 'reminder' && i.reminderId === rem.reminderId,
+        );
+        return Boolean(item && !item.handling.stagedAt && item.handling.status === 'queued');
+      }, { description: 'reconcile publishes committed wake despite cancel', timeoutMs: 5_000 });
+    } finally {
+      await second.stop();
+    }
+    const claimed = await queue2.takeNextRunnable({
+      isWorkerAlive: () => true,
+      workerId: 'commit-cancel-worker',
     });
     assert.ok(claimed);
     assert.equal((claimed as { reminderId: string }).reminderId, rem.reminderId);

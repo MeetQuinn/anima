@@ -191,7 +191,7 @@ export class WakeQueueStore {
   /**
    * Remove an unclaimed queued item and record it as seen. Used to compensate
    * an enqueue that later turns out to be a duplicate (legacy ledger horizon).
-   * Also withdraws staged (unpublished) rows. Returns undefined when absent or claimed.
+   * Returns undefined when the item is absent or already claimed.
    */
   async withdrawQueued(itemId: string): Promise<InboxItem | undefined> {
     let withdrawn: InboxItem | undefined;
@@ -204,6 +204,30 @@ export class WakeQueueStore {
       return { items, seen: withSeenMarker(current.seen, item, nowIso()) };
     });
     return withdrawn;
+  }
+
+  /**
+   * Drop an uncommitted staged row without a seen tombstone so the same fire id
+   * can be staged again after cancel/snooze. No-op if missing, published, or claimed.
+   */
+  async abandonStaged(itemId: string): Promise<InboxItem | undefined> {
+    let abandoned: InboxItem | undefined;
+    await this.update((current) => {
+      const item = current.items[itemId];
+      if (
+        !item
+        || item.handling.status !== 'queued'
+        || item.handling.workerId
+        || !item.handling.stagedAt
+      ) {
+        return current;
+      }
+      abandoned = item;
+      const items = { ...current.items };
+      delete items[itemId];
+      return { items, seen: current.seen };
+    });
+    return abandoned;
   }
 
   async replaceItem(item: InboxItem): Promise<InboxItem> {

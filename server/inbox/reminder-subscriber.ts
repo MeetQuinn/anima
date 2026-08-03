@@ -105,8 +105,8 @@ export class ReminderInboxSubscriber {
 
   /**
    * Durable outbox for staged reminder wakes:
-   * - committed (reminder.firedCount >= fireIndex) → publish so workers can claim
-   * - cancelled / missing / deferred uncommitted → withdraw
+   * - committed (firedCount >= fireIndex; commit wins over later cancel) → publish
+   * - missing / deferred uncommitted → abandon without seen tombstone
    * - uncommitted and still due → leave for the normal stage→CAS→publish path
    */
   private async reconcileStagedReminderWakes(now: Date): Promise<void> {
@@ -130,10 +130,10 @@ export class ReminderInboxSubscriber {
         );
         continue;
       }
-      if (action === 'withdraw') {
-        const withdrawn = await this.queue.withdrawQueued(item.id);
+      if (action === 'abandon') {
+        const abandoned = await this.queue.abandonStaged(item.id);
         console.log(
-          `reminder staged wake reconciled withdraw reminderId=${item.reminderId} eventId=${item.id} withdrawn=${Boolean(withdrawn)}`,
+          `reminder staged wake reconciled abandon reminderId=${item.reminderId} eventId=${item.id} abandoned=${Boolean(abandoned)}`,
         );
       }
       // leave: uncommitted and still due — due path finishes CAS + publish
@@ -284,9 +284,9 @@ export class ReminderInboxSubscriber {
       preflightResult: result,
     });
     if (!transition.applied) {
-      const withdrawn = await this.queue.withdrawQueued(event.id);
+      const abandoned = await this.queue.abandonStaged(event.id);
       console.log(
-        `reminder preflight discarded after staged enqueue reminderId=${reminder.reminderId} withdrawn=${Boolean(withdrawn)}`,
+        `reminder preflight discarded after staged enqueue reminderId=${reminder.reminderId} abandoned=${Boolean(abandoned)}`,
       );
       return;
     }
@@ -395,7 +395,7 @@ export class ReminderInboxSubscriber {
       now: firedAt,
     });
     if (!transition.applied) {
-      await this.queue.withdrawQueued(event.id);
+      await this.queue.abandonStaged(event.id);
       return;
     }
     await this.queue.publishQueued(event.id);
@@ -472,11 +472,12 @@ export function reminderFireIndexFromEventId(eventId: string): number | undefine
   return Number.isInteger(index) && index > 0 ? index : undefined;
 }
 
-export type StagedReminderWakeAction = 'publish' | 'withdraw' | 'leave';
+export type StagedReminderWakeAction = 'publish' | 'abandon' | 'leave';
 
 /**
  * Classify a staged reminder wake against durable reminder state.
- * Committed = fire index already counted on the reminder (CAS applied).
+ * Commit ordinal (`firedCount >= fireIndex`) is authoritative even if the
+ * reminder was cancelled after CAS — publish that wake.
  */
 export function stagedReminderWakeAction(input: {
   fireIndex: number;
@@ -484,13 +485,14 @@ export function stagedReminderWakeAction(input: {
   reminder: Reminder | undefined;
 }): StagedReminderWakeAction {
   const { fireIndex, nowMs, reminder } = input;
-  if (!reminder || reminder.status === 'cancelled') return 'withdraw';
-  // CAS applied for this fire (or a later one): publish the staged wake.
+  if (!reminder) return 'abandon';
+  // Committed ordinal wins over a later cancel/snooze.
   if (reminder.firedCount >= fireIndex) return 'publish';
-  // Uncommitted stage. If the reminder is no longer due for this attempt, drop it.
-  if (reminder.status !== 'scheduled') return 'withdraw';
+  // Uncommitted: drop without tombstone when no longer an active due attempt.
+  if (reminder.status === 'cancelled') return 'abandon';
+  if (reminder.status !== 'scheduled') return 'abandon';
   if (reminder.nextDueAt !== undefined && Date.parse(reminder.nextDueAt) > nowMs) {
-    return 'withdraw';
+    return 'abandon';
   }
   // Still due and uncommitted — normal path will finish stage→CAS→publish.
   return 'leave';
