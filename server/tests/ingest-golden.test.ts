@@ -18,6 +18,7 @@ import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { SubscriptionStore } from '../storage/schema/subscription.store.js';
 import { slackMessageContentForText } from '../tools/slack-message-format.js';
 import { withAnimaHome } from './anima-home.js';
+import { waitFor } from './helpers/harness.js';
 import { allActivities, loadState } from './helpers/state.js';
 
 const AGENT_ID = 'scout';
@@ -29,6 +30,7 @@ interface CapturedIngest {
   log: unknown;
   outcome: 'queued' | 'suppressed';
   queuedItem?: unknown;
+  subscriptionAddPayloads: unknown[];
 }
 
 test('Slack wake ingest decision matrix golden logs, queue outcomes, and attention records', async () => {
@@ -39,6 +41,7 @@ test('Slack wake ingest decision matrix golden logs, queue outcomes, and attenti
     expectedOutcome: CapturedIngest['outcome'];
     prepare?(queue: WakeQueueService): Promise<void>;
     expectedActivityPayloads?: unknown[];
+    expectedSubscriptionAddPayloads?: unknown[];
     expectedApiCalls?: string[];
   }> = [{
     name: 'bot-authored explicit mention wakes',
@@ -73,6 +76,11 @@ test('Slack wake ingest decision matrix golden logs, queue outcomes, and attenti
       },
     },
     expectedOutcome: 'queued',
+    expectedSubscriptionAddPayloads: [{
+      channelId: 'C-team',
+      channelName: 'team',
+      kind: 'thread',
+    }],
   }, {
     name: 'bot-authored broadcast mentions do not bypass passive suppression',
     event: slackEvent({
@@ -266,6 +274,11 @@ test('Slack wake ingest decision matrix golden logs, queue outcomes, and attenti
       },
     },
     expectedOutcome: 'queued',
+    expectedSubscriptionAddPayloads: [{
+      channelId: 'C-team',
+      channelName: 'team',
+      kind: 'thread',
+    }],
   }];
 
   for (const item of cases) {
@@ -281,6 +294,11 @@ test('Slack wake ingest decision matrix golden logs, queue outcomes, and attenti
       assert.deepEqual(result.log, item.expectedLog, item.name);
       assert.equal(result.outcome, item.expectedOutcome, item.name);
       assert.deepEqual(result.activities.map((activity) => (activity as { payload?: unknown }).payload), item.expectedActivityPayloads ?? [], item.name);
+      assert.deepEqual(
+        result.subscriptionAddPayloads,
+        item.expectedSubscriptionAddPayloads ?? [],
+        item.name,
+      );
       if (item.expectedApiCalls) assert.deepEqual(result.apiCalls, item.expectedApiCalls, item.name);
       if (item.name === 'bot long blocks trailing mention wakes without app_mention') {
         const queued = result.queuedItem as SlackInboxItem | undefined;
@@ -528,6 +546,7 @@ async function captureSlackIngest(
   const logs: string[] = [];
   const calls: string[] = [];
   const originalLog = console.log;
+  const subscriptionAddsBefore = (await subscriptionAddActivities()).length;
   try {
     console.log = (...args: unknown[]) => {
       logs.push(args.map(String).join(' '));
@@ -550,12 +569,19 @@ async function captureSlackIngest(
   }
   const queued = await queue.list();
   const log = parseSingleJsonLog(logs);
+  // Production fire-and-forgets anima.subscription.add on mention follow; own that
+  // write before temp-home cleanup so activity.jsonl cannot race rmdir.
+  await settleMentionSubscriptionAdd(log, subscriptionAddsBefore);
+  const subscriptionAddPayloads = (await subscriptionAddActivities())
+    .slice(subscriptionAddsBefore)
+    .map((activity) => (activity as { payload?: unknown }).payload);
   return {
     activities: await attentionActivities(),
     apiCalls: calls,
     log,
     outcome: isQueuedLog(log) ? 'queued' : 'suppressed',
     queuedItem: queued.find((item) => item.id.endsWith(`:${event.ts}`)),
+    subscriptionAddPayloads,
   };
 }
 
@@ -593,11 +619,30 @@ async function captureFeishuIngest(
     log,
     outcome: isQueuedLog(log) ? 'queued' : 'suppressed',
     queuedItem: queued.find((item) => item.id === expectedId),
+    subscriptionAddPayloads: [],
   };
 }
 
 async function attentionActivities(): Promise<unknown[]> {
   return allActivities(await loadState()).filter((activity) => activity.type === 'anima.attention.suggestion');
+}
+
+async function subscriptionAddActivities(): Promise<unknown[]> {
+  return allActivities(await loadState()).filter((activity) => activity.type === 'anima.subscription.add');
+}
+
+/** Await production's fire-and-forget subscription.add when this event should have written one. */
+async function settleMentionSubscriptionAdd(log: unknown, previousCount: number): Promise<void> {
+  if (!log || typeof log !== 'object') return;
+  const row = log as { duplicate?: unknown; queued?: unknown; reason?: unknown };
+  if (row.reason !== 'mention' || row.duplicate === true || row.queued !== true) return;
+  await waitFor(
+    async () => (await subscriptionAddActivities()).length > previousCount,
+    {
+      description: 'anima.subscription.add activity from mention follow',
+      timeoutMs: 2_000,
+    },
+  );
 }
 
 function parseSingleJsonLog(logs: string[]): unknown {
