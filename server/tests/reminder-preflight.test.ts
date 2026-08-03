@@ -776,6 +776,198 @@ test('successful preflight publishes staged wake so workers can claim', async ()
   });
 });
 
+test('stagedReminderWakeAction distinguishes committed vs uncommitted stages', async () => {
+  const { stagedReminderWakeAction } = await import('../inbox/reminder-subscriber.js');
+  const nowMs = Date.parse('2026-08-03T12:00:00.000Z');
+  const base = {
+    createdAt: '2026-08-03T00:00:00.000Z',
+    firedCount: 0,
+    instructions: 'x',
+    reminderId: 'rem_x',
+    schedule: { kind: 'once' as const },
+    status: 'scheduled' as const,
+    title: 't',
+    updatedAt: '2026-08-03T00:00:00.000Z',
+  };
+  assert.equal(
+    stagedReminderWakeAction({ fireIndex: 1, nowMs, reminder: undefined }),
+    'withdraw',
+  );
+  assert.equal(
+    stagedReminderWakeAction({
+      fireIndex: 1,
+      nowMs,
+      reminder: { ...base, status: 'cancelled', cancelledAt: base.updatedAt },
+    }),
+    'withdraw',
+  );
+  // Uncommitted, still due
+  assert.equal(
+    stagedReminderWakeAction({
+      fireIndex: 1,
+      nowMs,
+      reminder: { ...base, nextDueAt: '2020-01-01T00:00:00.000Z' },
+    }),
+    'leave',
+  );
+  // Uncommitted, deferred (snooze)
+  assert.equal(
+    stagedReminderWakeAction({
+      fireIndex: 1,
+      nowMs,
+      reminder: { ...base, nextDueAt: '2030-01-01T00:00:00.000Z' },
+    }),
+    'withdraw',
+  );
+  // Committed: CAS counted this fire
+  assert.equal(
+    stagedReminderWakeAction({
+      fireIndex: 1,
+      nowMs,
+      reminder: {
+        ...base,
+        firedCount: 1,
+        lastFiredAt: '2026-08-03T11:00:00.000Z',
+        status: 'fired',
+      },
+    }),
+    'publish',
+  );
+  // Interval committed: scheduled ahead with firedCount >= index
+  assert.equal(
+    stagedReminderWakeAction({
+      fireIndex: 1,
+      nowMs,
+      reminder: {
+        ...base,
+        firedCount: 1,
+        nextDueAt: '2026-08-03T13:00:00.000Z',
+        schedule: { kind: 'interval', intervalMs: 3_600_000, repeatRule: 'every:1h' },
+        status: 'scheduled',
+      },
+    }),
+    'publish',
+  );
+});
+
+test('restart after publish miss publishes committed staged wake', async () => {
+  await withAgentHome(async (_home, agentId) => {
+    const service = reminderServiceForAgent(agentId);
+    const queue = new WakeQueueService(agentId);
+    const rem = await service.scheduleReminder({
+      fireAt: '2020-06-01T00:00:00.000Z',
+      instructions: 'crash-after-cas',
+      now: new Date(),
+      preflight: { command: 'exit 0' },
+      title: 'publish-miss',
+    });
+    // First subscriber: CAS succeeds, publish always fails (durable staged remains).
+    queue.publishQueued = async () => false;
+    const first = new ReminderInboxSubscriber(queue, service);
+    first.start();
+    await waitFor(async () => {
+      const live = await service.findReminder(rem.reminderId);
+      const item = (await queue.list()).find(
+        (i) => i.kind === 'reminder' && i.reminderId === rem.reminderId,
+      );
+      return live?.firedCount === 1 && Boolean(item?.handling.stagedAt);
+    }, { description: 'CAS applied with staged unpublished wake', timeoutMs: 5_000 });
+    await first.stop();
+
+    // Reminder no longer due; staged row still blocked from claim without reconcile.
+    assert.equal((await service.findReminder(rem.reminderId))?.status, 'fired');
+    assert.equal(
+      await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'w0' }),
+      undefined,
+    );
+
+    // Fresh queue/subscriber over the same stores (restart).
+    const queue2 = new WakeQueueService(agentId);
+    const second = new ReminderInboxSubscriber(queue2, service);
+    second.start();
+    try {
+      await waitFor(async () => {
+        const item = (await queue2.list()).find(
+          (i) => i.kind === 'reminder' && i.reminderId === rem.reminderId,
+        );
+        return Boolean(item && !item.handling.stagedAt && item.handling.status === 'queued');
+      }, { description: 'reconcile published staged wake after restart', timeoutMs: 5_000 });
+    } finally {
+      await second.stop();
+    }
+    const claimed = await queue2.takeNextRunnable({
+      isWorkerAlive: () => true,
+      workerId: 'worker-restart',
+    });
+    assert.ok(claimed);
+    assert.equal((claimed as { reminderId: string }).reminderId, rem.reminderId);
+    assert.equal(claimed.handling.status, 'running');
+    assert.equal((await service.findReminder(rem.reminderId))?.firedCount, 1);
+  });
+});
+
+test('restart after stage before CAS finishes via due path (uncommitted leave)', async () => {
+  await withAgentHome(async (_home, agentId) => {
+    const service = reminderServiceForAgent(agentId);
+    const queue = new WakeQueueService(agentId);
+    // Legacy path (no preflight) also uses stage→CAS→publish.
+    const rem = await service.scheduleReminder({
+      fireAt: '2020-07-01T00:00:00.000Z',
+      instructions: 'crash-before-cas',
+      now: new Date(),
+      title: 'stage-only',
+    });
+    const originalDue = rem.nextDueAt;
+    // Crash window: stage succeeds, CAS never applies.
+    service.completeReminderFire = async () => {
+      throw new Error('synthetic crash before CAS commit');
+    };
+    const first = new ReminderInboxSubscriber(queue, service);
+    first.start();
+    await waitFor(async () => {
+      const item = (await queue.list()).find(
+        (i) => i.kind === 'reminder' && i.reminderId === rem.reminderId,
+      );
+      const live = await service.findReminder(rem.reminderId);
+      return Boolean(item?.handling.stagedAt) && live?.firedCount === 0 && live?.status === 'scheduled';
+    }, { description: 'staged uncommitted wake after crash before CAS', timeoutMs: 5_000 });
+    await first.stop();
+
+    assert.equal((await service.findReminder(rem.reminderId))?.nextDueAt, originalDue);
+    assert.equal(
+      await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'w0' }),
+      undefined,
+      'uncommitted staged must not be claimable',
+    );
+
+    // Restart with healthy service methods (new ReminderService, same store).
+    const service2 = reminderServiceForAgent(agentId);
+    const queue2 = new WakeQueueService(agentId);
+    const second = new ReminderInboxSubscriber(queue2, service2);
+    second.start();
+    try {
+      await waitFor(async () => {
+        const item = (await queue2.list()).find(
+          (i) => i.kind === 'reminder' && i.reminderId === rem.reminderId,
+        );
+        const live = await service2.findReminder(rem.reminderId);
+        return (
+          live?.firedCount === 1
+          && Boolean(item && !item.handling.stagedAt && item.handling.status === 'queued')
+        );
+      }, { description: 'due path reuses staged row and publishes after restart', timeoutMs: 5_000 });
+    } finally {
+      await second.stop();
+    }
+    const claimed = await queue2.takeNextRunnable({
+      isWorkerAlive: () => true,
+      workerId: 'worker-retry',
+    });
+    assert.ok(claimed);
+    assert.equal((claimed as { reminderId: string }).reminderId, rem.reminderId);
+  });
+});
+
 async function realpathSafe(path: string): Promise<string> {
   const { realpath } = await import('node:fs/promises');
   try {
