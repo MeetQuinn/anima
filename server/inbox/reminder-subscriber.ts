@@ -6,9 +6,11 @@ import { reminderServiceForAgent, type ReminderService } from '../reminders/remi
 import {
   classifyPreflightAttentionKey,
   endPreflight,
+  killAllRunningPreflights,
   preflightEvidenceForWake,
   runPreflightCommand,
   tryBeginPreflight,
+  type PreflightLastResult,
 } from '../reminders/preflight.js';
 import type { Reminder } from '../../shared/reminder.js';
 import type { ReminderInboxItem } from '../../shared/inbox.js';
@@ -16,11 +18,19 @@ import { WakeQueueService } from './wake-queue.service.js';
 
 const REMINDER_POLL_MS = 30_000;
 /** Throttle repeated identical preflight-error attention to once per hour. */
-const PREFLIGHT_ERROR_ATTENTION_THROTTLE_MS = 60 * 60 * 1000;
+export const PREFLIGHT_ERROR_ATTENTION_THROTTLE_MS = 60 * 60 * 1000;
+
+interface ManagedPreflightJob {
+  abort: AbortController;
+  promise: Promise<void>;
+  reminderId: string;
+}
 
 export class ReminderInboxSubscriber {
   private poll?: Promise<void>;
+  private readonly jobs = new Map<string, ManagedPreflightJob>();
   private readonly reminderService: ReminderService;
+  private stopping = false;
   private timer?: NodeJS.Timeout;
 
   constructor(
@@ -31,14 +41,22 @@ export class ReminderInboxSubscriber {
   }
 
   start(): void {
+    this.stopping = false;
     this.timer = setInterval(() => void this.pollDueReminders(), REMINDER_POLL_MS);
     this.timer.unref();
     void this.pollDueReminders();
   }
 
   async stop(): Promise<void> {
+    this.stopping = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
+    // Abort and kill every in-flight preflight process group, then await cleanup.
+    for (const job of this.jobs.values()) {
+      job.abort.abort();
+    }
+    killAllRunningPreflights();
+    await Promise.allSettled([...this.jobs.values()].map((job) => job.promise));
     await (this.poll ?? Promise.resolve());
   }
 
@@ -55,97 +73,211 @@ export class ReminderInboxSubscriber {
   }
 
   private async fireDueReminders(): Promise<void> {
-    const firedAt = new Date();
-    for (const reminder of await this.reminderService.dueReminders({ now: firedAt })) {
-      await this.fireReminder(reminder, firedAt);
+    if (this.stopping) return;
+    const polledAt = new Date();
+    for (const reminder of await this.reminderService.dueReminders({ now: polledAt })) {
+      if (this.stopping) return;
+      if (reminder.preflight) {
+        // Do not await long commands — track as managed job so poll can continue.
+        // Clone snapshot: store updates mutate shared object refs from JsonStore cache.
+        this.startPreflightJob(cloneReminder(reminder));
+        continue;
+      }
+      await this.enqueueAndComplete(reminder, polledAt);
     }
   }
 
-  private async fireReminder(reminder: Reminder, firedAt: Date): Promise<void> {
-    if (reminder.preflight) {
-      await this.fireReminderWithPreflight(reminder, firedAt);
-      return;
-    }
-    await this.enqueueAndComplete(reminder, firedAt);
-  }
-
-  private async fireReminderWithPreflight(reminder: Reminder, firedAt: Date): Promise<void> {
-    // Forbid concurrent preflight for the same reminder; skip this tick (no catch-up).
-    if (!tryBeginPreflight(reminder.reminderId)) {
+  private startPreflightJob(reminder: Reminder): void {
+    if (this.jobs.has(reminder.reminderId)) {
       console.log(
-        `reminder preflight skipped overlap reminderId=${reminder.reminderId} firedAt=${firedAt.toISOString()}`,
+        `reminder preflight skipped overlap reminderId=${reminder.reminderId}`,
       );
       return;
     }
+
+    const abort = new AbortController();
+    if (!tryBeginPreflight(reminder.reminderId, () => abort.abort())) {
+      console.log(
+        `reminder preflight skipped overlap reminderId=${reminder.reminderId}`,
+      );
+      return;
+    }
+
+    const promise = this.runPreflightJob(reminder, abort)
+      .catch((error: unknown) => {
+        console.error(
+          `reminder preflight job failed reminderId=${reminder.reminderId}: ${errorMessage(error)}`,
+        );
+      })
+      .finally(() => {
+        endPreflight(reminder.reminderId);
+        this.jobs.delete(reminder.reminderId);
+      });
+
+    this.jobs.set(reminder.reminderId, {
+      abort,
+      promise,
+      reminderId: reminder.reminderId,
+    });
+  }
+
+  private async runPreflightJob(
+    snapshot: Reminder,
+    abort: AbortController,
+  ): Promise<void> {
+    const startedAt = new Date();
+    const scheduledAt = snapshot.nextDueAt ?? startedAt.toISOString();
+    const preflightConfig = snapshot.preflight;
+    if (!preflightConfig) return;
+
+    const agentHome = await resolveAgentHomeForPreflight(this.queue.agentId);
+
+    const { aborted, result } = await runPreflightCommand({
+      abortSignal: abort.signal,
+      command: preflightConfig.command,
+      cwd: agentHome,
+      now: startedAt,
+      scheduledAt,
+      ...(preflightConfig.timeoutMs !== undefined ? { timeoutMs: preflightConfig.timeoutMs } : {}),
+    });
+
+    if (aborted || this.stopping || !result) {
+      console.log(
+        `reminder preflight discarded aborted reminderId=${snapshot.reminderId}`,
+      );
+      return;
+    }
+
+    const completedAt = new Date();
+    // Re-check live record: cancel/snooze/config change must discard stale result.
+    const live = await this.reminderService.findReminder(snapshot.reminderId);
+    const liveStatus = live?.status ?? 'missing';
+    if (!isPreflightResultStillValid(snapshot, live)) {
+      console.log(
+        `reminder preflight discarded stale reminderId=${snapshot.reminderId} status=${liveStatus}`,
+      );
+      return;
+    }
+
+    if (result.status === 'succeeded') {
+      await this.commitSucceededPreflight(live, result, completedAt, scheduledAt);
+      return;
+    }
+    if (result.status === 'declined') {
+      await this.commitDeclinedPreflight(live, result, completedAt);
+      return;
+    }
+    await this.commitErroredPreflight(live, result, completedAt);
+  }
+
+  private async commitSucceededPreflight(
+    reminder: Reminder,
+    result: PreflightLastResult,
+    completedAt: Date,
+    scheduledAt: string,
+  ): Promise<void> {
+    const hadError = Boolean(reminder.preflightError);
+    // Durable enqueue BEFORE schedule advance / fire count (legacy crash ordering).
+    const receivedAt = completedAt.toISOString();
+    const event: ReminderInboxItem = {
+      id: `reminder:${reminder.reminderId}:fire:${reminder.firedCount + 1}`,
+      kind: 'reminder',
+      receivedAt,
+      handling: {
+        createdAt: receivedAt,
+        queuedAt: receivedAt,
+        status: 'queued',
+        updatedAt: receivedAt,
+      },
+      reminderId: reminder.reminderId,
+      scheduledAt,
+      ...(preflightEvidenceForWake(result)
+        ? { preflightEvidence: preflightEvidenceForWake(result) }
+        : {}),
+      title: reminder.title,
+    };
+
+    let decision;
     try {
-      const agentHome = await resolveAgentHomeForPreflight(this.queue.agentId);
-      const scheduledAt = reminder.nextDueAt ?? firedAt.toISOString();
-      const { result } = await runPreflightCommand({
-        command: reminder.preflight!.command,
-        cwd: agentHome,
-        now: firedAt,
-        scheduledAt,
-        ...(reminder.preflight!.timeoutMs !== undefined
-          ? { timeoutMs: reminder.preflight!.timeoutMs }
-          : {}),
-      });
-
-      if (result.status === 'succeeded') {
-        const hadError = Boolean(reminder.preflightError);
-        const scheduledAt = reminder.nextDueAt;
-        const firedReminder = await this.reminderService.completeReminderFire({
-          clearPreflightError: hadError,
-          id: reminder.reminderId,
-          now: firedAt,
-          preflightResult: result,
-        });
-        if (hadError) await this.recordPreflightRecovery(reminder, result.status);
-        await this.enqueueWakeOnly(
-          firedReminder,
-          firedAt,
-          scheduledAt,
-          preflightEvidenceForWake(result),
-        );
-        return;
-      }
-
-      if (result.status === 'declined') {
-        const hadError = Boolean(reminder.preflightError);
-        await this.reminderService.completeReminderFire({
-          clearPreflightError: hadError,
-          id: reminder.reminderId,
-          now: firedAt,
-          preflightResult: result,
-        });
-        if (hadError) await this.recordPreflightRecovery(reminder, result.status);
-        console.log(
-          `reminder preflight declined reminderId=${reminder.reminderId} exit=1 firedAt=${firedAt.toISOString()}`,
-        );
-        return;
-      }
-
-      // errored: advance schedule, no agent wake, persistent attention state
-      const attentionKey = classifyPreflightAttentionKey(reminder.reminderId, result);
-      const shouldNotify = shouldNotifyPreflightError(reminder, attentionKey, firedAt);
-      await this.reminderService.completeReminderFire({
-        id: reminder.reminderId,
-        now: firedAt,
-        preflightResult: result,
-        setPreflightError: {
-          attentionKey,
-          ...(shouldNotify ? { lastNotifiedAt: firedAt.toISOString() } : {}),
-          since: reminder.preflightError?.since ?? firedAt.toISOString(),
-        },
-      });
-      if (shouldNotify) {
-        await this.recordPreflightErrorAttention(reminder, result);
-      }
-      console.log(
-        `reminder preflight errored reminderId=${reminder.reminderId} exit=${result.exitCode ?? '-'} timedOut=${Boolean(result.timedOut)} firedAt=${firedAt.toISOString()}`,
+      decision = await this.queue.enqueue(event);
+    } catch (error) {
+      // Leave reminder scheduled with original nextDueAt so the wake is not lost.
+      console.error(
+        `reminder preflight enqueue failed reminderId=${reminder.reminderId}: ${errorMessage(error)}`,
       );
-    } finally {
-      endPreflight(reminder.reminderId);
+      return;
     }
+
+    // Re-check again after enqueue async boundary before mutating fire counters.
+    const live = await this.reminderService.findReminder(reminder.reminderId);
+    if (!isPreflightResultStillValid(reminder, live)) {
+      console.log(
+        `reminder preflight discarded after enqueue reminderId=${reminder.reminderId}`,
+      );
+      return;
+    }
+
+    const firedReminder = await this.reminderService.completeReminderFire({
+      clearPreflightError: hadError,
+      id: reminder.reminderId,
+      now: completedAt,
+      preflightResult: result,
+    });
+    if (hadError) await this.recordPreflightRecovery(reminder, result.status);
+    if (!decision.duplicate) {
+      await this.reminderService.recordReminderFire({
+        firedAt: completedAt,
+        reminder: firedReminder,
+      });
+    }
+    console.log(
+      `reminder fired reminderId=${firedReminder.reminderId} eventId=${event.id} duplicate=${Boolean(decision.duplicate)} queued=${Boolean(decision.queued)} firedAt=${completedAt.toISOString()} preflight=succeeded`,
+    );
+  }
+
+  private async commitDeclinedPreflight(
+    reminder: Reminder,
+    result: PreflightLastResult,
+    completedAt: Date,
+  ): Promise<void> {
+    const hadError = Boolean(reminder.preflightError);
+    await this.reminderService.recordPreflightCheck({
+      clearPreflightError: hadError,
+      id: reminder.reminderId,
+      now: completedAt,
+      preflightResult: result,
+    });
+    if (hadError) await this.recordPreflightRecovery(reminder, result.status);
+    console.log(
+      `reminder preflight declined reminderId=${reminder.reminderId} exit=1 completedAt=${completedAt.toISOString()}`,
+    );
+  }
+
+  private async commitErroredPreflight(
+    reminder: Reminder,
+    result: PreflightLastResult,
+    completedAt: Date,
+  ): Promise<void> {
+    const attentionKey = classifyPreflightAttentionKey(reminder.reminderId, result);
+    const shouldNotify = shouldNotifyPreflightError(reminder, attentionKey, completedAt);
+    await this.reminderService.recordPreflightCheck({
+      id: reminder.reminderId,
+      now: completedAt,
+      preflightResult: result,
+      setPreflightError: {
+        attentionKey,
+        // Only set lastNotifiedAt when we actually notify; otherwise service
+        // preserves the previous timestamp (throttle must not erase it).
+        ...(shouldNotify ? { lastNotifiedAt: completedAt.toISOString() } : {}),
+        since: reminder.preflightError?.since ?? completedAt.toISOString(),
+      },
+    });
+    if (shouldNotify) {
+      await this.recordPreflightErrorAttention(reminder, result);
+    }
+    console.log(
+      `reminder preflight errored reminderId=${reminder.reminderId} exit=${result.exitCode ?? '-'} timedOut=${Boolean(result.timedOut)} completedAt=${completedAt.toISOString()} notified=${shouldNotify}`,
+    );
   }
 
   /** Classic path: enqueue wake then complete fire (original ordering). */
@@ -178,41 +310,6 @@ export class ReminderInboxSubscriber {
     }
     console.log(
       `reminder fired reminderId=${reminder.reminderId} eventId=${event.id} duplicate=${Boolean(decision.duplicate)} queued=${Boolean(decision.queued)} firedAt=${firedAt.toISOString()}`,
-    );
-  }
-
-  /** Preflight already completed the fire; only enqueue the agent wake. */
-  private async enqueueWakeOnly(
-    firedReminder: Reminder,
-    firedAt: Date,
-    scheduledAt: string | undefined,
-    preflightEvidence?: string,
-  ): Promise<void> {
-    const receivedAt = firedAt.toISOString();
-    const event: ReminderInboxItem = {
-      id: `reminder:${firedReminder.reminderId}:fire:${firedReminder.firedCount}`,
-      kind: 'reminder',
-      receivedAt,
-      handling: {
-        createdAt: receivedAt,
-        queuedAt: receivedAt,
-        status: 'queued',
-        updatedAt: receivedAt,
-      },
-      reminderId: firedReminder.reminderId,
-      ...(scheduledAt ? { scheduledAt } : {}),
-      ...(preflightEvidence ? { preflightEvidence } : {}),
-      title: firedReminder.title,
-    };
-    const decision = await this.queue.enqueue(event);
-    if (!decision.duplicate) {
-      await this.reminderService.recordReminderFire({
-        firedAt,
-        reminder: firedReminder,
-      });
-    }
-    console.log(
-      `reminder fired reminderId=${firedReminder.reminderId} eventId=${event.id} duplicate=${Boolean(decision.duplicate)} queued=${Boolean(decision.queued)} firedAt=${firedAt.toISOString()} preflight=succeeded`,
     );
   }
 
@@ -257,7 +354,32 @@ export class ReminderInboxSubscriber {
   }
 }
 
-function shouldNotifyPreflightError(
+function samePreflightConfig(
+  a: Reminder['preflight'] | undefined,
+  b: Reminder['preflight'] | undefined,
+): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return a.command === b.command && a.timeoutMs === b.timeoutMs;
+}
+
+function cloneReminder(reminder: Reminder): Reminder {
+  return structuredClone(reminder);
+}
+
+/** Cancel/snooze/config edits bump updatedAt and must void in-flight preflight results. */
+export function isPreflightResultStillValid(
+  snapshot: Reminder,
+  live: Reminder | undefined,
+): live is Reminder {
+  if (!live || live.status !== 'scheduled') return false;
+  if (live.updatedAt !== snapshot.updatedAt) return false;
+  if (live.nextDueAt !== snapshot.nextDueAt) return false;
+  if (!samePreflightConfig(live.preflight, snapshot.preflight)) return false;
+  return true;
+}
+
+export function shouldNotifyPreflightError(
   reminder: Reminder,
   attentionKey: string,
   now: Date,

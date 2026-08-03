@@ -163,17 +163,22 @@ export class ReminderService {
     });
   }
 
+  /**
+   * Count a real agent wake and advance schedule. Call only after a wake is
+   * durably enqueued (or for legacy non-preflight after enqueue).
+   */
   async completeReminderFire(input: {
     id: string;
     now?: Date;
-    /** When set, advances schedule after a preflight outcome (wake, decline, or error). */
     preflightResult?: ReminderPreflightLastResult;
     clearPreflightError?: boolean;
-    setPreflightError?: { attentionKey: string; since: string; lastNotifiedAt?: string };
   }): Promise<Reminder> {
     const now = input.now ?? new Date();
     const reminder = await this.store.find(input.id);
     if (!reminder) throw new Error(`Reminder not found: ${input.id}`);
+    if (reminder.status === 'cancelled') {
+      throw new Error(`Cannot complete fire on cancelled reminder: ${input.id}`);
+    }
     const firedAt = now.toISOString();
     reminder.firedCount += 1;
     reminder.lastFiredAt = firedAt;
@@ -183,28 +188,62 @@ export class ReminderService {
     if (input.clearPreflightError) {
       delete reminder.preflightError;
     }
+    this.advanceSchedule(reminder, now);
+    reminder.updatedAt = firedAt;
+    const updated = await this.store.update(reminder);
+    await this.pruneOldSettled(now);
+    return updated;
+  }
+
+  /**
+   * Persist a preflight check that did **not** wake the agent: advance schedule
+   * and last-result without incrementing firedCount / lastFiredAt.
+   */
+  async recordPreflightCheck(input: {
+    id: string;
+    now?: Date;
+    preflightResult: ReminderPreflightLastResult;
+    clearPreflightError?: boolean;
+    setPreflightError?: { attentionKey: string; since: string; lastNotifiedAt?: string };
+  }): Promise<Reminder> {
+    const now = input.now ?? new Date();
+    const reminder = await this.store.find(input.id);
+    if (!reminder) throw new Error(`Reminder not found: ${input.id}`);
+    if (reminder.status === 'cancelled') {
+      throw new Error(`Cannot record preflight check on cancelled reminder: ${input.id}`);
+    }
+    const at = now.toISOString();
+    reminder.preflightLastResult = input.preflightResult;
+    if (input.clearPreflightError) {
+      delete reminder.preflightError;
+    }
     if (input.setPreflightError) {
+      // Preserve lastNotifiedAt when the caller suppresses a repeat notification.
+      const lastNotifiedAt = input.setPreflightError.lastNotifiedAt
+        ?? reminder.preflightError?.lastNotifiedAt;
       reminder.preflightError = {
         attentionKey: input.setPreflightError.attentionKey,
         since: input.setPreflightError.since,
-        ...(input.setPreflightError.lastNotifiedAt
-          ? { lastNotifiedAt: input.setPreflightError.lastNotifiedAt }
-          : {}),
+        ...(lastNotifiedAt ? { lastNotifiedAt } : {}),
       };
     }
+    this.advanceSchedule(reminder, now);
+    reminder.updatedAt = at;
+    const updated = await this.store.update(reminder);
+    await this.pruneOldSettled(now);
+    return updated;
+  }
+
+  private advanceSchedule(reminder: Reminder, now: Date): void {
     if (reminder.schedule.kind === 'once') {
       reminder.status = 'fired';
       delete reminder.nextDueAt;
     } else {
       reminder.status = 'scheduled';
-      // Records created before phaseAnchorAt was introduced retain their
-      // original creation-time recurrence origin without rewriting the store.
+      // Advance strictly from actual completion time so long preflights do not
+      // leave nextDueAt in the past (no missed-tick catch-up).
       reminder.nextDueAt = nextDueAtForSchedule(reminder.schedule, now, reminder.createdAt);
     }
-    reminder.updatedAt = firedAt;
-    const updated = await this.store.update(reminder);
-    await this.pruneOldSettled(now);
-    return updated;
   }
 
   async recordReminderFire(input: {

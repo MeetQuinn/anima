@@ -53,6 +53,7 @@ test('preflight exit 0 = succeeded, exit 1 = declined, exit 2 = errored', async 
       cwd,
       scheduledAt: '2026-08-03T00:00:00.000Z',
     });
+    assert.ok(ok.result);
     assert.equal(ok.result.status, 'succeeded');
     assert.equal(ok.result.exitCode, 0);
 
@@ -61,6 +62,7 @@ test('preflight exit 0 = succeeded, exit 1 = declined, exit 2 = errored', async 
       cwd,
       scheduledAt: '2026-08-03T00:00:00.000Z',
     });
+    assert.ok(declined.result);
     assert.equal(declined.result.status, 'declined');
     assert.equal(declined.result.exitCode, 1);
 
@@ -69,6 +71,7 @@ test('preflight exit 0 = succeeded, exit 1 = declined, exit 2 = errored', async 
       cwd,
       scheduledAt: '2026-08-03T00:00:00.000Z',
     });
+    assert.ok(errored.result);
     assert.equal(errored.result.status, 'errored');
     assert.equal(errored.result.exitCode, 2);
   });
@@ -83,6 +86,7 @@ test('preflight cwd is exactly Agent Home', async () => {
       cwd,
       scheduledAt: '2026-08-03T00:00:00.000Z',
     });
+    assert.ok(run.result);
     assert.equal(run.result.status, 'succeeded');
     assert.match(run.result.stdout ?? '', /FOUND/);
     // pwd output should be the agent home path
@@ -103,6 +107,7 @@ test('preflight timeout kills process group and is errored', async () => {
       timeoutMs: 200,
     });
     const elapsed = Date.now() - started;
+    assert.ok(run.result);
     assert.equal(run.result.status, 'errored');
     assert.equal(run.result.timedOut, true);
     assert.ok(elapsed < 5_000, `timeout should kill quickly, took ${elapsed}ms`);
@@ -116,6 +121,7 @@ test('preflight stdout is capped with truncation marker on wake evidence', async
       cwd,
       scheduledAt: '2026-08-03T00:00:00.000Z',
     });
+    assert.ok(run.result);
     assert.equal(run.result.status, 'succeeded');
     assert.equal(run.result.stdoutTruncated, true);
     assert.ok((run.result.stdout ?? '').length <= REMINDER_BODY_MAX_CHARS);
@@ -202,6 +208,9 @@ test('end-to-end: preflight 0 wakes with evidence; 1 skips; 2 errors without que
     assert.equal(afterSkip?.preflightLastResult?.status, 'declined');
     assert.equal((await queue.list()).length, beforeSkip);
     assert.equal(afterSkip?.preflightError, undefined);
+    // Declined check must not count as a fire.
+    assert.equal(afterSkip?.firedCount, 0);
+    assert.equal(afterSkip?.lastFiredAt, undefined);
 
     // exit 2: error state, no queue
     const err = await service.scheduleReminder({
@@ -226,6 +235,8 @@ test('end-to-end: preflight 0 wakes with evidence; 1 skips; 2 errors without que
     assert.equal(afterErr?.preflightLastResult?.exitCode, 7);
     assert.ok(afterErr?.preflightError, 'preflight-error attention state');
     assert.equal((await queue.list()).length, beforeErr);
+    assert.equal(afterErr?.firedCount, 0, 'errored check is not a fire');
+    assert.equal(afterErr?.lastFiredAt, undefined);
 
     // red control: exit 1 must not be succeeded or errored
     assert.notEqual(afterSkip?.preflightLastResult?.status, 'succeeded');
@@ -236,10 +247,11 @@ test('end-to-end: preflight 0 wakes with evidence; 1 skips; 2 errors without que
 test('overlap Forbid: second fire while preflight runs is skipped', async () => {
   await withAgentHome(async () => {
     const id = 'rem_overlap_test';
-    assert.equal(tryBeginPreflight(id), true);
-    assert.equal(tryBeginPreflight(id), false, 'second begin must be rejected');
+    const noop = () => {};
+    assert.equal(tryBeginPreflight(id, noop), true);
+    assert.equal(tryBeginPreflight(id, noop), false, 'second begin must be rejected');
     endPreflight(id);
-    assert.equal(tryBeginPreflight(id), true);
+    assert.equal(tryBeginPreflight(id, noop), true);
     endPreflight(id);
   });
 });
@@ -285,6 +297,207 @@ test('windowed schedule still accepts preflight without schedule rewrite', async
     assert.equal(reminder.schedule.kind, 'windowed_interval');
     assert.equal(reminder.preflight?.command, 'exit 0');
     assert.equal(reminder.preflight?.timeoutMs, 60_000);
+  });
+});
+
+test('cancel/snooze mid-preflight discards stale success via updatedAt gate', async () => {
+  await withAgentHome(async (home, agentId) => {
+    const service = reminderServiceForAgent(agentId);
+    const queue = new WakeQueueService(agentId);
+    const subscriber = new ReminderInboxSubscriber(queue, service);
+    const { isPreflightResultStillValid } = await import('../inbox/reminder-subscriber.js');
+    const gate = join(home, 'preflight-release');
+
+    // Cancel case: unit validity + e2e with gate file
+    const cancelRem = await service.scheduleReminder({
+      fireAt: '2020-01-01T00:00:00.000Z',
+      instructions: 'cancel',
+      now: new Date(),
+      preflight: { command: `while [ ! -f '${gate}' ]; do sleep 0.05; done; exit 0` },
+      title: 'cancel-race',
+    });
+    subscriber.start();
+    await waitFor(async () => {
+      const { isPreflightRunning } = await import('../reminders/preflight.js');
+      return isPreflightRunning(cancelRem.reminderId);
+    }, { description: 'cancel preflight started', timeoutMs: 2_000 });
+    const cancelled = await service.cancelReminder({ id: cancelRem.reminderId });
+    assert.equal(isPreflightResultStillValid(cancelRem, cancelled), false);
+    await writeFile(gate, 'go\n');
+    await waitFor(async () => {
+      const { isPreflightRunning } = await import('../reminders/preflight.js');
+      return !isPreflightRunning(cancelRem.reminderId);
+    }, { description: 'cancel preflight finished', timeoutMs: 5_000 });
+    await subscriber.stop();
+    assert.equal((await service.findReminder(cancelRem.reminderId))?.status, 'cancelled');
+    assert.equal(
+      (await queue.list()).filter((i) => i.kind === 'reminder' && i.reminderId === cancelRem.reminderId).length,
+      0,
+    );
+    assert.equal((await service.findReminder(cancelRem.reminderId))?.firedCount, 0);
+
+    // Snooze case
+    await rm(gate, { force: true });
+    const snoozeRem = await service.scheduleReminder({
+      fireAt: '2020-01-02T00:00:00.000Z',
+      instructions: 'snooze',
+      now: new Date(),
+      preflight: { command: `while [ ! -f '${gate}' ]; do sleep 0.05; done; exit 0` },
+      repeat: 'every:1h',
+      title: 'snooze-race',
+    });
+    // Freeze snapshot as the job does (clone) so in-place store mutation cannot poison it.
+    const frozenSnap = structuredClone(snoozeRem);
+    subscriber.start();
+    await waitFor(async () => {
+      const { isPreflightRunning } = await import('../reminders/preflight.js');
+      return isPreflightRunning(snoozeRem.reminderId);
+    }, { description: 'snooze preflight started', timeoutMs: 2_000 });
+    const snoozed = await service.snoozeReminder({ by: '2h', id: snoozeRem.reminderId, now: new Date() });
+    assert.equal(isPreflightResultStillValid(frozenSnap, snoozed), false);
+    assert.notEqual(snoozed.nextDueAt, frozenSnap.nextDueAt);
+    await writeFile(gate, 'go\n');
+    await waitFor(async () => {
+      const { isPreflightRunning } = await import('../reminders/preflight.js');
+      return !isPreflightRunning(snoozeRem.reminderId);
+    }, { description: 'snooze preflight finished', timeoutMs: 5_000 });
+    await subscriber.stop();
+    const after = await service.findReminder(snoozeRem.reminderId);
+    assert.equal(after?.status, 'scheduled');
+    assert.equal(after?.firedCount, 0, 'stale success must not count a fire');
+    assert.equal(after?.nextDueAt, snoozed.nextDueAt, 'snooze nextDueAt must stick');
+    assert.equal(
+      (await queue.list()).filter((i) => i.kind === 'reminder' && i.reminderId === snoozeRem.reminderId).length,
+      0,
+    );
+  });
+});
+
+test('schedule advances from completion time (no missed-tick catch-up)', async () => {
+  await withAgentHome(async (_home, agentId) => {
+    const service = reminderServiceForAgent(agentId);
+    // Simulate long preflight: record check with completedAt far after original due.
+    const rem = await service.scheduleReminder({
+      fireAt: '2020-01-01T00:00:00.000Z',
+      instructions: 'interval',
+      now: new Date('2020-01-01T00:00:00.000Z'),
+      preflight: { command: 'exit 1' },
+      repeat: 'every:1m',
+      title: 'catchup',
+    });
+    assert.equal(rem.nextDueAt, '2020-01-01T00:00:00.000Z');
+    const completedAt = new Date('2020-01-01T00:05:00.000Z');
+    const after = await service.recordPreflightCheck({
+      id: rem.reminderId,
+      now: completedAt,
+      preflightResult: {
+        durationMs: 300_000,
+        endedAt: completedAt.toISOString(),
+        exitCode: 1,
+        scheduledAt: '2020-01-01T00:00:00.000Z',
+        startedAt: '2020-01-01T00:00:00.000Z',
+        status: 'declined',
+      },
+    });
+    // Next due must be strictly after completion (00:06), not 00:01.
+    assert.equal(after.nextDueAt, '2020-01-01T00:06:00.000Z');
+    assert.equal(after.firedCount, 0);
+  });
+});
+
+test('error attention throttle preserves lastNotifiedAt across three repeats', async () => {
+  await withAgentHome(async (_home, agentId) => {
+    const service = reminderServiceForAgent(agentId);
+    const { shouldNotifyPreflightError } = await import('../inbox/reminder-subscriber.js');
+    const rem = await service.scheduleReminder({
+      fireAt: '2020-01-01T00:00:00.000Z',
+      instructions: 'err',
+      now: new Date(),
+      preflight: { command: 'exit 9' },
+      title: 'throttle',
+    });
+    const result = {
+      durationMs: 1,
+      endedAt: '2020-01-01T00:00:01.000Z',
+      exitCode: 9,
+      scheduledAt: '2020-01-01T00:00:00.000Z',
+      startedAt: '2020-01-01T00:00:00.000Z',
+      status: 'errored' as const,
+    };
+    const { classifyPreflightAttentionKey } = await import('../reminders/preflight.js');
+    const key = classifyPreflightAttentionKey(rem.reminderId, result);
+    const t0 = new Date('2020-01-01T00:00:01.000Z');
+    const first = await service.recordPreflightCheck({
+      id: rem.reminderId,
+      now: t0,
+      preflightResult: result,
+      setPreflightError: {
+        attentionKey: key,
+        lastNotifiedAt: t0.toISOString(),
+        since: t0.toISOString(),
+      },
+    });
+    assert.equal(first.preflightError?.lastNotifiedAt, t0.toISOString());
+    assert.equal(shouldNotifyPreflightError(first, key, new Date('2020-01-01T00:10:00.000Z')), false);
+    // Suppressed write must not erase lastNotifiedAt
+    const second = await service.recordPreflightCheck({
+      id: rem.reminderId,
+      now: new Date('2020-01-01T00:10:00.000Z'),
+      preflightResult: { ...result, endedAt: '2020-01-01T00:10:00.000Z' },
+      setPreflightError: {
+        attentionKey: key,
+        since: t0.toISOString(),
+        // omit lastNotifiedAt on purpose
+      },
+    });
+    assert.equal(second.preflightError?.lastNotifiedAt, t0.toISOString());
+    assert.equal(shouldNotifyPreflightError(second, key, new Date('2020-01-01T00:20:00.000Z')), false);
+    const third = await service.recordPreflightCheck({
+      id: rem.reminderId,
+      now: new Date('2020-01-01T00:20:00.000Z'),
+      preflightResult: { ...result, endedAt: '2020-01-01T00:20:00.000Z' },
+      setPreflightError: {
+        attentionKey: key,
+        since: t0.toISOString(),
+      },
+    });
+    assert.equal(third.preflightError?.lastNotifiedAt, t0.toISOString());
+    assert.equal(shouldNotifyPreflightError(third, key, new Date('2020-01-01T00:30:00.000Z')), false);
+    // After 1h, notify again
+    assert.equal(shouldNotifyPreflightError(third, key, new Date('2020-01-01T01:01:00.000Z')), true);
+  });
+});
+
+test('queue failure before complete leaves reminder scheduled (wake not lost)', async () => {
+  await withAgentHome(async (_home, agentId) => {
+    const service = reminderServiceForAgent(agentId);
+    const queue = new WakeQueueService(agentId);
+    const retry = await service.scheduleReminder({
+      fireAt: '2020-02-01T00:00:00.000Z',
+      instructions: 'retry',
+      now: new Date(),
+      preflight: { command: 'exit 0' },
+      repeat: 'every:1h',
+      title: 'enqueue-fail',
+    });
+    const originalDue = retry.nextDueAt;
+    queue.enqueue = async () => {
+      throw new Error('synthetic enqueue failure');
+    };
+    const subscriber = new ReminderInboxSubscriber(queue, service);
+    subscriber.start();
+    // Preflight succeeds quickly; enqueue fails; job settles without complete.
+    await waitFor(async () => {
+      const { isPreflightRunning } = await import('../reminders/preflight.js');
+      return !isPreflightRunning(retry.reminderId)
+        && (await service.findReminder(retry.reminderId))?.status === 'scheduled';
+    }, { description: 'preflight job finished after enqueue failure', timeoutMs: 5_000 });
+    await subscriber.stop();
+    const after = await service.findReminder(retry.reminderId);
+    assert.equal(after?.status, 'scheduled');
+    assert.equal(after?.firedCount, 0);
+    assert.equal(after?.nextDueAt, originalDue, 'must not advance schedule when enqueue fails');
+    assert.equal(after?.preflightLastResult, undefined, 'stale success must not commit');
   });
 });
 

@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
 /** Cap shared with reminder body evidence attachment (spec: reuse body upper bound). */
@@ -25,6 +25,7 @@ export interface PreflightLastResult {
 }
 
 export interface RunPreflightInput {
+  abortSignal?: AbortSignal;
   command: string;
   cwd: string;
   now?: Date;
@@ -33,24 +34,40 @@ export interface RunPreflightInput {
 }
 
 export interface RunPreflightOutput {
-  result: PreflightLastResult;
+  aborted: boolean;
+  result?: PreflightLastResult;
 }
 
-/** In-process Forbid map: one preflight run per reminder at a time. */
-const runningPreflights = new Set<string>();
+interface ManagedPreflight {
+  kill: () => void;
+  reminderId: string;
+}
+
+/** In-process Forbid + kill handles for managed preflight jobs. */
+const runningPreflights = new Map<string, ManagedPreflight>();
 
 export function isPreflightRunning(reminderId: string): boolean {
   return runningPreflights.has(reminderId);
 }
 
-export function tryBeginPreflight(reminderId: string): boolean {
+export function tryBeginPreflight(reminderId: string, kill: () => void): boolean {
   if (runningPreflights.has(reminderId)) return false;
-  runningPreflights.add(reminderId);
+  runningPreflights.set(reminderId, { kill, reminderId });
   return true;
 }
 
 export function endPreflight(reminderId: string): void {
   runningPreflights.delete(reminderId);
+}
+
+export function killAllRunningPreflights(): void {
+  for (const job of runningPreflights.values()) {
+    try {
+      job.kill();
+    } catch {
+      // best-effort
+    }
+  }
 }
 
 /** Test-only: clear concurrency map between cases. */
@@ -79,7 +96,7 @@ export function validatePreflightCommand(command: string): string {
 
 /**
  * Run a preflight shell command with fixed CWD (Agent Home).
- * Timeout kills the entire process group. Does not inject env secrets.
+ * Timeout / abort kill the entire process group. Does not inject env secrets.
  */
 export async function runPreflightCommand(input: RunPreflightInput): Promise<RunPreflightOutput> {
   const command = validatePreflightCommand(input.command);
@@ -88,7 +105,15 @@ export async function runPreflightCommand(input: RunPreflightInput): Promise<Run
   const startedAt = now.toISOString();
   const startedMs = now.getTime();
 
+  if (input.abortSignal?.aborted) {
+    return { aborted: true };
+  }
+
+  let child: ChildProcess | undefined;
+  const kill = () => killProcessGroup(child?.pid);
+
   const result = await new Promise<{
+    aborted: boolean;
     exitCode: number | null;
     signal: NodeJS.Signals | null;
     stderr: string;
@@ -98,8 +123,9 @@ export async function runPreflightCommand(input: RunPreflightInput): Promise<Run
     timedOut: boolean;
   }>((resolve) => {
     let timedOut = false;
+    let aborted = false;
     let settled = false;
-    const child = spawn(command, {
+    child = spawn(command, {
       cwd: input.cwd,
       detached: true,
       env: process.env,
@@ -126,14 +152,22 @@ export async function runPreflightCommand(input: RunPreflightInput): Promise<Run
 
     const timer = setTimeout(() => {
       timedOut = true;
-      killProcessGroup(child.pid);
+      kill();
     }, timeoutMs);
+
+    const onAbort = () => {
+      aborted = true;
+      kill();
+    };
+    input.abortSignal?.addEventListener('abort', onAbort, { once: true });
 
     const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      input.abortSignal?.removeEventListener('abort', onAbort);
       resolve({
+        aborted,
         exitCode,
         signal,
         stderr,
@@ -153,6 +187,10 @@ export async function runPreflightCommand(input: RunPreflightInput): Promise<Run
     });
   });
 
+  if (result.aborted && !result.timedOut) {
+    return { aborted: true };
+  }
+
   const ended = new Date();
   const endedAt = ended.toISOString();
   const durationMs = Math.max(0, ended.getTime() - startedMs);
@@ -168,7 +206,6 @@ export async function runPreflightCommand(input: RunPreflightInput): Promise<Run
     status = 'declined';
   } else {
     status = 'errored';
-    // spawn error with null code
     if (result.exitCode === null) exitCode = 127;
   }
 
@@ -187,7 +224,7 @@ export async function runPreflightCommand(input: RunPreflightInput): Promise<Run
     ...(result.stderrTruncated ? { stderrTruncated: true } : {}),
   };
 
-  return { result: last };
+  return { aborted: false, result: last };
 }
 
 export function preflightEvidenceForWake(result: PreflightLastResult): string | undefined {
@@ -199,7 +236,6 @@ export function preflightEvidenceForWake(result: PreflightLastResult): string | 
 }
 
 export function classifyPreflightAttentionKey(reminderId: string, result: PreflightLastResult): string {
-  // Throttle key so identical errored results can be rate-limited by callers.
   const hash = createHash('sha256')
     .update([
       reminderId,
@@ -214,7 +250,7 @@ export function classifyPreflightAttentionKey(reminderId: string, result: Prefli
   return `preflight-error:${reminderId}:${hash}`;
 }
 
-function killProcessGroup(pid: number | undefined): void {
+export function killProcessGroup(pid: number | undefined): void {
   if (pid === undefined) return;
   try {
     process.kill(-pid, 'SIGKILL');
