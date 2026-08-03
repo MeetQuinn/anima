@@ -1,6 +1,7 @@
 import { errorMessage, makeId } from '../ids.js';
 import type { Reminder, ReminderProvenance, ReminderStatus } from '../../shared/reminder.js';
 import { ReminderStore } from '../storage/schema/reminder.store.js';
+import type { ReminderPreflightLastResult } from '../../shared/reminder.js';
 import {
   buildWindowedIntervalSchedule,
   initialDueAt,
@@ -13,6 +14,10 @@ import {
   defaultReminderActivityRecorder,
   type ReminderActivityRecorder,
 } from './reminder.activity.js';
+import {
+  normalizePreflightTimeoutMs,
+  validatePreflightCommand,
+} from './preflight.js';
 
 const SETTLED_REMINDER_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -21,6 +26,8 @@ export interface ScheduleReminderInput {
   fireAt?: string;
   instructions: string;
   now?: Date;
+  /** Optional shell gate; product label "Run only when". CWD is always Agent Home. */
+  preflight?: { command: string; timeoutMs?: number };
   provenance?: ReminderProvenance;
   repeat?: string;
   timezone?: string;
@@ -38,7 +45,15 @@ export class ReminderService {
 
   async scheduleReminder(input: ScheduleReminderInput): Promise<Reminder> {
     const now = input.now ?? new Date();
-    return this.activity.schedule({ agentId: this.agentId, ...input }, async () => {
+    return this.activity.schedule({
+      agentId: this.agentId,
+      title: input.title,
+      ...(input.repeat ? { repeat: input.repeat } : {}),
+      ...(input.window ? { window: input.window } : {}),
+      ...(input.fireAt ? { fireAt: input.fireAt } : {}),
+      ...(input.delaySeconds !== undefined ? { delaySeconds: input.delaySeconds } : {}),
+      ...(input.preflight ? { preflight: input.preflight } : {}),
+    }, async () => {
       const title = input.title.trim();
       const instructions = input.instructions.trim();
       if (!title) throw new Error('reminder schedule requires title');
@@ -86,11 +101,20 @@ export class ReminderService {
           phaseAnchorAt: hasFireAt || hasDelay ? nextDueAt : createdAt,
         };
       }
+      const preflight = input.preflight
+        ? {
+            command: validatePreflightCommand(input.preflight.command),
+            ...(input.preflight.timeoutMs !== undefined
+              ? { timeoutMs: normalizePreflightTimeoutMs(input.preflight.timeoutMs) }
+              : {}),
+          }
+        : undefined;
       const reminder: Reminder = {
         createdAt,
         firedCount: 0,
         instructions,
         nextDueAt,
+        ...(preflight ? { preflight } : {}),
         ...(input.provenance ? { provenance: input.provenance } : {}),
         reminderId: makeId('rem'),
         schedule,
@@ -139,13 +163,35 @@ export class ReminderService {
     });
   }
 
-  async completeReminderFire(input: { id: string; now?: Date }): Promise<Reminder> {
+  async completeReminderFire(input: {
+    id: string;
+    now?: Date;
+    /** When set, advances schedule after a preflight outcome (wake, decline, or error). */
+    preflightResult?: ReminderPreflightLastResult;
+    clearPreflightError?: boolean;
+    setPreflightError?: { attentionKey: string; since: string; lastNotifiedAt?: string };
+  }): Promise<Reminder> {
     const now = input.now ?? new Date();
     const reminder = await this.store.find(input.id);
     if (!reminder) throw new Error(`Reminder not found: ${input.id}`);
     const firedAt = now.toISOString();
     reminder.firedCount += 1;
     reminder.lastFiredAt = firedAt;
+    if (input.preflightResult) {
+      reminder.preflightLastResult = input.preflightResult;
+    }
+    if (input.clearPreflightError) {
+      delete reminder.preflightError;
+    }
+    if (input.setPreflightError) {
+      reminder.preflightError = {
+        attentionKey: input.setPreflightError.attentionKey,
+        since: input.setPreflightError.since,
+        ...(input.setPreflightError.lastNotifiedAt
+          ? { lastNotifiedAt: input.setPreflightError.lastNotifiedAt }
+          : {}),
+      };
+    }
     if (reminder.schedule.kind === 'once') {
       reminder.status = 'fired';
       delete reminder.nextDueAt;

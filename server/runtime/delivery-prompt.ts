@@ -193,12 +193,15 @@ function buildReminderDeliveryPrompt(
     { key: 'scheduled', value: envelopeTime(event.scheduledAt ?? event.receivedAt) },
   ]);
 
+  const evidence = event.preflightEvidence?.trim()
+    ? `\n\n${event.preflightEvidence.trim()}`
+    : '';
   return `Scheduled reminder:
 
 ${envelope} ${reminder.title}
 
 Instructions:
-${reminder.instructions}${provenance}`;
+${reminder.instructions}${evidence}${provenance}`;
 }
 
 // Delivery time for scheduled wakes: the moment the runtime claimed the item

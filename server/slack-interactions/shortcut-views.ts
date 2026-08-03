@@ -179,7 +179,8 @@ export function reminderDetailView(reminder: Reminder, now: Date): ShortcutModal
 
   const due = reminder.nextDueAt ? humanDueLabel(reminder.nextDueAt, now) : '';
   const recurrence = scheduleLabel(reminder.schedule);
-  const meta = [due, recurrence].filter(Boolean).join('  ·  ');
+  const gate = preflightLabel(reminder);
+  const meta = [due, recurrence, gate].filter(Boolean).join('  ·  ');
 
   blocks.push({
     type: 'section',
@@ -270,6 +271,14 @@ function scheduleLabel(schedule: ReminderSchedule): string {
       return `${every} ${schedule.windowRule}`;
     }
   }
+}
+
+export function preflightLabel(reminder: { preflight?: { command: string }; preflightError?: unknown; preflightLastResult?: { status: string } }): string | undefined {
+  if (!reminder.preflight) return undefined;
+  const parts = [`Run only when: \`${reminder.preflight.command}\``];
+  if (reminder.preflightLastResult) parts.push(`last=${reminder.preflightLastResult.status}`);
+  if (reminder.preflightError) parts.push('Needs attention · preflight-error');
+  return parts.join(' · ');
 }
 
 function elapsedLabel(startedAt: string, now: Date): string {

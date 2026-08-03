@@ -51,6 +51,44 @@ export const ReminderSchedule = z.discriminatedUnion('kind', [
 
 export type ReminderSchedule = z.infer<typeof ReminderSchedule>;
 
+/** Optional gate: run a shell command before waking the agent. Product: "Run only when". */
+export const ReminderPreflight = z.object({
+  command: z.string().min(1),
+  /** Default 30m; v1 hard cap 24h. */
+  timeoutMs: z.number().positive().optional(),
+});
+
+export type ReminderPreflight = z.infer<typeof ReminderPreflight>;
+
+export const ReminderPreflightResultStatus = z.enum(['succeeded', 'declined', 'errored']);
+export type ReminderPreflightResultStatus = z.infer<typeof ReminderPreflightResultStatus>;
+
+export const ReminderPreflightLastResult = z.object({
+  durationMs: z.number(),
+  endedAt: z.string(),
+  exitCode: z.number().optional(),
+  scheduledAt: z.string(),
+  signal: z.string().optional(),
+  startedAt: z.string(),
+  status: ReminderPreflightResultStatus,
+  stderr: z.string().optional(),
+  stderrTruncated: z.boolean().optional(),
+  stdout: z.string().optional(),
+  stdoutTruncated: z.boolean().optional(),
+  timedOut: z.boolean().optional(),
+});
+
+export type ReminderPreflightLastResult = z.infer<typeof ReminderPreflightLastResult>;
+
+/** Persistent attention while the last preflight outcome is errored. */
+export const ReminderPreflightErrorState = z.object({
+  attentionKey: z.string(),
+  lastNotifiedAt: z.string().optional(),
+  since: z.string(),
+});
+
+export type ReminderPreflightErrorState = z.infer<typeof ReminderPreflightErrorState>;
+
 export const Reminder = z.object({
   cancelledAt: z.string().optional(),
   createdAt: z.string(),
@@ -58,6 +96,9 @@ export const Reminder = z.object({
   instructions: z.string(),
   lastFiredAt: z.string().optional(),
   nextDueAt: z.string().optional(),
+  preflight: ReminderPreflight.optional(),
+  preflightError: ReminderPreflightErrorState.optional(),
+  preflightLastResult: ReminderPreflightLastResult.optional(),
   provenance: ReminderProvenance.optional(),
   reminderId: z.string(),
   schedule: ReminderSchedule,

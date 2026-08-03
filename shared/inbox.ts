@@ -160,6 +160,8 @@ export type FeishuOnboardingInboxItem = z.infer<typeof FeishuOnboardingInboxItem
 
 export const ReminderInboxItem = InboxItemBase.extend({
   kind: z.literal('reminder'),
+  /** Bounded preflight stdout evidence attached on succeeded gates (optional). */
+  preflightEvidence: z.string().optional(),
   reminderId: z.string(),
   // The reminder's intended fire moment (nextDueAt at fire time), as opposed
   // to receivedAt (the poll tick that noticed it was due). Optional because
