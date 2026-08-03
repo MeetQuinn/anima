@@ -260,6 +260,23 @@ describe('UsagePanel Claude account selection', () => {
     expect(api.refreshProviderUsage).toHaveBeenCalledOnce();
   });
 
+  it('keeps removal disabled while an isolated account is active', async () => {
+    renderPanel();
+    await expandClaude();
+
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for secondary@example.com' }));
+    const remove = screen.getByRole('menuitem', {
+      name: /Remove account.*Switch accounts before removing/,
+    });
+    expect(remove.getAttribute('aria-disabled')).toBe('true');
+    expect(document.activeElement).toBe(remove);
+
+    fireEvent.keyDown(remove, { key: 'Escape' });
+    expect(document.activeElement).toBe(screen.getByRole('button', {
+      name: 'More actions for secondary@example.com',
+    }));
+  });
+
   it('offers reauthentication for an expired account without hiding the healthy one', async () => {
     accountState.value.status = 'active';
     accountState.value.errorAgentIds = [];

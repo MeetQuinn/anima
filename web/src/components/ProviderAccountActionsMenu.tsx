@@ -13,6 +13,7 @@ interface Props {
 export default function ProviderAccountActionsMenu({ account, name, onRemove }: Props) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const removable = account.profile === 'isolated' && !account.selected;
   const unavailableReason = account.profile === 'default'
     ? 'Primary account cannot be removed.'
@@ -20,6 +21,7 @@ export default function ProviderAccountActionsMenu({ account, name, onRemove }: 
 
   useEffect(() => {
     if (!open) return;
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     const onPointerDown = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) setOpen(false);
     };
@@ -35,9 +37,11 @@ export default function ProviderAccountActionsMenu({ account, name, onRemove }: 
         if (event.key !== 'Escape' || !open) return;
         event.stopPropagation();
         setOpen(false);
+        triggerRef.current?.focus();
       }}
     >
       <button
+        ref={triggerRef}
         type="button"
         aria-expanded={open}
         aria-haspopup="menu"
@@ -66,9 +70,11 @@ export default function ProviderAccountActionsMenu({ account, name, onRemove }: 
               Remove account
             </button>
           ) : (
-            <div
+            <button
+              type="button"
               role="menuitem"
               aria-disabled="true"
+              onClick={(event) => event.preventDefault()}
               className="flex min-h-[52px] w-full cursor-not-allowed items-start gap-2.5 px-3 py-2 font-sans text-[12px] text-text-subtle opacity-60"
             >
               <Trash2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -76,7 +82,7 @@ export default function ProviderAccountActionsMenu({ account, name, onRemove }: 
                 <span>Remove account</span>
                 <span className="mt-0.5 text-[10px] leading-tight">{unavailableReason}</span>
               </span>
-            </div>
+            </button>
           )}
         </div>
       )}

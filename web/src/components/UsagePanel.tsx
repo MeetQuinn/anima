@@ -309,7 +309,7 @@ function ActiveAccountCard({
   return (
     <div className="rounded-md border border-border-soft bg-surface-raised px-3.5 py-3 shadow-lift">
       {(name || plan || usage.stale) && (
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <div className="flex min-w-0 items-baseline gap-2">
           {name && (
             <span className="min-w-0 truncate font-mono text-[12px] text-text" title={name}>
               {name}
