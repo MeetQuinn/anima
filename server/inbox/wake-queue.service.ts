@@ -56,6 +56,14 @@ export class WakeQueueService {
     return { duplicate: false, item: result.item, queued: true };
   }
 
+  /**
+   * Remove a still-queued (unclaimed) item. Used when a preflight success
+   * enqueued a wake that must be discarded after a concurrent cancel/snooze.
+   */
+  async withdrawQueued(itemId: string): Promise<InboxItem | undefined> {
+    return this.store.withdrawQueued(itemId);
+  }
+
   async hasSeen(itemId: string): Promise<boolean> {
     if (await this.store.has(itemId)) return true;
     try {

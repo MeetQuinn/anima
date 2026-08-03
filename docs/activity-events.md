@@ -11,25 +11,26 @@ available yet, it's called out under [Known gaps](#known-gaps).
 
 ## Sources
 
-Fourteen modules import the activity service. Ten write to the log, four only read
+Fifteen modules import the activity service. Eleven write to the log, four only read
 it. **These two tables are the claim**, and `server/tests/activity-emitters.test.ts`
 parses them out of this file and compares them against a set re-derived from the
 sources. There is no third list: edit a table, or the test reds.
 
 #### Emitters
 
-| module                                          | writes                            |
-| ----------------------------------------------- | --------------------------------- |
-| `server/agents/agent.service.ts`                | agent lifecycle                   |
-| `server/asks/interactive-ask.service.ts`        | `anima ask` prompts and answers   |
-| `server/inbox/attention-suggestion-activity.ts` | attention suggestions             |
-| `server/inbox/slack-subscriber.ts`              | subscription changes from Slack   |
-| `server/inbox/subscription.service.ts`          | subscription changes from the CLI |
-| `server/memory/memory-coherence-outcome.ts`     | memory pass outcomes              |
-| `server/reminders/reminder.activity.ts`         | reminder schedule, fire, cancel   |
-| `server/runtime/activity.ts`                    | turns, messages, provider events  |
-| `server/slack-interactions/shortcut.service.ts` | Slack shortcut invocations        |
-| `server/tools/tool-context.ts`                  | tool steps                        |
+| module                                          | writes                             |
+| ----------------------------------------------- | ---------------------------------- |
+| `server/agents/agent.service.ts`                | agent lifecycle                    |
+| `server/asks/interactive-ask.service.ts`        | `anima ask` prompts and answers    |
+| `server/inbox/attention-suggestion-activity.ts` | attention suggestions              |
+| `server/inbox/reminder-subscriber.ts`           | preflight error/recovery attention |
+| `server/inbox/slack-subscriber.ts`              | subscription changes from Slack    |
+| `server/inbox/subscription.service.ts`          | subscription changes from the CLI  |
+| `server/memory/memory-coherence-outcome.ts`     | memory pass outcomes               |
+| `server/reminders/reminder.activity.ts`         | reminder schedule, fire, cancel    |
+| `server/runtime/activity.ts`                    | turns, messages, provider events   |
+| `server/slack-interactions/shortcut.service.ts` | Slack shortcut invocations         |
+| `server/tools/tool-context.ts`                  | tool steps                         |
 
 #### Readers
 
@@ -69,7 +70,7 @@ the file: `SubscriptionStore.list()` reads as an activity read, and
 or injected as an `ActivityRecorder`. A check that knows only the first two reports
 `server/asks/interactive-ask.service.ts` as neither reader nor writer.
 
-Adding emitter #11 turns the test red. Add it to the table in the same commit.
+Adding emitter #12 turns the test red. Add it to the table in the same commit.
 
 ## What the Activity tab is
 

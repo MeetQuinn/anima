@@ -21,6 +21,38 @@ import {
 
 const SETTLED_REMINDER_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
+/** Snapshot fields re-checked inside the JsonStore update critical section. */
+export interface ReminderExpectedVersion {
+  nextDueAt?: string;
+  preflight?: Reminder['preflight'];
+  status: ReminderStatus;
+  updatedAt: string;
+}
+
+export interface ReminderTransitionResult {
+  applied: boolean;
+  reminder: Reminder;
+}
+
+export function matchesExpectedVersion(
+  live: Reminder,
+  expected: ReminderExpectedVersion,
+): boolean {
+  if (live.status !== expected.status) return false;
+  if (live.updatedAt !== expected.updatedAt) return false;
+  if (live.nextDueAt !== expected.nextDueAt) return false;
+  return samePreflightConfig(live.preflight, expected.preflight);
+}
+
+function samePreflightConfig(
+  a: Reminder['preflight'] | undefined,
+  b: Reminder['preflight'] | undefined,
+): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return a.command === b.command && a.timeoutMs === b.timeoutMs;
+}
+
 export interface ScheduleReminderInput {
   delaySeconds?: number;
   fireAt?: string;
@@ -166,38 +198,50 @@ export class ReminderService {
   /**
    * Count a real agent wake and advance schedule. Call only after a wake is
    * durably enqueued (or for legacy non-preflight after enqueue).
+   *
+   * When `expected` is set, status/updatedAt/nextDueAt/preflight are checked
+   * inside the same JsonStore update critical section (CAS). Stale → no-op.
    */
   async completeReminderFire(input: {
     id: string;
     now?: Date;
     preflightResult?: ReminderPreflightLastResult;
     clearPreflightError?: boolean;
-  }): Promise<Reminder> {
+    /** Snapshot version that must still match at commit time. */
+    expected?: ReminderExpectedVersion;
+  }): Promise<ReminderTransitionResult> {
     const now = input.now ?? new Date();
-    const reminder = await this.store.find(input.id);
+    const { applied, reminder } = await this.store.updateMatching(input.id, (current) => {
+      if (input.expected) {
+        if (!matchesExpectedVersion(current, input.expected)) return null;
+      } else if (current.status === 'cancelled') {
+        throw new Error(`Cannot complete fire on cancelled reminder: ${input.id}`);
+      }
+      if (current.status === 'cancelled') return null;
+      const next = current;
+      const firedAt = now.toISOString();
+      next.firedCount += 1;
+      next.lastFiredAt = firedAt;
+      if (input.preflightResult) {
+        next.preflightLastResult = input.preflightResult;
+      }
+      if (input.clearPreflightError) {
+        delete next.preflightError;
+      }
+      this.advanceSchedule(next, now);
+      next.updatedAt = firedAt;
+      return next;
+    });
     if (!reminder) throw new Error(`Reminder not found: ${input.id}`);
-    if (reminder.status === 'cancelled') {
-      throw new Error(`Cannot complete fire on cancelled reminder: ${input.id}`);
-    }
-    const firedAt = now.toISOString();
-    reminder.firedCount += 1;
-    reminder.lastFiredAt = firedAt;
-    if (input.preflightResult) {
-      reminder.preflightLastResult = input.preflightResult;
-    }
-    if (input.clearPreflightError) {
-      delete reminder.preflightError;
-    }
-    this.advanceSchedule(reminder, now);
-    reminder.updatedAt = firedAt;
-    const updated = await this.store.update(reminder);
-    await this.pruneOldSettled(now);
-    return updated;
+    if (applied) await this.pruneOldSettled(now);
+    return { applied, reminder };
   }
 
   /**
    * Persist a preflight check that did **not** wake the agent: advance schedule
    * and last-result without incrementing firedCount / lastFiredAt.
+   *
+   * When `expected` is set, CAS runs inside the same store update as the write.
    */
   async recordPreflightCheck(input: {
     id: string;
@@ -205,33 +249,39 @@ export class ReminderService {
     preflightResult: ReminderPreflightLastResult;
     clearPreflightError?: boolean;
     setPreflightError?: { attentionKey: string; since: string; lastNotifiedAt?: string };
-  }): Promise<Reminder> {
+    expected?: ReminderExpectedVersion;
+  }): Promise<ReminderTransitionResult> {
     const now = input.now ?? new Date();
-    const reminder = await this.store.find(input.id);
+    const { applied, reminder } = await this.store.updateMatching(input.id, (current) => {
+      if (input.expected) {
+        if (!matchesExpectedVersion(current, input.expected)) return null;
+      } else if (current.status === 'cancelled') {
+        throw new Error(`Cannot record preflight check on cancelled reminder: ${input.id}`);
+      }
+      if (current.status === 'cancelled') return null;
+      const next = current;
+      const at = now.toISOString();
+      next.preflightLastResult = input.preflightResult;
+      if (input.clearPreflightError) {
+        delete next.preflightError;
+      }
+      if (input.setPreflightError) {
+        // Preserve lastNotifiedAt when the caller suppresses a repeat notification.
+        const lastNotifiedAt = input.setPreflightError.lastNotifiedAt
+          ?? next.preflightError?.lastNotifiedAt;
+        next.preflightError = {
+          attentionKey: input.setPreflightError.attentionKey,
+          since: input.setPreflightError.since,
+          ...(lastNotifiedAt ? { lastNotifiedAt } : {}),
+        };
+      }
+      this.advanceSchedule(next, now);
+      next.updatedAt = at;
+      return next;
+    });
     if (!reminder) throw new Error(`Reminder not found: ${input.id}`);
-    if (reminder.status === 'cancelled') {
-      throw new Error(`Cannot record preflight check on cancelled reminder: ${input.id}`);
-    }
-    const at = now.toISOString();
-    reminder.preflightLastResult = input.preflightResult;
-    if (input.clearPreflightError) {
-      delete reminder.preflightError;
-    }
-    if (input.setPreflightError) {
-      // Preserve lastNotifiedAt when the caller suppresses a repeat notification.
-      const lastNotifiedAt = input.setPreflightError.lastNotifiedAt
-        ?? reminder.preflightError?.lastNotifiedAt;
-      reminder.preflightError = {
-        attentionKey: input.setPreflightError.attentionKey,
-        since: input.setPreflightError.since,
-        ...(lastNotifiedAt ? { lastNotifiedAt } : {}),
-      };
-    }
-    this.advanceSchedule(reminder, now);
-    reminder.updatedAt = at;
-    const updated = await this.store.update(reminder);
-    await this.pruneOldSettled(now);
-    return updated;
+    if (applied) await this.pruneOldSettled(now);
+    return { applied, reminder };
   }
 
   private advanceSchedule(reminder: Reminder, now: Date): void {
