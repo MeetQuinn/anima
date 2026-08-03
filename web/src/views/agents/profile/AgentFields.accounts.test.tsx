@@ -74,9 +74,17 @@ describe('ClaudeAccountRow', () => {
         account.id === 'secondary' ? { ...account, status: 'not_configured' as const } : account
       )),
     };
-    render(<ClaudeAccountRow accountState={signedOut} onRequestSave={() => {}} />);
+    render(
+      <ClaudeAccountRow
+        accountId="secondary"
+        accountState={signedOut}
+        onRequestSave={() => {}}
+      />,
+    );
 
-    fireEvent.click(screen.getByRole('button', { name: /Machine default · Primary/ }));
+    fireEvent.click(screen.getByRole('button', {
+      name: /Secondary · secondary@example.com · Sign in required/,
+    }));
     fireEvent.click(screen.getByRole('combobox'));
     const option = await screen.findByRole('option', {
       name: /Secondary · secondary@example.com · Sign in required/,

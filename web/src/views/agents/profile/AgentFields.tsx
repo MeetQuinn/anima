@@ -609,10 +609,10 @@ export function ClaudeAccountRow({
   const saveBlocked = !accountState || !draftAccount || draftAccount.status !== 'available';
   const currentLabel = accountId
     ? assigned
-      ? accountLabel(assigned)
+      ? accountOptionLabel(assigned)
       : `Unavailable · ${accountId}`
     : machineDefault
-      ? `Machine default · ${accountLabel(machineDefault)}`
+      ? `Machine default · ${accountOptionLabel(machineDefault)}`
       : 'Machine default unavailable';
 
   return (
