@@ -883,6 +883,10 @@ async function startAgentFromConfig(
   const server = runtimeServerConfigForAgent(agent);
   if (server.slack) await validateSlackConnectionForStart(agent.id, server.slack);
   const managedEnv = await managedProviderEnvForAgent(agent, animaHome, server.slack?.botToken);
+  const runtimeEnv = {
+    ...(server.runtime.env ?? {}),
+    ...managedEnv,
+  };
   const outputLines = [
     server.slack ? 'Slack output: send enabled.' : undefined,
     server.feishu.connected ? 'Feishu output: send enabled.' : undefined,
@@ -897,7 +901,7 @@ async function startAgentFromConfig(
   );
   return startRunningAgent({
     ...server.config,
-    agentRuntime: createAgentRuntime(runtimeWithEnv(server.runtime, managedEnv)),
+    agentRuntime: createAgentRuntime(runtimeWithEnv(server.runtime, runtimeEnv)),
     animaHome,
     ...(server.slack
       ? {
@@ -909,6 +913,7 @@ async function startAgentFromConfig(
     feishu: server.feishu,
     ...(server.runtime.idleTimeoutMs !== undefined ? { idleTimeoutMs: server.runtime.idleTimeoutMs } : {}),
     runLimiter: options.runLimiter,
+    runtimeEnv,
     startAbortForceAfterMs: options.forceStopAfterMs,
     startTimeoutMs: options.startTimeoutMs,
   });
@@ -1086,10 +1091,7 @@ export function runtimeWorkerConfigForAgent(agent: AgentConfig): RuntimeWorkerCo
 function runtimeWithEnv(config: AgentProviderConfig, env: Record<string, string>): AgentProviderConfig {
   return {
     ...config,
-    env: {
-      ...(config.env ?? {}),
-      ...env,
-    },
+    env,
   };
 }
 

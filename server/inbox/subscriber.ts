@@ -14,6 +14,7 @@ export interface InboxSubscriberOptions {
   botToken?: string;
   feishu?: FeishuConfig;
   queue: WakeQueueService;
+  runtimeEnv: Record<string, string>;
 }
 
 export class InboxSubscriber {
@@ -21,7 +22,12 @@ export class InboxSubscriber {
   private readonly transports: MessageTransportRunner;
 
   constructor(options: InboxSubscriberOptions) {
-    this.reminders = new ReminderInboxSubscriber(options.queue, undefined, options.animaHome);
+    this.reminders = new ReminderInboxSubscriber(
+      options.queue,
+      undefined,
+      options.animaHome,
+      options.runtimeEnv,
+    );
     const transports = [
       ...(options.appToken && options.botToken ? [new SlackMessageTransport({
         agentRuntimeKind: options.agentRuntimeKind,
