@@ -19,7 +19,6 @@ import {
   type OpenCodeCliAgentProviderConfig,
 } from './contract.js';
 
-const OPENCODE_COMMAND = 'opencode';
 const OPENCODE_RUNTIME_KIND = 'opencode-cli';
 
 export function openCodeAcpLaunchArgs(): string[] {
@@ -53,13 +52,15 @@ export function openCodeLaunchEnvironment(
 }
 
 export class OpenCodeCliAgentRuntime extends ControllerAgentRuntime<OpenCodeAcpController> {
+  readonly command: string;
   readonly env: Record<string, string> | undefined;
   readonly kind = OPENCODE_RUNTIME_KIND;
   private readonly config: OpenCodeCliAgentProviderConfig;
 
-  constructor(config: OpenCodeCliAgentProviderConfig) {
+  constructor(config: OpenCodeCliAgentProviderConfig, command: string) {
     super({ providerChildIdleTimeoutMs: config.providerChildIdleTimeoutMs });
     this.config = config;
+    this.command = command;
     this.env = config.env;
   }
 
@@ -67,7 +68,7 @@ export class OpenCodeCliAgentRuntime extends ControllerAgentRuntime<OpenCodeAcpC
     return this.runTurnLifecycle(input, {
       label: 'OpenCode',
       startedPayload: {
-        command: OPENCODE_COMMAND,
+        command: this.command,
         transport: 'acp',
       },
       abort: async (signal) => {
@@ -120,7 +121,7 @@ export class OpenCodeCliAgentRuntime extends ControllerAgentRuntime<OpenCodeAcpC
         return this.spawnController(
           {
             args: openCodeAcpLaunchArgs(),
-            command: OPENCODE_COMMAND,
+            command: this.command,
             label: 'OpenCode ACP runtime',
           },
           {

@@ -15,10 +15,12 @@ import {
   checkProviderClis,
   fetchProviderAccounts,
   fetchProviderContextLimits,
+  fetchProviderRuntimeCommands,
   fetchProviderUsage,
   removeClaudeAccount,
   refreshProviderUsage,
   saveProviderContextLimit,
+  saveProviderRuntimeCommand,
   selectClaudeAccount,
 } from '@/api/system';
 import { queryKeys } from '@/lib/query-keys';
@@ -34,6 +36,8 @@ import type {
 } from '@shared/provider-usage';
 import type { ClaudeCodeAccountState, ProviderAccountSummary } from '@shared/provider-accounts';
 import type { ProviderContextLimitRow } from '@shared/provider-context-limits';
+import type { ProviderRuntimeCommandRow } from '@shared/provider-runtime-commands';
+import { providerCatalogEntry } from '@shared/provider-catalog';
 import ClaudeAccountLoginModal from './ClaudeAccountLoginModal';
 import ProviderAccountActionsMenu from './ProviderAccountActionsMenu';
 
@@ -480,6 +484,10 @@ function ProviderUnit({
   contextLimitError,
   contextLimitSaving = false,
   onContextLimitChange,
+  runtimeCommand,
+  runtimeCommandError,
+  runtimeCommandSaving = false,
+  onRuntimeCommandSave,
 }: {
   expanded: boolean;
   globallyLocked?: boolean;
@@ -499,7 +507,20 @@ function ProviderUnit({
   contextLimitError?: string;
   contextLimitSaving?: boolean;
   onContextLimitChange: (maxTokens: number | null) => void;
+  runtimeCommand: ProviderRuntimeCommandRow;
+  runtimeCommandError?: string;
+  runtimeCommandSaving?: boolean;
+  onRuntimeCommandSave: (command: string | null) => void;
 }) {
+  const storedRuntimeCommand = runtimeCommand.command ?? '';
+  const [runtimeCommandEdit, setRuntimeCommandEdit] = useState({
+    source: storedRuntimeCommand,
+    value: storedRuntimeCommand,
+  });
+  const runtimeCommandDraft =
+    runtimeCommandEdit.source === storedRuntimeCommand
+      ? runtimeCommandEdit.value
+      : storedRuntimeCommand;
   const sortedUsages = [...usages].sort((a, b) => Number(b.active ?? false) - Number(a.active ?? false));
   const featured = sortedUsages.find((row) => row.active) ?? sortedUsages[0];
   const others = sortedUsages.filter((row) => row !== featured);
@@ -526,6 +547,8 @@ function ProviderUnit({
     || accountSwitchFailed;
   const open = expanded || needsAttention;
   const collapsedSummary = providerCollapsedSummary(sortedUsages);
+  const normalizedRuntimeCommand = runtimeCommandDraft.trim();
+  const runtimeCommandChanged = normalizedRuntimeCommand !== storedRuntimeCommand;
 
   return (
     <div>
@@ -688,15 +711,58 @@ function ProviderUnit({
             </button>
           )}
 
-          {/* Settings keeps ONLY the context-window limit (totoday 08-02): version,
-              binary path, install source, auto-update, and per-agent details are gone. */}
-          {contextLimit && (
-            <details className="group">
-              <summary className="flex cursor-pointer list-none items-center gap-1 font-sans text-[10px] uppercase tracking-[0.08em] text-text-subtle hover:text-text-muted">
-                <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
-                Settings
-              </summary>
-              <div className="mt-2 border-l border-border-soft pl-3">
+          <details className="group">
+            <summary className="flex cursor-pointer list-none items-center gap-1 font-sans text-[10px] uppercase tracking-[0.08em] text-text-subtle hover:text-text-muted">
+              <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
+              Settings
+            </summary>
+            <div className="mt-2 space-y-4 border-l border-border-soft pl-3">
+              <form
+                className="space-y-1.5"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  onRuntimeCommandSave(normalizedRuntimeCommand || null);
+                }}
+              >
+                <label className="block font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
+                  Runtime command
+                  <input
+                    aria-label={`${management.label} runtime command`}
+                    autoCapitalize="off"
+                    autoComplete="off"
+                    className="mt-1.5 block min-h-[44px] w-full rounded-sm border border-border-soft bg-surface-elevated px-3 font-mono text-[12px] text-text placeholder:text-text-subtle focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-wait disabled:opacity-60"
+                    disabled={runtimeCommandSaving}
+                    onChange={(event) =>
+                      setRuntimeCommandEdit({
+                        source: storedRuntimeCommand,
+                        value: event.currentTarget.value,
+                      })
+                    }
+                    placeholder={runtimeCommand.defaultCommand}
+                    spellCheck={false}
+                    value={runtimeCommandDraft}
+                  />
+                </label>
+                <div className="flex items-start justify-between gap-3">
+                  <p className="font-sans text-[10px] leading-relaxed text-text-subtle">
+                    Global for every agent using this provider. Leave blank for the default. Executable name or absolute path only; arguments are not supported.
+                  </p>
+                  <button
+                    type="submit"
+                    className="min-h-[36px] shrink-0 rounded-sm border border-border-soft px-3 font-sans text-[11px] font-medium text-text-muted hover:border-border hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={!runtimeCommandChanged || runtimeCommandSaving}
+                  >
+                    {runtimeCommandSaving ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+                {runtimeCommandError && (
+                  <p className="font-sans text-[10px] leading-relaxed text-health-error">
+                    {runtimeCommandError}
+                  </p>
+                )}
+              </form>
+
+              {contextLimit && (
                 <div className="space-y-1.5">
                   <label className="block font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
                     Context limit
@@ -728,9 +794,9 @@ function ProviderUnit({
                     </p>
                   )}
                 </div>
-              </div>
-            </details>
-          )}
+              )}
+            </div>
+          </details>
         </div>
       )}
     </div>
@@ -766,6 +832,12 @@ export default function UsagePanel({ onClose }: Props) {
     message: string;
     provider: ProviderUsageKind;
   }>();
+  const [savingRuntimeCommandProvider, setSavingRuntimeCommandProvider] =
+    useState<ProviderUsageKind>();
+  const [runtimeCommandFailure, setRuntimeCommandFailure] = useState<{
+    message: string;
+    provider: ProviderUsageKind;
+  }>();
   const { data: cliData, isLoading: cliLoading, isFetching: cliFetching } = useProviderCliStatus();
 
   const {
@@ -776,6 +848,15 @@ export default function UsagePanel({ onClose }: Props) {
     queryKey: queryKeys.providerUsage(),
     queryFn: fetchProviderUsage,
     staleTime: 60_000,
+  });
+  const {
+    data: runtimeCommands,
+    isFetching: runtimeCommandsFetching,
+    refetch: refetchRuntimeCommands,
+  } = useQuery({
+    queryKey: queryKeys.providerRuntimeCommands(),
+    queryFn: fetchProviderRuntimeCommands,
+    staleTime: 30_000,
   });
   const {
     data: contextLimits,
@@ -815,10 +896,11 @@ export default function UsagePanel({ onClose }: Props) {
   }, undefined);
 
   async function refreshAll(): Promise<void> {
-    const [usage, , , status] = await Promise.all([
+    const [usage, , , , status] = await Promise.all([
       refreshProviderUsage(),
       refetchAccounts(),
       refetchContextLimits(),
+      refetchRuntimeCommands(),
       checkProviderClis(),
     ]);
     queryClient.setQueryData(queryKeys.providerUsage(), usage);
@@ -851,6 +933,28 @@ export default function UsagePanel({ onClose }: Props) {
       });
     } finally {
       setSavingContextProvider(undefined);
+    }
+  }
+
+  async function changeRuntimeCommand(
+    provider: ProviderUsageKind,
+    command: string | null,
+  ): Promise<void> {
+    setSavingRuntimeCommandProvider(provider);
+    setRuntimeCommandFailure(undefined);
+    try {
+      const next = await saveProviderRuntimeCommand(provider, command);
+      queryClient.setQueryData(queryKeys.providerRuntimeCommands(), next);
+    } catch (error) {
+      setRuntimeCommandFailure({
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Could not save runtime command',
+        provider,
+      });
+    } finally {
+      setSavingRuntimeCommandProvider(undefined);
     }
   }
 
@@ -950,7 +1054,12 @@ export default function UsagePanel({ onClose }: Props) {
     .filter((value): value is string => Boolean(value))
     .sort()
     .at(-1);
-  const fetching = usageFetching || cliFetching || accountsFetching || contextLimitsFetching;
+  const fetching =
+    usageFetching ||
+    cliFetching ||
+    accountsFetching ||
+    contextLimitsFetching ||
+    runtimeCommandsFetching;
 
   return (
     <Fragment>
@@ -1039,6 +1148,27 @@ export default function UsagePanel({ onClose }: Props) {
                             (candidate) => candidate.provider === row.provider,
                           );
                           if (limit) void changeContextLimit(limit, maxTokens);
+                        }}
+                        runtimeCommand={
+                          runtimeCommands?.providers.find(
+                            (candidate) => candidate.provider === row.provider,
+                          ) ?? {
+                            command: null,
+                            defaultCommand:
+                              providerCatalogEntry(row.provider)?.command ?? row.provider,
+                            provider: row.provider,
+                          }
+                        }
+                        runtimeCommandError={
+                          runtimeCommandFailure?.provider === row.provider
+                            ? runtimeCommandFailure.message
+                            : undefined
+                        }
+                        runtimeCommandSaving={
+                          savingRuntimeCommandProvider === row.provider
+                        }
+                        onRuntimeCommandSave={(command) => {
+                          void changeRuntimeCommand(row.provider, command);
                         }}
                         onRetryAccount={() => {
                           if (row.provider === 'claude-code' && claudeAccountState) {

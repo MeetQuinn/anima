@@ -33,6 +33,22 @@ The create-agent flow checks whether `claude`, `codex`, `kimi`, `grok`, and `ope
 
 Detection proves that an executable exists. The first real turn proves that its authentication and provider account are usable.
 
+## Override the runtime command
+
+Each provider has a machine-wide **Runtime command** field under **Providers → Settings**. Leave it
+blank to use the default shown in the placeholder: `claude`, `codex`, `kimi`, `grok`, or
+`opencode`. Set it to another executable name or an absolute executable path when every Anima agent
+using that provider should launch through a compatible wrapper, for example `mcodex` for Codex.
+
+The value is one executable name or absolute path, not a shell command: arguments, pipes, redirects,
+relative paths, and environment assignments are not supported. Anima validates that the executable
+resolves and is runnable before saving it. A change applies only to agents using that provider,
+after their active turn and provider background work reach a safe boundary.
+
+This setting changes runtime launch only. Provider detection, version reporting, installation, and
+updates continue to use the official CLI named in the table above. The wrapper remains operator-owned
+and must preserve the provider protocol that Anima expects.
+
 ## Authentication ownership
 
 Sign in through the provider's own CLI. Do not paste provider login tokens into an Anima agent, Slack, Feishu, or an agent env entry.

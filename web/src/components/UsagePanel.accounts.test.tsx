@@ -86,6 +86,11 @@ vi.mock('@/api/system', () => ({
   checkProviderClis: vi.fn(),
   fetchClaudeAccountLogin: api.fetchClaudeAccountLogin,
   fetchProviderContextLimits: vi.fn(async () => ({ providers: [] })),
+  fetchProviderRuntimeCommands: vi.fn(async () => ({
+    providers: [
+      { command: null, defaultCommand: 'claude', provider: 'claude-code' as const },
+    ],
+  })),
   fetchProviderAccounts: vi.fn(async () => ({
     providers: [accountState.value],
   })),
@@ -114,6 +119,7 @@ vi.mock('@/api/system', () => ({
   refreshProviderUsage: api.refreshProviderUsage,
   selectClaudeAccount: api.selectClaudeAccount,
   saveProviderContextLimit: vi.fn(),
+  saveProviderRuntimeCommand: vi.fn(),
   startClaudeAccountLogin: api.startClaudeAccountLogin,
   submitClaudeAccountLoginCode: api.submitClaudeAccountLoginCode,
 }));

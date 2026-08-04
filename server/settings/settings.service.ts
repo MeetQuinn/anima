@@ -2,6 +2,7 @@ import type {
   DashboardAuth,
   ProviderAccountsConfig,
   ProviderContextLimitsConfig,
+  ProviderRuntimeCommandsConfig,
   ReleaseTrack,
   ServerTrack,
   SidebarOrder,
@@ -9,6 +10,7 @@ import type {
   WorkspacePlatform,
 } from '../../shared/server-settings.js';
 import type { ProviderContextLimitProvider } from '../../shared/provider-context-limits.js';
+import type { ProviderUsageKind } from '../../shared/provider-usage.js';
 import {
   serverConfigStore,
   type ServerConfig,
@@ -72,6 +74,11 @@ export class ServerSettingsService {
     return config.providerContextLimits ?? {};
   }
 
+  async getProviderRuntimeCommands(): Promise<ProviderRuntimeCommandsConfig> {
+    const config = await this.store.read();
+    return config.providerCommands ?? {};
+  }
+
   async getTrack(): Promise<ServerTrack> {
     const config = await this.store.read();
     return config.track ?? config.releaseTrack ?? 'stable';
@@ -123,6 +130,22 @@ export class ServerSettingsService {
       return { ...current, providerContextLimits };
     });
     return config.providerContextLimits ?? {};
+  }
+
+  async setProviderRuntimeCommand(
+    provider: ProviderUsageKind,
+    command: string | null,
+  ): Promise<ProviderRuntimeCommandsConfig> {
+    const config = await this.store.update((current) => {
+      const providerCommands = { ...current.providerCommands };
+      if (command === null) delete providerCommands[provider];
+      else providerCommands[provider] = command;
+      const next = { ...current };
+      if (Object.keys(providerCommands).length === 0) delete next.providerCommands;
+      else next.providerCommands = providerCommands;
+      return next;
+    });
+    return config.providerCommands ?? {};
   }
 
   async setWorkspacePlatform(workspacePlatform: WorkspacePlatform): Promise<WorkspacePlatform> {

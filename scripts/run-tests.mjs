@@ -66,6 +66,7 @@ const groups = {
     'provider-cli.test.js',
     'provider-context-limits.test.js',
     'provider-quiescent-waiters.test.js',
+    'provider-runtime-commands.test.js',
     'provider-accounts.test.js',
     'provider-usage.test.js',
     'grok-launch-args.test.js',

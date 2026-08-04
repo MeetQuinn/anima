@@ -20,17 +20,18 @@ import {
   type KimiCliAgentProviderConfig,
 } from './contract.js';
 
-const KIMI_COMMAND = 'kimi';
 const KIMI_RUNTIME_KIND = 'kimi-cli';
 
 export class KimiCliAgentRuntime extends ControllerAgentRuntime<KimiAcpController> {
+  readonly command: string;
   readonly env: Record<string, string> | undefined;
   readonly kind = KIMI_RUNTIME_KIND;
   private readonly config: KimiCliAgentProviderConfig;
 
-  constructor(config: KimiCliAgentProviderConfig) {
+  constructor(config: KimiCliAgentProviderConfig, command: string) {
     super({ providerChildIdleTimeoutMs: config.providerChildIdleTimeoutMs });
     this.config = config;
+    this.command = command;
     this.env = config.env;
   }
 
@@ -38,7 +39,7 @@ export class KimiCliAgentRuntime extends ControllerAgentRuntime<KimiAcpControlle
     return this.runTurnLifecycle(input, {
       label: 'Kimi',
       startedPayload: {
-        command: KIMI_COMMAND,
+        command: this.command,
         transport: 'acp',
       },
       turn: async () => {
@@ -84,7 +85,7 @@ export class KimiCliAgentRuntime extends ControllerAgentRuntime<KimiAcpControlle
         return this.spawnController(
           {
             args: ['--yolo', 'acp'],
-            command: KIMI_COMMAND,
+            command: this.command,
             label: 'Kimi ACP runtime',
           },
           input,

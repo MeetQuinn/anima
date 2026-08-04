@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -30,4 +30,30 @@ test('runtime host config watch event invalidates changed agent config cache', a
 
 test('runtime host root agents watch events schedule reconcile without config cache invalidation', () => {
   assert.equal(invalidateConfigCacheForWatchEvent('agents', '/tmp/anima/agents', 'scout'), true);
+});
+
+test('runtime host server config watch event invalidates provider command config cache', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-server-config-watch-'));
+  try {
+    const configPath = join(dir, 'config.json');
+    await writeFile(configPath, '{"providerCommands":{"codex-cli":"mcodex"}}\n', 'utf8');
+
+    const fileStat = await statOrNull(configPath);
+    assert.ok(fileStat);
+    cacheSet(configPath, { providerCommands: { 'codex-cli': 'codex' } }, fileStat);
+
+    const file = new JsonFile<{ providerCommands: Record<string, string> }>(
+      configPath,
+      () => ({ providerCommands: {} }),
+    );
+    assert.equal((await file.read()).providerCommands['codex-cli'], 'codex');
+
+    assert.equal(
+      invalidateConfigCacheForWatchEvent('server', dir, 'config.json'),
+      true,
+    );
+    assert.equal((await file.read()).providerCommands['codex-cli'], 'mcodex');
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
 });

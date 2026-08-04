@@ -199,6 +199,108 @@ test('web API manages global provider context limits without storing them in age
   }
 });
 
+test('web API manages validated provider runtime command overrides in server config', async () => {
+  const stateDir = await mkdtemp(
+    join(tmpdir(), 'anima-web-api-provider-command-'),
+  );
+  const previousMachineWrites = process.env.ANIMA_ALLOW_MACHINE_WRITES;
+  process.env.ANIMA_ALLOW_MACHINE_WRITES = '1';
+  await writeAgentConfigs(stateDir);
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const server = await createWebServer();
+      try {
+        server.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        const address = server.address();
+        if (!address || typeof address === 'string')
+          throw new Error('Expected TCP address');
+        const base = `http://127.0.0.1:${address.port}`;
+
+        const before = await fetch(`${base}/api/provider-runtime-commands`);
+        assert.equal(before.status, 200);
+        const beforeBody = (await before.json()) as {
+          providers: Array<{
+            command: string | null;
+            defaultCommand: string;
+            provider: string;
+          }>;
+        };
+        assert.deepEqual(
+          beforeBody.providers.find((row) => row.provider === 'codex-cli'),
+          { command: null, defaultCommand: 'codex', provider: 'codex-cli' },
+        );
+
+        const saved = await fetch(`${base}/api/provider-runtime-commands`, {
+          body: JSON.stringify({
+            command: process.execPath,
+            provider: 'codex-cli',
+          }),
+          headers: { 'content-type': 'application/json' },
+          method: 'PUT',
+        });
+        assert.equal(saved.status, 200);
+        assert.equal(
+          (
+            (await saved.json()) as {
+              providers: Array<{ command: string | null; provider: string }>;
+            }
+          ).providers.find((row) => row.provider === 'codex-cli')?.command,
+          process.execPath,
+        );
+        assert.equal(
+          (
+            JSON.parse(
+              await readFile(join(stateDir, 'config.json'), 'utf8'),
+            ) as { providerCommands?: Record<string, string> }
+          ).providerCommands?.['codex-cli'],
+          process.execPath,
+        );
+
+        const rejected = await fetch(`${base}/api/provider-runtime-commands`, {
+          body: JSON.stringify({
+            command: '/definitely/missing/anima-provider-command',
+            provider: 'codex-cli',
+          }),
+          headers: { 'content-type': 'application/json' },
+          method: 'PUT',
+        });
+        assert.equal(rejected.status, 409);
+        assert.equal(
+          (
+            JSON.parse(
+              await readFile(join(stateDir, 'config.json'), 'utf8'),
+            ) as { providerCommands?: Record<string, string> }
+          ).providerCommands?.['codex-cli'],
+          process.execPath,
+        );
+
+        const reset = await fetch(`${base}/api/provider-runtime-commands`, {
+          body: JSON.stringify({ command: null, provider: 'codex-cli' }),
+          headers: { 'content-type': 'application/json' },
+          method: 'PUT',
+        });
+        assert.equal(reset.status, 200);
+        assert.equal(
+          (
+            JSON.parse(
+              await readFile(join(stateDir, 'config.json'), 'utf8'),
+            ) as { providerCommands?: Record<string, string> }
+          ).providerCommands,
+          undefined,
+        );
+      } finally {
+        server.close();
+      }
+    });
+  } finally {
+    if (previousMachineWrites === undefined)
+      delete process.env.ANIMA_ALLOW_MACHINE_WRITES;
+    else process.env.ANIMA_ALLOW_MACHINE_WRITES = previousMachineWrites;
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('server-info exposes the last standalone restart result for UI echoes', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-last-restart-test-'));
   await writeAgentConfigs(stateDir);

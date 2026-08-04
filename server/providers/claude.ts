@@ -2,7 +2,6 @@ import { isRecord, stringField } from '../json.js';
 import { classifyProviderFailureReason } from './provider-failure.js';
 import { type RunningChildProcess } from './child-process.js';
 import {
-  CLAUDE_COMMAND,
   claudeCommonArgs,
   claudeProviderEnv,
   writeSystemPromptFile,
@@ -26,13 +25,15 @@ const CLAUDE_TRANSIENT_CONTINUE_PROMPT =
   'The previous provider turn ended with a transient API or transport error after partial progress. Continue from the current conversation state. Do not repeat completed tool calls, chat messages, file sends, or file edits; inspect state first if needed, then finish the requested task.';
 
 export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJsonController> {
+  readonly command: string;
   readonly env: Record<string, string>;
   readonly kind = 'claude-code';
   private readonly config: ClaudeCodeAgentProviderConfig;
 
-  constructor(config: ClaudeCodeAgentProviderConfig) {
+  constructor(config: ClaudeCodeAgentProviderConfig, command: string) {
     super({ providerChildIdleTimeoutMs: config.providerChildIdleTimeoutMs });
     this.config = config;
+    this.command = command;
     this.env = claudeProviderEnv(config);
   }
 
@@ -55,7 +56,7 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
       },
       label: 'Claude Code',
       startedPayload: {
-        command: CLAUDE_COMMAND,
+        command: this.command,
         inputFormat: 'stream-json',
       },
       turn: async () => {
@@ -142,7 +143,7 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
       () => this.slot.get() ?? this.spawnController(
         {
           args: this.claudeArgs(input.providerSession, systemPromptFilePath),
-          command: CLAUDE_COMMAND,
+          command: this.command,
           label: 'Claude Code runtime',
         },
         input,

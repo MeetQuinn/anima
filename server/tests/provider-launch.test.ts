@@ -11,12 +11,38 @@ import {
   claudeProviderEnv,
 } from '../providers/claude-launch.js';
 import { ControllerAgentRuntime } from '../providers/provider-runtime.js';
+import { createAgentRuntime } from '../providers/factory.js';
 import type {
+  AgentRuntime,
   AgentRuntimeEffects,
   AgentRuntimeFollowupResult,
   AgentRuntimeInput,
   AgentRuntimeResult,
 } from '../providers/contract.js';
+
+test('provider runtimes use catalog commands by default and accept one executable override', () => {
+  const cases = [
+    [{ kind: 'claude-code' as const }, 'claude'],
+    [{ kind: 'codex-cli' as const }, 'codex'],
+    [{ kind: 'kimi-cli' as const }, 'kimi'],
+    [{ kind: 'grok-cli' as const }, 'grok'],
+    [{ kind: 'opencode-cli' as const }, 'opencode'],
+  ] as const;
+
+  for (const [config, expected] of cases) {
+    assert.equal(
+      (createAgentRuntime(config) as AgentRuntime & { command: string }).command,
+      expected,
+    );
+    assert.equal(
+      (
+        createAgentRuntime(config, { command: '/opt/provider-wrapper' }) as
+          AgentRuntime & { command: string }
+      ).command,
+      '/opt/provider-wrapper',
+    );
+  }
+});
 
 test('claude provider env defaults the auto-compact window and lets config env override it', () => {
   assert.deepEqual(claudeProviderEnv({ kind: 'claude-code' }), {
