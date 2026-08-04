@@ -44,6 +44,7 @@ export class ReminderInboxSubscriber {
   private poll?: Promise<void>;
   private readonly jobs = new Map<string, ManagedPreflightJob>();
   private readonly reminderService: ReminderService;
+  private readonly runtimeEnv: Record<string, string>;
   private stopping = false;
   private timer?: NodeJS.Timeout;
 
@@ -51,8 +52,10 @@ export class ReminderInboxSubscriber {
     private readonly queue: WakeQueueService,
     reminderService?: ReminderService,
     private readonly animaHome = resolveAnimaHome(),
+    runtimeEnv: Record<string, string> = {},
   ) {
     this.reminderService = reminderService ?? reminderServiceForAgent(queue.agentId);
+    this.runtimeEnv = { ...runtimeEnv };
   }
 
   start(): void {
@@ -195,6 +198,7 @@ export class ReminderInboxSubscriber {
       cwd: agentHome,
       now: startedAt,
       reminderId: snapshot.reminderId,
+      runtimeEnv: this.runtimeEnv,
       scheduledAt,
       ...(preflightConfig.timeoutMs !== undefined ? { timeoutMs: preflightConfig.timeoutMs } : {}),
     });

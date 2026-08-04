@@ -22,8 +22,11 @@ import {
 } from '../reminders/preflight.js';
 import { reminderServiceForAgent } from '../reminders/reminder.service.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
+import { startRunningAgent } from '../runtime/agent-runner.js';
+import { TeamRunLimiter } from '../runtime/team-run-limiter.js';
 import { withAnimaHome } from './anima-home.js';
 import { waitFor } from './helpers/harness.js';
+import { StaticTextRuntime } from './helpers/runtime-worker.js';
 
 async function writeAgentConfig(stateDir: string, agentId: string, homePath: string): Promise<void> {
   await mkdir(homePath, { recursive: true });
@@ -313,6 +316,110 @@ test('ReminderInboxSubscriber hands queue owner, reminder id, and active Anima h
     assert.match(evidence, new RegExp(`ANIMA_AGENT_ID=${agentId}`));
     assert.match(evidence, new RegExp(`ANIMA_REMINDER_ID=${reminder.reminderId}`));
     assert.match(evidence, new RegExp(`ANIMA_HOME=${animaHome}`));
+  });
+});
+
+test('runner hands the agent startup env snapshot to a real preflight child', async () => {
+  await withAgentHome(async (homePath, agentId) => {
+    const animaHome = join(homePath, '..');
+    const service = reminderServiceForAgent(agentId);
+    const queue = new WakeQueueService(agentId);
+    const runtimeEnv = {
+      ANIMA_HOME: animaHome,
+      ANIMA_RUNTIME_HOME: animaHome,
+      ANIMA_SLACK_BOT_TOKEN: 'xoxb-agent',
+      PROVIDER_ACCOUNT_ENV: 'provider-agent',
+      SLACK_BOT_TOKEN: 'xoxb-agent',
+    };
+    const hostileAmbient = {
+      ANIMA_AGENT_ID: 'wrong-agent',
+      ANIMA_CHANNEL: 'wrong-channel',
+      ANIMA_CHANNEL_ID: 'C_WRONG',
+      ANIMA_CHANNEL_NAME: 'wrong-name',
+      ANIMA_HOME: '/wrong/home',
+      ANIMA_INBOX_ITEM_ID: 'wrong-item',
+      ANIMA_INSTRUCTIONS_PATH: '/wrong/instructions',
+      ANIMA_MESSAGE_TS: '123.456',
+      ANIMA_REMINDER_ID: 'wrong-reminder',
+      ANIMA_SESSION_KEY: 'wrong-session',
+      ANIMA_SLACK_BOT_TOKEN: 'xoxb-ambient',
+      ANIMA_SURFACE_KIND: 'thread',
+      ANIMA_THREAD: 'wrong-thread',
+      ANIMA_THREAD_TS: '456.789',
+      ANIMA_WORKSPACE_PATH: '/wrong/workspace',
+      PATH: '/deliberately/missing',
+      PROVIDER_ACCOUNT_ENV: 'provider-ambient',
+      SLACK_BOT_TOKEN: 'xoxb-ambient',
+    };
+    const previous = new Map<string, string | undefined>();
+    for (const [key, value] of Object.entries(hostileAmbient)) {
+      previous.set(key, process.env[key]);
+      process.env[key] = value;
+    }
+
+    let running: Awaited<ReturnType<typeof startRunningAgent>> | undefined;
+    try {
+      const reminder = await service.scheduleReminder({
+        fireAt: '2020-01-01T00:00:00.000Z',
+        instructions: 'inspect startup env',
+        now: new Date(),
+        preflight: { command: 'anima --help >/dev/null && env' },
+        title: 'runtime-env-handoff',
+      });
+      running = await startRunningAgent({
+        agentId,
+        agentRuntime: new StaticTextRuntime('done'),
+        animaHome,
+        homePath,
+        runLimiter: new TeamRunLimiter(),
+        runtimeEnv,
+        stateDir: animaHome,
+      });
+
+      await waitFor(async () => (await queue.list()).some((item) =>
+        item.kind === 'reminder' && item.reminderId === reminder.reminderId), {
+        description: 'runtime env handoff reminder wake',
+        timeoutMs: 5_000,
+      });
+      const item = (await queue.list()).find((candidate) =>
+        candidate.kind === 'reminder' && candidate.reminderId === reminder.reminderId);
+      assert.ok(item);
+      const evidence = (item as { preflightEvidence?: string }).preflightEvidence ?? '';
+      const childEnv = Object.fromEntries(
+        evidence.split('\n').slice(1).map((line) => {
+          const separator = line.indexOf('=');
+          return [line.slice(0, separator), line.slice(separator + 1)];
+        }),
+      );
+      assert.equal(childEnv.PROVIDER_ACCOUNT_ENV, 'provider-agent');
+      assert.equal(childEnv.SLACK_BOT_TOKEN, 'xoxb-agent');
+      assert.equal(childEnv.ANIMA_SLACK_BOT_TOKEN, 'xoxb-agent');
+      assert.equal(childEnv.ANIMA_AGENT_ID, agentId);
+      assert.equal(childEnv.ANIMA_HOME, animaHome);
+      assert.equal(childEnv.ANIMA_RUNTIME_HOME, animaHome);
+      assert.equal(childEnv.ANIMA_REMINDER_ID, reminder.reminderId);
+      for (const key of [
+        'ANIMA_CHANNEL',
+        'ANIMA_CHANNEL_ID',
+        'ANIMA_CHANNEL_NAME',
+        'ANIMA_INBOX_ITEM_ID',
+        'ANIMA_INSTRUCTIONS_PATH',
+        'ANIMA_MESSAGE_TS',
+        'ANIMA_SESSION_KEY',
+        'ANIMA_SURFACE_KIND',
+        'ANIMA_THREAD',
+        'ANIMA_THREAD_TS',
+        'ANIMA_WORKSPACE_PATH',
+      ]) {
+        assert.equal(childEnv[key], undefined, `${key} must not reach preflight`);
+      }
+    } finally {
+      await running?.stop();
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 });
 

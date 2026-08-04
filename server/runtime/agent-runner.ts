@@ -27,6 +27,7 @@ interface RunningAgentOptions extends RuntimeWorkerConfig {
   feishu?: FeishuConfig;
   idleTimeoutMs?: number;
   runLimiter: TeamRunLimiter;
+  runtimeEnv: Record<string, string>;
   startAbortForceAfterMs?: number;
   startTimeoutMs?: number;
 }
@@ -79,6 +80,7 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
     ...(options.botToken ? { botToken: options.botToken } : {}),
     ...(options.feishu ? { feishu: options.feishu } : {}),
     queue,
+    runtimeEnv: options.runtimeEnv,
   });
   try {
     worker.start();

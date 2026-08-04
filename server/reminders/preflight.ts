@@ -36,6 +36,7 @@ export interface RunPreflightInput {
   cwd: string;
   now?: Date;
   reminderId: string;
+  runtimeEnv?: Record<string, string>;
   scheduledAt: string;
   timeoutMs?: number;
 }
@@ -103,7 +104,8 @@ export function validatePreflightCommand(command: string): string {
 
 /**
  * Run a preflight shell command with fixed CWD (Agent Home).
- * Timeout / abort kill the entire process group. Does not inject env secrets.
+ * The caller supplies the agent's captured configured/managed runtime env; no
+ * wake-item context is invented. Timeout / abort kill the entire process group.
  */
 export async function runPreflightCommand(input: RunPreflightInput): Promise<RunPreflightOutput> {
   const command = validatePreflightCommand(input.command);
@@ -139,6 +141,7 @@ export async function runPreflightCommand(input: RunPreflightInput): Promise<Run
         agentId: input.agentId,
         animaHome: input.animaHome,
         reminderId: input.reminderId,
+        runtimeEnv: input.runtimeEnv,
       }),
       shell: true,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -241,19 +244,38 @@ export async function runPreflightCommand(input: RunPreflightInput): Promise<Run
 export interface PreflightEnvironmentOptions {
   agentId: string;
   animaHome: string;
-  baseEnv?: NodeJS.ProcessEnv;
   reminderId: string;
+  runtimeEnv?: Record<string, string>;
 }
+
+const PREFLIGHT_ITEM_ENV_KEYS = [
+  'ANIMA_CHANNEL',
+  'ANIMA_CHANNEL_ID',
+  'ANIMA_CHANNEL_NAME',
+  'ANIMA_INBOX_ITEM_ID',
+  'ANIMA_INSTRUCTIONS_PATH',
+  'ANIMA_MESSAGE_TS',
+  'ANIMA_SESSION_KEY',
+  'ANIMA_SURFACE_KIND',
+  'ANIMA_THREAD',
+  'ANIMA_THREAD_TS',
+  'ANIMA_WORKSPACE_PATH',
+] as const;
 
 export function buildPreflightEnvironment(
   options: PreflightEnvironmentOptions,
 ): Record<string, string> {
-  const env = buildServiceEnvironment({
-    animaHome: options.animaHome,
-    ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}),
-  });
+  // Provider children also inherit process.env. Preflight deliberately starts
+  // from stable service basics so the firing caller cannot leak item identity
+  // or override the agent-owned startup snapshot handed in by the host.
+  const env = {
+    ...buildServiceEnvironment({ animaHome: options.animaHome }),
+    ...(options.runtimeEnv ?? {}),
+  };
+  for (const key of PREFLIGHT_ITEM_ENV_KEYS) delete env[key];
   const packageBin = resolve(dirname(fileURLToPath(import.meta.url)), '../../..', 'bin');
   env.ANIMA_AGENT_ID = options.agentId;
+  env.ANIMA_HOME = options.animaHome;
   env.ANIMA_REMINDER_ID = options.reminderId;
   env.PATH = [packageBin, env.PATH].join(delimiter);
   return env;
