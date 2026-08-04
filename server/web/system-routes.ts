@@ -21,6 +21,7 @@ import { ProviderUsageKind } from '../../shared/provider-usage.js';
 import {
   ClaudeAccountLoginCodeRequest,
   ClaudeAccountLoginStartRequest,
+  ProviderAccountId,
   SelectProviderAccountRequest,
 } from '../../shared/provider-accounts.js';
 import {
@@ -84,6 +85,18 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
       throw error;
     }
   });
+  fastify.delete<{ Params: { accountId: string } }>(
+    '/api/provider-accounts/claude-code/:accountId',
+    async (request) => {
+      const accountId = ProviderAccountId.parse(request.params.accountId);
+      try {
+        return await defaultProviderAccountService.removeClaudeAccount(accountId);
+      } catch (error) {
+        if (error instanceof ProviderAccountError) throw new HttpError(error.statusCode, error.message);
+        throw error;
+      }
+    },
+  );
   fastify.post('/api/provider-accounts/claude-code/login', async (request, reply) => {
     try {
       const operation = await defaultClaudeAccountLoginService.start(

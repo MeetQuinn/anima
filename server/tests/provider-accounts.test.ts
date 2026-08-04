@@ -13,7 +13,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 
 import type { AgentConfig } from '../../shared/agent-config.js';
@@ -33,6 +33,10 @@ import {
   ensureClaudeAccountContinuityWithRoot,
 } from '../provider-accounts/claude-account-continuity.js';
 import { synchronizeClaudeAccountMcpStateAtPaths } from '../provider-accounts/claude-account-mcp.js';
+import {
+  ClaudeAccountRemovalError,
+  stageClaudeAccountRemoval,
+} from '../provider-accounts/claude-account-removal.js';
 import {
   ProviderAccountError,
   ProviderAccountService,
@@ -1044,6 +1048,234 @@ test('selecting the active account mid-switch requeues agents whose outcomes nev
   }
 });
 
+test('isolated Claude profile removal archives metadata, preserves shared targets, and deletes credentials', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-claude-account-remove-'));
+  const profilesRoot = join(root, 'profiles');
+  const archiveRoot = join(root, 'profiles-archive');
+  const canonicalProjects = join(root, 'canonical-projects');
+  const profile = join(profilesRoot, 'account-2');
+  await mkdir(profile, { recursive: true });
+  await mkdir(canonicalProjects, { recursive: true });
+  await writeFile(join(profile, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'two@example.com' } }));
+  await writeFile(join(profile, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'secret' } }));
+  await symlink(canonicalProjects, join(profile, 'projects'), 'dir');
+  const deletedServices: string[] = [];
+
+  try {
+    const staged = await stageClaudeAccountRemoval(
+      { configDir: profile, id: 'account-2', label: 'Account 2' },
+      {
+        archiveRoot,
+        deleteKeychain: async (service) => { deletedServices.push(service); },
+        now: () => new Date('2026-08-03T08:30:00.000Z'),
+        profilesRoot,
+      },
+    );
+    assert.ok(staged.archivedPath);
+    await assert.rejects(lstat(profile), /ENOENT/);
+    assert.equal(await readlink(join(staged.archivedPath, 'projects')), canonicalProjects);
+    assert.match(await readFile(join(staged.archivedPath, '.credentials.json'), 'utf8'), /secret/);
+
+    await staged.finalize();
+
+    await assert.rejects(readFile(join(staged.archivedPath, '.credentials.json')), /ENOENT/);
+    assert.match(await readFile(join(staged.archivedPath, '.claude.json'), 'utf8'), /two@example.com/);
+    assert.deepEqual(deletedServices, [claudeKeychainService(profile)]);
+    assert.equal((await stat(canonicalProjects)).isDirectory(), true);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('Claude profile removal restores the exact directory before credential deletion completes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-claude-account-restore-'));
+  const profilesRoot = join(root, 'profiles');
+  const profile = join(profilesRoot, 'account-2');
+  await mkdir(profile, { recursive: true });
+  await writeFile(join(profile, '.credentials.json'), 'credential');
+  try {
+    const staged = await stageClaudeAccountRemoval(
+      { configDir: profile, id: 'account-2', label: 'Account 2' },
+      { archiveRoot: join(root, 'archive'), deleteKeychain: async () => {}, profilesRoot },
+    );
+    await staged.restore();
+    assert.equal(await readFile(join(profile, '.credentials.json'), 'utf8'), 'credential');
+    await assert.rejects(lstat(staged.archivedPath as string), /ENOENT/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('Claude profile removal keeps file credentials recoverable when Keychain cleanup fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-claude-account-keychain-failure-'));
+  const profilesRoot = join(root, 'profiles');
+  const profile = join(profilesRoot, 'account-2');
+  await mkdir(profile, { recursive: true });
+  await writeFile(join(profile, '.credentials.json'), 'credential');
+  try {
+    const staged = await stageClaudeAccountRemoval(
+      { configDir: profile, id: 'account-2', label: 'Account 2' },
+      {
+        archiveRoot: join(root, 'archive'),
+        deleteKeychain: async () => {
+          assert.equal(
+            await readFile(join(staged.archivedPath as string, '.credentials.json'), 'utf8'),
+            'credential',
+          );
+          throw new Error('keychain unavailable');
+        },
+        profilesRoot,
+      },
+    );
+
+    await assert.rejects(staged.finalize(), /keychain unavailable/);
+    await staged.restore();
+    assert.equal(await readFile(join(profile, '.credentials.json'), 'utf8'), 'credential');
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('Claude profile removal refuses a symlinked managed profile', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-claude-account-symlink-'));
+  const profilesRoot = join(root, 'profiles');
+  const outside = join(root, 'outside');
+  const profile = join(profilesRoot, 'account-2');
+  await mkdir(profilesRoot);
+  await mkdir(outside);
+  await symlink(outside, profile, 'dir');
+  try {
+    await assert.rejects(
+      stageClaudeAccountRemoval(
+        { configDir: profile, id: 'account-2', label: 'Account 2' },
+        { archiveRoot: join(root, 'archive'), deleteKeychain: async () => {}, profilesRoot },
+      ),
+      (error) => error instanceof ClaudeAccountRemovalError
+        && /profile must be a real directory/.test(error.message),
+    );
+    assert.equal((await stat(outside)).isDirectory(), true);
+    assert.equal((await lstat(profile)).isSymbolicLink(), true);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('Claude profile removal fails closed outside the managed direct-child root', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-claude-account-boundary-'));
+  const profilesRoot = join(root, 'profiles');
+  const outside = join(root, 'outside');
+  await mkdir(profilesRoot);
+  await mkdir(outside);
+  try {
+    await assert.rejects(
+      stageClaudeAccountRemoval(
+        { configDir: outside, id: 'outside', label: 'Outside' },
+        { archiveRoot: join(root, 'archive'), deleteKeychain: async () => {}, profilesRoot },
+      ),
+      (error) => error instanceof ClaudeAccountRemovalError
+        && /Only isolated Claude profiles managed by Anima/.test(error.message),
+    );
+    assert.equal((await stat(outside)).isDirectory(), true);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('removing a non-active Claude account persists one-account registry and finalizes its profile', async () => {
+  const fixture = await accountServiceFixture({ active: false });
+  try {
+    const state = await fixture.service.removeClaudeAccount('secondary');
+    assert.deepEqual(state.accounts.map((account) => account.id), ['primary']);
+    assert.deepEqual(fixture.config().claudeCode?.accounts.map((account) => account.id), ['primary']);
+    assert.deepEqual(fixture.removedAccountIds, ['secondary']);
+    assert.equal(fixture.removeFinalizeCount(), 1);
+    assert.equal(fixture.removeRestoreCount(), 0);
+    assert.deepEqual(fixture.restarted, []);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('Claude account removal rejects active and directly referenced profiles before staging', async () => {
+  const fixture = await accountServiceFixture({ active: false });
+  try {
+    await assert.rejects(
+      fixture.service.removeClaudeAccount('primary'),
+      (error) => error instanceof ProviderAccountError
+        && error.statusCode === 409
+        && /Switch to another Claude account/.test(error.message),
+    );
+    fixture.replaceAgent(claudeAgent('iris', fixture.secondaryDir));
+    await assert.rejects(
+      fixture.service.removeClaudeAccount('secondary'),
+      (error) => error instanceof ProviderAccountError
+        && error.statusCode === 409
+        && /still configured on agents: iris/.test(error.message),
+    );
+
+    const pinned = claudeAgent('iris');
+    if (pinned.provider.kind !== 'claude-code') assert.fail('expected Claude agent');
+    pinned.provider.accountId = 'secondary';
+    fixture.replaceAgent(pinned);
+    await assert.rejects(
+      fixture.service.removeClaudeAccount('secondary'),
+      (error) => error instanceof ProviderAccountError
+        && error.statusCode === 409
+        && /still configured on agents: iris/.test(error.message),
+    );
+
+    const alias = join(dirname(fixture.secondaryDir), 'secondary-alias');
+    await symlink(fixture.secondaryDir, alias, 'dir');
+    fixture.replaceAgent(claudeAgent('iris', alias));
+    await assert.rejects(
+      fixture.service.removeClaudeAccount('secondary'),
+      (error) => error instanceof ProviderAccountError
+        && error.statusCode === 409
+        && /still configured on agents: iris/.test(error.message),
+    );
+    assert.deepEqual(fixture.removedAccountIds, []);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('Claude account removal serializes behind per-agent assignment before checking references', async () => {
+  const fixture = await accountServiceFixture({ active: false });
+  try {
+    const assignment = fixture.service.assignClaudeAccount('iris', 'secondary');
+    const removal = fixture.service.removeClaudeAccount('secondary');
+
+    const assignedAgent = await assignment;
+    await assert.rejects(
+      removal,
+      (error) => error instanceof ProviderAccountError
+        && error.statusCode === 409
+        && /still configured on agents: iris/.test(error.message),
+    );
+    assert.deepEqual(fixture.removedAccountIds, []);
+    if (assignedAgent.provider.kind !== 'claude-code') assert.fail('expected Claude agent');
+    assert.equal(assignedAgent.provider.accountId, 'secondary');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('Claude account removal restores registry and profile when credential cleanup fails', async () => {
+  const fixture = await accountServiceFixture({ active: false, removeFinalizeFailure: true });
+  try {
+    await assert.rejects(fixture.service.removeClaudeAccount('secondary'), /credential cleanup failed/);
+    assert.deepEqual(
+      fixture.config().claudeCode?.accounts.map((account) => account.id),
+      ['primary', 'secondary'],
+    );
+    assert.equal(fixture.removeFinalizeCount(), 1);
+    assert.equal(fixture.removeRestoreCount(), 1);
+    assert.equal(fixture.writeCount(), 2);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 function healthyWorkerHealth(
   workerId: string,
   childStartedAt?: string,
@@ -1092,6 +1324,7 @@ async function accountServiceFixture(input: {
   reloadGate?: Promise<void>;
   reloadStarted?: () => void;
   reloadFailures?: number;
+  removeFinalizeFailure?: boolean;
   secondaryAuthenticated?: boolean;
   secondaryCredentials?: { accessToken?: string; refreshToken?: string };
   agentIds?: string[];
@@ -1129,6 +1362,9 @@ async function accountServiceFixture(input: {
   let reloadFailures = input.reloadFailures ?? 0;
   let ensureContinuityCalls = 0;
   const mcpSynchronizations: string[][] = [];
+  const removedAccountIds: string[] = [];
+  let removeFinalizeCount = 0;
+  let removeRestoreCount = 0;
   let agentConfigs = (input.agentIds ?? ['iris']).map((id) =>
     claudeAgent(id, input.configured === false ? secondaryDir : primaryDir));
   const statuses: AgentStatusSummary[] = [{
@@ -1191,6 +1427,19 @@ async function accountServiceFixture(input: {
       assigned.push({ accountId, agentId });
       return next;
     },
+    async (account) => {
+      removedAccountIds.push(account.id);
+      return {
+        archivedPath: join(root, 'archive', account.id),
+        async finalize() {
+          removeFinalizeCount += 1;
+          if (input.removeFinalizeFailure) throw new Error('credential cleanup failed');
+        },
+        async restore() {
+          removeRestoreCount += 1;
+        },
+      };
+    },
   );
 
   return {
@@ -1204,6 +1453,9 @@ async function accountServiceFixture(input: {
     config: () => config,
     ensureContinuityCalls: () => ensureContinuityCalls,
     mcpSynchronizations: () => mcpSynchronizations,
+    removedAccountIds,
+    removeFinalizeCount: () => removeFinalizeCount,
+    removeRestoreCount: () => removeRestoreCount,
     replaceAgent(agent: AgentConfig) {
       agentConfigs = agentConfigs.map((current) => (current.id === agent.id ? agent : current));
     },
@@ -1265,6 +1517,7 @@ async function accountServiceFixture(input: {
       };
     },
     service,
+    secondaryDir,
     writeCount: () => writes,
   };
 }

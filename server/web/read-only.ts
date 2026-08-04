@@ -35,7 +35,7 @@ export const READ_ONLY_REFUSAL = 'read-only runtime: machine-scoped mutation dis
 export interface GovernedRoute {
   /** Stable id, used in the refusal body and in tests. */
   readonly id: string;
-  readonly method: 'GET' | 'POST' | 'PUT';
+  readonly method: 'DELETE' | 'GET' | 'POST' | 'PUT';
   /** Matched against the pathname only (query string stripped). */
   readonly pattern: RegExp;
   /**
@@ -95,6 +95,13 @@ export const GOVERNED_ROUTES: readonly GovernedRoute[] = [
     pattern: /^\/api\/agents\/[^/]+\/provider\/claude-account$/,
     evidence:
       'Assigns a machine-user Claude credential profile to one agent and can create shared-state links under machine-user Claude configuration directories outside ANIMA_HOME.',
+  },
+  {
+    id: 'DELETE /api/provider-accounts/claude-code/:accountId',
+    method: 'DELETE',
+    pattern: /^\/api\/provider-accounts\/claude-code\/[^/]+$/,
+    evidence:
+      'Removes a machine-user Claude credential from Keychain and moves its isolated configuration directory outside the shared Claude profile discovery root. Both locations live outside ANIMA_HOME and are visible to other Claude Code processes owned by this machine user.',
   },
   {
     id: 'POST /api/provider-accounts/claude-code/login',
