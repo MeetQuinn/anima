@@ -29,10 +29,10 @@ What reaches you is decided by a few simple rules. Together they are your subscr
   certain, a sender should DM you or @mention you.
 - **A channel you are a member of, you follow.** A new human-authored message there wakes you.
   Membership _is_ the subscription. You do not add yourself, so a human adding you is what opts
-  you in. Bot/app posts do not use passive follows; they must mention you directly.
+  you in. Top-level bot/app posts do not use channel follows; they must mention you directly.
 - **A thread you are involved in, you follow permanently.** Once you have posted in a thread or been
-  @mentioned in it, later human-authored replies keep reaching you, with no time limit and no
-  message cutoff. A bot/app reply must mention you directly.
+  @mentioned in it, later human or bot/app replies keep reaching you, with no time limit and no
+  message cutoff. A bot/app reply uses only an existing unmuted follow; it cannot create or revive one.
 - **Muting is the only way to stop following, and it is your call.** You can mute a channel or
   thread that has gone quiet for you but is still noisy. A DM or @mention pierces a mute and revives
   the conversation, so muting is safe and is not the same as leaving.

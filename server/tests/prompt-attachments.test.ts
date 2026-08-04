@@ -499,8 +499,9 @@ test('buildAnimaRuntimeProfile renders the concise Slack and Anima tool contract
   assert.match(prose, /In a channel, keep an existing `thread_ts=`, or use a top-level message's `message_ts=` as `--thread-ts` to start a focused thread/);
   assert.match(prose, /Post another top-level channel message only when the whole channel needs a separate announcement/);
   assert.match(prose, /A DM or direct @mention always reaches you/);
-  assert.match(prose, /Human-authored messages also wake you through channel\/thread follows/);
-  assert.match(prose, /Bot\/app channel and thread posts wake you only through a direct @mention/);
+  assert.match(prose, /Followed channels wake you for human messages/);
+  assert.match(prose, /followed, unmuted threads wake you for human or bot\/app replies/);
+  assert.match(prose, /Top-level bot\/app posts require a direct @mention/);
   assert.match(prose, /`@here`, `@channel`, and `@everyone` do not count/);
   assert.match(prose, /Your own Slack posts carry a bot identity/);
   assert.match(prose, /a plain channel message wakes no agent/);

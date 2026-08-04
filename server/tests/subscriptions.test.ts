@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import {
   attentionMapForSubscriptions,
   channelSubscriptionId,
+  channelSubscriptionRecord,
   ensureThreadSubscriptionForSentMessage,
   muteSubscriptionForAgent,
   platformForSubscription,
@@ -600,7 +601,7 @@ test('thread follows are permanent and mute is revived by mention', async () => 
   }
 });
 
-test('Slack bot thread replies do not consume or revive passive thread follows', async () => {
+test('Slack bot thread replies consume existing unmuted thread follows', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-bot-thread-routing-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
@@ -628,9 +629,30 @@ test('Slack bot thread replies do not consume or revive passive thread follows',
         },
         { agentId: 'scout', nowMs: 2_000 },
       );
-      assert.equal(unmentioned.shouldStartRuntime, false);
-      assert.equal(unmentioned.reason, 'not_addressed');
-      assert.deepEqual(await store.find(subscriptionId), before);
+      assert.equal(unmentioned.shouldStartRuntime, true);
+      assert.equal(unmentioned.reason, 'thread_follow');
+      assert.notDeepEqual(await store.find(subscriptionId), before);
+
+      const noSubscription = await slackRuntimeDecision(
+        {
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'unmentioned bot reply in an unfollowed thread',
+          thread_ts: '1770000090.000001',
+          ts: '1770000091.000002',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', nowMs: 2_500 },
+      );
+      assert.equal(noSubscription.shouldStartRuntime, false);
+      assert.equal(noSubscription.reason, 'not_addressed');
+      assert.equal(
+        await store.find(threadSubscriptionId('scout', 'C123', '1770000090.000001')),
+        undefined,
+      );
 
       await muteSubscriptionForAgent({
         agentId: 'scout',
@@ -653,7 +675,7 @@ test('Slack bot thread replies do not consume or revive passive thread follows',
         },
         { agentId: 'scout', nowMs: 4_000 },
       );
-      assert.equal(suppressedWhileMuted.reason, 'not_addressed');
+      assert.equal(suppressedWhileMuted.reason, 'muted');
       assert.deepEqual(await store.find(subscriptionId), mutedBefore);
 
       const mentioned = await slackRuntimeDecision(
@@ -674,6 +696,38 @@ test('Slack bot thread replies do not consume or revive passive thread follows',
       assert.equal(mentioned.reason, 'mention');
       assert.equal(mentioned.subscription?.status, 'following');
       assert.equal((await store.find(subscriptionId))?.mutedAt, undefined);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('Slack top-level bot posts do not consume channel follows', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-bot-channel-routing-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const store = new SubscriptionStore('scout');
+      const subscriptionId = channelSubscriptionId('scout', 'C123');
+      await store.replace(channelSubscriptionRecord('scout', 'C123', new Date(1_000).toISOString(), 'slack'));
+      const before = await store.find(subscriptionId);
+
+      const decision = await slackRuntimeDecision(
+        {
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'unmentioned top-level bot post',
+          ts: '1770000030.000001',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', nowMs: 2_000 },
+      );
+
+      assert.equal(decision.shouldStartRuntime, false);
+      assert.equal(decision.reason, 'not_addressed');
+      assert.deepEqual(await store.find(subscriptionId), before);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

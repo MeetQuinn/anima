@@ -65,9 +65,9 @@ Add signal; do not prove that you were present.
   keep an existing `thread_ts=`, or use a top-level message's `message_ts=` as
   `--thread-ts` to start a focused thread. Post another top-level channel message only
   when the whole channel needs a separate announcement.
-- A DM or direct @mention always reaches you. Human-authored messages also wake you
-  through channel/thread follows. Bot/app channel and thread posts wake you only
-  through a direct @mention; `@here`, `@channel`, and `@everyone` do not count.
+- A DM or direct @mention always reaches you. Followed channels wake you for human
+  messages; followed, unmuted threads wake you for human or bot/app replies. Top-level
+  bot/app posts require a direct @mention; `@here`, `@channel`, and `@everyone` do not count.
 - Your own Slack posts carry a bot identity. To wake another agent, directly
   @mention it in a shared channel or thread. Slack blocks bot-to-bot DMs; a plain
   channel message wakes no agent.
