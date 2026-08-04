@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { ProviderUsageService, claudeAccountUsageAdapter } from '../provider-usage/provider-usage.service.js';
 import { fetchJson, providerUsageNetworkErrorMessage } from '../provider-usage/http.js';
 import { fetchClaudeUsage, parseClaudeUsageResponse } from '../provider-usage/providers/claude.js';
-import { fetchCodexUsage, parseCodexUsageResponse } from '../provider-usage/providers/codex.js';
+import { codexAccount, fetchCodexUsage, parseCodexUsageResponse } from '../provider-usage/providers/codex.js';
 import {
   fetchGrokUsage,
   fetchUntilBody,
@@ -271,6 +271,41 @@ test('Kimi usage reads Kimi Code credentials before legacy migrated credentials'
     restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
     restoreEnv('KIMI_SHARE_DIR', originalShareDir);
   }
+});
+
+test('Codex account prefers profile/email over opaque org account ids', () => {
+  const orgId = 'org-eiFkFtFjcRGAF6c7737GVQC5';
+  assert.equal(
+    codexAccount({
+      account_id: orgId,
+      id_token: jwtWithClaims({
+        'https://api.openai.com/profile': {
+          email: 'guoqiang@lunapark.com',
+          email_verified: true,
+          name: 'Guoqiang Wang',
+        },
+      }),
+    }),
+    'guoqiang@lunapark.com',
+  );
+  assert.equal(
+    codexAccount(
+      { account_id: orgId, id_token: jwtWithClaims({ sub: 'user-1' }) },
+      { email: 'from-auth-json@example.com' },
+    ),
+    'from-auth-json@example.com',
+  );
+  assert.equal(
+    codexAccount({
+      account_id: orgId,
+      id_token: jwtWithClaims({
+        'https://api.openai.com/profile': { name: 'Guoqiang Wang' },
+      }),
+    }),
+    'Guoqiang Wang',
+  );
+  // Opaque org ids are not a useful identity label.
+  assert.equal(codexAccount({ account_id: orgId }), undefined);
 });
 
 test('Codex usage refreshes an expired access token before fetching usage', async () => {

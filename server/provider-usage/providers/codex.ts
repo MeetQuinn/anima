@@ -103,7 +103,7 @@ async function readCodexCredentials(): Promise<CodexCredentials | undefined> {
   const tokens = record(auth?.tokens);
   const accessToken = stringValue(tokens?.access_token);
   if (!auth || !accessToken) return undefined;
-  const account = codexAccount(tokens);
+  const account = codexAccount(tokens, auth);
   return {
     ...(account ? { account } : {}),
     accessToken,
@@ -113,9 +113,32 @@ async function readCodexCredentials(): Promise<CodexCredentials | undefined> {
   };
 }
 
-function codexAccount(tokens: Record<string, unknown> | undefined): string | undefined {
-  const claims = record(decodeJwtPayload(stringValue(tokens?.id_token) ?? ''));
-  return stringValue(claims?.email) ?? stringValue(tokens?.account_id);
+/**
+ * Human identity for the Providers panel. ChatGPT OAuth puts email under the
+ * OpenAI profile claim (and often as a top-level auth.json field), not
+ * `claims.email`. Falling through to tokens.account_id alone surfaces opaque
+ * `org-…` ids, which are not useful as a display name.
+ */
+export function codexAccount(
+  tokens: Record<string, unknown> | undefined,
+  auth: Record<string, unknown> | undefined = undefined,
+): string | undefined {
+  const claims = record(
+    decodeJwtPayload(stringValue(tokens?.id_token) ?? stringValue(tokens?.access_token) ?? ''),
+  );
+  const profile = record(claims?.['https://api.openai.com/profile']);
+  return (
+    stringValue(claims?.email)
+    ?? stringValue(profile?.email)
+    ?? stringValue(auth?.email)
+    ?? stringValue(profile?.name)
+    ?? nonOrgAccountId(stringValue(tokens?.account_id))
+  );
+}
+
+function nonOrgAccountId(accountId: string | undefined): string | undefined {
+  if (!accountId || /^org-/i.test(accountId)) return undefined;
+  return accountId;
 }
 
 async function fetchCodexUsageWithToken(token: string): ReturnType<typeof fetchJson> {
@@ -168,7 +191,7 @@ async function refreshCodexCredentials(
   } catch {
     return { error: usageError('unknown', 'Codex token refreshed but could not be saved. Check ~/.codex/auth.json permissions.') };
   }
-  const account = codexAccount(record(tokens)) ?? credentials.account;
+  const account = codexAccount(record(tokens), auth) ?? credentials.account;
   return {
     credentials: {
       ...(account ? { account } : {}),
