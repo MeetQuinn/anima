@@ -1239,6 +1239,27 @@ test('Claude account removal rejects active and directly referenced profiles bef
   }
 });
 
+test('Claude account removal serializes behind per-agent assignment before checking references', async () => {
+  const fixture = await accountServiceFixture({ active: false });
+  try {
+    const assignment = fixture.service.assignClaudeAccount('iris', 'secondary');
+    const removal = fixture.service.removeClaudeAccount('secondary');
+
+    const assignedAgent = await assignment;
+    await assert.rejects(
+      removal,
+      (error) => error instanceof ProviderAccountError
+        && error.statusCode === 409
+        && /still configured on agents: iris/.test(error.message),
+    );
+    assert.deepEqual(fixture.removedAccountIds, []);
+    if (assignedAgent.provider.kind !== 'claude-code') assert.fail('expected Claude agent');
+    assert.equal(assignedAgent.provider.accountId, 'secondary');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('Claude account removal restores registry and profile when credential cleanup fails', async () => {
   const fixture = await accountServiceFixture({ active: false, removeFinalizeFailure: true });
   try {
