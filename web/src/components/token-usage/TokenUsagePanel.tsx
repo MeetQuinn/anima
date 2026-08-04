@@ -25,6 +25,22 @@ import {
  */
 const VISIBLE_AGENTS = 10;
 
+/**
+ * The window these numbers actually cover, named honestly.
+ *
+ * This said "Lifetime" and that was false. `currentTokenUsageRange()` asks for
+ * the same 52 weeks the heatmap draws, `fetchAgentTokenUsage` sends that
+ * bounded from/through, `agentTokenUsageReport` resolves it through
+ * `store.listBetween(fromUtc, throughUtc)`, and the route rejects any span over
+ * 371 days outright. So the total is a windowed total at every layer, and there
+ * is no lifetime figure available to render. "Lifetime" was only accidentally
+ * true while the ledger was younger than a year, and would then have started
+ * quietly dropping older usage while still claiming to be everything.
+ *
+ * Matches the wording already used by AgentUsageSection ("52 weeks").
+ */
+const RANGE_LABEL = 'Past 52 weeks';
+
 export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
   const range = currentTokenUsageRange();
@@ -74,9 +90,9 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
           {isError && <p className="font-serif text-[14px] text-text-muted">Token usage is unavailable right now.</p>}
           {data && (
             <div className="space-y-8">
-              {/* Two numbers, no prose. The lifetime total, and the biggest
-                  single day — the two facts people actually came for. The
-                  per-kind cache breakdown that used to sit here answered a
+              {/* Two numbers, no prose. The window total, and the biggest
+                  single day within it — the two facts people actually came for.
+                  The per-kind cache breakdown that used to sit here answered a
                   question nobody was asking. */}
               <div className="flex flex-wrap items-end gap-x-14 gap-y-5">
                 <div>
@@ -84,7 +100,7 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
                     {formatTokens(total)}
                   </div>
                   <div className="mt-1.5 font-sans text-[10px] uppercase tracking-[0.13em] text-text-subtle">
-                    Lifetime
+                    {RANGE_LABEL}
                   </div>
                 </div>
                 {busiest && (
@@ -154,7 +170,15 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
 
                         {/* The bar is the only share encoding now, so it gets
                             the width the per-agent heatmap used to take.
-                            Linear, against the all-agent total. */}
+                            Linear, against the all-agent total.
+
+                            The 1% floor keeps a real but tiny share from
+                            rendering as an empty track, and it applies ONLY to
+                            positive shares. Unconditional Math.max(1, share)
+                            drew a bar for an agent whose own row said 0.0%, and
+                            gave every row a bar in an all-zero report — the bar
+                            contradicting the number beside it. Zero stays
+                            zero. */}
                         <div
                           className="h-[7px] w-full overflow-hidden rounded-full"
                           style={{ background: USAGE_RAMP[0] }}
@@ -162,7 +186,7 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
                         >
                           <div
                             className="h-full rounded-full"
-                            style={{ background: USAGE_RAMP[4], width: `${Math.max(1, share)}%` }}
+                            style={{ background: USAGE_RAMP[4], width: shareBarWidth(share) }}
                           />
                         </div>
 
@@ -205,6 +229,15 @@ export function rankAgents(agents: AgentTokenUsageSummary[]): AgentTokenUsageSum
  */
 export function formatShare(share: number): string {
   return share < 1 ? share.toFixed(1) : share.toFixed(0);
+}
+
+/**
+ * Visibility floor for the share bar, applied only where there is something to
+ * make visible. A zero share must draw nothing: the row already says 0.0%, and
+ * ink that disagrees with the number next to it is worse than no ink.
+ */
+export function shareBarWidth(share: number): string {
+  return share <= 0 ? '0%' : `${Math.max(1, share)}%`;
 }
 
 export function commonCoverageStart(values: Array<string | undefined>): string | undefined {

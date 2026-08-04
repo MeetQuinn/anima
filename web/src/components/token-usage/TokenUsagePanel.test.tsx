@@ -117,7 +117,7 @@ describe('TokenUsagePanel', () => {
     expect(formatShare(54.4)).toBe('54');
   });
 
-  it('shows the lifetime total, the busiest day, and a ranked agent list', async () => {
+  it('shows the windowed total, the busiest day, and a ranked agent list', async () => {
     api.fetchAgentTokenUsage.mockResolvedValue(
       report([
         agent('bram', 'Bram', 0),
@@ -130,9 +130,15 @@ describe('TokenUsagePanel', () => {
     renderPanel();
 
     expect(await screen.findByText('Mira')).toBeTruthy();
-    expect(screen.getByText('Lifetime')).toBeTruthy();
+    expect(screen.getByText('Past 52 weeks')).toBeTruthy();
     expect(screen.getByText(/Busiest day/)).toBeTruthy();
     expect(screen.getByText('Top agents')).toBeTruthy();
+
+    // The number under this label is a windowed total at every layer:
+    // currentTokenUsageRange asks for 52 weeks, the report resolves it through
+    // store.listBetween, and the route rejects a span over 371 days. There is
+    // no lifetime figure to render, so nothing may claim to be one.
+    expect(document.body.textContent).not.toMatch(/lifetime|all.time|total ever/i);
 
     // Sorted, not registry order: Mira has usage, Bram has none, and the mock
     // returns Bram first.
@@ -161,6 +167,44 @@ describe('TokenUsagePanel', () => {
     expect(document.body.textContent).not.toMatch(/cache/i);
     expect(document.body.textContent).not.toMatch(/\bruns?\b|\bunknown\b/i);
     expect(document.body.textContent).not.toMatch(/quota|cost/i);
+  });
+
+  // Three cases in one render because the floor is the whole point: remove it
+  // and Tiny goes to 0.5%, apply it unconditionally and Zero goes to 1% while
+  // its own row says 0.0%. Only the pair of bounds pins the intended rule.
+  it('floors a tiny share to a visible bar but leaves a zero share empty', async () => {
+    api.fetchAgentTokenUsage.mockResolvedValue(
+      report([agent('big', 'Big', 99_500), agent('tiny', 'Tiny', 500), agent('zero', 'Zero', 0)]),
+    );
+    renderPanel();
+
+    expect(await screen.findByText('Big')).toBeTruthy();
+    const widthOf = (name: string) =>
+      (screen.getByText(name).closest('button')?.querySelector('div[aria-hidden="true"] > div') as HTMLElement)
+        ?.style.width;
+
+    expect(widthOf('Big')).toBe('99.5%');
+    expect(widthOf('Tiny')).toBe('1%');
+    expect(widthOf('Zero')).toBe('0%');
+    // The bar and the number beside it must not disagree.
+    expect(screen.getByText('Zero').closest('button')?.textContent).toContain('0.0%');
+  });
+
+  it('never draws share ink when nothing was used at all', async () => {
+    api.fetchAgentTokenUsage.mockResolvedValue(report([agent('a', 'Ada', 0), agent('b', 'Bo', 0)]));
+    renderPanel();
+
+    expect(await screen.findByText('Ada')).toBeTruthy();
+    // Scoped to the rows on purpose: a document-wide `div[aria-hidden] > div`
+    // also matches the heatmap's month-label strip, which would have made this
+    // count wrong in a way that still looked like a number.
+    const bars = ['Ada', 'Bo'].map(
+      (name) =>
+        screen.getByText(name).closest('button')?.querySelector('div[aria-hidden="true"] > div') as HTMLElement,
+    );
+    expect(bars.length).toBe(2);
+    expect(bars.every(Boolean)).toBe(true);
+    expect(bars.every((bar) => bar.style.width === '0%')).toBe(true);
   });
 
   it('draws the top ten and leaves the rest to the sidebar', async () => {
