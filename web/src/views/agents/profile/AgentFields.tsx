@@ -576,16 +576,20 @@ export function ClaudeAccountRow({
   const machineDefault = accountState?.accounts.find(
     (account) => account.id === accountState.activeAccountId,
   );
+  // Only real signed-in identities; no Primary/Secondary/Machine-default labels.
+  const visibleAccounts = accountState?.accounts.filter((account) => account.account) ?? [];
+  const labelsById = providerAccountLabels(visibleAccounts);
   const assigned = accountId
     ? accountState?.accounts.find((account) => account.id === accountId)
     : machineDefault;
 
   function begin() {
-    setDraft(accountId ?? MACHINE_DEFAULT_ACCOUNT);
+    setDraft(accountId ?? (machineDefault ? MACHINE_DEFAULT_ACCOUNT : ''));
     setEditing(true);
   }
 
   function save() {
+    // Selecting the Providers-active account restores inheritance (null pin).
     const next = draft === MACHINE_DEFAULT_ACCOUNT ? null : draft;
     if ((next ?? undefined) === accountId) {
       setEditing(false);
@@ -609,11 +613,11 @@ export function ClaudeAccountRow({
   const saveBlocked = !accountState || !draftAccount || draftAccount.status !== 'available';
   const currentLabel = accountId
     ? assigned
-      ? accountOptionLabel(assigned)
+      ? accountOptionLabel(assigned, labelsById)
       : `Unavailable · ${accountId}`
     : machineDefault
-      ? `Machine default · ${accountOptionLabel(machineDefault)}`
-      : 'Machine default unavailable';
+      ? accountOptionLabel(machineDefault, labelsById)
+      : 'Unavailable';
 
   return (
     <Field label="Claude account">
@@ -623,34 +627,30 @@ export function ClaudeAccountRow({
             <Select value={draft} onValueChange={(value) => value && setDraft(value)}>
               <SelectTrigger className="h-8 w-80 max-w-full font-serif text-[14px]">
                 <span className="min-w-0 flex-1 truncate text-left">
-                  {draft === MACHINE_DEFAULT_ACCOUNT
-                    ? `Machine default · ${machineDefault ? accountLabel(machineDefault) : 'Unavailable'}`
-                    : draftAccount
-                      ? accountLabel(draftAccount)
-                      : `Unavailable · ${draft}`}
+                  {draftAccount ? accountOptionLabel(draftAccount, labelsById) : `Unavailable · ${draft}`}
                 </span>
               </SelectTrigger>
               <SelectContent className="w-80 max-w-[calc(100vw-2rem)]">
-                <SelectItem
-                  value={MACHINE_DEFAULT_ACCOUNT}
-                  disabled={!machineDefault || machineDefault.status !== 'available'}
-                  className="font-serif text-[14px]"
-                >
-                  Machine default · {machineDefault ? accountOptionLabel(machineDefault) : 'Unavailable'}
-                </SelectItem>
-                {accountState.accounts.map((account) => (
-                  <SelectItem
-                    key={account.id}
-                    value={account.id}
-                    disabled={account.status !== 'available'}
-                    className="font-serif text-[14px]"
-                  >
-                    {accountOptionLabel(account)}
-                  </SelectItem>
-                ))}
-                {accountId && !accountState.accounts.some((account) => account.id === accountId) && (
+                {visibleAccounts.map((account) => {
+                  // Providers-active account maps to inheritance sentinel so
+                  // choosing it while pinned clears the pin (Save → null).
+                  const value = account.id === machineDefault?.id
+                    ? MACHINE_DEFAULT_ACCOUNT
+                    : account.id;
+                  return (
+                    <SelectItem
+                      key={account.id}
+                      value={value}
+                      disabled={account.status !== 'available'}
+                      className="font-serif text-[14px]"
+                    >
+                      {accountOptionLabel(account, labelsById)}
+                    </SelectItem>
+                  );
+                })}
+                {accountId && !visibleAccounts.some((account) => account.id === accountId) && (
                   <SelectItem value={accountId} disabled className="font-serif text-[14px]">
-                    Unavailable · {accountId}
+                    Sign in required
                   </SelectItem>
                 )}
               </SelectContent>
@@ -663,9 +663,6 @@ export function ClaudeAccountRow({
               <X />
               Cancel
             </Button>
-          </div>
-          <div className="max-w-xl font-sans text-[11px] leading-snug text-text-muted">
-            This changes only this agent. Machine default follows the account selected in Providers.
           </div>
         </div>
       ) : (
@@ -681,12 +678,34 @@ export function ClaudeAccountRow({
   );
 }
 
-function accountLabel(account: ProviderAccountSummary): string {
-  return account.account ? `${account.label} · ${account.account}` : account.label;
+/** Display: `email · plan` (subscription). No Primary / Secondary / Machine default. */
+function providerAccountLabels(accounts: ProviderAccountSummary[]): Map<string, string> {
+  const baseById = new Map(accounts.map((account) => [account.id, rawAccountOptionLabel(account)]));
+  const countByBase = new Map<string, number>();
+  for (const label of baseById.values()) countByBase.set(label, (countByBase.get(label) ?? 0) + 1);
+  const ordinalByBase = new Map<string, number>();
+  return new Map(accounts.map((account) => {
+    const base = baseById.get(account.id)!;
+    if ((countByBase.get(base) ?? 0) < 2) return [account.id, base];
+    const ordinal = (ordinalByBase.get(base) ?? 0) + 1;
+    ordinalByBase.set(base, ordinal);
+    return [account.id, `${base} · ${ordinal}`];
+  }));
 }
 
-function accountOptionLabel(account: ProviderAccountSummary): string {
-  return `${accountLabel(account)}${account.status === 'available' ? '' : ' · Sign in required'}`;
+function accountLabel(account: ProviderAccountSummary): string {
+  if (!account.account) return 'Sign in required';
+  return `${account.account} · ${account.plan ?? 'Plan unknown'}`;
+}
+
+function accountOptionLabel(account: ProviderAccountSummary, labelsById: Map<string, string>): string {
+  return labelsById.get(account.id) ?? rawAccountOptionLabel(account);
+}
+
+function rawAccountOptionLabel(account: ProviderAccountSummary): string {
+  const label = accountLabel(account);
+  if (!account.account) return label;
+  return `${label}${account.status === 'available' ? '' : ' · Sign in required'}`;
 }
 
 // ── ProviderEnvRow ──────────────────────────────────────────────────────────
