@@ -17,6 +17,7 @@ vi.mock('@/api/token-usage', () => ({
       {
         agentId: 'mira',
         agentName: 'Mira',
+        avatarUrl: 'https://avatars.example/mira.png',
         cacheCreationInputTokens: 0,
         cacheReadInputTokens: 200,
         coverageStartedAt: '2026-08-01T00:00:00.000Z',
@@ -82,6 +83,8 @@ describe('TokenUsagePanel', () => {
     );
     expect(await screen.findByText('Mira')).toBeTruthy();
     expect(screen.getByText('Bram')).toBeTruthy();
+    expect(screen.getByText('Mira').closest('button')?.querySelector('img')?.getAttribute('src')).toBe('https://avatars.example/mira.png');
+    expect(screen.getByText('Bram').closest('button')?.querySelector('[aria-hidden="true"]')?.textContent).toBe('B');
     expect(screen.getByText(/Tokens processed · all agents/)).toBeTruthy();
     expect(screen.getByText(/Earlier days are intentionally unfilled, not estimated/)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/quota|cost/i);

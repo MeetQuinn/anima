@@ -36,6 +36,7 @@ export interface AgentTokenUsageDay extends TokenUsageTotals {
 export interface AgentTokenUsageSummary extends TokenUsageTotals {
   agentId: string;
   agentName: string;
+  avatarUrl?: string;
   coverageStartedAt?: string;
   days: AgentTokenUsageDay[];
   reportedRuns: number;

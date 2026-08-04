@@ -71,14 +71,16 @@ export async function agentTokenUsageReport(input: {
   const agents = await defaultAgentRegistryService.listAgentConfigs();
   const selected = input.agentId ? agents.filter((agent) => agent.id === input.agentId) : agents;
   if (input.agentId && selected.length === 0) throw new Error(`Agent not found: ${input.agentId}`);
-  const summaries = await Promise.all(selected.map((agent) =>
-    agentTokenUsageServiceForAgent(agent.id).summary({
+  const summaries = await Promise.all(selected.map(async (agent) => {
+    const summary = await agentTokenUsageServiceForAgent(agent.id).summary({
       agentName: agent.profile.displayName,
       from: input.from,
       through: input.through,
       timezone: input.timezone,
-    }),
-  ));
+    });
+    const avatarUrl = configuredAgentAvatarUrl(agent);
+    return avatarUrl ? { ...summary, avatarUrl } : summary;
+  }));
   const totals = summaries.reduce<TokenUsageTotals>(addSummary, { ...EMPTY_TOKEN_USAGE_TOTALS });
   return {
     ...totals,
@@ -89,6 +91,15 @@ export async function agentTokenUsageReport(input: {
     timezone: input.timezone,
     unknownRuns: summaries.reduce((sum, summary) => sum + summary.unknownRuns, 0),
   };
+}
+
+function configuredAgentAvatarUrl(agent: {
+  feishu?: { avatarUrl?: string; connected?: boolean };
+  slack?: { avatarUrl?: string; connected?: boolean };
+}): string | undefined {
+  if (agent.feishu?.connected && agent.feishu.avatarUrl) return agent.feishu.avatarUrl;
+  if (agent.slack?.connected && agent.slack.avatarUrl) return agent.slack.avatarUrl;
+  return agent.slack?.avatarUrl || agent.feishu?.avatarUrl;
 }
 
 function normalizedUsage(usage: ProviderUsageInput): Omit<StoredProviderUsage,

@@ -6,11 +6,15 @@ import { providerUsageFromStats } from '../providers/provider-usage.js';
 import { agentTokenUsageReport, agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
 import { registerAgentTokenUsageRoutes } from '../web/agent-token-usage-routes.js';
 import { registerErrorHandler } from '../web/http.js';
-import { withTempAnimaHome, writeAgentConfigs } from './helpers/harness.js';
+import { defaultAgentConfig, withTempAnimaHome, writeAgentConfigs } from './helpers/harness.js';
 
 test('agent token usage is idempotent and grouped in the requested timezone', async () => {
   await withTempAnimaHome(async (stateDir) => {
-    await writeAgentConfigs(stateDir);
+    const agent = defaultAgentConfig('anima');
+    await writeAgentConfigs(stateDir, [{
+      ...agent,
+      slack: { ...agent.slack, avatarUrl: 'https://avatars.example/anima.png' },
+    }]);
     const usage = agentTokenUsageServiceForAgent('anima');
     await usage.initialize('2026-08-01T00:00:00.000Z');
 
@@ -57,6 +61,7 @@ test('agent token usage is idempotent and grouped in the requested timezone', as
     assert.equal(report.reportedRuns, 2);
     assert.equal(report.unknownRuns, 1);
     assert.equal(report.agents[0]?.coverageStartedAt, '2026-08-01T00:00:00.000Z');
+    assert.equal(report.agents[0]?.avatarUrl, 'https://avatars.example/anima.png');
     assert.deepEqual(
       report.agents[0]?.days.map((day) => ({
         date: day.date,

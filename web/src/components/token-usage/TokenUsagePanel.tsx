@@ -5,6 +5,7 @@ import { ArrowRight, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import { currentTokenUsageRange, fetchAgentTokenUsage } from '@/api/token-usage';
+import { agentColor, initialOf } from '@/lib/avatars';
 import { queryKeys } from '@/lib/query-keys';
 import {
   UsageHeatmap,
@@ -97,7 +98,7 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
                   <span className="font-mono text-[10px] text-text-subtle">shared intensity scale</span>
                 </div>
                 <div className="divide-y divide-border-soft">
-                  {data.agents.map((agent) => (
+                  {data.agents.map((agent, index) => (
                     <button
                       key={agent.agentId}
                       type="button"
@@ -105,12 +106,29 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
                         onClose();
                         navigate(`/agents/${encodeURIComponent(agent.agentId)}/profile`);
                       }}
-                      className="group grid w-full gap-3 py-4 text-left hover:bg-surface-elevated/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent md:grid-cols-[minmax(150px,0.65fr)_minmax(390px,1.35fr)_90px_20px] md:items-center md:px-2"
+                      className="group grid w-full gap-3 py-4 text-left hover:bg-surface-elevated/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent md:grid-cols-[minmax(180px,0.65fr)_minmax(390px,1.35fr)_90px_20px] md:items-center md:px-2"
                     >
-                      <div className="min-w-0">
-                        <div className="truncate font-serif text-[15px] text-text">{agent.agentName}</div>
-                        <div className="mt-0.5 font-mono text-[9px] text-text-subtle">
-                          {agent.reportedRuns} runs{agent.unknownRuns > 0 ? ` · ${agent.unknownRuns} unknown` : ''}
+                      <div className="flex min-w-0 items-center gap-3">
+                        {agent.avatarUrl ? (
+                          <img
+                            src={agent.avatarUrl}
+                            alt=""
+                            className="h-8 w-8 shrink-0 rounded-lg object-cover ring-1 ring-border-soft"
+                          />
+                        ) : (
+                          <span
+                            aria-hidden="true"
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg font-sans text-[11px] font-bold text-white ring-1 ring-border-soft"
+                            style={{ background: agentColor(index) }}
+                          >
+                            {initialOf(agent.agentName)}
+                          </span>
+                        )}
+                        <div className="min-w-0">
+                          <div className="truncate font-serif text-[15px] text-text">{agent.agentName}</div>
+                          <div className="mt-0.5 font-mono text-[9px] text-text-subtle">
+                            {agent.reportedRuns} runs{agent.unknownRuns > 0 ? ` · ${agent.unknownRuns} unknown` : ''}
+                          </div>
                         </div>
                       </div>
                       <UsageHeatmap
