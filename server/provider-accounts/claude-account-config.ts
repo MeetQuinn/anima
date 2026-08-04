@@ -148,18 +148,55 @@ export function claudeAccountMetadataPath(account: ClaudeCodeAccountConfig): str
     : join(homedir(), '.claude.json');
 }
 
-export async function readClaudeAccountName(account: ClaudeCodeAccountConfig): Promise<string | undefined> {
+export interface ClaudeAccountMetadata {
+  account?: string;
+  organizationName?: string;
+  organizationType?: string;
+}
+
+export async function readClaudeAccountMetadata(
+  account: ClaudeCodeAccountConfig,
+): Promise<ClaudeAccountMetadata> {
   try {
     const parsed = JSON.parse(await readFile(claudeAccountMetadataPath(account), 'utf8')) as {
-      oauthAccount?: { displayName?: unknown; emailAddress?: unknown };
+      oauthAccount?: {
+        displayName?: unknown;
+        emailAddress?: unknown;
+        organizationName?: unknown;
+        organizationType?: unknown;
+      };
     };
-    const email = parsed.oauthAccount?.emailAddress;
-    if (typeof email === 'string' && email.trim()) return email.trim();
-    const displayName = parsed.oauthAccount?.displayName;
-    return typeof displayName === 'string' && displayName.trim() ? displayName.trim() : undefined;
+    const email = trimmedString(parsed.oauthAccount?.emailAddress);
+    const displayName = trimmedString(parsed.oauthAccount?.displayName);
+    const organizationName = trimmedString(parsed.oauthAccount?.organizationName);
+    const organizationType = trimmedString(parsed.oauthAccount?.organizationType);
+    return {
+      ...(email ?? displayName ? { account: email ?? displayName } : {}),
+      ...(organizationName ? { organizationName } : {}),
+      ...(organizationType ? { organizationType } : {}),
+    };
   } catch {
-    return undefined;
+    return {};
   }
+}
+
+export async function readClaudeAccountName(account: ClaudeCodeAccountConfig): Promise<string | undefined> {
+  return (await readClaudeAccountMetadata(account)).account;
+}
+
+/** Map local Claude profile metadata to a short subscription family label. */
+export function claudePlanFamily(
+  input: { organizationType?: string; rateLimitTier?: string; subscriptionType?: string } = {},
+): string | undefined {
+  const sub = (input.subscriptionType ?? '').toLowerCase();
+  const orgType = (input.organizationType ?? '').toLowerCase();
+  const tier = (input.rateLimitTier ?? '').toLowerCase();
+  const family = `${sub} ${orgType}`.trim();
+  if (includesToken(family, 'team') || orgType.includes('claude_team')) return 'Claude Team';
+  if (includesToken(family, 'enterprise') || orgType.includes('claude_enterprise')) return 'Claude Enterprise';
+  if (includesToken(family, 'max') || orgType.includes('claude_max') || tier.includes('max')) return 'Claude Max';
+  if (includesToken(family, 'pro') || orgType.includes('claude_pro') || tier.includes('pro')) return 'Claude Pro';
+  return undefined;
 }
 
 export async function claudeAccountIsConfigured(account: ClaudeCodeAccountConfig): Promise<boolean> {
@@ -245,6 +282,15 @@ function titleCaseAccountName(name: string): string {
   const words = name.split('-').filter(Boolean);
   if (words.length === 0) return 'Claude account';
   return words.map((word) => `${word[0]?.toUpperCase() ?? ''}${word.slice(1)}`).join(' ');
+}
+
+function trimmedString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function includesToken(haystack: string, token: string): boolean {
+  if (!haystack) return false;
+  return new RegExp(`(?:^|[^a-z0-9])${token}(?:[^a-z0-9]|$)`).test(haystack);
 }
 
 async function pathExists(path: string): Promise<boolean> {

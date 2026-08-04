@@ -41,6 +41,8 @@ export const ProviderAccountSummary = z.object({
   account: z.string().max(320).optional(),
   id: ProviderAccountId,
   label: z.string(),
+  /** Local plan family from Claude profile metadata (e.g. Claude Max / Team). */
+  plan: z.string().max(80).optional(),
   profile: z.enum(['default', 'isolated']),
   selected: z.boolean(),
   status: z.enum(['available', 'not_configured']),

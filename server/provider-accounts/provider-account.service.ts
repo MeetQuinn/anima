@@ -20,9 +20,10 @@ import {
   applyClaudeAccountToAgent,
   claudeAccountIsConfigured,
   claudeAccountRuntimeFingerprint,
+  claudePlanFamily,
   discoverClaudeAccounts,
   effectiveClaudeAccountRegistry,
-  readClaudeAccountName,
+  readClaudeAccountMetadata,
   selectedClaudeAccount,
   selectedClaudeAccountForAgent,
 } from './claude-account-config.js';
@@ -83,11 +84,13 @@ export class ProviderAccountService {
     const registry = effectiveClaudeAccountRegistry(configured.claudeCode, agents, discovered);
     const selected = selectedClaudeAccount(registry);
     const accounts = await Promise.all(registry.accounts.map(async (account) => {
-      const accountName = await readClaudeAccountName(account);
+      const metadata = await readClaudeAccountMetadata(account);
+      const plan = claudePlanFamily(metadata);
       return {
-        ...(accountName ? { account: accountName } : {}),
+        ...(metadata.account ? { account: metadata.account } : {}),
         id: account.id,
         label: account.label,
+        ...(plan ? { plan } : {}),
         profile: account.configDir ? 'isolated' as const : 'default' as const,
         selected: account.id === selected.id,
         status: await claudeAccountIsConfigured(account) ? 'available' as const : 'not_configured' as const,
