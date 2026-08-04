@@ -54,7 +54,8 @@ selected model exactly:
 
 | Provider    | Models                                     | Reasoning effort                                 |
 | ----------- | ------------------------------------------ | ------------------------------------------------ |
-| Claude Code | Opus, Sonnet, Fable                        | `low`, `medium`, `high`, `xhigh`, `max`          |
+| Claude Code | Opus, Sonnet, Fable; Opus 4.8              | `low`, `medium`, `high`, `xhigh`, `max`          |
+| Claude Code | Opus 4.6, Sonnet 4.6                       | `low`, `medium`, `high`, `max`                   |
 | Claude Code | Haiku                                      | Provider default; no adjustable effort           |
 | Codex CLI   | GPT-5.6 Sol, GPT-5.6 Terra                 | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
 | Codex CLI   | GPT-5.6 Luna                               | `low`, `medium`, `high`, `xhigh`, `max`          |
