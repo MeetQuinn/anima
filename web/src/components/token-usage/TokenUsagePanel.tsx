@@ -4,16 +4,26 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
+import type { AgentTokenUsageSummary } from '@shared/agent-token-usage';
 import { currentTokenUsageRange, fetchAgentTokenUsage } from '@/api/token-usage';
 import { agentColor, initialOf } from '@/lib/avatars';
 import { queryKeys } from '@/lib/query-keys';
 import {
+  USAGE_RAMP,
   UsageHeatmap,
   formatTokens,
+  formatUsageDate,
   mergeUsageDays,
-  usageScaleMax,
+  peakUsageDay,
 } from './UsageHeatmap';
-import { UsageTotals } from './UsageTotals';
+
+/**
+ * How many agents the leaderboard draws. The list is cut and the heading says
+ * so, which is the whole declaration a reader needs: each row's percentage is a
+ * true share of the all-agent total whether or not the rows below it are drawn.
+ * The remaining agents stay reachable from the sidebar, which lists every one.
+ */
+const VISIBLE_AGENTS = 10;
 
 export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
@@ -33,8 +43,10 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
   }, [onClose]);
 
   const aggregateDays = mergeUsageDays(data?.agents.map((agent) => agent.days) ?? []);
-  const sharedScale = usageScaleMax(data?.agents.flatMap((agent) => agent.days) ?? []);
   const aggregateCoverage = commonCoverageStart(data?.agents.map((agent) => agent.coverageStartedAt) ?? []);
+  const busiest = peakUsageDay(aggregateDays);
+  const ranked = rankAgents(data?.agents ?? []).slice(0, VISIBLE_AGENTS);
+  const total = data?.totalTokens ?? 0;
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-stretch justify-end bg-page/55 backdrop-blur-[2px]" onMouseDown={onClose}>
@@ -45,13 +57,8 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
         className="flex h-full w-full max-w-[960px] flex-col border-l border-border-soft bg-surface shadow-deep"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <header className="flex shrink-0 items-start justify-between border-b border-border-soft px-5 py-4 md:px-8 md:py-6">
-          <div>
-            <h2 className="display text-[24px] font-semibold text-text md:text-[28px]">Token usage</h2>
-            <p className="mt-1 font-sans text-[11px] uppercase tracking-[0.12em] text-text-subtle">
-              Provider reported · grouped in {range.timezone}
-            </p>
-          </div>
+        <header className="flex shrink-0 items-center justify-between border-b border-border-soft px-5 py-4 md:px-8 md:py-5">
+          <h2 className="display text-[24px] font-semibold text-text md:text-[26px]">Token usage</h2>
           <button
             type="button"
             onClick={onClose}
@@ -66,82 +73,111 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
           {isLoading && <div className="h-64 animate-pulse rounded-sm bg-surface-elevated" />}
           {isError && <p className="font-serif text-[14px] text-text-muted">Token usage is unavailable right now.</p>}
           {data && (
-            <div className="space-y-9">
-              <section className="space-y-5">
-                <div className="flex flex-wrap items-end justify-between gap-4">
-                  <div>
-                    <div className="font-serif text-[38px] tabular-nums leading-none text-text">
-                      {formatTokens(data.totalTokens)}
-                    </div>
-                    <div className="mt-1 font-sans text-[11px] uppercase tracking-[0.11em] text-text-subtle">
-                      Tokens processed · all agents
-                    </div>
+            <div className="space-y-8">
+              {/* Two numbers, no prose. The lifetime total, and the biggest
+                  single day — the two facts people actually came for. The
+                  per-kind cache breakdown that used to sit here answered a
+                  question nobody was asking. */}
+              <div className="flex flex-wrap items-end gap-x-14 gap-y-5">
+                <div>
+                  <div className="font-serif text-[40px] leading-none tabular-nums text-text">
+                    {formatTokens(total)}
                   </div>
-                  <div className="max-w-sm text-right font-sans text-[11px] leading-relaxed text-text-subtle">
-                    Measured usage is shown. All-agent totals become exact once every agent starts tracking;
-                    earlier days stay unfilled, never estimated.
+                  <div className="mt-1.5 font-sans text-[10px] uppercase tracking-[0.13em] text-text-subtle">
+                    Lifetime
                   </div>
                 </div>
+                {busiest && (
+                  <div>
+                    <div className="font-serif text-[26px] leading-none tabular-nums text-text-muted">
+                      {formatTokens(busiest.totalTokens)}
+                    </div>
+                    <div className="mt-1.5 font-sans text-[10px] uppercase tracking-[0.13em] text-text-subtle">
+                      Busiest day · {formatUsageDate(busiest.date)}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* No legend row: the ramp reads on its own, and the one mark that
+                  does not (the coverage rule) carries its own caption. */}
+              <div className="pb-3">
                 <UsageHeatmap
                   coverageStartedAt={aggregateCoverage}
                   days={aggregateDays}
                   from={range.from}
-                  scaleMax={usageScaleMax(aggregateDays)}
                   through={range.through}
                 />
-                <UsageTotals totals={data} />
-              </section>
+              </div>
 
               <section>
-                <div className="mb-3 flex items-baseline justify-between border-b border-border-soft pb-2">
-                  <h3 className="chrome text-[11px] uppercase tracking-[0.12em] text-text-muted">By agent</h3>
-                  <span className="font-mono text-[10px] text-text-subtle">shared intensity scale</span>
+                <div className="mb-1 border-b border-border-soft pb-2 font-sans text-[10px] uppercase tracking-[0.13em] text-text-muted">
+                  Top agents
                 </div>
                 <div className="divide-y divide-border-soft">
-                  {data.agents.map((agent, index) => (
-                    <button
-                      key={agent.agentId}
-                      type="button"
-                      onClick={() => {
-                        onClose();
-                        navigate(`/agents/${encodeURIComponent(agent.agentId)}/profile`);
-                      }}
-                      className="group grid w-full gap-3 py-4 text-left hover:bg-surface-elevated/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent md:grid-cols-[minmax(150px,0.65fr)_minmax(390px,1.35fr)_90px_20px] md:items-center md:px-2"
-                    >
-                      <div className="flex min-w-0 items-center gap-3">
-                        {agent.avatarUrl ? (
-                          <img
-                            src={agent.avatarUrl}
-                            alt=""
-                            className="h-8 w-8 shrink-0 rounded-lg object-cover ring-1 ring-border-soft"
-                          />
-                        ) : (
-                          <span
-                            aria-hidden="true"
-                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg font-sans text-[11px] font-bold text-white ring-1 ring-border-soft"
-                            style={{ background: agentColor(index) }}
-                          >
-                            {initialOf(agent.agentName)}
+                  {ranked.map((agent, index) => {
+                    const share = total > 0 ? (agent.totalTokens / total) * 100 : 0;
+                    const peak = peakUsageDay(agent.days);
+                    return (
+                      <button
+                        key={agent.agentId}
+                        type="button"
+                        onClick={() => {
+                          onClose();
+                          navigate(`/agents/${encodeURIComponent(agent.agentId)}/profile`);
+                        }}
+                        className="group grid w-full items-center gap-x-4 gap-y-2 py-3.5 text-left hover:bg-surface-elevated/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent md:grid-cols-[minmax(150px,0.5fr)_1fr_112px_16px] md:px-1"
+                      >
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <span className="w-[12px] shrink-0 text-right font-mono text-[10px] tabular-nums text-text-subtle">
+                            {index + 1}
                           </span>
-                        )}
-                        <div className="min-w-0">
-                          <div className="truncate font-serif text-[15px] text-text">{agent.agentName}</div>
+                          {agent.avatarUrl ? (
+                            <img
+                              src={agent.avatarUrl}
+                              alt=""
+                              className="h-7 w-7 shrink-0 rounded-lg object-cover ring-1 ring-border-soft"
+                            />
+                          ) : (
+                            <span
+                              aria-hidden="true"
+                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg font-sans text-[10px] font-bold text-white"
+                              style={{ background: agentColor(index) }}
+                            >
+                              {initialOf(agent.agentName)}
+                            </span>
+                          )}
+                          <span className="truncate font-serif text-[15px] leading-tight text-text">
+                            {agent.agentName}
+                          </span>
                         </div>
-                      </div>
-                      <UsageHeatmap
-                        compact
-                        coverageStartedAt={agent.coverageStartedAt}
-                        days={agent.days}
-                        from={range.from}
-                        scaleMax={sharedScale}
-                        through={range.through}
-                      />
-                      <div className="font-mono text-[12px] tabular-nums text-text-muted md:text-right">
-                        {formatTokens(agent.totalTokens)}
-                      </div>
-                      <ArrowRight className="hidden h-3.5 w-3.5 text-text-subtle transition-transform group-hover:translate-x-0.5 group-hover:text-text md:block" />
-                    </button>
-                  ))}
+
+                        {/* The bar is the only share encoding now, so it gets
+                            the width the per-agent heatmap used to take.
+                            Linear, against the all-agent total. */}
+                        <div
+                          className="h-[7px] w-full overflow-hidden rounded-full"
+                          style={{ background: USAGE_RAMP[0] }}
+                          aria-hidden
+                        >
+                          <div
+                            className="h-full rounded-full"
+                            style={{ background: USAGE_RAMP[4], width: `${Math.max(1, share)}%` }}
+                          />
+                        </div>
+
+                        <div className="md:text-right">
+                          <div className="font-mono text-[13px] tabular-nums text-text">
+                            {formatTokens(agent.totalTokens)}
+                          </div>
+                          <div className="mt-0.5 font-mono text-[9px] tabular-nums text-text-subtle">
+                            {formatShare(share)}%{peak ? ` · peak ${formatTokens(peak.totalTokens)}` : ''}
+                          </div>
+                        </div>
+                        <ArrowRight className="hidden h-3.5 w-3.5 text-text-subtle transition-transform group-hover:translate-x-0.5 group-hover:text-text md:block" />
+                      </button>
+                    );
+                  })}
                 </div>
               </section>
             </div>
@@ -151,6 +187,24 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
     </div>,
     document.body,
   );
+}
+
+/**
+ * Registry order is not usage order, so the panel sorts. Ties break on name so
+ * two idle agents do not swap places between refetches.
+ */
+export function rankAgents(agents: AgentTokenUsageSummary[]): AgentTokenUsageSummary[] {
+  return [...agents].sort(
+    (a, b) => b.totalTokens - a.totalTokens || a.agentName.localeCompare(b.agentName),
+  );
+}
+
+/**
+ * One rule for both ends of the range, so a rounded `0%` never appears next to
+ * a `54%` and reads as "used nothing".
+ */
+export function formatShare(share: number): string {
+  return share < 1 ? share.toFixed(1) : share.toFixed(0);
 }
 
 export function commonCoverageStart(values: Array<string | undefined>): string | undefined {
