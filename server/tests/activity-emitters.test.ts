@@ -137,6 +137,50 @@ function tableRows(doc: string, heading: string): string[] {
   return rows.sort();
 }
 
+/**
+ * GFM cell count for a table line. Bare `|` inside a cell (e.g. status lists)
+ * expands the row and is exactly the failure mode this control catches.
+ * Prefer slashes/commas or escaped pipes in cell prose.
+ */
+function markdownTableCellCount(line: string): number {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('|')) return 0;
+  const body = trimmed.endsWith('|') ? trimmed.slice(1, -1) : trimmed.slice(1);
+  return body.split('|').length;
+}
+
+/**
+ * Contiguous `|…|` blocks in the doc (header + separator + data rows).
+ * Fenced code samples are skipped so shell pipelines with `|` are not tables.
+ */
+function markdownTables(doc: string): string[][] {
+  const tables: string[][] = [];
+  let current: string[] | null = null;
+  let inFence = false;
+  for (const line of doc.split('\n')) {
+    if (line.trimStart().startsWith('```')) {
+      if (current) {
+        tables.push(current);
+        current = null;
+      }
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    if (line.trimStart().startsWith('|')) {
+      if (!current) current = [];
+      current.push(line);
+      continue;
+    }
+    if (current) {
+      tables.push(current);
+      current = null;
+    }
+  }
+  if (current) tables.push(current);
+  return tables;
+}
+
 test('the method names this test keys on still exist on ActivityService', async () => {
   const svc = await readFile(SERVICE_SOURCE, 'utf8');
   for (const m of [...WRITE_METHODS, ...READ_METHODS]) {
@@ -186,4 +230,25 @@ test('every importer of the activity service is classified as a writer or a read
       'method. Either they reach it a new way the classifier cannot see, or a method was ' +
       'renamed. Do not add them to the doc until you know which.',
   );
+});
+
+test('docs/activity-events.md markdown tables keep a consistent column count', async () => {
+  const doc = await readFile(DOC, 'utf8');
+  const tables = markdownTables(doc);
+  assert.ok(tables.length > 0, 'parsed no markdown tables from docs/activity-events.md');
+
+  for (const table of tables) {
+    assert.ok(table.length >= 2, `table too short: ${table[0]?.slice(0, 60)}`);
+    const expected = markdownTableCellCount(table[0]!);
+    assert.ok(expected >= 2, `header has ${expected} cells: ${table[0]!.slice(0, 80)}`);
+    for (const row of table) {
+      const cells = markdownTableCellCount(row);
+      assert.equal(
+        cells,
+        expected,
+        `table row has ${cells} cells, header has ${expected}. Unescaped | in cell ` +
+          `prose splits columns. Use / or commas, or escape pipes.\n  ${row.slice(0, 120)}`,
+      );
+    }
+  }
 });
