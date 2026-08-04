@@ -611,6 +611,7 @@ export function ClaudeAccountRow({
     ? machineDefault
     : accountState?.accounts.find((account) => account.id === draft);
   const saveBlocked = !accountState || !draftAccount || draftAccount.status !== 'available';
+  const inheritsMachineDefault = !accountId;
   const currentLabel = accountId
     ? assigned
       ? accountOptionLabel(assigned, labelsById)
@@ -618,6 +619,10 @@ export function ClaudeAccountRow({
     : machineDefault
       ? accountOptionLabel(machineDefault, labelsById)
       : 'Unavailable';
+  const draftInherits = draft === MACHINE_DEFAULT_ACCOUNT;
+  const draftLabel = draftAccount
+    ? accountOptionLabel(draftAccount, labelsById)
+    : `Unavailable · ${draft}`;
 
   return (
     <Field label="Claude account">
@@ -627,16 +632,18 @@ export function ClaudeAccountRow({
             <Select value={draft} onValueChange={(value) => value && setDraft(value)}>
               <SelectTrigger className="h-8 w-80 max-w-full font-serif text-[14px]">
                 <span className="min-w-0 flex-1 truncate text-left">
-                  {draftAccount ? accountOptionLabel(draftAccount, labelsById) : `Unavailable · ${draft}`}
+                  {draftInherits && draftAccount
+                    ? inheritAccountLabel(draftLabel)
+                    : draftLabel}
                 </span>
               </SelectTrigger>
               <SelectContent className="w-80 max-w-[calc(100vw-2rem)]">
                 {visibleAccounts.map((account) => {
                   // Providers-active account maps to inheritance sentinel so
                   // choosing it while pinned clears the pin (Save → null).
-                  const value = account.id === machineDefault?.id
-                    ? MACHINE_DEFAULT_ACCOUNT
-                    : account.id;
+                  const inherits = account.id === machineDefault?.id;
+                  const value = inherits ? MACHINE_DEFAULT_ACCOUNT : account.id;
+                  const optionLabel = accountOptionLabel(account, labelsById);
                   return (
                     <SelectItem
                       key={account.id}
@@ -644,7 +651,7 @@ export function ClaudeAccountRow({
                       disabled={account.status !== 'available'}
                       className="font-serif text-[14px]"
                     >
-                      {accountOptionLabel(account, labelsById)}
+                      {inherits ? inheritAccountLabel(optionLabel) : optionLabel}
                     </SelectItem>
                   );
                 })}
@@ -668,17 +675,54 @@ export function ClaudeAccountRow({
       ) : (
         accountState ? (
           <EditAffordance onEdit={begin}>
-            <span className="font-serif text-[13px] md:text-[15px] text-text">{currentLabel}</span>
+            <ClaudeAccountDisplay label={currentLabel} inherits={inheritsMachineDefault && Boolean(machineDefault)} />
           </EditAffordance>
         ) : (
-          <span className="font-serif text-[13px] md:text-[15px] text-text-muted">{currentLabel}</span>
+          <ClaudeAccountDisplay
+            label={currentLabel}
+            inherits={inheritsMachineDefault && Boolean(machineDefault)}
+            muted
+          />
         )
       )}
     </Field>
   );
 }
 
-/** Display: `email · plan` (subscription). No Primary / Secondary / Machine default. */
+/** Resting/edit mark for unpinned inheritance — identity stays email · plan. */
+function inheritAccountLabel(identity: string): string {
+  return `${identity} · Default`;
+}
+
+function ClaudeAccountDisplay({
+  inherits,
+  label,
+  muted = false,
+}: {
+  inherits: boolean;
+  label: string;
+  muted?: boolean;
+}) {
+  return (
+    <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+      <span
+        className={[
+          'min-w-0 truncate font-serif text-[13px] md:text-[15px]',
+          muted ? 'text-text-muted' : 'text-text',
+        ].join(' ')}
+      >
+        {label}
+      </span>
+      {inherits && (
+        <span className="shrink-0 font-sans text-[12px] text-text-muted" title="Uses the account selected in Providers">
+          Default
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Display: `email · plan` (subscription). No Primary / Secondary registry labels. */
 function providerAccountLabels(accounts: ProviderAccountSummary[]): Map<string, string> {
   const baseById = new Map(accounts.map((account) => [account.id, rawAccountOptionLabel(account)]));
   const countByBase = new Map<string, number>();
