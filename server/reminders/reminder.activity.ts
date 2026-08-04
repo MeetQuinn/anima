@@ -87,6 +87,38 @@ export class ReminderActivityRecorder {
     });
   }
 
+  /**
+   * Audit-only lifecycle for a durably applied hosted preflight outcome.
+   * Allowlist only — never command, streams, env, or wake evidence.
+   */
+  async preflight(input: {
+    agentId: string;
+    completedAt: string;
+    reminder: Reminder;
+    result: {
+      durationMs: number;
+      exitCode?: number;
+      signal?: string;
+      status: 'succeeded' | 'declined' | 'errored';
+      timedOut?: boolean;
+    };
+  }): Promise<void> {
+    await this.activity.record(input.agentId, {
+      payload: {
+        tool: 'anima.reminder.preflight',
+        reminderId: input.reminder.reminderId,
+        title: input.reminder.title,
+        status: input.result.status,
+        completedAt: input.completedAt,
+        durationMs: input.result.durationMs,
+        ...(input.result.exitCode !== undefined ? { exitCode: input.result.exitCode } : {}),
+        ...(input.result.signal ? { signal: input.result.signal } : {}),
+        ...(input.result.timedOut ? { timedOut: true } : {}),
+      },
+      type: 'tool.call.completed',
+    });
+  }
+
   private async recordReminderTool(input: {
     agentId: string;
     failurePayload?: Record<string, unknown>;

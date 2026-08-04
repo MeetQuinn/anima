@@ -27,6 +27,7 @@ import { TeamRunLimiter } from '../runtime/team-run-limiter.js';
 import { withAnimaHome } from './anima-home.js';
 import { waitFor } from './helpers/harness.js';
 import { StaticTextRuntime } from './helpers/runtime-worker.js';
+import { allActivities, loadState } from './helpers/state.js';
 
 async function writeAgentConfig(stateDir: string, agentId: string, homePath: string): Promise<void> {
   await mkdir(homePath, { recursive: true });
@@ -1360,6 +1361,107 @@ test('committed then cancelled still publishes staged wake on reconcile', async 
     });
     assert.ok(claimed);
     assert.equal((claimed as { reminderId: string }).reminderId, rem.reminderId);
+  });
+});
+
+test('durably applied preflight results write allowlisted Activity once (no secrets)', async () => {
+  await withAgentHome(async (_home, agentId) => {
+    const service = reminderServiceForAgent(agentId);
+    const queue = new WakeQueueService(agentId);
+    const secret = 'sk-live-PREFLIGHT_SECRET_TOKEN_xyz';
+    const rem = await service.scheduleReminder({
+      fireAt: '2020-10-01T00:00:00.000Z',
+      instructions: 'activity audit',
+      now: new Date(),
+      // stdout would be secret-shaped if ever persisted — must not reach Activity.
+      preflight: { command: `printf '${secret}\\n' >&2; exit 1` },
+      title: 'preflight-activity',
+    });
+    const subscriber = new ReminderInboxSubscriber(queue, service);
+    subscriber.start();
+    try {
+      await waitFor(async () => {
+        const live = await service.findReminder(rem.reminderId);
+        return live?.preflightLastResult?.status === 'declined';
+      }, { description: 'declined preflight applied', timeoutMs: 5_000 });
+    } finally {
+      await subscriber.stop();
+    }
+
+    const activities = allActivities(await loadState()).filter(
+      (activity) => activity.payload?.['tool'] === 'anima.reminder.preflight',
+    );
+    assert.equal(activities.length, 1, 'exactly one preflight activity');
+    const payload = activities[0]?.payload ?? {};
+    assert.equal(payload['status'], 'declined');
+    assert.equal(payload['reminderId'], rem.reminderId);
+    assert.equal(payload['title'], 'preflight-activity');
+    assert.ok(typeof payload['completedAt'] === 'string');
+    assert.ok(typeof payload['durationMs'] === 'number');
+    assert.equal(payload['exitCode'], 1);
+    // Allowlist only — no command/streams/env/evidence.
+    for (const forbidden of [
+      'command', 'stdout', 'stderr', 'preflightEvidence', 'env', 'PATH', 'SLACK_BOT_TOKEN',
+    ]) {
+      assert.equal(payload[forbidden], undefined, forbidden);
+    }
+    const blob = JSON.stringify(payload);
+    assert.ok(!blob.includes(secret), 'secret-shaped stream must not land in Activity');
+    assert.ok(!blob.includes('printf'), 'command must not land in Activity');
+
+    // CAS miss must not emit another activity.
+    const before = activities.length;
+    await service.recordPreflightCheck({
+      expected: {
+        nextDueAt: 'never-matches',
+        status: 'scheduled',
+        updatedAt: '1999-01-01T00:00:00.000Z',
+      },
+      id: rem.reminderId,
+      now: new Date(),
+      preflightResult: {
+        durationMs: 1,
+        endedAt: new Date().toISOString(),
+        exitCode: 1,
+        scheduledAt: '2020-10-01T00:00:00.000Z',
+        startedAt: new Date().toISOString(),
+        status: 'declined',
+        stderr: secret,
+      },
+    });
+    const after = allActivities(await loadState()).filter(
+      (a) => a.payload?.['tool'] === 'anima.reminder.preflight',
+    );
+    assert.equal(after.length, before, 'stale CAS must not add preflight activity');
+  });
+});
+
+test('succeeded hosted preflight records preflight Activity and keeps reminder.fire', async () => {
+  await withAgentHome(async (_home, agentId) => {
+    const service = reminderServiceForAgent(agentId);
+    const queue = new WakeQueueService(agentId);
+    const rem = await service.scheduleReminder({
+      fireAt: '2020-11-01T00:00:00.000Z',
+      instructions: 'wake me',
+      now: new Date(),
+      preflight: { command: 'exit 0' },
+      title: 'preflight-success-activity',
+    });
+    const subscriber = new ReminderInboxSubscriber(queue, service);
+    subscriber.start();
+    try {
+      await waitFor(async () => (await queue.list()).some(
+        (i) => i.kind === 'reminder' && i.reminderId === rem.reminderId,
+      ), { description: 'wake queued', timeoutMs: 5_000 });
+    } finally {
+      await subscriber.stop();
+    }
+    const activities = allActivities(await loadState());
+    const preflight = activities.filter((a) => a.payload?.['tool'] === 'anima.reminder.preflight');
+    const fire = activities.filter((a) => a.payload?.['tool'] === 'anima.reminder.fire');
+    assert.equal(preflight.length, 1);
+    assert.equal(preflight[0]?.payload?.['status'], 'succeeded');
+    assert.equal(fire.length, 1, 'normal fire activity preserved');
   });
 });
 

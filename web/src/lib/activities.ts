@@ -307,6 +307,33 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   if (normalized === 'anima.reminder.list') {
     return { title: 'Listed reminders', color: 'var(--color-activity-reminder)', kind: 'tool' };
   }
+  if (normalized === 'anima.reminder.preflight') {
+    const status = pickString(payload, ['status']);
+    const title = status === 'succeeded'
+      ? 'Preflight succeeded'
+      : status === 'declined'
+        ? 'Preflight declined'
+        : 'Preflight errored';
+    const durationMs = typeof payload['durationMs'] === 'number' ? payload['durationMs'] : undefined;
+    const name = reminderName(payload);
+    const detail = [
+      durationMs !== undefined ? `${Math.round(durationMs)}ms` : undefined,
+      payload['timedOut'] === true
+        ? 'timeout'
+        : pickString(payload, ['signal'])
+          ? `signal ${pickString(payload, ['signal'])}`
+          : payload['exitCode'] !== undefined
+            ? `exit ${String(payload['exitCode'])}`
+            : undefined,
+    ].filter(Boolean).join(' · ');
+    const target = name && detail ? `${name} · ${detail}` : name ?? detail;
+    return {
+      title,
+      target,
+      color: 'var(--color-activity-reminder)',
+      kind: 'lifecycle',
+    };
+  }
   // anima.reminder.fire is normally consumed by the message-in row for a
   // reminder item (it's wake metadata, not a user-issued action). This
   // fallback only fires for defensive paths where the fire activity is
