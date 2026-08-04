@@ -273,7 +273,7 @@ test('CLI/help copy forbids true/false/pass/fail wording for preflight', async (
   const { readFile } = await import('node:fs/promises');
   const { resolve } = await import('node:path');
   const cli = await readFile(resolve('server/reminders/cli.ts'), 'utf8');
-  const preflightHelp = cli.slice(cli.indexOf('--preflight'));
+  const preflightHelp = cli.slice(cli.indexOf(".option('--preflight <command>'"));
   const section = preflightHelp.slice(0, 800).toLowerCase();
   assert.match(section, /exit 0 = wake/);
   assert.match(section, /exit 1 = skip/);

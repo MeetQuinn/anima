@@ -13,11 +13,10 @@ export const PREFLIGHT_MAX_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 export type PreflightRunStatus = 'succeeded' | 'declined' | 'errored';
 
-export interface PreflightLastResult {
+export interface PreflightExecutionResult {
   durationMs: number;
   endedAt: string;
   exitCode?: number;
-  scheduledAt: string;
   signal?: string;
   startedAt: string;
   status: PreflightRunStatus;
@@ -28,6 +27,10 @@ export interface PreflightLastResult {
   timedOut?: boolean;
 }
 
+export interface PreflightLastResult extends PreflightExecutionResult {
+  scheduledAt: string;
+}
+
 export interface RunPreflightInput {
   abortSignal?: AbortSignal;
   agentId: string;
@@ -35,14 +38,23 @@ export interface RunPreflightInput {
   command: string;
   cwd: string;
   now?: Date;
-  reminderId: string;
+  reminderId?: string;
   runtimeEnv?: Record<string, string>;
-  scheduledAt: string;
+  scheduledAt?: string;
   timeoutMs?: number;
 }
 
 export interface RunPreflightOutput {
   aborted: boolean;
+  result?: PreflightExecutionResult;
+}
+
+interface RunHostedPreflightInput extends RunPreflightInput {
+  reminderId: string;
+  scheduledAt: string;
+}
+
+interface RunHostedPreflightOutput extends RunPreflightOutput {
   result?: PreflightLastResult;
 }
 
@@ -107,6 +119,8 @@ export function validatePreflightCommand(command: string): string {
  * The caller supplies the agent's captured configured/managed runtime env; no
  * wake-item context is invented. Timeout / abort kill the entire process group.
  */
+export function runPreflightCommand(input: RunHostedPreflightInput): Promise<RunHostedPreflightOutput>;
+export function runPreflightCommand(input: RunPreflightInput): Promise<RunPreflightOutput>;
 export async function runPreflightCommand(input: RunPreflightInput): Promise<RunPreflightOutput> {
   const command = validatePreflightCommand(input.command);
   const timeoutMs = normalizePreflightTimeoutMs(input.timeoutMs);
@@ -223,12 +237,12 @@ export async function runPreflightCommand(input: RunPreflightInput): Promise<Run
     if (result.exitCode === null) exitCode = 127;
   }
 
-  const last: PreflightLastResult = {
+  const last: PreflightExecutionResult = {
     durationMs,
     endedAt,
-    scheduledAt: input.scheduledAt,
     startedAt,
     status,
+    ...(input.scheduledAt ? { scheduledAt: input.scheduledAt } : {}),
     ...(exitCode !== undefined ? { exitCode } : {}),
     ...(result.signal ? { signal: result.signal } : {}),
     ...(result.timedOut ? { timedOut: true } : {}),
@@ -244,7 +258,7 @@ export async function runPreflightCommand(input: RunPreflightInput): Promise<Run
 export interface PreflightEnvironmentOptions {
   agentId: string;
   animaHome: string;
-  reminderId: string;
+  reminderId?: string;
   runtimeEnv?: Record<string, string>;
 }
 
@@ -276,7 +290,8 @@ export function buildPreflightEnvironment(
   const packageBin = resolve(dirname(fileURLToPath(import.meta.url)), '../../..', 'bin');
   env.ANIMA_AGENT_ID = options.agentId;
   env.ANIMA_HOME = options.animaHome;
-  env.ANIMA_REMINDER_ID = options.reminderId;
+  delete env.ANIMA_REMINDER_ID;
+  if (options.reminderId) env.ANIMA_REMINDER_ID = options.reminderId;
   env.PATH = [packageBin, env.PATH].join(delimiter);
   return env;
 }

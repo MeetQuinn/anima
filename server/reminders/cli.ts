@@ -1,7 +1,11 @@
+import { constants } from 'node:os';
 import type { Command } from 'commander';
 import { z } from 'zod';
 
+import { resolveAnimaHome } from '../anima-home.js';
+import { resolveAgentHomePath } from '../agents/agent-config-ops.js';
 import { resolveAgentIdFrom } from '../cli/shared.js';
+import { AgentStore } from '../storage/schema/agent.store.js';
 import type { Reminder, ReminderProvenance, ReminderStatus } from '../../shared/reminder.js';
 import { reminderServiceForAgent } from './reminder.service.js';
 import { parseDurationMs, scheduleDisplayRule } from './reminder.helper.js';
@@ -9,6 +13,11 @@ import {
   formatReminderInspection,
   inspectReminder,
 } from './reminder.inspection.js';
+import {
+  REMINDER_BODY_MAX_CHARS,
+  runPreflightCommand,
+  type PreflightExecutionResult,
+} from './preflight.js';
 
 const SharedFlags = z.object({
   agent: z.string().optional(),
@@ -29,6 +38,11 @@ const ScheduleSchema = SharedFlags.extend({
   window: z.string().optional(),
   preflight: z.string().optional(),
   preflightTimeout: z.string().optional(),
+});
+
+const PreflightSchema = z.object({
+  command: z.string().min(1, 'Missing --command'),
+  timeout: z.string().optional(),
 });
 
 const ListSchema = SharedFlags.extend({
@@ -64,10 +78,17 @@ const SnoozeSchema = SharedFlags.extend({
 });
 
 type ScheduleOptions = z.infer<typeof ScheduleSchema>;
+type PreflightOptions = z.infer<typeof PreflightSchema>;
 type ListOptions = z.infer<typeof ListSchema>;
 type ShowOptions = z.infer<typeof ShowSchema>;
 type CancelOptions = z.infer<typeof CancelSchema>;
 type SnoozeOptions = z.infer<typeof SnoozeSchema>;
+
+export const REMINDER_PREFLIGHT_SCHEDULE_EXAMPLE = [
+  '--repeat', 'every:15m', '--title', 'Usage check',
+  '--instructions', 'review the usage alert', '--preflight', './scripts/check-usage.sh',
+  '--preflight-timeout', '2m',
+] as const;
 
 export const REMINDER_SCHEDULE_EXAMPLES = [
   ['--in', '1h', '--title', 'check deploy', '--instructions', 'verify prod is healthy'],
@@ -80,14 +101,45 @@ export const REMINDER_SCHEDULE_EXAMPLES = [
     '--timezone', 'America/New_York', '--title', 'Work-hours poll',
     '--instructions', 'poll the work queue during business hours',
   ],
+  REMINDER_PREFLIGHT_SCHEDULE_EXAMPLE,
 ] as const;
 
 export function reminderScheduleExampleCommand(args: readonly string[]): string {
   return ['anima', 'reminder', 'schedule', ...args].map(readableShellArg).join(' ');
 }
 
+function preflightWorkflowHelp(): string {
+  return [
+    "  anima reminder preflight --command './scripts/check-usage.sh' --timeout 2m",
+    `  ${reminderScheduleExampleCommand(REMINDER_PREFLIGHT_SCHEDULE_EXAMPLE)}`,
+  ].join('\n');
+}
+
 export function registerReminderCommands(program: Command): void {
-  const reminder = program.command('reminder').description('Schedule and manage agent wake-up reminders.');
+  const reminder = program
+    .command('reminder')
+    .description('Schedule and manage agent wake-up reminders.')
+    .addHelpText('after', '\nWrite → Run → Schedule:\n' +
+      '  Write and debug the script in Agent Home.\n' +
+      `${preflightWorkflowHelp()}\n`);
+
+  reminder
+    .command('preflight')
+    .description('Run a reminder preflight once without scheduling it.')
+    .requiredOption('--command <command>', 'shell command to run once (CWD = Agent Home)')
+    .option('--timeout <duration>',
+      'timeout (default 30m, hard cap 24h); format: <n><s|m|h|d>\n' +
+      'on timeout the process group is killed')
+    .addHelpText('after', '\nRun this from the target agent. It uses the same Agent Home and configured/managed\n' +
+      'environment as hosted preflight. No message context is invented, and no reminder, wake,\n' +
+      'or state is created. Exit 0 succeeds and would wake; exit 1 declines and would skip;\n' +
+      'exit >=2, signal, or timeout errors and would report Needs attention.\n\n' +
+      'Example (Write → Run → Schedule):\n' +
+      `${preflightWorkflowHelp()}\n`)
+    .action(async (_, command) => {
+      const opts = PreflightSchema.parse(command.opts());
+      await runPreflight(opts);
+    });
 
   // Input:   anima reminder schedule --title <text> [--instructions <text> | stdin]
   //          (--in <duration> | --fire-at <iso>) [--repeat <rule>] [--timezone <tz>]
@@ -136,7 +188,7 @@ export function registerReminderCommands(program: Command): void {
       'requires --anchor-message-ts; together they set the reply context')
     .option('--anchor-message-ts <ts>', 'Slack message timestamp to anchor to (requires --anchor-channel)')
     .option('--anchor-thread-ts <ts>', 'thread root timestamp when anchoring inside a thread')
-    .addHelpText('after', `\nExamples:\n${REMINDER_SCHEDULE_EXAMPLES
+    .addHelpText('after', `\nWrite → Run → Schedule:\n${preflightWorkflowHelp()}\n\nExamples:\n${REMINDER_SCHEDULE_EXAMPLES
       .map((args) => `  ${reminderScheduleExampleCommand(args)}`)
       .join('\n')}`)
     .action(async (_, command) => {
@@ -236,6 +288,64 @@ async function runSchedule(opts: ScheduleOptions): Promise<void> {
     ...(provenance ? { provenance } : {}),
   });
   printReminderResult('scheduled', reminder);
+}
+
+async function runPreflight(opts: PreflightOptions): Promise<void> {
+  const agentId = process.env.ANIMA_AGENT_ID?.trim();
+  if (!agentId) {
+    throw new Error('Run reminder preflight from the target agent; ANIMA_AGENT_ID is required.');
+  }
+  const animaHome = resolveAnimaHome();
+  const store = new AgentStore(agentId);
+  if (!store.exists()) throw new Error(`Agent not found: ${agentId}`);
+  const agentHome = resolveAgentHomePath(await store.read());
+  const { result } = await runPreflightCommand({
+    agentId,
+    animaHome,
+    command: opts.command,
+    cwd: agentHome,
+    runtimeEnv: process.env as Record<string, string>,
+    ...(opts.timeout ? { timeoutMs: parseDurationMs(opts.timeout) } : {}),
+  });
+  if (!result) throw new Error('Preflight did not produce a result.');
+  printPreflightResult(result);
+  process.exitCode = preflightExitCode(result);
+}
+
+function printPreflightResult(result: PreflightExecutionResult): void {
+  printCapturedStream('stdout', result.stdout, result.stdoutTruncated);
+  printCapturedStream('stderr', result.stderr, result.stderrTruncated);
+  const execution = result.timedOut
+    ? 'timeout'
+    : result.signal
+      ? `signal=${result.signal}`
+      : `exit=${result.exitCode ?? 127}`;
+  const meaning = result.status === 'succeeded'
+    ? 'succeeds; hosted reminder would wake'
+    : result.status === 'declined'
+      ? 'declines; hosted reminder would skip'
+      : 'errors; hosted reminder would report Needs attention';
+  console.log(`result: ${meaning}`);
+  console.log(`duration_ms=${result.durationMs} ${execution}`);
+}
+
+function printCapturedStream(
+  name: 'stdout' | 'stderr',
+  output: string | undefined,
+  truncated: boolean | undefined,
+): void {
+  console.log(`${name}:`);
+  if (output) process.stdout.write(output.endsWith('\n') ? output : `${output}\n`);
+  else console.log('(empty)');
+  if (truncated) {
+    console.log(`…[preflight ${name} truncated at ${REMINDER_BODY_MAX_CHARS} characters]`);
+  }
+}
+
+function preflightExitCode(result: PreflightExecutionResult): number {
+  if (result.timedOut) return 124;
+  if (result.signal) return 128 + (constants.signals[result.signal as keyof typeof constants.signals] ?? 0);
+  return result.exitCode ?? 127;
 }
 
 async function runList(opts: ListOptions): Promise<void> {
