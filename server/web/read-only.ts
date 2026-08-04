@@ -76,6 +76,13 @@ export interface GovernedRoute {
  */
 export const GOVERNED_ROUTES: readonly GovernedRoute[] = [
   {
+    id: 'PUT /api/provider-runtime-commands',
+    method: 'PUT',
+    pattern: /^\/api\/provider-runtime-commands$/,
+    evidence:
+      "Changes which machine-user executable every agent of a provider launches. The command can resolve through the machine user's PATH or name an absolute executable outside ANIMA_HOME, so an isolated runtime must not redirect live provider processes to host code it does not own.",
+  },
+  {
     id: 'PUT /api/provider-context-limits',
     method: 'PUT',
     pattern: /^\/api\/provider-context-limits$/,

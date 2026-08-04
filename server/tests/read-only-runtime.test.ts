@@ -311,6 +311,7 @@ test('#524 the governed table matches on method and path, and ignores the query 
   assert.ok(governedRouteFor('GET', '/api/provider-usage/claude-code'));
   assert.ok(governedRouteFor('HEAD', '/api/provider-usage'), 'HEAD must normalize to GET');
   assert.ok(governedRouteFor('POST', '/api/provider-cli-status/claude-code/apply'));
+  assert.ok(governedRouteFor('PUT', '/api/provider-runtime-commands'));
   assert.ok(governedRouteFor('PUT', '/api/provider-context-limits'));
   assert.ok(governedRouteFor('POST', '/api/provider-accounts/claude-code/select'));
   assert.ok(governedRouteFor('POST', '/api/agents/mira/provider/claude-account'));
@@ -331,6 +332,10 @@ test('#524 the governed table matches on method and path, and ignores the query 
   assert.equal(governedRouteFor('GET', '/api/provider-cli-status'), undefined);
   assert.equal(
     governedRouteFor('GET', '/api/provider-context-limits'),
+    undefined,
+  );
+  assert.equal(
+    governedRouteFor('GET', '/api/provider-runtime-commands'),
     undefined,
   );
   // The `check` routes take no machine-wide lease and write nothing.

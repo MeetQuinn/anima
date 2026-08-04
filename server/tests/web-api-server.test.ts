@@ -203,6 +203,8 @@ test('web API manages validated provider runtime command overrides in server con
   const stateDir = await mkdtemp(
     join(tmpdir(), 'anima-web-api-provider-command-'),
   );
+  const previousMachineWrites = process.env.ANIMA_ALLOW_MACHINE_WRITES;
+  process.env.ANIMA_ALLOW_MACHINE_WRITES = '1';
   await writeAgentConfigs(stateDir);
   try {
     await withAnimaHome(stateDir, async () => {
@@ -292,6 +294,9 @@ test('web API manages validated provider runtime command overrides in server con
       }
     });
   } finally {
+    if (previousMachineWrites === undefined)
+      delete process.env.ANIMA_ALLOW_MACHINE_WRITES;
+    else process.env.ANIMA_ALLOW_MACHINE_WRITES = previousMachineWrites;
     await rm(stateDir, { force: true, recursive: true });
   }
 });
