@@ -14,7 +14,6 @@ import {
   type ProviderSessionCorruptionReason,
 } from './session-corruption.js';
 
-const CODEX_COMMAND = 'codex';
 export const CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV = 'ANIMA_CODEX_AUTO_COMPACT_TOKEN_LIMIT';
 export const CODEX_AUTO_COMPACT_TOKEN_LIMIT_SCOPE = 'total';
 const CODEX_TOOL_ENV_BASE_INCLUDE = [
@@ -35,15 +34,17 @@ const CODEX_TOOL_ENV_BASE_INCLUDE = [
 ];
 
 export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerController> {
+  readonly command: string;
   readonly env: Record<string, string> | undefined;
   readonly kind = 'codex-cli';
   private readonly config: CodexCliAgentProviderConfig;
   private pendingSessionCorruption?: ProviderSessionCorruptionReason;
   private resumedProviderSessionId?: string;
 
-  constructor(config: CodexCliAgentProviderConfig) {
+  constructor(config: CodexCliAgentProviderConfig, command: string) {
     super({ providerChildIdleTimeoutMs: config.providerChildIdleTimeoutMs });
     this.config = config;
+    this.command = command;
     this.env = config.env;
   }
 
@@ -55,7 +56,7 @@ export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerC
         beforeFinishRun: () => this.slot.get()?.detachRun(input),
         label: 'Codex',
         startedPayload: {
-          command: CODEX_COMMAND,
+          command: this.command,
           transport: 'app-server',
         },
         turn: async () => {
@@ -119,7 +120,7 @@ export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerC
       () => this.slot.get() ?? this.spawnController(
         {
           args: codexAppServerArgs(this.env),
-          command: CODEX_COMMAND,
+          command: this.command,
           label: 'Codex app-server runtime',
         },
         input,

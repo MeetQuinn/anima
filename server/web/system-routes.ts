@@ -34,10 +34,15 @@ import {
 } from '../provider-accounts/claude-account-login.service.js';
 import { SidebarOrder, WorkspacePlatform } from '../../shared/server-settings.js';
 import { ProviderContextLimitRequest } from '../../shared/provider-context-limits.js';
+import { ProviderRuntimeCommandRequest } from '../../shared/provider-runtime-commands.js';
 import {
   defaultProviderContextLimitService,
   ProviderContextLimitError,
 } from '../provider-context/provider-context-limit.service.js';
+import {
+  defaultProviderRuntimeCommandService,
+  ProviderRuntimeCommandError,
+} from '../providers/runtime-command.service.js';
 import { defaultTeamService, TeamServiceError } from '../teams/team.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { HttpError } from './http.js';
@@ -170,6 +175,24 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
       return await defaultProviderContextLimitService.set(parsed.data);
     } catch (error) {
       if (error instanceof ProviderContextLimitError)
+        throw new HttpError(error.statusCode, error.message);
+      throw error;
+    }
+  });
+  fastify.get('/api/provider-runtime-commands', async () =>
+    defaultProviderRuntimeCommandService.status(),
+  );
+  fastify.put('/api/provider-runtime-commands', async (request, reply) => {
+    const parsed = ProviderRuntimeCommandRequest.safeParse(request.body);
+    if (!parsed.success) {
+      return reply
+        .status(400)
+        .send({ error: 'Invalid provider runtime command payload' });
+    }
+    try {
+      return await defaultProviderRuntimeCommandService.set(parsed.data);
+    } catch (error) {
+      if (error instanceof ProviderRuntimeCommandError)
         throw new HttpError(error.statusCode, error.message);
       throw error;
     }

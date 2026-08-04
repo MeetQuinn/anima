@@ -12,6 +12,7 @@ import type {
   ProviderContextLimitProvider,
   ProviderContextLimitsResponse,
 } from '@shared/provider-context-limits';
+import type { ProviderRuntimeCommandsResponse } from '@shared/provider-runtime-commands';
 import type { ServerInfo } from '@shared/server-info';
 import type { SidebarOrder, WorkspacePlatform } from '@shared/server-settings';
 import type {
@@ -143,6 +144,20 @@ export async function saveProviderContextLimit(
   maxTokens: number | null,
 ): Promise<ProviderContextLimitsResponse> {
   return apiRequest('/api/provider-context-limits', jsonInit('PUT', { maxTokens, provider }));
+}
+
+export async function fetchProviderRuntimeCommands(): Promise<ProviderRuntimeCommandsResponse> {
+  return apiRequest('/api/provider-runtime-commands');
+}
+
+export async function saveProviderRuntimeCommand(
+  provider: ProviderUsageKind,
+  command: string | null,
+): Promise<ProviderRuntimeCommandsResponse> {
+  return apiRequest(
+    '/api/provider-runtime-commands',
+    jsonInit('PUT', { command, provider }),
+  );
 }
 
 export async function fetchServerInfo(): Promise<ServerInfo> {

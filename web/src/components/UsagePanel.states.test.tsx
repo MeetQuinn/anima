@@ -7,6 +7,9 @@ import UsagePanel from './UsagePanel';
 const contextApi = vi.hoisted(() => ({
   save: vi.fn(),
 }));
+const runtimeCommandApi = vi.hoisted(() => ({
+  save: vi.fn(),
+}));
 
 // Version-slot honesty regression (#520 gate, Milo). The server has a
 // distinct reachable shape for "binary present but version unverified":
@@ -82,6 +85,13 @@ vi.mock('@/api/system', () => ({
       },
     ],
   })),
+  fetchProviderRuntimeCommands: vi.fn(async () => ({
+    providers: [
+      { command: null, defaultCommand: 'claude', provider: 'claude-code' as const },
+      { command: null, defaultCommand: 'kimi', provider: 'kimi-cli' as const },
+      { command: null, defaultCommand: 'grok', provider: 'grok-cli' as const },
+    ],
+  })),
   fetchProviderAccounts: vi.fn(async () => ({
     providers: [
       {
@@ -131,6 +141,7 @@ vi.mock('@/api/system', () => ({
   refreshProviderUsage: vi.fn(async () => ({ providers: [] })),
   selectClaudeAccount: vi.fn(),
   saveProviderContextLimit: contextApi.save,
+  saveProviderRuntimeCommand: runtimeCommandApi.save,
 }));
 
 function renderPanel() {
@@ -165,11 +176,14 @@ describe('UsagePanel version slot', () => {
     expect(await screen.findByText('op@example.com')).toBeTruthy();
     expect(screen.getByText('80%')).toBeTruthy();
     expect(screen.getByText('· cached')).toBeTruthy();
-    // Details rows are gone; Claude has no context limit, so no Settings either —
-    // but Add account stays reachable outside any disclosure.
+    // Version/binary rows stay gone. Runtime command makes Settings available for
+    // every provider, while Add account remains outside the disclosure.
     expect(screen.queryByText('Binary')).toBeNull();
-    expect(screen.queryByText(/Settings/i)).toBeNull();
     expect(screen.getByRole('button', { name: /Add account/i })).toBeTruthy();
+    fireEvent.click(screen.getByText(/Settings/i));
+    const command = screen.getByRole('textbox', { name: 'Claude Code runtime command' });
+    expect((command as HTMLInputElement).value).toBe('');
+    expect(command.getAttribute('placeholder')).toBe('claude');
 
     // Manually expanding a collapsed provider must still surface its update
     // offer (#615 gate blocker: the offer block was guarded by needsAttention).
@@ -188,11 +202,25 @@ describe('UsagePanel version slot', () => {
         },
       ],
     });
+    runtimeCommandApi.save.mockResolvedValueOnce({
+      providers: [
+        { command: 'kimi-wrapper', defaultCommand: 'kimi', provider: 'kimi-cli' },
+      ],
+    });
     renderPanel();
 
-    // Context limit is the ONLY thing left under the Settings disclosure.
+    // Runtime command is global for all providers; context limit remains beside
+    // it only for providers that support the managed cap.
     fireEvent.click(await screen.findByRole('button', { name: /Kimi CLI/i }));
     fireEvent.click(screen.getByText(/Settings/i));
+
+    const command = screen.getByRole('textbox', { name: 'Kimi CLI runtime command' });
+    expect(command.getAttribute('placeholder')).toBe('kimi');
+    fireEvent.change(command, { target: { value: 'kimi-wrapper' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(runtimeCommandApi.save).toHaveBeenCalledWith('kimi-cli', 'kimi-wrapper'),
+    );
 
     const select = await screen.findByRole('combobox', { name: 'Kimi CLI context limit' });
     expect((select as HTMLSelectElement).value).toBe('no-anima-limit');

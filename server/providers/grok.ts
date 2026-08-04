@@ -20,7 +20,6 @@ import {
   type GrokCliAgentProviderConfig,
 } from './contract.js';
 
-const GROK_COMMAND = 'grok';
 const GROK_RUNTIME_KIND = 'grok-cli';
 
 /**
@@ -52,15 +51,17 @@ class GrokJsonRpcError extends Error {
 }
 
 export class GrokCliAgentRuntime extends ControllerAgentRuntime<GrokAcpController> {
+  readonly command: string;
   readonly env: Record<string, string> | undefined;
   readonly kind = GROK_RUNTIME_KIND;
   private readonly config: GrokCliAgentProviderConfig;
   // Keep accepted prompts outside the child controller so same-item crash retry can replay them.
   private retainedFollowups?: { itemId: string; prompts: string[] };
 
-  constructor(config: GrokCliAgentProviderConfig) {
+  constructor(config: GrokCliAgentProviderConfig, command: string) {
     super({ providerChildIdleTimeoutMs: config.providerChildIdleTimeoutMs });
     this.config = config;
+    this.command = command;
     this.env = config.env;
   }
 
@@ -68,7 +69,7 @@ export class GrokCliAgentRuntime extends ControllerAgentRuntime<GrokAcpControlle
     return this.runTurnLifecycle(input, {
       label: 'Grok',
       startedPayload: {
-        command: GROK_COMMAND,
+        command: this.command,
         transport: 'acp',
       },
       abort: async (signal) => {
@@ -131,7 +132,7 @@ export class GrokCliAgentRuntime extends ControllerAgentRuntime<GrokAcpControlle
         return this.spawnController(
           {
             args: grokAcpLaunchArgs(this.config),
-            command: GROK_COMMAND,
+            command: this.command,
             label: 'Grok ACP runtime',
           },
           input,

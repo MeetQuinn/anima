@@ -43,6 +43,7 @@ export const queryKeys = {
   providerAvailability: () => ['provider-availability'] as const,
   providerCliStatus: () => ['provider-cli-status'] as const,
   providerContextLimits: () => ['provider-context-limits'] as const,
+  providerRuntimeCommands: () => ['provider-runtime-commands'] as const,
   providerUsage: () => ['provider-usage'] as const,
   tokenUsage: (from: string, through: string, timezone: string) =>
     ['agent-token-usage', 'all', from, through, timezone] as const,

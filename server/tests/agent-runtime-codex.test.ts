@@ -154,7 +154,7 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
   try {
     await withAnimaHome(stateDir, async () => {
     const callsPath = join(stateDir, 'codex-app-server-calls.jsonl');
-    const fakeCodex = join(stateDir, 'codex');
+    const fakeCodex = join(stateDir, 'mcodex');
     await writeFile(
       fakeCodex,
       [
@@ -290,17 +290,21 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
       config,
     );
 
-    runtime = createAgentRuntime({
-      env: runtimeTestEnv(stateDir, {
-        CALLS_PATH: callsPath,
-        [CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV]: String(autoCompactTokenLimit),
-      }),
-      kind: 'codex-cli',
-      model: 'gpt-test',
-      reasoningEffort: 'ultra',
-    });
+    runtime = createAgentRuntime(
+      {
+        env: runtimeTestEnv(stateDir, {
+          CALLS_PATH: callsPath,
+          [CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV]: String(autoCompactTokenLimit),
+        }),
+        kind: 'codex-cli',
+        model: 'gpt-test',
+        reasoningEffort: 'ultra',
+      },
+      { command: fakeCodex },
+    );
     const runPromise = runtime.run(await runtimeInput(runtime, firstCtx, await loadState()));
     await waitFor(async () => (await readFile(callsPath, 'utf8')).includes('"method":"thread/start"'));
+    assert.equal(runtime.health?.().child?.command, fakeCodex);
     assert.equal(runtime.health?.().child?.version, '0.145.0');
     const beforeTurnReady = await runtime.appendToActiveRun(
       await runtimeFollowupInput(runtime, firstCtx, secondCtx, await loadState()),
@@ -411,15 +415,18 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
       config,
     );
     await runtime.close?.();
-    runtime = createAgentRuntime({
-      env: runtimeTestEnv(stateDir, {
-        CALLS_PATH: callsPath,
-        [CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV]: String(autoCompactTokenLimit),
-      }),
-      kind: 'codex-cli',
-      model: 'gpt-test',
-      reasoningEffort: 'ultra',
-    });
+    runtime = createAgentRuntime(
+      {
+        env: runtimeTestEnv(stateDir, {
+          CALLS_PATH: callsPath,
+          [CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV]: String(autoCompactTokenLimit),
+        }),
+        kind: 'codex-cli',
+        model: 'gpt-test',
+        reasoningEffort: 'ultra',
+      },
+      { command: fakeCodex },
+    );
     assert.equal((await runtime.run(await runtimeInput(runtime, thirdCtx, await loadState()))).text, 'handled third');
     const finalCalls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string });
     assert.equal(finalCalls.filter((call) => call.method === 'initialize').length, 2);

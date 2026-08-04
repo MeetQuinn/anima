@@ -3,8 +3,6 @@ import { dirname } from 'node:path';
 
 import type { AgentRuntimeInput, ClaudeCodeAgentProviderConfig } from './contract.js';
 
-// Launch surface for the Claude Code stream-json transport.
-export const CLAUDE_COMMAND = 'claude';
 export const CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW = 272000;
 export const CLAUDE_DISALLOWED_TOOLS = [
   'AskUserQuestion',

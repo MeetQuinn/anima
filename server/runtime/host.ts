@@ -34,6 +34,10 @@ import { createSlackWebClient } from '../slack/client.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
 import { agentHasConnectedTransport } from '../../shared/agent-transports.js';
 import {
+  effectiveProviderRuntimeCommand,
+  type ProviderRuntimeCommandsConfig,
+} from '../../shared/provider-runtime-commands.js';
+import {
   AgentRestartCommandStore,
   type AgentRestartCommand,
 } from './agent-restart-command.store.js';
@@ -79,11 +83,13 @@ interface ManagedAgent {
   config: AgentConfig;
   configReloadWait?: ConfigReloadWait;
   lastLoggedStatus?: string;
+  providerCommand: string;
   running?: RunningAgentRecord;
 }
 
 export interface StartAgentOptions {
   forceStopAfterMs: number;
+  providerCommand: string;
   runLimiter: TeamRunLimiter;
   startTimeoutMs: number;
 }
@@ -92,6 +98,7 @@ export interface RuntimeHostDependencies {
   animaHome?: string;
   forceRestartTimeoutMs?: number;
   loadAgents?: (opts: RuntimeHostOptions) => Promise<AgentConfig[]>;
+  loadProviderCommands?: () => Promise<ProviderRuntimeCommandsConfig>;
   ensureDefaultSkills?: () => Promise<void>;
   healthIntervalMs?: number;
   healthStore?: AgentHealthStore;
@@ -123,6 +130,7 @@ export class RuntimeHost {
   private readonly agents = new Map<string, ManagedAgent>();
   private readonly animaHome: string;
   private readonly loadAgents: (opts: RuntimeHostOptions) => Promise<AgentConfig[]>;
+  private readonly loadProviderCommands: () => Promise<ProviderRuntimeCommandsConfig>;
   private readonly ensureDefaultSkills: () => Promise<void>;
   private readonly logger: Pick<Console, 'error' | 'log'>;
   private readonly memoryCoherenceScheduler: Pick<MemoryCoherenceScheduler, 'reconcile'>;
@@ -151,6 +159,10 @@ export class RuntimeHost {
   ) {
     this.animaHome = deps.animaHome ?? resolveAnimaHome();
     this.loadAgents = deps.loadAgents ?? loadRuntimeAgents;
+    this.loadProviderCommands = deps.loadProviderCommands ?? (async () => {
+      const config = await new ServerConfigStore(this.animaHome).read();
+      return config.providerCommands ?? {};
+    });
     this.ensureDefaultSkills = deps.ensureDefaultSkills ?? (async () => {
       await ensureDefaultSkills();
     });
@@ -246,7 +258,10 @@ export class RuntimeHost {
   }
 
   private async reconcileAgents(): Promise<void> {
-    const agents = await this.loadAgents(this.opts);
+    const [agents, providerCommands] = await Promise.all([
+      this.loadAgents(this.opts),
+      this.loadProviderCommands(),
+    ]);
     await this.cleanupExpiredHandoffs(agents);
     await this.initializeBootHealth(agents);
     this.syncConfigWatchers(agents.map((agent) => agent.id));
@@ -254,7 +269,11 @@ export class RuntimeHost {
     const seenAgentIds = new Set<string>();
     for (const agent of agents) {
       seenAgentIds.add(agent.id);
-      const record = this.managedAgent(agent);
+      const providerCommand = effectiveProviderRuntimeCommand(
+        agent.provider.kind,
+        providerCommands,
+      );
+      const record = this.managedAgent(agent, providerCommand);
       const running = record.running;
       try {
         await this.validateAgent(agent);
@@ -288,7 +307,7 @@ export class RuntimeHost {
           });
           continue;
         }
-        await this.startAndStore(agent);
+        await this.startAndStore(agent, providerCommand);
       } catch (error) {
         const action = running ? 'failed to reconcile' : 'failed to start';
         const message = `Agent ${agent.id} ${action}: ${errorMessage(error)}`;
@@ -327,13 +346,14 @@ export class RuntimeHost {
     }
   }
 
-  private managedAgent(agent: AgentConfig): ManagedAgent {
+  private managedAgent(agent: AgentConfig, providerCommand: string): ManagedAgent {
     const existing = this.agents.get(agent.id);
     if (existing) {
       existing.config = agent;
+      existing.providerCommand = providerCommand;
       return existing;
     }
-    const record: ManagedAgent = { config: agent };
+    const record: ManagedAgent = { config: agent, providerCommand };
     this.agents.set(agent.id, record);
     return record;
   }
@@ -398,7 +418,7 @@ export class RuntimeHost {
         );
         record.running = undefined;
       }
-      await this.startAndStore(agent, command);
+      await this.startAndStore(agent, record.providerCommand, command);
     } catch (error) {
       await this.writeRestartFailed(agent.id, command, 'restart_failed');
       throw error;
@@ -427,7 +447,7 @@ export class RuntimeHost {
       return;
     }
 
-    const nextFingerprint = runtimeFingerprint(agent);
+    const nextFingerprint = runtimeFingerprint(agent, record.providerCommand);
     if (running.fingerprint === nextFingerprint) {
       this.clearConfigReloadWait(record);
       running.handle.setIntakePaused?.(false);
@@ -455,7 +475,7 @@ export class RuntimeHost {
       forceAfterMs: this.forceRestartTimeoutMs,
     });
     record.running = undefined;
-    await this.startAndStore(agent);
+    await this.startAndStore(agent, record.providerCommand);
   }
 
   /**
@@ -507,9 +527,10 @@ export class RuntimeHost {
 
   private async startAndStore(
     agent: AgentConfig,
+    providerCommand: string,
     restartCommand?: AgentRestartCommand,
   ): Promise<void> {
-    const record = this.managedAgent(agent);
+    const record = this.managedAgent(agent, providerCommand);
     this.clearConfigReloadWait(record);
     await this.health.writeHealth({
       agentId: agent.id,
@@ -520,21 +541,28 @@ export class RuntimeHost {
       state: 'starting',
       updatedAt: nowIso(),
     });
-    const started = await this.startAgentWithTimeout(agent);
-    const startedRecord = this.managedAgent(started.agent);
+    const started = await this.startAgentWithTimeout(agent, providerCommand);
+    const startedRecord = this.managedAgent(started.agent, providerCommand);
     this.clearConfigReloadWait(startedRecord);
-    startedRecord.running = { fingerprint: runtimeFingerprint(started.agent), handle: started.handle };
+    startedRecord.running = {
+      fingerprint: runtimeFingerprint(started.agent, providerCommand),
+      handle: started.handle,
+    };
     startedRecord.lastLoggedStatus = undefined;
     await this.publishHealthForAgent(startedRecord, restartCommand);
   }
 
-  private async startAgentWithTimeout(agent: AgentConfig): Promise<{ agent: AgentConfig; handle: RunningAgentHandle }> {
+  private async startAgentWithTimeout(
+    agent: AgentConfig,
+    providerCommand: string,
+  ): Promise<{ agent: AgentConfig; handle: RunningAgentHandle }> {
     let timeout: NodeJS.Timeout | undefined;
     let timedOut = false;
     const startPromise = (async () => {
       const startAgent = await this.agentAfterSlackDisplayInfoSync(agent);
       const handle = await this.startAgent(startAgent, this.animaHome, {
         forceStopAfterMs: this.forceRestartTimeoutMs,
+        providerCommand,
         runLimiter: this.runLimiter,
         startTimeoutMs: this.startAgentTimeoutMs,
       });
@@ -762,6 +790,7 @@ export class RuntimeHost {
 
   private syncConfigWatchers(agentIds: string[]): void {
     const nextPaths = new Map<string, string>();
+    if (existsSync(this.animaHome)) nextPaths.set('server', this.animaHome);
     const root = join(this.animaHome, 'agents');
     if (existsSync(root)) nextPaths.set('agents', root);
     for (const agentId of agentIds) {
@@ -901,7 +930,9 @@ async function startAgentFromConfig(
   );
   return startRunningAgent({
     ...server.config,
-    agentRuntime: createAgentRuntime(runtimeWithEnv(server.runtime, runtimeEnv)),
+    agentRuntime: createAgentRuntime(runtimeWithEnv(server.runtime, runtimeEnv), {
+      command: options.providerCommand,
+    }),
     animaHome,
     ...(server.slack
       ? {
@@ -949,7 +980,7 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-function runtimeFingerprint(agent: AgentConfig): string {
+function runtimeFingerprint(agent: AgentConfig, providerCommand: string): string {
   return stableJson({
     enabled: agent.enabled,
     homePath: resolveAgentHomePath(agent),
@@ -958,6 +989,7 @@ function runtimeFingerprint(agent: AgentConfig): string {
       role: agent.profile.role,
     },
     provider: agent.provider,
+    providerCommand,
     feishu: {
       appId: agent.feishu.appId,
       appSecret: agent.feishu.appSecret,

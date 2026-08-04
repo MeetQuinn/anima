@@ -12,6 +12,7 @@ import {
   MemoryCoherenceConfig,
   ProviderAccountsConfig,
   ProviderContextLimitsConfig,
+  ProviderRuntimeCommandsConfig,
   ReleaseTrack,
   ServerTrack,
   SidebarOrder,
@@ -26,6 +27,7 @@ export const ServerConfig = z.object({
   memoryCoherence: MemoryCoherenceConfig.optional(),
   providerAccounts: ProviderAccountsConfig.optional(),
   providerContextLimits: ProviderContextLimitsConfig.optional(),
+  providerCommands: ProviderRuntimeCommandsConfig.optional(),
   releaseTrack: ReleaseTrack.optional(),
   sidebarOrder: SidebarOrder.optional(),
   // Team registry. Optional + never schema-defaulted, so a legacy/empty config still loads

@@ -1,7 +1,7 @@
 import { constants } from 'node:fs';
 import { access, readFile, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { delimiter, dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { PROVIDER_CATALOG, type ProviderKind } from '../../shared/provider-catalog.js';
 import { errorMessage } from '../ids.js';
@@ -16,7 +16,7 @@ export async function inspectProvider(
 ): Promise<ProviderInspection> {
   const catalog = PROVIDER_CATALOG.find((entry) => entry.kind === provider);
   if (!catalog) throw new Error(`Unknown provider ${provider}`);
-  const executable = await resolveExecutable(catalog.command, env);
+  const executable = await resolveProviderExecutable(catalog.command, env);
   if (!executable) {
     return {
       installSource: 'unknown',
@@ -295,12 +295,16 @@ async function inspectGrok(
   };
 }
 
-async function resolveExecutable(command: string, env: NodeJS.ProcessEnv): Promise<ResolvedExecutable | undefined> {
+export async function resolveProviderExecutable(
+  command: string,
+  env: NodeJS.ProcessEnv,
+): Promise<ResolvedExecutable | undefined> {
   const candidates: Array<{ path: string; realPath: string }> = [];
   const seenPaths = new Set<string>();
-  for (const entry of (env.PATH ?? '').split(delimiter)) {
+  const entries = isAbsolute(command) ? [command] : (env.PATH ?? '').split(delimiter);
+  for (const entry of entries) {
     if (!entry) continue;
-    const path = resolve(entry, command);
+    const path = isAbsolute(command) ? entry : resolve(entry, command);
     if (seenPaths.has(path) || !(await isAccessible(path, constants.X_OK))) continue;
     seenPaths.add(path);
     candidates.push({ path, realPath: await realpath(path).catch(() => path) });
