@@ -21,7 +21,7 @@ The desktop sidebar holds three levels of navigation:
 
 - The team switcher sets the team you are currently working in.
 - **Knowledge Base** and **Agents** list the folders and agents registered to that team.
-- **Providers** and **Server** open machine-wide operational panels.
+- **Usage**, **Providers**, and **Server** open machine-wide operational panels.
 
 Collapse the sidebar when you need more room. On mobile, the same information opens as a full
 navigation screen; once you open an agent, a fixed bottom bar switches between its five tabs:
@@ -91,6 +91,22 @@ take effect at the next safe reload boundary.
 **This session** shows the current provider session, including context occupancy when the provider
 reports it, compaction information, and start time. The **Skills** region is described in
 [Skills](./skills.md).
+
+## Compare agent token usage
+
+Each agent's **Profile** includes a 52-week token heatmap and a breakdown of uncached input, cache
+read, cache write, and output tokens. Open **Usage** in the main navigation to compare the same
+period across all agents. Days use the browser's local timezone, and every agent row uses the same
+color scale so intensity is comparable.
+
+These surfaces count provider-reported tokens for model work initiated by the agent. Provider
+retries, failed turns, and provider-managed child agents are included when the provider reports
+their usage. Reasoning tokens are already part of output and are not added twice. A run without a
+provider usage payload is shown as unknown rather than as zero.
+
+Tracking is exact only from the release that introduces this ledger. Earlier Activity is not
+estimated or backfilled; the heatmap marks those days as outside exact coverage. The totals are
+tokens processed, not subscription quota, API cost, or a billing statement.
 
 ## Browse the agent home in Files
 

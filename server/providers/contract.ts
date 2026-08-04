@@ -7,6 +7,7 @@ import type {
   OpenCodeCliAgentProviderConfig,
 } from '../../shared/agent-config.js';
 import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
+import type { ProviderUsageInput } from '../../shared/agent-token-usage.js';
 
 export type {
   AgentProviderConfig,
@@ -34,6 +35,7 @@ export interface AgentRuntimeEffects {
   recordAgentText(text: string | undefined, payload?: Record<string, unknown>): Promise<void>;
   recordEvent(payload: Record<string, unknown>): Promise<void>;
   recordOutput(stream: 'stderr' | 'stdout', text: string): Promise<void>;
+  recordUsage(usage: ProviderUsageInput): Promise<void>;
   recordRuntime(
     type: 'runtime.started' | 'runtime.completed' | 'runtime.failed',
     payload?: Record<string, unknown>,

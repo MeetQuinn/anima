@@ -9,7 +9,7 @@ export type TestAgentConfig = Omit<ReturnType<typeof defaultAgentConfig>, 'slack
   enabled?: boolean;
   homePath?: string;
   profile?: { displayName?: string; role?: string };
-  slack?: ReturnType<typeof defaultAgentConfig>['slack'] & { appId?: string; manifestVersion?: number; teamId?: string };
+  slack?: ReturnType<typeof defaultAgentConfig>['slack'] & { appId?: string; avatarUrl?: string; manifestVersion?: number; teamId?: string };
 };
 
 export function defaultAgentConfig(id: string) {

@@ -1,5 +1,5 @@
-import { errorMessage } from '../ids.js';
 import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
+import { errorMessage } from '../ids.js';
 import { InboxSubscriber } from '../inbox/subscriber.js';
 import {
   addFeishuProcessingReaction,
@@ -14,6 +14,7 @@ import type { FeishuConfig } from '../../shared/agent-config.js';
 import type { AgentRuntimeHandleSnapshot } from '../../shared/snapshot.js';
 import { AgentRuntimeWorker, type AgentRuntimeWorkerCloseOptions } from './runtime-worker.js';
 import type { RuntimeWorkerConfig } from './types.js';
+import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
 import { recordLifetimeTokenUsageForItem } from './usage.js';
 import type { TeamRunLimiter } from './team-run-limiter.js';
 
@@ -44,6 +45,7 @@ export interface RunningAgentHandle {
 }
 
 export async function startRunningAgent(options: RunningAgentOptions): Promise<RunningAgentHandle> {
+  await agentTokenUsageServiceForAgent(options.agentId).initialize();
   const queue = wakeQueueServiceForAgent(options.agentId);
   const reactionClient = options.botToken ? slackReactionClient(options.botToken) : undefined;
   const feishuClient = options.feishu?.connected ? feishuProcessingReactionClient(options.feishu) : undefined;
@@ -57,6 +59,8 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
         await addFeishuProcessingReaction({ context, feishuClient, logger: console });
       },
       onItemSettled: async (context) => {
+        // Keep the legacy lifetime diagnostic populated while the exact daily
+        // ledger becomes the source for the new usage surfaces.
         await recordLifetimeTokenUsageForItem(context.agentId, context.item.id).catch((error: unknown) => {
           console.error(`Lifetime token usage update failed for item ${context.item.id}: ${errorMessage(error)}`);
         });

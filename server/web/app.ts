@@ -11,6 +11,7 @@ import { registerReadOnlyGuard } from './read-only.js';
 import { registerStaticRoutes } from './static.js';
 import { registerSystemRoutes } from './system-routes.js';
 import { registerKbRoutes } from './kb-routes.js';
+import { registerAgentTokenUsageRoutes } from './agent-token-usage-routes.js';
 
 export function buildWebApp(): FastifyInstance {
   const fastify: FastifyInstance = Fastify({ logger: false });
@@ -34,6 +35,7 @@ export function buildWebApp(): FastifyInstance {
   registerSystemRoutes(fastify);
   registerClientErrorRoutes(fastify);
   registerKbRoutes(fastify);
+  registerAgentTokenUsageRoutes(fastify);
   registerAgentRoutes(fastify);
   registerStaticRoutes(fastify);
 

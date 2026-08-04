@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronLeft, Gauge, Plus, Server } from 'lucide-react';
+import { ChartColumn, ChevronLeft, Gauge, Plus, Server } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -15,6 +15,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import AnimaIcon from '@/components/AnimaIcon';
 import ServerPanel from '@/components/ServerPanel';
 import UsagePanel from '@/components/UsagePanel';
+import TokenUsagePanel from '@/components/token-usage/TokenUsagePanel';
 import { removeKb, renameKb } from '@/api/kb';
 import { queryClient } from '@/query-client';
 import { queryKeys } from '@/lib/query-keys';
@@ -160,6 +161,7 @@ export default function Sidebar({
   // Server + Usage panels
   const [serverPanelOpen, setServerPanelOpen] = useState(false);
   const [usagePanelOpen, setUsagePanelOpen] = useState(false);
+  const [tokenUsagePanelOpen, setTokenUsagePanelOpen] = useState(false);
   // Resting indicator — a subtle accent dot on the Server trigger when a system
   // update is available. Reuses the panel's query (deduped by key), so no extra
   // request; the dot disappears once the user opens the panel and upgrades.
@@ -362,6 +364,13 @@ export default function Sidebar({
           {/* Footer — Providers above Server. */}
           <div className="shrink-0 border-t border-spine-border py-1.5 flex flex-col items-center gap-1">
             <button
+              onClick={() => setTokenUsagePanelOpen((v) => !v)}
+              title="Token usage"
+              className="relative flex h-8 w-8 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            >
+              <ChartColumn className="h-3.5 w-3.5" />
+            </button>
+            <button
               onClick={() => setUsagePanelOpen((v) => !v)}
               title={providerUpdateAvailable ? 'Providers — update available' : 'Providers'}
               className="relative flex h-8 w-8 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
@@ -532,8 +541,16 @@ export default function Sidebar({
             </div>
           </div>
 
-          {/* Footer — Providers above Server. */}
+          {/* Footer — usage, provider accounts, then server operations. */}
           <div className="border-t border-spine-border p-2 space-y-0.5">
+            <button
+              onClick={() => setTokenUsagePanelOpen((v) => !v)}
+              className="chrome flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-2.5 text-left text-[11px] uppercase tracking-[0.1em] text-text-on-spine-muted transition-colors hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              title="Token usage"
+            >
+              <ChartColumn className="h-3.5 w-3.5" />
+              <span>Usage</span>
+            </button>
             <button
               onClick={() => setUsagePanelOpen((v) => !v)}
               className="chrome flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-2.5 text-left text-[11px] uppercase tracking-[0.1em] text-text-on-spine-muted transition-colors hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
@@ -645,6 +662,7 @@ export default function Sidebar({
 
       {serverPanelOpen && <ServerPanel onClose={() => setServerPanelOpen(false)} />}
       {usagePanelOpen && <UsagePanel onClose={() => setUsagePanelOpen(false)} />}
+      {tokenUsagePanelOpen && <TokenUsagePanel onClose={() => setTokenUsagePanelOpen(false)} />}
     </>
   );
 }

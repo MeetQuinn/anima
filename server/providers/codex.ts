@@ -126,6 +126,7 @@ export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerC
         (child) => new CodexAppServerController(
           child,
           this.kind,
+          this.config.model,
           (reason) => this.markSessionCorruption(reason),
         ),
       ),

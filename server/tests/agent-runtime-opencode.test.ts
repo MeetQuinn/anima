@@ -9,6 +9,7 @@ import type { AgentRuntime } from '../providers/contract.js';
 import { openCodeLaunchEnvironment } from '../providers/opencode.js';
 import { runtimeSessionServiceForAgent } from '../runtime/runtime-session.service.js';
 import { withAnimaHome } from './anima-home.js';
+import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
 import {
   assertFollowupPrompt,
   providerSessionStartedPayload,
@@ -213,6 +214,15 @@ test('opencode-cli ACP uses global DeepSeek auth, selects the model, and appends
           && activity.payload?.['currentContextTokens'] === 4096
           && activity.payload?.['contextWindow'] === 1_000_000
           && activity.payload?.['costUsd'] === 0.012));
+      const usage = await agentTokenUsageServiceForAgent('anima').summary({
+        agentName: 'Anima',
+        from: '2000-01-01',
+        through: '2100-01-01',
+        timezone: 'UTC',
+      });
+      assert.equal(usage.totalTokens, 132);
+      assert.equal(usage.reportedRuns, 2);
+      assert.equal(usage.unknownRuns, 0);
     });
   } finally {
     await runtime?.close?.();
@@ -386,6 +396,14 @@ test('opencode-cli turns ACP DeepSeek authentication errors into machine-level s
       );
       assert.equal(runtime.health?.().child, undefined);
       assert.equal((await readFile(callsPath, 'utf8')).includes('DEEPSEEK_API_KEY'), false);
+      const usage = await agentTokenUsageServiceForAgent('anima').summary({
+        agentName: 'Anima',
+        from: '2000-01-01',
+        through: '2100-01-01',
+        timezone: 'UTC',
+      });
+      assert.equal(usage.reportedRuns, 0);
+      assert.equal(usage.unknownRuns, 1);
     });
   } finally {
     await runtime?.close?.();

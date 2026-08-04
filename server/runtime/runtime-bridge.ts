@@ -28,6 +28,7 @@ import type {
   AgentRuntimeInput,
   ProviderSessionRecord,
 } from '../providers/contract.js';
+import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
 
 export class AgentRuntimeBridge {
   constructor(private readonly runtime: AgentRuntime) {}
@@ -111,6 +112,7 @@ export class AgentRuntimeBridge {
     onActivity?: () => void,
     onProviderProgress?: () => void,
   ): AgentRuntimeEffects {
+    const runtimeKind = this.runtime.kind;
     const target: RuntimeActivityTarget = {
       agentId: context.agentId,
       itemId: context.item.id,
@@ -133,6 +135,16 @@ export class AgentRuntimeBridge {
       recordOutput: (stream, text) => {
         noteActivity();
         return recordRuntimeOutputChunk(target, this.runtime.kind, stream, text);
+      },
+      async recordUsage(usage) {
+        noteActivity();
+        try {
+          await agentTokenUsageServiceForAgent(context.agentId).record(context.item.id, runtimeKind, usage);
+        } catch (error) {
+          // Accounting must not turn a completed provider request into a failed
+          // user task. Storage failures remain visible in service logs.
+          console.error(`Token usage record failed for ${context.agentId}/${context.item.id}:`, error);
+        }
       },
       recordRuntime: (type, payload) => {
         noteActivity();

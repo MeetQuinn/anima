@@ -139,6 +139,7 @@ function recordingEffects(): {
     recordAgentText: async () => {},
     recordEvent: async () => {},
     recordOutput: async () => {},
+    recordUsage: async () => {},
     recordRuntime: async (type, payload) => {
       runtimeRecords.push({ type, ...(payload ? { payload } : {}) });
     },

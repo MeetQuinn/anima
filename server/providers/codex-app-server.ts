@@ -27,6 +27,7 @@ import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
 import { LineBuffer } from './line-buffer.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
 import type { ProviderSessionCorruptionReason } from './session-corruption.js';
+import { providerUsageFromStats } from './provider-usage.js';
 
 interface CodexThread {
   id: string;
@@ -64,6 +65,7 @@ export class CodexAppServerController {
   private readonly completedTurns = new Set<string>();
   private readonly linkedTextByItem = new Map<string, LinkedAgentText>();
   private readonly textByTurn = new Map<string, string>();
+  private readonly usageByTurn = new Map<string, Record<string, unknown>>();
   private readonly activeProviderToolIds = new Set<string>();
   private readonly pendingSubagentSpawns = new Map<string, PendingCodexSubagentSpawn>();
   private readonly recordedSubagentChildren = new Set<string>();
@@ -81,6 +83,7 @@ export class CodexAppServerController {
   constructor(
     private readonly child: RunningChildProcess,
     private readonly runtimeKind: string,
+    private readonly configuredModel?: string,
     private readonly onSessionCorruption?: (reason: ProviderSessionCorruptionReason) => void,
   ) {
     this.completion = child.completion.then(
@@ -173,6 +176,15 @@ export class CodexAppServerController {
       return text;
     } catch (error) {
       turn.ready.reject(error);
+      if (turnId && !this.completedTurns.has(turnId)) {
+        const cached = this.usageByTurn.get(turnId);
+        await input.effects.recordUsage(providerUsageFromStats(
+          `${this.threadId || 'thread'}:${turnId}`,
+          cached,
+          { ...(this.configuredModel ? { model: this.configuredModel } : {}) },
+        ));
+        this.usageByTurn.delete(turnId);
+      }
       throw error;
     } finally {
       if (this.currentTurn === turn) this.currentTurn = undefined;
@@ -340,7 +352,11 @@ export class CodexAppServerController {
       const input = this.currentTurn?.input ?? this.activeInput;
       if (!input) return;
       const stats = codexContextStatsFromTokenUsage(recordParam(message.params, 'tokenUsage'), this.runtimeKind);
-      if (stats) await input.effects.recordEvent(stats);
+      if (stats) {
+        const turnId = stringParam(message.params, 'turnId') ?? this.currentTurn?.turnId;
+        if (turnId) this.usageByTurn.set(turnId, stats);
+        await input.effects.recordEvent(stats);
+      }
       return;
     }
     if (message.method === 'turn/completed') {
@@ -352,6 +368,15 @@ export class CodexAppServerController {
       if (input) await this.flushLinkedAgentText(input);
       if (input) void this.recordSessionFileDetails(input, turnId).catch(() => undefined);
       if (stats && input) await input.effects.recordEvent(stats);
+      if (input) {
+        const cached = this.usageByTurn.get(turnId);
+        await input.effects.recordUsage(providerUsageFromStats(
+          `${this.threadId || 'thread'}:${turnId}`,
+          { ...(cached ?? {}), ...(stats ?? {}) },
+          { ...(this.configuredModel ? { model: this.configuredModel } : {}) },
+        ));
+      }
+      this.usageByTurn.delete(turnId);
       this.completedTurns.add(turnId);
       if (this.currentTurn?.turnId === turnId) this.currentTurn.completed.resolve();
     }

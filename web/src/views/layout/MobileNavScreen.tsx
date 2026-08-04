@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, Gauge, GripVertical, Pencil, Plus, Server } from 'lucide-react';
+import { ChartColumn, Check, ChevronDown, Gauge, GripVertical, Pencil, Plus, Server } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DndContext, closestCenter } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -14,6 +14,7 @@ import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
 import { useProviderCliStatus } from '@/hooks/useProviderCliStatus';
 import ServerPanel from '@/components/ServerPanel';
 import UsagePanel from '@/components/UsagePanel';
+import TokenUsagePanel from '@/components/token-usage/TokenUsagePanel';
 import { AgentCreateModal, AddKbModal } from './Sidebar';
 import { AgentRow } from './sidebar/AgentRow';
 import { KbRow, isKbActive } from './sidebar/KbRow';
@@ -75,6 +76,7 @@ export default function MobileNavScreen({
   const [editTeam, setEditTeam] = useState<TeamConfig | null>(null);
   const [serverPanelOpen, setServerPanelOpen] = useState(false);
   const [usagePanelOpen, setUsagePanelOpen] = useState(false);
+  const [tokenUsagePanelOpen, setTokenUsagePanelOpen] = useState(false);
   const multiTeam = teams.length > 1;
   const currentTeam = teams.find((t) => t.id === currentTeamId) ?? teams[0];
   // Resting indicator — accent dot on the Server footer when a system update is
@@ -337,11 +339,19 @@ export default function MobileNavScreen({
         </div>
       </div>
 
-      {/* Providers + Server — pinned footer, one row split in half. */}
+      {/* Usage + Providers + Server — pinned footer. */}
       <div
         className="flex shrink-0 gap-1 border-t border-spine-border px-2 pt-1"
         style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 0.25rem)' }}
       >
+        <button
+          onClick={() => setTokenUsagePanelOpen(true)}
+          title="Token usage"
+          className="chrome flex min-h-[44px] flex-1 items-center justify-center gap-1.5 rounded-sm px-1.5 text-[10px] uppercase tracking-[0.08em] text-text-on-spine-muted transition-colors hover:bg-spine-elevated hover:text-text-on-spine"
+        >
+          <ChartColumn className="h-3.5 w-3.5" />
+          <span>Usage</span>
+        </button>
         <button
           onClick={() => setUsagePanelOpen(true)}
           title={providerUpdateAvailable ? 'Providers — update available' : 'Providers'}
@@ -389,6 +399,7 @@ export default function MobileNavScreen({
       )}
       {serverPanelOpen && <ServerPanel onClose={() => setServerPanelOpen(false)} />}
       {usagePanelOpen && <UsagePanel onClose={() => setUsagePanelOpen(false)} />}
+      {tokenUsagePanelOpen && <TokenUsagePanel onClose={() => setTokenUsagePanelOpen(false)} />}
 
       {showCreateTeamModal && (
         <CreateTeamModal

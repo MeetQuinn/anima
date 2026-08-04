@@ -30,6 +30,7 @@ const groups = {
     'agent-health.test.js',
     'agent-seed-memory.test.js',
     'agent-skills.test.js',
+    'agent-token-usage.test.js',
     'attention-suggestion-activity.test.js',
     'channel-match.test.js',
     'chat-target-options.test.js',

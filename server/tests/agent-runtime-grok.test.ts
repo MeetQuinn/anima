@@ -28,6 +28,7 @@ import {
 import { makeSlackEvent } from './helpers/slack.js';
 import { allActivities, loadState } from './helpers/state.js';
 import { defaultServerSettingsService } from '../settings/settings.service.js';
+import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
 
 test('grok-cli ACP starts, appends, dispatches agent requests, and reports actual model authority', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-grok-runtime-'));
@@ -180,6 +181,15 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
         undefined,
       );
       assert.equal(state.sessions.anima?.latestProviderStats?.totalTokens, 24);
+      const usage = await agentTokenUsageServiceForAgent('anima').summary({
+        agentName: 'Anima',
+        from: '2000-01-01',
+        through: '2100-01-01',
+        timezone: 'UTC',
+      });
+      assert.equal(usage.totalTokens, 184);
+      assert.equal(usage.reportedRuns, 2);
+      assert.equal(usage.unknownRuns, 0);
     });
   } finally {
     await runtime?.close?.();
