@@ -233,7 +233,12 @@ export class ReminderService {
       return next;
     });
     if (!reminder) throw new Error(`Reminder not found: ${input.id}`);
-    if (applied) await this.pruneOldSettled(now);
+    if (applied) {
+      await this.pruneOldSettled(now);
+      if (input.preflightResult) {
+        await this.recordPreflightActivity(reminder, input.preflightResult, now);
+      }
+    }
     return { applied, reminder };
   }
 
@@ -280,8 +285,36 @@ export class ReminderService {
       return next;
     });
     if (!reminder) throw new Error(`Reminder not found: ${input.id}`);
-    if (applied) await this.pruneOldSettled(now);
+    if (applied) {
+      await this.pruneOldSettled(now);
+      await this.recordPreflightActivity(reminder, input.preflightResult, now);
+    }
     return { applied, reminder };
+  }
+
+  private async recordPreflightActivity(
+    reminder: Reminder,
+    result: ReminderPreflightLastResult,
+    completedAt: Date,
+  ): Promise<void> {
+    try {
+      await this.activity.preflight({
+        agentId: this.agentId,
+        completedAt: completedAt.toISOString(),
+        reminder,
+        result: {
+          durationMs: result.durationMs,
+          status: result.status,
+          ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+          ...(result.signal ? { signal: result.signal } : {}),
+          ...(result.timedOut ? { timedOut: true } : {}),
+        },
+      });
+    } catch (error) {
+      console.warn(
+        `reminder preflight activity failed reminderId=${reminder.reminderId}: ${errorMessage(error)}`,
+      );
+    }
   }
 
   private advanceSchedule(reminder: Reminder, now: Date): void {

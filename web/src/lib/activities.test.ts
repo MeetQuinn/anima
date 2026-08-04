@@ -77,6 +77,64 @@ describe('activityRow', () => {
   });
 
   it.each([
+    [
+      'succeeded',
+      {
+        completedAt: '2026-08-04T00:00:01.000Z',
+        durationMs: 42,
+        exitCode: 0,
+        status: 'succeeded',
+        title: 'Usage check',
+        tool: 'anima.reminder.preflight',
+      },
+      {
+        title: 'Preflight succeeded',
+        target: 'Usage check · 42ms · exit 0',
+        color: 'var(--color-activity-reminder)',
+        kind: 'lifecycle',
+      },
+    ],
+    [
+      'declined',
+      {
+        completedAt: '2026-08-04T00:00:01.000Z',
+        durationMs: 12,
+        exitCode: 1,
+        status: 'declined',
+        title: 'Usage check',
+        tool: 'anima.reminder.preflight',
+      },
+      {
+        title: 'Preflight declined',
+        target: 'Usage check · 12ms · exit 1',
+        color: 'var(--color-activity-reminder)',
+        kind: 'lifecycle',
+      },
+    ],
+    [
+      'errored timeout',
+      {
+        completedAt: '2026-08-04T00:00:01.000Z',
+        durationMs: 1000,
+        status: 'errored',
+        timedOut: true,
+        title: 'Usage check',
+        tool: 'anima.reminder.preflight',
+      },
+      {
+        title: 'Preflight errored',
+        target: 'Usage check · 1000ms · timeout',
+        color: 'var(--color-activity-reminder)',
+        kind: 'lifecycle',
+      },
+    ],
+  ])('maps anima.reminder.preflight %s to lifecycle titles', (_label, payload, expected) => {
+    const record = activity(payload, 'tool.call.completed');
+    expect(isNarrativeStep(record)).toBe(true);
+    expect(activityRow(record)).toEqual(expected);
+  });
+
+  it.each([
     ['message send', { tool: 'anima.message.send' }, 'Message failed'],
     ['message send effect', { effect: 'slack.message.send' }, 'Message failed'],
     ['message update', { tool: 'anima.message.update' }, 'Edit failed'],
