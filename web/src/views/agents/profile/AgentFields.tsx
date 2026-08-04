@@ -691,7 +691,7 @@ export function ClaudeAccountRow({
 
 /** Resting/edit mark for unpinned inheritance — identity stays email · plan. */
 function inheritAccountLabel(identity: string): string {
-  return `${identity} · Follows Providers`;
+  return `${identity} · Default`;
 }
 
 function ClaudeAccountDisplay({
@@ -715,7 +715,7 @@ function ClaudeAccountDisplay({
       </span>
       {inherits && (
         <span className="shrink-0 font-sans text-[12px] text-text-muted" title="Uses the account selected in Providers">
-          Follows Providers
+          Default
         </span>
       )}
     </span>

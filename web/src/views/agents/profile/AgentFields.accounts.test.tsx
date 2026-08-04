@@ -42,14 +42,14 @@ const accountState: ClaudeCodeAccountState = {
 };
 
 describe('ClaudeAccountRow', () => {
-  it('marks unpinned inheritance as Follows Providers while keeping email · plan identity', async () => {
+  it('marks unpinned inheritance as Default while keeping email · plan identity', async () => {
     const onRequestSave = vi.fn();
     const view = render(
       <ClaudeAccountRow accountState={accountState} onRequestSave={onRequestSave} />,
     );
 
     expect(screen.getByText('guoqiang@lunapark.com · Claude Max')).toBeTruthy();
-    expect(screen.getByText('Follows Providers')).toBeTruthy();
+    expect(screen.getByText('Default')).toBeTruthy();
     expect(screen.queryByText(/Machine default|Primary|Secondary|Account 2/)).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /guoqiang@lunapark.com · Claude Max/ }));
@@ -57,7 +57,7 @@ describe('ClaudeAccountRow', () => {
     const options = await screen.findAllByRole('option');
     expect(options).toHaveLength(3);
     expect(options.map((option) => option.textContent)).toEqual([
-      'guoqiang@lunapark.com · Claude Max · Follows Providers',
+      'guoqiang@lunapark.com · Claude Max · Default',
       'lemon.yang.y@gmail.com · Claude Max',
       'guoqiang@lunapark.com · Claude Team',
     ]);
@@ -77,17 +77,17 @@ describe('ClaudeAccountRow', () => {
       />,
     );
     expect(screen.getByText('lemon.yang.y@gmail.com · Claude Max')).toBeTruthy();
-    expect(screen.queryByText('Follows Providers')).toBeNull();
+    expect(screen.queryByText('Default')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /lemon.yang.y@gmail.com · Claude Max/ }));
     fireEvent.click(screen.getByRole('combobox'));
     const defaultOption = await screen.findByRole('option', {
-      name: 'guoqiang@lunapark.com · Claude Max · Follows Providers',
+      name: 'guoqiang@lunapark.com · Claude Max · Default',
     });
     fireEvent.pointerDown(defaultOption);
     fireEvent.pointerUp(defaultOption);
     fireEvent.click(defaultOption);
-    await waitFor(() => expect(screen.getByRole('combobox').textContent).toContain('Follows Providers'));
+    await waitFor(() => expect(screen.getByRole('combobox').textContent).toContain('Default'));
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(onRequestSave).toHaveBeenLastCalledWith(null);
   });
@@ -127,14 +127,14 @@ describe('ClaudeAccountRow', () => {
       />,
     );
 
-    // Pinned even when identity matches Providers-active — no Follows mark.
+    // Pinned even when identity matches Providers-active — no Default mark.
     expect(screen.getByText('guoqiang@lunapark.com · Claude Max')).toBeTruthy();
-    expect(screen.queryByText('Follows Providers')).toBeNull();
+    expect(screen.queryByText('Default')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /guoqiang@lunapark.com · Claude Max/ }));
     fireEvent.click(screen.getByRole('combobox'));
     const defaultOption = await screen.findByRole('option', {
-      name: 'guoqiang@lunapark.com · Claude Max · Follows Providers',
+      name: 'guoqiang@lunapark.com · Claude Max · Default',
     });
     fireEvent.pointerDown(defaultOption);
     fireEvent.pointerUp(defaultOption);
@@ -154,11 +154,11 @@ describe('ClaudeAccountRow', () => {
     };
     render(<ClaudeAccountRow accountState={duplicates} onRequestSave={() => {}} />);
 
-    expect(screen.getByText('Follows Providers')).toBeTruthy();
+    expect(screen.getByText('Default')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /guoqiang@lunapark.com · Plan unknown · 1/ }));
     fireEvent.click(screen.getByRole('combobox'));
     expect((await screen.findAllByRole('option')).map((option) => option.textContent)).toEqual([
-      'guoqiang@lunapark.com · Plan unknown · 1 · Follows Providers',
+      'guoqiang@lunapark.com · Plan unknown · 1 · Default',
       'guoqiang@lunapark.com · Plan unknown · 2',
     ]);
   });
@@ -183,7 +183,7 @@ describe('ClaudeAccountRow', () => {
     fireEvent.click(screen.getByRole('combobox'));
     expect(await screen.findAllByRole('option')).toHaveLength(1);
     expect(screen.getByRole('option', {
-      name: 'guoqiang@lunapark.com · Claude Max · Follows Providers',
+      name: 'guoqiang@lunapark.com · Claude Max · Default',
     })).toBeTruthy();
     expect(screen.queryByText(/Secondary|Machine default|Primary|Account 2/)).toBeNull();
   });
