@@ -101,7 +101,7 @@ test('Slack wake ingest decision matrix golden logs, queue outcomes, and attenti
     expectedOutcome: 'suppressed',
     expectedApiCalls: [],
   }, {
-    name: 'bot-authored passive thread reply is ignored',
+    name: 'bot-authored reply in a followed thread wakes',
     event: slackEvent({
       bot_id: 'B-alerts',
       subtype: 'bot_message',
@@ -119,11 +119,102 @@ test('Slack wake ingest decision matrix golden logs, queue outcomes, and attenti
     },
     expectedLog: {
       agentRuntime: 'codex-cli',
+      duplicate: false,
+      subscription: {
+        kind: 'thread',
+        status: 'following',
+        subscriptionId: 'slack-subscription:scout:C-team:thread:1780408700.000002',
+        threadTs: '1780408700.000002',
+      },
+      ingested: true,
+      queued: true,
+      reason: 'thread_follow',
+      itemId: 'slack:T-golden:C-team:1780408800.000003',
+      surface: {
+        channelId: 'C-team',
+        channelName: 'team',
+        id: 'slack:T-golden:C-team:thread:1780408700.000002',
+        kind: 'thread',
+        teamId: 'T-golden',
+        threadTs: '1780408700.000002',
+        visibility: 'public',
+      },
+    },
+    expectedOutcome: 'queued',
+    expectedActivityPayloads: [{
+      channelId: 'C-team',
+      channelName: 'team',
+      platform: 'slack',
+      suggestion: "Anima note: you've been reading thread 1780408700.000002 in C-team without posting. If it is not relevant, mute it with `anima subscription mute --channel C-team --thread-ts 1780408700.000002`.",
+      threadTs: '1780408700.000002',
+    }],
+  }, {
+    name: 'bot-authored reply without a thread follow is ignored',
+    event: slackEvent({
+      bot_id: 'B-alerts',
+      subtype: 'bot_message',
+      text: 'automated reply in an unfollowed thread',
+      thread_ts: '1780408700.000003',
+      ts: '1780408800.000004',
+      user: 'U-alerts',
+    }),
+    expectedLog: {
+      agentRuntime: 'codex-cli',
       channel: 'C-team',
       ignored: true,
       ingested: false,
       reason: 'not_addressed',
-      ts: '1780408800.000003',
+      ts: '1780408800.000004',
+    },
+    expectedOutcome: 'suppressed',
+    expectedApiCalls: [],
+  }, {
+    name: 'bot-authored reply does not revive a muted thread follow',
+    event: slackEvent({
+      bot_id: 'B-alerts',
+      subtype: 'bot_message',
+      text: 'automated reply in a muted thread',
+      thread_ts: '1780408700.000004',
+      ts: '1780408800.000005',
+      user: 'U-alerts',
+    }),
+    async prepare() {
+      await seedSubscription({
+        channelId: 'C-team',
+        kind: 'thread',
+        muted: true,
+        threadTs: '1780408700.000004',
+      });
+    },
+    expectedLog: {
+      agentRuntime: 'codex-cli',
+      channel: 'C-team',
+      ignored: true,
+      ingested: false,
+      reason: 'muted',
+      ts: '1780408800.000005',
+    },
+    expectedOutcome: 'suppressed',
+    expectedApiCalls: [],
+  }, {
+    name: 'top-level bot post does not consume a channel follow',
+    event: slackEvent({
+      bot_id: 'B-alerts',
+      subtype: 'bot_message',
+      text: 'automated channel update',
+      ts: '1780408800.000006',
+      user: 'U-alerts',
+    }),
+    async prepare() {
+      await seedSubscription({ channelId: 'C-team', kind: 'channel' });
+    },
+    expectedLog: {
+      agentRuntime: 'codex-cli',
+      channel: 'C-team',
+      ignored: true,
+      ingested: false,
+      reason: 'not_addressed',
+      ts: '1780408800.000006',
     },
     expectedOutcome: 'suppressed',
     expectedApiCalls: [],
@@ -336,6 +427,40 @@ test('Slack message + app_mention for same ts share item id and enqueue once', a
     assert.equal((second.log as { duplicate?: boolean }).duplicate, true);
     assert.equal((second.log as { itemId?: string }).itemId, `slack:T-golden:C-team:${ts}`);
     assert.equal((await queue.list()).filter((item) => item.id.endsWith(`:${ts}`)).length, 1);
+  });
+});
+
+test('duplicate bot thread replies enqueue once and count one subscription wake', async () => {
+  await withIngestHome('slack', async (stateDir) => {
+    await writeAgentConfig(stateDir, {
+      slack: { botProfileSyncedAt: '2099-01-01T00:00:00.000Z', botUserId: 'U-bot' },
+    });
+    const queue = new WakeQueueService(AGENT_ID);
+    const threadTs = '1780408811.000001';
+    const ts = '1780408812.000001';
+    await seedSubscription({ channelId: 'C-team', kind: 'thread', threadTs, wakeCount: 0 });
+    const event = slackEvent({
+      bot_id: 'B-alerts',
+      subtype: 'bot_message',
+      text: 'one automated thread reply',
+      thread_ts: threadTs,
+      ts,
+      user: 'U-alerts',
+    });
+
+    const first = await captureSlackIngest(queue, event);
+    assert.equal(first.outcome, 'queued');
+    const second = await captureSlackIngest(queue, { ...event, type: 'app_mention' });
+    assert.equal(second.outcome, 'suppressed');
+    assert.equal((second.log as { duplicate?: boolean }).duplicate, true);
+    assert.equal((second.log as { itemId?: string }).itemId, `slack:T-golden:C-team:${ts}`);
+    assert.equal((await queue.list()).filter((item) => item.id.endsWith(`:${ts}`)).length, 1);
+
+    const subscription = await new SubscriptionStore(AGENT_ID).find(
+      `slack-subscription:${AGENT_ID}:C-team:thread:${threadTs}`,
+    );
+    assert.equal(subscription?.wakeCount, 1);
+    assert.equal(subscription?.wakesSinceLastPost, 6);
   });
 });
 
@@ -832,12 +957,15 @@ function feishuTransportConfig(overrides: Partial<FeishuConfig> = {}): FeishuCon
 async function seedSubscription(input: {
   channelId: string;
   kind: 'channel' | 'thread';
+  muted?: boolean;
   threadTs?: string;
+  wakeCount?: number;
 }): Promise<void> {
   const subscriptionId = input.kind === 'thread'
     ? `slack-subscription:${AGENT_ID}:${input.channelId}:thread:${input.threadTs}`
     : `slack-subscription:${AGENT_ID}:${input.channelId}:channel`;
   const now = new Date().toISOString();
+  const wakeCount = input.wakeCount ?? 5;
   if (input.kind === 'thread') {
     assert.ok(input.threadTs);
     await new SubscriptionStore(AGENT_ID).replace({
@@ -845,11 +973,12 @@ async function seedSubscription(input: {
       channelId: input.channelId,
       kind: 'thread',
       lastActivityAt: now,
+      ...(input.muted ? { mutedAt: now } : {}),
       silentWakeStartedAt: now,
       subscriptionId,
       threadTs: input.threadTs,
       updatedAt: now,
-      wakeCount: 5,
+      wakeCount,
       wakeWindowStartedAt: now,
       wakesSinceLastPost: 5,
     });
@@ -860,10 +989,11 @@ async function seedSubscription(input: {
     channelId: input.channelId,
     kind: 'channel',
     lastActivityAt: now,
+    ...(input.muted ? { mutedAt: now } : {}),
     silentWakeStartedAt: now,
     subscriptionId,
     updatedAt: now,
-    wakeCount: 5,
+    wakeCount,
     wakeWindowStartedAt: now,
     wakesSinceLastPost: 5,
   });

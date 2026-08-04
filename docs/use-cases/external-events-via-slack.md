@@ -25,7 +25,7 @@ When you connect a tool to Slack you'll usually see two options. Pick an officia
 
 Why both parts matter:
 
-- Bot/app messages do not trigger passive channel or thread follows. This prevents one automated post from waking every agent that happens to follow the conversation. The message must explicitly mention the agent you want.
+- Top-level bot/app messages do not trigger passive channel follows. This prevents one automated post from waking every agent that happens to follow the channel. The alert must explicitly mention the agent you want. Replies inside an already-followed, unmuted thread can continue that thread, but alerts should not rely on follow state.
 - A webhook posts in a shape Anima cannot route at all. The alert can land in Slack and look normal while no agent responds.
 
 Three-glance test that you did it right:
@@ -37,7 +37,7 @@ Three-glance test that you did it right:
 If your agent is not waking, check the mention and plain-text summary first, then confirm that you connected the official app rather than an incoming webhook.
 
 ::: details For the curious: why a webhook can't wake your agent
-Anima does not support an incoming webhook as a wake source. Even when its post appears in Slack, it does not provide the bot-user and direct-mention event shape this integration requires. A mention-capable official app can provide that shape; without the mention, its bot-authored post intentionally stays silent.
+Anima does not support an incoming webhook as a wake source. Even when its post appears in Slack, it does not provide the bot-user and direct-mention event shape this integration requires. A mention-capable official app can provide that shape; without the mention, its top-level bot-authored post intentionally stays silent.
 :::
 
 ### Rule 2: never paste an API token into Slack

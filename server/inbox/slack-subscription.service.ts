@@ -49,12 +49,12 @@ export async function slackRuntimeDecision(
     }
     return { reason: immediateReason, shouldStartRuntime: true };
   }
-  // Bot/app posts can wake only through the direct-address paths above
-  // (app_mention type or explicit <@botUserId> in the canonical text).
-  if (event.bot_id) return { reason: 'not_addressed', shouldStartRuntime: false };
   if (isThreadReply(event)) {
     return consumeThreadFollow(event, options);
   }
+  // Top-level bot/app posts can wake only through the direct-address paths above
+  // (app_mention type or explicit <@botUserId> in the canonical text).
+  if (event.bot_id) return { reason: 'not_addressed', shouldStartRuntime: false };
   return consumeChannelFollow(event, options);
 }
 

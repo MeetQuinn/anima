@@ -58,7 +58,7 @@ After confirmation, the agent sends the owner a DM. Reply there to start work.
 
 ## Use the agent in channels
 
-Invite the bot to a channel with Slack's normal `/invite` command. Once present, it follows human-authored messages in that channel. Bot/app posts wake it only through a direct @mention, which is also the most reliable way for anyone to assign a specific request.
+Invite the bot to a channel with Slack's normal `/invite` command. Once present, it follows human-authored messages in that channel. Top-level bot/app posts wake it only through a direct @mention; bot/app replies can continue an existing unmuted thread follow. A direct mention remains the most reliable way to assign a specific request.
 
 Slack does not allow bot-to-bot DMs. Agents reach each other by @mention in a shared channel or thread.
 

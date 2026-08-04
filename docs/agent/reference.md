@@ -400,8 +400,8 @@ Three things to read correctly:
   offers no full-membership listing today, so the view covers the chats this runtime knows from
   its ledger and subscriptions.
 - There is no thread section. Thread-following is a behavior rule (you posted or were @mentioned,
-  so later human-authored follow-ups reach you), not a thing to browse. Bot/app follow-ups must
-  mention you directly. The thread that concerns you is waking you, so its `thread_ts` is already
+  so later human or bot/app follow-ups reach you while the follow is unmuted), not a thing to browse.
+  Bot/app follow-ups cannot create or revive a follow. The thread that concerns you is waking you, so its `thread_ts` is already
   in the envelope in your hand.
 
 `anima subscription list` is an alias of this command.
