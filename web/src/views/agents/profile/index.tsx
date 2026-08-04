@@ -41,6 +41,7 @@ import { FeishuConnectStepper } from './FeishuConnectStepper';
 import { FeishuScopeStatusCard } from './FeishuScopeStatusCard';
 import { SlackManifestUpdateCard } from './SlackManifestUpdateCard';
 import { SkillsSection } from './SkillsSection';
+import { AgentUsageSection } from '@/components/token-usage/AgentUsageSection';
 import { OwnerPickerForm } from './OwnerPickerForm';
 import { agentFeishuConnected, agentHasConnectedTransport, agentSlackConnected } from '@shared/agent-transports';
 import type { AgentConfig, AgentUpdateProviderRequest } from '@shared/agent-config';
@@ -556,6 +557,10 @@ export default function Profile() {
             <SessionSection stats={stats} session={session ?? undefined} now={now} />
           </Section>
         )}
+
+        <Section title="Token usage">
+          <AgentUsageSection agentId={agentId} />
+        </Section>
 
         {/* ── SLACK (connect flow only - the connected state lives as a Setup
             row above) ─────────────────────────────────────────────────────── */}

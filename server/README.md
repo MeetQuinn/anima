@@ -85,15 +85,16 @@ See `docs/runtime-providers.md` for provider contract details.
 
 An agent is not one service. It is a small group of agent-scoped services over one agent id, plus runtime wiring that runs work for that agent. API routes, CLI commands, Slack callbacks, and workers should call these services instead of editing storage files directly.
 
-| Service                 | Scope     | Owns                                                                                                                                                                                               |
-| ----------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AgentService`          | one agent | Config CRUD, enable/disable, home/profile/provider mutation, operator-facing session read/rotate, provider-kind session archive side effects, skills visible from the agent home.                  |
-| `AgentSlackService`     | one agent | Slack token validation, connect flow, manifest upgrade metadata, bot/workspace display sync, Slack WebClient construction, owner selection, onboarding DM queueing, and private Slack URL fetches. |
-| `ActivityService`       | one agent | Activity append/read API, feed pagination, and the inbox join needed by the Activity tab. Domain-specific payload construction stays with the domain that emits the activity.                      |
-| `WakeQueueService`      | one agent | Durable wake item lifecycle: enqueue/dedupe, find/list, claim, requeue, stop request, complete/fail, active-run settlement. Product inbox/outbox history lives in `MessageService`.                |
-| `RuntimeSessionService` | one agent | Runtime-owned session persistence: primary session upsert, provider session ids, runtime stats, and lifetime token accounting.                                                                     |
-| `ReminderService`       | one agent | Reminder records, schedule/cancel/snooze, due scans, repeat math, fire completion, reminder activity rows.                                                                                         |
-| `InteractiveAskService` | one agent | Pending ask records, answer validation, click result persistence, answered-message replacement, forbidden-click notices.                                                                           |
+| Service                  | Scope     | Owns                                                                                                                                                                                               |
+| ------------------------ | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AgentService`           | one agent | Config CRUD, enable/disable, home/profile/provider mutation, operator-facing session read/rotate, provider-kind session archive side effects, skills visible from the agent home.                  |
+| `AgentSlackService`      | one agent | Slack token validation, connect flow, manifest upgrade metadata, bot/workspace display sync, Slack WebClient construction, owner selection, onboarding DM queueing, and private Slack URL fetches. |
+| `ActivityService`        | one agent | Activity append/read API, feed pagination, and the inbox join needed by the Activity tab. Domain-specific payload construction stays with the domain that emits the activity.                      |
+| `WakeQueueService`       | one agent | Durable wake item lifecycle: enqueue/dedupe, find/list, claim, requeue, stop request, complete/fail, active-run settlement. Product inbox/outbox history lives in `MessageService`.                |
+| `RuntimeSessionService`  | one agent | Runtime-owned session persistence: primary session upsert, provider session ids, runtime stats, and lifetime token accounting.                                                                     |
+| `AgentTokenUsageService` | one agent | Content-free, provider-reported token ledger with durable event deduplication, exact-coverage metadata, timezone-aware daily grouping, and aggregate reporting.                                    |
+| `ReminderService`        | one agent | Reminder records, schedule/cancel/snooze, due scans, repeat math, fire completion, reminder activity rows.                                                                                         |
+| `InteractiveAskService`  | one agent | Pending ask records, answer validation, click result persistence, answered-message replacement, forbidden-click notices.                                                                           |
 
 Agent runtime execution is intentionally not exposed as a broad `AgentRuntimeService`. Runtime code wires an `AgentRuntimeWorker`, `AgentRuntimeBridge`, and provider adapter for each runnable agent. That layer owns claiming wake work, provider prompt/input construction, active-run follow-up append, idle/stop behavior, and runtime event recording. Runtime session persistence goes through `RuntimeSessionService`.
 
@@ -122,7 +123,7 @@ Keep API and CLI thin. They should parse input, call a domain service, redact or
 
 - Stores live under `storage/schema/` and own one persisted file family or table. Prefer typed stores over ad hoc filesystem reads/writes.
 - Services own workflows and cross-store orchestration. If a method has product semantics or records activity, it usually belongs in a service.
-- Runtime provider effects should use runtime-owned sinks (`runtime/activity.ts`, `RuntimeSessionService`) for execution internals such as activity rows, provider session ids, runtime stats, and lifetime token accounting. Do not make provider/runtime code depend back on `AgentService`.
+- Runtime provider effects should use runtime-owned sinks (`runtime/activity.ts`, `RuntimeSessionService`, `AgentTokenUsageService`) for execution internals such as activity rows, provider session ids, runtime stats, and token accounting. Do not make provider/runtime code depend back on `AgentService`.
 - Shared activity text/payload formatting lives in `activities/format.ts`, not in runtime/provider adapters.
 - Pure parsing, formatting, DTO-to-config transforms, validation, path checks, and payload builders should live in nearby helpers, not inside service methods unless the logic is tiny.
 - `providers/` own provider CLI protocols only. They do not know Slack wake policy, web response shape, queue semantics, or config mutation semantics.

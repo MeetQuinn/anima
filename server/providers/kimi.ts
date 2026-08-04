@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { nowIso } from '../ids.js';
 import { isRecord, numberField, singleLineForActivity, stringField } from '../json.js';
 import { truncateForActivity } from '../activities/format.js';
@@ -8,6 +10,7 @@ import { ControllerAgentRuntime } from './provider-runtime.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
 import { withProviderCliLaunchPermit } from '../provider-cli/launch-gate.js';
 import { defaultProviderContextLimitService } from '../provider-context/provider-context-limit.service.js';
+import { providerUsageFromStats } from './provider-usage.js';
 import {
   providerSessionPayload,
   type AgentRuntimeFollowupInput,
@@ -123,6 +126,9 @@ class KimiAcpController {
   private readonly quiescentWaiters = new QuiescentWaiterSet();
   private readonly rpc: AcpJsonRpcPeer;
   private latestUsage?: Record<string, unknown>;
+  private configuredModel?: string;
+  private readonly usageCaptureId = randomUUID();
+  private usageSequence = 0;
   readonly completion: Promise<{ stdout: string; stderr: string }>;
   sessionId = '';
 
@@ -157,6 +163,7 @@ class KimiAcpController {
     model: string | undefined,
     reasoningEffort: string | undefined,
   ): Promise<void> {
+    this.configuredModel = model;
     if (!this.initialized) {
       this.initialized = this.initializeSession(input, model, reasoningEffort).catch((error) => {
         this.initialized = undefined;
@@ -169,7 +176,14 @@ class KimiAcpController {
   async startTurn(input: AgentRuntimeInput, prompt: string): Promise<string> {
     if (this.currentTurn) throw new Error('Kimi ACP runtime already has an active turn');
     const result = new Promise<string>((resolve, reject) => {
-      this.currentTurn = { acceptingFollowups: true, followups: [], input, reject, resolve, text: [] };
+      this.currentTurn = {
+        acceptingFollowups: true,
+        followups: [],
+        input,
+        reject,
+        resolve,
+        text: [],
+      };
     });
     void this.runTurnQueue(prompt).catch((error) => this.abortCurrentTurn(error));
     return result;
@@ -280,16 +294,28 @@ class KimiAcpController {
   }
 
   private async runOnePrompt(turn: KimiTurn, prompt: string): Promise<void> {
+    this.latestUsage = undefined;
     await turn.input.effects.recordEvent({
       eventType: 'kimi.turn.started',
       runtimeKind: KIMI_RUNTIME_KIND,
       transport: 'acp',
       userInputLength: prompt.length,
     });
-    const result = await this.rpc.request('session/prompt', {
-      prompt: [{ text: prompt, type: 'text' }],
-      sessionId: this.sessionId,
-    });
+    const sourceId = `${this.sessionId}:${this.usageCaptureId}:prompt:${++this.usageSequence}`;
+    let result: Record<string, unknown> | undefined;
+    try {
+      result = await this.rpc.request('session/prompt', {
+        prompt: [{ text: prompt, type: 'text' }],
+        sessionId: this.sessionId,
+      });
+    } catch (error) {
+      await turn.input.effects.recordUsage(providerUsageFromStats(
+        sourceId,
+        this.latestUsage,
+        { model: this.configuredModel },
+      ));
+      throw error;
+    }
     const usage = acpUsagePayload(result);
     if (usage) {
       this.latestUsage = usage;
@@ -301,6 +327,11 @@ class KimiAcpController {
         terminalReason: stringField(result, 'stopReason'),
       });
     }
+    await turn.input.effects.recordUsage(providerUsageFromStats(
+      sourceId,
+      usage ?? this.latestUsage,
+      { model: stringField(result, 'model') ?? stringField(result, 'modelId') ?? this.configuredModel },
+    ));
     await turn.input.effects.recordEvent({
       eventType: 'kimi.turn.completed',
       runtimeKind: KIMI_RUNTIME_KIND,

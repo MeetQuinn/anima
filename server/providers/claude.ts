@@ -37,7 +37,10 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
   }
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
-    const jsonlMapper = createClaudeJsonlActivityMapper(input.effects, this.kind);
+    const jsonlMapper = createClaudeJsonlActivityMapper(input.effects, this.kind, {
+      ...(this.config.accountId ? { accountId: this.config.accountId } : {}),
+      ...(this.config.model ? { model: this.config.model } : {}),
+    });
     return this.runTurnLifecycle(input, {
       failurePayload: async (error) => {
         const flushError = await flushClaudeMapper(jsonlMapper);
@@ -155,13 +158,17 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
   ): Promise<string> {
     const controller = await this.ensureController(input);
     const turn = controller.startTurn(input, jsonlMapper);
+    const usageRecordCount = jsonlMapper.usageRecordCount();
     try {
       await controller.writeUserMessage(prompt);
+      return await turn;
     } catch (error) {
       controller.abortCurrentTurn(error);
+      if (jsonlMapper.usageRecordCount() === usageRecordCount) {
+        await jsonlMapper.recordUnavailable();
+      }
       throw error;
     }
-    return turn;
   }
 
   private claudeArgs(providerSession: ProviderSessionRecord | undefined, systemPromptFilePath: string | undefined): string[] {

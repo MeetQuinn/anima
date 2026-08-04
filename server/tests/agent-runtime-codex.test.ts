@@ -19,6 +19,7 @@ import { allActivities, loadState } from './helpers/state.js';
 import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { withAnimaHome } from './anima-home.js';
+import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
 import { runtimeInput, runtimeFollowupInput, assertFollowupPrompt, providerSessionStartedPayload, runtimeTestEnv } from './helpers/agent-runtime.js';
 import { runtimeSessionServiceForAgent } from '../runtime/runtime-session.service.js';
 import {
@@ -453,6 +454,15 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
       postRotateCalls.filter((call) => call.method === 'thread/resume').map((call) => (call as { params?: Record<string, unknown> }).params?.['threadId']),
       ['codex-child-raw', 'codex-thread-1'],
     );
+    const usage = await agentTokenUsageServiceForAgent('anima').summary({
+      agentName: 'Anima',
+      from: '2000-01-01',
+      through: '2100-01-01',
+      timezone: 'UTC',
+    });
+    assert.equal(usage.totalTokens, 1366);
+    assert.equal(usage.reportedRuns, 1);
+    assert.equal(usage.unknownRuns, 2);
     });
   } finally {
     await runtime?.close?.();
@@ -895,6 +905,14 @@ test('codex-cli app-server transport fails when process exits before turn comple
 
     const activities = await activitiesForInboxItemWindow('anima', ctx.item.id);
     assert.ok(activities.some((activity) => activity.type === 'runtime.failed'));
+    const usage = await agentTokenUsageServiceForAgent('anima').summary({
+      agentName: 'Anima',
+      from: '2000-01-01',
+      through: '2100-01-01',
+      timezone: 'UTC',
+    });
+    assert.equal(usage.reportedRuns, 0);
+    assert.equal(usage.unknownRuns, 1);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

@@ -12,6 +12,7 @@ import { ingestEvent } from './helpers/inbox.js';
 import { allActivities, loadState } from './helpers/state.js';
 import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
 import { withAnimaHome } from './anima-home.js';
+import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
 import { runtimeInput, runtimeFollowupInput, assertFollowupPrompt, providerSessionStartedPayload, runtimeTestEnv } from './helpers/agent-runtime.js';
 
 test('claude-code runtime streams activity, persists Claude session metadata, and resumes it', async () => {
@@ -294,6 +295,15 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
     assert.equal(stats?.payload?.['webFetchRequests'], 2);
     assert.equal(stats?.payload?.['maxOutputTokens'], 32000);
     assert.equal(stats?.payload?.['permissionDenialCount'], 1);
+    const usage = await agentTokenUsageServiceForAgent('anima').summary({
+      agentName: 'Anima',
+      from: '2000-01-01',
+      through: '2100-01-01',
+      timezone: 'UTC',
+    });
+    assert.equal(usage.totalTokens, 2256);
+    assert.equal(usage.reportedRuns, 2);
+    assert.equal(usage.unknownRuns, 0);
     await runtime.close?.();
     runtime = undefined;
     });
@@ -523,6 +533,14 @@ test('claude-code runtime retries transient provider protocol errors before tool
     assert.ok(activities.some((activity) => activity.type === 'runtime.completed'));
     assert.equal(activities.some((activity) => activity.type === 'runtime.failed'), false);
     assert.equal((await readFile(callsPath, 'utf8')).trim().split('\n').length, 2);
+    const usage = await agentTokenUsageServiceForAgent('anima').summary({
+      agentName: 'Anima',
+      from: '2000-01-01',
+      through: '2100-01-01',
+      timezone: 'UTC',
+    });
+    assert.equal(usage.reportedRuns, 1);
+    assert.equal(usage.unknownRuns, 1);
     await runtime.close?.();
     });
   } finally {
@@ -1058,6 +1076,14 @@ test('claude-code stream-json input completes when process exits without a resul
     const result = await withTimeout(runtime.run(await runtimeInput(runtime, ctx, await loadState())), 1_000);
 
     assert.equal(result.text, 'assistant fallback');
+    const usage = await agentTokenUsageServiceForAgent('anima').summary({
+      agentName: 'Anima',
+      from: '2000-01-01',
+      through: '2100-01-01',
+      timezone: 'UTC',
+    });
+    assert.equal(usage.reportedRuns, 0);
+    assert.equal(usage.unknownRuns, 1);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

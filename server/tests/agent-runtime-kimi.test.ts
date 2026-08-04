@@ -12,6 +12,7 @@ import { allActivities, loadState } from './helpers/state.js';
 import { withAnimaHome } from './anima-home.js';
 import { runtimeInput, runtimeFollowupInput, assertFollowupPrompt, providerSessionStartedPayload, runtimeTestEnv } from './helpers/agent-runtime.js';
 import { defaultServerSettingsService } from '../settings/settings.service.js';
+import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
 
 test('kimi-cli ACP transport starts a turn and appends subscription follow-up input', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
@@ -200,6 +201,15 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
           false,
         );
       }
+      const usage = await agentTokenUsageServiceForAgent('anima').summary({
+        agentName: 'Anima',
+        from: '2000-01-01',
+        through: '2100-01-01',
+        timezone: 'UTC',
+      });
+      assert.equal(usage.totalTokens, 1160);
+      assert.equal(usage.reportedRuns, 2);
+      assert.equal(usage.unknownRuns, 0);
     });
   } finally {
     await runtime?.close?.();

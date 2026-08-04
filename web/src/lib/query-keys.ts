@@ -22,6 +22,8 @@ export const queryKeys = {
   agentChannels: (agentId: string) => ['agent-channels', agentId] as const,
   agentReminders: (agentId: string) => ['reminders', agentId] as const,
   agentSessions: (agentId: string) => ['agent-session', agentId] as const,
+  agentTokenUsage: (agentId: string, from: string, through: string, timezone: string) =>
+    ['agent-token-usage', agentId, from, through, timezone] as const,
   agentSession: (agentId: string, currentItemId?: string) =>
     ['agent-session', agentId, currentItemId] as const,
   agentFeishuScopes: (agentId: string) => ['agent-feishu-scopes', agentId] as const,
@@ -42,6 +44,8 @@ export const queryKeys = {
   providerCliStatus: () => ['provider-cli-status'] as const,
   providerContextLimits: () => ['provider-context-limits'] as const,
   providerUsage: () => ['provider-usage'] as const,
+  tokenUsage: (from: string, through: string, timezone: string) =>
+    ['agent-token-usage', 'all', from, through, timezone] as const,
   providerAccounts: () => ['provider-accounts'] as const,
   health: () => ['health'] as const,
   serverInfo: () => ['server-info'] as const,

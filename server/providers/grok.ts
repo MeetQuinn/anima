@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { nowIso } from '../ids.js';
 import { isRecord, numberField, singleLineForActivity, stringField } from '../json.js';
 import { truncateForActivity } from '../activities/format.js';
@@ -8,6 +10,7 @@ import { ControllerAgentRuntime } from './provider-runtime.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
 import { withProviderCliLaunchPermit } from '../provider-cli/launch-gate.js';
 import { defaultProviderContextLimitService } from '../provider-context/provider-context-limit.service.js';
+import { providerUsageFromStats } from './provider-usage.js';
 import {
   providerSessionPayload,
   type AgentRuntimeFollowupInput,
@@ -132,7 +135,11 @@ export class GrokCliAgentRuntime extends ControllerAgentRuntime<GrokAcpControlle
             label: 'Grok ACP runtime',
           },
           input,
-          (child) => new GrokAcpController(child, this.config.reasoningEffort?.trim() || undefined),
+          (child) => new GrokAcpController(
+            child,
+            this.config.reasoningEffort?.trim() || undefined,
+            this.config.model,
+          ),
         );
       }));
     try {
@@ -177,6 +184,8 @@ class GrokAcpController {
   private currentTurn?: GrokTurn;
   private readonly activeToolIds = new Set<string>();
   private readonly quiescentWaiters = new QuiescentWaiterSet();
+  private readonly usageCaptureId = randomUUID();
+  private usageSequence = 0;
   private latestUsage?: Record<string, unknown>;
   private turnCompletion?: Promise<string>;
   private actualModel?: string;
@@ -194,6 +203,7 @@ class GrokAcpController {
   constructor(
     private readonly child: RunningChildProcess,
     private readonly configuredEffort?: string,
+    private readonly configuredModel?: string,
   ) {
     this.completion = child.completion.then(
       (result) => {
@@ -355,16 +365,28 @@ class GrokAcpController {
   }
 
   private async runOnePrompt(turn: GrokTurn, prompt: string): Promise<void> {
+    this.latestUsage = undefined;
     await turn.input.effects.recordEvent({
       eventType: 'grok.turn.started',
       runtimeKind: GROK_RUNTIME_KIND,
       transport: 'acp',
       userInputLength: prompt.length,
     });
-    const result = await this.request('session/prompt', {
-      prompt: [{ text: prompt, type: 'text' }],
-      sessionId: this.sessionId,
-    });
+    const sourceId = `${this.sessionId}:${this.usageCaptureId}:prompt:${++this.usageSequence}`;
+    let result: Record<string, unknown> | undefined;
+    try {
+      result = await this.request('session/prompt', {
+        prompt: [{ text: prompt, type: 'text' }],
+        sessionId: this.sessionId,
+      });
+    } catch (error) {
+      await turn.input.effects.recordUsage(providerUsageFromStats(
+        sourceId,
+        this.latestUsage,
+        { model: this.actualModel ?? this.configuredModel },
+      ));
+      throw error;
+    }
     this.captureModelAuthority(result);
     const usage = acpUsagePayload(result);
     if (usage) {
@@ -385,6 +407,11 @@ class GrokAcpController {
         terminalReason: stringField(result, 'stopReason'),
       });
     }
+    await turn.input.effects.recordUsage(providerUsageFromStats(
+      sourceId,
+      usage ?? this.latestUsage,
+      { model: grokResultModel(result) ?? this.actualModel ?? this.configuredModel },
+    ));
     await turn.input.effects.recordEvent({
       eventType: 'grok.turn.completed',
       runtimeKind: GROK_RUNTIME_KIND,

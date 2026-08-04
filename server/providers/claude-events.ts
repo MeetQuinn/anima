@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -12,6 +13,7 @@ import {
   copyString,
 } from '../activities/format.js';
 import { nowIso } from '../ids.js';
+import { providerUsageFromStats } from './provider-usage.js';
 import { isNonEmptyString, isRecord, singleLine, singleLineForActivity, stringField } from '../json.js';
 import {
   claudeSubagentLinkage,
@@ -29,11 +31,17 @@ import {
   type ClaudeSubagentResult,
 } from './claude-subagent-transcript.js';
 
-export function createClaudeJsonlActivityMapper(effects: AgentRuntimeEffects, runtimeKind: string): {
+export function createClaudeJsonlActivityMapper(
+  effects: AgentRuntimeEffects,
+  runtimeKind: string,
+  usageContext: { accountId?: string; model?: string } = {},
+): {
   accept(chunk: string): Promise<void>;
   flush(): Promise<void>;
+  recordUnavailable(): Promise<void>;
+  usageRecordCount(): number;
 } {
-  return createJsonlActivityMapper(effects, runtimeKind);
+  return createJsonlActivityMapper(effects, runtimeKind, usageContext);
 }
 
 export function parseClaudeRuntimeOutput(stdout: string) {
@@ -60,13 +68,25 @@ export function parseClaudeRuntimeOutput(stdout: string) {
 function createJsonlActivityMapper(
   effects: AgentRuntimeEffects,
   runtimeKind: string,
+  usageContext: { accountId?: string; model?: string },
 ): {
   accept(chunk: string): Promise<void>;
   flush(): Promise<void>;
+  recordUnavailable(): Promise<void>;
+  usageRecordCount(): number;
 } {
   let buffer = '';
   let reasoningExposed = false;
   let flushed = false;
+  const usageState = { captureId: randomUUID(), resultSequence: 0 };
+  const recordUnavailable = async (): Promise<void> => {
+    usageState.resultSequence += 1;
+    await effects.recordUsage(providerUsageFromStats(
+      `${usageState.captureId}:unavailable:${usageState.resultSequence}`,
+      undefined,
+      usageContext,
+    ));
+  };
   const state: ClaudeJsonlMapperState = {
     context: {},
     emittedSubagentTextKeys: new Set(),
@@ -86,20 +106,29 @@ function createJsonlActivityMapper(
       const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() ?? '';
       for (const line of lines) {
-        reasoningExposed = (await recordJsonlLine(effects, runtimeKind, line, state)) || reasoningExposed;
+        reasoningExposed = (
+          await recordJsonlLine(effects, runtimeKind, line, state, usageState, usageContext)
+        ) || reasoningExposed;
       }
     },
     async flush(): Promise<void> {
       if (flushed) return;
       flushed = true;
       if (buffer.trim()) {
-        reasoningExposed = (await recordJsonlLine(effects, runtimeKind, buffer, state)) || reasoningExposed;
+        reasoningExposed = (
+          await recordJsonlLine(effects, runtimeKind, buffer, state, usageState, usageContext)
+        ) || reasoningExposed;
         buffer = '';
       }
       await flushPendingUnlinkedClaudeEvents(effects, runtimeKind, state);
       if (!reasoningExposed) {
         await effects.recordEvent(notExposedReasoningEvent({ provider: 'claude', runtimeKind }));
       }
+      if (usageState.resultSequence === 0) await recordUnavailable();
+    },
+    recordUnavailable,
+    usageRecordCount(): number {
+      return usageState.resultSequence;
     },
   };
 }
@@ -109,6 +138,8 @@ async function recordJsonlLine(
   runtimeKind: string,
   line: string,
   state: ClaudeJsonlMapperState,
+  usageState: { captureId: string; resultSequence: number },
+  usageContext: { accountId?: string; model?: string },
 ): Promise<boolean> {
   const trimmed = line.trim();
   if (!trimmed) return false;
@@ -138,6 +169,16 @@ async function recordJsonlLine(
         textKind: 'raw',
       }));
     }
+  }
+  if (isRecord(parsed) && stringField(parsed, 'type') === 'result') {
+    usageState.resultSequence += 1;
+    const stats = runtimeEvents.find((event) => event['eventType'] === 'claude.session.stats');
+    const sessionId = stringField(parsed, 'session_id') ?? 'session';
+    await effects.recordUsage(providerUsageFromStats(
+      `${sessionId}:${usageState.captureId}:result:${usageState.resultSequence}`,
+      stats,
+      usageContext,
+    ));
   }
   const providerSession = claudeSessionMetaFromJson(parsed);
   if (providerSession) {
