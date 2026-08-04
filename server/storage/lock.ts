@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { ensureParentDirectory } from './write-root.js';
@@ -53,7 +53,16 @@ async function acquireLock(lockDir: string): Promise<void> {
   while (true) {
     try {
       await mkdir(lockDir);
-      await writeFile(join(lockDir, 'owner.json'), `${JSON.stringify({ createdAt: Date.now(), pid: process.pid })}\n`, 'utf8');
+      try {
+        await writeFile(
+          join(lockDir, 'owner.json'),
+          `${JSON.stringify({ createdAt: Date.now(), pid: process.pid })}\n`,
+          'utf8',
+        );
+      } catch (error) {
+        await rm(lockDir, { force: true, recursive: true }).catch(() => undefined);
+        throw error;
+      }
       return;
     } catch (error) {
       if (!isEexist(error)) throw error;
@@ -65,7 +74,11 @@ async function acquireLock(lockDir: string): Promise<void> {
 
 async function removeStaleLock(lockDir: string): Promise<boolean> {
   const owner = await readLockOwner(lockDir);
-  if (!owner) return false;
+  if (!owner) {
+    if (!await isStaleLockDirectory(lockDir)) return false;
+    await rm(lockDir, { force: true, recursive: true });
+    return true;
+  }
   const staleByAge = Date.now() - owner.createdAt > LOCK_STALE_MS;
   const staleByPid = !isPidRunning(owner.pid);
   if (!staleByAge && !staleByPid) return false;
@@ -80,6 +93,14 @@ async function readLockOwner(lockDir: string): Promise<LockOwner | undefined> {
     return { createdAt: Number(value.createdAt), pid: Number(value.pid) };
   } catch {
     return undefined;
+  }
+}
+
+async function isStaleLockDirectory(lockDir: string): Promise<boolean> {
+  try {
+    return Date.now() - (await stat(lockDir)).mtimeMs > LOCK_STALE_MS;
+  } catch {
+    return false;
   }
 }
 
