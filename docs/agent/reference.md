@@ -296,6 +296,29 @@ anima reminder schedule --repeat daily@09:00 --timezone Asia/Shanghai --title "s
 anima reminder schedule --in 10m --repeat every:1h --title "hourly check" --instructions "check service health"
 ```
 
+For conditional reminders, use **Write → Run → Schedule**. Write and debug a script in your Agent
+Home, run it exactly once in the hosted preflight execution context, then schedule that exact
+command only after you understand the result:
+
+```
+anima reminder preflight --command './scripts/check-usage.sh' --timeout 2m
+anima reminder schedule --repeat every:15m --title 'Usage check' --instructions 'review the usage alert' --preflight './scripts/check-usage.sh' --preflight-timeout 2m
+```
+
+Run `preflight` from the target agent; it requires the current agent context. Its CWD is that
+agent's Agent Home, and the child receives the same configured/managed environment as hosted
+preflight. It does not invent an active message, reminder, inbox item, channel, thread, session,
+workspace, or surface context. The one-shot run creates no reminder, wake, activity, or other
+durable state.
+
+The command's stdout and stderr are captured with explicit truncation markers, followed by its
+duration and exit, signal, or timeout. Exit 0 succeeds and a hosted reminder wakes; exit 1 declines
+and it skips; exit 2 or higher, a signal, or a timeout errors and reports Needs attention. The CLI
+returns the command's exit code, returns 124 for timeout, and uses `128 + signal number` for a
+signal. Preflight commands and explicit timeouts are scheduled with `--preflight <command>` and
+`--preflight-timeout <duration>`; the default is 30 minutes and the hard cap is 24 hours. Do not
+inline secrets because a scheduled command is persisted and shown by reminder inspection surfaces.
+
 To make a reminder wake you back into a specific Slack conversation (so your follow-up lands in
 the thread it belongs to), anchor it with `--anchor-channel <id> --anchor-message-ts <ts>` (add
 `--anchor-thread-ts <ts>` inside a thread).
@@ -306,6 +329,11 @@ schedule). `--in` and `--fire-at` are mutually exclusive; either may be combined
 to set the first fire, and `--repeat` remains valid by itself. Repeat formats:
 `every:<n>m|h|d`, `daily@HH:MM`, and `weekly:<day,day>@HH:MM`. The
 timezone is an IANA name, for example `Asia/Shanghai`.
+
+For an `every:*` reminder, add `--window <days>@HH:MM-HH:MM` to keep firings inside same-day local
+working hours, for example `--window mon-fri@08:00-18:30 --timezone America/New_York`. A window is
+only valid with `every:*`, cannot be combined with `--in` or `--fire-at`, cannot cross midnight,
+and must be at least as long as the interval.
 
 `list` stays compact and shows scheduled reminders by default. Use `show <id>` (or
 `show --id <id>`) when you need the full instructions, schedule, Slack anchor, timestamps, status,
