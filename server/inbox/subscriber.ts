@@ -7,6 +7,7 @@ import { SlackMessageTransport } from '../transports/slack-message-transport.js'
 
 export interface InboxSubscriberOptions {
   agentRuntimeKind: string;
+  animaHome: string;
   appToken?: string;
   /** Agent Slack bot user id from the synced start-time config (not re-read per event). */
   botUserId?: string;
@@ -20,7 +21,7 @@ export class InboxSubscriber {
   private readonly transports: MessageTransportRunner;
 
   constructor(options: InboxSubscriberOptions) {
-    this.reminders = new ReminderInboxSubscriber(options.queue);
+    this.reminders = new ReminderInboxSubscriber(options.queue, undefined, options.animaHome);
     const transports = [
       ...(options.appToken && options.botToken ? [new SlackMessageTransport({
         agentRuntimeKind: options.agentRuntimeKind,

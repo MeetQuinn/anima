@@ -1,4 +1,5 @@
 import { errorMessage } from '../ids.js';
+import { resolveAnimaHome } from '../anima-home.js';
 import { AgentStore } from '../storage/schema/agent.store.js';
 import { resolveAgentHomePath } from '../agents/agent-config-ops.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
@@ -49,6 +50,7 @@ export class ReminderInboxSubscriber {
   constructor(
     private readonly queue: WakeQueueService,
     reminderService?: ReminderService,
+    private readonly animaHome = resolveAnimaHome(),
   ) {
     this.reminderService = reminderService ?? reminderServiceForAgent(queue.agentId);
   }
@@ -187,9 +189,12 @@ export class ReminderInboxSubscriber {
 
     const { aborted, result } = await runPreflightCommand({
       abortSignal: abort.signal,
+      agentId: this.queue.agentId,
+      animaHome: this.animaHome,
       command: preflightConfig.command,
       cwd: agentHome,
       now: startedAt,
+      reminderId: snapshot.reminderId,
       scheduledAt,
       ...(preflightConfig.timeoutMs !== undefined ? { timeoutMs: preflightConfig.timeoutMs } : {}),
     });
