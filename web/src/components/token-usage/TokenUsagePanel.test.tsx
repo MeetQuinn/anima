@@ -21,7 +21,19 @@ vi.mock('@/api/token-usage', () => ({
         cacheCreationInputTokens: 0,
         cacheReadInputTokens: 200,
         coverageStartedAt: '2026-08-01T00:00:00.000Z',
-        days: [],
+        days: [
+          {
+            cacheCreationInputTokens: 0,
+            cacheReadInputTokens: 200,
+            date: '2026-08-04',
+            inputTokens: 100,
+            outputTokens: 50,
+            reasoningOutputTokens: 10,
+            reportedRuns: 2,
+            totalTokens: 350,
+            unknownRuns: 0,
+          },
+        ],
         inputTokens: 100,
         outputTokens: 50,
         reasoningOutputTokens: 10,
@@ -86,7 +98,9 @@ describe('TokenUsagePanel', () => {
     expect(screen.getByText('Mira').closest('button')?.querySelector('img')?.getAttribute('src')).toBe('https://avatars.example/mira.png');
     expect(screen.getByText('Bram').closest('button')?.querySelector('[aria-hidden="true"]')?.textContent).toBe('B');
     expect(screen.getByText(/Tokens processed · all agents/)).toBeTruthy();
-    expect(screen.getByText(/Earlier days are intentionally unfilled, not estimated/)).toBeTruthy();
+    expect(screen.getByText(/All-agent totals become exact once every agent starts tracking/)).toBeTruthy();
+    expect(document.querySelector('span[title*="350 tokens"][title*="exact coverage incomplete"]')?.className).toContain('bg-accent');
+    expect(document.body.textContent).not.toMatch(/\bruns?\b|\bunknown\b/i);
     expect(document.body.textContent).not.toMatch(/quota|cost/i);
   });
 });

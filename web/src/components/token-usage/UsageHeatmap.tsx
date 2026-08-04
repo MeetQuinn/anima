@@ -80,10 +80,11 @@ export function UsageHeatmap({
                 {week.map((date) => {
                   const day = dayByDate.get(date);
                   const future = date > through;
-                  const unknown = !future && (!coverageDate || date < coverageDate);
-                  const missingUsage = !future && !unknown && (day?.unknownRuns ?? 0) > 0;
+                  const incompleteCoverage = !future && (!coverageDate || date < coverageDate);
+                  const hasMeasuredActivity = Boolean(day && (day.totalTokens > 0 || day.reportedRuns > 0 || day.unknownRuns > 0));
+                  const missingUsage = !future && (day?.unknownRuns ?? 0) > 0;
                   const level = day ? usageLevel(day.totalTokens, max) : 0;
-                  const title = usageDayTitle(date, day, { future, unknown });
+                  const title = usageDayTitle(date, day, { future, incompleteCoverage });
                   return (
                     <span
                       key={date}
@@ -94,13 +95,17 @@ export function UsageHeatmap({
                         'block shrink-0 border transition-colors',
                         future
                           ? 'border-transparent bg-transparent'
-                          : unknown
-                            ? 'border-border-soft/70'
+                          : incompleteCoverage
+                            ? hasMeasuredActivity
+                              ? missingUsage
+                                ? `${level === 0 ? 'bg-health-warn-soft/60' : LEVEL_CLASS[level]} border-health-warn/60`
+                                : `border-border-soft/70 ${LEVEL_CLASS[level]}`
+                              : 'border-border-soft/70'
                             : missingUsage
                               ? `${level === 0 ? 'bg-health-warn-soft/60' : LEVEL_CLASS[level]} border-health-warn/60`
                               : `border-transparent ${LEVEL_CLASS[level]}`,
                       ].join(' ')}
-                      style={unknown ? {
+                      style={incompleteCoverage ? {
                         backgroundImage: 'repeating-linear-gradient(135deg, transparent 0 2px, color-mix(in srgb, currentColor 10%, transparent) 2px 3px)',
                       } : undefined}
                     />
@@ -184,7 +189,7 @@ function monthLabel(week: string[], previous: string[] | undefined): string | un
 function usageDayTitle(
   date: string,
   day: AgentTokenUsageDay | undefined,
-  state: { future: boolean; unknown: boolean },
+  state: { future: boolean; incompleteCoverage: boolean },
 ): string {
   const label = parseLocalDate(date).toLocaleDateString(undefined, {
     day: 'numeric',
@@ -192,13 +197,11 @@ function usageDayTitle(
     year: 'numeric',
   });
   if (state.future) return `${label}: future`;
-  if (state.unknown) return `${label}: before exact tracking began`;
+  if (state.incompleteCoverage && !day) return `${label}: before exact tracking began`;
   if (!day || (day.totalTokens === 0 && day.unknownRuns === 0)) return `${label}: 0 tokens`;
-  const parts = [
-    `${formatTokens(day.totalTokens)} tokens`,
-    `${day.reportedRuns} reported run${day.reportedRuns === 1 ? '' : 's'}`,
-  ];
-  if (day.unknownRuns > 0) parts.push(`${day.unknownRuns} run${day.unknownRuns === 1 ? '' : 's'} without usage`);
+  const parts = day.totalTokens > 0 ? [`${formatTokens(day.totalTokens)} tokens`] : ['Token usage unavailable'];
+  if (day.unknownRuns > 0 && day.totalTokens > 0) parts.push('provider reporting incomplete');
+  if (state.incompleteCoverage) parts.push('exact coverage incomplete');
   return `${label}: ${parts.join(' · ')}`;
 }
 

@@ -38,9 +38,22 @@ describe('UsageHeatmap', () => {
     );
     expect(container.querySelectorAll('span[title]').length).toBe(364);
     expect(screen.getAllByLabelText(/before exact tracking began/).length).toBeGreaterThan(0);
-    expect(screen.getByLabelText(/1.2K tokens · 2 reported runs/)).toBeTruthy();
-    expect(screen.getByLabelText(/1 run without usage/).className).toContain('border-health-warn');
+    expect(screen.getByLabelText(/1.2K tokens/)).toBeTruthy();
+    expect(screen.getByLabelText(/Token usage unavailable/).className).toContain('border-health-warn');
     expect(screen.getAllByLabelText(/0 tokens/).length).toBeGreaterThan(0);
+  });
+
+  it('keeps measured usage visible when exact aggregate coverage is incomplete', () => {
+    render(
+      <UsageHeatmap
+        days={[day('2026-02-26', 500_000, 20_000)]}
+        from="2025-12-28"
+        through="2026-12-26"
+      />,
+    );
+    const measured = screen.getByLabelText(/500K tokens · exact coverage incomplete/);
+    expect(measured.className).toContain('bg-accent');
+    expect(measured.getAttribute('title')).not.toContain('before exact tracking began');
   });
 
   it('merges daily agent totals without adding reasoning twice', () => {

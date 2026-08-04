@@ -30,7 +30,7 @@ export function AgentUsageSection({ agentId }: { agentId: string }) {
             Tokens processed · 52 weeks
           </div>
         </div>
-        <TrackingNote coverageStartedAt={usage.coverageStartedAt} unknownRuns={usage.unknownRuns} />
+        <TrackingNote coverageStartedAt={usage.coverageStartedAt} />
       </div>
       <UsageHeatmap
         coverageStartedAt={usage.coverageStartedAt}
@@ -46,7 +46,7 @@ export function AgentUsageSection({ agentId }: { agentId: string }) {
   );
 }
 
-function TrackingNote({ coverageStartedAt, unknownRuns }: { coverageStartedAt?: string; unknownRuns: number }) {
+function TrackingNote({ coverageStartedAt }: { coverageStartedAt?: string }) {
   if (!coverageStartedAt) {
     return (
       <span className="max-w-xs font-sans text-[11px] leading-relaxed text-text-subtle">
@@ -57,7 +57,6 @@ function TrackingNote({ coverageStartedAt, unknownRuns }: { coverageStartedAt?: 
   return (
     <span className="max-w-xs text-right font-sans text-[11px] leading-relaxed text-text-subtle">
       Exact since {new Date(coverageStartedAt).toLocaleDateString()}
-      {unknownRuns > 0 ? ` · ${unknownRuns} run${unknownRuns === 1 ? '' : 's'} had no provider usage` : ''}
     </span>
   );
 }

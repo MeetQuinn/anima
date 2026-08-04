@@ -78,8 +78,8 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
                     </div>
                   </div>
                   <div className="max-w-sm text-right font-sans text-[11px] leading-relaxed text-text-subtle">
-                    Exact data starts with this release. Earlier days are intentionally unfilled, not estimated.
-                    {data.unknownRuns > 0 && ` ${data.unknownRuns} run${data.unknownRuns === 1 ? '' : 's'} had no provider usage.`}
+                    Measured usage is shown. All-agent totals become exact once every agent starts tracking;
+                    earlier days stay unfilled, never estimated.
                   </div>
                 </div>
                 <UsageHeatmap
@@ -106,7 +106,7 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
                         onClose();
                         navigate(`/agents/${encodeURIComponent(agent.agentId)}/profile`);
                       }}
-                      className="group grid w-full gap-3 py-4 text-left hover:bg-surface-elevated/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent md:grid-cols-[minmax(180px,0.65fr)_minmax(390px,1.35fr)_90px_20px] md:items-center md:px-2"
+                      className="group grid w-full gap-3 py-4 text-left hover:bg-surface-elevated/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent md:grid-cols-[minmax(150px,0.65fr)_minmax(390px,1.35fr)_90px_20px] md:items-center md:px-2"
                     >
                       <div className="flex min-w-0 items-center gap-3">
                         {agent.avatarUrl ? (
@@ -126,9 +126,6 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
                         )}
                         <div className="min-w-0">
                           <div className="truncate font-serif text-[15px] text-text">{agent.agentName}</div>
-                          <div className="mt-0.5 font-mono text-[9px] text-text-subtle">
-                            {agent.reportedRuns} runs{agent.unknownRuns > 0 ? ` · ${agent.unknownRuns} unknown` : ''}
-                          </div>
                         </div>
                       </div>
                       <UsageHeatmap
