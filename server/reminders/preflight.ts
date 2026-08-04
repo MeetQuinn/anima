@@ -1,5 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { delimiter, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { buildServiceEnvironment } from '../services/env.js';
 
 /** Cap shared with reminder body evidence attachment (spec: reuse body upper bound). */
 export const REMINDER_BODY_MAX_CHARS = 32_000;
@@ -26,9 +30,12 @@ export interface PreflightLastResult {
 
 export interface RunPreflightInput {
   abortSignal?: AbortSignal;
+  agentId: string;
+  animaHome: string;
   command: string;
   cwd: string;
   now?: Date;
+  reminderId: string;
   scheduledAt: string;
   timeoutMs?: number;
 }
@@ -128,7 +135,11 @@ export async function runPreflightCommand(input: RunPreflightInput): Promise<Run
     child = spawn(command, {
       cwd: input.cwd,
       detached: true,
-      env: process.env,
+      env: buildPreflightEnvironment({
+        agentId: input.agentId,
+        animaHome: input.animaHome,
+        reminderId: input.reminderId,
+      }),
       shell: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -225,6 +236,27 @@ export async function runPreflightCommand(input: RunPreflightInput): Promise<Run
   };
 
   return { aborted: false, result: last };
+}
+
+export interface PreflightEnvironmentOptions {
+  agentId: string;
+  animaHome: string;
+  baseEnv?: NodeJS.ProcessEnv;
+  reminderId: string;
+}
+
+export function buildPreflightEnvironment(
+  options: PreflightEnvironmentOptions,
+): Record<string, string> {
+  const env = buildServiceEnvironment({
+    animaHome: options.animaHome,
+    ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}),
+  });
+  const packageBin = resolve(dirname(fileURLToPath(import.meta.url)), '../../..', 'bin');
+  env.ANIMA_AGENT_ID = options.agentId;
+  env.ANIMA_REMINDER_ID = options.reminderId;
+  env.PATH = [packageBin, env.PATH].join(delimiter);
+  return env;
 }
 
 export function preflightEvidenceForWake(result: PreflightLastResult): string | undefined {

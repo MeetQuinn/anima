@@ -79,8 +79,11 @@ async function withTwoAgentHomes<T>(
 test('preflight exit 0 = succeeded, exit 1 = declined, exit 2 = errored', async () => {
   await withAgentHome(async (cwd) => {
     const ok = await runPreflightCommand({
+      agentId: 'scout',
+      animaHome: cwd,
       command: 'exit 0',
       cwd,
+      reminderId: 'reminder-ok',
       scheduledAt: '2026-08-03T00:00:00.000Z',
     });
     assert.ok(ok.result);
@@ -88,8 +91,11 @@ test('preflight exit 0 = succeeded, exit 1 = declined, exit 2 = errored', async 
     assert.equal(ok.result.exitCode, 0);
 
     const declined = await runPreflightCommand({
+      agentId: 'scout',
+      animaHome: cwd,
       command: 'exit 1',
       cwd,
+      reminderId: 'reminder-declined',
       scheduledAt: '2026-08-03T00:00:00.000Z',
     });
     assert.ok(declined.result);
@@ -97,8 +103,11 @@ test('preflight exit 0 = succeeded, exit 1 = declined, exit 2 = errored', async 
     assert.equal(declined.result.exitCode, 1);
 
     const errored = await runPreflightCommand({
+      agentId: 'scout',
+      animaHome: cwd,
       command: 'exit 2',
       cwd,
+      reminderId: 'reminder-errored',
       scheduledAt: '2026-08-03T00:00:00.000Z',
     });
     assert.ok(errored.result);
@@ -112,8 +121,11 @@ test('preflight cwd is exactly Agent Home', async () => {
     const marker = join(cwd, 'cwd-marker.txt');
     await writeFile(marker, 'here\n');
     const run = await runPreflightCommand({
+      agentId: 'scout',
+      animaHome: cwd,
       command: 'pwd && test -f cwd-marker.txt && echo FOUND',
       cwd,
+      reminderId: 'reminder-cwd',
       scheduledAt: '2026-08-03T00:00:00.000Z',
     });
     assert.ok(run.result);
@@ -127,12 +139,97 @@ test('preflight cwd is exactly Agent Home', async () => {
   });
 });
 
+test('real preflight child receives only stable owner context from a hostile ambient environment', async () => {
+  await withAgentHome(async (cwd) => {
+    const animaHome = join(cwd, '..');
+    const ambient = {
+      ANIMA_AGENT_ID: 'wrong-agent',
+      ANIMA_CHANNEL: 'wrong-channel',
+      ANIMA_CHANNEL_ID: 'C_WRONG',
+      ANIMA_INBOX_ITEM_ID: 'item-secret',
+      ANIMA_MESSAGE_TS: '123.456',
+      ANIMA_REMINDER_ID: 'wrong-reminder',
+      ANIMA_RUNTIME_HOME: '/wrong/runtime',
+      ANIMA_SESSION_KEY: 'session-secret',
+      ANIMA_SLACK_BOT_TOKEN: 'xoxb-anima-secret',
+      ANIMA_SURFACE_KIND: 'thread',
+      ANIMA_THREAD_TS: '456.789',
+      ANIMA_WORKSPACE_PATH: '/wrong/workspace',
+      FEISHU_APP_ID: 'feishu-app-secret',
+      FEISHU_APP_SECRET: 'feishu-secret',
+      FEISHU_TENANT_ACCESS_TOKEN: 'feishu-token-secret',
+      GENERIC_PROVIDER_SECRET: 'provider-secret',
+      PATH: '/deliberately/missing',
+      SLACK_BOT_TOKEN: 'xoxb-slack-secret',
+    };
+    const previous = new Map<string, string | undefined>();
+    for (const [key, value] of Object.entries(ambient)) {
+      previous.set(key, process.env[key]);
+      process.env[key] = value;
+    }
+    try {
+      const run = await runPreflightCommand({
+        agentId: 'scout',
+        animaHome,
+        command: 'env',
+        cwd,
+        reminderId: 'reminder-stable',
+        scheduledAt: '2026-08-03T00:00:00.000Z',
+      });
+      assert.equal(run.result?.status, 'succeeded');
+      const childEnv = Object.fromEntries(
+        (run.result?.stdout ?? '').trim().split('\n').map((line) => {
+          const separator = line.indexOf('=');
+          return [line.slice(0, separator), line.slice(separator + 1)];
+        }),
+      );
+      assert.equal(childEnv.ANIMA_AGENT_ID, 'scout');
+      assert.equal(childEnv.ANIMA_REMINDER_ID, 'reminder-stable');
+      assert.equal(childEnv.ANIMA_HOME, animaHome);
+      for (const key of Object.keys(ambient)) {
+        if (key === 'ANIMA_AGENT_ID' || key === 'ANIMA_REMINDER_ID' || key === 'PATH') continue;
+        assert.equal(childEnv[key], undefined, `${key} must not reach preflight`);
+      }
+    } finally {
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+});
+
+test('real preflight resolves the current package anima launcher with minimal ambient PATH', async () => {
+  await withAgentHome(async (cwd) => {
+    const previousPath = process.env.PATH;
+    process.env.PATH = '/deliberately/missing';
+    try {
+      const run = await runPreflightCommand({
+        agentId: 'scout',
+        animaHome: join(cwd, '..'),
+        command: 'anima --help',
+        cwd,
+        reminderId: 'reminder-cli',
+        scheduledAt: '2026-08-03T00:00:00.000Z',
+      });
+      assert.equal(run.result?.status, 'succeeded');
+      assert.match(run.result?.stdout ?? '', /Usage: anima/);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+    }
+  });
+});
+
 test('preflight timeout kills process group and is errored', async () => {
   await withAgentHome(async (cwd) => {
     const started = Date.now();
     const run = await runPreflightCommand({
+      agentId: 'scout',
+      animaHome: cwd,
       command: 'sleep 30',
       cwd,
+      reminderId: 'reminder-timeout',
       scheduledAt: '2026-08-03T00:00:00.000Z',
       timeoutMs: 200,
     });
@@ -147,8 +244,11 @@ test('preflight timeout kills process group and is errored', async () => {
 test('preflight stdout is capped with truncation marker on wake evidence', async () => {
   await withAgentHome(async (cwd) => {
     const run = await runPreflightCommand({
+      agentId: 'scout',
+      animaHome: cwd,
       command: `node -e "process.stdout.write('x'.repeat(${REMINDER_BODY_MAX_CHARS + 500}))"`,
       cwd,
+      reminderId: 'reminder-stdout',
       scheduledAt: '2026-08-03T00:00:00.000Z',
     });
     assert.ok(run.result);
@@ -177,6 +277,43 @@ test('CLI/help copy forbids true/false/pass/fail wording for preflight', async (
   for (const banned of ['true/false', 'pass/fail', 'true = ', 'false = ', 'pass =', 'fail =']) {
     assert.ok(!section.includes(banned), `banned wording: ${banned}`);
   }
+});
+
+test('ReminderInboxSubscriber hands queue owner, reminder id, and active Anima home to preflight', async () => {
+  await withAgentHome(async (homePath, agentId) => {
+    const animaHome = join(homePath, '..');
+    const service = reminderServiceForAgent(agentId);
+    const queue = new WakeQueueService(agentId);
+    const subscriber = new ReminderInboxSubscriber(queue, service, animaHome);
+    const reminder = await service.scheduleReminder({
+      fireAt: '2020-01-01T00:00:00.000Z',
+      instructions: 'inspect context',
+      now: new Date(),
+      preflight: {
+        command: 'printf "ANIMA_AGENT_ID=%s\\nANIMA_REMINDER_ID=%s\\nANIMA_HOME=%s\\n" "$ANIMA_AGENT_ID" "$ANIMA_REMINDER_ID" "$ANIMA_HOME"',
+      },
+      title: 'context-handoff',
+    });
+
+    subscriber.start();
+    try {
+      await waitFor(async () => (await queue.list()).some((item) =>
+        item.kind === 'reminder' && item.reminderId === reminder.reminderId), {
+        description: 'context handoff reminder wake',
+        timeoutMs: 5_000,
+      });
+    } finally {
+      await subscriber.stop();
+    }
+
+    const item = (await queue.list()).find((candidate) =>
+      candidate.kind === 'reminder' && candidate.reminderId === reminder.reminderId);
+    assert.ok(item);
+    const evidence = (item as { preflightEvidence?: string }).preflightEvidence ?? '';
+    assert.match(evidence, new RegExp(`ANIMA_AGENT_ID=${agentId}`));
+    assert.match(evidence, new RegExp(`ANIMA_REMINDER_ID=${reminder.reminderId}`));
+    assert.match(evidence, new RegExp(`ANIMA_HOME=${animaHome}`));
+  });
 });
 
 test('end-to-end: preflight 0 wakes with evidence; 1 skips; 2 errors without queue item', async () => {

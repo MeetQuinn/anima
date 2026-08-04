@@ -898,6 +898,7 @@ async function startAgentFromConfig(
   return startRunningAgent({
     ...server.config,
     agentRuntime: createAgentRuntime(runtimeWithEnv(server.runtime, managedEnv)),
+    animaHome,
     ...(server.slack
       ? {
           appToken: server.slack.appToken,
