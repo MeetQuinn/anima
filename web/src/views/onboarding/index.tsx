@@ -8,6 +8,7 @@ import {
   refreshDashboardData,
   startAgentFeishuAppRegistration,
   updateAgentProfile,
+  updateAgentProvider,
 } from '@/api/agents';
 import { fetchProviderAvailability, fetchWorkspacePlatform, saveWorkspacePlatform } from '@/api/system';
 import {
@@ -378,17 +379,20 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
     else clearFeishuSlowTimer();
 
     let nextAgentId = createdAgentId;
+    const provider = {
+      kind: providerKind,
+      model,
+      ...(selectedEffortOptions.length > 0 && effort ? { reasoningEffort: effort } : {}),
+    };
     try {
-      // Agent already created (user went back to edit name/role) — update profile and advance.
+      // Agent already created (user went back from connect) — re-apply the full
+      // draft, including provider. Skipping provider left the first create's kind
+      // (e.g. Claude Code) when the user switched to Grok on the return pass.
       if (nextAgentId) {
         await updateAgentProfile(nextAgentId, { displayName: name.trim(), role: role.trim() });
+        await updateAgentProvider(nextAgentId, provider);
         refreshDashboardData();
       } else {
-        const provider = {
-          kind: providerKind,
-          model,
-          ...(selectedEffortOptions.length > 0 && effort ? { reasoningEffort: effort } : {}),
-        };
         const agent = await createAgent({
           name: name.trim(),
           role: role.trim(),
