@@ -1,7 +1,7 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { activityRow, activityIsFailure } from '@/lib/activities';
 import { emojiGlyph, replaceEmojiShortcodes } from '@/lib/emoji';
-import { dateLabel, clockHM } from '@/lib/format';
+import { clockHM } from '@/lib/format';
 import { Row, SurfaceText, COLOR_OUTBOUND } from './Row';
 import type { ActivityFeedItem, SubagentStream } from '@/lib/activity-feed';
 import { shortenModelLabel, subagentDelegationLabel } from '@/lib/activity-feed';
@@ -321,24 +321,6 @@ export function WorkingIndicator({
           {label}…
         </span>
       </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Day section divider
-// ---------------------------------------------------------------------------
-
-export function DaySection({ date, children }: { date: string; children: ReactNode }) {
-  // Editorial day-divider: small-caps Fraunces eyebrow + hairline rule. Reads
-  // like a section break in a published log rather than a UI separator.
-  return (
-    <div>
-      <div className="mt-8 mb-3 flex items-center gap-4 first:mt-2">
-        <span className="caps text-text-muted">{dateLabel(date)}</span>
-        <span className="h-px flex-1 bg-border-soft" />
-      </div>
-      <div>{children}</div>
     </div>
   );
 }
