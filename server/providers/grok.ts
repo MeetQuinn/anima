@@ -100,7 +100,7 @@ export class GrokCliAgentRuntime extends ControllerAgentRuntime<GrokAcpControlle
     if (!this.activeRun.accepts(input)) return { accepted: false };
     if (!controller) return { accepted: false };
     if (!controller.appendPrompt(input.prompt)) return { accepted: false };
-    return { accepted: true, text: 'queued for Grok ACP session' };
+    return { accepted: true, text: 'Grok follow-up applied (interrupts active prompt)' };
   }
 
   private followupsForItem(itemId: string): string[] {
@@ -189,6 +189,8 @@ class GrokAcpController {
   private usageSequence = 0;
   private latestUsage?: Record<string, unknown>;
   private turnCompletion?: Promise<string>;
+  /** True while a session/prompt RPC is outstanding. */
+  private promptInFlight = false;
   private actualModel?: string;
   private contextWindow?: number;
   // Live reasoning-effort menu bound to the exact model that advertised it, from ACP
@@ -267,6 +269,10 @@ class GrokAcpController {
     if (!turn) return false;
     if (!turn.acceptingFollowups) return false;
     turn.followups.push(prompt);
+    // Interrupt in-flight session/prompt so follow-ups take effect immediately.
+    if (this.promptInFlight && this.sessionId) {
+      this.notify('session/cancel', { sessionId: this.sessionId });
+    }
     return true;
   }
 
@@ -356,10 +362,12 @@ class GrokAcpController {
   private async runTurnQueue(firstPrompt: string): Promise<void> {
     const turn = this.currentTurn;
     if (!turn) return;
-    await this.runOnePrompt(turn, firstPrompt);
-    while (!turn.input.signal?.aborted && turn.followups.length > 0) {
-      await this.runOnePrompt(turn, turn.followups[0]!);
-      turn.followups.shift();
+    // Mid-turn appendPrompt cancels the in-flight prompt; after that RPC settles we
+    // immediately run the next follow-up instead of waiting for a natural end_turn.
+    let next: string | undefined = firstPrompt;
+    while (next !== undefined && !turn.input.signal?.aborted) {
+      await this.runOnePrompt(turn, next);
+      next = turn.followups.length > 0 ? turn.followups.shift() : undefined;
     }
     turn.acceptingFollowups = false;
     await this.finishCurrentTurn();
@@ -374,21 +382,37 @@ class GrokAcpController {
       userInputLength: prompt.length,
     });
     const sourceId = `${this.sessionId}:${this.usageCaptureId}:prompt:${++this.usageSequence}`;
+    // Assistant chunks stream into turn.text; if this prompt is cancelled for a
+    // mid-turn follow-up, discard only the chunks produced by this prompt.
+    const textCheckpoint = turn.text.length;
     let result: Record<string, unknown> | undefined;
+    this.promptInFlight = true;
     try {
       result = await this.request('session/prompt', {
         prompt: [{ text: prompt, type: 'text' }],
         sessionId: this.sessionId,
       });
     } catch (error) {
+      turn.text.length = textCheckpoint;
+      this.activeToolIds.clear();
+      this.pendingTools.clear();
       await turn.input.effects.recordUsage(providerUsageFromStats(
         sourceId,
         this.latestUsage,
         { model: this.actualModel ?? this.configuredModel },
       ));
       throw error;
+    } finally {
+      this.promptInFlight = false;
     }
     this.captureModelAuthority(result);
+    const stopReason = stringField(result, 'stopReason');
+    if (stopReason === 'cancelled') {
+      // Do not leak cancelled-prompt assistant text into the follow-up Slack reply.
+      turn.text.length = textCheckpoint;
+      this.activeToolIds.clear();
+      this.pendingTools.clear();
+    }
     const usage = acpUsagePayload(result);
     if (usage) {
       const model = grokResultModel(result) ?? this.actualModel;
@@ -405,7 +429,7 @@ class GrokAcpController {
         eventType: 'grok.context.stats',
         ...(model ? { model } : {}),
         runtimeKind: GROK_RUNTIME_KIND,
-        terminalReason: stringField(result, 'stopReason'),
+        terminalReason: stopReason,
       });
     }
     await turn.input.effects.recordUsage(providerUsageFromStats(
@@ -416,7 +440,7 @@ class GrokAcpController {
     await turn.input.effects.recordEvent({
       eventType: 'grok.turn.completed',
       runtimeKind: GROK_RUNTIME_KIND,
-      terminalReason: stringField(result, 'stopReason'),
+      terminalReason: stopReason,
       transport: 'acp',
     });
   }

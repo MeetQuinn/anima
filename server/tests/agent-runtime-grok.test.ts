@@ -76,10 +76,16 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
         "      send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'grok-session-1', models: { currentModelId: 'grok-4.5', availableModels: [{ modelId: 'grok-4.5', _meta: { totalContextTokens: 500000 } }] } } });",
         '      continue;',
         '    }',
+        "    if (msg.method === 'session/cancel') {",
+        '      if (pendingPromptId !== undefined) {',
+        "        send({ jsonrpc: '2.0', id: pendingPromptId, result: { stopReason: 'cancelled', _meta: { cancellationCategory: 'MidTurnAbort' } } });",
+        '        pendingPromptId = undefined;',
+        '      }',
+        '      continue;',
+        '    }',
         "    if (msg.id === 'agent-request-1' && msg.error) {",
         '      if (msg.error.code !== -32601) process.exit(71);',
-        "      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'first' } });",
-        "      setTimeout(() => send({ jsonrpc: '2.0', id: pendingPromptId, result: { stopReason: 'end_turn', _meta: { modelId: 'grok-4.5', inputTokens: 120, outputTokens: 30, cachedTokens: 10, reasoningTokens: 5, totalTokens: 160, currentContextTokens: 140 } } }), 40);",
+        '      // Leave primary open; mid-turn follow-up cancel must complete it.',
         '      continue;',
         '    }',
         "    if (msg.method === 'session/prompt') {",
@@ -88,7 +94,7 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
         '        pendingPromptId = msg.id;',
         "        send({ jsonrpc: '2.0', id: 'agent-request-1', method: 'fs/read_text_file', params: { path: 'PROBE.txt' } });",
         '      } else {',
-        "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' + appended' } });",
+        "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'appended' } });",
         "        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn', _meta: { modelId: 'grok-4.5', inputTokens: 20, outputTokens: 4, totalTokens: 24 } } });",
         '      }',
         '    }',
@@ -116,9 +122,10 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
       await waitFor(() => readFile(callsPath, 'utf8').then((value) => value.includes('session/prompt')));
       assert.deepEqual(
         await runtime.appendToActiveRun(await runtimeFollowupInput(runtime, first, followup, await loadState())),
-        { accepted: true, text: 'queued for Grok ACP session' },
+        { accepted: true, text: 'Grok follow-up applied (interrupts active prompt)' },
       );
-      assert.equal((await withTimeout(runPromise, 2_000)).text, 'first + appended');
+      const finalText = (await withTimeout(runPromise, 2_000)).text ?? '';
+      assert.equal(finalText, 'appended');
 
       const calls = await readJsonLines(callsPath);
       const launch = calls[0] as { argv?: string[] };
@@ -144,6 +151,7 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
       const prompts = calls.filter((call) => call['method'] === 'session/prompt');
       assert.equal(prompts.length, 2);
       assertFollowupPrompt(promptText(prompts[1]), 'Continue Grok.');
+      assert.ok(calls.some((call) => call['method'] === 'session/cancel'), 'mid-turn follow-up must cancel the active prompt');
       assert.ok(calls.some((call) => call['id'] === 'agent-request-1' && isErrorCode(call, -32601)));
       assert.deepEqual(await providerSessionStartedPayload(first.item.id), {
         kind: 'grok-cli',
@@ -169,14 +177,6 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
       assert.equal(stats?.payload?.['contextWindow'], 500000);
       assert.equal(stats?.payload?.['currentContextTokens'], undefined);
       assert.equal(
-        allActivities(state).find(
-          (activity) =>
-            activity.payload?.['eventType'] === 'grok.context.stats' &&
-            activity.payload?.['totalTokens'] === 160,
-        )?.payload?.['currentContextTokens'],
-        140,
-      );
-      assert.equal(
         state.sessions.anima?.latestProviderStats?.currentContextTokens,
         undefined,
       );
@@ -187,9 +187,10 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
         through: '2100-01-01',
         timezone: 'UTC',
       });
-      assert.equal(usage.totalTokens, 184);
-      assert.equal(usage.reportedRuns, 2);
-      assert.equal(usage.unknownRuns, 0);
+      // Follow-up reports 24; cancelled primary may leave an unavailable/unknown run.
+      assert.equal(usage.totalTokens, 24);
+      assert.equal(usage.reportedRuns, 1);
+      assert.ok(usage.unknownRuns <= 1);
     });
   } finally {
     await runtime?.close?.();
@@ -879,7 +880,89 @@ test('grok-cli child loss retries the same inbox item and reloads the persisted 
   }
 });
 
-test('grok-cli abort never starts a queued follow-up after session/cancel', async () => {
+
+test('grok-cli mid-turn follow-up cancels active prompt then runs the follow-up immediately', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-grok-interrupt-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      await installFakeGrok(stateDir, [
+        "const fs = require('fs');",
+        "process.stdin.setEncoding('utf8');",
+        "let buffer = '';",
+        'let pendingPromptId;',
+        'let promptCount = 0;',
+        "function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }",
+        "function update(value) { send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'grok-session-interrupt', update: value } }); }",
+        "process.stdin.on('data', (chunk) => {",
+        '  buffer += chunk;',
+        '  const lines = buffer.split(/\\r?\\n/);',
+        "  buffer = lines.pop() || '';",
+        '  for (const line of lines) {',
+        '    if (!line.trim()) continue;',
+        '    const msg = JSON.parse(line);',
+        "    fs.appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + '\\n');",
+        "    if (msg.method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, _meta: { agentVersion: '0.2.93', modelState: { currentModelId: 'grok-4.5', availableModels: [] } } } });",
+        "    if (msg.method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'grok-session-interrupt' } });",
+        "    if (msg.method === 'session/cancel') {",
+        '      if (pendingPromptId !== undefined) {',
+        "        send({ jsonrpc: '2.0', id: pendingPromptId, result: { stopReason: 'cancelled', _meta: { cancellationCategory: 'MidTurnAbort' } } });",
+        '        pendingPromptId = undefined;',
+        '      }',
+        '      continue;',
+        '    }',
+        "    if (msg.method === 'session/prompt') {",
+        '      promptCount += 1;',
+        '      if (promptCount === 1) {',
+        '        pendingPromptId = msg.id;',
+        "        // Emit assistant text before cancel — must not leak into final reply.",
+        "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'stale-primary' } });",
+        '        // Hold open until cancel — never end_turn on primary.',
+        '      } else {',
+        "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'interrupted-ok' } });",
+        "        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn', _meta: { modelId: 'grok-4.5' } } });",
+        '      }',
+        '    }',
+        '  }',
+        '});',
+      ]);
+      const first = await ingestGrokEvent(stateDir, 'Start long Grok work.', '1771000090.000001');
+      const followup = await ingestGrokEvent(stateDir, 'Interrupt now.', '1771000090.000002');
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'grok-cli',
+        model: 'grok-4.5',
+      });
+      const runPromise = runtime.run(await runtimeInput(runtime, first, await loadState()));
+      await waitFor(() => readFile(callsPath, 'utf8').then((value) => value.includes('session/prompt')));
+      // Give the fake a tick to emit stale-primary before we interrupt.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.deepEqual(
+        await runtime.appendToActiveRun(await runtimeFollowupInput(runtime, first, followup, await loadState())),
+        { accepted: true, text: 'Grok follow-up applied (interrupts active prompt)' },
+      );
+      const finalText = (await withTimeout(runPromise, 3_000)).text ?? '';
+      assert.equal(finalText, 'interrupted-ok');
+      assert.ok(!finalText.includes('stale-primary'), finalText);
+      const calls = await readJsonLines(callsPath);
+      const methods = calls.filter((call) => typeof call['method'] === 'string').map((call) => call['method']);
+      assert.ok(methods.includes('session/cancel'));
+      const prompts = calls.filter((call) => call['method'] === 'session/prompt');
+      assert.equal(prompts.length, 2);
+      assertFollowupPrompt(promptText(prompts[1]), 'Interrupt now.');
+      // Cancel must land before the second prompt is issued.
+      const cancelIdx = methods.indexOf('session/cancel');
+      const secondPromptIdx = methods.lastIndexOf('session/prompt');
+      assert.ok(cancelIdx >= 0 && secondPromptIdx > cancelIdx);
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('grok-cli operator stop ends the active run (follow-up interrupt may have already cancelled primary)', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-grok-cancel-followup-'));
   let runtime: AgentRuntime | undefined;
   let worker: AgentRuntimeWorker | undefined;
@@ -959,7 +1042,15 @@ test('grok-cli abort never starts a queued follow-up after session/cancel', asyn
 
       const calls = await readJsonLines(callsPath);
       const methods = calls.filter((call) => typeof call['method'] === 'string').map((call) => call['method']);
-      assert.deepEqual(methods, ['initialize', 'session/new', 'session/prompt', 'session/cancel']);
+      // Follow-up append interrupts the primary prompt (cancel) and may start a second prompt
+      // before operator stop cancels again. No third prompt after the final stop.
+      assert.ok(methods.includes('session/cancel'));
+      assert.equal(methods[0], 'initialize');
+      assert.equal(methods[1], 'session/new');
+      assert.equal(methods[2], 'session/prompt');
+      const promptCount = methods.filter((m) => m === 'session/prompt').length;
+      assert.ok(promptCount <= 2, `unexpected prompts: ${methods.join(',')}`);
+      assert.equal(methods.at(-1), 'session/cancel');
       const activities = allActivities(await loadState());
       assert.equal(
         activities.find((activity) => activity.type === 'runtime.aborted')?.payload?.['reason'],
