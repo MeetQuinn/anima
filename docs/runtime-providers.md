@@ -432,8 +432,11 @@ Current process model:
 - Fresh work uses `session/new`; a stored provider session uses Grok's supported `session/load`.
   A confirmed missing session falls back to `session/new`. Anima does not emulate unsupported fork
   or resume-prompt operations.
-- Each item uses `session/prompt`; compatible follow-ups are queued into that same ACP session.
-  Cancellation sends `session/cancel` before Anima tears down the child.
+- Each item uses `session/prompt`. Compatible follow-ups are accepted on the same ACP session;
+  if a prompt is already in flight, Anima sends `session/cancel` first so the follow-up starts
+  immediately (not after the prior prompt's natural `end_turn`). Operator stop still cancels and
+  drops any not-yet-run follow-ups.
+  Full stop also sends `session/cancel` before Anima tears down the child.
 - If the child exits mid-turn, the worker records `provider.crash.retry` and retries the same inbox
   item. The persisted session is loaded again; the interrupted prompt is not assumed durable.
   Follow-ups already accepted for that item are retained across child replacement and reach the
