@@ -916,6 +916,8 @@ test('grok-cli mid-turn follow-up cancels active prompt then runs the follow-up 
         '      promptCount += 1;',
         '      if (promptCount === 1) {',
         '        pendingPromptId = msg.id;',
+        "        // Emit assistant text before cancel — must not leak into final reply.",
+        "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'stale-primary' } });",
         '        // Hold open until cancel — never end_turn on primary.',
         '      } else {',
         "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'interrupted-ok' } });",
@@ -934,11 +936,15 @@ test('grok-cli mid-turn follow-up cancels active prompt then runs the follow-up 
       });
       const runPromise = runtime.run(await runtimeInput(runtime, first, await loadState()));
       await waitFor(() => readFile(callsPath, 'utf8').then((value) => value.includes('session/prompt')));
+      // Give the fake a tick to emit stale-primary before we interrupt.
+      await new Promise((resolve) => setTimeout(resolve, 20));
       assert.deepEqual(
         await runtime.appendToActiveRun(await runtimeFollowupInput(runtime, first, followup, await loadState())),
         { accepted: true, text: 'Grok follow-up applied (interrupts active prompt)' },
       );
-      assert.equal((await withTimeout(runPromise, 3_000)).text, 'interrupted-ok');
+      const finalText = (await withTimeout(runPromise, 3_000)).text ?? '';
+      assert.equal(finalText, 'interrupted-ok');
+      assert.ok(!finalText.includes('stale-primary'), finalText);
       const calls = await readJsonLines(callsPath);
       const methods = calls.filter((call) => typeof call['method'] === 'string').map((call) => call['method']);
       assert.ok(methods.includes('session/cancel'));

@@ -382,6 +382,9 @@ class GrokAcpController {
       userInputLength: prompt.length,
     });
     const sourceId = `${this.sessionId}:${this.usageCaptureId}:prompt:${++this.usageSequence}`;
+    // Assistant chunks stream into turn.text; if this prompt is cancelled for a
+    // mid-turn follow-up, discard only the chunks produced by this prompt.
+    const textCheckpoint = turn.text.length;
     let result: Record<string, unknown> | undefined;
     this.promptInFlight = true;
     try {
@@ -390,6 +393,9 @@ class GrokAcpController {
         sessionId: this.sessionId,
       });
     } catch (error) {
+      turn.text.length = textCheckpoint;
+      this.activeToolIds.clear();
+      this.pendingTools.clear();
       await turn.input.effects.recordUsage(providerUsageFromStats(
         sourceId,
         this.latestUsage,
@@ -400,6 +406,13 @@ class GrokAcpController {
       this.promptInFlight = false;
     }
     this.captureModelAuthority(result);
+    const stopReason = stringField(result, 'stopReason');
+    if (stopReason === 'cancelled') {
+      // Do not leak cancelled-prompt assistant text into the follow-up Slack reply.
+      turn.text.length = textCheckpoint;
+      this.activeToolIds.clear();
+      this.pendingTools.clear();
+    }
     const usage = acpUsagePayload(result);
     if (usage) {
       const model = grokResultModel(result) ?? this.actualModel;
@@ -416,7 +429,7 @@ class GrokAcpController {
         eventType: 'grok.context.stats',
         ...(model ? { model } : {}),
         runtimeKind: GROK_RUNTIME_KIND,
-        terminalReason: stringField(result, 'stopReason'),
+        terminalReason: stopReason,
       });
     }
     await turn.input.effects.recordUsage(providerUsageFromStats(
@@ -427,7 +440,7 @@ class GrokAcpController {
     await turn.input.effects.recordEvent({
       eventType: 'grok.turn.completed',
       runtimeKind: GROK_RUNTIME_KIND,
-      terminalReason: stringField(result, 'stopReason'),
+      terminalReason: stopReason,
       transport: 'acp',
     });
   }
