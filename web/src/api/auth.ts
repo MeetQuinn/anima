@@ -14,6 +14,8 @@ export function loginDashboard(password: string): Promise<{ authenticated: boole
   return apiRequest('/api/auth/login', jsonInit('POST', { password }));
 }
 
-export function logoutDashboard(): Promise<{ ok: boolean }> {
-  return apiRequest('/api/auth/logout', jsonInit('POST'));
-}
+// No logout counterpart on purpose. The dashboard is machine-local, so the
+// security boundary is the machine and not the browser session: closing the tab
+// or stopping the server is the logout (iris, `1786086839.466209`). If remote
+// access ever lands, logout becomes a real requirement and gets designed from
+// the threat model up rather than resurrected from a stub.

@@ -2,13 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AlertCircle, Bell, ChevronDown } from 'lucide-react';
 import type { SurfaceChip } from '@/lib/activity-feed';
 
-export const COLOR_INBOUND = 'var(--color-activity-inbound)';
 export const COLOR_OUTBOUND = 'var(--color-activity-outbound)';
-// Reminder wakes share the inbound register (they are wake sources, parallel
-// to a Slack message arriving — iris framing `1779213328.332169`) but use
-// the aubergine reminder hue instead of the muted teal so the user can
-// tell "scheduler woke me" apart from "person messaged me" at a glance.
-export const COLOR_REMINDER = 'var(--color-activity-reminder)';
 
 export function SurfaceText({ chip }: { chip: SurfaceChip }) {
   // channel/thread/dm labels already carry their kind marker in text

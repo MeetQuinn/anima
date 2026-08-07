@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/u
 import ConfirmModal from '@/components/ConfirmModal';
 import DirectoryPicker from '@/components/DirectoryPicker';
 import { EditAffordance, ErrorHint, Field, SavedHint } from './Primitives';
-import { ANIMA_MANAGED_PROVIDER_ENV_KEYS, type AgentProviderConfig } from '@shared/agent-config';
+import { ANIMA_MANAGED_PROVIDER_ENV_KEYS } from '@shared/agent-config';
 import type { TeamConfig } from '@shared/server-settings';
 import {
   effortOptionsForSelectedModel,
@@ -999,23 +999,4 @@ function envPatchFromDraft(rows: EnvDraftRow[]): { patch: Record<string, string 
     if (value) patch[key] = value;
   }
   return { patch };
-}
-
-// ── Provider helpers ──────────────────────────────────────────────────────────
-
-export function modelOptionsFor(provider: AgentProviderConfig, providerOptions: ProviderCatalogEntry[]): string[] {
-  const catalogModels = providerOptions.find((option) => option.kind === provider.kind)?.models ?? [];
-  return [...catalogModels, provider.model].filter((m): m is string => Boolean(m));
-}
-
-export function effortOptionsFor(
-  provider: AgentProviderConfig,
-  providerOptions: ProviderCatalogEntry[],
-  availability?: ProviderAvailability[] | null,
-): string[] {
-  const entry = providerOptions.find((option) => option.kind === provider.kind);
-  const catalogEfforts = effortOptionsForSelectedModel(entry, provider.model, availability);
-  if (catalogEfforts.length === 0) return [];
-  const providerEffort = 'reasoningEffort' in provider ? provider.reasoningEffort : undefined;
-  return [...catalogEfforts, providerEffort].filter((effort): effort is string => Boolean(effort));
 }

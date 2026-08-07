@@ -76,6 +76,12 @@
   --color-activity-inbound: #2d6b6f; /* muted teal — message received */
   --color-activity-outbound: var(--color-accent); /* accent — our voice */
   --color-activity-tool: #6a655c; /* warm grey — tool call */
+  /* Reminder wakes share the inbound register (they are wake sources, parallel
+     to a Slack message arriving — iris framing `1779213328.332169`) but use the
+     aubergine hue instead of the muted teal so the user can tell "scheduler woke
+     me" apart from "person messaged me" at a glance. Consumers write this token
+     as a literal `var(...)` string in `lib/activities.ts`, so the rationale
+     lives here at the definition rather than beside any one caller. */
   --color-activity-reminder: #6b3a52; /* aubergine — reminder fired */
   --color-activity-subscription: #3b4d6a; /* slate-indigo — subscription */
 

@@ -354,7 +354,7 @@ export default function MobileNavScreen({
         </button>
         <button
           onClick={() => setUsagePanelOpen(true)}
-          title={providerUpdateAvailable ? 'Providers — update available' : 'Providers'}
+          title={providerUpdateAvailable ? 'Providers: update available' : 'Providers'}
           className="chrome flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-sm px-2.5 text-[11px] uppercase tracking-[0.1em] text-text-on-spine-muted transition-colors hover:bg-spine-elevated hover:text-text-on-spine"
         >
           <Gauge className="h-3.5 w-3.5" />
@@ -365,7 +365,7 @@ export default function MobileNavScreen({
         </button>
         <button
           onClick={() => setServerPanelOpen(true)}
-          title={updateAvailable ? 'Server — update available' : 'Server status & restart'}
+          title={updateAvailable ? 'Server: update available' : 'Server status & restart'}
           className="chrome flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-sm px-2.5 text-[11px] uppercase tracking-[0.1em] text-text-on-spine-muted transition-colors hover:bg-spine-elevated hover:text-text-on-spine"
         >
           <Server className="h-3.5 w-3.5" />
