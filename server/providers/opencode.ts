@@ -6,6 +6,14 @@ import { truncateForActivity } from '../activities/format.js';
 import { type RunningChildProcess } from './child-process.js';
 import { providerUsageFromStats } from './provider-usage.js';
 import { AcpJsonRpcError, AcpJsonRpcPeer } from './acp-json-rpc.js';
+import {
+  acpFollowupAppliedText,
+  appendAcpFollowupPrompt,
+  discardAcpPromptPartialText,
+  drainAcpTurnQueue,
+  rollbackCancelledAcpPromptText,
+  withAcpPromptInFlight,
+} from './acp-midturn-followup.js';
 import { exposedReasoningEvent } from './reasoning-events.js';
 import { ControllerAgentRuntime } from './provider-runtime.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
@@ -100,7 +108,7 @@ export class OpenCodeCliAgentRuntime extends ControllerAgentRuntime<OpenCodeAcpC
     const controller = this.slot.get();
     if (!this.activeRun.accepts(input)) return { accepted: false };
     if (!controller?.appendPrompt(input.prompt)) return { accepted: false };
-    return { accepted: true, text: 'queued for OpenCode ACP session' };
+    return { accepted: true, text: acpFollowupAppliedText('OpenCode') };
   }
 
   private async ensureController(input: AgentRuntimeInput): Promise<OpenCodeAcpController> {
@@ -168,6 +176,8 @@ class OpenCodeAcpController {
   private readonly quiescentWaiters = new QuiescentWaiterSet();
   private readonly rpc: AcpJsonRpcPeer;
   private turnCompletion?: Promise<string>;
+  /** True while a session/prompt RPC is outstanding. */
+  private promptInFlight = false;
   readonly completion: Promise<{ stdout: string; stderr: string }>;
   sessionId = '';
 
@@ -243,10 +253,13 @@ class OpenCodeAcpController {
   }
 
   appendPrompt(prompt: string): boolean {
-    const turn = this.currentTurn;
-    if (!turn?.acceptingFollowups) return false;
-    turn.followups.push(prompt);
-    return true;
+    return appendAcpFollowupPrompt({
+      cancelSession: (sessionId) => this.rpc.notify('session/cancel', { sessionId }),
+      prompt,
+      promptInFlight: this.promptInFlight,
+      sessionId: this.sessionId || undefined,
+      turn: this.currentTurn,
+    });
   }
 
   acceptStdoutChunk(chunk: string): Promise<void> {
@@ -348,12 +361,11 @@ class OpenCodeAcpController {
   private async runTurnQueue(firstPrompt: string): Promise<void> {
     const turn = this.currentTurn;
     if (!turn) return;
-    let prompt: string | undefined = firstPrompt;
-    while (prompt !== undefined) {
-      await this.runOnePrompt(turn, prompt);
-      prompt = turn.followups.shift();
-    }
-    turn.acceptingFollowups = false;
+    await drainAcpTurnQueue({
+      firstPrompt,
+      runOnePrompt: (prompt) => this.runOnePrompt(turn, prompt),
+      turn,
+    });
     await this.finishCurrentTurn();
   }
 
@@ -366,19 +378,35 @@ class OpenCodeAcpController {
       userInputLength: prompt.length,
     });
     const sourceId = `${this.sessionId}:${this.usageCaptureId}:prompt:${++this.usageSequence}`;
+    // Assistant chunks stream into turn.text; if this prompt is cancelled for a
+    // mid-turn follow-up, discard only the chunks produced by this prompt.
+    const textCheckpoint = turn.text.length;
     let result: Record<string, unknown> | undefined;
     try {
-      result = await this.rpc.request('session/prompt', {
-        prompt: [{ text: prompt, type: 'text' }],
-        sessionId: this.sessionId,
-      });
+      result = await withAcpPromptInFlight(
+        (value) => {
+          this.promptInFlight = value;
+        },
+        () => this.rpc.request('session/prompt', {
+          prompt: [{ text: prompt, type: 'text' }],
+          sessionId: this.sessionId,
+        }),
+      );
     } catch (error) {
+      discardAcpPromptPartialText(turn, textCheckpoint);
+      this.activeToolIds.clear();
+      this.pendingTools.clear();
       await turn.input.effects.recordUsage(providerUsageFromStats(
         sourceId,
         this.latestUsage,
         { model: this.configuredModel },
       ));
       throw error;
+    }
+    const stopReason = stringField(result, 'stopReason');
+    if (rollbackCancelledAcpPromptText(turn, textCheckpoint, stopReason)) {
+      this.activeToolIds.clear();
+      this.pendingTools.clear();
     }
     const usage = acpUsagePayload(result);
     if (usage) {
@@ -387,7 +415,7 @@ class OpenCodeAcpController {
         ...usage,
         eventType: 'opencode.context.stats',
         runtimeKind: OPENCODE_RUNTIME_KIND,
-        terminalReason: stringField(result, 'stopReason'),
+        terminalReason: stopReason,
       });
     }
     await turn.input.effects.recordUsage(providerUsageFromStats(
@@ -398,7 +426,7 @@ class OpenCodeAcpController {
     await turn.input.effects.recordEvent({
       eventType: 'opencode.turn.completed',
       runtimeKind: OPENCODE_RUNTIME_KIND,
-      terminalReason: stringField(result, 'stopReason'),
+      terminalReason: stopReason,
       transport: 'acp',
     });
   }
