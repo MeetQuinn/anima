@@ -144,7 +144,7 @@ test('opencode-cli ACP uses global DeepSeek auth, selects the model, and appends
         await runtime.appendToActiveRun(
           await runtimeFollowupInput(runtime, firstCtx, secondCtx, await loadState()),
         ),
-        { accepted: true, text: 'queued for OpenCode ACP session' },
+        { accepted: true, text: 'OpenCode follow-up applied (interrupts active prompt)' },
       );
       assert.equal((await withTimeout(runPromise, 2_000)).text, 'handled first + appended');
 
@@ -456,6 +456,99 @@ test('opencode-cli sends ACP cancel before tearing down an aborted turn', async 
       const cancel = (await readJsonLines(callsPath)).find((call) => call.method === 'session/cancel');
       assert.deepEqual(cancel?.params, { sessionId: 'opencode-session-cancel' });
       assert.equal('id' in (cancel ?? {}), false);
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('opencode-cli mid-turn follow-up cancels active prompt then runs the follow-up immediately', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-opencode-interrupt-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      await installFakeOpenCode(stateDir, [
+        "const fs = require('fs');",
+        "process.stdin.setEncoding('utf8');",
+        "let buffer = '';",
+        'let pendingPromptId;',
+        'let promptCount = 0;',
+        "function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }",
+        "function update(value) { send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'opencode-session-interrupt', update: value } }); }",
+        "process.stdin.on('data', (chunk) => {",
+        '  buffer += chunk;',
+        '  const lines = buffer.split(/\\r?\\n/);',
+        "  buffer = lines.pop() || '';",
+        '  for (const line of lines) {',
+        '    if (!line.trim()) continue;',
+        '    const msg = JSON.parse(line);',
+        "    fs.appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + '\\n');",
+        "    if (msg.method === 'initialize') {",
+        "      send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentInfo: { name: 'OpenCode', version: '1.18.4' }, agentCapabilities: { loadSession: true } } });",
+        '      continue;',
+        '    }',
+        "    if (msg.method === 'session/new') {",
+        "      send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'opencode-session-interrupt' } });",
+        '      continue;',
+        '    }',
+        "    if (msg.method === 'session/set_config_option') {",
+        "      send({ jsonrpc: '2.0', id: msg.id, result: {} });",
+        '      continue;',
+        '    }',
+        "    if (msg.method === 'session/cancel') {",
+        '      if (pendingPromptId !== undefined) {',
+        "        send({ jsonrpc: '2.0', id: pendingPromptId, result: { stopReason: 'cancelled' } });",
+        '        pendingPromptId = undefined;',
+        '      }',
+        '      continue;',
+        '    }',
+        "    if (msg.method === 'session/prompt') {",
+        '      promptCount += 1;',
+        '      if (promptCount === 1) {',
+        '        pendingPromptId = msg.id;',
+        "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'stale-primary' } });",
+        '      } else {',
+        "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'interrupted-ok' } });",
+        "        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });",
+        '      }',
+        '    }',
+        '  }',
+        '});',
+      ]);
+
+      const firstCtx = await ingestOpenCodeEvent(stateDir, 'Start long OpenCode work.', '1785000090.000001');
+      const followupCtx = await ingestOpenCodeEvent(stateDir, 'Interrupt now.', '1785000090.000002');
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'opencode-cli',
+        model: 'deepseek/deepseek-v4-pro',
+      });
+      const runPromise = runtime.run(await runtimeInput(runtime, firstCtx, await loadState()));
+      await waitFor(() => readFile(callsPath, 'utf8').then((text) => text.includes('"method":"session/prompt"')));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.deepEqual(
+        await runtime.appendToActiveRun(
+          await runtimeFollowupInput(runtime, firstCtx, followupCtx, await loadState()),
+        ),
+        { accepted: true, text: 'OpenCode follow-up applied (interrupts active prompt)' },
+      );
+      const finalText = (await withTimeout(runPromise, 3_000)).text ?? '';
+      assert.equal(finalText, 'interrupted-ok');
+      assert.ok(!finalText.includes('stale-primary'), finalText);
+      const calls = await readJsonLines(callsPath);
+      const methods = calls
+        .filter((call) => typeof call.method === 'string')
+        .map((call) => call.method as string);
+      assert.ok(methods.includes('session/cancel'));
+      const prompts = calls.filter((call) => call.method === 'session/prompt');
+      assert.equal(prompts.length, 2);
+      const secondPrompt = ((prompts[1]?.params as Record<string, unknown>)?.prompt as Array<{ text?: string }>)[0]?.text ?? '';
+      assertFollowupPrompt(secondPrompt, 'Interrupt now.');
+      const cancelIdx = methods.indexOf('session/cancel');
+      const secondPromptIdx = methods.lastIndexOf('session/prompt');
+      assert.ok(cancelIdx >= 0 && secondPromptIdx > cancelIdx);
     });
   } finally {
     await runtime?.close?.();

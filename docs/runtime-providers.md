@@ -418,8 +418,12 @@ Active-run follow-up:
 
 - `appendToActiveRun` is accepted only when the requested active item matches the adapter's
   current active item;
-- accepted input is queued into the live ACP session, and `kimi.steer.consumed` records when the
-  session actually takes it.
+- compatible follow-ups are accepted on the same ACP session; if a prompt is already in flight,
+  Anima sends `session/cancel` first so the follow-up starts immediately (not after the prior
+  prompt's natural `end_turn`). Cancelled-prompt assistant chunks are rolled back so they do not
+  join the final reply. Operator stop still cancels and drops any not-yet-run follow-ups.
+  Shared policy: `server/providers/acp-midturn-followup.ts`.
+- `kimi.steer.consumed` records when the session actually takes a follow-up.
 
 ## Grok Build Adapter
 
@@ -432,10 +436,11 @@ Current process model:
 - Fresh work uses `session/new`; a stored provider session uses Grok's supported `session/load`.
   A confirmed missing session falls back to `session/new`. Anima does not emulate unsupported fork
   or resume-prompt operations.
-- Each item uses `session/prompt`. Compatible follow-ups are accepted on the same ACP session;
-  if a prompt is already in flight, Anima sends `session/cancel` first so the follow-up starts
-  immediately (not after the prior prompt's natural `end_turn`). Operator stop still cancels and
-  drops any not-yet-run follow-ups.
+- Each item uses `session/prompt`. Compatible follow-ups use the shared ACP mid-turn interrupt
+  policy (`server/providers/acp-midturn-followup.ts`): if a prompt is already in flight, Anima
+  sends `session/cancel` first so the follow-up starts immediately (not after the prior prompt's
+  natural `end_turn`). Cancelled-prompt assistant chunks are rolled back. Operator stop still
+  cancels and drops any not-yet-run follow-ups.
   Full stop also sends `session/cancel` before Anima tears down the child.
 - If the child exits mid-turn, the worker records `provider.crash.retry` and retries the same inbox
   item. The persisted session is loaded again; the interrupted prompt is not assumed durable.
@@ -508,8 +513,11 @@ Current process model:
   prompt with `session/set_config_option` using `configId: "model"`.
 - Optional `reasoningEffort` (`high` or `max`) is then applied before the first prompt with
   `session/set_config_option` using `configId: "effort"`.
-- Each item uses `session/prompt`. Compatible follow-ups are queued into the same ACP session, and
-  cancellation sends `session/cancel` before Anima tears down the child.
+- Each item uses `session/prompt`. Compatible follow-ups use the shared ACP mid-turn interrupt
+  policy (`server/providers/acp-midturn-followup.ts`): if a prompt is already in flight, Anima
+  sends `session/cancel` first so the follow-up starts immediately. Cancelled-prompt assistant
+  chunks are rolled back. Operator cancellation sends `session/cancel` before Anima tears down
+  the child.
 - ACP thinking, assistant text, usage, tool calls, tool failures, and permission requests are mapped
   into the same Anima activity and health surfaces as the other providers.
 
@@ -517,10 +525,13 @@ Anima currently exposes `deepseek/deepseek-v4-pro` and `deepseek/deepseek-v4-fla
 Both support `high` and `max` effort. The retired `deepseek-chat` and `deepseek-reasoner` aliases
 are not accepted for new agent configuration.
 
-OpenCode, Kimi, and Grok all use ACP, but their session and event contracts are provider-specific.
-`server/providers/acp-json-rpc.ts` shares only newline framing, JSON-RPC request correlation, and
-request/notification routing. Session methods, permission policy, model selection, and activity
-mapping remain in each adapter.
+OpenCode, Kimi, and Grok all use ACP, but most of their session and event contracts are
+provider-specific. Shared pieces:
+- `server/providers/acp-json-rpc.ts`: newline framing, JSON-RPC request correlation, and
+  request/notification routing;
+- `server/providers/acp-midturn-followup.ts`: mid-turn follow-up interrupt via `session/cancel`
+  and cancelled-prompt text isolation.
+Session methods, permission policy, model selection, and activity mapping remain in each adapter.
 
 ## Agent Activities
 

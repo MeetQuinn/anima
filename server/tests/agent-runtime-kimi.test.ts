@@ -131,7 +131,7 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
       await waitFor(() => readFile(callsPath, 'utf8').then((text) => text.includes('"method":"session/prompt"')));
       assert.deepEqual(
         await runtime.appendToActiveRun(await runtimeFollowupInput(runtime, firstCtx, secondCtx, await loadState())),
-        { accepted: true, text: 'queued for Kimi ACP session' },
+        { accepted: true, text: 'Kimi follow-up applied (interrupts active prompt)' },
       );
       assert.equal((await withTimeout(runPromise, 1_000)).text, 'handled first + appended');
       assert.equal(runtime.health?.().child?.version, '0.9.0');
@@ -415,6 +415,125 @@ test('kimi-cli ACP falls back to a new session when resume session is missing', 
         && activity.payload?.['eventType'] === 'kimi.session.resume_missing'
         && (activity.payload?.['providerSession'] as { id?: string } | undefined)?.id === 'kimi-session-stale'
       ));
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('kimi-cli mid-turn follow-up cancels active prompt then runs the follow-up immediately', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-kimi-interrupt-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'kimi-interrupt-calls.jsonl');
+      const fakeKimi = join(stateDir, 'kimi');
+      await writeFile(
+        fakeKimi,
+        [
+          '#!/usr/bin/env node',
+          "const fs = require('fs');",
+          "process.stdin.setEncoding('utf8');",
+          "let buffer = '';",
+          'let pendingPromptId;',
+          'let promptCount = 0;',
+          'function send(message) { process.stdout.write(JSON.stringify(message) + "\\n"); }',
+          'function update(update) { send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "kimi-session-interrupt", update } }); }',
+          'process.stdin.on("data", (chunk) => {',
+          '  buffer += chunk;',
+          '  const lines = buffer.split(/\\r?\\n/);',
+          '  buffer = lines.pop() || "";',
+          '  for (const line of lines) {',
+          '    if (!line.trim()) continue;',
+          '    const msg = JSON.parse(line);',
+          '    fs.appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + "\\n");',
+          '    if (msg.method === "initialize") {',
+          '      send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, serverInfo: { name: "Kimi Code CLI", version: "0.9.0" }, agentCapabilities: { loadSession: true } } });',
+          '      continue;',
+          '    }',
+          '    if (msg.method === "session/new") {',
+          '      send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "kimi-session-interrupt" } });',
+          '      continue;',
+          '    }',
+          '    if (msg.method === "session/set_model" || msg.method === "session/set_config_option") {',
+          '      send({ jsonrpc: "2.0", id: msg.id, result: {} });',
+          '      continue;',
+          '    }',
+          '    if (msg.method === "session/cancel") {',
+          '      if (pendingPromptId !== undefined) {',
+          '        send({ jsonrpc: "2.0", id: pendingPromptId, result: { stopReason: "cancelled" } });',
+          '        pendingPromptId = undefined;',
+          '      }',
+          '      continue;',
+          '    }',
+          '    if (msg.method === "session/prompt") {',
+          '      promptCount += 1;',
+          '      if (promptCount === 1) {',
+          '        pendingPromptId = msg.id;',
+          '        update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "stale-primary" } });',
+          '      } else {',
+          '        update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "interrupted-ok" } });',
+          '        send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });',
+          '      }',
+          '    }',
+          '  }',
+          '});',
+        ].join('\n'),
+        'utf8',
+      );
+      await chmod(fakeKimi, 0o755);
+
+      const firstCtx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-kimi-interrupt',
+          teamId: 'T-demo',
+          text: 'Start long Kimi work.',
+          ts: '1771000090.000001',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+      const followupCtx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-kimi-interrupt',
+          teamId: 'T-demo',
+          text: 'Interrupt now.',
+          ts: '1771000090.000002',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, {
+          CALLS_PATH: callsPath,
+          KIMI_CODE_HOME: join(stateDir, 'kimi-home'),
+        }),
+        kind: 'kimi-cli',
+        model: 'kimi-code/k3',
+      });
+      const runPromise = runtime.run(await runtimeInput(runtime, firstCtx, await loadState()));
+      await waitFor(() => readFile(callsPath, 'utf8').then((text) => text.includes('"method":"session/prompt"')));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.deepEqual(
+        await runtime.appendToActiveRun(await runtimeFollowupInput(runtime, firstCtx, followupCtx, await loadState())),
+        { accepted: true, text: 'Kimi follow-up applied (interrupts active prompt)' },
+      );
+      const finalText = (await withTimeout(runPromise, 3_000)).text ?? '';
+      assert.equal(finalText, 'interrupted-ok');
+      assert.ok(!finalText.includes('stale-primary'), finalText);
+      const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) =>
+        JSON.parse(line) as { method?: string; params?: { prompt?: Array<{ text?: string }> } },
+      );
+      const methods = calls.map((call) => call.method).filter((method): method is string => typeof method === 'string');
+      assert.ok(methods.includes('session/cancel'));
+      const prompts = calls.filter((call) => call.method === 'session/prompt');
+      assert.equal(prompts.length, 2);
+      assertFollowupPrompt(prompts[1]?.params?.prompt?.[0]?.text ?? '', 'Interrupt now.');
+      const cancelIdx = methods.indexOf('session/cancel');
+      const secondPromptIdx = methods.lastIndexOf('session/prompt');
+      assert.ok(cancelIdx >= 0 && secondPromptIdx > cancelIdx);
     });
   } finally {
     await runtime?.close?.();

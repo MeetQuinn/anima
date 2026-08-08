@@ -12,6 +12,14 @@ import { withProviderCliLaunchPermit } from '../provider-cli/launch-gate.js';
 import { defaultProviderContextLimitService } from '../provider-context/provider-context-limit.service.js';
 import { providerUsageFromStats } from './provider-usage.js';
 import {
+  acpFollowupAppliedText,
+  appendAcpFollowupPrompt,
+  discardAcpPromptPartialText,
+  drainAcpTurnQueue,
+  rollbackCancelledAcpPromptText,
+  withAcpPromptInFlight,
+} from './acp-midturn-followup.js';
+import {
   providerSessionPayload,
   type AgentRuntimeFollowupInput,
   type AgentRuntimeFollowupResult,
@@ -100,7 +108,7 @@ export class GrokCliAgentRuntime extends ControllerAgentRuntime<GrokAcpControlle
     if (!this.activeRun.accepts(input)) return { accepted: false };
     if (!controller) return { accepted: false };
     if (!controller.appendPrompt(input.prompt)) return { accepted: false };
-    return { accepted: true, text: 'Grok follow-up applied (interrupts active prompt)' };
+    return { accepted: true, text: acpFollowupAppliedText('Grok') };
   }
 
   private followupsForItem(itemId: string): string[] {
@@ -265,15 +273,13 @@ class GrokAcpController {
   }
 
   appendPrompt(prompt: string): boolean {
-    const turn = this.currentTurn;
-    if (!turn) return false;
-    if (!turn.acceptingFollowups) return false;
-    turn.followups.push(prompt);
-    // Interrupt in-flight session/prompt so follow-ups take effect immediately.
-    if (this.promptInFlight && this.sessionId) {
-      this.notify('session/cancel', { sessionId: this.sessionId });
-    }
-    return true;
+    return appendAcpFollowupPrompt({
+      cancelSession: (sessionId) => this.notify('session/cancel', { sessionId }),
+      prompt,
+      promptInFlight: this.promptInFlight,
+      sessionId: this.sessionId || undefined,
+      turn: this.currentTurn,
+    });
   }
 
   async acceptStdoutChunk(chunk: string): Promise<void> {
@@ -362,14 +368,11 @@ class GrokAcpController {
   private async runTurnQueue(firstPrompt: string): Promise<void> {
     const turn = this.currentTurn;
     if (!turn) return;
-    // Mid-turn appendPrompt cancels the in-flight prompt; after that RPC settles we
-    // immediately run the next follow-up instead of waiting for a natural end_turn.
-    let next: string | undefined = firstPrompt;
-    while (next !== undefined && !turn.input.signal?.aborted) {
-      await this.runOnePrompt(turn, next);
-      next = turn.followups.length > 0 ? turn.followups.shift() : undefined;
-    }
-    turn.acceptingFollowups = false;
+    await drainAcpTurnQueue({
+      firstPrompt,
+      runOnePrompt: (prompt) => this.runOnePrompt(turn, prompt),
+      turn,
+    });
     await this.finishCurrentTurn();
   }
 
@@ -386,14 +389,18 @@ class GrokAcpController {
     // mid-turn follow-up, discard only the chunks produced by this prompt.
     const textCheckpoint = turn.text.length;
     let result: Record<string, unknown> | undefined;
-    this.promptInFlight = true;
     try {
-      result = await this.request('session/prompt', {
-        prompt: [{ text: prompt, type: 'text' }],
-        sessionId: this.sessionId,
-      });
+      result = await withAcpPromptInFlight(
+        (value) => {
+          this.promptInFlight = value;
+        },
+        () => this.request('session/prompt', {
+          prompt: [{ text: prompt, type: 'text' }],
+          sessionId: this.sessionId,
+        }),
+      );
     } catch (error) {
-      turn.text.length = textCheckpoint;
+      discardAcpPromptPartialText(turn, textCheckpoint);
       this.activeToolIds.clear();
       this.pendingTools.clear();
       await turn.input.effects.recordUsage(providerUsageFromStats(
@@ -402,14 +409,10 @@ class GrokAcpController {
         { model: this.actualModel ?? this.configuredModel },
       ));
       throw error;
-    } finally {
-      this.promptInFlight = false;
     }
     this.captureModelAuthority(result);
     const stopReason = stringField(result, 'stopReason');
-    if (stopReason === 'cancelled') {
-      // Do not leak cancelled-prompt assistant text into the follow-up Slack reply.
-      turn.text.length = textCheckpoint;
+    if (rollbackCancelledAcpPromptText(turn, textCheckpoint, stopReason)) {
       this.activeToolIds.clear();
       this.pendingTools.clear();
     }
