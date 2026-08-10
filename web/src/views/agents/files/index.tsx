@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, Search, X } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { fetchAgentHomeFile, fetchAgentHomeManifest } from '@/api/agent-files';
+import { fetchAgentHomeDirectory, fetchAgentHomeFile } from '@/api/agent-files';
 import type { AgentHomeEntry } from '@/api/agent-files';
 import { buildAgentFilePath, buildAgentFileRawPath } from '@/lib/url-state';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
@@ -23,54 +23,20 @@ import {
 import type { FileLinks, ViewMode } from '../../kb/FileViewer';
 
 // ---------------------------------------------------------------------------
-// Flat manifest → nested tree
-//
-// The backend sends a flat, recursive entry list (one node per file and dir,
-// home-relative POSIX paths). We nest it client-side so the KB TreeRow — which
-// consumes a KbTreeNode — renders it verbatim, then reorder the root level to
-// the presentation order the spec asks for (MEMORY.md → notes/ → rest).
+// Shallow directory listing → tree nodes (one level). Children of expanded
+// dirs are loaded by AgentHomeDirectoryRows, matching the KB browser's
+// lazy directory pattern so huge homes (worktrees / node_modules) stay usable.
 // ---------------------------------------------------------------------------
 
-function buildTree(entries: AgentHomeEntry[]): KbTreeNode[] {
-  const nodes = new Map<string, KbTreeNode>();
-  for (const e of entries) {
-    nodes.set(e.path, {
-      name: e.name,
-      path: e.path,
-      type: e.kind === 'dir' ? 'dir' : 'file',
-      ...(e.mtime ? { mtime: e.mtime } : {}),
-      ...(e.kind === 'dir' ? { children: [] as KbTreeNode[] } : {}),
-    });
-  }
-  const roots: KbTreeNode[] = [];
-  for (const e of entries) {
-    const node = nodes.get(e.path)!;
-    const slash = e.path.lastIndexOf('/');
-    const parent = slash < 0 ? undefined : nodes.get(e.path.slice(0, slash));
-    // Attach to parent dir when present; otherwise surface at root (top-level
-    // entries, or an orphan whose parent dir wasn't listed) rather than drop it.
-    if (parent && parent.children) parent.children.push(node);
-    else roots.push(node);
-  }
-  bubbleMtimes(roots);
-  return roots;
-}
-
-// Dir mtime = latest mtime among descendants (GitHub-style "latest change
-// inside"), matching the KB tree the server pre-bubbles. ISO 8601 UTC strings
-// share a fixed format, so lexicographic max is chronological max.
-function bubbleMtimes(nodes: KbTreeNode[]): string | undefined {
-  let latest: string | undefined;
-  for (const node of nodes) {
-    if (node.children) {
-      const childLatest = bubbleMtimes(node.children);
-      if (childLatest !== undefined) node.mtime = childLatest;
-    }
-    if (node.mtime !== undefined && (latest === undefined || node.mtime > latest)) {
-      latest = node.mtime;
-    }
-  }
-  return latest;
+function entryToNode(entry: AgentHomeEntry): KbTreeNode {
+  return {
+    name: entry.name,
+    path: entry.path,
+    type: entry.kind === 'dir' ? 'dir' : 'file',
+    ...(entry.mtime ? { mtime: entry.mtime } : {}),
+    // Omit children for dirs so matchesFilter treats them as not-yet-loaded
+    // (lazy rows use renderChildren instead of node.children).
+  };
 }
 
 function byDirsFirstThenName(a: KbTreeNode, b: KbTreeNode): number {
@@ -78,14 +44,8 @@ function byDirsFirstThenName(a: KbTreeNode, b: KbTreeNode): number {
   return a.name.localeCompare(b.name);
 }
 
-function sortRecursive(nodes: KbTreeNode[]): void {
-  nodes.sort(byDirsFirstThenName);
-  for (const n of nodes) if (n.children) sortRecursive(n.children);
-}
-
-// Root order is presentation, not data: MEMORY.md (the agent's memory) first,
-// notes/ (its durable knowledge) second, everything else after in the default
-// dirs-first-alphabetical order.
+// Root order is presentation, not data: MEMORY.md first, notes/ second,
+// everything else dirs-first-alphabetical.
 function orderRoot(nodes: KbTreeNode[]): KbTreeNode[] {
   const rank = (n: KbTreeNode): number => {
     if (n.type === 'file' && n.name === 'MEMORY.md') return 0;
@@ -99,22 +59,19 @@ function orderRoot(nodes: KbTreeNode[]): KbTreeNode[] {
   });
 }
 
-// ---------------------------------------------------------------------------
+function sortEntries(entries: AgentHomeEntry[]): KbTreeNode[] {
+  return entries.map(entryToNode).sort(byDirsFirstThenName);
+}
 
 // Expanded-dirs memory per agent — module-level so the tree survives the
-// component remounts that file navigation triggers, exactly like the KB
-// browser's expandedDirsByKb (views/kb/index.tsx). Without it, clicking a
-// file reset the tree to just the clicked file's ancestors, collapsing every
-// other open folder. Session-transient by design (not a durable preference).
+// component remounts that file navigation triggers (same as before).
 const expandedDirsByAgent = new Map<string, string[]>();
 
 function restoredExpandedDirs(agentId: string, filePath: string | null): Set<string> {
   const cached = expandedDirsByAgent.get(agentId);
   const expanded = new Set(cached ?? []);
   for (const ancestor of ancestorsOf(filePath)) expanded.add(ancestor);
-  // First visit only (no cache), no deep link: open notes/ by default so any
-  // note is two clicks (tab → note). Harmless if the dir is absent — TreeRow
-  // only expands what exists. Once a cached layout exists, respect it as-is.
+  // First visit only: open notes/ by default so any note is two clicks.
   if (!cached && !filePath) expanded.add('notes');
   return expanded;
 }
@@ -123,21 +80,122 @@ function cacheExpandedDirs(agentId: string, expanded: Set<string>): void {
   expandedDirsByAgent.set(agentId, [...expanded]);
 }
 
+// ---------------------------------------------------------------------------
+
+function useAgentHomeDirectory(agentId: string, dir: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.agentHomeFiles(agentId, dir),
+    queryFn: () => fetchAgentHomeDirectory(agentId, dir),
+    enabled,
+    refetchInterval: refetchIntervals.kbContent,
+  });
+}
+
+/** Lazy children for one expanded home directory. */
+function AgentHomeDirectoryRows({
+  agentId,
+  path,
+  depth,
+  expanded,
+  selectedPath,
+  filterQuery,
+  now,
+  onToggleDir,
+  onSelectFile,
+}: {
+  agentId: string;
+  path: string;
+  depth: number;
+  expanded: Set<string>;
+  selectedPath: string | null;
+  filterQuery?: string;
+  now: Date;
+  onToggleDir: (path: string) => void;
+  onSelectFile: (path: string) => void;
+}) {
+  // Always fetch when mounted: TreeRow only mounts us when the parent dir is open
+  // (or while filtering, when dirs auto-expand).
+  const query = useAgentHomeDirectory(agentId, path, true);
+  const nodes = useMemo(() => sortEntries(query.data?.entries ?? []), [query.data?.entries]);
+  const depthStyle = { '--tree-depth': depth } as React.CSSProperties;
+
+  if (query.isPending) {
+    return (
+      <div className="tree-row py-2 pr-3 font-sans text-[12px] text-text-subtle" style={depthStyle}>
+        Loading…
+      </div>
+    );
+  }
+  if (query.error) {
+    return (
+      <div
+        className="tree-row py-2 pr-3 font-sans text-[12px] text-health-error"
+        style={depthStyle}
+      >
+        {query.error instanceof Error ? query.error.message : String(query.error)}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {nodes.map((node) => (
+        <TreeRow
+          key={node.path}
+          node={node}
+          depth={depth}
+          expanded={expanded}
+          selectedPath={selectedPath}
+          filterQuery={filterQuery}
+          now={now}
+          onToggleDir={onToggleDir}
+          onSelectFile={onSelectFile}
+          renderChildren={(directory, childDepth) => (
+            <AgentHomeDirectoryRows
+              agentId={agentId}
+              path={directory.path}
+              depth={childDepth}
+              expanded={expanded}
+              selectedPath={selectedPath}
+              filterQuery={filterQuery}
+              now={now}
+              onToggleDir={onToggleDir}
+              onSelectFile={onSelectFile}
+            />
+          )}
+        />
+      ))}
+      {query.data?.truncated && (
+        <div
+          className="tree-row py-1.5 pr-3 font-sans text-[11px] text-text-subtle"
+          style={depthStyle}
+        >
+          Showing the first {query.data.entries.length.toLocaleString()} entries in this folder.
+        </div>
+      )}
+      {filterQuery &&
+        nodes.length > 0 &&
+        nodes.every((n) => !matchesFilter(n, filterQuery)) &&
+        !nodes.some((n) => n.type === 'dir') && (
+          <div
+            className="tree-row py-1.5 pr-3 font-sans text-[11px] text-text-subtle"
+            style={depthStyle}
+          >
+            No matches in this folder (expand other folders to search further).
+          </div>
+        )}
+    </>
+  );
+}
+
 export default function AgentFiles() {
   const { agentId, '*': splat } = useParams<{ agentId: string; '*'?: string }>();
   const filePath = splat || null;
   if (!agentId) return null;
-  // Reset all per-agent view state when switching agents.
   return <AgentFilesContent key={agentId} agentId={agentId} filePath={filePath} />;
 }
 
-function AgentFilesContent({
-  agentId,
-  filePath,
-}: {
-  agentId: string;
-  filePath: string | null;
-}) {
+function AgentFilesContent({ agentId, filePath }: { agentId: string; filePath: string | null }) {
   const navigate = useNavigate();
   const treeRef = useRef<HTMLDivElement>(null);
 
@@ -145,30 +203,44 @@ function AgentFilesContent({
     restoredExpandedDirs(agentId, filePath),
   );
   const [filterQuery, setFilterQuery] = useState('');
-  // One clock for every row's relative mtime label (see TreeRow's `now`).
   const now = useNow();
 
-  const {
-    data: manifest,
-    error: manifestError,
-  } = useQuery({
-    queryKey: queryKeys.agentHomeFiles(agentId),
-    queryFn: () => fetchAgentHomeManifest(agentId),
-    refetchInterval: refetchIntervals.kbContent,
-  });
+  const { data: rootListing, error: rootError } = useAgentHomeDirectory(agentId, '', true);
 
-  // Desktop default view: when nothing is deep-linked, land the operator on
-  // MEMORY.md (what the agent knows) instead of a placeholder — one click into
-  // the tab reaches rendered memory. The URL stays at bare /files so deep-link
-  // semantics are untouched; mobile stays list-first (the right panel is hidden
-  // until a real selection). Falls back to the placeholder when MEMORY.md is
-  // absent.
+  // Prefetch ancestor directories for deep links so expand + file open work.
+  const ancestorDirs = useMemo(() => [...ancestorsOf(filePath)], [filePath]);
+  useEffect(() => {
+    // Ensure deep-linked path's ancestors are expanded (and thus loaded).
+    if (!filePath) return;
+    const t = setTimeout(() => {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        for (const a of ancestorsOf(filePath)) next.add(a);
+        cacheExpandedDirs(agentId, next);
+        return next;
+      });
+    }, 0);
+    return () => clearTimeout(t);
+  }, [agentId, filePath]);
+
+  // Warm react-query cache for ancestors (component tree also loads them when expanded).
+  for (const dir of ancestorDirs) {
+    // Hooks can't be in loops — use a dedicated helper component instead.
+    void dir;
+  }
+
+  const rootNodes = useMemo(() => {
+    if (!rootListing) return [];
+    return orderRoot(sortEntries(rootListing.entries));
+  }, [rootListing]);
+
+  // Desktop default: MEMORY.md when present.
   const memoryDefault = useMemo(() => {
-    if (!manifest) return null;
-    return manifest.entries.some((e) => e.kind === 'file' && e.path === 'MEMORY.md')
+    if (!rootListing) return null;
+    return rootListing.entries.some((e) => e.kind === 'file' && e.path === 'MEMORY.md')
       ? 'MEMORY.md'
       : null;
-  }, [manifest]);
+  }, [rootListing]);
   const previewPath = filePath ?? memoryDefault;
 
   const {
@@ -182,15 +254,6 @@ function AgentFilesContent({
     refetchInterval: refetchIntervals.kbContent,
   });
 
-  const tree = useMemo(() => {
-    if (!manifest) return [];
-    const roots = buildTree(manifest.entries);
-    sortRecursive(roots);
-    return orderRoot(roots);
-  }, [manifest]);
-
-  // URL builders pointed at the agent-home endpoints — this is the one swap
-  // that repurposes the KB renderer for the Files surface.
   const links = useMemo<FileLinks>(
     () => ({
       rawPath: (p: string) => buildAgentFileRawPath(agentId, p),
@@ -199,17 +262,11 @@ function AgentFilesContent({
     [agentId],
   );
 
-  // TOC entries for the previewed markdown file — feeds the header outline
-  // (TocButton). Non-markdown / empty content → no outline button.
   const toc = useMemo(
     () => (file?.kind === 'markdown' && file.content ? extractToc(file.content) : []),
     [file],
   );
 
-  // Preview/Code mode lifted to the page so the single toggle lives in the file
-  // header alongside Open raw / outline (matching the KB file view) instead of a
-  // second strip inside the viewer. Land in Code when deep-linked to a `#L<n>`
-  // source line; otherwise honour the session's last choice.
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
     lineFromHash(window.location.hash) ? 'code' : loadSessionViewMode(),
   );
@@ -218,22 +275,6 @@ function AgentFilesContent({
     saveSessionViewMode(next);
   }, []);
   const isMarkdown = file?.kind === 'markdown';
-
-  // Open the tree to the deep-linked file so a refreshed/shared URL lands with
-  // its branch expanded. Deferred a tick (matching the KB tree) so the merge
-  // runs after commit rather than synchronously inside the effect body.
-  useEffect(() => {
-    if (!filePath) return;
-    const t = setTimeout(() => {
-      setExpanded((prev) => {
-        const next = new Set(prev);
-        for (const a of ancestorsOf(filePath)) next.add(a);
-        cacheExpandedDirs(agentId, next);
-        return next;
-      });
-    }, 0);
-    return () => clearTimeout(t);
-  }, [agentId, filePath]);
 
   const toggleDir = useCallback(
     (path: string) => {
@@ -255,9 +296,6 @@ function AgentFilesContent({
     [agentId, navigate],
   );
 
-  // Keyboard navigation for the file tree: Up/Down between rows, Right/Left
-  // expand/collapse dirs, Enter to select files or toggle dirs. Mirrors the KB
-  // tree so the two surfaces feel identical.
   const handleTreeKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (!treeRef.current) return;
@@ -290,26 +328,17 @@ function AgentFilesContent({
     [expanded, filterQuery, toggleDir, selectFile],
   );
 
-  const isEmpty = !!manifest && manifest.entries.length === 0;
-  // On mobile the file panel only slides in once a file is selected.
+  const isEmpty = !!rootListing && rootListing.entries.length === 0;
   const mobileShowRight = !!filePath;
 
   return (
-    // h-full (not flex-1): the agent-detail Outlet parent is a bounded block,
-    // not a flex container, so flex-1 has nothing to resolve against and the
-    // panels grow content-tall instead of scrolling. Matches the Activity and
-    // Channels tab roots (flex h-full overflow-hidden).
     <div className="flex h-full overflow-hidden">
-      {/* --------------------------------------------------------------- */}
-      {/* Left panel: filter + tree */}
-      {/* --------------------------------------------------------------- */}
       <nav
         className={[
           'flex min-h-0 w-full shrink-0 flex-col bg-surface-raised/40 md:w-72',
           mobileShowRight ? 'hidden md:flex' : 'flex',
         ].join(' ')}
       >
-        {/* Filter input */}
         <div className="flex min-h-[44px] shrink-0 items-center border-b border-border-soft px-3">
           <div className="flex w-full items-center gap-1.5 rounded-md border border-border-soft bg-surface-elevated/40 px-2 py-1.5">
             <Search className="h-3 w-3 shrink-0 text-text-subtle" />
@@ -332,18 +361,17 @@ function AgentFilesContent({
           </div>
         </div>
 
-        {/* Tree */}
         <div
           ref={treeRef}
           onKeyDown={handleTreeKeyDown}
           className="min-h-0 flex-1 overflow-y-auto py-1"
         >
-          {manifestError && (
+          {rootError && (
             <div className="px-4 py-3 font-sans text-[12px] text-health-error">
-              {manifestError instanceof Error ? manifestError.message : String(manifestError)}
+              {rootError instanceof Error ? rootError.message : String(rootError)}
             </div>
           )}
-          {!manifest && !manifestError && (
+          {!rootListing && !rootError && (
             <div className="animate-pulse py-1">
               {([0, 0, 1, 1, 0, 2, 1] as const).map((depth, i) => (
                 <div
@@ -365,8 +393,8 @@ function AgentFilesContent({
               This agent's home is empty.
             </div>
           )}
-          {!filterQuery && <TreeSummary nodes={tree} />}
-          {tree.map((node) => (
+          {!filterQuery && rootNodes.length > 0 && <TreeSummary nodes={rootNodes} />}
+          {rootNodes.map((node) => (
             <TreeRow
               key={node.path}
               node={node}
@@ -377,27 +405,37 @@ function AgentFilesContent({
               now={now}
               onToggleDir={toggleDir}
               onSelectFile={selectFile}
+              renderChildren={(directory, childDepth) => (
+                <AgentHomeDirectoryRows
+                  agentId={agentId}
+                  path={directory.path}
+                  depth={childDepth}
+                  expanded={expanded}
+                  selectedPath={filePath}
+                  filterQuery={filterQuery || undefined}
+                  now={now}
+                  onToggleDir={toggleDir}
+                  onSelectFile={selectFile}
+                />
+              )}
             />
           ))}
           {filterQuery &&
-            tree.length > 0 &&
-            tree.every((n) => !matchesFilter(n, filterQuery)) && (
+            rootNodes.length > 0 &&
+            rootNodes.every((n) => !matchesFilter(n, filterQuery)) && (
               <div className="px-4 py-3 font-sans text-[12px] text-text-subtle">
-                No files match "{filterQuery}".
+                No files match "{filterQuery}" in loaded folders. Expand folders to search deeper.
               </div>
             )}
-          {manifest?.truncated && (
+          {rootListing?.truncated && (
             <div className="mt-1 border-t border-border-soft px-4 py-2 font-sans text-[11px] text-text-subtle">
-              Showing the first {manifest.entries.length.toLocaleString()} entries. This home has more
-              files than the listing cap.
+              Showing the first {rootListing.entries.length.toLocaleString()} entries in the home
+              root.
             </div>
           )}
         </div>
       </nav>
 
-      {/* --------------------------------------------------------------- */}
-      {/* Right panel: file content */}
-      {/* --------------------------------------------------------------- */}
       <section
         className={[
           'min-w-0 border-l border-border-soft',
@@ -406,9 +444,6 @@ function AgentFilesContent({
       >
         {previewPath ? (
           <div className="flex h-full min-h-0 w-full flex-col">
-            {/* Mobile file toolbar — back to the list, plus the filename. Only
-                reachable on a real selection (filePath); the default preview is
-                desktop-only, where this bar is hidden. */}
             <div className="flex min-h-[44px] shrink-0 items-center gap-2 border-b border-border-soft px-4 md:hidden">
               <button
                 onClick={() => navigate(buildAgentFilePath(agentId, null))}
@@ -433,10 +468,6 @@ function AgentFilesContent({
               />
               <TocButton entries={toc} />
             </div>
-            {/* Desktop file header — breadcrumb (location) on the left, action
-                cluster on the right: [Preview|Code] [⋯ Copy path / Open raw]
-                [outline]. Mirrors the KB file view; Download is deferred (no home
-                download endpoint yet) so the overflow menu omits it. */}
             <div className="hidden min-h-[44px] shrink-0 items-center gap-2 border-b border-border-soft px-5 md:flex">
               <FileBreadcrumb filePath={previewPath} />
               <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
@@ -476,7 +507,7 @@ function AgentFilesContent({
           <div className="hidden h-full flex-col items-start justify-start p-8 md:flex">
             <div className="font-serif text-[20px] font-semibold text-text">Files</div>
             <div className="mt-3 font-sans text-[13px] text-text-muted">
-              {!manifest && !manifestError
+              {!rootListing && !rootError
                 ? 'Loading…'
                 : isEmpty
                   ? "This agent's home is empty."
@@ -485,6 +516,17 @@ function AgentFilesContent({
           </div>
         )}
       </section>
+
+      {/* Prefetch ancestor dirs for deep links without conditional hooks. */}
+      {ancestorDirs.map((dir) => (
+        <AncestorDirPrefetch key={dir} agentId={agentId} dir={dir} />
+      ))}
     </div>
   );
+}
+
+/** Mount-only prefetch so deep-linked files open with parents already cached. */
+function AncestorDirPrefetch({ agentId, dir }: { agentId: string; dir: string }) {
+  useAgentHomeDirectory(agentId, dir, true);
+  return null;
 }

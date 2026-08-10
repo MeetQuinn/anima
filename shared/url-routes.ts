@@ -64,7 +64,7 @@ export function buildPath(loc: { agentId: string | null; tab: AgentTab | null })
 //
 // The backend serves from a `home` namespace — the bare `/agents/:id/files/:x`
 // API path is already taken by cached Slack attachments:
-//   GET /api/agents/<id>/home/files         → manifest { root, entries, truncated }
+//   GET /api/agents/<id>/home/files[?dir=]  → shallow dir listing { root, dir, entries, truncated }
 //   GET /api/agents/<id>/home/files/<path>  → KbFile-shaped file payload
 //   GET /api/agents/<id>/home/raw/<path>    → raw bytes (img src / open-raw)
 

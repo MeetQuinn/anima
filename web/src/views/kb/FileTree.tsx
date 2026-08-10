@@ -29,10 +29,15 @@ export function ancestorsOf(filePath: string | null): Set<string> {
 }
 
 // Returns true if a node or any of its descendants match the filter query.
+// Dirs with `children === undefined` are treated as not-yet-loaded (lazy trees)
+// and stay visible so the operator can expand them to search deeper. Loaded
+// empty dirs (`children: []`) only match when the dir name itself matches.
 export function matchesFilter(node: KbTreeNode, query: string): boolean {
   const q = query.toLowerCase();
   if (node.type === 'file') return node.name.toLowerCase().includes(q);
-  return node.children?.some((c) => matchesFilter(c, query)) ?? false;
+  if (node.name.toLowerCase().includes(q)) return true;
+  if (node.children === undefined) return true;
+  return node.children.some((c) => matchesFilter(c, query));
 }
 
 function useIsTruncated<T extends HTMLElement>(): [React.RefObject<T | null>, boolean] {
@@ -76,7 +81,9 @@ function HighlightMatch({ text, query }: { text: string; query: string }) {
   return (
     <>
       {text.slice(0, idx)}
-      <mark className="rounded-sm bg-accent/20 text-text not-italic">{text.slice(idx, idx + query.length)}</mark>
+      <mark className="rounded-sm bg-accent/20 text-text not-italic">
+        {text.slice(idx, idx + query.length)}
+      </mark>
       {text.slice(idx + query.length)}
     </>
   );
@@ -144,7 +151,9 @@ export function TreeRow({
           ) : (
             <ChevronRight className="hidden h-3.5 w-3.5 shrink-0 opacity-60 md:block" />
           )}
-          <span ref={nameRef} className="truncate">{node.name}</span>
+          <span ref={nameRef} className="truncate">
+            {node.name}
+          </span>
           <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-2 font-normal text-[12px] tabular-nums text-text-subtle md:hidden">
             {node.mtime ? formatRelativeShort(node.mtime, now) : null}
             <ChevronRight
@@ -152,8 +161,8 @@ export function TreeRow({
             />
           </span>
         </button>
-        {isOpen && (
-          renderChildren
+        {isOpen &&
+          (renderChildren
             ? renderChildren(node, depth + 1)
             : node.children?.map((child) => (
                 <TreeRow
@@ -167,8 +176,7 @@ export function TreeRow({
                   onToggleDir={onToggleDir}
                   onSelectFile={onSelectFile}
                 />
-              ))
-        )}
+              )))}
       </div>
     );
   }
