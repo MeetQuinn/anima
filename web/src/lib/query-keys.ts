@@ -12,8 +12,7 @@ export const queryKeys = {
   // Indicator-only activity slice: the live Working/Thinking label needs the
   // current item's latest activity even when the step layer is hidden. Distinct
   // key so it never collides with the infinite agentActivities feed.
-  agentIndicatorActivity: (agentId: string) =>
-    ['agent-activities', agentId, 'indicator'] as const,
+  agentIndicatorActivity: (agentId: string) => ['agent-activities', agentId, 'indicator'] as const,
   agentMessages: (agentId: string) => ['agent-messages', agentId] as const,
   // Channels detail pane: one channel's history, fetched server-side scoped to
   // the channel (not the global stream filtered client-side).
@@ -36,8 +35,9 @@ export const queryKeys = {
   kbFile: (id: string, filePath: string) => ['kb-file', id, filePath] as const,
   kbBrowse: (path: string) => ['kb-browse', path] as const,
   agentSkills: (agentId: string) => ['agent-skills', agentId] as const,
-  // Agent home Files tab: the manifest (flat entry list) and one file's payload.
-  agentHomeFiles: (agentId: string) => ['agent-home-files', agentId] as const,
+  // Agent home Files tab: one shallow directory listing, plus one file payload.
+  // `dir` is home-relative POSIX ('' = home root).
+  agentHomeFiles: (agentId: string, dir = '') => ['agent-home-files', agentId, dir] as const,
   agentHomeFile: (agentId: string, filePath: string) =>
     ['agent-home-file', agentId, filePath] as const,
   providerAvailability: () => ['provider-availability'] as const,

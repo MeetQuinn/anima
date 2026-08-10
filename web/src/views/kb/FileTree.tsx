@@ -29,9 +29,13 @@ export function ancestorsOf(filePath: string | null): Set<string> {
 }
 
 // Returns true if a node or any of its descendants match the filter query.
+// Dir names also match so a folder can surface even when its children are not
+// yet loaded (lazy trees). Unloaded dirs do NOT auto-match every query — that
+// would force a recursive fetch cascade when combined with auto-expand.
 export function matchesFilter(node: KbTreeNode, query: string): boolean {
   const q = query.toLowerCase();
-  if (node.type === 'file') return node.name.toLowerCase().includes(q);
+  if (node.name.toLowerCase().includes(q)) return true;
+  if (node.type === 'file') return false;
   return node.children?.some((c) => matchesFilter(c, query)) ?? false;
 }
 
@@ -76,7 +80,9 @@ function HighlightMatch({ text, query }: { text: string; query: string }) {
   return (
     <>
       {text.slice(0, idx)}
-      <mark className="rounded-sm bg-accent/20 text-text not-italic">{text.slice(idx, idx + query.length)}</mark>
+      <mark className="rounded-sm bg-accent/20 text-text not-italic">
+        {text.slice(idx, idx + query.length)}
+      </mark>
       {text.slice(idx + query.length)}
     </>
   );
@@ -92,6 +98,13 @@ export function TreeRow({
   onToggleDir,
   onSelectFile,
   renderChildren,
+  // Fully-loaded trees (KB) auto-open dirs while filtering so matches appear.
+  // Lazy trees (agent home) must pass false: auto-open would mount every child
+  // loader and crawl the whole home (worktrees/node_modules).
+  autoExpandOnFilter = true,
+  // Optional override for filter visibility (agent home keeps dirs visible so
+  // the operator can expand already-loaded levels without a name match).
+  nodeMatchesFilter = matchesFilter,
 }: {
   node: KbTreeNode;
   depth: number;
@@ -106,12 +119,14 @@ export function TreeRow({
   onToggleDir: (path: string) => void;
   onSelectFile: (path: string) => void;
   renderChildren?: (node: KbTreeNode, depth: number) => React.ReactNode;
+  autoExpandOnFilter?: boolean;
+  nodeMatchesFilter?: (node: KbTreeNode, query: string) => boolean;
 }) {
   const isFiltering = !!filterQuery;
   const [nameRef, isTruncated] = useIsTruncated<HTMLSpanElement>();
 
   // When filtering, skip nodes that don't match.
-  if (isFiltering && !matchesFilter(node, filterQuery)) return null;
+  if (isFiltering && !nodeMatchesFilter(node, filterQuery)) return null;
 
   // Indent via CSS custom property + .tree-row class so a single @media rule in
   // index.css can reduce per-level width on mobile (8px) vs desktop (12px) without
@@ -119,12 +134,14 @@ export function TreeRow({
   const depthStyle = { '--tree-depth': depth } as React.CSSProperties;
 
   if (node.type === 'dir') {
-    // While filtering, dirs auto-expand to reveal matching children.
-    const isOpen = isFiltering ? true : expanded.has(node.path);
+    // Fully-loaded trees auto-expand while filtering; lazy trees stay on the
+    // operator's expanded set so filter never becomes a recursive crawl.
+    const isOpen = (isFiltering && autoExpandOnFilter) || expanded.has(node.path);
+    const canToggle = !isFiltering || !autoExpandOnFilter;
     return (
       <div>
         <button
-          onClick={() => !isFiltering && onToggleDir(node.path)}
+          onClick={() => canToggle && onToggleDir(node.path)}
           data-tree-row
           data-path={node.path}
           data-type="dir"
@@ -144,7 +161,9 @@ export function TreeRow({
           ) : (
             <ChevronRight className="hidden h-3.5 w-3.5 shrink-0 opacity-60 md:block" />
           )}
-          <span ref={nameRef} className="truncate">{node.name}</span>
+          <span ref={nameRef} className="truncate">
+            {node.name}
+          </span>
           <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-2 font-normal text-[12px] tabular-nums text-text-subtle md:hidden">
             {node.mtime ? formatRelativeShort(node.mtime, now) : null}
             <ChevronRight
@@ -152,8 +171,8 @@ export function TreeRow({
             />
           </span>
         </button>
-        {isOpen && (
-          renderChildren
+        {isOpen &&
+          (renderChildren
             ? renderChildren(node, depth + 1)
             : node.children?.map((child) => (
                 <TreeRow
@@ -166,9 +185,10 @@ export function TreeRow({
                   now={now}
                   onToggleDir={onToggleDir}
                   onSelectFile={onSelectFile}
+                  autoExpandOnFilter={autoExpandOnFilter}
+                  nodeMatchesFilter={nodeMatchesFilter}
                 />
-              ))
-        )}
+              )))}
       </div>
     );
   }

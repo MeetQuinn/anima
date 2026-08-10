@@ -1,33 +1,43 @@
 import { apiRequest } from './client';
 import type { KbFile } from '@shared/kb';
 
-// One node of the agent-home manifest. Flat, recursive, home-relative POSIX
-// paths. `kind` is the file-vs-dir discriminator (NOT a KbFileKind) — the
-// display kind/icon is derived client-side via the shared `kbFileKind(name)`
-// so one classifier runs on both ends.
+// One node of a single directory listing. Paths are home-relative POSIX.
+// `kind` is file-vs-dir (NOT a KbFileKind) — display kind/icon is derived
+// client-side via shared `kbFileKind(name)`.
 export interface AgentHomeEntry {
   path: string;
   name: string;
   kind: 'file' | 'dir';
   ext?: string;
   size?: number;
-  // File lstat mtime, ISO 8601 UTC. Dirs carry none — the tree builder derives
-  // a dir's "latest change inside" from its descendants (GitHub semantics).
+  // File lstat mtime, ISO 8601 UTC. Dirs carry none.
   mtime?: string;
 }
 
-export interface AgentHomeManifest {
-  root: string; // resolved absolute homePath — the "Files in this agent's home" header
+// Shallow listing for one directory. The Files tab lazy-loads children when a
+// folder is expanded so a huge node_modules under home no longer caps the root.
+export interface AgentHomeDirectory {
+  root: string; // resolved absolute homePath
+  dir: string; // '' for home root; otherwise home-relative POSIX dir
   entries: AgentHomeEntry[];
-  truncated: boolean; // structural cap (5,000 entries) hit
+  truncated: boolean; // this directory alone hit the per-listing cap
 }
 
 // File payload is KbFile-shaped minus `kbId` (agentId comes from the route).
 // `kind` here IS a KbFileKind — the same value the KB renderer switches on.
 export type AgentHomeFile = Omit<KbFile, 'kbId'>;
 
-export async function fetchAgentHomeManifest(agentId: string): Promise<AgentHomeManifest> {
-  return apiRequest(`/api/agents/${encodeURIComponent(agentId)}/home/files`);
+export async function fetchAgentHomeDirectory(
+  agentId: string,
+  dir = '',
+): Promise<AgentHomeDirectory> {
+  const qs = dir ? `?dir=${dir.split('/').map(encodeURIComponent).join('/')}` : '';
+  return apiRequest(`/api/agents/${encodeURIComponent(agentId)}/home/files${qs}`);
+}
+
+/** @deprecated Prefer fetchAgentHomeDirectory — kept as alias for root listing. */
+export async function fetchAgentHomeManifest(agentId: string): Promise<AgentHomeDirectory> {
+  return fetchAgentHomeDirectory(agentId, '');
 }
 
 export async function fetchAgentHomeFile(
