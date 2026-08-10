@@ -8,7 +8,7 @@ import { buildAgentFilePath, buildAgentFileRawPath } from '@/lib/url-state';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import { useNow } from '@/hooks/useNow';
 import type { KbTreeNode } from '@shared/kb';
-import { TreeRow, TreeSummary, ancestorsOf, matchesFilter } from '../../kb/FileTree';
+import { TreeRow, TreeSummary, ancestorsOf } from '../../kb/FileTree';
 import {
   FileContent,
   FileBreadcrumb,
@@ -34,9 +34,16 @@ function entryToNode(entry: AgentHomeEntry): KbTreeNode {
     path: entry.path,
     type: entry.kind === 'dir' ? 'dir' : 'file',
     ...(entry.mtime ? { mtime: entry.mtime } : {}),
-    // Omit children for dirs so matchesFilter treats them as not-yet-loaded
-    // (lazy rows use renderChildren instead of node.children).
+    // Dirs omit children — rows load via renderChildren when expanded.
   };
+}
+
+// Lazy-tree filter: files match by name; directories stay visible so the operator
+// can expand already-loaded levels. Must not auto-match every unloaded dir
+// (that + auto-expand would crawl worktrees/node_modules).
+export function matchesLazyHomeFilter(node: KbTreeNode, query: string): boolean {
+  if (node.type === 'dir') return true;
+  return node.name.toLowerCase().includes(query.toLowerCase());
 }
 
 function byDirsFirstThenName(a: KbTreeNode, b: KbTreeNode): number {
@@ -113,8 +120,8 @@ function AgentHomeDirectoryRows({
   onToggleDir: (path: string) => void;
   onSelectFile: (path: string) => void;
 }) {
-  // Always fetch when mounted: TreeRow only mounts us when the parent dir is open
-  // (or while filtering, when dirs auto-expand).
+  // Mounted only when the parent is open via the expanded set (never via
+  // filter auto-expand). Fetch is therefore bounded to explicit expands.
   const query = useAgentHomeDirectory(agentId, path, true);
   const nodes = useMemo(() => sortEntries(query.data?.entries ?? []), [query.data?.entries]);
   const depthStyle = { '--tree-depth': depth } as React.CSSProperties;
@@ -150,6 +157,8 @@ function AgentHomeDirectoryRows({
           now={now}
           onToggleDir={onToggleDir}
           onSelectFile={onSelectFile}
+          autoExpandOnFilter={false}
+          nodeMatchesFilter={matchesLazyHomeFilter}
           renderChildren={(directory, childDepth) => (
             <AgentHomeDirectoryRows
               agentId={agentId}
@@ -173,17 +182,6 @@ function AgentHomeDirectoryRows({
           Showing the first {query.data.entries.length.toLocaleString()} entries in this folder.
         </div>
       )}
-      {filterQuery &&
-        nodes.length > 0 &&
-        nodes.every((n) => !matchesFilter(n, filterQuery)) &&
-        !nodes.some((n) => n.type === 'dir') && (
-          <div
-            className="tree-row py-1.5 pr-3 font-sans text-[11px] text-text-subtle"
-            style={depthStyle}
-          >
-            No matches in this folder (expand other folders to search further).
-          </div>
-        )}
     </>
   );
 }
@@ -309,11 +307,11 @@ function AgentFilesContent({ agentId, filePath }: { agentId: string; filePath: s
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         rows[Math.max(0, idx <= 0 ? 0 : idx - 1)]?.focus();
-      } else if (e.key === 'ArrowRight' && focused && !filterQuery) {
+      } else if (e.key === 'ArrowRight' && focused) {
         e.preventDefault();
         const p = focused.dataset.path;
         if (p && focused.dataset.type === 'dir' && !expanded.has(p)) toggleDir(p);
-      } else if (e.key === 'ArrowLeft' && focused && !filterQuery) {
+      } else if (e.key === 'ArrowLeft' && focused) {
         e.preventDefault();
         const p = focused.dataset.path;
         if (p && focused.dataset.type === 'dir' && expanded.has(p)) toggleDir(p);
@@ -322,7 +320,7 @@ function AgentFilesContent({ agentId, filePath }: { agentId: string; filePath: s
         const p = focused.dataset.path;
         if (!p) return;
         if (focused.dataset.type === 'file') selectFile(p);
-        else if (focused.dataset.type === 'dir' && !filterQuery) toggleDir(p);
+        else if (focused.dataset.type === 'dir') toggleDir(p);
       }
     },
     [expanded, filterQuery, toggleDir, selectFile],
@@ -405,6 +403,8 @@ function AgentFilesContent({ agentId, filePath }: { agentId: string; filePath: s
               now={now}
               onToggleDir={toggleDir}
               onSelectFile={selectFile}
+              autoExpandOnFilter={false}
+              nodeMatchesFilter={matchesLazyHomeFilter}
               renderChildren={(directory, childDepth) => (
                 <AgentHomeDirectoryRows
                   agentId={agentId}
@@ -420,13 +420,11 @@ function AgentFilesContent({ agentId, filePath }: { agentId: string; filePath: s
               )}
             />
           ))}
-          {filterQuery &&
-            rootNodes.length > 0 &&
-            rootNodes.every((n) => !matchesFilter(n, filterQuery)) && (
-              <div className="px-4 py-3 font-sans text-[12px] text-text-subtle">
-                No files match "{filterQuery}" in loaded folders. Expand folders to search deeper.
-              </div>
-            )}
+          {filterQuery && rootNodes.length > 0 && (
+            <div className="mt-1 border-t border-border-soft px-4 py-2 font-sans text-[11px] text-text-subtle">
+              Filter applies to loaded folders only. Expand a folder to search inside it.
+            </div>
+          )}
           {rootListing?.truncated && (
             <div className="mt-1 border-t border-border-soft px-4 py-2 font-sans text-[11px] text-text-subtle">
               Showing the first {rootListing.entries.length.toLocaleString()} entries in the home
