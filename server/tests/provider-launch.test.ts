@@ -62,6 +62,7 @@ test('claude provider env defaults the auto-compact window and lets config env o
 
 test('claude common args carry the shared launch flags and optional config flags', () => {
   assert.deepEqual(claudeCommonArgs({ kind: 'claude-code' }, undefined), [
+    '--chrome',
     '--permission-mode', 'bypassPermissions',
     '--disallowedTools', CLAUDE_DISALLOWED_TOOLS.join(','),
   ]);
@@ -71,6 +72,7 @@ test('claude common args carry the shared launch flags and optional config flags
       '/tmp/system-prompt.md',
     ),
     [
+      '--chrome',
       '--permission-mode', 'bypassPermissions',
       '--disallowedTools', CLAUDE_DISALLOWED_TOOLS.join(','),
       '--model', 'claude-opus-4-8',
