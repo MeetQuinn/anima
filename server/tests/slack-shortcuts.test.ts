@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { WebClient } from '@slack/web-api';
@@ -17,6 +17,10 @@ import {
   parseOauthScopesHeader,
   slackShortcutManifestUpdateYaml,
 } from '../slack/shortcuts.js';
+import {
+  ObservedConversationStore,
+  surfaceIdForObservation,
+} from '../storage/schema/observed-conversation.store.js';
 import { withAnimaHome } from './anima-home.js';
 
 test('shortcut manifest helper adds commands scope and required shortcuts idempotently', () => {
@@ -297,6 +301,18 @@ test('message shortcut hands the source message to the agent thread and responds
       assert.equal(item.actor?.userId, 'U_SOURCE');
       assert.match(item.text, /<@U_HANDOFF> used the Slack message shortcut/);
       assert.match(item.text, /Please turn this into a task\./);
+
+      // Producer journals before enqueue (cursor-delivery trigger observation).
+      const store = new ObservedConversationStore('scout');
+      const surfaceId = surfaceIdForObservation({
+        channelId: 'C1',
+        messageTs: '1779790000.123456',
+        teamId: 'T1',
+        threadTs: '1779790000.123456',
+      });
+      const rows = await store.readJournal(surfaceId, { limit: 10 });
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]?.userId, 'U_SOURCE');
     });
   } finally {
     globalThis.fetch = previousFetch;
@@ -305,6 +321,56 @@ test('message shortcut hands the source message to the agent thread and responds
   assert.equal(fetchCalls.length, 1);
   assert.equal(fetchCalls[0]?.url, 'https://hooks.slack.test/shortcut-response');
   assert.match(String(fetchCalls[0]?.body), /Handed to the agent/);
+});
+
+test('message shortcut without message.user falls back to invoker actor and still journals', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-shortcuts-actorless-'));
+  await writeMinimalAgentConfig(stateDir, 'scout');
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const service = new SlackShortcutService({
+        activityRecorder: {
+          record: async (_agentId: string, input: { payload?: Record<string, unknown>; type: string }) => (
+            { activityId: 'actv_test', createdAt: '2026-05-26T12:00:00.000Z', ...input }
+          ),
+        } as never,
+        handoffService: slackShortcutHandoffServiceForAgent('scout'),
+      });
+      await service.handMessageToAgent({
+        agentId: 'scout',
+        body: {
+          callback_id: 'anima.hand_to_agent',
+          channel: { id: 'C1', name: 'course-team' },
+          // Legal: source message omits user.
+          message: { text: 'No author field', ts: '1779790003.000000' },
+          response_url: 'https://hooks.slack.test/shortcut-response',
+          team: { id: 'T1' },
+          user: { id: 'U_HANDOFF' },
+        },
+      });
+
+      const item = await new WakeQueueService('scout').find('slack-shortcut-handoff:T1:C1:1779790003.000000');
+      assert.ok(item);
+      assert.equal(item.kind, 'slack');
+      if (item.kind !== 'slack') return;
+      assert.equal(item.actor?.userId, 'U_HANDOFF');
+      const store = new ObservedConversationStore('scout');
+      const surfaceId = surfaceIdForObservation({
+        channelId: 'C1',
+        messageTs: '1779790003.000000',
+        teamId: 'T1',
+        threadTs: '1779790003.000000',
+      });
+      const rows = await store.readJournal(surfaceId, { limit: 10 });
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]?.userId, 'U_HANDOFF');
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 function fakeWebClient(): { client: WebClient; opened: unknown[] } {

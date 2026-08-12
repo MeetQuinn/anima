@@ -21,11 +21,14 @@ import {
   setCursorDeliveryEnabledForTests,
 } from '../runtime/cursor-delivery.js';
 import {
+  ACTORLESS_SLACK_WAKE_BOT_ID,
   backfillActiveSlackWakeJournal,
   compareSlackWakesForBackfill,
   eventIdForSlackWake,
+  observeInputFromSlackWake,
 } from '../runtime/cursor-wake-journal-backfill.js';
 import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
+import { slackShortcutHandoffServiceForAgent } from '../inbox/slack-shortcut-handoff.service.js';
 import {
   ObservedConversationStore,
   surfaceIdForObservation,
@@ -317,6 +320,259 @@ test('pin: start() path also backfills before first automatic drain', async () =
       assert.match(runtime.calls[0]?.prompt ?? '', /start-path pre-journal/);
       runtime.finishNext();
       await waitForInboxItemRemoved(agentId, item.id);
+    } finally {
+      setCursorDeliveryEnabledForTests(undefined);
+      await worker?.close();
+    }
+  });
+});
+
+test('observeInputFromSlackWake: actorless wakes use stable botId', () => {
+  const item = wake({
+    channelId: 'C1',
+    messageTs: '1.0',
+    text: 'no actor',
+  });
+  item.actor = {};
+  const input = observeInputFromSlackWake(item);
+  assert.equal(input.botId, ACTORLESS_SLACK_WAKE_BOT_ID);
+  assert.equal(input.userId, undefined);
+  assert.equal(input.messageTs, '1.0');
+});
+
+test('red pin: post-start shortcut handoff journals and reaches provider (not quiet-requeue deadlock)', async () => {
+  await withHome(async (stateDir) => {
+    const agentId = 'scout';
+    await ensureTestAgentConfig({ agentId, stateDir });
+    setCursorDeliveryEnabledForTests(true);
+    let worker: AgentRuntimeWorker | undefined;
+    try {
+      const runtime = new ControlledRuntime();
+      worker = new AgentRuntimeWorker({
+        agentId,
+        agentRuntime: runtime,
+        pollIntervalMs: 60_000,
+        queue: queueFor(agentId),
+        stateDir,
+        workerId: 'shortcut-post-start',
+      }, silentLogger);
+      // Empty-queue start completes once-only-style first backfill.
+      worker.start();
+      await waitFor(async () => (await queueFor(agentId).list()).length === 0, { timeoutMs: 2_000 });
+      // Let the initial drain settle (no work).
+      await new Promise((r) => setTimeout(r, 50));
+      assert.equal(runtime.calls.length, 0);
+
+      // Live shortcut producer after start — must journal before claim.
+      await slackShortcutHandoffServiceForAgent(agentId).handMessageToAgent({
+        channelId: 'C1',
+        channelName: 'course-team',
+        messageTs: '1779790000.123456',
+        receivedAt: new Date().toISOString(),
+        sourceUserId: 'U_SOURCE',
+        teamId: 'T1',
+        text: '<@U_HANDOFF> used the Slack message shortcut on:\nPlease turn this into a task.',
+        threadTs: '1779790000.123456',
+      });
+
+      await waitFor(() => runtime.calls.length === 1, { timeoutMs: 5_000 });
+      assert.match(runtime.calls[0]?.prompt ?? '', /Please turn this into a task/);
+      const store = new ObservedConversationStore(agentId);
+      const surfaceId = surfaceIdForObservation({
+        channelId: 'C1',
+        messageTs: '1779790000.123456',
+        teamId: 'T1',
+        threadTs: '1779790000.123456',
+      });
+      const rows = await store.readJournal(surfaceId, { limit: 10 });
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]?.userId, 'U_SOURCE');
+      runtime.finishNext();
+      await waitForInboxItemRemoved(agentId, 'slack-shortcut-handoff:T1:C1:1779790000.123456');
+    } finally {
+      setCursorDeliveryEnabledForTests(undefined);
+      await worker?.close();
+    }
+  });
+});
+
+test('red pin: actorless shortcut (no message.user) journals via invoker/stable bot and runs', async () => {
+  await withHome(async (stateDir) => {
+    const agentId = 'scout';
+    await ensureTestAgentConfig({ agentId, stateDir });
+    setCursorDeliveryEnabledForTests(true);
+    let worker: AgentRuntimeWorker | undefined;
+    try {
+      // Active actorless wake already queued before worker start (migration shape).
+      // No source user; empty actor — observe must use stable botId.
+      const actorless: SlackInboxItem = {
+        actor: {},
+        channelId: 'C1',
+        handling: {
+          createdAt: new Date().toISOString(),
+          queuedAt: new Date().toISOString(),
+          status: 'queued',
+          updatedAt: new Date().toISOString(),
+        },
+        id: 'slack-shortcut-handoff:T1:C1:1779790001.000000',
+        kind: 'slack',
+        messageTs: '1779790001.000000',
+        receivedAt: new Date().toISOString(),
+        teamId: 'T1',
+        text: 'actorless shortcut source',
+        threadTs: '1779790001.000000',
+      };
+      await queueFor(agentId).enqueue(actorless);
+
+      const runtime = new ControlledRuntime();
+      worker = new AgentRuntimeWorker({
+        agentId,
+        agentRuntime: runtime,
+        pollIntervalMs: 60_000,
+        queue: queueFor(agentId),
+        stateDir,
+        workerId: 'shortcut-actorless',
+      }, silentLogger);
+
+      const drain = worker.drainOnce();
+      await waitFor(() => runtime.calls.length === 1, { timeoutMs: 5_000 });
+      assert.match(runtime.calls[0]?.prompt ?? '', /actorless shortcut source/);
+
+      const store = new ObservedConversationStore(agentId);
+      const surfaceId = surfaceIdForObservation({
+        channelId: 'C1',
+        messageTs: actorless.messageTs,
+        teamId: 'T1',
+        threadTs: actorless.threadTs,
+      });
+      const rows = await store.readJournal(surfaceId, { limit: 10 });
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]?.botId, ACTORLESS_SLACK_WAKE_BOT_ID);
+      assert.equal(rows[0]?.userId, undefined);
+
+      runtime.finishNext();
+      assert.equal(await drain, 1);
+      await waitForInboxItemRemoved(agentId, actorless.id);
+    } finally {
+      setCursorDeliveryEnabledForTests(undefined);
+      await worker?.close();
+    }
+  });
+});
+
+test('red pin: post-start actorless handoff with invoker actor journals and runs', async () => {
+  await withHome(async (stateDir) => {
+    const agentId = 'scout';
+    await ensureTestAgentConfig({ agentId, stateDir });
+    setCursorDeliveryEnabledForTests(true);
+    let worker: AgentRuntimeWorker | undefined;
+    try {
+      const runtime = new ControlledRuntime();
+      worker = new AgentRuntimeWorker({
+        agentId,
+        agentRuntime: runtime,
+        pollIntervalMs: 60_000,
+        queue: queueFor(agentId),
+        stateDir,
+        workerId: 'shortcut-invoker',
+      }, silentLogger);
+      worker.start();
+      await new Promise((r) => setTimeout(r, 50));
+
+      // No sourceUserId; invoker supplies stable actor identity.
+      await slackShortcutHandoffServiceForAgent(agentId).handMessageToAgent({
+        channelId: 'C1',
+        invokerUserId: 'U_HANDOFF',
+        messageTs: '1779790002.000000',
+        receivedAt: new Date().toISOString(),
+        teamId: 'T1',
+        text: 'handed without source user',
+        threadTs: '1779790002.000000',
+      });
+
+      await waitFor(() => runtime.calls.length === 1, { timeoutMs: 5_000 });
+      assert.match(runtime.calls[0]?.prompt ?? '', /handed without source user/);
+      const store = new ObservedConversationStore(agentId);
+      const surfaceId = surfaceIdForObservation({
+        channelId: 'C1',
+        messageTs: '1779790002.000000',
+        teamId: 'T1',
+        threadTs: '1779790002.000000',
+      });
+      const rows = await store.readJournal(surfaceId, { limit: 10 });
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]?.userId, 'U_HANDOFF');
+      runtime.finishNext();
+      await waitForInboxItemRemoved(agentId, 'slack-shortcut-handoff:T1:C1:1779790002.000000');
+    } finally {
+      setCursorDeliveryEnabledForTests(undefined);
+      await worker?.close();
+    }
+  });
+});
+
+/** Queue that fails list() once (top-level backfill failure), then works. */
+class FailOnceListQueue extends WakeQueueService {
+  listFailuresRemaining = 1;
+  listCalls = 0;
+
+  override async list() {
+    this.listCalls += 1;
+    if (this.listFailuresRemaining > 0) {
+      this.listFailuresRemaining -= 1;
+      throw new Error('transient queue list failure');
+    }
+    return super.list();
+  }
+}
+
+test('red pin: transient backfill failure then later successful backfill → drain', async () => {
+  await withHome(async (stateDir) => {
+    const agentId = 'scout';
+    await ensureTestAgentConfig({ agentId, stateDir });
+    setCursorDeliveryEnabledForTests(true);
+    let worker: AgentRuntimeWorker | undefined;
+    try {
+      const queue = new FailOnceListQueue(agentId);
+      const item = wake({
+        channelId: 'D-user',
+        messageTs: '1770000030.000001',
+        text: 'survives failed first backfill',
+        teamId: 'T-demo',
+        id: 'slack:T-demo:D-user:1770000030.000001',
+      });
+      // Enqueue via base store path (parent enqueue uses store, not list).
+      await new WakeQueueService(agentId).enqueue(item);
+
+      const runtime = new ControlledRuntime();
+      worker = new AgentRuntimeWorker({
+        agentId,
+        agentRuntime: runtime,
+        pollIntervalMs: 60_000,
+        queue,
+        stateDir,
+        workerId: 'retry-backfill-worker',
+      }, silentLogger);
+
+      // First drain: list() throws → backfill fails soft → claim may quiet-requeue
+      // on missing_trigger (or list fails again mid-claim path uses takeNext which
+      // does not use our list override). After backfill failure, takeNextRunnable
+      // still claims; prepare fails; quiet requeue.
+      const first = await worker.drainOnce();
+      assert.equal(runtime.calls.length, 0);
+      // Item still active (not tombstoned).
+      assert.ok(await queueFor(agentId).find(item.id));
+
+      // Second drain: list() succeeds → backfill journals → provider runs.
+      const second = worker.drainOnce();
+      await waitFor(() => runtime.calls.length === 1, { timeoutMs: 5_000 });
+      assert.match(runtime.calls[0]?.prompt ?? '', /survives failed first backfill/);
+      runtime.finishNext();
+      assert.equal(await second, 1);
+      await waitForInboxItemRemoved(agentId, item.id);
+      assert.ok(queue.listCalls >= 2, `expected list retried, got ${queue.listCalls}`);
+      // First drain processed 0 provider turns (deferred/requeue).
+      assert.equal(first, 0);
     } finally {
       setCursorDeliveryEnabledForTests(undefined);
       await worker?.close();

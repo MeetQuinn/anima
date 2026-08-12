@@ -81,8 +81,14 @@ export class AgentRuntimeWorker {
   private pendingWake = false;
   private pollTimer?: NodeJS.Timeout;
   private unsubscribeWake?: () => void;
-  /** Shared first-drain gate: backfill pre-journal Slack wakes before any claim. */
-  private journalBackfill?: Promise<void>;
+  /**
+   * In-flight pre-drain journal backfill only. Not a lifetime success cache:
+   * every drain re-runs (deduped observes are cheap) so transient top-level
+   * queue/store failures are retried, and pre-journal active wakes are covered
+   * without treating once-only startup as the sole correctness boundary.
+   * Concurrent callers share one in-flight promise.
+   */
+  private journalBackfillInFlight?: Promise<void>;
 
   constructor(
     private readonly options: AgentRuntimeWorkerOptions,
@@ -117,8 +123,9 @@ export class AgentRuntimeWorker {
   }
 
   private async drainLoop(): Promise<number> {
-    // Before any claim: ensure active Slack wakes exist in the observed journal
-    // (pre-journal wakes would otherwise fail prepare → quiet-requeue forever).
+    // Before any claim: backfill active Slack wakes missing from the journal
+    // (upgrade/pre-journal recovery). Producers must also journal; this is not
+    // the sole boundary for post-start wakes.
     await this.ensureJournalBackfill();
     let processed = 0;
     while (!this.closing && await this.runOne()) processed += 1;
@@ -126,24 +133,29 @@ export class AgentRuntimeWorker {
   }
 
   /**
-   * Idempotent pre-drain migration. Awaits the same promise from start() and
-   * drainOnce() so the first claim never races an incomplete backfill.
+   * Pre-drain migration. Coalesces concurrent callers; always clears after
+   * settle so the next drain retries after a transient top-level failure
+   * (and re-scans active wakes that arrived mid-flight).
    */
   private ensureJournalBackfill(): Promise<void> {
-    if (!this.journalBackfill) {
-      this.journalBackfill = backfillActiveSlackWakeJournal({
-        agentId: this.options.agentId,
-        queue: this.queue,
-        logger: this.logger,
-      }).then(() => undefined).catch((error: unknown) => {
-        // Fail-soft on the migration itself: prepare remains fail-closed for
-        // any still-missing trigger. Do not block the worker forever.
-        this.logger.error(
-          `cursor-wake journal backfill failed for ${this.options.agentId}: ${errorMessage(error)}`,
-        );
-      });
-    }
-    return this.journalBackfill;
+    if (this.journalBackfillInFlight) return this.journalBackfillInFlight;
+    this.journalBackfillInFlight = backfillActiveSlackWakeJournal({
+      agentId: this.options.agentId,
+      queue: this.queue,
+      logger: this.logger,
+    }).then(() => undefined).catch((error: unknown) => {
+      // Fail-soft on the migration itself: prepare remains fail-closed for
+      // any still-missing trigger. Do not block the worker forever.
+      this.logger.error(
+        `cursor-wake journal backfill failed for ${this.options.agentId}: ${errorMessage(error)}`,
+      );
+    }).finally(() => {
+      if (this.journalBackfillInFlight) {
+        // Clear only if we are still the in-flight owner (always true here).
+        this.journalBackfillInFlight = undefined;
+      }
+    });
+    return this.journalBackfillInFlight;
   }
 
   start(): NodeJS.Timeout {

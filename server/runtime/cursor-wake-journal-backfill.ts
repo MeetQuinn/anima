@@ -1,13 +1,16 @@
-// Pre-drain migration: backfill the per-agent observed-conversation journal for
-// active Slack wakes that predate the journal (upgrade / restart recovery).
+// Pre-drain migration + shared observe helper for Slack wakes.
 //
 // Cursor-delivery prepare is fail-closed on missing_trigger_observation. Quiet
 // requeue clears resumeReason, so that field is not a durable discriminator —
-// the durable fix is to plant missing journal rows through the normal deduped
-// observe path before any worker drain claims a wake.
+// every Slack queue producer must journal before claim, and startup/pre-drain
+// backfill covers genuinely pre-journal active wakes (upgrade recovery).
 //
-// Ordering: surfaceId, then Slack messageTs, then item id — deterministic
-// conversation order so empty journals receive ordinals matching chronology.
+// Ordering for backfill: surfaceId, then Slack messageTs, then item id —
+// deterministic conversation order so empty journals receive chronological
+// ordinals.
+//
+// Actorless wakes (e.g. Slack shortcut source messages that omit message.user)
+// use a stable synthetic botId for observation when no actor.userId is present.
 
 import type { InboxItem, SlackInboxItem, SlackFileMeta } from '../../shared/inbox.js';
 import { WakeQueueService, wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
@@ -16,9 +19,17 @@ import {
   observedConversationStoreForAgent,
   surfaceIdForObservation,
   type ObserveSlackMessageInput,
+  type ObserveSlackMessageResult,
   type ObservedConversationStore,
   type ObservedFileDescriptor,
 } from '../storage/schema/observed-conversation.store.js';
+
+/**
+ * Stable observation actor when a Slack wake has no userId (shortcut handoffs
+ * over source messages that omit message.user). Must stay constant so dedupe
+ * and prepare lookups remain stable across restart.
+ */
+export const ACTORLESS_SLACK_WAKE_BOT_ID = 'B_ANIMA_SHORTCUT';
 
 export interface CursorWakeJournalBackfillResult {
   appended: number;
@@ -36,7 +47,7 @@ export interface CursorWakeJournalBackfillInput {
 
 /**
  * List active Slack wakes and ensure each is present in the observed journal
- * via the normal deduped `store.observe` path. Safe to call every start;
+ * via the normal deduped `store.observe` path. Safe to call every drain;
  * already-journaled wakes are no-ops.
  */
 export async function backfillActiveSlackWakeJournal(
@@ -57,17 +68,17 @@ export async function backfillActiveSlackWakeJournal(
   let failed = 0;
 
   for (const item of slackWakes) {
-    const observeInput = observeInputFromSlackWake(item);
-    if (!observeInput) {
-      failed += 1;
-      logger.error(
-        `cursor-wake journal backfill skipped agent=${input.agentId} item=${item.id}: `
-          + 'missing actor userId (observe requires userId and/or botId)',
-      );
-      continue;
-    }
     try {
-      const result = await store.observe(observeInput);
+      const result = await observeSlackWakeInJournal({
+        agentId: input.agentId,
+        item,
+        store,
+        throwOnError: true,
+      });
+      if (!result) {
+        failed += 1;
+        continue;
+      }
       if (result.appended) appended += 1;
       else skipped += 1;
     } catch (error) {
@@ -93,6 +104,30 @@ export async function backfillActiveSlackWakeJournal(
   };
 }
 
+/**
+ * Journal one Slack wake through the normal deduped observation store.
+ * Used by producers (shortcut handoff) and by pre-drain backfill.
+ */
+export async function observeSlackWakeInJournal(input: {
+  agentId: string;
+  item: SlackInboxItem;
+  store?: ObservedConversationStore;
+  throwOnError?: boolean;
+}): Promise<ObserveSlackMessageResult | undefined> {
+  const observeInput = observeInputFromSlackWake(input.item);
+  const store = input.store ?? observedConversationStoreForAgent(input.agentId);
+  try {
+    return await store.observe(observeInput);
+  } catch (error) {
+    if (input.throwOnError) throw error;
+    console.warn(
+      `observed-conversation journal write failed for agent=${input.agentId} `
+        + `wake=${input.item.id}: ${errorMessage(error)}`,
+    );
+    return undefined;
+  }
+}
+
 /** Deterministic conversation order for journal ordinal assignment. */
 export function compareSlackWakesForBackfill(a: SlackInboxItem, b: SlackInboxItem): number {
   const surfaceA = surfaceIdForObservation({
@@ -114,17 +149,20 @@ export function compareSlackWakesForBackfill(a: SlackInboxItem, b: SlackInboxIte
   return a.id.localeCompare(b.id);
 }
 
-export function observeInputFromSlackWake(item: SlackInboxItem): ObserveSlackMessageInput | undefined {
+/**
+ * Build observe input from a queued Slack wake. Prefer actor.userId; when
+ * absent (legal for some shortcut source messages), use a stable botId so
+ * observation and prepare can still complete.
+ */
+export function observeInputFromSlackWake(item: SlackInboxItem): ObserveSlackMessageInput {
   const userId = item.actor?.userId?.trim();
-  if (!userId) return undefined;
-
   const files = observedFilesFromInbox(item.files);
   const input: ObserveSlackMessageInput = {
     channelId: item.channelId,
     messageTs: item.messageTs,
     teamId: item.teamId,
     text: item.text,
-    userId,
+    ...(userId ? { userId } : { botId: ACTORLESS_SLACK_WAKE_BOT_ID }),
   };
   if (item.threadTs) input.threadTs = item.threadTs;
   if (item.receivedAt) input.receivedAt = item.receivedAt;
