@@ -205,6 +205,15 @@ export class WakeQueueService {
     signalWake(this.agentId);
   }
 
+  /**
+   * Requeue without signalWake. Used when cursor-delivery prepare fails closed
+   * mid-drain: a wake would set pendingWake and immediately reclaim the same
+   * item in a hot loop. The regular poll timer retries later.
+   */
+  async requeueQuiet(itemId: string, options: { resumeReason?: 'runtime_restart' } = {}): Promise<void> {
+    await this.store.requeue(itemId, options);
+  }
+
   async requeueBatch(itemIds: string[]): Promise<InboxItem[]> {
     const items = await this.store.requeueBatch(itemIds);
     if (items.length > 0) signalWake(this.agentId);

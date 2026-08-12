@@ -355,8 +355,16 @@ export function groupFollowupContexts(contexts: RuntimeItemContext[]): {
     const acc = groups.get(key)!;
     const triggerItem = acc.members[acc.members.length - 1]!.item as SlackInboxItem;
     const mergedPlan = mergeCursorDeliveryPlans(acc.plans, triggerItem);
+    // Union files/previews from every member onto the lead so the bridge's
+    // single rendered inbox item still carries full attachment metadata for
+    // non-lead wakes whose cursors advance with the group.
+    const leadItem = mergeSlackInboxAttachments(
+      acc.members.map((m) => m.item as SlackInboxItem),
+      triggerItem,
+    );
     const lead: RuntimeItemContext = {
       ...acc.members[0]!,
+      item: leadItem,
       cursorDelivery: mergedPlan,
     };
     units[i] = {
@@ -369,6 +377,27 @@ export function groupFollowupContexts(contexts: RuntimeItemContext[]): {
   }
 
   return { bridgeContexts, units };
+}
+
+/** Union files + previews from all group members onto one Slack inbox item. */
+export function mergeSlackInboxAttachments(
+  members: SlackInboxItem[],
+  base: SlackInboxItem,
+): SlackInboxItem {
+  const filesById = new Map<string, NonNullable<SlackInboxItem['files']>[number]>();
+  const previews: NonNullable<SlackInboxItem['previews']> = [];
+  for (const member of members) {
+    for (const file of member.files ?? []) {
+      filesById.set(file.id, file);
+    }
+    if (member.previews?.length) previews.push(...member.previews);
+  }
+  const files = [...filesById.values()];
+  return {
+    ...base,
+    ...(files.length > 0 ? { files } : {}),
+    ...(previews.length > 0 ? { previews } : {}),
+  };
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {

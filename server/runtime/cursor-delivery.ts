@@ -411,32 +411,54 @@ async function buildSharedBudgetSurfacePlans(
     }
   }
 
+  // Sort by conversation time (messageTs), not surface order / per-surface ordinal.
+  tagged.sort(compareByConversationTime);
+
   const mustInclude =
     tagged.some((t) => t.eventId === opts.triggerEventId)
       ? opts.triggerEventId
       : undefined;
+
+  // Reserve rendered budget for prompt chrome + clipped Latest wake so the
+  // final cursor view (snapshot + Latest wake) stays within 16 KiB.
+  const reservedLatest = CURSOR_DELIVERY_MAX_MESSAGE_CHARS + 256;
+  const chromeBytes = 128;
+  const contextBudget = Math.max(
+    512,
+    CURSOR_DELIVERY_MAX_BYTES - reservedLatest - chromeBytes,
+  );
+
   const selected = selectNewestFitting(tagged, {
     maxMessages: CURSOR_DELIVERY_MAX_MESSAGES,
-    maxBytes: CURSOR_DELIVERY_MAX_BYTES,
+    maxBytes: contextBudget,
     mustIncludeEventId: mustInclude,
   });
+  return assembleSurfacePlansFromSelection(raw, selected, opts.triggerSurfaceId, tagged.length);
+}
+
+function assembleSurfacePlansFromSelection(
+  raw: SurfaceCandidates[],
+  selected: { entries: ObservedConversationEntry[]; omittedCount: number },
+  triggerSurfaceId: string,
+  totalCandidates: number,
+): SurfaceDeliveryPlan[] {
+  type Tagged = ObservedConversationEntry & { _surfaceId?: string };
   const selectedBySurface = new Map<string, ObservedConversationEntry[]>();
   for (const entry of selected.entries) {
     const surfaceId = (entry as Tagged)._surfaceId;
+    if (!surfaceId) continue;
     const list = selectedBySurface.get(surfaceId) ?? [];
-    // Strip tag before storing.
-    const { _surfaceId: _, ...rest } = entry as Tagged;
+    const { _surfaceId: _, ...rest } = entry as Tagged & { _surfaceId: string };
     list.push(rest);
     selectedBySurface.set(surfaceId, list);
   }
+  // Sort each surface's entries by ordinal for stable journal advance.
+  for (const [sid, list] of selectedBySurface) {
+    list.sort((a, b) => a.ordinal - b.ordinal);
+    selectedBySurface.set(sid, list);
+  }
 
-  // Total omitted across the whole view (exact count for the shared bound).
-  const totalCandidates = tagged.length;
-  const totalSelected = selected.entries.length;
-  const totalOmitted = Math.max(0, totalCandidates - totalSelected);
-
-  // Assign omitted count to the primary/trigger surface for display; others 0
-  // so the prompt shows one exact total.
+  const totalOmitted = Math.max(0, totalCandidates - selected.entries.length);
   const plans: SurfaceDeliveryPlan[] = [];
   for (const surface of raw) {
     if (surface.isResponseThreadEstablish) {
@@ -452,11 +474,10 @@ async function buildSharedBudgetSurfacePlans(
     }
     const entries = selectedBySurface.get(surface.surfaceId) ?? [];
     const last = entries[entries.length - 1];
-    // Only advance through what was actually selected/shown.
     const nextDeliveredOrdinal = last
       ? last.ordinal
       : surface.cursorDeliveredOrdinal;
-    const isTriggerSurface = surface.surfaceId === opts.triggerSurfaceId;
+    const isTriggerSurface = surface.surfaceId === triggerSurfaceId;
     plans.push({
       surfaceId: surface.surfaceId,
       cursorExpected: surface.cursorExpected,
@@ -472,52 +493,144 @@ async function buildSharedBudgetSurfacePlans(
   return plans;
 }
 
+/** Conversation-time order for cross-surface selection (messageTs primary). */
+export function compareByConversationTime(
+  a: { messageTs: string; receivedAt?: string; ordinal?: number },
+  b: { messageTs: string; receivedAt?: string; ordinal?: number },
+): number {
+  const byTs = a.messageTs.localeCompare(b.messageTs, undefined, { numeric: true });
+  if (byTs !== 0) return byTs;
+  if (a.receivedAt && b.receivedAt) {
+    const byRecv = a.receivedAt.localeCompare(b.receivedAt);
+    if (byRecv !== 0) return byRecv;
+  }
+  return (a.ordinal ?? 0) - (b.ordinal ?? 0);
+}
+
 /**
- * Merge multiple delivery plans by exact surface id (not primary only).
- * Used when batching two channel-root wakes that share a channel surface but
- * have distinct response-thread surfaces.
+ * Merge multiple delivery plans by exact surface id, then re-apply the global
+ * 20/16 KiB window so a union of individually bounded plans cannot exceed the
+ * contract (e.g. 15+15 → 30 without re-window).
  */
 export function mergeSurfacePlans(plans: CursorDeliveryPlan[]): SurfaceDeliveryPlan[] {
-  const bySurface = new Map<string, SurfaceDeliveryPlan>();
+  // Union raw entries per surface (before re-window).
+  type Acc = {
+    surfaceId: string;
+    cursorExpected: AdvanceCursorExpected;
+    cursorFloor: number;
+    establishOnly: boolean;
+    entries: ObservedConversationEntry[];
+  };
+  const bySurface = new Map<string, Acc>();
   for (const plan of plans) {
     for (const surface of plan.surfaces) {
       const existing = bySurface.get(surface.surfaceId);
       if (!existing) {
         bySurface.set(surface.surfaceId, {
-          ...surface,
+          surfaceId: surface.surfaceId,
+          cursorExpected: surface.cursorExpected,
+          cursorFloor: surface.establishOnly
+            ? 0
+            : Math.max(0, surface.nextDeliveredOrdinal - (surface.entries.at(-1)?.ordinal ?? surface.nextDeliveredOrdinal)),
+          establishOnly: surface.establishOnly,
           entries: [...surface.entries],
         });
+        // cursorFloor fallback: if we have entries, floor is min ordinal - 1 conceptually;
+        // for CAS we keep the earliest (lowest present) expectation when merging.
         continue;
       }
-      // Keep farthest nextDeliveredOrdinal and union entries by eventId.
+      // Prefer absent→present: use the more advanced expected only if equal epoch;
+      // when batching concurrent prepares both start from the same cursorExpected.
+      if (
+        existing.cursorExpected.status === 'absent'
+        && surface.cursorExpected.status === 'present'
+      ) {
+        // Keep existing absent if still valid for both; concurrent batch same epoch.
+      }
       const entryById = new Map<string, ObservedConversationEntry>();
       for (const e of existing.entries) entryById.set(e.eventId, e);
       for (const e of surface.entries) entryById.set(e.eventId, e);
-      const entries = [...entryById.values()].sort((a, b) => a.ordinal - b.ordinal);
-      const farther = surface.nextDeliveredOrdinal >= existing.nextDeliveredOrdinal
-        ? surface
-        : existing;
-      bySurface.set(surface.surfaceId, {
-        surfaceId: surface.surfaceId,
-        // Prefer the expectation from the farther plan (same prepare epoch when batched).
-        cursorExpected: farther.cursorExpected,
-        nextDeliveredOrdinal: farther.nextDeliveredOrdinal,
-        ...(farther.lastDeliveredEventId
-          ? { lastDeliveredEventId: farther.lastDeliveredEventId }
-          : {}),
-        ...(farther.lastDeliveredMessageTs
-          ? { lastDeliveredMessageTs: farther.lastDeliveredMessageTs }
-          : {}),
-        entries,
-        omittedCount: Math.max(existing.omittedCount, surface.omittedCount),
-        establishOnly: existing.establishOnly && surface.establishOnly && entries.length === 0,
-      });
+      existing.entries = [...entryById.values()];
+      existing.establishOnly = existing.establishOnly && surface.establishOnly && existing.entries.length === 0;
+      // Keep the lower cursor expected (more conservative CAS) when both present.
+      if (
+        existing.cursorExpected.status === 'present'
+        && surface.cursorExpected.status === 'present'
+        && surface.cursorExpected.deliveredOrdinal < existing.cursorExpected.deliveredOrdinal
+      ) {
+        existing.cursorExpected = surface.cursorExpected;
+      }
     }
   }
-  return [...bySurface.values()];
+
+  // Re-window under one global budget by conversation time.
+  type Tagged = ObservedConversationEntry & { _surfaceId: string };
+  const tagged: Tagged[] = [];
+  for (const acc of bySurface.values()) {
+    if (acc.establishOnly) continue;
+    for (const entry of acc.entries) {
+      tagged.push({ ...entry, _surfaceId: acc.surfaceId });
+    }
+  }
+  tagged.sort(compareByConversationTime);
+  const selected = selectNewestFitting(tagged, {
+    maxMessages: CURSOR_DELIVERY_MAX_MESSAGES,
+    maxBytes: CURSOR_DELIVERY_MAX_BYTES,
+  });
+
+  const selectedBySurface = new Map<string, ObservedConversationEntry[]>();
+  for (const entry of selected.entries) {
+    const sid = (entry as Tagged)._surfaceId;
+    const list = selectedBySurface.get(sid) ?? [];
+    const { _surfaceId: _, ...rest } = entry as Tagged;
+    list.push(rest);
+    selectedBySurface.set(sid, list);
+  }
+  for (const [sid, list] of selectedBySurface) {
+    list.sort((a, b) => a.ordinal - b.ordinal);
+    selectedBySurface.set(sid, list);
+  }
+
+  const totalOmitted = selected.omittedCount;
+  const plansOut: SurfaceDeliveryPlan[] = [];
+  let omittedAssigned = false;
+  for (const acc of bySurface.values()) {
+    if (acc.establishOnly) {
+      plansOut.push({
+        surfaceId: acc.surfaceId,
+        cursorExpected: acc.cursorExpected,
+        nextDeliveredOrdinal: 0,
+        entries: [],
+        omittedCount: 0,
+        establishOnly: true,
+      });
+      continue;
+    }
+    const entries = selectedBySurface.get(acc.surfaceId) ?? [];
+    const last = entries[entries.length - 1];
+    let floor = 0;
+    if (acc.cursorExpected.status === 'present') {
+      floor = acc.cursorExpected.deliveredOrdinal;
+    }
+    const nextDeliveredOrdinal = last ? last.ordinal : floor;
+    const assignOmitted = !omittedAssigned;
+    if (assignOmitted) omittedAssigned = true;
+    plansOut.push({
+      surfaceId: acc.surfaceId,
+      cursorExpected: acc.cursorExpected,
+      nextDeliveredOrdinal,
+      ...(last
+        ? { lastDeliveredEventId: last.eventId, lastDeliveredMessageTs: last.messageTs }
+        : {}),
+      entries,
+      omittedCount: assignOmitted ? totalOmitted : 0,
+      establishOnly: false,
+    });
+  }
+  return plansOut;
 }
 
-/** Merge plans and rebuild prompt from the primary trigger item. */
+/** Merge plans, re-window globally, rebuild prompt. */
 export function mergeCursorDeliveryPlans(
   plans: CursorDeliveryPlan[],
   triggerItem: SlackInboxItem,
@@ -543,8 +656,9 @@ export function mergeCursorDeliveryPlans(
 }
 
 /**
- * Newest-fitting selection: walk from newest backward until message/byte caps,
- * then return chronological. Ensures mustIncludeEventId stays in the window.
+ * Newest-fitting selection by conversation time: sort by messageTs, walk from
+ * newest backward until message/byte caps, return chronological. Ensures
+ * mustIncludeEventId stays in the window (time-based, not per-surface ordinal).
  */
 export function selectNewestFitting(
   candidates: ObservedConversationEntry[],
@@ -556,18 +670,18 @@ export function selectNewestFitting(
 ): { entries: ObservedConversationEntry[]; omittedCount: number } {
   if (candidates.length === 0) return { entries: [], omittedCount: 0 };
 
+  const ordered = [...candidates].sort(compareByConversationTime);
   const selected: ObservedConversationEntry[] = [];
   let bytes = 0;
-  for (let i = candidates.length - 1; i >= 0; i -= 1) {
-    const row = candidates[i]!;
+  for (let i = ordered.length - 1; i >= 0; i -= 1) {
+    const row = ordered[i]!;
     const line = formatObservedLine(row);
     const lineBytes = Buffer.byteLength(line, 'utf8') + (selected.length > 0 ? 1 : 0);
     if (selected.length >= options.maxMessages) break;
     if (selected.length > 0 && bytes + lineBytes > options.maxBytes) break;
-    // Single oversized first line: clip rather than skip.
     if (selected.length === 0 && lineBytes > options.maxBytes) {
       selected.push(row);
-      bytes = options.maxBytes;
+      bytes = Math.min(lineBytes, options.maxBytes);
       break;
     }
     selected.push(row);
@@ -575,24 +689,24 @@ export function selectNewestFitting(
   }
   selected.reverse();
 
-  // Ensure trigger is retained even after a long delay filled the window with
-  // newer rows: re-window from the trigger forward (newest-fitting among the
-  // suffix that includes the trigger).
   if (options.mustIncludeEventId) {
     const has = selected.some((r) => r.eventId === options.mustIncludeEventId);
     if (!has) {
-      const trigger = candidates.find((r) => r.eventId === options.mustIncludeEventId);
+      const trigger = ordered.find((r) => r.eventId === options.mustIncludeEventId);
       if (trigger) {
-        const fromTrigger = candidates.filter((r) => r.ordinal >= trigger.ordinal);
+        // Include everything at or after the trigger in conversation time.
+        const fromTrigger = ordered.filter(
+          (r) => compareByConversationTime(r, trigger) >= 0,
+        );
         const rewindowed = selectNewestFitting(fromTrigger, {
           maxMessages: options.maxMessages,
           maxBytes: options.maxBytes,
         });
-        // Guaranteed to include trigger (it is the oldest of fromTrigger; if the
-        // window is all newer and over budget, force-prepend trigger).
         if (!rewindowed.entries.some((r) => r.eventId === options.mustIncludeEventId)) {
-          const rest = rewindowed.entries.slice(-(options.maxMessages - 1));
-          const forced = [trigger, ...rest.filter((r) => r.eventId !== trigger.eventId)];
+          const rest = rewindowed.entries
+            .filter((r) => r.eventId !== trigger.eventId)
+            .slice(-(options.maxMessages - 1));
+          const forced = [trigger, ...rest].sort(compareByConversationTime);
           return {
             entries: forced,
             omittedCount: Math.max(0, candidates.length - forced.length),
@@ -606,8 +720,10 @@ export function selectNewestFitting(
     }
   }
 
-  const omittedCount = Math.max(0, candidates.length - selected.length);
-  return { entries: selected, omittedCount };
+  return {
+    entries: selected,
+    omittedCount: Math.max(0, candidates.length - selected.length),
+  };
 }
 
 export function formatObservedLine(entry: ObservedConversationEntry): string {
@@ -638,34 +754,60 @@ export function renderCursorDeliveryPrompt(
   trigger: SlackInboxItem,
   surfaces: SurfaceDeliveryPlan[],
 ): string {
-  // Render every surface that has rows (including child response-threads) so
-  // cursor advance never covers content absent from the prompt.
-  const parts: string[] = ['Slack conversation update:'];
-  let anyContext = false;
+  // Chronological flat list (not surface-order) so the rendered window matches
+  // conversation-time newest-fitting selection.
+  const allEntries: ObservedConversationEntry[] = [];
+  let omitted = 0;
   for (const surface of surfaces) {
-    if (surface.establishOnly || surface.entries.length === 0) continue;
-    anyContext = true;
-    const isThread = surface.surfaceId.includes(':thread:');
-    parts.push('', isThread ? `Thread ${surface.surfaceId}:` : `Channel ${surface.surfaceId}:`);
-    for (const entry of surface.entries) {
+    if (surface.establishOnly) continue;
+    allEntries.push(...surface.entries);
+    omitted += surface.omittedCount;
+  }
+  allEntries.sort(compareByConversationTime);
+
+  const parts: string[] = ['Slack conversation update:'];
+  if (allEntries.length > 0) {
+    parts.push('');
+    for (const entry of allEntries) {
       parts.push(formatObservedLine(entry));
     }
-    if (surface.omittedCount > 0) {
+    if (omitted > 0) {
       parts.push(
-        `(${surface.omittedCount} earlier message${surface.omittedCount === 1 ? '' : 's'} not shown)`,
+        `(${omitted} earlier message${omitted === 1 ? '' : 's'} not shown)`,
       );
     }
-  }
-  if (!anyContext) {
+  } else {
     parts.push('', '(no prior observed messages in window)');
   }
 
+  // Latest wake is always clipped — never re-expand a long trigger past the
+  // per-message clip that selectNewestFitting already applied to snapshot rows.
   const latest = buildLatestWakeLine(trigger);
   parts.push('', 'Latest wake:', latest);
   if (trigger.attentionSuggestion) {
     parts.push('', trigger.attentionSuggestion);
   }
-  return parts.join('\n');
+  let body = parts.join('\n');
+  // Hard cap: entire cursor view ≤ 16 KiB rendered UTF-8.
+  if (Buffer.byteLength(body, 'utf8') > CURSOR_DELIVERY_MAX_BYTES) {
+    body = truncateUtf8(body, CURSOR_DELIVERY_MAX_BYTES);
+  }
+  return body;
+}
+
+/** Truncate a string to at most maxBytes UTF-8, appending an ellipsis if cut. */
+export function truncateUtf8(text: string, maxBytes: number): string {
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
+  const ellipsis = '…';
+  const budget = maxBytes - Buffer.byteLength(ellipsis, 'utf8');
+  let end = text.length;
+  while (end > 0 && Buffer.byteLength(text.slice(0, end), 'utf8') > budget) {
+    end = Math.floor(end * 0.9);
+  }
+  while (end > 0 && Buffer.byteLength(text.slice(0, end), 'utf8') > budget) {
+    end -= 1;
+  }
+  return `${text.slice(0, end)}${ellipsis}`;
 }
 
 /** Primary surface id for a plan (grouping key for follow-up batching). */
@@ -687,9 +829,13 @@ function buildLatestWakeLine(event: SlackInboxItem): string {
     { key: 'time', value: envelopeTime(event.receivedAt) },
     { key: 'user_id', value: event.actor?.userId },
   ]);
-  let text = event.text;
+  let text = event.text ?? '';
   if (!text && event.files?.length) {
     text = `[file: ${event.files.map((f) => f.name).join(', ')}]`;
+  }
+  // Same clip as snapshot rows — never re-expand a long trigger in Latest wake.
+  if (text.length > CURSOR_DELIVERY_MAX_MESSAGE_CHARS) {
+    text = `${text.slice(0, CURSOR_DELIVERY_MAX_MESSAGE_CHARS)}…`;
   }
   return `${env} ${actor}: ${text}`;
 }

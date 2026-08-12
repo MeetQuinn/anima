@@ -308,7 +308,8 @@ export class AgentRuntimeWorker {
         this.logger.error(
           `Cursor delivery prepare failed for item ${item.id}: ${prepared.error.message} (${prepared.error.reason})`,
         );
-        await this.queue.requeue(item.id);
+        // Quiet requeue: no wake signal (avoids pendingWake → immediate reclaim hot loop).
+        await this.queue.requeueQuiet(item.id);
         releaseFollowups?.();
         return 'deferred';
       }

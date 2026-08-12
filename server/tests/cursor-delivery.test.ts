@@ -156,8 +156,8 @@ test('first wake: bounded context + trigger retained; child thread established p
     assert.match(prepared.plan.promptBody, /Slack conversation update:/);
     assert.match(prepared.plan.promptBody, /Latest wake:/);
     assert.match(prepared.plan.promptBody, /msg-25/);
-    // Child establish-only has no rows — not required in prompt; channel rows are.
-    assert.match(prepared.plan.promptBody, /Channel slack:T1:C1:/);
+    // Chronological flat view (no per-surface headers).
+    assert.match(prepared.plan.promptBody, /earlier message/);
 
     const committed = await commitCursorDelivery({ plan: prepared.plan, queue, store });
     assert.ok(committed.advanced.includes('slack:T1:C1'));
@@ -513,7 +513,8 @@ test('child-thread rows are rendered before cursor advance on that surface', asy
     assert.equal(child!.nextDeliveredOrdinal, 1);
     assert.ok(child!.entries.some((e) => e.text === 'reply-before-start'));
     assert.match(prepared.plan.promptBody, /reply-before-start/);
-    assert.match(prepared.plan.promptBody, /Thread slack:T1:C1:thread:10\.0:/);
+    // Flat chronological render includes the thread row before advance.
+    assert.match(prepared.plan.promptBody, /message_ts=11\.0/);
   });
 });
 
@@ -779,6 +780,146 @@ test('runtime_restart prompt includes prepared delta (arrived-during-crash visib
     });
     assert.match(prompt, /Runtime restart continuation:/);
     assert.match(prompt, /arrived-during-crash/);
+  });
+});
+
+test('rendered cursor view stays within 16 KiB even with a long trigger', async () => {
+  await withEnabledStore(async (store, agentId) => {
+    const long = 'L'.repeat(30_000);
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '1.0',
+      text: long,
+      userId: 'U1',
+    });
+    const item = slackItem({ channelId: 'C1', messageTs: '1.0', text: long, userId: 'U1' });
+    const prepared = await prepareCursorDelivery({ agentId, item, store });
+    assert.equal(prepared.kind, 'prepared');
+    if (prepared.kind !== 'prepared') return;
+    const full = buildCodeAgentDeliveryPrompt(item, {
+      cursorDeliveryPromptBody: prepared.plan.promptBody,
+    });
+    // Prompt body alone is hard-capped; with files/previews may grow slightly.
+    assert.ok(
+      Buffer.byteLength(prepared.plan.promptBody, 'utf8') <= CURSOR_DELIVERY_MAX_BYTES,
+      `promptBody ${Buffer.byteLength(prepared.plan.promptBody, 'utf8')}`,
+    );
+    // Latest wake must not re-expand the full 30k raw text.
+    assert.ok(!full.includes(long));
+    assert.ok(full.includes('…') || full.length < long.length);
+  });
+});
+
+test('newest-fitting uses conversation time across surfaces (not surface order)', async () => {
+  await withEnabledStore(async (store, agentId) => {
+    // Channel root at 50.0; fill channel surface with many mid-range rows.
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '50.0',
+      text: 'channel-root-trigger',
+      userId: 'U1',
+    });
+    for (let i = 1; i <= 25; i += 1) {
+      await store.observe({
+        teamId: 'T1',
+        channelId: 'C1',
+        messageTs: `${50 + i}.0`,
+        text: `ch-noise-${i}`,
+        userId: 'U1',
+      });
+    }
+    // Globally newest reply on the response-thread for this root (thread:50.0).
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '99.0',
+      threadTs: '50.0',
+      text: 'newest-thread-reply',
+      userId: 'U2',
+    });
+
+    const item = slackItem({
+      channelId: 'C1',
+      messageTs: '50.0',
+      text: 'channel-root-trigger',
+      userId: 'U1',
+    });
+    const prepared = await prepareCursorDelivery({ agentId, item, store });
+    assert.equal(prepared.kind, 'prepared');
+    if (prepared.kind !== 'prepared') return;
+    // Globally newest (99.0 on response-thread) must not be evicted by channel-first fill.
+    assert.match(prepared.plan.promptBody, /newest-thread-reply/);
+  });
+});
+
+test('merge re-windows to ≤20 rows after union of two bounded plans', async () => {
+  await withEnabledStore(async (store, agentId) => {
+    for (let i = 1; i <= 30; i += 1) {
+      await store.observe({
+        teamId: 'T1',
+        channelId: 'C1',
+        messageTs: `${i}.0`,
+        text: `row-${i}`,
+        userId: 'U1',
+      });
+    }
+    // Two prepares from absent both capture up to 20 newest — union without
+    // re-window would still be 20; force different windows by advancing cursor
+    // is hard. Instead merge two plans each holding 15 distinct via manual plans.
+    const a = await prepareCursorDelivery({
+      agentId,
+      item: slackItem({ channelId: 'C1', messageTs: '30.0', text: 'row-30' }),
+      store,
+    });
+    assert.equal(a.kind, 'prepared');
+    if (a.kind !== 'prepared') return;
+    // Synthesize a second plan with earlier rows by cloning surfaces and swapping
+    // entries to a 15-row lower window (still from same journal space).
+    const lower = a.plan.surfaces.map((s) => {
+      if (s.surfaceId !== 'slack:T1:C1') return s;
+      // Take rows 1-15 if available from full journal.
+      return s;
+    });
+    // Build second plan by preparing after temporarily... simpler: take a.plan
+    // entries and a synthetic plan with different entries from journal.
+    const all = await store.readJournal('slack:T1:C1', { limit: 1000 });
+    const early = all.slice(0, 15);
+    const late = all.slice(-15);
+    const planEarly: typeof a.plan = {
+      ...a.plan,
+      surfaces: a.plan.surfaces.map((s) =>
+        s.surfaceId === 'slack:T1:C1'
+          ? {
+              ...s,
+              entries: early,
+              nextDeliveredOrdinal: early[early.length - 1]!.ordinal,
+              omittedCount: 0,
+            }
+          : s,
+      ),
+    };
+    const planLate: typeof a.plan = {
+      ...a.plan,
+      surfaces: a.plan.surfaces.map((s) =>
+        s.surfaceId === 'slack:T1:C1'
+          ? {
+              ...s,
+              entries: late,
+              nextDeliveredOrdinal: late[late.length - 1]!.ordinal,
+              omittedCount: 0,
+            }
+          : s,
+      ),
+    };
+    const merged = mergeCursorDeliveryPlans(
+      [planEarly, planLate],
+      slackItem({ channelId: 'C1', messageTs: '30.0', text: 'row-30' }),
+    );
+    const total = merged.surfaces.reduce((n, s) => n + s.entries.length, 0);
+    assert.ok(total <= CURSOR_DELIVERY_MAX_MESSAGES, `merged rows ${total}`);
+    void lower;
   });
 });
 
