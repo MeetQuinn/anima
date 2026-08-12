@@ -22,6 +22,7 @@ import {
   PROVIDER_IDLE_TIMEOUT_MS_DEFAULT,
 } from '../../shared/agent-config.js';
 import {
+  isSupportedReasoningEffort,
   providerCatalogEntry,
   reasoningEffortsForModel,
 } from '../../shared/provider-catalog.js';
@@ -571,21 +572,42 @@ test('grok-cli effort write-validates the provider vocabulary; per-model support
     }).provider.reasoningEffort,
     'low',
   );
-  // xhigh is not part of Grok's effort vocabulary — rejected at write time.
-  assert.throws(
-    () =>
-      AgentCreateRequest.parse({
-        name: 'Grok xhigh',
-        homePath: 'agents/grok-xhigh',
-        role: 'general purpose',
-        provider: {
-          kind: 'grok-cli',
-          model: 'grok-4.5',
-          reasoningEffort: 'xhigh',
-        },
-      }),
-    /unsupported reasoningEffort xhigh/,
+  // xhigh is in Grok's write vocabulary (live ACP can advertise it, e.g. grok-4.6).
+  assert.equal(
+    AgentCreateRequest.parse({
+      name: 'Grok xhigh',
+      homePath: 'agents/grok-xhigh',
+      role: 'general purpose',
+      provider: {
+        kind: 'grok-cli',
+        model: 'grok-4.6',
+        reasoningEffort: 'xhigh',
+      },
+    }).provider.reasoningEffort,
+    'xhigh',
   );
+  // Live menu present for the model → that menu is authoritative at write time.
+  assert.equal(
+    isSupportedReasoningEffort('grok-cli', 'xhigh', 'grok-4.6', {
+      modelReasoningEfforts: { 'grok-4.6': ['low', 'medium', 'high', 'xhigh'] },
+    }),
+    true,
+  );
+  assert.equal(
+    isSupportedReasoningEffort('grok-cli', 'xhigh', 'grok-4.6', {
+      modelReasoningEfforts: { 'grok-4.6': ['low', 'medium', 'high'] },
+    }),
+    false,
+  );
+  // Empty live menu (e.g. composer) ⇒ no effort may be stored when Live is present.
+  assert.equal(
+    isSupportedReasoningEffort('grok-cli', 'low', 'grok-composer-2.5-fast', {
+      modelReasoningEfforts: { 'grok-composer-2.5-fast': [] },
+    }),
+    false,
+  );
+  // No live snapshot ⇒ vocabulary fallback still accepts xhigh.
+  assert.equal(isSupportedReasoningEffort('grok-cli', 'xhigh', 'grok-4.6'), true);
   assert.throws(
     () =>
       AgentCreateRequest.parse({

@@ -40,9 +40,10 @@ const CODEX_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra
  * Effort tokens a Grok model may support. This is the write-time vocabulary only:
  * whether a *specific* model actually supports an effort is decided at runtime by
  * the live ACP catalog (`session/set_model` is gated on it), never inferred here
- * from the model name.
+ * from the model name. Includes `xhigh` so UI values from live ACP (e.g. grok-4.6)
+ * can be saved; unadvertised efforts are still not applied at session/set_model.
  */
-const GROK_REASONING_EFFORTS = ['low', 'medium', 'high'];
+const GROK_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh'];
 
 export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
   {
@@ -178,17 +179,36 @@ export function isSupportedProviderModel(kind: string, model: string): boolean {
   return normalized.length > 0 && !entry.marketingModelAliases?.includes(normalized);
 }
 
+export type ReasoningEffortAvailability = {
+  modelReasoningEfforts?: Record<string, string[]>;
+} | null | undefined;
+
 /**
- * Whether `effort` is a valid token to store for this provider. For Grok this is the
- * provider effort vocabulary, not a per-model claim: the model-specific decision is
- * made at runtime against the live ACP catalog, so writes never infer support from
- * the model name (which could disagree with what the model actually advertises).
+ * Whether `effort` is a valid token to store for this provider.
+ *
+ * Grok: when live ACP availability is present **and** includes this model, the
+ * per-model menu is authoritative (empty menu ⇒ no effort may be stored). When
+ * live data is absent (offline / probe failed / model not in snapshot), fall
+ * back to the provider write vocabulary so saves are not blocked. Per-model
+ * apply at runtime still gates `session/set_model` on the live catalog.
  */
-export function isSupportedReasoningEffort(kind: string, effort: string, model?: string): boolean {
+export function isSupportedReasoningEffort(
+  kind: string,
+  effort: string,
+  model?: string,
+  availability?: ReasoningEffortAvailability,
+): boolean {
   if (kind === 'grok-cli') {
+    if (
+      model
+      && availability?.modelReasoningEfforts
+      && Object.prototype.hasOwnProperty.call(availability.modelReasoningEfforts, model)
+    ) {
+      return (availability.modelReasoningEfforts[model] ?? []).includes(effort);
+    }
     return GROK_REASONING_EFFORTS.includes(effort);
   }
-  return reasoningEffortsForModel(kind, model).includes(effort);
+  return reasoningEffortsForModel(kind, model, availability).includes(effort);
 }
 
 /**

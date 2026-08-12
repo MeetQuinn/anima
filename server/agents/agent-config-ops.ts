@@ -19,6 +19,7 @@ import {
   isSupportedProviderModel,
   providerCatalogEntry,
   reasoningEffortsForModel,
+  type ReasoningEffortAvailability,
 } from '../../shared/provider-catalog.js';
 import { ProviderAccountId } from '../../shared/provider-accounts.js';
 import { resolveAnimaHome } from '../anima-home.js';
@@ -80,10 +81,14 @@ export function agentConfigFromCreateInput(
 export function agentConfigWithProviderUpdate(
   current: AgentConfig,
   update: AgentUpdateProviderRequest,
+  /** Live ACP effort menus (Grok). When provided, write-time validation follows Live. */
+  availability?: ReasoningEffortAvailability,
 ): AgentConfig {
-  const selection = mergeProviderSelection(current.provider, update);
+  const selection = mergeProviderSelection(current.provider, update, availability);
   const env = mergeProviderEnv(current.provider.env, update.env);
   if (env) selection.env = env;
+  // Zod re-checks against write vocabulary only (no live map on the schema).
+  // Live rejection already happened in mergeProviderSelection when availability was set.
   return { ...current, provider: AgentProviderConfig.parse(selection) };
 }
 
@@ -105,19 +110,20 @@ export function agentConfigWithClaudeAccount(
 function mergeProviderSelection(
   current: AgentConfig['provider'],
   update: AgentUpdateProviderRequest,
+  availability?: ReasoningEffortAvailability,
 ): Record<string, unknown> {
   // Same kind: keep the current selection, overlay only the fields the update provides.
   if (!update.kind || update.kind === current.kind) {
     const currentEffort = 'reasoningEffort' in current ? current.reasoningEffort : undefined;
     const model = update.model ?? current.model;
-    // Explicit effort wins; otherwise keep current only when it is still a valid effort
-    // token for the provider. Grok's per-model support is enforced at runtime (the ACP
-    // catalog gates session/set_model), so writes store the token as a preference.
+    // Explicit effort wins; otherwise keep current only when it is still valid.
+    // With live availability for this model, the ACP menu is authoritative;
+    // otherwise the provider write vocabulary applies.
     let reasoningEffort =
       update.reasoningEffort !== undefined ? update.reasoningEffort : currentEffort;
     if (
       reasoningEffort &&
-      !isSupportedReasoningEffort(current.kind, reasoningEffort, model)
+      !isSupportedReasoningEffort(current.kind, reasoningEffort, model, availability)
     ) {
       if (update.reasoningEffort !== undefined) {
         throw new AgentConfigError(400, `unsupported reasoningEffort ${reasoningEffort}`);
@@ -127,7 +133,7 @@ function mergeProviderSelection(
     if (update.transport !== undefined && current.kind !== 'claude-code') {
       throw new AgentConfigError(400, `unsupported transport for ${current.kind}: ${update.transport}`);
     }
-    validateProviderShape(current.kind, model, reasoningEffort);
+    validateProviderShape(current.kind, model, reasoningEffort, '', availability);
 
     const { env: _env, ...rest } = current;
     const next: Record<string, unknown> = { ...rest };
@@ -146,7 +152,7 @@ function mergeProviderSelection(
   }
   const model = update.model ?? entry.defaultModel;
   const reasoningEffort = update.reasoningEffort ?? defaultReasoningEffort(entry.kind, model);
-  validateProviderShape(entry.kind, model, reasoningEffort);
+  validateProviderShape(entry.kind, model, reasoningEffort, '', availability);
 
   const next: Record<string, unknown> = { kind: entry.kind, model };
   if (current.idleTimeoutMs !== undefined) next.idleTimeoutMs = current.idleTimeoutMs;
@@ -264,6 +270,7 @@ function validateProviderShape(
   model: string | undefined,
   reasoningEffort: string | undefined,
   prefix = '',
+  availability?: ReasoningEffortAvailability,
 ): void {
   if (!isSupportedProviderKind(kind)) {
     throw new AgentConfigError(400, `${prefix}unsupported provider kind ${kind}`);
@@ -271,7 +278,7 @@ function validateProviderShape(
   if (model && !isSupportedProviderModel(kind, model)) {
     throw new AgentConfigError(400, `${prefix}unsupported model for ${kind}: ${model}`);
   }
-  if (reasoningEffort && !isSupportedReasoningEffort(kind, reasoningEffort, model)) {
+  if (reasoningEffort && !isSupportedReasoningEffort(kind, reasoningEffort, model, availability)) {
     throw new AgentConfigError(400, `${prefix}unsupported reasoningEffort ${reasoningEffort}`);
   }
 }
