@@ -336,8 +336,9 @@ export class ObservedConversationStore {
       throw err;
     }
     // Continuity is sticky: ordinary success never clears `degraded` and does
-    // not rewrite continuity.json (avoids a JSON write on every message). A
-    // known gap remains fail-closed until explicit repairContinuity().
+    // not rewrite continuity.json. Cut (a) exposes only getContinuity + degrade;
+    // authorized repair/reset lands later with an operational seam that can
+    // require evidence and record audit activity.
     return outcome;
   }
 
@@ -473,37 +474,9 @@ export class ObservedConversationStore {
     return this.continuityStore().read();
   }
 
-  /**
-   * Explicit, auditable repair: clear degraded → ok.
-   * Ordinary observe() must never call this — a later successful event does not
-   * prove a prior gap was recovered.
-   */
-  async repairContinuity(input: { note?: string } = {}): Promise<ObservationContinuity> {
-    const at = nowIso();
-    return this.continuityStore().update((current) => ({
-      status: 'ok' as const,
-      lastSuccessAt: at,
-      updatedAt: at,
-      // Keep prior failure breadcrumbs for audit; status is the gate.
-      ...(current.lastFailureAt ? { lastFailureAt: current.lastFailureAt } : {}),
-      ...(current.lastFailureMessage
-        ? {
-            lastFailureMessage: input.note
-              ? `${current.lastFailureMessage} | repaired: ${input.note}`.slice(0, 500)
-              : current.lastFailureMessage,
-          }
-        : input.note
-          ? { lastFailureMessage: `repaired: ${input.note}`.slice(0, 500) }
-          : {}),
-      ...(current.lastFailureEventId ? { lastFailureEventId: current.lastFailureEventId } : {}),
-      ...(current.lastFailureSurfaceId ? { lastFailureSurfaceId: current.lastFailureSurfaceId } : {}),
-    }));
-  }
-
-  /** @deprecated Prefer repairContinuity — name makes the explicit-repair seam obvious. */
-  async markOk(): Promise<ObservationContinuity> {
-    return this.repairContinuity();
-  }
+  // No public clear/repair on cut (a). Degraded sticks until a later operational
+  // seam can require evidence and emit audit activity. Tests plant state via
+  // markDegraded only.
 
   async markDegraded(input: {
     eventId?: string;

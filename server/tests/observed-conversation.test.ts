@@ -489,6 +489,7 @@ test('continuity degrades on write failure and persists across store re-instanti
 
 test('degraded continuity is sticky across later successful observes (no auto-clear)', async () => {
   // Milo red control: failure → later success → new store instance still degraded.
+  // Cut (a) has no public repair API — only getContinuity + degrade.
   await withAgentStore(async (store) => {
     await store.markDegraded({ message: 'prior gap', surfaceId: 'slack:T1:C1' });
     assert.equal((await store.getContinuity()).status, 'degraded');
@@ -509,11 +510,7 @@ test('degraded continuity is sticky across later successful observes (no auto-cl
     // Fresh store instance (restart) still reads degraded.
     const restarted = new ObservedConversationStore('anima');
     assert.equal((await restarted.getContinuity()).status, 'degraded');
-
-    // Only explicit repair clears it.
-    await store.repairContinuity({ note: 'manual resync' });
-    assert.equal((await store.getContinuity()).status, 'ok');
-    assert.equal((await restarted.getContinuity()).status, 'ok');
+    assert.equal((await restarted.getContinuity()).lastFailureMessage, 'prior gap');
   });
 });
 
