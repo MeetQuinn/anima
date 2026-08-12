@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { resolveAnimaHome } from '../../anima-home.js';
 import { JsonStore } from '../json-store.js';
 import {
+  CursorDeliveryConfig,
   DashboardAuth,
   MemoryCoherenceConfig,
   ProviderAccountsConfig,
@@ -21,6 +22,7 @@ import {
 } from '../../../shared/server-settings.js';
 
 export const ServerConfig = z.object({
+  cursorDelivery: CursorDeliveryConfig.optional(),
   dashboardAuth: DashboardAuth.optional(),
   dashboardHost: z.string().min(1).optional(),
   dashboardPort: z.number().int().positive().max(65535).optional(),

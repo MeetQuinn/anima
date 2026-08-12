@@ -37,6 +37,12 @@ export interface CodeAgentPromptContext {
     homePath?: string;
   };
   reminder?: Reminder;
+  /**
+   * Cut (b): when present, Slack wakes use the cursor-delivery prompt body
+   * instead of the single-message form. Gate-off leaves this undefined so
+   * Feishu/reminder/choice/onboarding paths stay byte-identical.
+   */
+  cursorDeliveryPromptBody?: string;
 }
 
 /**
@@ -74,6 +80,8 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
   if (event.kind === 'feishu_onboarding') return buildFeishuOnboardingDeliveryPrompt(event);
   if (event.kind === 'feishu') return buildFeishuMessageDeliveryPrompt(event);
 
+  // Cursor-delivery body (flag on) replaces the single-message Slack form only.
+  if (context.cursorDeliveryPromptBody) return context.cursorDeliveryPromptBody;
   return buildSlackMessageDeliveryPrompt(event);
 }
 

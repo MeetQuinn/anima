@@ -34,6 +34,13 @@ import { defaultAgentHealthService, isProviderFailureReason } from './agent-heal
 import { runtimeSessionServiceForAgent } from './runtime-session.service.js';
 import type { AgentRuntimeHandleSnapshot } from '../../shared/snapshot.js';
 import { TeamRunLimiter } from './team-run-limiter.js';
+import {
+  coalesceCoveredWakes,
+  commitCursorDelivery,
+  prepareCursorDelivery,
+  surfacesForSlackWake,
+} from './cursor-delivery.js';
+import { observedConversationStoreForAgent } from '../storage/schema/observed-conversation.store.js';
 
 // Executor for one agent: claims queued inbox items, runs the provider runtime,
 // appends follow-up items into the active run, and settles item lifecycle state.
@@ -241,32 +248,85 @@ export class AgentRuntimeWorker {
     let followupLoop: Promise<void> | undefined;
     let followupError: unknown;
     let appendedFollowupsSettled = false;
+    // Cut (b): follow-up appender starts only after initial cursor commit so it
+    // cannot race the snapshot (or coalesce under a half-committed cursor).
+    let releaseFollowups: (() => void) | undefined;
+    const followupsGate = new Promise<void>((resolve) => {
+      releaseFollowups = resolve;
+    });
     try {
       context = await runtimeContextForItemId(item.id, this.options, this.queue);
       const activeContext = context;
-      memoryCoherenceBeforeDigest = await this.memoryCoherenceDigest(context);
-      followupLoop = appendQueuedFollowupsUntilFinished({
-        activeContext,
-        agentRuntime: this.options.agentRuntime,
-        isIntakePaused: () => this.intakePaused,
-        ...(this.options.isRestartDrainActive
-          ? { isRestartDrainActive: this.options.isRestartDrainActive }
-          : {}),
-        itemDone: itemAbort.signal,
-        logger: this.logger,
-        onFollowupAccepted: () => handle.noteActivity(),
-        onFollowupAppended: async (followupContext, _text) => {
-          handle.appendedFollowups.push(followupContext);
-          await this.notifyItemFollowupAppended(activeContext, followupContext);
-        },
-        onFollowupSettled: (followupContext) => this.notifySettledItems([followupContext]),
-        queue: this.queue,
-        runtimeBridge: this.runtimeBridge,
-        runtimeConfig: this.options,
-        workerId: this.workerId,
-      }).catch((error: unknown) => {
-        followupError = error;
+
+      // Prepare cursor delivery (flag-off → disabled, no behavior change).
+      const prepared = await prepareCursorDelivery({
+        agentId: this.options.agentId,
+        item: context.item,
       });
+      if (prepared.kind === 'already_delivered') {
+        // Crash recovery: cursor already covers this wake — settle without a provider turn,
+        // and coalesce any other same-surface wakes already under that cursor.
+        await this.queue.complete(item.id);
+        if (context.item.kind === 'slack') {
+          const store = observedConversationStoreForAgent(this.options.agentId);
+          const surfaceIds = surfacesForSlackWake(context.item);
+          const surfaces = await Promise.all(surfaceIds.map(async (surfaceId) => {
+            const cursor = await store.getCursor(surfaceId);
+            const next = cursor.status === 'present' ? cursor.deliveredOrdinal : 0;
+            return {
+              surfaceId,
+              cursorExpected: cursor.status === 'absent'
+                ? { status: 'absent' as const }
+                : { status: 'present' as const, deliveredOrdinal: cursor.deliveredOrdinal },
+              nextDeliveredOrdinal: next,
+              entries: [],
+              omittedCount: 0,
+              establishOnly: next === 0,
+            };
+          }));
+          await coalesceCoveredWakes({
+            agentId: this.options.agentId,
+            queue: this.queue,
+            surfaces,
+            excludeItemIds: new Set([item.id]),
+            store,
+          });
+        }
+        releaseFollowups?.();
+        return;
+      }
+      if (prepared.kind === 'failed') {
+        throw prepared.error;
+      }
+      if (prepared.kind === 'prepared') {
+        context.cursorDelivery = prepared.plan;
+      }
+
+      memoryCoherenceBeforeDigest = await this.memoryCoherenceDigest(context);
+      followupLoop = followupsGate
+        .then(() => appendQueuedFollowupsUntilFinished({
+          activeContext,
+          agentRuntime: this.options.agentRuntime,
+          isIntakePaused: () => this.intakePaused,
+          ...(this.options.isRestartDrainActive
+            ? { isRestartDrainActive: this.options.isRestartDrainActive }
+            : {}),
+          itemDone: itemAbort.signal,
+          logger: this.logger,
+          onFollowupAccepted: () => handle.noteActivity(),
+          onFollowupAppended: async (followupContext, _text) => {
+            handle.appendedFollowups.push(followupContext);
+            await this.notifyItemFollowupAppended(activeContext, followupContext);
+          },
+          onFollowupSettled: (followupContext) => this.notifySettledItems([followupContext]),
+          queue: this.queue,
+          runtimeBridge: this.runtimeBridge,
+          runtimeConfig: this.options,
+          workerId: this.workerId,
+        }))
+        .catch((error: unknown) => {
+          followupError = error;
+        });
       const agentConfig = await defaultAgentRegistryService.serviceFor(this.options.agentId).getConfig();
       const slackIdentity = agentConfig.slack.botUserId
         ? { handle: agentConfig.slack.botHandle, userId: agentConfig.slack.botUserId }
@@ -301,6 +361,18 @@ export class AgentRuntimeWorker {
           this.logger.error(`Runtime worker provider-progress health clear failed for item ${item.id}: ${errorMessage(error)}`);
         });
       };
+      const onRuntimeStarted = async () => {
+        // Commit cursor + coalesce once at the provider-neutral runtime.started seam.
+        if (runContext.cursorDelivery) {
+          await commitCursorDelivery({
+            plan: runContext.cursorDelivery,
+            queue: this.queue,
+          });
+        }
+        // Release follow-up appender only after initial commit/coalesce.
+        releaseFollowups?.();
+      };
+      // Gate-off / non-Slack: still release follow-ups (no plan to commit).
       const result = await runProviderWithCrashRetries({
         agentId: this.options.agentId,
         agentRuntime: this.options.agentRuntime,
@@ -308,6 +380,7 @@ export class AgentRuntimeWorker {
           context: runContext,
           onActivity: () => handle.noteActivity(),
           onProviderProgress: clearProviderFailureOnProviderProgress,
+          onRuntimeStarted,
           profile: {
             displayName: agentConfig.profile?.displayName ?? this.options.agentId,
             ...(agentConfig.profile?.role ? { role: agentConfig.profile.role } : {}),
@@ -335,6 +408,8 @@ export class AgentRuntimeWorker {
         signal: itemAbort.signal,
       });
       itemAbort.abort('completed');
+      // Ensure follow-ups are released even if runtime.started never fired.
+      releaseFollowups?.();
       await followupLoop;
       if (followupError) throw followupError;
       this.logger.log(JSON.stringify({
@@ -361,6 +436,7 @@ export class AgentRuntimeWorker {
       await this.queue.completeAppendedTo(item.id);
       appendedFollowupsSettled = true;
     } catch (error) {
+      releaseFollowups?.();
       if (!itemAbort.signal.aborted) itemAbort.abort('failed');
       await followupLoop;
       if (followupError) {
