@@ -36,6 +36,11 @@ import {
   readStdin,
 } from './tool-context.js';
 import type { FeishuInboxItem, FeishuOnboardingInboxItem } from '../../shared/inbox.js';
+import {
+  evaluateSendHold,
+  observeOwnOutboundPost,
+  SendHoldError,
+} from '../runtime/send-hold.js';
 
 interface MessageGlobalInput {
   agent?: string;
@@ -116,6 +121,25 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
     tool: 'anima.message.send',
   };
 
+  // Pre-commit hold (cut c): after target prep, before first irreversible Slack op.
+  // Outside withToolActivity so HELD never creates external.effect / outbox.
+  if (!teamId) throw new Error(`Agent ${agent.id} has no Slack team id configured`);
+  try {
+    const hold = await evaluateSendHold({
+      agentId,
+      teamId,
+      channelId: channel.id,
+      ...(threadTs ? { threadTs } : {}),
+      tool: 'anima.message.send',
+      botUserId: agent.slack.botUserId,
+      writeOutput: deps.writeOutput,
+    });
+    if (hold.kind === 'held') return;
+  } catch (error) {
+    if (error instanceof SendHoldError) throw error;
+    throw error;
+  }
+
   await withToolActivity({
     audit: { agentId },
     basePayload,
@@ -150,6 +174,18 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
             messageTs: response.ts,
             ...(threadTs ? { threadTs } : {}),
           });
+      // Own post → local journal (ingress ignoreSelf would otherwise omit it).
+      if (response.ts) {
+        await observeOwnOutboundPost({
+          agentId,
+          teamId,
+          channelId,
+          messageTs: response.ts,
+          ...(threadTs ? { threadTs } : {}),
+          text,
+          botUserId: agent.slack.botUserId,
+        });
+      }
       const writeOutput = deps.writeOutput ?? console.log;
       writeOutput(slackOutputLine({
         messageTs: response.ts,

@@ -21,6 +21,10 @@ import { isClaimableQueuedInboxItem } from '../../shared/inbox.js';
 import { envelopeTime, renderEnvelope } from '../messages/envelope.js';
 import { slackDisplayLabel } from '../slack/slack.helper.js';
 import { renderSlackCursorExtras } from './delivery-prompt.js';
+import {
+  exactEarlierMessagesMarker,
+  truncatedMarkerSuffix,
+} from './send-hold-copy.js';
 
 /** Newest-fitting bound: max messages in the final provider-facing envelope. */
 export const CURSOR_DELIVERY_MAX_MESSAGES = 20;
@@ -941,7 +945,11 @@ export function formatObservedLine(entry: ObservedConversationEntry): string {
     text = text ? `[file: ${text}]` : '[file]';
   }
   if (Buffer.byteLength(text, 'utf8') > CURSOR_DELIVERY_MAX_MESSAGE_CHARS) {
-    text = truncateUtf8(text, CURSOR_DELIVERY_MAX_MESSAGE_CHARS);
+    // Iris: per-message clip ends with `… [truncated]`.
+    const suffix = truncatedMarkerSuffix();
+    const suffixBytes = Buffer.byteLength(suffix, 'utf8');
+    const bodyBudget = Math.max(1, CURSOR_DELIVERY_MAX_MESSAGE_CHARS - suffixBytes);
+    text = `${truncateUtf8(text, bodyBudget)}${suffix}`;
   }
   const env = renderEnvelope([
     { key: 'message_ts', value: entry.messageTs },
@@ -993,9 +1001,8 @@ export function renderCursorDeliveryEnvelopeFromEntries(
       parts.push(formatObservedLine(entry));
     }
     if (omitted > 0) {
-      parts.push(
-        `(${omitted} earlier message${omitted === 1 ? '' : 's'} not shown)`,
-      );
+      // Iris exact-count form: `(+N earlier messages not shown)`.
+      parts.push(exactEarlierMessagesMarker(omitted));
     }
   } else {
     parts.push('', '(no prior observed messages in window)');
@@ -1134,7 +1141,11 @@ function buildLatestWakeLine(event: SlackInboxItem): string {
   }
   // Same clip as snapshot rows — never re-expand a long trigger in Latest wake.
   if (Buffer.byteLength(text, 'utf8') > CURSOR_DELIVERY_MAX_MESSAGE_CHARS) {
-    text = truncateUtf8(text, CURSOR_DELIVERY_MAX_MESSAGE_CHARS);
+    // Iris: per-message clip ends with `… [truncated]`.
+    const suffix = truncatedMarkerSuffix();
+    const suffixBytes = Buffer.byteLength(suffix, 'utf8');
+    const bodyBudget = Math.max(1, CURSOR_DELIVERY_MAX_MESSAGE_CHARS - suffixBytes);
+    text = `${truncateUtf8(text, bodyBudget)}${suffix}`;
   }
   return `${env} ${actor}: ${text}`;
 }

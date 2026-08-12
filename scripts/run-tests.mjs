@@ -60,6 +60,7 @@ const groups = {
     'outcome-line.test.js',
     'observed-conversation.test.js',
     'cursor-delivery.test.js',
+    'send-hold.test.js',
     'workspace-directory.test.js',
     'prompt-attachments.test.js',
     'prompt-template.test.js',

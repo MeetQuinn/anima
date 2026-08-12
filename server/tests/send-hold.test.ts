@@ -1,0 +1,393 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+
+import {
+  evaluateSendHold,
+  isOwnObservedEntry,
+  observeOwnOutboundPost,
+  SendHoldError,
+} from '../runtime/send-hold.js';
+import {
+  exactEarlierMessagesMarker,
+  renderHeldCopy,
+  renderHeldCopyZh,
+  unknownEarlierMessagesMarker,
+} from '../runtime/send-hold-copy.js';
+import { setCursorDeliveryEnabledForTests } from '../runtime/cursor-delivery.js';
+import { ObservedConversationStore } from '../storage/schema/observed-conversation.store.js';
+import { activityServiceForAgent } from '../activities/activity.service.js';
+import { withAnimaHome } from './anima-home.js';
+import { defaultAgentConfig, writeAgentConfigs } from './helpers/harness.js';
+
+async function withHoldStore<T>(
+  body: (store: ObservedConversationStore, agentId: string) => Promise<T>,
+): Promise<T> {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-send-hold-'));
+  setCursorDeliveryEnabledForTests(true);
+  try {
+    await writeAgentConfigs(stateDir, [defaultAgentConfig('anima')]);
+    return await withAnimaHome(stateDir, async () => {
+      const store = new ObservedConversationStore('anima');
+      return body(store, 'anima');
+    });
+  } finally {
+    setCursorDeliveryEnabledForTests(undefined);
+    await rm(stateDir, { force: true, recursive: true });
+  }
+}
+
+test('held copy EN matches Iris template (message + file noun)', () => {
+  const shown = [
+    {
+      botId: undefined,
+      channelId: 'C1',
+      eventId: 'slack:T1:C1:1.0',
+      messageTs: '1.0',
+      observedAt: '2026-01-01T13:44:59.000Z',
+      ordinal: 1,
+      receivedAt: '2026-01-01T13:44:59.000Z',
+      surfaceId: 'slack:T1:C1',
+      teamId: 'T1',
+      text: '1',
+      userId: 'U_MILO',
+    },
+    {
+      channelId: 'C1',
+      eventId: 'slack:T1:C1:2.0',
+      messageTs: '2.0',
+      observedAt: '2026-01-01T13:45:20.000Z',
+      ordinal: 2,
+      receivedAt: '2026-01-01T13:45:20.000Z',
+      surfaceId: 'slack:T1:C1',
+      teamId: 'T1',
+      text: '2',
+      userId: 'U_TESS',
+    },
+  ] as const;
+
+  const messageCopy = renderHeldCopy({
+    totalNewCount: 2,
+    shown: [...shown],
+    noun: 'message',
+  });
+  assert.match(messageCopy, /^HELD: the conversation moved while you were composing\. 2 new messages arrived, so your message was not sent:/);
+  assert.match(messageCopy, /\[@U_MILO 13:44:59\] 1/);
+  assert.match(messageCopy, /\[@U_TESS 13:45:20\] 2/);
+  assert.match(messageCopy, /Read them, then resend to post it \(revised or unchanged\)\. To stay silent, do nothing\./);
+  assert.doesNotMatch(messageCopy, /blocked|rejected|failed/i);
+
+  const fileCopy = renderHeldCopy({
+    totalNewCount: 1,
+    shown: [shown[0]],
+    noun: 'file',
+  });
+  assert.match(fileCopy, /1 new message arrived, so your file was not sent:/);
+
+  const zh = renderHeldCopyZh({
+    totalNewCount: 2,
+    shown: [...shown],
+    noun: 'message',
+  });
+  assert.match(zh, /^HELD:你组稿期间会话有 2 条新消息/);
+});
+
+test('truncation markers match Iris exact/unknown forms', () => {
+  assert.equal(exactEarlierMessagesMarker(2), '(+2 earlier messages not shown)');
+  assert.equal(exactEarlierMessagesMarker(1), '(+1 earlier message not shown)');
+  assert.equal(unknownEarlierMessagesMarker(), '(earlier messages not shown)');
+});
+
+test('gate-off: evaluateSendHold returns disabled / allow without comparing', async () => {
+  setCursorDeliveryEnabledForTests(false);
+  try {
+    const result = await evaluateSendHold({
+      agentId: 'anima',
+      teamId: 'T1',
+      channelId: 'C1',
+      tool: 'anima.message.send',
+    });
+    assert.equal(result.kind, 'disabled');
+  } finally {
+    setCursorDeliveryEnabledForTests(undefined);
+  }
+});
+
+test('absent cursor lands without hold', async () => {
+  await withHoldStore(async (store, agentId) => {
+    const result = await evaluateSendHold({
+      agentId,
+      teamId: 'T1',
+      channelId: 'C1',
+      tool: 'anima.message.send',
+      botUserId: 'U_BOT',
+      store,
+    });
+    assert.equal(result.kind, 'allow');
+  });
+});
+
+test('stale room holds, advances cursor, sole stdout is HELD copy', async () => {
+  await withHoldStore(async (store, agentId) => {
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '10.0',
+      text: 'topic',
+      userId: 'U_ROOT',
+    });
+    await store.advanceCursor({
+      surfaceId: 'slack:T1:C1',
+      expected: { status: 'absent' },
+      nextDeliveredOrdinal: 1,
+      lastDeliveredEventId: 'slack:T1:C1:10.0',
+      lastDeliveredMessageTs: '10.0',
+    });
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '11.0',
+      text: '1',
+      userId: 'U_MILO',
+      receivedAt: '2026-01-01T13:44:59.000Z',
+    });
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '12.0',
+      text: '2',
+      userId: 'U_TESS',
+      receivedAt: '2026-01-01T13:45:20.000Z',
+    });
+
+    const lines: string[] = [];
+    const result = await evaluateSendHold({
+      agentId,
+      teamId: 'T1',
+      channelId: 'C1',
+      tool: 'anima.message.send',
+      botUserId: 'U_BOT',
+      store,
+      writeOutput: (line) => lines.push(line),
+    });
+    assert.equal(result.kind, 'held');
+    if (result.kind !== 'held') return;
+    assert.equal(result.deltaCount, 2);
+    assert.equal(result.advancedToOrdinal, 3);
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0], result.stdout);
+    assert.match(result.stdout, /^HELD:/);
+    assert.match(result.stdout, /your message was not sent/);
+
+    const cursor = await store.getCursor('slack:T1:C1');
+    assert.equal(cursor.status, 'present');
+    if (cursor.status === 'present') {
+      assert.equal(cursor.deliveredOrdinal, 3);
+    }
+
+    // Held activity recorded locally (no draft text).
+    const activities = await activityServiceForAgent(agentId).readLastN(5);
+    const held = activities.find((a) => a.payload?.['status'] === 'held');
+    assert.ok(held, 'expected held activity');
+    assert.equal(held!.type, 'tool.call.completed');
+    assert.equal(held!.payload?.['tool'], 'anima.message.send');
+    assert.equal(held!.payload?.['text'], undefined);
+
+    // Retry after hold with no further room movement → allow.
+    const again = await evaluateSendHold({
+      agentId,
+      teamId: 'T1',
+      channelId: 'C1',
+      tool: 'anima.message.send',
+      botUserId: 'U_BOT',
+      store,
+    });
+    assert.equal(again.kind, 'allow');
+  });
+});
+
+test('own posts after cursor do not hold', async () => {
+  await withHoldStore(async (store, agentId) => {
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '1.0',
+      text: 'seen',
+      userId: 'U1',
+    });
+    await store.advanceCursor({
+      surfaceId: 'slack:T1:C1',
+      expected: { status: 'absent' },
+      nextDeliveredOrdinal: 1,
+      lastDeliveredEventId: 'slack:T1:C1:1.0',
+      lastDeliveredMessageTs: '1.0',
+    });
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '2.0',
+      text: 'my prior',
+      userId: 'U_BOT',
+    });
+    const result = await evaluateSendHold({
+      agentId,
+      teamId: 'T1',
+      channelId: 'C1',
+      tool: 'anima.message.send',
+      botUserId: 'U_BOT',
+      store,
+    });
+    assert.equal(result.kind, 'allow');
+  });
+});
+
+test('file send noun in held copy', async () => {
+  await withHoldStore(async (store, agentId) => {
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '1.0',
+      text: 'root',
+      userId: 'U1',
+    });
+    await store.advanceCursor({
+      surfaceId: 'slack:T1:C1',
+      expected: { status: 'absent' },
+      nextDeliveredOrdinal: 1,
+      lastDeliveredEventId: 'slack:T1:C1:1.0',
+      lastDeliveredMessageTs: '1.0',
+    });
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '2.0',
+      text: 'moved',
+      userId: 'U2',
+    });
+    const lines: string[] = [];
+    const result = await evaluateSendHold({
+      agentId,
+      teamId: 'T1',
+      channelId: 'C1',
+      tool: 'anima.file.send',
+      botUserId: 'U_BOT',
+      store,
+      writeOutput: (line) => lines.push(line),
+    });
+    assert.equal(result.kind, 'held');
+    if (result.kind !== 'held') return;
+    assert.match(result.stdout, /your file was not sent/);
+  });
+});
+
+test('degraded continuity fails closed (not silent allow)', async () => {
+  await withHoldStore(async (store, agentId) => {
+    await store.markDegraded({ message: 'gap', surfaceId: 'slack:T1:C1' });
+    await assert.rejects(
+      () =>
+        evaluateSendHold({
+          agentId,
+          teamId: 'T1',
+          channelId: 'C1',
+          tool: 'anima.message.send',
+          store,
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof SendHoldError);
+        assert.equal(err.reason, 'continuity_degraded');
+        return true;
+      },
+    );
+  });
+});
+
+test('cursor beyond tail fails closed before hold', async () => {
+  await withHoldStore(async (store, agentId) => {
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '1.0',
+      text: 'a',
+      userId: 'U1',
+    });
+    await store.writeCursorForTest({
+      surfaceId: 'slack:T1:C1',
+      deliveredOrdinal: 9,
+      updatedAt: new Date().toISOString(),
+    });
+    await assert.rejects(
+      () =>
+        evaluateSendHold({
+          agentId,
+          teamId: 'T1',
+          channelId: 'C1',
+          tool: 'anima.message.send',
+          botUserId: 'U_BOT',
+          store,
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof SendHoldError);
+        assert.equal(err.reason, 'store_error');
+        assert.match(err.message, /beyond reconciled tail/);
+        return true;
+      },
+    );
+  });
+});
+
+test('observeOwnOutboundPost journals own send for later hold exclusion', async () => {
+  await withHoldStore(async (store, agentId) => {
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '1.0',
+      text: 'prior',
+      userId: 'U1',
+    });
+    await store.advanceCursor({
+      surfaceId: 'slack:T1:C1',
+      expected: { status: 'absent' },
+      nextDeliveredOrdinal: 1,
+      lastDeliveredEventId: 'slack:T1:C1:1.0',
+      lastDeliveredMessageTs: '1.0',
+    });
+    await observeOwnOutboundPost({
+      agentId,
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '2.0',
+      text: 'i sent this',
+      botUserId: 'U_BOT',
+      store,
+    });
+    const result = await evaluateSendHold({
+      agentId,
+      teamId: 'T1',
+      channelId: 'C1',
+      tool: 'anima.message.send',
+      botUserId: 'U_BOT',
+      store,
+    });
+    assert.equal(result.kind, 'allow');
+    assert.equal(
+      isOwnObservedEntry(
+        {
+          channelId: 'C1',
+          eventId: 'x',
+          messageTs: '2.0',
+          observedAt: 't',
+          ordinal: 2,
+          receivedAt: 't',
+          surfaceId: 'slack:T1:C1',
+          teamId: 'T1',
+          text: 'i sent this',
+          userId: 'U_BOT',
+        },
+        { botUserId: 'U_BOT' },
+      ),
+      true,
+    );
+  });
+});

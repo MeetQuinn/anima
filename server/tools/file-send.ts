@@ -31,6 +31,11 @@ import {
   readStdin,
 } from './tool-context.js';
 import { resolveChatTarget } from './chat-target-resolver.js';
+import {
+  evaluateSendHold,
+  observeOwnOutboundPost,
+  SendHoldError,
+} from '../runtime/send-hold.js';
 
 export interface FileSendInputData {
   agent?: string;
@@ -135,6 +140,23 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
     tool: 'anima.file.send',
   };
 
+  // Pre-commit hold (cut c): before any upload URL/bytes. Outside withToolActivity.
+  if (!teamId) throw new Error(`Agent ${agent.id} has no Slack team id configured`);
+  try {
+    const hold = await evaluateSendHold({
+      agentId,
+      teamId,
+      channelId: channel.id,
+      ...(threadTs ? { threadTs } : {}),
+      tool: 'anima.file.send',
+      botUserId: agent.slack.botUserId,
+    });
+    if (hold.kind === 'held') return;
+  } catch (error) {
+    if (error instanceof SendHoldError) throw error;
+    throw error;
+  }
+
   await withToolActivity({
     audit: { agentId },
     basePayload,
@@ -182,6 +204,20 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
           ...(title ? { title } : {}),
         };
       }));
+
+      // Own journal: only when we have a real message ts (never invent from file id).
+      const ownMessageTs = enriched.find((f) => f.messageId)?.messageId;
+      if (ownMessageTs && teamId) {
+        await observeOwnOutboundPost({
+          agentId,
+          teamId,
+          channelId: channel.id,
+          messageTs: ownMessageTs,
+          ...(threadTs ? { threadTs } : {}),
+          text: caption ?? validated.map((f) => f.filename).join(', '),
+          botUserId: agent.slack.botUserId,
+        });
+      }
 
       console.log(slackFileOutputLine({
         fileCount: enriched.length,

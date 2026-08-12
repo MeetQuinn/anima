@@ -32,6 +32,11 @@ import {
   resolveToolAgentId,
   withToolActivity,
 } from './tool-context.js';
+import {
+  evaluateSendHold,
+  observeOwnOutboundPost,
+  SendHoldError,
+} from '../runtime/send-hold.js';
 
 type SlackPostMessagePayload = Parameters<WebClient['chat']['postMessage']>[0];
 type AskAllowedUser = {
@@ -109,6 +114,22 @@ export async function runAsk(opts: z.infer<typeof AskCommandSchema>): Promise<vo
     tool: 'anima.ask',
   };
 
+  // Pre-commit hold (cut c): before postMessage; outside withToolActivity.
+  try {
+    const hold = await evaluateSendHold({
+      agentId,
+      teamId,
+      channelId: target.channel.id,
+      ...(target.threadTs ? { threadTs: target.threadTs } : {}),
+      tool: 'anima.ask',
+      botUserId: agent.slack.botUserId,
+    });
+    if (hold.kind === 'held') return;
+  } catch (error) {
+    if (error instanceof SendHoldError) throw error;
+    throw error;
+  }
+
   await withToolActivity({
     audit: { agentId },
     basePayload,
@@ -160,6 +181,15 @@ export async function runAsk(opts: z.infer<typeof AskCommandSchema>): Promise<vo
             messageTs,
             ...(target.threadTs ? { threadTs: target.threadTs } : {}),
           });
+      await observeOwnOutboundPost({
+        agentId,
+        teamId,
+        channelId,
+        messageTs,
+        ...(target.threadTs ? { threadTs: target.threadTs } : {}),
+        text: question,
+        botUserId: agent.slack.botUserId,
+      });
       console.log(askOutputLine({
         askId,
         messageTs,
