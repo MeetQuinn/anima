@@ -1045,6 +1045,88 @@ test('merge does not double-count overlapping omissions on the same surface', as
   });
 });
 
+test('merge unions exact per-surface candidateCount across distinct child threads (62-pop)', async () => {
+  // 2 channel roots + 30 observations in each of two response threads = 62.
+  // Plan-local aggregate omissions parked on the trigger surface under-count
+  // (shown+omitted ≈ 51). Exact candidateCount per surface must union to 62.
+  await withEnabledStore(async (store, agentId) => {
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '10.0',
+      text: 'root-one',
+      userId: 'U1',
+    });
+    for (let i = 1; i <= 30; i += 1) {
+      await store.observe({
+        teamId: 'T1',
+        channelId: 'C1',
+        messageTs: `10.${String(i).padStart(3, '0')}`,
+        threadTs: '10.0',
+        text: `t1-reply-${i}`,
+        userId: 'U2',
+      });
+    }
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '20.0',
+      text: 'root-two',
+      userId: 'U1',
+    });
+    for (let i = 1; i <= 30; i += 1) {
+      await store.observe({
+        teamId: 'T1',
+        channelId: 'C1',
+        messageTs: `20.${String(i).padStart(3, '0')}`,
+        threadTs: '20.0',
+        text: `t2-reply-${i}`,
+        userId: 'U3',
+      });
+    }
+
+    const a = await prepareCursorDelivery({
+      agentId,
+      item: slackItem({ channelId: 'C1', messageTs: '10.0', text: 'root-one', id: 'root-one' }),
+      store,
+    });
+    const b = await prepareCursorDelivery({
+      agentId,
+      item: slackItem({ channelId: 'C1', messageTs: '20.0', text: 'root-two', id: 'root-two' }),
+      store,
+    });
+    assert.equal(a.kind, 'prepared');
+    assert.equal(b.kind, 'prepared');
+    if (a.kind !== 'prepared' || b.kind !== 'prepared') return;
+
+    // Each root plan sees its own response-thread population exactly.
+    const aThread = a.plan.surfaces.find((s) => s.surfaceId === 'slack:T1:C1:thread:10.0');
+    const bThread = b.plan.surfaces.find((s) => s.surfaceId === 'slack:T1:C1:thread:20.0');
+    assert.ok(aThread, 'plan A must include thread:10.0');
+    assert.ok(bThread, 'plan B must include thread:20.0');
+    assert.equal(aThread!.candidateCount, 30);
+    assert.equal(bThread!.candidateCount, 30);
+
+    const merged = mergeCursorDeliveryPlans(
+      [a.plan, b.plan],
+      slackItem({ channelId: 'C1', messageTs: '20.0', text: 'root-two' }),
+    );
+    const shown = merged.surfaces.reduce((n, s) => n + s.entries.length, 0);
+    const omitted = merged.surfaces.reduce((n, s) => n + s.omittedCount, 0);
+    const population = shown + omitted;
+    assert.equal(population, 62, `shown=${shown} omitted=${omitted} population=${population}`);
+    assert.ok(shown <= CURSOR_DELIVERY_MAX_MESSAGES, `shown ${shown}`);
+    // Both child threads must survive the surface union.
+    const surfaceIds = new Set(merged.surfaces.map((s) => s.surfaceId));
+    assert.ok(surfaceIds.has('slack:T1:C1:thread:10.0'));
+    assert.ok(surfaceIds.has('slack:T1:C1:thread:20.0'));
+    const m1 = merged.surfaces.find((s) => s.surfaceId === 'slack:T1:C1:thread:10.0')!;
+    const m2 = merged.surfaces.find((s) => s.surfaceId === 'slack:T1:C1:thread:20.0')!;
+    assert.equal(m1.candidateCount, 30);
+    assert.equal(m2.candidateCount, 30);
+  });
+});
+
 test('settings read failure is fail-closed (not silent disable)', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cursor-settings-fail-'));
   setCursorDeliveryEnabledForTests(undefined);
@@ -1067,6 +1149,40 @@ test('settings read failure is fail-closed (not silent disable)', async () => {
       if (prepared.kind === 'failed') {
         assert.equal(prepared.error.reason, 'store_error');
       }
+    });
+  } finally {
+    setCursorDeliveryEnabledForTests(undefined);
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('corrupt cursor settings does not block non-Slack wakes', async () => {
+  // cut (b) fail-closed is Slack-only: reminder/choice/Feishu must not quiet-requeue
+  // indefinitely when config.json is unreadable.
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cursor-settings-nons-'));
+  setCursorDeliveryEnabledForTests(undefined);
+  try {
+    const { writeFile, mkdir } = await import('node:fs/promises');
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, 'config.json'), '{not-json', 'utf8');
+    await withAnimaHome(stateDir, async () => {
+      const now = new Date().toISOString();
+      const prepared = await prepareCursorDelivery({
+        agentId: 'anima',
+        item: {
+          id: 'reminder-corrupt-cfg',
+          kind: 'reminder',
+          reminderId: 'r-corrupt',
+          receivedAt: now,
+          handling: {
+            createdAt: now,
+            queuedAt: now,
+            status: 'queued',
+            updatedAt: now,
+          },
+        },
+      });
+      assert.equal(prepared.kind, 'disabled');
     });
   } finally {
     setCursorDeliveryEnabledForTests(undefined);

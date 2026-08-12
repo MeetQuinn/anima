@@ -287,6 +287,7 @@ export class AgentRuntimeWorker {
                 : { status: 'present' as const, deliveredOrdinal: cursor.deliveredOrdinal },
               nextDeliveredOrdinal: next,
               entries: [],
+              candidateCount: 0,
               omittedCount: 0,
               establishOnly: next === 0,
             };

@@ -58,7 +58,14 @@ export interface SurfaceDeliveryPlan {
   lastDeliveredMessageTs?: string;
   /** Bounded journal rows delivered for this surface (chronological). */
   entries: ObservedConversationEntry[];
-  /** Count of candidate rows after cursor not included due to the bound. */
+  /**
+   * Exact candidate population for this surface after the cursor (journal
+   * rows considered before the shared envelope bound). Used for merge union
+   * so child-thread omissions are not lost when aggregate omitted was once
+   * parked only on the trigger surface.
+   */
+  candidateCount: number;
+  /** Count of this surface's candidates not included due to the bound. */
   omittedCount: number;
   /** True when establishing present@0 with no journal rows. */
   establishOnly: boolean;
@@ -175,10 +182,13 @@ export async function prepareCursorDelivery(input: {
   item: InboxItem;
   store?: ObservedConversationStore;
 }): Promise<PrepareCursorDeliveryResult> {
+  // Slack-only: non-Slack wakes never consult cursor settings (a corrupt
+  // config must not quiet-requeue reminder/choice/Feishu indefinitely).
+  if (input.item.kind !== 'slack') return { kind: 'disabled' };
+
   const enabled = await resolveCursorDeliveryEnabled();
   if (enabled.kind === 'disabled') return { kind: 'disabled' };
   if (enabled.kind === 'error') return { kind: 'failed', error: enabled.error };
-  if (input.item.kind !== 'slack') return { kind: 'disabled' };
   const item = input.item;
   const store = input.store ?? observedConversationStoreForAgent(input.agentId);
 
@@ -414,7 +424,14 @@ interface SurfaceCandidates {
   cursorExpected: AdvanceCursorExpected;
   cursorDeliveredOrdinal: number; // 0 if absent
   isResponseThreadEstablish: boolean;
+  /** Rows available for selection (may be a shown subset after merge). */
   candidates: ObservedConversationEntry[];
+  /**
+   * Exact after-cursor journal population for this surface. Defaults to
+   * candidates.length. Set explicitly on merge re-window so omissions survive
+   * when only shown rows are present in candidates.
+   */
+  candidateCount?: number;
 }
 
 /**
@@ -477,14 +494,12 @@ async function buildSharedBudgetSurfacePlans(
     triggerItem: opts.triggerItem,
     totalCandidates: tagged.length,
   });
-  return assembleSurfacePlansFromSelection(raw, selected, opts.triggerSurfaceId, tagged.length);
+  return assembleSurfacePlansFromSelection(raw, selected);
 }
 
 function assembleSurfacePlansFromSelection(
   raw: SurfaceCandidates[],
   selected: { entries: ObservedConversationEntry[]; omittedCount: number },
-  triggerSurfaceId: string,
-  totalCandidates: number,
 ): SurfaceDeliveryPlan[] {
   type Tagged = ObservedConversationEntry & { _surfaceId?: string };
   const selectedBySurface = new Map<string, ObservedConversationEntry[]>();
@@ -502,7 +517,6 @@ function assembleSurfacePlansFromSelection(
     selectedBySurface.set(sid, list);
   }
 
-  const totalOmitted = Math.max(0, totalCandidates - selected.entries.length);
   const plans: SurfaceDeliveryPlan[] = [];
   for (const surface of raw) {
     if (surface.isResponseThreadEstablish) {
@@ -511,6 +525,7 @@ function assembleSurfacePlansFromSelection(
         cursorExpected: surface.cursorExpected,
         nextDeliveredOrdinal: 0,
         entries: [],
+        candidateCount: 0,
         omittedCount: 0,
         establishOnly: true,
       });
@@ -521,7 +536,9 @@ function assembleSurfacePlansFromSelection(
     const nextDeliveredOrdinal = last
       ? last.ordinal
       : surface.cursorDeliveredOrdinal;
-    const isTriggerSurface = surface.surfaceId === triggerSurfaceId;
+    // Exact per-surface population after cursor (not an aggregate parked on trigger).
+    const candidateCount = surface.candidateCount ?? surface.candidates.length;
+    const omittedCount = Math.max(0, candidateCount - entries.length);
     plans.push({
       surfaceId: surface.surfaceId,
       cursorExpected: surface.cursorExpected,
@@ -530,7 +547,8 @@ function assembleSurfacePlansFromSelection(
         ? { lastDeliveredEventId: last.eventId, lastDeliveredMessageTs: last.messageTs }
         : {}),
       entries,
-      omittedCount: isTriggerSurface ? totalOmitted : 0,
+      candidateCount,
+      omittedCount,
       establishOnly: false,
     });
   }
@@ -555,8 +573,9 @@ export function compareByConversationTime(
  * Pure union of plans by exact surface id (no re-window). Entries deduped by
  * eventId; cursorExpected prefers the more conservative (lower) present ordinal.
  *
- * Per-surface omitted pool is max(entries_i + omitted_i) − unique(entries), not
- * a sum of plan-local omitted counts (overlapping windows would double-count).
+ * Per-surface candidateCount is max(candidateCount_i) across plans (exact journal
+ * population after the same cursor). omitted = candidateCount − unique(entries).
+ * Never sum plan-local omitted aggregates across overlapping windows.
  */
 export function mergeSurfacePlans(plans: CursorDeliveryPlan[]): SurfaceDeliveryPlan[] {
   type Acc = {
@@ -564,13 +583,15 @@ export function mergeSurfacePlans(plans: CursorDeliveryPlan[]): SurfaceDeliveryP
     cursorExpected: AdvanceCursorExpected;
     establishOnly: boolean;
     entries: ObservedConversationEntry[];
-    /** Max journal pool size seen for this surface (shown+omitted) across plans. */
-    maxPool: number;
+    /** Exact after-cursor population for this surface (max across source plans). */
+    candidateCount: number;
   };
   const bySurface = new Map<string, Acc>();
   for (const plan of plans) {
     for (const surface of plan.surfaces) {
-      const pool = surface.entries.length + surface.omittedCount;
+      const pool = surface.candidateCount > 0
+        ? surface.candidateCount
+        : surface.entries.length + surface.omittedCount;
       const existing = bySurface.get(surface.surfaceId);
       if (!existing) {
         bySurface.set(surface.surfaceId, {
@@ -578,7 +599,7 @@ export function mergeSurfacePlans(plans: CursorDeliveryPlan[]): SurfaceDeliveryP
           cursorExpected: surface.cursorExpected,
           establishOnly: surface.establishOnly,
           entries: [...surface.entries],
-          maxPool: pool,
+          candidateCount: pool,
         });
         continue;
       }
@@ -588,7 +609,7 @@ export function mergeSurfacePlans(plans: CursorDeliveryPlan[]): SurfaceDeliveryP
       existing.entries = [...entryById.values()].sort((a, b) => a.ordinal - b.ordinal);
       existing.establishOnly =
         existing.establishOnly && surface.establishOnly && existing.entries.length === 0;
-      existing.maxPool = Math.max(existing.maxPool, pool);
+      existing.candidateCount = Math.max(existing.candidateCount, pool);
       if (
         existing.cursorExpected.status === 'present'
         && surface.cursorExpected.status === 'present'
@@ -602,8 +623,7 @@ export function mergeSurfacePlans(plans: CursorDeliveryPlan[]): SurfaceDeliveryP
     const last = acc.entries[acc.entries.length - 1];
     let floor = 0;
     if (acc.cursorExpected.status === 'present') floor = acc.cursorExpected.deliveredOrdinal;
-    // Dedupe: omitted = pool − unique shown (never sum of overlapping plan omissions).
-    const omittedCount = Math.max(0, acc.maxPool - acc.entries.length);
+    const omittedCount = Math.max(0, acc.candidateCount - acc.entries.length);
     return {
       surfaceId: acc.surfaceId,
       cursorExpected: acc.cursorExpected,
@@ -612,6 +632,7 @@ export function mergeSurfacePlans(plans: CursorDeliveryPlan[]): SurfaceDeliveryP
         ? { lastDeliveredEventId: last.eventId, lastDeliveredMessageTs: last.messageTs }
         : {}),
       entries: acc.entries,
+      candidateCount: acc.candidateCount,
       omittedCount,
       establishOnly: acc.establishOnly && acc.entries.length === 0,
     };
@@ -641,17 +662,19 @@ export function mergeCursorDeliveryPlans(
   }
 
   const unioned = mergeSurfacePlans(plans);
-  // totalCandidates = unique shown + per-surface deduped omitted (already on unioned).
+  // Exact unique population = sum of per-surface candidateCount (independent journals).
   let totalCandidates = 0;
   type Tagged = ObservedConversationEntry & { _surfaceId: string };
   const tagged: Tagged[] = [];
   for (const surface of unioned) {
     if (surface.establishOnly) continue;
-    totalCandidates += surface.entries.length + surface.omittedCount;
+    totalCandidates += surface.candidateCount;
     for (const entry of surface.entries) {
       tagged.push({ ...entry, _surfaceId: surface.surfaceId });
     }
   }
+  // Re-window only among rows already shown in source plans; omitted accounting
+  // still uses exact per-surface candidateCount (not inventable journal rows).
   totalCandidates = Math.max(totalCandidates, tagged.length);
   const clippedTrigger = clipTriggerExtrasForEnvelope(triggerItem);
   tagged.sort(compareByConversationTime);
@@ -661,6 +684,8 @@ export function mergeCursorDeliveryPlans(
     triggerItem: clippedTrigger,
     totalCandidates,
   });
+  // Carry exact candidateCount per surface so assemble can recover omissions
+  // for child threads that contributed only aggregate omissions under the bound.
   const raw: SurfaceCandidates[] = unioned.map((s) => ({
     surfaceId: s.surfaceId,
     cursorExpected: s.cursorExpected,
@@ -668,13 +693,9 @@ export function mergeCursorDeliveryPlans(
       s.cursorExpected.status === 'present' ? s.cursorExpected.deliveredOrdinal : 0,
     isResponseThreadEstablish: s.establishOnly,
     candidates: s.entries,
+    candidateCount: s.candidateCount,
   }));
-  const surfaces = assembleSurfacePlansFromSelection(
-    raw,
-    selected,
-    unioned[0]?.surfaceId ?? '',
-    totalCandidates,
-  );
+  const surfaces = assembleSurfacePlansFromSelection(raw, selected);
   const primary = plans.reduce((a, b) =>
     Math.max(...a.surfaces.map((s) => s.nextDeliveredOrdinal))
       >= Math.max(...b.surfaces.map((s) => s.nextDeliveredOrdinal))
