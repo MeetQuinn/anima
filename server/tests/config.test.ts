@@ -571,20 +571,19 @@ test('grok-cli effort write-validates the provider vocabulary; per-model support
     }).provider.reasoningEffort,
     'low',
   );
-  // xhigh is not part of Grok's effort vocabulary — rejected at write time.
-  assert.throws(
-    () =>
-      AgentCreateRequest.parse({
-        name: 'Grok xhigh',
-        homePath: 'agents/grok-xhigh',
-        role: 'general purpose',
-        provider: {
-          kind: 'grok-cli',
-          model: 'grok-4.5',
-          reasoningEffort: 'xhigh',
-        },
-      }),
-    /unsupported reasoningEffort xhigh/,
+  // xhigh is in Grok's write vocabulary (live ACP can advertise it, e.g. grok-4.6).
+  assert.equal(
+    AgentCreateRequest.parse({
+      name: 'Grok xhigh',
+      homePath: 'agents/grok-xhigh',
+      role: 'general purpose',
+      provider: {
+        kind: 'grok-cli',
+        model: 'grok-4.6',
+        reasoningEffort: 'xhigh',
+      },
+    }).provider.reasoningEffort,
+    'xhigh',
   );
   assert.throws(
     () =>

@@ -40,9 +40,10 @@ const CODEX_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra
  * Effort tokens a Grok model may support. This is the write-time vocabulary only:
  * whether a *specific* model actually supports an effort is decided at runtime by
  * the live ACP catalog (`session/set_model` is gated on it), never inferred here
- * from the model name.
+ * from the model name. Includes `xhigh` so UI values from live ACP (e.g. grok-4.6)
+ * can be saved; unadvertised efforts are still not applied at session/set_model.
  */
-const GROK_REASONING_EFFORTS = ['low', 'medium', 'high'];
+const GROK_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh'];
 
 export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
   {
