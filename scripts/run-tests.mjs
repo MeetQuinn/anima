@@ -58,6 +58,7 @@ const groups = {
     'orientation.test.js',
     'outbound-effects.test.js',
     'outcome-line.test.js',
+    'observed-conversation.test.js',
     'workspace-directory.test.js',
     'prompt-attachments.test.js',
     'prompt-template.test.js',

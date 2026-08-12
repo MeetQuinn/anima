@@ -33,6 +33,7 @@ import {
   slackAttentionSuggestionPayload,
 } from './attention-suggestion-activity.js';
 import { runIngestPipeline } from './ingest-pipeline.js';
+import { observeRoutableSlackMessage } from './observed-conversation.js';
 import { buildSlackInboxItemWithLatePreview } from './slack-ingest.js';
 import { slackShortcutHandoffServiceForAgent } from './slack-shortcut-handoff.service.js';
 import { slackRuntimeDecision, type SlackRuntimeDecision } from './slack-subscription.service.js';
@@ -232,6 +233,14 @@ export class SlackInboxSubscriber {
 
     const envelope = body as SlackMessageEnvelope;
     const teamId = slackEventTeamId(envelope, rawEvent);
+    // Observed-conversation journal (send-hold cut a): record every routable
+    // Slack message this agent process sees, before wake/subscription filtering.
+    // Failures are logged and never block routing.
+    await observeRoutableSlackMessage({
+      agentId: this.options.queue.agentId,
+      envelope,
+      event: rawEvent,
+    });
     let latePreview: ((item: SlackInboxItem) => Promise<SlackInboxItem | undefined>) | undefined;
     await runIngestPipeline<SlackInboxItem, SlackRuntimeDecision>({
       agentId: this.options.queue.agentId,
