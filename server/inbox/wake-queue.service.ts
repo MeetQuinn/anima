@@ -114,6 +114,15 @@ export class WakeQueueService {
   }
 
   /**
+   * Atomically settle multiple still-claimable queued items to seen (one store
+   * update). Cursor-delivery coalescing uses this so the selected same-surface
+   * set cannot partially land.
+   */
+  async withdrawQueuedBatch(itemIds: string[]): Promise<InboxItem[]> {
+    return this.store.withdrawQueuedBatch(itemIds);
+  }
+
+  /**
    * Drop an uncommitted staged wake without a seen tombstone so the same fire
    * id remains reusable after cancel/snooze CAS miss.
    */

@@ -194,16 +194,37 @@ export class WakeQueueStore {
    * Returns undefined when the item is absent or already claimed.
    */
   async withdrawQueued(itemId: string): Promise<InboxItem | undefined> {
-    let withdrawn: InboxItem | undefined;
+    const settled = await this.withdrawQueuedBatch([itemId]);
+    return settled[0];
+  }
+
+  /**
+   * Atomically settle a set of still-claimable queued items (no worker, not
+   * staged) to seen. Used by cursor-delivery same-surface coalescing so the
+   * selected set moves in one queue-store update.
+   */
+  async withdrawQueuedBatch(itemIds: string[]): Promise<InboxItem[]> {
+    if (itemIds.length === 0) return [];
+    const want = new Set(itemIds);
+    const settled: InboxItem[] = [];
     await this.update((current) => {
-      const item = current.items[itemId];
-      if (!item || item.handling.status !== 'queued' || item.handling.workerId) return current;
-      withdrawn = item;
+      settled.length = 0;
+      let seen = current.seen;
       const items = { ...current.items };
-      delete items[itemId];
-      return { items, seen: withSeenMarker(current.seen, item, nowIso()) };
+      let changed = false;
+      const now = nowIso();
+      for (const itemId of want) {
+        const item = items[itemId];
+        if (!item || item.handling.status !== 'queued' || item.handling.workerId) continue;
+        if (item.handling.stagedAt) continue;
+        settled.push(item);
+        delete items[itemId];
+        seen = withSeenMarker(seen, item, now);
+        changed = true;
+      }
+      return changed ? { items, seen } : current;
     });
-    return withdrawn;
+    return settled;
   }
 
   /**

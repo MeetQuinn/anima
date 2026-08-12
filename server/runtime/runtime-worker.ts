@@ -303,6 +303,13 @@ export class AgentRuntimeWorker {
       }
 
       memoryCoherenceBeforeDigest = await this.memoryCoherenceDigest(context);
+      // Gate-off / no plan: preserve pre-cut-(b) behavior — follow-ups run
+      // without waiting on runtime.started (fake/test runtimes may omit it).
+      // Gate-on: hold follow-ups until cursor commit at runtime.started.
+      const holdFollowupsForCursorCommit = Boolean(context.cursorDelivery);
+      if (!holdFollowupsForCursorCommit) {
+        releaseFollowups?.();
+      }
       followupLoop = followupsGate
         .then(() => appendQueuedFollowupsUntilFinished({
           activeContext,
@@ -368,11 +375,10 @@ export class AgentRuntimeWorker {
             plan: runContext.cursorDelivery,
             queue: this.queue,
           });
+          // Release follow-ups only after cursor commit when gate-on.
+          releaseFollowups?.();
         }
-        // Release follow-up appender only after initial commit/coalesce.
-        releaseFollowups?.();
       };
-      // Gate-off / non-Slack: still release follow-ups (no plan to commit).
       const result = await runProviderWithCrashRetries({
         agentId: this.options.agentId,
         agentRuntime: this.options.agentRuntime,

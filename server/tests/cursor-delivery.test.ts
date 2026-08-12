@@ -153,6 +153,8 @@ test('first wake: bounded context + trigger retained; child thread established p
     assert.match(prepared.plan.promptBody, /Slack conversation update:/);
     assert.match(prepared.plan.promptBody, /Latest wake:/);
     assert.match(prepared.plan.promptBody, /msg-25/);
+    // Child establish-only has no rows — not required in prompt; channel rows are.
+    assert.match(prepared.plan.promptBody, /Channel slack:T1:C1:/);
 
     const committed = await commitCursorDelivery({ plan: prepared.plan, queue, store });
     assert.ok(committed.advanced.includes('slack:T1:C1'));
@@ -475,5 +477,192 @@ test('follow-up accept advances cursor; reject does not (unit of commit semantic
     if (cursorAfter.status === 'present') {
       assert.equal(cursorAfter.deliveredOrdinal, 1);
     }
+  });
+});
+
+test('child-thread rows are rendered before cursor advance on that surface', async () => {
+  await withEnabledStore(async (store, agentId) => {
+    // Channel root + a reply already in the response thread before the root wake starts.
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '10.0',
+      text: 'root',
+      userId: 'U1',
+    });
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '11.0',
+      threadTs: '10.0',
+      text: 'reply-before-start',
+      userId: 'U2',
+    });
+
+    const item = slackItem({ channelId: 'C1', messageTs: '10.0', text: 'root', userId: 'U1' });
+    const prepared = await prepareCursorDelivery({ agentId, item, store });
+    assert.equal(prepared.kind, 'prepared');
+    if (prepared.kind !== 'prepared') return;
+
+    const child = prepared.plan.surfaces.find((s) => s.surfaceId === 'slack:T1:C1:thread:10.0');
+    assert.ok(child);
+    assert.equal(child!.establishOnly, false);
+    assert.equal(child!.nextDeliveredOrdinal, 1);
+    assert.ok(child!.entries.some((e) => e.text === 'reply-before-start'));
+    assert.match(prepared.plan.promptBody, /reply-before-start/);
+    assert.match(prepared.plan.promptBody, /Thread slack:T1:C1:thread:10\.0:/);
+  });
+});
+
+test('strict CAS rejects stale plan after concurrent advance (not silent rewrite)', async () => {
+  await withEnabledStore(async (store, agentId, queue) => {
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '1.0',
+      text: 'a',
+      userId: 'U1',
+    });
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '2.0',
+      text: 'b',
+      userId: 'U2',
+    });
+
+    const item = slackItem({ channelId: 'C1', messageTs: '2.0', text: 'b' });
+    const prepared = await prepareCursorDelivery({ agentId, item, store });
+    assert.equal(prepared.kind, 'prepared');
+    if (prepared.kind !== 'prepared') return;
+    assert.equal(prepared.plan.surfaces[0]!.cursorExpected.status, 'absent');
+
+    // Another delivery advances to 1 before our stale plan commits.
+    await store.advanceCursor({
+      surfaceId: 'slack:T1:C1',
+      expected: { status: 'absent' },
+      nextDeliveredOrdinal: 1,
+      lastDeliveredEventId: 'slack:T1:C1:1.0',
+      lastDeliveredMessageTs: '1.0',
+    });
+
+    await assert.rejects(
+      () => commitCursorDelivery({ plan: prepared.plan, queue, store }),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /stale cursor plan|cas_failure|expected/);
+        return true;
+      },
+    );
+    // Cursor must not have been rewritten to 2 by the stale plan.
+    const cursor = await store.getCursor('slack:T1:C1');
+    assert.equal(cursor.status, 'present');
+    if (cursor.status === 'present') assert.equal(cursor.deliveredOrdinal, 1);
+  });
+});
+
+test('runtime_restart is never already_delivered (preserves recovery continuation)', async () => {
+  await withEnabledStore(async (store, agentId) => {
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '1.0',
+      text: 'only',
+      userId: 'U1',
+    });
+    await store.advanceCursor({
+      surfaceId: 'slack:T1:C1',
+      expected: { status: 'absent' },
+      nextDeliveredOrdinal: 1,
+      lastDeliveredEventId: 'slack:T1:C1:1.0',
+      lastDeliveredMessageTs: '1.0',
+    });
+
+    const item = slackItem({ channelId: 'C1', messageTs: '1.0', text: 'only' });
+    item.handling.resumeReason = 'runtime_restart';
+
+    const prepared = await prepareCursorDelivery({ agentId, item, store });
+    // Must prepare (or at least not already_delivered) so the worker runs continuation.
+    assert.notEqual(prepared.kind, 'already_delivered');
+    assert.equal(prepared.kind, 'prepared');
+
+    // Prompt path still prefers restart continuation over cursor body.
+    const prompt = buildCodeAgentDeliveryPrompt(item, {
+      cursorDeliveryPromptBody: prepared.kind === 'prepared' ? prepared.plan.promptBody : undefined,
+    });
+    assert.match(prompt, /Runtime restart continuation:/);
+  });
+});
+
+test('cursor prompt preserves attached_files and unfurl previews from the wake item', () => {
+  const event = makeSlackEvent({
+    channelId: 'C-team',
+    eventId: 'evt-file',
+    teamId: 'T-demo',
+    text: 'see file',
+    ts: '1770000010.000001',
+    userId: 'U1',
+    files: [{ id: 'F1', name: 'shot.png', mimetype: 'image/png', sizeBytes: 4096 }],
+    previews: [{ text: 'unfurled title', fromUrl: 'https://example.test/x' }],
+  });
+  const text = buildCodeAgentDeliveryPrompt(event, {
+    cursorDeliveryPromptBody: 'Slack conversation update:\n\nLatest wake:\n[message_ts=1770000010.000001] U1: see file',
+  });
+  assert.match(text, /Slack conversation update:/);
+  assert.match(text, /<attached_files>/);
+  assert.match(text, /shot\.png/);
+  assert.match(text, /size_bytes="4096"/);
+  assert.match(text, /unfurled title|source="slack_unfurl"/);
+});
+
+test('same-surface follow-up batch keeps one snapshot (no triple-rendered delta)', async () => {
+  // Unit of the grouping rule: two plans on the same DM surface collapse to one
+  // prompt body when committed independently with shared surface id.
+  await withEnabledStore(async (store, agentId, queue) => {
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'D9',
+      messageTs: '1.0',
+      text: 'alpha-unique',
+      userId: 'U1',
+    });
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'D9',
+      messageTs: '2.0',
+      text: 'beta-unique',
+      userId: 'U2',
+    });
+
+    const a = await prepareCursorDelivery({
+      agentId,
+      item: slackItem({ channelId: 'D9', messageTs: '1.0', text: 'alpha-unique', id: 'wake-a' }),
+      store,
+    });
+    const b = await prepareCursorDelivery({
+      agentId,
+      item: slackItem({ channelId: 'D9', messageTs: '2.0', text: 'beta-unique', id: 'wake-b' }),
+      store,
+    });
+    assert.equal(a.kind, 'prepared');
+    assert.equal(b.kind, 'prepared');
+    if (a.kind !== 'prepared' || b.kind !== 'prepared') return;
+
+    // Both plans start from absent — concatenating two full prompts multiplies context.
+    const naive = `${a.plan.promptBody}\n\n${b.plan.promptBody}`;
+    const alphaCountNaive = naive.split('alpha-unique').length - 1;
+    assert.ok(alphaCountNaive >= 2, `naive concat should duplicate alpha, got ${alphaCountNaive}`);
+
+    // Grouped path uses the farther plan once (covers alpha+beta without a second full dump).
+    const grouped = b.plan.promptBody;
+    const alphaGrouped = grouped.split('alpha-unique').length - 1;
+    assert.ok(alphaGrouped < alphaCountNaive, `grouped ${alphaGrouped} should be < naive ${alphaCountNaive}`);
+    assert.ok(grouped.includes('alpha-unique') && grouped.includes('beta-unique'));
+
+    // Commit once with the farther plan only.
+    await commitCursorDelivery({ plan: b.plan, queue, store, excludeItemIds: ['wake-a', 'wake-b'] });
+    const cursor = await store.getCursor('slack:T1:D9');
+    assert.equal(cursor.status, 'present');
+    if (cursor.status === 'present') assert.equal(cursor.deliveredOrdinal, 2);
   });
 });

@@ -10,7 +10,13 @@ import type { AgentRuntime } from '../providers/contract.js';
 import type { AgentRuntimeBridge } from './runtime-bridge.js';
 import { readRestartDrainActive } from './intake-gate.js';
 import type { RuntimeItemContext, RuntimeWorkerConfig } from './types.js';
-import { commitCursorDelivery, prepareCursorDelivery } from './cursor-delivery.js';
+import {
+  commitCursorDelivery,
+  prepareCursorDelivery,
+  primarySurfaceId,
+  type CursorDeliveryPlan,
+} from './cursor-delivery.js';
+import { buildCodeAgentDeliveryPrompt } from './delivery-prompt.js';
 
 const FOLLOWUP_POLL_MS = 100;
 export const FOLLOWUP_BATCH_MAX_ITEMS = 16;
@@ -93,31 +99,26 @@ async function tryFollowupBatch(
 ): Promise<void> {
   let contexts: RuntimeItemContext[] = [];
   let failedItemIds = claimedItemIds;
+  /** True only after appendToActiveRun accepted — never requeue after that. */
   let accepted = false;
   try {
     contexts = await Promise.all(claimedItemIds.map(
       (itemId) => runtimeContextForItemId(itemId, input.runtimeConfig, input.queue),
     ));
-    // Prepare per-surface cursor snapshots for Slack follow-ups (flag-off: no-op).
-    // Commit only after appendToActiveRun.accepted.
-    const dropIds: string[] = [];
-    const keep: typeof contexts = [];
+    // Prepare cursor plans (flag-off → disabled). Commit only after accept.
+    const keep: RuntimeItemContext[] = [];
     for (const context of contexts) {
       const prepared = await prepareCursorDelivery({
         agentId: input.runtimeConfig.agentId,
         item: context.item,
       });
       if (prepared.kind === 'already_delivered') {
-        // Covered by prior cursor commit (coalesce race/recovery) — settle, no append.
-        // Item is already claimed as running for follow-up, so complete (not withdraw).
         await input.queue.complete(context.item.id).catch(() => undefined);
-        dropIds.push(context.item.id);
         continue;
       }
       if (prepared.kind === 'failed') {
-        // Fail-closed: leave for a later attempt; do not advance cursor.
         skippedItemIds.add(context.item.id);
-        dropIds.push(context.item.id);
+        await input.queue.requeueBatch([context.item.id]);
         continue;
       }
       if (prepared.kind === 'prepared') {
@@ -125,27 +126,48 @@ async function tryFollowupBatch(
       }
       keep.push(context);
     }
-    if (dropIds.length > 0) {
-      // Requeue failed-prepare items; already_delivered were settled above.
-      const requeueIds = dropIds.filter((id) => skippedItemIds.has(id));
-      if (requeueIds.length > 0) await input.queue.requeueBatch(requeueIds);
-    }
     contexts = keep;
     if (contexts.length === 0) return;
+
     const drainAfterContext = await probeRestartDrain(input);
     if (isPaused(input) || drainAfterContext) {
-      await input.queue.requeueBatch(claimedItemIds);
+      await input.queue.requeueBatch(contexts.map((c) => c.item.id));
       return;
     }
-    const followupInput = await input.runtimeBridge.followupInput({
-      activeContext: input.activeContext,
-      contexts,
-      maxPromptBytes: FOLLOWUP_BATCH_MAX_PROMPT_BYTES,
-    });
-    contexts = contexts.slice(0, followupInput.itemIds.length);
-    const overflowIds = claimedItemIds.slice(contexts.length);
-    if (overflowIds.length > 0) await input.queue.requeueBatch(overflowIds);
-    failedItemIds = followupInput.itemIds;
+
+    // Gate-off / no cursor plans: preserve the original bridge path (reminder
+    // context loading, size limits). Gate-on: group by surface.
+    let itemIds: string[];
+    let prompt: string;
+    let plansToCommit: CursorDeliveryPlan[] = [];
+    const anyCursor = contexts.some((c) => c.cursorDelivery);
+    if (!anyCursor) {
+      const followupInput = await input.runtimeBridge.followupInput({
+        activeContext: input.activeContext,
+        contexts,
+        maxPromptBytes: FOLLOWUP_BATCH_MAX_PROMPT_BYTES,
+      });
+      contexts = contexts.slice(0, followupInput.itemIds.length);
+      const overflowIds = keep.map((c) => c.item.id).slice(contexts.length);
+      if (overflowIds.length > 0) await input.queue.requeueBatch(overflowIds);
+      itemIds = followupInput.itemIds;
+      prompt = followupInput.prompt;
+      failedItemIds = itemIds;
+    } else {
+      const built = buildFollowupBatch(contexts, FOLLOWUP_BATCH_MAX_PROMPT_BYTES);
+      if (built.itemIds.length === 0) {
+        await input.queue.requeueBatch(keep.map((c) => c.item.id));
+        return;
+      }
+      contexts = built.contextsInBatch;
+      failedItemIds = built.itemIds;
+      itemIds = built.itemIds;
+      prompt = built.prompt;
+      plansToCommit = built.plansToCommit;
+      const inBatch = new Set(itemIds);
+      const overflow = keep.map((c) => c.item.id).filter((id) => !inBatch.has(id));
+      if (overflow.length > 0) await input.queue.requeueBatch(overflow);
+    }
 
     // Pre-append: drain probe, sync pause, then appendToActiveRun starts in this
     // same continuation (no await of a helper that already sampled pause).
@@ -155,15 +177,19 @@ async function tryFollowupBatch(
       return;
     }
 
-    const result = await input.agentRuntime.appendToActiveRun(followupInput);
+    const result = await input.agentRuntime.appendToActiveRun({
+      activeItemId: input.activeContext.item.id,
+      itemIds,
+      prompt,
+    });
     if (!result.accepted) {
-      // Rejected follow-up: do not advance cursors or coalesce.
-      await input.queue.requeueBatch(contexts.map((context) => context.item.id));
+      // Rejected: do not advance cursors or coalesce.
+      await input.queue.requeueBatch(itemIds);
       if (result.retryable) {
         await sleep(FOLLOWUP_POLL_MS, input.itemDone);
         return;
       }
-      for (const context of contexts) skippedItemIds.add(context.item.id);
+      for (const itemId of itemIds) skippedItemIds.add(itemId);
       await recordRuntimePending(
         { agentId: input.runtimeConfig.agentId },
         {
@@ -176,14 +202,22 @@ async function tryFollowupBatch(
       return;
     }
 
-    // Accepted: commit each surface plan, then coalesce covered wakes.
-    for (const context of contexts) {
-      if (!context.cursorDelivery) continue;
-      await commitCursorDelivery({
-        plan: context.cursorDelivery,
-        queue: input.queue,
-        excludeItemIds: contexts.map((c) => c.item.id),
-      });
+    // Irreversible accept: never requeue from here, even if commit fails.
+    accepted = true;
+
+    // Commit each unique surface plan once. On failure: still mark appended
+    // (provider already has the text) and surface a durable error — no requeue.
+    let commitError: unknown;
+    try {
+      for (const plan of plansToCommit) {
+        await commitCursorDelivery({
+          plan,
+          queue: input.queue,
+          excludeItemIds: itemIds,
+        });
+      }
+    } catch (error) {
+      commitError = error;
     }
 
     await recordRuntimeFollowupAppended(
@@ -196,21 +230,36 @@ async function tryFollowupBatch(
     );
     input.onFollowupAccepted();
     await input.queue.markAppendedBatch({
-      itemIds: contexts.map((context) => context.item.id),
+      itemIds,
       parentItemId: input.activeContext.item.id,
       workerId: input.workerId,
     });
-    accepted = true;
     await Promise.all(contexts.map((context) => input.onFollowupAppended(context, result.text)));
     input.logger.log(JSON.stringify({
       activeItemId: input.activeContext.item.id,
       agentRuntime: input.agentRuntime.kind,
       event: 'runtime.followup_appended',
-      itemIds: contexts.map((context) => context.item.id),
+      itemIds,
       text: result.text,
       workerId: input.workerId,
     }, null, 2));
+
+    if (commitError) {
+      await recordRuntimeFollowupFailed(
+        { agentId: input.runtimeConfig.agentId },
+        {
+          activeItemId: input.activeContext.item.id,
+          agentRuntime: input.agentRuntime.kind,
+          error: errorMessage(commitError),
+          reason: 'followup_commit_failed',
+        },
+      );
+      input.logger.error(
+        `Cursor commit after follow-up accept failed for items ${itemIds.join(', ')}: ${errorMessage(commitError)}`,
+      );
+    }
   } catch (error) {
+    // After accept, provider already has the text — do not requeue (duplicate path).
     if (!accepted) await input.queue.requeueBatch(failedItemIds);
     for (const itemId of failedItemIds) skippedItemIds.add(itemId);
     await recordRuntimeFollowupFailed(
@@ -236,6 +285,98 @@ async function tryFollowupBatch(
       }
     }
   }
+}
+
+/**
+ * Build one prompt per unique cursor surface (plus one per non-cursor item).
+ * Same-surface wakes share a single snapshot so the provider does not see
+ * duplicated conversation deltas. Stops adding units once maxPromptBytes is hit
+ * (same contract as AgentRuntimeBridge.followupInput).
+ */
+function buildFollowupBatch(
+  contexts: RuntimeItemContext[],
+  maxPromptBytes: number,
+): {
+  itemIds: string[];
+  prompt: string;
+  plansToCommit: CursorDeliveryPlan[];
+  contextsInBatch: RuntimeItemContext[];
+} {
+  type SurfaceGroup = {
+    plan: CursorDeliveryPlan;
+    contexts: RuntimeItemContext[];
+  };
+  const bySurface = new Map<string, SurfaceGroup>();
+  const nonCursor: RuntimeItemContext[] = [];
+  // Preserve claim order for size-limit batching (FIFO units).
+  const unitOrder: Array<{ kind: 'surface'; key: string } | { kind: 'item'; context: RuntimeItemContext }> = [];
+
+  for (const context of contexts) {
+    const plan = context.cursorDelivery;
+    if (!plan) {
+      nonCursor.push(context);
+      unitOrder.push({ kind: 'item', context });
+      continue;
+    }
+    const key = primarySurfaceId(plan);
+    const existing = bySurface.get(key);
+    if (!existing) {
+      bySurface.set(key, { plan, contexts: [context] });
+      unitOrder.push({ kind: 'surface', key });
+      continue;
+    }
+    existing.contexts.push(context);
+    const existingTail = Math.max(...existing.plan.surfaces.map((s) => s.nextDeliveredOrdinal));
+    const nextTail = Math.max(...plan.surfaces.map((s) => s.nextDeliveredOrdinal));
+    if (nextTail >= existingTail) existing.plan = plan;
+  }
+
+  const prompts: string[] = [];
+  const itemIds: string[] = [];
+  const plansToCommit: CursorDeliveryPlan[] = [];
+  const contextsInBatch: RuntimeItemContext[] = [];
+  let promptBytes = 0;
+
+  const tryAdd = (prompt: string, add: () => void): boolean => {
+    const separator = prompts.length > 0 ? '\n\n' : '';
+    const candidateBytes = promptBytes + Buffer.byteLength(`${separator}${prompt}`, 'utf8');
+    if (prompts.length > 0 && candidateBytes > maxPromptBytes) return false;
+    prompts.push(prompt);
+    promptBytes = candidateBytes;
+    add();
+    return true;
+  };
+
+  for (const unit of unitOrder) {
+    if (unit.kind === 'surface') {
+      const group = bySurface.get(unit.key)!;
+      const prompt = buildCodeAgentDeliveryPrompt(group.contexts[0]!.item, {
+        cursorDeliveryPromptBody: group.plan.promptBody,
+      });
+      const ok = tryAdd(prompt, () => {
+        for (const context of group.contexts) {
+          itemIds.push(context.item.id);
+          contextsInBatch.push(context);
+        }
+        plansToCommit.push(group.plan);
+      });
+      if (!ok) break;
+      continue;
+    }
+    const prompt = buildCodeAgentDeliveryPrompt(unit.context.item);
+    const ok = tryAdd(prompt, () => {
+      itemIds.push(unit.context.item.id);
+      contextsInBatch.push(unit.context);
+    });
+    if (!ok) break;
+  }
+
+  return {
+    itemIds,
+    prompt: prompts.join('\n\n'),
+    plansToCommit,
+    contextsInBatch,
+  };
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {

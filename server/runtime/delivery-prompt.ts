@@ -80,8 +80,15 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
   if (event.kind === 'feishu_onboarding') return buildFeishuOnboardingDeliveryPrompt(event);
   if (event.kind === 'feishu') return buildFeishuMessageDeliveryPrompt(event);
 
-  // Cursor-delivery body (flag on) replaces the single-message Slack form only.
-  if (context.cursorDeliveryPromptBody) return context.cursorDeliveryPromptBody;
+  // Cursor-delivery body (flag on) replaces the single-message Slack form, but
+  // preserves current-file metadata and unfurl previews from the wake item.
+  if (context.cursorDeliveryPromptBody && event.kind === 'slack') {
+    return [
+      context.cursorDeliveryPromptBody,
+      formatSlackMessagePreviews(event.previews),
+      formatAttachedFiles(event.files),
+    ].filter(Boolean).join('\n\n');
+  }
   return buildSlackMessageDeliveryPrompt(event);
 }
 

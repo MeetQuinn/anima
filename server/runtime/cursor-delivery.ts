@@ -184,9 +184,12 @@ export async function prepareCursorDelivery(input: {
     }
 
     // Recovery: trigger already covered by cursor → settle without provider.
+    // Never skip a runtime_restart primary — that is interrupted work, not a
+    // coalesced duplicate wake. Cursor coverage may skip later queued wakes only.
     const primaryCursor = await store.getCursor(triggerSurfaceId);
     if (
-      primaryCursor.status === 'present'
+      item.handling.resumeReason !== 'runtime_restart'
+      && primaryCursor.status === 'present'
       && primaryCursor.deliveredOrdinal >= triggerEntry.ordinal
     ) {
       return { kind: 'already_delivered', settledItemIds: [item.id] };
@@ -229,8 +232,11 @@ export async function prepareCursorDelivery(input: {
 }
 
 /**
- * Commit at runtime.started (or after follow-up accept). Idempotent: if cursor
- * already at/ past target, treats as success and still coalesces.
+ * Commit at runtime.started (or after follow-up accept).
+ *
+ * Idempotent only when live cursor is already at/past the plan target
+ * (`current >= target`). Any other expectation mismatch is fail-closed —
+ * never rewrite the prepared CAS expectation to the live cursor.
  */
 export async function commitCursorDelivery(input: {
   plan: CursorDeliveryPlan;
@@ -248,27 +254,25 @@ export async function commitCursorDelivery(input: {
 
   for (const surface of plan.surfaces) {
     const current = await store.getCursor(surface.surfaceId);
+    // Idempotent success: already at/past target (retry after partial commit).
     if (
       current.status === 'present'
       && current.deliveredOrdinal >= surface.nextDeliveredOrdinal
     ) {
-      // Already committed (retry / crash recovery).
       continue;
     }
 
-    const expected: AdvanceCursorExpected =
-      current.status === 'absent'
-        ? { status: 'absent' }
-        : { status: 'present', deliveredOrdinal: current.deliveredOrdinal };
-
-    // Prefer plan.expected when it still matches; else use live current.
-    const casExpected = cursorExpectationMatches(current, surface.cursorExpected)
-      ? surface.cursorExpected
-      : expected;
+    // Strict CAS: prepared expectation must still match. Stale plans fail closed.
+    if (!cursorExpectationMatches(current, surface.cursorExpected)) {
+      throw new CursorDeliveryError(
+        'cas_failure',
+        `stale cursor plan for ${surface.surfaceId}: expected ${JSON.stringify(surface.cursorExpected)}, live ${JSON.stringify(current)}`,
+      );
+    }
 
     const result = await store.advanceCursor({
       surfaceId: surface.surfaceId,
-      expected: casExpected,
+      expected: surface.cursorExpected,
       nextDeliveredOrdinal: surface.nextDeliveredOrdinal,
       ...(surface.lastDeliveredEventId
         ? { lastDeliveredEventId: surface.lastDeliveredEventId }
@@ -279,7 +283,7 @@ export async function commitCursorDelivery(input: {
     });
 
     if (!result.advanced) {
-      // Re-check: concurrent advance may have landed the same target.
+      // Concurrent commit may have landed the same target after our read.
       const again = await store.getCursor(surface.surfaceId);
       if (
         again.status === 'present'
@@ -311,6 +315,9 @@ export async function commitCursorDelivery(input: {
  * Settle still-queued Slack wakes on the same exact surface whose observed
  * ordinals are within the captured tail. Never touches the active item, other
  * surfaces, later-than-tail rows, staged rows, or non-Slack items.
+ *
+ * Candidate selection is read-side; the settle is one atomic queue-store batch
+ * so the selected set moves to seen together.
  */
 export async function coalesceCoveredWakes(input: {
   agentId: string;
@@ -324,7 +331,7 @@ export async function coalesceCoveredWakes(input: {
     input.surfaces.map((s) => [s.surfaceId, s.nextDeliveredOrdinal] as const),
   );
   const items = await input.queue.list();
-  const settled: string[] = [];
+  const candidateIds: string[] = [];
 
   for (const item of items) {
     if (input.excludeItemIds.has(item.id)) continue;
@@ -345,10 +352,11 @@ export async function coalesceCoveredWakes(input: {
     if (!entry) continue;
     if (entry.ordinal > tail) continue; // later than captured tail
 
-    const withdrawn = await input.queue.withdrawQueued(item.id);
-    if (withdrawn) settled.push(item.id);
+    candidateIds.push(item.id);
   }
-  return settled;
+  if (candidateIds.length === 0) return [];
+  const settled = await input.queue.withdrawQueuedBatch(candidateIds);
+  return settled.map((item) => item.id);
 }
 
 // --- internals ---
@@ -507,30 +515,39 @@ export function renderCursorDeliveryPrompt(
   trigger: SlackInboxItem,
   surfaces: SurfaceDeliveryPlan[],
 ): string {
-  // Primary surface carries the conversation context; child establish-only is silent.
-  const primary = surfaces[0];
-  const contextLines: string[] = [];
-  let omitted = 0;
-  if (primary && !primary.establishOnly && primary.entries.length > 0) {
-    for (const entry of primary.entries) {
-      contextLines.push(formatObservedLine(entry));
+  // Render every surface that has rows (including child response-threads) so
+  // cursor advance never covers content absent from the prompt.
+  const parts: string[] = ['Slack conversation update:'];
+  let anyContext = false;
+  for (const surface of surfaces) {
+    if (surface.establishOnly || surface.entries.length === 0) continue;
+    anyContext = true;
+    const isThread = surface.surfaceId.includes(':thread:');
+    parts.push('', isThread ? `Thread ${surface.surfaceId}:` : `Channel ${surface.surfaceId}:`);
+    for (const entry of surface.entries) {
+      parts.push(formatObservedLine(entry));
     }
-    omitted = primary.omittedCount;
+    if (surface.omittedCount > 0) {
+      parts.push(
+        `(${surface.omittedCount} earlier message${surface.omittedCount === 1 ? '' : 's'} not shown)`,
+      );
+    }
+  }
+  if (!anyContext) {
+    parts.push('', '(no prior observed messages in window)');
   }
 
   const latest = buildLatestWakeLine(trigger);
-  const parts: string[] = ['Slack conversation update:'];
-  if (contextLines.length > 0) {
-    parts.push('', ...contextLines);
-    if (omitted > 0) {
-      parts.push(`(${omitted} earlier message${omitted === 1 ? '' : 's'} not shown)`);
-    }
-  }
   parts.push('', 'Latest wake:', latest);
   if (trigger.attentionSuggestion) {
     parts.push('', trigger.attentionSuggestion);
   }
   return parts.join('\n');
+}
+
+/** Primary surface id for a plan (grouping key for follow-up batching). */
+export function primarySurfaceId(plan: CursorDeliveryPlan): string {
+  return plan.surfaces[0]?.surfaceId ?? plan.triggerEventId;
 }
 
 function buildLatestWakeLine(event: SlackInboxItem): string {
