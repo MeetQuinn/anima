@@ -353,7 +353,12 @@ export function groupFollowupContexts(contexts: RuntimeItemContext[]): {
     }
     const key = primarySurfaceId(unit.mergedPlan);
     const acc = groups.get(key)!;
-    const triggerItem = acc.members[acc.members.length - 1]!.item as SlackInboxItem;
+    // Union files onto trigger before merge so envelope budget includes them.
+    const baseTrigger = acc.members[acc.members.length - 1]!.item as SlackInboxItem;
+    const triggerItem = mergeSlackInboxAttachments(
+      acc.members.map((m) => m.item as SlackInboxItem),
+      baseTrigger,
+    );
     const mergedPlan = mergeCursorDeliveryPlans(acc.plans, triggerItem);
     // Union files/previews from every member onto the lead so the bridge's
     // single rendered inbox item still carries full attachment metadata for

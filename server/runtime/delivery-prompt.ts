@@ -74,13 +74,9 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
       itemId: event.id,
       time: event.handling.startedAt ?? event.receivedAt,
     });
+    // Cursor body is already the full provider-facing envelope (incl. files/previews).
     if (context.cursorDeliveryPromptBody && event.kind === 'slack') {
-      return [
-        continuation,
-        context.cursorDeliveryPromptBody,
-        formatSlackMessagePreviews(event.previews),
-        formatAttachedFiles(event.files),
-      ].filter(Boolean).join('\n\n');
+      return `${continuation}\n\n${context.cursorDeliveryPromptBody}`;
     }
     return continuation;
   }
@@ -91,16 +87,19 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
   if (event.kind === 'feishu_onboarding') return buildFeishuOnboardingDeliveryPrompt(event);
   if (event.kind === 'feishu') return buildFeishuMessageDeliveryPrompt(event);
 
-  // Cursor-delivery body (flag on) replaces the single-message Slack form, but
-  // preserves current-file metadata and unfurl previews from the wake item.
+  // Cursor-delivery body is the full final envelope (20/16KiB bound includes
+  // previews and file metadata). Do not append extras outside the cap.
   if (context.cursorDeliveryPromptBody && event.kind === 'slack') {
-    return [
-      context.cursorDeliveryPromptBody,
-      formatSlackMessagePreviews(event.previews),
-      formatAttachedFiles(event.files),
-    ].filter(Boolean).join('\n\n');
+    return context.cursorDeliveryPromptBody;
   }
   return buildSlackMessageDeliveryPrompt(event);
+}
+
+/** Render Slack unfurl previews + attached_files for inclusion in the cursor envelope. */
+export function renderSlackCursorExtras(event: SlackInboxItem): string {
+  return [formatSlackMessagePreviews(event.previews), formatAttachedFiles(event.files)]
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 function buildSlackMessageDeliveryPrompt(event: SlackInboxItem): string {

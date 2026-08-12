@@ -20,10 +20,15 @@ import type { InboxItem, SlackInboxItem } from '../../shared/inbox.js';
 import { isClaimableQueuedInboxItem } from '../../shared/inbox.js';
 import { envelopeTime, renderEnvelope } from '../messages/envelope.js';
 import { slackDisplayLabel } from '../slack/slack.helper.js';
+import { renderSlackCursorExtras } from './delivery-prompt.js';
 
-/** Newest-fitting bound: max messages in a delivered snapshot. */
+/** Newest-fitting bound: max messages in the final provider-facing envelope. */
 export const CURSOR_DELIVERY_MAX_MESSAGES = 20;
-/** Newest-fitting bound: max rendered UTF-8 bytes across snapshot lines. */
+/**
+ * Max UTF-8 bytes of the final provider-facing rendered envelope (PRD / Iris):
+ * snapshot rows + Latest wake + previews + file metadata — everything the
+ * agent turn receives from the cursor view.
+ */
 export const CURSOR_DELIVERY_MAX_BYTES = 16 * 1024;
 /** Soft per-message clip so one row cannot consume the whole budget alone. */
 export const CURSOR_DELIVERY_MAX_MESSAGE_CHARS = 2_000;
@@ -196,14 +201,17 @@ export async function prepareCursorDelivery(input: {
     }
 
     // Build raw per-surface candidates, then allocate ONE shared 20/16KiB budget
-    // across the whole cursor view (not per surface).
+    // for the final provider-facing envelope (rows + Latest wake + previews/files).
+    // nextDeliveredOrdinal is computed only from rows that survive that budget —
+    // never truncate the rendered evidence after choosing the advance.
     const surfaces = await buildSharedBudgetSurfacePlans(store, surfaceIds, {
       triggerEventId: eventId,
       triggerSurfaceId,
       triggerOrdinal: triggerEntry.ordinal,
+      triggerItem: item,
     });
 
-    const promptBody = renderCursorDeliveryPrompt(item, surfaces);
+    const promptBody = renderCursorDeliveryEnvelope(item, surfaces);
     return {
       kind: 'prepared',
       plan: {
@@ -379,6 +387,7 @@ async function buildSharedBudgetSurfacePlans(
     triggerEventId: string;
     triggerSurfaceId: string;
     triggerOrdinal: number;
+    triggerItem: SlackInboxItem;
   },
 ): Promise<SurfaceDeliveryPlan[]> {
   const raw: SurfaceCandidates[] = [];
@@ -401,7 +410,6 @@ async function buildSharedBudgetSurfacePlans(
     });
   }
 
-  // Tagged candidates for shared selection (establish-only surfaces contribute none).
   type Tagged = ObservedConversationEntry & { _surfaceId: string };
   const tagged: Tagged[] = [];
   for (const surface of raw) {
@@ -410,8 +418,6 @@ async function buildSharedBudgetSurfacePlans(
       tagged.push({ ...entry, _surfaceId: surface.surfaceId });
     }
   }
-
-  // Sort by conversation time (messageTs), not surface order / per-surface ordinal.
   tagged.sort(compareByConversationTime);
 
   const mustInclude =
@@ -419,19 +425,15 @@ async function buildSharedBudgetSurfacePlans(
       ? opts.triggerEventId
       : undefined;
 
-  // Reserve rendered budget for prompt chrome + clipped Latest wake so the
-  // final cursor view (snapshot + Latest wake) stays within 16 KiB.
-  const reservedLatest = CURSOR_DELIVERY_MAX_MESSAGE_CHARS + 256;
-  const chromeBytes = 128;
-  const contextBudget = Math.max(
-    512,
-    CURSOR_DELIVERY_MAX_BYTES - reservedLatest - chromeBytes,
-  );
-
-  const selected = selectNewestFitting(tagged, {
+  // Envelope-aware selection: only keep rows that fit the final provider-facing
+  // rendered envelope (incl. Latest wake + previews + files). Advance tracks
+  // exactly these rows — no post-hoc truncation.
+  const selected = selectNewestFittingForEnvelope(tagged, {
     maxMessages: CURSOR_DELIVERY_MAX_MESSAGES,
-    maxBytes: contextBudget,
+    maxBytes: CURSOR_DELIVERY_MAX_BYTES,
     mustIncludeEventId: mustInclude,
+    triggerItem: opts.triggerItem,
+    totalCandidates: tagged.length,
   });
   return assembleSurfacePlansFromSelection(raw, selected, opts.triggerSurfaceId, tagged.length);
 }
@@ -508,18 +510,17 @@ export function compareByConversationTime(
 }
 
 /**
- * Merge multiple delivery plans by exact surface id, then re-apply the global
- * 20/16 KiB window so a union of individually bounded plans cannot exceed the
- * contract (e.g. 15+15 → 30 without re-window).
+ * Pure union of plans by exact surface id (no re-window). Entries deduped by
+ * eventId; cursorExpected prefers the more conservative (lower) present ordinal.
+ * omittedCount is summed for later totalCandidates accounting.
  */
 export function mergeSurfacePlans(plans: CursorDeliveryPlan[]): SurfaceDeliveryPlan[] {
-  // Union raw entries per surface (before re-window).
   type Acc = {
     surfaceId: string;
     cursorExpected: AdvanceCursorExpected;
-    cursorFloor: number;
     establishOnly: boolean;
     entries: ObservedConversationEntry[];
+    omittedCount: number;
   };
   const bySurface = new Map<string, Acc>();
   for (const plan of plans) {
@@ -529,30 +530,19 @@ export function mergeSurfacePlans(plans: CursorDeliveryPlan[]): SurfaceDeliveryP
         bySurface.set(surface.surfaceId, {
           surfaceId: surface.surfaceId,
           cursorExpected: surface.cursorExpected,
-          cursorFloor: surface.establishOnly
-            ? 0
-            : Math.max(0, surface.nextDeliveredOrdinal - (surface.entries.at(-1)?.ordinal ?? surface.nextDeliveredOrdinal)),
           establishOnly: surface.establishOnly,
           entries: [...surface.entries],
+          omittedCount: surface.omittedCount,
         });
-        // cursorFloor fallback: if we have entries, floor is min ordinal - 1 conceptually;
-        // for CAS we keep the earliest (lowest present) expectation when merging.
         continue;
-      }
-      // Prefer absent→present: use the more advanced expected only if equal epoch;
-      // when batching concurrent prepares both start from the same cursorExpected.
-      if (
-        existing.cursorExpected.status === 'absent'
-        && surface.cursorExpected.status === 'present'
-      ) {
-        // Keep existing absent if still valid for both; concurrent batch same epoch.
       }
       const entryById = new Map<string, ObservedConversationEntry>();
       for (const e of existing.entries) entryById.set(e.eventId, e);
       for (const e of surface.entries) entryById.set(e.eventId, e);
-      existing.entries = [...entryById.values()];
-      existing.establishOnly = existing.establishOnly && surface.establishOnly && existing.entries.length === 0;
-      // Keep the lower cursor expected (more conservative CAS) when both present.
+      existing.entries = [...entryById.values()].sort((a, b) => a.ordinal - b.ordinal);
+      existing.establishOnly =
+        existing.establishOnly && surface.establishOnly && existing.entries.length === 0;
+      existing.omittedCount = Math.max(existing.omittedCount, surface.omittedCount);
       if (
         existing.cursorExpected.status === 'present'
         && surface.cursorExpected.status === 'present'
@@ -562,75 +552,29 @@ export function mergeSurfacePlans(plans: CursorDeliveryPlan[]): SurfaceDeliveryP
       }
     }
   }
-
-  // Re-window under one global budget by conversation time.
-  type Tagged = ObservedConversationEntry & { _surfaceId: string };
-  const tagged: Tagged[] = [];
-  for (const acc of bySurface.values()) {
-    if (acc.establishOnly) continue;
-    for (const entry of acc.entries) {
-      tagged.push({ ...entry, _surfaceId: acc.surfaceId });
-    }
-  }
-  tagged.sort(compareByConversationTime);
-  const selected = selectNewestFitting(tagged, {
-    maxMessages: CURSOR_DELIVERY_MAX_MESSAGES,
-    maxBytes: CURSOR_DELIVERY_MAX_BYTES,
-  });
-
-  const selectedBySurface = new Map<string, ObservedConversationEntry[]>();
-  for (const entry of selected.entries) {
-    const sid = (entry as Tagged)._surfaceId;
-    const list = selectedBySurface.get(sid) ?? [];
-    const { _surfaceId: _, ...rest } = entry as Tagged;
-    list.push(rest);
-    selectedBySurface.set(sid, list);
-  }
-  for (const [sid, list] of selectedBySurface) {
-    list.sort((a, b) => a.ordinal - b.ordinal);
-    selectedBySurface.set(sid, list);
-  }
-
-  const totalOmitted = selected.omittedCount;
-  const plansOut: SurfaceDeliveryPlan[] = [];
-  let omittedAssigned = false;
-  for (const acc of bySurface.values()) {
-    if (acc.establishOnly) {
-      plansOut.push({
-        surfaceId: acc.surfaceId,
-        cursorExpected: acc.cursorExpected,
-        nextDeliveredOrdinal: 0,
-        entries: [],
-        omittedCount: 0,
-        establishOnly: true,
-      });
-      continue;
-    }
-    const entries = selectedBySurface.get(acc.surfaceId) ?? [];
-    const last = entries[entries.length - 1];
+  return [...bySurface.values()].map((acc) => {
+    const last = acc.entries[acc.entries.length - 1];
     let floor = 0;
-    if (acc.cursorExpected.status === 'present') {
-      floor = acc.cursorExpected.deliveredOrdinal;
-    }
-    const nextDeliveredOrdinal = last ? last.ordinal : floor;
-    const assignOmitted = !omittedAssigned;
-    if (assignOmitted) omittedAssigned = true;
-    plansOut.push({
+    if (acc.cursorExpected.status === 'present') floor = acc.cursorExpected.deliveredOrdinal;
+    return {
       surfaceId: acc.surfaceId,
       cursorExpected: acc.cursorExpected,
-      nextDeliveredOrdinal,
+      nextDeliveredOrdinal: last ? last.ordinal : acc.establishOnly ? 0 : floor,
       ...(last
         ? { lastDeliveredEventId: last.eventId, lastDeliveredMessageTs: last.messageTs }
         : {}),
-      entries,
-      omittedCount: assignOmitted ? totalOmitted : 0,
-      establishOnly: false,
-    });
-  }
-  return plansOut;
+      entries: acc.entries,
+      omittedCount: acc.omittedCount,
+      establishOnly: acc.establishOnly && acc.entries.length === 0,
+    };
+  });
 }
 
-/** Merge plans, re-window globally, rebuild prompt. */
+/**
+ * Merge plans and rebuild the full provider-facing envelope.
+ * Single-plan merge preserves surfaces/omitted; multi-plan unions then
+ * envelope-aware re-windows under 20/16KiB with prior omissions retained.
+ */
 export function mergeCursorDeliveryPlans(
   plans: CursorDeliveryPlan[],
   triggerItem: SlackInboxItem,
@@ -638,7 +582,50 @@ export function mergeCursorDeliveryPlans(
   if (plans.length === 0) {
     throw new Error('mergeCursorDeliveryPlans requires at least one plan');
   }
-  const surfaces = mergeSurfacePlans(plans);
+  if (plans.length === 1) {
+    const only = plans[0]!;
+    return {
+      ...only,
+      promptBody: renderCursorDeliveryEnvelope(triggerItem, only.surfaces),
+      committed: false,
+    };
+  }
+
+  const unioned = mergeSurfacePlans(plans);
+  let sourceOmitted = 0;
+  for (const plan of plans) {
+    for (const s of plan.surfaces) sourceOmitted += s.omittedCount;
+  }
+  type Tagged = ObservedConversationEntry & { _surfaceId: string };
+  const tagged: Tagged[] = [];
+  for (const surface of unioned) {
+    if (surface.establishOnly) continue;
+    for (const entry of surface.entries) {
+      tagged.push({ ...entry, _surfaceId: surface.surfaceId });
+    }
+  }
+  const totalCandidates = tagged.length + sourceOmitted;
+  tagged.sort(compareByConversationTime);
+  const selected = selectNewestFittingForEnvelope(tagged, {
+    maxMessages: CURSOR_DELIVERY_MAX_MESSAGES,
+    maxBytes: CURSOR_DELIVERY_MAX_BYTES,
+    triggerItem,
+    totalCandidates,
+  });
+  const raw: SurfaceCandidates[] = unioned.map((s) => ({
+    surfaceId: s.surfaceId,
+    cursorExpected: s.cursorExpected,
+    cursorDeliveredOrdinal:
+      s.cursorExpected.status === 'present' ? s.cursorExpected.deliveredOrdinal : 0,
+    isResponseThreadEstablish: s.establishOnly,
+    candidates: s.entries,
+  }));
+  const surfaces = assembleSurfacePlansFromSelection(
+    raw,
+    selected,
+    unioned[0]?.surfaceId ?? '',
+    totalCandidates,
+  );
   const primary = plans.reduce((a, b) =>
     Math.max(...a.surfaces.map((s) => s.nextDeliveredOrdinal))
       >= Math.max(...b.surfaces.map((s) => s.nextDeliveredOrdinal))
@@ -650,15 +637,14 @@ export function mergeCursorDeliveryPlans(
     triggerItemId: primary.triggerItemId,
     triggerEventId: primary.triggerEventId,
     surfaces,
-    promptBody: renderCursorDeliveryPrompt(triggerItem, surfaces),
+    promptBody: renderCursorDeliveryEnvelope(triggerItem, surfaces),
     committed: false,
   };
 }
 
 /**
- * Newest-fitting selection by conversation time: sort by messageTs, walk from
- * newest backward until message/byte caps, return chronological. Ensures
- * mustIncludeEventId stays in the window (time-based, not per-surface ordinal).
+ * Newest-fitting by conversation time using only line bytes (unit tests /
+ * internal). Prefer selectNewestFittingForEnvelope when advancing cursors.
  */
 export function selectNewestFitting(
   candidates: ObservedConversationEntry[],
@@ -668,53 +654,101 @@ export function selectNewestFitting(
     mustIncludeEventId?: string;
   },
 ): { entries: ObservedConversationEntry[]; omittedCount: number } {
-  if (candidates.length === 0) return { entries: [], omittedCount: 0 };
+  return selectNewestFittingForEnvelope(candidates, {
+    ...options,
+    totalCandidates: candidates.length,
+  });
+}
+
+/**
+ * Newest-fitting selection measured against the final provider-facing envelope
+ * (rows + Latest wake + previews + files). Only rows that fit are returned;
+ * nextDeliveredOrdinal must be derived from this set alone.
+ */
+export function selectNewestFittingForEnvelope(
+  candidates: ObservedConversationEntry[],
+  options: {
+    maxMessages: number;
+    maxBytes: number;
+    mustIncludeEventId?: string;
+    triggerItem?: SlackInboxItem;
+    totalCandidates?: number;
+  },
+): { entries: ObservedConversationEntry[]; omittedCount: number } {
+  if (candidates.length === 0) {
+    return { entries: [], omittedCount: options.totalCandidates ?? 0 };
+  }
 
   const ordered = [...candidates].sort(compareByConversationTime);
+  const poolSize = options.totalCandidates ?? candidates.length;
+
+  const fits = (entries: ObservedConversationEntry[]): boolean => {
+    if (entries.length > options.maxMessages) return false;
+    if (!options.triggerItem) {
+      // Line-only budget (merge path without trigger uses row bytes).
+      let bytes = 0;
+      for (const e of entries) {
+        bytes += Buffer.byteLength(formatObservedLine(e), 'utf8') + 1;
+      }
+      return bytes <= options.maxBytes;
+    }
+    const envelope = renderCursorDeliveryEnvelopeFromEntries(
+      options.triggerItem,
+      entries,
+      Math.max(0, poolSize - entries.length),
+    );
+    return Buffer.byteLength(envelope, 'utf8') <= options.maxBytes;
+  };
+
   const selected: ObservedConversationEntry[] = [];
-  let bytes = 0;
   for (let i = ordered.length - 1; i >= 0; i -= 1) {
-    const row = ordered[i]!;
-    const line = formatObservedLine(row);
-    const lineBytes = Buffer.byteLength(line, 'utf8') + (selected.length > 0 ? 1 : 0);
-    if (selected.length >= options.maxMessages) break;
-    if (selected.length > 0 && bytes + lineBytes > options.maxBytes) break;
-    if (selected.length === 0 && lineBytes > options.maxBytes) {
-      selected.push(row);
-      bytes = Math.min(lineBytes, options.maxBytes);
+    const trial = [...selected, ordered[i]!].sort(compareByConversationTime);
+    if (!fits(trial)) {
+      if (selected.length === 0) {
+        // Single oversized row: keep it (clipped lines still may exceed with extras);
+        // still include so trigger isn't lost; envelope builder clips message text.
+        selected.push(ordered[i]!);
+      }
       break;
     }
-    selected.push(row);
-    bytes += lineBytes;
+    selected.length = 0;
+    selected.push(...trial);
   }
-  selected.reverse();
 
   if (options.mustIncludeEventId) {
     const has = selected.some((r) => r.eventId === options.mustIncludeEventId);
     if (!has) {
       const trigger = ordered.find((r) => r.eventId === options.mustIncludeEventId);
       if (trigger) {
-        // Include everything at or after the trigger in conversation time.
-        const fromTrigger = ordered.filter(
-          (r) => compareByConversationTime(r, trigger) >= 0,
-        );
-        const rewindowed = selectNewestFitting(fromTrigger, {
+        const fromTrigger = ordered.filter((r) => compareByConversationTime(r, trigger) >= 0);
+        const rewindowed = selectNewestFittingForEnvelope(fromTrigger, {
           maxMessages: options.maxMessages,
           maxBytes: options.maxBytes,
+          triggerItem: options.triggerItem,
+          totalCandidates: poolSize,
         });
         if (!rewindowed.entries.some((r) => r.eventId === options.mustIncludeEventId)) {
           const rest = rewindowed.entries
             .filter((r) => r.eventId !== trigger.eventId)
             .slice(-(options.maxMessages - 1));
           const forced = [trigger, ...rest].sort(compareByConversationTime);
+          // Drop from newest until envelope fits, keeping trigger.
+          let kept = forced;
+          while (kept.length > 1 && !fits(kept)) {
+            // Remove newest non-trigger
+            const idx = [...kept].reverse().findIndex((e) => e.eventId !== trigger.eventId);
+            if (idx < 0) break;
+            const removeAt = kept.length - 1 - idx;
+            kept = kept.filter((_, i) => i !== removeAt);
+          }
           return {
-            entries: forced,
-            omittedCount: Math.max(0, candidates.length - forced.length),
+            entries: kept,
+            omittedCount: Math.max(0, poolSize - kept.length),
           };
         }
         return {
           entries: rewindowed.entries,
-          omittedCount: Math.max(0, candidates.length - rewindowed.entries.length),
+          omittedCount: Math.max(0, poolSize - rewindowed.entries.length),
         };
       }
     }
@@ -722,7 +756,7 @@ export function selectNewestFitting(
 
   return {
     entries: selected,
-    omittedCount: Math.max(0, candidates.length - selected.length),
+    omittedCount: Math.max(0, poolSize - selected.length),
   };
 }
 
@@ -737,8 +771,8 @@ export function formatObservedLine(entry: ObservedConversationEntry): string {
     text = entry.files.map((f) => f.name ?? f.id).join(', ');
     text = text ? `[file: ${text}]` : '[file]';
   }
-  if (text.length > CURSOR_DELIVERY_MAX_MESSAGE_CHARS) {
-    text = `${text.slice(0, CURSOR_DELIVERY_MAX_MESSAGE_CHARS)}…`;
+  if (Buffer.byteLength(text, 'utf8') > CURSOR_DELIVERY_MAX_MESSAGE_CHARS) {
+    text = truncateUtf8(text, CURSOR_DELIVERY_MAX_MESSAGE_CHARS);
   }
   const env = renderEnvelope([
     { key: 'message_ts', value: entry.messageTs },
@@ -750,12 +784,23 @@ export function formatObservedLine(entry: ObservedConversationEntry): string {
   return `${env} ${actor}: ${text}`;
 }
 
+/** @deprecated Use renderCursorDeliveryEnvelope — same output, full envelope. */
 export function renderCursorDeliveryPrompt(
   trigger: SlackInboxItem,
   surfaces: SurfaceDeliveryPlan[],
 ): string {
-  // Chronological flat list (not surface-order) so the rendered window matches
-  // conversation-time newest-fitting selection.
+  return renderCursorDeliveryEnvelope(trigger, surfaces);
+}
+
+/**
+ * Final provider-facing cursor envelope: chronological rows + Latest wake +
+ * previews/files. Must not post-truncate after nextDeliveredOrdinal is chosen;
+ * callers select rows so this string is already ≤ 16 KiB.
+ */
+export function renderCursorDeliveryEnvelope(
+  trigger: SlackInboxItem,
+  surfaces: SurfaceDeliveryPlan[],
+): string {
   const allEntries: ObservedConversationEntry[] = [];
   let omitted = 0;
   for (const surface of surfaces) {
@@ -763,12 +808,19 @@ export function renderCursorDeliveryPrompt(
     allEntries.push(...surface.entries);
     omitted += surface.omittedCount;
   }
-  allEntries.sort(compareByConversationTime);
+  return renderCursorDeliveryEnvelopeFromEntries(trigger, allEntries, omitted);
+}
 
+export function renderCursorDeliveryEnvelopeFromEntries(
+  trigger: SlackInboxItem,
+  entries: ObservedConversationEntry[],
+  omitted: number,
+): string {
+  const sorted = [...entries].sort(compareByConversationTime);
   const parts: string[] = ['Slack conversation update:'];
-  if (allEntries.length > 0) {
+  if (sorted.length > 0) {
     parts.push('');
-    for (const entry of allEntries) {
+    for (const entry of sorted) {
       parts.push(formatObservedLine(entry));
     }
     if (omitted > 0) {
@@ -780,34 +832,31 @@ export function renderCursorDeliveryPrompt(
     parts.push('', '(no prior observed messages in window)');
   }
 
-  // Latest wake is always clipped — never re-expand a long trigger past the
-  // per-message clip that selectNewestFitting already applied to snapshot rows.
-  const latest = buildLatestWakeLine(trigger);
-  parts.push('', 'Latest wake:', latest);
+  parts.push('', 'Latest wake:', buildLatestWakeLine(trigger));
   if (trigger.attentionSuggestion) {
     parts.push('', trigger.attentionSuggestion);
   }
-  let body = parts.join('\n');
-  // Hard cap: entire cursor view ≤ 16 KiB rendered UTF-8.
-  if (Buffer.byteLength(body, 'utf8') > CURSOR_DELIVERY_MAX_BYTES) {
-    body = truncateUtf8(body, CURSOR_DELIVERY_MAX_BYTES);
-  }
-  return body;
+  const extras = renderSlackCursorExtras(trigger);
+  if (extras) parts.push('', extras);
+  return parts.join('\n');
 }
 
-/** Truncate a string to at most maxBytes UTF-8, appending an ellipsis if cut. */
+/**
+ * Truncate to maxBytes UTF-8 without splitting code points / surrogate pairs.
+ * Used for per-message clip only — not for post-plan envelope mutation.
+ */
 export function truncateUtf8(text: string, maxBytes: number): string {
   if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
   const ellipsis = '…';
-  const budget = maxBytes - Buffer.byteLength(ellipsis, 'utf8');
-  let end = text.length;
-  while (end > 0 && Buffer.byteLength(text.slice(0, end), 'utf8') > budget) {
-    end = Math.floor(end * 0.9);
+  const budget = Math.max(0, maxBytes - Buffer.byteLength(ellipsis, 'utf8'));
+  let result = '';
+  for (const ch of text) {
+    // for...of yields full code points (no lone surrogates).
+    const next = result + ch;
+    if (Buffer.byteLength(next, 'utf8') > budget) break;
+    result = next;
   }
-  while (end > 0 && Buffer.byteLength(text.slice(0, end), 'utf8') > budget) {
-    end -= 1;
-  }
-  return `${text.slice(0, end)}${ellipsis}`;
+  return `${result}${ellipsis}`;
 }
 
 /** Primary surface id for a plan (grouping key for follow-up batching). */
@@ -834,8 +883,8 @@ function buildLatestWakeLine(event: SlackInboxItem): string {
     text = `[file: ${event.files.map((f) => f.name).join(', ')}]`;
   }
   // Same clip as snapshot rows — never re-expand a long trigger in Latest wake.
-  if (text.length > CURSOR_DELIVERY_MAX_MESSAGE_CHARS) {
-    text = `${text.slice(0, CURSOR_DELIVERY_MAX_MESSAGE_CHARS)}…`;
+  if (Buffer.byteLength(text, 'utf8') > CURSOR_DELIVERY_MAX_MESSAGE_CHARS) {
+    text = truncateUtf8(text, CURSOR_DELIVERY_MAX_MESSAGE_CHARS);
   }
   return `${env} ${actor}: ${text}`;
 }

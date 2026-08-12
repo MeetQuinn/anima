@@ -14,6 +14,7 @@ import {
   selectNewestFitting,
   setCursorDeliveryEnabledForTests,
   surfacesForSlackWake,
+  truncateUtf8,
 } from '../runtime/cursor-delivery.js';
 import { groupFollowupContexts } from '../runtime/followup-appender.js';
 import type { RuntimeItemContext } from '../runtime/types.js';
@@ -598,25 +599,31 @@ test('runtime_restart is never already_delivered (preserves recovery continuatio
   });
 });
 
-test('cursor prompt preserves attached_files and unfurl previews from the wake item', () => {
-  const event = makeSlackEvent({
-    channelId: 'C-team',
-    eventId: 'evt-file',
-    teamId: 'T-demo',
-    text: 'see file',
-    ts: '1770000010.000001',
-    userId: 'U1',
-    files: [{ id: 'F1', name: 'shot.png', mimetype: 'image/png', sizeBytes: 4096 }],
-    previews: [{ text: 'unfurled title', fromUrl: 'https://example.test/x' }],
+test('cursor envelope includes attached_files and unfurl previews from the wake item', async () => {
+  await withEnabledStore(async (store, agentId) => {
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '1.0',
+      text: 'see file',
+      userId: 'U1',
+      files: [{ id: 'F1', name: 'shot.png' }],
+    });
+    const item = slackItem({ channelId: 'C1', messageTs: '1.0', text: 'see file', userId: 'U1' });
+    item.files = [{ id: 'F1', name: 'shot.png', mimetype: 'image/png', sizeBytes: 4096 }];
+    item.previews = [{ text: 'unfurled title', fromUrl: 'https://example.test/x' }];
+    const prepared = await prepareCursorDelivery({ agentId, item, store });
+    assert.equal(prepared.kind, 'prepared');
+    if (prepared.kind !== 'prepared') return;
+    const text = buildCodeAgentDeliveryPrompt(item, {
+      cursorDeliveryPromptBody: prepared.plan.promptBody,
+    });
+    assert.match(text, /Slack conversation update:/);
+    assert.match(text, /<attached_files>/);
+    assert.match(text, /shot\.png/);
+    assert.match(text, /size_bytes="4096"/);
+    assert.match(text, /unfurled title|source="slack_unfurl"/);
   });
-  const text = buildCodeAgentDeliveryPrompt(event, {
-    cursorDeliveryPromptBody: 'Slack conversation update:\n\nLatest wake:\n[message_ts=1770000010.000001] U1: see file',
-  });
-  assert.match(text, /Slack conversation update:/);
-  assert.match(text, /<attached_files>/);
-  assert.match(text, /shot\.png/);
-  assert.match(text, /size_bytes="4096"/);
-  assert.match(text, /unfurled title|source="slack_unfurl"/);
 });
 
 test('shared budget caps total rows across channel + response-thread surfaces', async () => {
@@ -783,7 +790,7 @@ test('runtime_restart prompt includes prepared delta (arrived-during-crash visib
   });
 });
 
-test('rendered cursor view stays within 16 KiB even with a long trigger', async () => {
+test('final provider envelope stays within 16 KiB incl. previews/files; no post-plan truncate', async () => {
   await withEnabledStore(async (store, agentId) => {
     const long = 'L'.repeat(30_000);
     await store.observe({
@@ -794,20 +801,74 @@ test('rendered cursor view stays within 16 KiB even with a long trigger', async 
       userId: 'U1',
     });
     const item = slackItem({ channelId: 'C1', messageTs: '1.0', text: long, userId: 'U1' });
+    item.previews = [{ text: 'P'.repeat(8_000), fromUrl: 'https://example.test/x' }];
+    item.files = [{ id: 'F1', name: 'big.bin', mimetype: 'application/octet-stream', sizeBytes: 99 }];
+
     const prepared = await prepareCursorDelivery({ agentId, item, store });
     assert.equal(prepared.kind, 'prepared');
     if (prepared.kind !== 'prepared') return;
+
+    // Full envelope is what the provider gets (Iris: bound = final rendered envelope).
     const full = buildCodeAgentDeliveryPrompt(item, {
       cursorDeliveryPromptBody: prepared.plan.promptBody,
     });
-    // Prompt body alone is hard-capped; with files/previews may grow slightly.
+    assert.equal(full, prepared.plan.promptBody);
     assert.ok(
-      Buffer.byteLength(prepared.plan.promptBody, 'utf8') <= CURSOR_DELIVERY_MAX_BYTES,
-      `promptBody ${Buffer.byteLength(prepared.plan.promptBody, 'utf8')}`,
+      Buffer.byteLength(full, 'utf8') <= CURSOR_DELIVERY_MAX_BYTES,
+      `envelope ${Buffer.byteLength(full, 'utf8')}`,
     );
-    // Latest wake must not re-expand the full 30k raw text.
+    // Long raw trigger must not appear unclipped.
     assert.ok(!full.includes(long));
-    assert.ok(full.includes('…') || full.length < long.length);
+    // nextDeliveredOrdinal matches only rows present in the envelope.
+    const channel = prepared.plan.surfaces.find((s) => s.surfaceId === 'slack:T1:C1');
+    assert.ok(channel);
+    if (channel!.entries.length > 0) {
+      assert.equal(channel!.nextDeliveredOrdinal, channel!.entries.at(-1)!.ordinal);
+    }
+  });
+});
+
+test('truncateUtf8 does not split surrogate pairs', () => {
+  // Cap that cannot hold a full emoji (4 bytes) + ellipsis (3) cleanly.
+  const out = truncateUtf8('😀x', 6);
+  assert.ok(Buffer.byteLength(out, 'utf8') <= 6);
+  // Must not produce UTF-8 replacement from a lone surrogate in the payload.
+  const decoded = Buffer.from(out, 'utf8').toString('utf8');
+  assert.equal(decoded.includes('\uFFFD'), false);
+  // Every code point in the result (except ellipsis) is a complete character.
+  for (const ch of out) {
+    if (ch === '…') continue;
+    assert.ok([...ch].length === 1);
+  }
+});
+
+test('single-plan merge preserves omission count', async () => {
+  await withEnabledStore(async (store, agentId) => {
+    for (let i = 1; i <= 40; i += 1) {
+      await store.observe({
+        teamId: 'T1',
+        channelId: 'C1',
+        messageTs: `${i}.0`,
+        text: `row-${i}`,
+        userId: 'U1',
+      });
+    }
+    const prepared = await prepareCursorDelivery({
+      agentId,
+      item: slackItem({ channelId: 'C1', messageTs: '40.0', text: 'row-40' }),
+      store,
+    });
+    assert.equal(prepared.kind, 'prepared');
+    if (prepared.kind !== 'prepared') return;
+    const before = prepared.plan.surfaces.reduce((n, s) => n + s.omittedCount, 0);
+    assert.ok(before >= 1, `expected omissions before merge, got ${before}`);
+    const merged = mergeCursorDeliveryPlans(
+      [prepared.plan],
+      slackItem({ channelId: 'C1', messageTs: '40.0', text: 'row-40' }),
+    );
+    const after = merged.surfaces.reduce((n, s) => n + s.omittedCount, 0);
+    assert.equal(after, before);
+    assert.match(merged.promptBody, /earlier message/);
   });
 });
 
