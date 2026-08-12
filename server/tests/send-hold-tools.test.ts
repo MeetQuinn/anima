@@ -249,6 +249,52 @@ test('runAsk HELD: sole HELD stdout, zero chat.postMessage', async () => {
   }
 });
 
+test('runAsk sent path appends own observation', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-hold-ask-sent-'));
+  const posts: unknown[] = [];
+  const uploads: string[] = [];
+  const previousAgent = process.env.ANIMA_AGENT_ID;
+  const previousSlack = process.env.ANIMA_SLACK_API_URL;
+  const originalLog = console.log;
+  const lines: string[] = [];
+  console.log = (msg?: unknown) => {
+    if (typeof msg === 'string') lines.push(msg);
+  };
+  const slackApi = await startSlackApiMock(baseSlackHandlers(posts, uploads));
+  setCursorDeliveryEnabledForTests(true);
+  try {
+    process.env.ANIMA_AGENT_ID = 'scout';
+    process.env.ANIMA_SLACK_API_URL = slackApi.url;
+    await withAnimaHome(stateDir, async () => {
+      await writeScoutAgent(stateDir);
+      // Absent cursor → allow land.
+      await runAsk({
+        channel: CHANNEL,
+        question: 'ship it?',
+        option: ['yes', 'no'],
+        replyHint: true,
+      });
+      const store = new ObservedConversationStore('scout');
+      const journal = await store.readJournal(`slack:${TEAM}:${CHANNEL}`, { limit: 10 });
+      assert.ok(
+        journal.some((e) => e.messageTs === '1770000999.000001' && e.userId === BOT_USER),
+        `expected own ask observation, got ${JSON.stringify(journal)}`,
+      );
+    });
+    assert.equal(posts.length, 1, 'sent ask must postMessage once');
+    assert.doesNotMatch(lines.join('\n'), /^HELD:/m);
+  } finally {
+    console.log = originalLog;
+    setCursorDeliveryEnabledForTests(undefined);
+    if (previousAgent === undefined) delete process.env.ANIMA_AGENT_ID;
+    else process.env.ANIMA_AGENT_ID = previousAgent;
+    if (previousSlack === undefined) delete process.env.ANIMA_SLACK_API_URL;
+    else process.env.ANIMA_SLACK_API_URL = previousSlack;
+    await slackApi.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('runFileSend HELD: sole HELD stdout, zero upload URL/bytes/complete', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-hold-file-'));
   const posts: unknown[] = [];

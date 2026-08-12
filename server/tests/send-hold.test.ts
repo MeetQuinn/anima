@@ -546,7 +546,8 @@ test('wake-time cursor view places earlier-omitted marker above shown rows', () 
   assert.match(body, /\(\+5 earlier messages not shown\)/);
 });
 
-test('own posts after cursor do not hold', async () => {
+test('own posts after cursor do not hold; cursor advances through own tail', async () => {
+  // Red: cursor@1 + own ordinal 2 → allow, but must consume own so cursor → 2.
   await withHoldStore(async (store, agentId) => {
     await store.observe({
       teamId: 'T1',
@@ -578,6 +579,65 @@ test('own posts after cursor do not hold', async () => {
       store,
     });
     assert.equal(result.kind, 'allow');
+    const cursor = await store.getCursor('slack:T1:C1');
+    assert.equal(cursor.status, 'present');
+    if (cursor.status === 'present') {
+      assert.equal(cursor.deliveredOrdinal, 2, 'own rows must be consumed on allow');
+    }
+  });
+});
+
+test('HELD advances through captured tail including later own rows', async () => {
+  // Foreign then own: HELD shows foreign; cursor must land at own tail (not stop at foreign).
+  await withHoldStore(async (store, agentId) => {
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '1.0',
+      text: 'root',
+      userId: 'U1',
+    });
+    await store.advanceCursor({
+      surfaceId: 'slack:T1:C1',
+      expected: { status: 'absent' },
+      nextDeliveredOrdinal: 1,
+      lastDeliveredEventId: 'slack:T1:C1:1.0',
+      lastDeliveredMessageTs: '1.0',
+    });
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '2.0',
+      text: 'foreign',
+      userId: 'U_OTHER',
+    });
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '3.0',
+      text: 'my own after foreign',
+      userId: 'U_BOT',
+    });
+    const lines: string[] = [];
+    const result = await evaluateSendHold({
+      agentId,
+      teamId: 'T1',
+      channelId: 'C1',
+      tool: 'anima.message.send',
+      botUserId: 'U_BOT',
+      store,
+      writeOutput: (line) => lines.push(line),
+    });
+    assert.equal(result.kind, 'held');
+    if (result.kind !== 'held') return;
+    assert.equal(result.deltaCount, 1);
+    assert.equal(result.advancedToOrdinal, 3);
+    assert.match(result.stdout, /foreign/);
+    const cursor = await store.getCursor('slack:T1:C1');
+    assert.equal(cursor.status, 'present');
+    if (cursor.status === 'present') {
+      assert.equal(cursor.deliveredOrdinal, 3);
+    }
   });
 });
 

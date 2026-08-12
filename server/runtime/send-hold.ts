@@ -160,11 +160,29 @@ export async function evaluateSendHold(input: {
     }
 
     const self = { botUserId: input.botUserId, botId: input.botId };
-    const nonOwn = snapshot.candidates
-      .filter((row) => !isOwnObservedEntry(row, self))
-      .sort(compareByConversationTime);
+    const orderedCandidates = [...snapshot.candidates].sort(compareByConversationTime);
+    const nonOwn = orderedCandidates.filter((row) => !isOwnObservedEntry(row, self));
 
-    if (nonOwn.length === 0) return { kind: 'allow' };
+    // Always consume the full captured tail (own + foreign). Leaving known-own
+    // rows behind the cursor makes the 5k retained-window guard fail-closed
+    // forever after ~5k self sends even with no foreign movement.
+    const tailEntry = orderedCandidates.length > 0
+      ? orderedCandidates[orderedCandidates.length - 1]!
+      : undefined;
+
+    if (nonOwn.length === 0) {
+      // No foreign movement: advance through captured tail (if any), then land.
+      if (tail > afterOrdinal && tailEntry) {
+        await advanceSendHoldCursor({
+          store,
+          surfaceId,
+          expectedDeliveredOrdinal: cursor.deliveredOrdinal,
+          nextDeliveredOrdinal: tail,
+          last: tailEntry,
+        });
+      }
+      return { kind: 'allow' };
+    }
 
     const totalNewCount = nonOwn.length;
     const selected = selectNewestFittingForEnvelope(nonOwn, {
@@ -179,8 +197,10 @@ export async function evaluateSendHold(input: {
       noun: nounForTool(input.tool),
     });
 
-    const last = nonOwn[nonOwn.length - 1]!;
-    const advancedToOrdinal = last.ordinal;
+    // Advance through the *captured tail* (not merely the last foreign ordinal)
+    // so any own rows after the foreign delta are also consumed.
+    const advancedToOrdinal = tail;
+    const lastForAdvance = tailEntry ?? nonOwn[nonOwn.length - 1]!;
 
     // 1) Deliver HELD copy first — failed write must not consume the delta.
     const write = input.writeOutput ?? console.log;
@@ -200,27 +220,13 @@ export async function evaluateSendHold(input: {
     });
 
     // 3) Advance cursor only after the agent has received the HELD outcome.
-    const advance = await store.advanceCursor({
+    await advanceSendHoldCursor({
+      store,
       surfaceId,
-      expected: { status: 'present', deliveredOrdinal: cursor.deliveredOrdinal },
+      expectedDeliveredOrdinal: cursor.deliveredOrdinal,
       nextDeliveredOrdinal: advancedToOrdinal,
-      lastDeliveredEventId: last.eventId,
-      lastDeliveredMessageTs: last.messageTs,
+      last: lastForAdvance,
     });
-    if (!advance.advanced) {
-      const live = await store.getCursor(surfaceId);
-      if (
-        !(
-          live.status === 'present'
-          && live.deliveredOrdinal >= advancedToOrdinal
-        )
-      ) {
-        throw new SendHoldError(
-          'cas_failure',
-          `send-hold cursor advance failed for ${surfaceId}: ${advance.reason}`,
-        );
-      }
-    }
 
     return {
       kind: 'held',
@@ -244,6 +250,39 @@ export async function evaluateSendHold(input: {
       error instanceof Error ? error.message : String(error),
     );
   }
+}
+
+/**
+ * Strict CAS advance through the captured journal tail. Fail closed on mismatch
+ * unless live cursor is already at/past the target (idempotent retry).
+ */
+async function advanceSendHoldCursor(input: {
+  store: ObservedConversationStore;
+  surfaceId: string;
+  expectedDeliveredOrdinal: number;
+  nextDeliveredOrdinal: number;
+  last: ObservedConversationEntry;
+}): Promise<void> {
+  if (input.nextDeliveredOrdinal <= input.expectedDeliveredOrdinal) return;
+  const advance = await input.store.advanceCursor({
+    surfaceId: input.surfaceId,
+    expected: { status: 'present', deliveredOrdinal: input.expectedDeliveredOrdinal },
+    nextDeliveredOrdinal: input.nextDeliveredOrdinal,
+    lastDeliveredEventId: input.last.eventId,
+    lastDeliveredMessageTs: input.last.messageTs,
+  });
+  if (advance.advanced) return;
+  const live = await input.store.getCursor(input.surfaceId);
+  if (
+    live.status === 'present'
+    && live.deliveredOrdinal >= input.nextDeliveredOrdinal
+  ) {
+    return;
+  }
+  throw new SendHoldError(
+    'cas_failure',
+    `send-hold cursor advance failed for ${input.surfaceId}: ${advance.reason}`,
+  );
 }
 
 /**
