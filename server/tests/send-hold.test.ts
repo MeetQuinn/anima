@@ -313,7 +313,7 @@ test('failed HELD write does not consume cursor (delta undelivered)', async () =
 });
 
 test('incomplete retained window fails closed (no false-allow on capped read)', async () => {
-  // Cursor 0, tail 5001, retained only 2..5001 all own → missing ordinal 1 foreign-unknown.
+  // Cursor 0, captured tail 5001, retained only 2..5001 all own → missing ordinal 1.
   await withHoldStore(async (_store, agentId) => {
     const surfaceId = 'slack:T1:C1';
     const retained: Array<{
@@ -351,15 +351,6 @@ test('incomplete retained window fails closed (no false-allow on capped read)', 
           status: 'present' as const,
           deliveredOrdinal: 0,
           surfaceId,
-          updatedAt: '2026-01-01T00:00:00.000Z',
-        };
-      }
-      override async getIndexReconciled() {
-        return {
-          lastEventId: 'slack:T1:C1:5001.0',
-          lastMessageTs: '5001.0',
-          surfaceId,
-          tailOrdinal: 5_001,
           updatedAt: '2026-01-01T00:00:00.000Z',
         };
       }
@@ -407,6 +398,95 @@ test('incomplete retained window fails closed (no false-allow on capped read)', 
         return true;
       },
     );
+  });
+});
+
+test('completeness uses captured snapshot tail, not a prior unlocked index read', async () => {
+  // Red control: stale unlocked tail 5000, then own append → locked snapshot tail
+  // 5001 with retained 2..5001 all own. Must use captured 5001 (not 5000) so the
+  // incomplete window fails closed (ordinal 1 unknown) rather than false-allow.
+  await withHoldStore(async (_store, agentId) => {
+    const surfaceId = 'slack:T1:C1';
+    const retained: Array<{
+      channelId: string;
+      eventId: string;
+      messageTs: string;
+      observedAt: string;
+      ordinal: number;
+      receivedAt: string;
+      surfaceId: string;
+      teamId: string;
+      text: string;
+      userId: string;
+    }> = [];
+    for (let ord = 2; ord <= 5_001; ord += 1) {
+      retained.push({
+        channelId: 'C1',
+        eventId: `slack:T1:C1:${ord}.0`,
+        messageTs: `${ord}.0`,
+        observedAt: '2026-01-01T00:00:00.000Z',
+        ordinal: ord,
+        receivedAt: '2026-01-01T00:00:00.000Z',
+        surfaceId,
+        teamId: 'T1',
+        text: `own-${ord}`,
+        userId: 'U_BOT',
+      });
+    }
+    let getIndexCalls = 0;
+    class RaceStore extends ObservedConversationStore {
+      override async getContinuity() {
+        return { status: 'ok' as const, updatedAt: '2026-01-01T00:00:00.000Z' };
+      }
+      override async getCursor() {
+        return {
+          status: 'present' as const,
+          deliveredOrdinal: 0,
+          surfaceId,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        };
+      }
+      /** If evaluateSendHold still called this, it would see the stale tail. */
+      override async getIndexReconciled() {
+        getIndexCalls += 1;
+        return {
+          lastEventId: 'slack:T1:C1:5000.0',
+          lastMessageTs: '5000.0',
+          surfaceId,
+          tailOrdinal: 5_000,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        };
+      }
+      override async readCursorDeliverySnapshot() {
+        // Locked observation after own append: tail 5001, retained 2..5001.
+        return {
+          index: {
+            lastEventId: 'slack:T1:C1:5001.0',
+            lastMessageTs: '5001.0',
+            surfaceId,
+            tailOrdinal: 5_001,
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          },
+          candidates: retained,
+          capturedTailOrdinal: 5_001,
+        };
+      }
+    }
+
+    await assert.rejects(
+      () =>
+        evaluateSendHold({
+          agentId,
+          teamId: 'T1',
+          channelId: 'C1',
+          tool: 'anima.message.send',
+          botUserId: 'U_BOT',
+          store: new RaceStore(agentId),
+        }),
+      /retained window incomplete.*5001/,
+    );
+    // Must not consult a separate unlocked index (pairing race).
+    assert.equal(getIndexCalls, 0);
   });
 });
 

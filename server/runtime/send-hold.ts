@@ -134,8 +134,13 @@ export async function evaluateSendHold(input: {
     if (cursor.status === 'absent') return { kind: 'allow' };
 
     const afterOrdinal = cursor.deliveredOrdinal;
-    const index = await store.getIndexReconciled(surfaceId);
-    const tail = index?.tailOrdinal ?? 0;
+    // One locked snapshot: candidates + captured tail must not be paired with a
+    // separate earlier getIndexReconciled() observation (concurrent append race).
+    const snapshot = await store.readCursorDeliverySnapshot(surfaceId, {
+      afterOrdinal,
+      limit: 5_000,
+    });
+    const tail = snapshot.index?.tailOrdinal ?? snapshot.capturedTailOrdinal;
     if (cursor.deliveredOrdinal > tail) {
       throw new SendHoldError(
         'store_error',
@@ -143,13 +148,10 @@ export async function evaluateSendHold(input: {
       );
     }
 
-    const snapshot = await store.readCursorDeliverySnapshot(surfaceId, {
-      afterOrdinal,
-      limit: 5_000,
-    });
     const indexAfter = afterCursorIndexPopulation(afterOrdinal, tail);
-    // Capped/archived retained window must cover every after-cursor ordinal;
-    // otherwise ownership of omitted slots is unknown → never false-allow.
+    // Capped/archived retained window must cover every after-cursor ordinal
+    // against *this* captured tail; otherwise ownership of omitted slots is
+    // unknown → never false-allow.
     if (indexAfter > 0 && snapshot.candidates.length < indexAfter) {
       throw new SendHoldError(
         'store_error',
