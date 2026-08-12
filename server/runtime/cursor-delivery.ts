@@ -59,10 +59,10 @@ export interface SurfaceDeliveryPlan {
   /** Bounded journal rows delivered for this surface (chronological). */
   entries: ObservedConversationEntry[];
   /**
-   * Exact candidate population for this surface after the cursor (journal
-   * rows considered before the shared envelope bound). Used for merge union
-   * so child-thread omissions are not lost when aggregate omitted was once
-   * parked only on the trigger surface.
+   * Exact after-cursor population from the reconciled ordinal index
+   * (`tailOrdinal − deliveredOrdinal`), not the capped retained journal-read
+   * length. Used for “N earlier messages not shown” and merge union so archive
+   * retention / read limits cannot under-count the true conversation.
    */
   candidateCount: number;
   /** Count of this surface's candidates not included due to the bound. */
@@ -427,11 +427,61 @@ interface SurfaceCandidates {
   /** Rows available for selection (may be a shown subset after merge). */
   candidates: ObservedConversationEntry[];
   /**
-   * Exact after-cursor journal population for this surface. Defaults to
-   * candidates.length. Set explicitly on merge re-window so omissions survive
-   * when only shown rows are present in candidates.
+   * Exact after-cursor population (index-derived). Defaults to candidates.length
+   * only when unset (merge re-window always sets this from source plans).
    */
   candidateCount?: number;
+}
+
+/**
+ * Exact after-cursor count from reconciled ordinal index, not retained-window
+ * length. Fail-closed when the index cannot support the claim (missing index
+ * with retained rows, or index tail behind retained max / retained length).
+ */
+export function exactCandidateCountFromIndex(input: {
+  afterOrdinal: number;
+  candidates: ObservedConversationEntry[];
+  /** Reconciled journal-tail index; undefined when empty / unknown. */
+  index: { tailOrdinal: number; lastEventId?: string } | undefined;
+  isResponseThreadEstablish: boolean;
+  surfaceId: string;
+}): number {
+  if (input.isResponseThreadEstablish) return 0;
+
+  const hasIndex =
+    input.index !== undefined
+    && Boolean(input.index.lastEventId)
+    && input.index.tailOrdinal > 0;
+
+  if (!hasIndex) {
+    if (input.candidates.length > 0) {
+      throw new CursorDeliveryError(
+        'store_error',
+        `missing reconciled index for exact candidateCount on ${input.surfaceId}`,
+      );
+    }
+    return 0;
+  }
+
+  const tail = input.index!.tailOrdinal;
+  const count = Math.max(0, tail - input.afterOrdinal);
+  const maxRetained = input.candidates.reduce(
+    (max, row) => (row.ordinal > max ? row.ordinal : max),
+    0,
+  );
+  if (maxRetained > 0 && tail < maxRetained) {
+    throw new CursorDeliveryError(
+      'store_error',
+      `index tail ${tail} behind retained max ordinal ${maxRetained} on ${input.surfaceId}`,
+    );
+  }
+  if (count < input.candidates.length) {
+    throw new CursorDeliveryError(
+      'store_error',
+      `index candidateCount ${count} < retained rows ${input.candidates.length} on ${input.surfaceId}`,
+    );
+  }
+  return count;
 }
 
 /**
@@ -450,6 +500,7 @@ async function buildSharedBudgetSurfacePlans(
   },
 ): Promise<SurfaceDeliveryPlan[]> {
   const raw: SurfaceCandidates[] = [];
+  let totalCandidates = 0;
   for (const surfaceId of surfaceIds) {
     const cursor = await store.getCursor(surfaceId);
     const cursorExpected: AdvanceCursorExpected =
@@ -457,15 +508,34 @@ async function buildSharedBudgetSurfacePlans(
         ? { status: 'absent' }
         : { status: 'present', deliveredOrdinal: cursor.deliveredOrdinal };
     const afterOrdinal = cursor.status === 'present' ? cursor.deliveredOrdinal : 0;
+    // Selection window is capped/retained; exact population comes from the index.
     const candidates = await store.readJournal(surfaceId, { afterOrdinal, limit: 5_000 });
+    const index = await store.getIndexReconciled(surfaceId);
+    const indexPopulation =
+      index && index.lastEventId && index.tailOrdinal > 0
+        ? Math.max(0, index.tailOrdinal - afterOrdinal)
+        : 0;
+    // Empty retained alone is not "never observed" when the index still has a tail
+    // (archive retention / read limit can drop early ordinals).
     const isResponseThreadEstablish =
-      surfaceId !== opts.triggerSurfaceId && candidates.length === 0;
+      surfaceId !== opts.triggerSurfaceId
+      && candidates.length === 0
+      && indexPopulation === 0;
+    const candidateCount = exactCandidateCountFromIndex({
+      afterOrdinal,
+      candidates,
+      index,
+      isResponseThreadEstablish,
+      surfaceId,
+    });
+    if (!isResponseThreadEstablish) totalCandidates += candidateCount;
     raw.push({
       surfaceId,
       cursorExpected,
       cursorDeliveredOrdinal: cursor.status === 'present' ? cursor.deliveredOrdinal : 0,
       isResponseThreadEstablish,
       candidates,
+      candidateCount,
     });
   }
 
@@ -485,14 +555,15 @@ async function buildSharedBudgetSurfacePlans(
       : undefined;
 
   // Envelope-aware selection: only keep rows that fit the final provider-facing
-  // rendered envelope (incl. Latest wake + previews + files). Advance tracks
-  // exactly these rows — no post-hoc truncation.
+  // rendered envelope (incl. Latest wake + previews/files). Advance tracks
+  // exactly these rows — no post-hoc truncation. Omission budget uses the
+  // index-derived population, not the retained-window length.
   const selected = selectNewestFittingForEnvelope(tagged, {
     maxMessages: CURSOR_DELIVERY_MAX_MESSAGES,
     maxBytes: CURSOR_DELIVERY_MAX_BYTES,
     mustIncludeEventId: mustInclude,
     triggerItem: opts.triggerItem,
-    totalCandidates: tagged.length,
+    totalCandidates,
   });
   return assembleSurfacePlansFromSelection(raw, selected);
 }

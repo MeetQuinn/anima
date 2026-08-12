@@ -8,6 +8,7 @@ import {
   commitCursorDelivery,
   CURSOR_DELIVERY_MAX_BYTES,
   CURSOR_DELIVERY_MAX_MESSAGES,
+  exactCandidateCountFromIndex,
   formatObservedLine,
   mergeCursorDeliveryPlans,
   prepareCursorDelivery,
@@ -19,7 +20,11 @@ import {
 import { groupFollowupContexts } from '../runtime/followup-appender.js';
 import type { RuntimeItemContext } from '../runtime/types.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
-import { ObservedConversationStore } from '../storage/schema/observed-conversation.store.js';
+import {
+  ObservedConversationStore,
+  type ConversationIndex,
+  type ObservedConversationEntry,
+} from '../storage/schema/observed-conversation.store.js';
 import type { SlackInboxItem } from '../../shared/inbox.js';
 import { withAnimaHome } from './anima-home.js';
 import { defaultAgentConfig, writeAgentConfigs } from './helpers/harness.js';
@@ -1042,6 +1047,141 @@ test('merge does not double-count overlapping omissions on the same surface', as
     assert.ok(shown + omitted <= 45, `shown=${shown} omitted=${omitted}`);
     assert.ok(omitted <= omittedA + 5, `omitted ${omitted} should not be ~2× ${omittedA}`);
     assert.match(merged.promptBody, /earlier message/);
+  });
+});
+
+test('exactCandidateCountFromIndex uses ordinal index not retained-window length', () => {
+  // Retained window 2..5001 (5000 rows) + reconciled tail 5001 → population 5001.
+  const retained: ObservedConversationEntry[] = [];
+  for (let ord = 2; ord <= 5_001; ord += 1) {
+    retained.push({
+      channelId: 'C1',
+      eventId: `slack:T1:C1:${ord}.0`,
+      messageTs: `${ord}.0`,
+      observedAt: '2026-01-01T00:00:00.000Z',
+      ordinal: ord,
+      receivedAt: '2026-01-01T00:00:00.000Z',
+      surfaceId: 'slack:T1:C1',
+      teamId: 'T1',
+      text: `row-${ord}`,
+      userId: 'U1',
+    });
+  }
+  assert.equal(retained.length, 5_000);
+  const count = exactCandidateCountFromIndex({
+    afterOrdinal: 0,
+    candidates: retained,
+    index: { tailOrdinal: 5_001, lastEventId: 'slack:T1:C1:5001.0' },
+    isResponseThreadEstablish: false,
+    surfaceId: 'slack:T1:C1',
+  });
+  assert.equal(count, 5_001);
+  // Capped-read length must not be used as the population.
+  assert.notEqual(count, retained.length);
+
+  // present@100 → remaining population is tail − delivered.
+  assert.equal(
+    exactCandidateCountFromIndex({
+      afterOrdinal: 100,
+      candidates: retained.filter((r) => r.ordinal > 100),
+      index: { tailOrdinal: 5_001, lastEventId: 'slack:T1:C1:5001.0' },
+      isResponseThreadEstablish: false,
+      surfaceId: 'slack:T1:C1',
+    }),
+    4_901,
+  );
+
+  // Fail-closed: retained rows without an index.
+  assert.throws(
+    () =>
+      exactCandidateCountFromIndex({
+        afterOrdinal: 0,
+        candidates: retained.slice(0, 2),
+        index: undefined,
+        isResponseThreadEstablish: false,
+        surfaceId: 'slack:T1:C1',
+      }),
+    /missing reconciled index/,
+  );
+});
+
+test('prepare candidateCount is index population when retained window is truncated', async () => {
+  // Mock: retained ordinals 2..5001 (5000 rows) + reconciled tail 5001.
+  // Absent cursor → candidateCount must be 5001, not 5000.
+  await withEnabledStore(async (_store, agentId) => {
+    const surfaceId = 'slack:T1:C1';
+    const threadId = 'slack:T1:C1:thread:5001.0';
+    const retained: ObservedConversationEntry[] = [];
+    for (let ord = 2; ord <= 5_001; ord += 1) {
+      retained.push({
+        channelId: 'C1',
+        eventId: `slack:T1:C1:${ord}.0`,
+        messageTs: `${ord}.0`,
+        observedAt: '2026-01-01T00:00:00.000Z',
+        ordinal: ord,
+        receivedAt: '2026-01-01T00:00:00.000Z',
+        surfaceId,
+        teamId: 'T1',
+        text: `row-${ord}`,
+        userId: 'U1',
+      });
+    }
+    const index: ConversationIndex = {
+      lastEventId: 'slack:T1:C1:5001.0',
+      lastMessageTs: '5001.0',
+      surfaceId,
+      tailOrdinal: 5_001,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    class TruncatedRetentionStore extends ObservedConversationStore {
+      override async getContinuity() {
+        return { status: 'ok' as const, updatedAt: '2026-01-01T00:00:00.000Z' };
+      }
+      override async getCursor(sid: string) {
+        return { status: 'absent' as const, surfaceId: sid };
+      }
+      override async getIndexReconciled(sid: string) {
+        if (sid === surfaceId) return index;
+        return undefined;
+      }
+      override async readJournal(
+        sid: string,
+        options: { afterOrdinal?: number; limit?: number } = {},
+      ) {
+        if (sid !== surfaceId) return [];
+        const after = options.afterOrdinal ?? 0;
+        const limit = options.limit ?? 100;
+        const filtered = retained.filter((r) => r.ordinal > after);
+        return filtered.length <= limit
+          ? filtered
+          : filtered.slice(filtered.length - limit);
+      }
+      override async readTail(sid: string, limit: number) {
+        if (sid !== surfaceId) return [];
+        return retained.slice(-limit);
+      }
+    }
+
+    const mock = new TruncatedRetentionStore(agentId);
+    const item = slackItem({
+      channelId: 'C1',
+      messageTs: '5001.0',
+      text: 'row-5001',
+      userId: 'U1',
+    });
+    const prepared = await prepareCursorDelivery({ agentId, item, store: mock });
+    assert.equal(prepared.kind, 'prepared');
+    if (prepared.kind !== 'prepared') return;
+    const primary = prepared.plan.surfaces.find((s) => s.surfaceId === surfaceId);
+    assert.ok(primary, 'channel surface present');
+    assert.equal(primary!.candidateCount, 5_001);
+    assert.equal(primary!.entries.length + primary!.omittedCount, 5_001);
+    // Child response-thread with no index/rows remains establish-only.
+    const child = prepared.plan.surfaces.find((s) => s.surfaceId === threadId);
+    assert.ok(child);
+    assert.equal(child!.establishOnly, true);
+    assert.equal(child!.candidateCount, 0);
   });
 });
 
