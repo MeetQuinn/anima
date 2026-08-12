@@ -115,8 +115,10 @@ export type AdvanceCursorResult =
   | { advanced: true; cursor: Extract<ConversationCursorView, { status: 'present' }> }
   | {
       advanced: false;
-      reason: 'cas_mismatch' | 'regression';
+      reason: 'cas_mismatch' | 'regression' | 'beyond_tail';
       cursor: ConversationCursorView;
+      /** Reconciled journal tail when reason is beyond_tail (0 if no observations). */
+      tailOrdinal?: number;
     };
 
 /** Agent-wide observation continuity (fail-closed signal for later send hold). */
@@ -333,7 +335,9 @@ export class ObservedConversationStore {
       await this.markDegradedSafe({ eventId, message: err.message, surfaceId });
       throw err;
     }
-    await this.markOkSafe();
+    // Continuity is sticky: ordinary success never clears `degraded` and does
+    // not rewrite continuity.json (avoids a JSON write on every message). A
+    // known gap remains fail-closed until explicit repairContinuity().
     return outcome;
   }
 
@@ -390,9 +394,10 @@ export class ObservedConversationStore {
    *
    * - `expected` must match the current absent/present+ordinal view.
    * - `nextDeliveredOrdinal` must be >= 0; if current is present, next must be
-   *   >= current.deliveredOrdinal (monotonic; equal is a no-op success only when
-   *   CAS expected matches and next equals current — treated as advanced:true
-   *   idempotent only when next === current; regression when next < current).
+   *   >= current.deliveredOrdinal (regression otherwise).
+   * - Fail-closed against the journal: next must be <= reconciled journal tail.
+   *   The only allowed advance with no observed rows is present@0 (thread-root
+   *   establishment). Anything above tail returns `beyond_tail`.
    */
   async advanceCursor(input: {
     expected: AdvanceCursorExpected;
@@ -416,6 +421,23 @@ export class ObservedConversationStore {
         result = { advanced: false, reason: 'regression', cursor: view };
         return current;
       }
+
+      // Cap against reconciled journal tail (index + retained journal rows).
+      const index = await this.indexStore(input.surfaceId).read();
+      const recent = await this.journal(input.surfaceId).readTail(OBSERVED_CONVERSATION_DEDUPE_RECENT);
+      const reconciled = reconcileIndexFromJournal(index, recent, input.surfaceId);
+      const tailOrdinal = reconciled.tailOrdinal;
+      // present@0 is the only establishment with an empty journal.
+      if (input.nextDeliveredOrdinal > tailOrdinal) {
+        result = {
+          advanced: false,
+          reason: 'beyond_tail',
+          cursor: view,
+          tailOrdinal,
+        };
+        return current;
+      }
+
       const updatedAt = nowIso();
       const next: ConversationCursorRecord = {
         deliveredOrdinal: input.nextDeliveredOrdinal,
@@ -451,18 +473,36 @@ export class ObservedConversationStore {
     return this.continuityStore().read();
   }
 
-  async markOk(): Promise<ObservationContinuity> {
+  /**
+   * Explicit, auditable repair: clear degraded → ok.
+   * Ordinary observe() must never call this — a later successful event does not
+   * prove a prior gap was recovered.
+   */
+  async repairContinuity(input: { note?: string } = {}): Promise<ObservationContinuity> {
     const at = nowIso();
     return this.continuityStore().update((current) => ({
       status: 'ok' as const,
       lastSuccessAt: at,
       updatedAt: at,
-      // Preserve last failure breadcrumb for forensics; status is the gate.
+      // Keep prior failure breadcrumbs for audit; status is the gate.
       ...(current.lastFailureAt ? { lastFailureAt: current.lastFailureAt } : {}),
-      ...(current.lastFailureMessage ? { lastFailureMessage: current.lastFailureMessage } : {}),
+      ...(current.lastFailureMessage
+        ? {
+            lastFailureMessage: input.note
+              ? `${current.lastFailureMessage} | repaired: ${input.note}`.slice(0, 500)
+              : current.lastFailureMessage,
+          }
+        : input.note
+          ? { lastFailureMessage: `repaired: ${input.note}`.slice(0, 500) }
+          : {}),
       ...(current.lastFailureEventId ? { lastFailureEventId: current.lastFailureEventId } : {}),
       ...(current.lastFailureSurfaceId ? { lastFailureSurfaceId: current.lastFailureSurfaceId } : {}),
     }));
+  }
+
+  /** @deprecated Prefer repairContinuity — name makes the explicit-repair seam obvious. */
+  async markOk(): Promise<ObservationContinuity> {
+    return this.repairContinuity();
   }
 
   async markDegraded(input: {
@@ -493,18 +533,6 @@ export class ObservedConversationStore {
     } catch (error) {
       console.warn(
         `observed-conversation continuity markDegraded failed for agent=${this.agentId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
-
-  private async markOkSafe(): Promise<void> {
-    try {
-      await this.markOk();
-    } catch (error) {
-      console.warn(
-        `observed-conversation continuity markOk failed for agent=${this.agentId}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );

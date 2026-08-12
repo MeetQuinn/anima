@@ -348,7 +348,7 @@ test('file-only observation stores file descriptors (readable delta marker)', as
   });
 });
 
-test('delivered cursor: confirmed-absent vs ordinal-0; CAS advance is monotonic', async () => {
+test('delivered cursor: confirmed-absent vs ordinal-0; CAS + beyond_tail are fail-closed', async () => {
   await withAgentStore(async (store) => {
     const surfaceId = 'slack:T1:C1';
 
@@ -356,7 +356,19 @@ test('delivered cursor: confirmed-absent vs ordinal-0; CAS advance is monotonic'
     const absent = await store.getCursor(surfaceId);
     assert.equal(absent.status, 'absent');
 
-    // CAS: absent → present@0
+    // No journal: advance to 1 (or any N>0) is beyond_tail.
+    const skip = await store.advanceCursor({
+      surfaceId,
+      expected: { status: 'absent' },
+      nextDeliveredOrdinal: 1,
+    });
+    assert.equal(skip.advanced, false);
+    if (skip.advanced) return;
+    assert.equal(skip.reason, 'beyond_tail');
+    assert.equal(skip.tailOrdinal, 0);
+    assert.equal((await store.getCursor(surfaceId)).status, 'absent');
+
+    // Only allowed no-journal establishment: present@0.
     const toZero = await store.advanceCursor({
       surfaceId,
       expected: { status: 'absent' },
@@ -376,24 +388,51 @@ test('delivered cursor: confirmed-absent vs ordinal-0; CAS advance is monotonic'
     const mismatch = await store.advanceCursor({
       surfaceId,
       expected: { status: 'absent' },
-      nextDeliveredOrdinal: 1,
+      nextDeliveredOrdinal: 0,
     });
     assert.equal(mismatch.advanced, false);
     if (mismatch.advanced) return;
     assert.equal(mismatch.reason, 'cas_mismatch');
 
-    // Advance 0 → 2
+    // Seed journal tail=2, then advance 0 → 2 is allowed.
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '1.0',
+      text: 'a',
+      userId: 'U1',
+    });
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '2.0',
+      text: 'b',
+      userId: 'U2',
+    });
+    assert.equal((await store.getIndex(surfaceId))?.tailOrdinal, 2);
+
     const toTwo = await store.advanceCursor({
       surfaceId,
       expected: { status: 'present', deliveredOrdinal: 0 },
       nextDeliveredOrdinal: 2,
-      lastDeliveredEventId: 'slack:T1:C1:1.0',
-      lastDeliveredMessageTs: '1.0',
+      lastDeliveredEventId: 'slack:T1:C1:2.0',
+      lastDeliveredMessageTs: '2.0',
     });
     assert.equal(toTwo.advanced, true);
     if (!toTwo.advanced) return;
     assert.equal(toTwo.cursor.deliveredOrdinal, 2);
-    assert.equal(toTwo.cursor.lastDeliveredEventId, 'slack:T1:C1:1.0');
+    assert.equal(toTwo.cursor.lastDeliveredEventId, 'slack:T1:C1:2.0');
+
+    // Past tail rejected
+    const past = await store.advanceCursor({
+      surfaceId,
+      expected: { status: 'present', deliveredOrdinal: 2 },
+      nextDeliveredOrdinal: 99,
+    });
+    assert.equal(past.advanced, false);
+    if (past.advanced) return;
+    assert.equal(past.reason, 'beyond_tail');
+    assert.equal(past.tailOrdinal, 2);
 
     // Regression blocked
     const reg = await store.advanceCursor({
@@ -448,21 +487,33 @@ test('continuity degrades on write failure and persists across store re-instanti
   }
 });
 
-test('successful observe clears continuity to ok after prior degrade', async () => {
+test('degraded continuity is sticky across later successful observes (no auto-clear)', async () => {
+  // Milo red control: failure → later success → new store instance still degraded.
   await withAgentStore(async (store) => {
-    await store.markDegraded({ message: 'prior failure', surfaceId: 'slack:T1:C1' });
+    await store.markDegraded({ message: 'prior gap', surfaceId: 'slack:T1:C1' });
     assert.equal((await store.getContinuity()).status, 'degraded');
 
-    await store.observe({
+    const observed = await store.observe({
       teamId: 'T1',
       channelId: 'C1',
       messageTs: '1.0',
-      text: 'recovered',
+      text: 'later success does not repair the gap',
       userId: 'U1',
     });
-    const cont = await store.getContinuity();
-    assert.equal(cont.status, 'ok');
-    assert.ok(cont.lastSuccessAt);
+    assert.equal(observed.appended, true);
+
+    const after = await store.getContinuity();
+    assert.equal(after.status, 'degraded');
+    assert.equal(after.lastFailureMessage, 'prior gap');
+
+    // Fresh store instance (restart) still reads degraded.
+    const restarted = new ObservedConversationStore('anima');
+    assert.equal((await restarted.getContinuity()).status, 'degraded');
+
+    // Only explicit repair clears it.
+    await store.repairContinuity({ note: 'manual resync' });
+    assert.equal((await store.getContinuity()).status, 'ok');
+    assert.equal((await restarted.getContinuity()).status, 'ok');
   });
 });
 
