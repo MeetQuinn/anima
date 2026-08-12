@@ -35,7 +35,6 @@ import {
 import {
   evaluateSendHold,
   observeOwnOutboundPost,
-  SendHoldError,
 } from '../runtime/send-hold.js';
 
 type SlackPostMessagePayload = Parameters<WebClient['chat']['postMessage']>[0];
@@ -114,46 +113,53 @@ export async function runAsk(opts: z.infer<typeof AskCommandSchema>): Promise<vo
     tool: 'anima.ask',
   };
 
-  // Pre-commit hold (cut c): before postMessage; outside withToolActivity.
-  try {
-    const hold = await evaluateSendHold({
-      agentId,
-      teamId,
-      channelId: target.channel.id,
-      ...(target.threadTs ? { threadTs: target.threadTs } : {}),
-      tool: 'anima.ask',
-      botUserId: agent.slack.botUserId,
-    });
-    if (hold.kind === 'held') return;
-  } catch (error) {
-    if (error instanceof SendHoldError) throw error;
-    throw error;
-  }
+  // Prepare ask payload (target/answer policy already done above), then hold
+  // immediately before postMessage, outside withToolActivity.
+  const askId = makeId('ask');
+  const content = askMessageContent({
+    askId,
+    mentionUserId: answerPolicy.mentionUserId,
+    options,
+    question,
+    replyHint: opts.replyHint,
+  });
+  const payload = {
+    blocks: content.blocks,
+    channel: target.channel.id,
+    text: content.text,
+    ...(target.threadTs ? { thread_ts: target.threadTs } : {}),
+  } as SlackPostMessagePayload;
+
+  const hold = await evaluateSendHold({
+    agentId,
+    teamId,
+    channelId: target.channel.id,
+    ...(target.threadTs ? { threadTs: target.threadTs } : {}),
+    tool: 'anima.ask',
+    botUserId: agent.slack.botUserId,
+  });
+  if (hold.kind === 'held') return;
 
   await withToolActivity({
     audit: { agentId },
     basePayload,
     effectType: 'slack.ask.post',
     op: async () => {
-      const askId = makeId('ask');
-      const content = askMessageContent({
-        askId,
-        mentionUserId: answerPolicy.mentionUserId,
-        options,
-        question,
-        replyHint: opts.replyHint,
-      });
-      const payload = {
-        blocks: content.blocks,
-        channel: target.channel.id,
-        text: content.text,
-        ...(target.threadTs ? { thread_ts: target.threadTs } : {}),
-      } as SlackPostMessagePayload;
       const response = await client.chat.postMessage(payload);
       if (!response.ts) throw new Error('Slack chat.postMessage did not return a message ts');
 
       const messageTs = response.ts;
       const channelId = response.channel ?? target.channel.id;
+      // Own observation immediately after irreversible response.
+      await observeOwnOutboundPost({
+        agentId,
+        teamId,
+        channelId,
+        messageTs,
+        ...(target.threadTs ? { threadTs: target.threadTs } : {}),
+        text: question,
+        botUserId: agent.slack.botUserId,
+      });
       const record: InteractiveAskRecord = {
         agentId,
         allowAnyone: answerPolicy.allowAnyone,
@@ -181,15 +187,6 @@ export async function runAsk(opts: z.infer<typeof AskCommandSchema>): Promise<vo
             messageTs,
             ...(target.threadTs ? { threadTs: target.threadTs } : {}),
           });
-      await observeOwnOutboundPost({
-        agentId,
-        teamId,
-        channelId,
-        messageTs,
-        ...(target.threadTs ? { threadTs: target.threadTs } : {}),
-        text: question,
-        botUserId: agent.slack.botUserId,
-      });
       console.log(askOutputLine({
         askId,
         messageTs,

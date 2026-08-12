@@ -33,8 +33,8 @@ import {
 import { resolveChatTarget } from './chat-target-resolver.js';
 import {
   evaluateSendHold,
+  messageTsFromSlackFileInfo,
   observeOwnOutboundPost,
-  SendHoldError,
 } from '../runtime/send-hold.js';
 
 export interface FileSendInputData {
@@ -140,37 +140,29 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
     tool: 'anima.file.send',
   };
 
-  // Pre-commit hold (cut c): before any upload URL/bytes. Outside withToolActivity.
   if (!teamId) throw new Error(`Agent ${agent.id} has no Slack team id configured`);
-  try {
-    const hold = await evaluateSendHold({
-      agentId,
-      teamId,
-      channelId: channel.id,
-      ...(threadTs ? { threadTs } : {}),
-      tool: 'anima.file.send',
-      botUserId: agent.slack.botUserId,
-    });
-    if (hold.kind === 'held') return;
-  } catch (error) {
-    if (error instanceof SendHoldError) throw error;
-    throw error;
-  }
+
+  // Caption transform is preparation (not irreversible); hold still runs before
+  // any upload URL / bytes.
+  const captionText = caption ? slackCaptionText(caption) : undefined;
+
+  // Pre-commit hold: after target/caption prep, before first irreversible upload.
+  const hold = await evaluateSendHold({
+    agentId,
+    teamId,
+    channelId: channel.id,
+    ...(threadTs ? { threadTs } : {}),
+    tool: 'anima.file.send',
+    botUserId: agent.slack.botUserId,
+  });
+  if (hold.kind === 'held') return;
 
   await withToolActivity({
     audit: { agentId },
     basePayload,
     effectType: 'slack.file.send',
     op: async () => {
-      // GFM -> Slack mrkdwn, except when the author already typed Slack entity
-      // syntax; see slackCaptionText. Empty result (whitespace-only caption)
-      // falls through as undefined and the file posts with no comment, which is
-      // what it looked like anyway.
-      const captionText = caption ? slackCaptionText(caption) : undefined;
-
-      // Step 1+2: per-file upload URL + POST bytes. Each path's pair is
-      // independent — Slack docs don't require serialization, so we run them
-      // in parallel for batches (N files = 1×RTT instead of N×RTT).
+      // Step 1+2: per-file upload URL + POST bytes.
       const uploaded = await Promise.all(
         validated.map((entry) => uploadSlackFile({ client, localPath: entry.path })),
       );
@@ -184,15 +176,12 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
         ...(captionText ? { caption: captionText } : {}),
       });
 
-      // Per-file enrichment: permalink + thumbs (image only) for the audit
-      // payload + UI render. Best-effort — a single failed files.info should
-      // not abort the whole upload. Each file carries its own permalink;
-      // there's no top-level "message permalink" because Slack groups
-      // multi-file uploads into one message but only emits per-file URLs.
+      // Per-file enrichment: permalink + thumbs + share message_ts for own journal.
       const titleByFileId = new Map(completed.map((file) => [file.fileId, file.title]));
       const enriched: UploadedFilePayload[] = await Promise.all(uploaded.map(async (file) => {
         const info = await safeFetchSlackFileInfo({ client, fileId: file.fileId });
         const title = titleByFileId.get(file.fileId);
+        const shareTs = messageTsFromSlackFileInfo(info, channel.id);
         return {
           fileId: file.fileId,
           filename: file.filename,
@@ -202,12 +191,13 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
           ...(info?.thumb_360 ? { thumb360: info.thumb_360 } : {}),
           ...(info?.thumb_720 ? { thumb720: info.thumb_720 } : {}),
           ...(title ? { title } : {}),
+          ...(shareTs ? { messageId: shareTs } : {}),
         };
       }));
 
-      // Own journal: only when we have a real message ts (never invent from file id).
+      // Own journal immediately after irreversible complete — use first share ts.
       const ownMessageTs = enriched.find((f) => f.messageId)?.messageId;
-      if (ownMessageTs && teamId) {
+      if (ownMessageTs) {
         await observeOwnOutboundPost({
           agentId,
           teamId,
@@ -228,17 +218,6 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
       return {
         result: undefined,
         completedPayload: {
-          // basePayload records the caption the author typed. Once we transform
-          // it, that alone is a misleading audit trail: it says what was asked
-          // for, not what Slack was told. Record the sent form too, but only
-          // when the two differ — on the raw path they are the same string and a
-          // duplicate field would just be noise.
-          //
-          // Keyed on `caption`, not on `captionText`: a whitespace-only caption
-          // converts to '' and is dropped from the send, so '' IS the sent form
-          // and the case that most needs recording. A truthy check on the result
-          // would skip exactly it, leaving the payload claiming a caption Slack
-          // never received — the ambiguity this field exists to kill.
           ...(caption && captionText !== caption ? { slackCaption: captionText } : {}),
           status: 'sent',
           uploads: enriched,

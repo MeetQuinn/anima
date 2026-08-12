@@ -5,8 +5,10 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  afterCursorIndexPopulation,
   evaluateSendHold,
   isOwnObservedEntry,
+  messageTsFromSlackFileInfo,
   observeOwnOutboundPost,
   SendHoldError,
 } from '../runtime/send-hold.js';
@@ -16,11 +18,15 @@ import {
   renderHeldCopyZh,
   unknownEarlierMessagesMarker,
 } from '../runtime/send-hold-copy.js';
-import { setCursorDeliveryEnabledForTests } from '../runtime/cursor-delivery.js';
+import {
+  renderCursorDeliveryEnvelopeFromEntries,
+  setCursorDeliveryEnabledForTests,
+} from '../runtime/cursor-delivery.js';
 import { ObservedConversationStore } from '../storage/schema/observed-conversation.store.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { withAnimaHome } from './anima-home.js';
 import { defaultAgentConfig, writeAgentConfigs } from './helpers/harness.js';
+import type { SlackInboxItem } from '../../shared/inbox.js';
 
 async function withHoldStore<T>(
   body: (store: ObservedConversationStore, agentId: string) => Promise<T>,
@@ -256,6 +262,208 @@ test('stale room holds, advances cursor, sole stdout is HELD copy', async () => 
     });
     assert.equal(again.kind, 'allow');
   });
+});
+
+test('failed HELD write does not consume cursor (delta undelivered)', async () => {
+  await withHoldStore(async (store, agentId) => {
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '1.0',
+      text: 'root',
+      userId: 'U1',
+    });
+    await store.advanceCursor({
+      surfaceId: 'slack:T1:C1',
+      expected: { status: 'absent' },
+      nextDeliveredOrdinal: 1,
+      lastDeliveredEventId: 'slack:T1:C1:1.0',
+      lastDeliveredMessageTs: '1.0',
+    });
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '2.0',
+      text: 'foreign',
+      userId: 'U2',
+    });
+
+    await assert.rejects(
+      () =>
+        evaluateSendHold({
+          agentId,
+          teamId: 'T1',
+          channelId: 'C1',
+          tool: 'anima.message.send',
+          botUserId: 'U_BOT',
+          store,
+          writeOutput: () => {
+            throw new Error('stdout failed');
+          },
+        }),
+      /stdout failed/,
+    );
+
+    const cursor = await store.getCursor('slack:T1:C1');
+    assert.equal(cursor.status, 'present');
+    if (cursor.status === 'present') {
+      assert.equal(cursor.deliveredOrdinal, 1, 'cursor must stay at 1 when HELD write fails');
+    }
+  });
+});
+
+test('incomplete retained window fails closed (no false-allow on capped read)', async () => {
+  // Cursor 0, tail 5001, retained only 2..5001 all own → missing ordinal 1 foreign-unknown.
+  await withHoldStore(async (_store, agentId) => {
+    const surfaceId = 'slack:T1:C1';
+    const retained: Array<{
+      channelId: string;
+      eventId: string;
+      messageTs: string;
+      observedAt: string;
+      ordinal: number;
+      receivedAt: string;
+      surfaceId: string;
+      teamId: string;
+      text: string;
+      userId: string;
+    }> = [];
+    for (let ord = 2; ord <= 5_001; ord += 1) {
+      retained.push({
+        channelId: 'C1',
+        eventId: `slack:T1:C1:${ord}.0`,
+        messageTs: `${ord}.0`,
+        observedAt: '2026-01-01T00:00:00.000Z',
+        ordinal: ord,
+        receivedAt: '2026-01-01T00:00:00.000Z',
+        surfaceId,
+        teamId: 'T1',
+        text: `own-${ord}`,
+        userId: 'U_BOT',
+      });
+    }
+    class GapStore extends ObservedConversationStore {
+      override async getContinuity() {
+        return { status: 'ok' as const, updatedAt: '2026-01-01T00:00:00.000Z' };
+      }
+      override async getCursor() {
+        return {
+          status: 'present' as const,
+          deliveredOrdinal: 0,
+          surfaceId,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        };
+      }
+      override async getIndexReconciled() {
+        return {
+          lastEventId: 'slack:T1:C1:5001.0',
+          lastMessageTs: '5001.0',
+          surfaceId,
+          tailOrdinal: 5_001,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        };
+      }
+      override async readCursorDeliverySnapshot(
+        _sid: string,
+        options: { afterOrdinal?: number; limit?: number } = {},
+      ) {
+        const after = options.afterOrdinal ?? 0;
+        const limit = options.limit ?? 100;
+        const filtered = retained.filter((r) => r.ordinal > after);
+        const candidates = filtered.length <= limit
+          ? filtered
+          : filtered.slice(filtered.length - limit);
+        return {
+          index: {
+            lastEventId: 'slack:T1:C1:5001.0',
+            lastMessageTs: '5001.0',
+            surfaceId,
+            tailOrdinal: 5_001,
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          },
+          candidates,
+          capturedTailOrdinal: 5_001,
+        };
+      }
+    }
+
+    assert.equal(afterCursorIndexPopulation(0, 5_001), 5_001);
+    assert.equal(retained.length, 5_000);
+
+    await assert.rejects(
+      () =>
+        evaluateSendHold({
+          agentId,
+          teamId: 'T1',
+          channelId: 'C1',
+          tool: 'anima.message.send',
+          botUserId: 'U_BOT',
+          store: new GapStore(agentId),
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof SendHoldError);
+        assert.equal(err.reason, 'store_error');
+        assert.match(err.message, /retained window incomplete/);
+        return true;
+      },
+    );
+  });
+});
+
+test('messageTsFromSlackFileInfo reads share stamp for own observation', () => {
+  assert.equal(
+    messageTsFromSlackFileInfo(
+      {
+        shares: {
+          private: {
+            C1: [{ ts: '1770000999.000111' }],
+          },
+        },
+      },
+      'C1',
+    ),
+    '1770000999.000111',
+  );
+  assert.equal(messageTsFromSlackFileInfo(undefined, 'C1'), undefined);
+});
+
+test('wake-time cursor view places earlier-omitted marker above shown rows', () => {
+  const now = new Date().toISOString();
+  const entries = [1, 2].map((ord) => ({
+    channelId: 'C1',
+    eventId: `e${ord}`,
+    messageTs: `${ord}.0`,
+    observedAt: now,
+    ordinal: ord,
+    receivedAt: now,
+    surfaceId: 'slack:T1:C1',
+    teamId: 'T1',
+    text: `row-${ord}`,
+    userId: 'U1',
+  }));
+  const trigger = {
+    id: 'wake',
+    kind: 'slack',
+    teamId: 'T1',
+    channelId: 'C1',
+    messageTs: '3.0',
+    text: 'wake',
+    receivedAt: now,
+    actor: { userId: 'U1' },
+    handling: {
+      createdAt: now,
+      queuedAt: now,
+      status: 'queued',
+      updatedAt: now,
+    },
+  } as SlackInboxItem;
+  const body = renderCursorDeliveryEnvelopeFromEntries(trigger, entries, 5);
+  const lines = body.split('\n');
+  const markerIdx = lines.findIndex((l) => l.includes('earlier message'));
+  const rowIdx = lines.findIndex((l) => l.includes('row-1'));
+  assert.ok(markerIdx >= 0 && rowIdx >= 0);
+  assert.ok(markerIdx < rowIdx, `cursor view marker above rows:\n${body}`);
+  assert.match(body, /\(\+5 earlier messages not shown\)/);
 });
 
 test('own posts after cursor do not hold', async () => {

@@ -4,6 +4,9 @@
 // atomically. Hold runs outside withToolActivity(effectType) — HELD is a local
 // completed activity with status:held, never an external.effect / outbox row.
 // Confirmed-absent cursor lands without hold; store errors fail closed.
+//
+// Delivery before consume: stdout is written before cursor advance so a failed
+// outcome never proves the delta was delivered.
 
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { slackSurfaceId } from '../ids.js';
@@ -59,7 +62,6 @@ export function isOwnObservedEntry(
 ): boolean {
   if (self.botUserId && entry.userId && entry.userId === self.botUserId) return true;
   if (self.botId && entry.botId && entry.botId === self.botId) return true;
-  // Some journaled bot posts only carry userId = bot user id.
   if (self.botUserId && entry.botId && entry.botId === self.botUserId) return true;
   return false;
 }
@@ -77,9 +79,22 @@ export function surfaceIdForOutbound(input: {
 }
 
 /**
+ * After-cursor index population that the retained window must fully cover
+ * before we can claim "no foreign movement" / exact non-own counts.
+ */
+export function afterCursorIndexPopulation(
+  afterOrdinal: number,
+  tailOrdinal: number,
+): number {
+  return Math.max(0, tailOrdinal - afterOrdinal);
+}
+
+/**
  * Compare cursor vs local observed ledger for one outbound Slack post surface.
- * Does not perform the irreversible Slack op. On held: advances cursor to the
- * full non-own after-cursor tail and records a local held activity (no draft).
+ * Does not perform the irreversible Slack op.
+ *
+ * On held: writes stdout first, then records activity, then advances cursor —
+ * a failed write/outcome never consumes the undelivered delta.
  */
 export async function evaluateSendHold(input: {
   agentId: string;
@@ -87,7 +102,6 @@ export async function evaluateSendHold(input: {
   channelId: string;
   threadTs?: string;
   tool: SendHoldTool;
-  /** Bot user id (U…) for excluding own posts from the stale set. */
   botUserId?: string;
   botId?: string;
   store?: ObservedConversationStore;
@@ -96,10 +110,7 @@ export async function evaluateSendHold(input: {
   const enabled = await resolveCursorDeliveryEnabled();
   if (enabled.kind === 'disabled') return { kind: 'disabled' };
   if (enabled.kind === 'error') {
-    throw new SendHoldError(
-      'store_error',
-      enabled.error.message,
-    );
+    throw new SendHoldError('store_error', enabled.error.message);
   }
 
   const store = input.store ?? observedConversationStoreForAgent(input.agentId);
@@ -123,7 +134,6 @@ export async function evaluateSendHold(input: {
     if (cursor.status === 'absent') return { kind: 'allow' };
 
     const afterOrdinal = cursor.deliveredOrdinal;
-    // Fail closed if cursor is past the reconciled tail (same invariant as prepare).
     const index = await store.getIndexReconciled(surfaceId);
     const tail = index?.tailOrdinal ?? 0;
     if (cursor.deliveredOrdinal > tail) {
@@ -137,6 +147,16 @@ export async function evaluateSendHold(input: {
       afterOrdinal,
       limit: 5_000,
     });
+    const indexAfter = afterCursorIndexPopulation(afterOrdinal, tail);
+    // Capped/archived retained window must cover every after-cursor ordinal;
+    // otherwise ownership of omitted slots is unknown → never false-allow.
+    if (indexAfter > 0 && snapshot.candidates.length < indexAfter) {
+      throw new SendHoldError(
+        'store_error',
+        `send-hold retained window incomplete on ${surfaceId}: index after-cursor population ${indexAfter}, retained ${snapshot.candidates.length}`,
+      );
+    }
+
     const self = { botUserId: input.botUserId, botId: input.botId };
     const nonOwn = snapshot.candidates
       .filter((row) => !isOwnObservedEntry(row, self))
@@ -144,8 +164,6 @@ export async function evaluateSendHold(input: {
 
     if (nonOwn.length === 0) return { kind: 'allow' };
 
-    // Exact population for the HELD copy = non-own retained after cursor.
-    // (Index population may include own posts; hold staleness is non-own only.)
     const totalNewCount = nonOwn.length;
     const selected = selectNewestFittingForEnvelope(nonOwn, {
       maxMessages: CURSOR_DELIVERY_MAX_MESSAGES,
@@ -159,34 +177,14 @@ export async function evaluateSendHold(input: {
       noun: nounForTool(input.tool),
     });
 
-    // Advance to the full non-own after-cursor tail (not only shown rows) so a
-    // retry is a plain re-check; omitted rows were still "delivered" via marker.
     const last = nonOwn[nonOwn.length - 1]!;
     const advancedToOrdinal = last.ordinal;
-    const advance = await store.advanceCursor({
-      surfaceId,
-      expected: { status: 'present', deliveredOrdinal: cursor.deliveredOrdinal },
-      nextDeliveredOrdinal: advancedToOrdinal,
-      lastDeliveredEventId: last.eventId,
-      lastDeliveredMessageTs: last.messageTs,
-    });
-    if (!advance.advanced) {
-      // Concurrent advance to same/later target is ok; anything else fails closed.
-      const live = await store.getCursor(surfaceId);
-      if (
-        live.status === 'present'
-        && live.deliveredOrdinal >= advancedToOrdinal
-      ) {
-        // proceed to held outcome
-      } else {
-        throw new SendHoldError(
-          'cas_failure',
-          `send-hold cursor advance failed for ${surfaceId}: ${advance.reason}`,
-        );
-      }
-    }
 
-    // Local completed activity only — never external.effect / outbox.
+    // 1) Deliver HELD copy first — failed write must not consume the delta.
+    const write = input.writeOutput ?? console.log;
+    write(stdout);
+
+    // 2) Local completed activity only — never external.effect / outbox.
     await activityServiceForAgent(input.agentId).record({
       type: 'tool.call.completed',
       payload: {
@@ -199,8 +197,28 @@ export async function evaluateSendHold(input: {
       },
     });
 
-    const write = input.writeOutput ?? console.log;
-    write(stdout);
+    // 3) Advance cursor only after the agent has received the HELD outcome.
+    const advance = await store.advanceCursor({
+      surfaceId,
+      expected: { status: 'present', deliveredOrdinal: cursor.deliveredOrdinal },
+      nextDeliveredOrdinal: advancedToOrdinal,
+      lastDeliveredEventId: last.eventId,
+      lastDeliveredMessageTs: last.messageTs,
+    });
+    if (!advance.advanced) {
+      const live = await store.getCursor(surfaceId);
+      if (
+        !(
+          live.status === 'present'
+          && live.deliveredOrdinal >= advancedToOrdinal
+        )
+      ) {
+        throw new SendHoldError(
+          'cas_failure',
+          `send-hold cursor advance failed for ${surfaceId}: ${advance.reason}`,
+        );
+      }
+    }
 
     return {
       kind: 'held',
@@ -214,6 +232,11 @@ export async function evaluateSendHold(input: {
     if (error instanceof CursorDeliveryError) {
       throw new SendHoldError('store_error', error.message);
     }
+    // writeOutput / unexpected throws: do not wrap as if we held successfully.
+    if (error instanceof Error && !(error instanceof SendHoldError)) {
+      // Preserve original error for stdout failures so callers see the real cause.
+      throw error;
+    }
     throw new SendHoldError(
       'store_error',
       error instanceof Error ? error.message : String(error),
@@ -224,6 +247,7 @@ export async function evaluateSendHold(input: {
 /**
  * Append the agent's own successful post into the observed journal so a later
  * hold does not treat it as foreign room movement (ingress uses ignoreSelf).
+ * Call immediately after the irreversible Slack response returns a ts.
  */
 export async function observeOwnOutboundPost(input: {
   agentId: string;
@@ -237,7 +261,6 @@ export async function observeOwnOutboundPost(input: {
   store?: ObservedConversationStore;
 }): Promise<void> {
   if (!input.botUserId && !input.botId) {
-    // Cannot journal without an actor id; skip rather than crash a successful send.
     console.warn(
       `observeOwnOutboundPost skipped: no bot identity for agent=${input.agentId}`,
     );
@@ -255,11 +278,35 @@ export async function observeOwnOutboundPost(input: {
       ...(input.botId ? { botId: input.botId } : {}),
     });
   } catch (error) {
-    // Landing already succeeded; journal failure is diagnostic, not a rollback.
     console.warn(
       `observeOwnOutboundPost failed for agent=${input.agentId}: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
   }
+}
+
+/**
+ * Best-effort message ts from Slack files.info `shares` (channel share stamp).
+ * completeUploadExternal does not return a conversation message_ts.
+ */
+export function messageTsFromSlackFileInfo(
+  info: {
+    shares?: {
+      public?: Record<string, Array<{ ts?: string }>>;
+      private?: Record<string, Array<{ ts?: string }>>;
+    };
+  } | undefined,
+  channelId: string,
+): string | undefined {
+  if (!info?.shares) return undefined;
+  const from = (bucket?: Record<string, Array<{ ts?: string }>>) => {
+    const rows = bucket?.[channelId];
+    if (!rows?.length) return undefined;
+    for (const row of rows) {
+      if (row.ts && row.ts.trim()) return row.ts.trim();
+    }
+    return undefined;
+  };
+  return from(info.shares.public) ?? from(info.shares.private);
 }

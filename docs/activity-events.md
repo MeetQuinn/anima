@@ -11,7 +11,7 @@ available yet, it's called out under [Known gaps](#known-gaps).
 
 ## Sources
 
-Fifteen modules import the activity service. Eleven write to the log, four only read
+Fifteen modules import the activity service. Twelve write to the log, four only read
 it. **These two tables are the claim**, and `server/tests/activity-emitters.test.ts`
 parses them out of this file and compares them against a set re-derived from the
 sources. There is no third list: edit a table, or the test reds.
@@ -29,6 +29,7 @@ sources. There is no third list: edit a table, or the test reds.
 | `server/memory/memory-coherence-outcome.ts`     | memory pass outcomes               |
 | `server/reminders/reminder.activity.ts`         | reminder schedule, fire, cancel    |
 | `server/runtime/activity.ts`                    | turns, messages, provider events   |
+| `server/runtime/send-hold.ts`                   | send-hold HELD local completed     |
 | `server/slack-interactions/shortcut.service.ts` | Slack shortcut invocations         |
 | `server/tools/tool-context.ts`                  | tool steps                         |
 

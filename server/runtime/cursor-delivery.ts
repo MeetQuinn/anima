@@ -997,12 +997,13 @@ export function renderCursorDeliveryEnvelopeFromEntries(
   const parts: string[] = ['Slack conversation update:'];
   if (sorted.length > 0) {
     parts.push('');
+    // Iris: earlier-omitted marker above shown rows (gap is chronologically
+    // before the newest-fitting set) — same placement as HELD delta.
+    if (omitted > 0) {
+      parts.push(exactEarlierMessagesMarker(omitted));
+    }
     for (const entry of sorted) {
       parts.push(formatObservedLine(entry));
-    }
-    if (omitted > 0) {
-      // Iris exact-count form: `(+N earlier messages not shown)`.
-      parts.push(exactEarlierMessagesMarker(omitted));
     }
   } else {
     parts.push('', '(no prior observed messages in window)');
