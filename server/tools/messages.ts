@@ -36,6 +36,10 @@ import {
   readStdin,
 } from './tool-context.js';
 import type { FeishuInboxItem, FeishuOnboardingInboxItem } from '../../shared/inbox.js';
+import {
+  evaluateSendHold,
+  observeOwnOutboundPost,
+} from '../runtime/send-hold.js';
 
 interface MessageGlobalInput {
   agent?: string;
@@ -108,6 +112,26 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
   const threadTs = opts.threadTs;
   const target = await slackTargetSummary({ channel, client, teamId });
   const thread = threadTs ? slackThreadSummary(target, threadTs) : undefined;
+  if (!teamId) throw new Error(`Agent ${agent.id} has no Slack team id configured`);
+
+  // Target + mention preparation (before hold; hold is immediately before the
+  // first irreversible Slack op and outside withToolActivity).
+  const slackText = await slackTextForPostMessage({ channelId: channel.id, client, teamId, text });
+  const content = slackMessageContentForText(slackText.text);
+  const warnings = await mentionWarningsForTarget({
+    channelId: channel.id,
+    client,
+    slackText,
+    target,
+    teamId,
+  });
+  const payload = {
+    ...(content.blocks ? { blocks: content.blocks } : {}),
+    channel: channel.id,
+    text: content.text,
+    ...(threadTs ? { thread_ts: threadTs } : {}),
+  } as SlackPostMessagePayload;
+
   const basePayload = {
     ...slackTargetPayload(channel),
     ...target,
@@ -116,28 +140,38 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
     tool: 'anima.message.send',
   };
 
+  // Pre-commit hold: after target/mention prep, before postMessage.
+  const hold = await evaluateSendHold({
+    agentId,
+    teamId,
+    channelId: channel.id,
+    ...(threadTs ? { threadTs } : {}),
+    tool: 'anima.message.send',
+    botUserId: agent.slack.botUserId,
+    writeOutput: deps.writeOutput,
+  });
+  if (hold.kind === 'held') return;
+
   await withToolActivity({
     audit: { agentId },
     basePayload,
     effectType: 'slack.message.send',
     op: async () => {
-      const slackText = await slackTextForPostMessage({ channelId: channel.id, client, teamId, text });
-      const content = slackMessageContentForText(slackText.text);
-      const warnings = await mentionWarningsForTarget({
-        channelId: channel.id,
-        client,
-        slackText,
-        target,
-        teamId,
-      });
-      const payload = {
-        ...(content.blocks ? { blocks: content.blocks } : {}),
-        channel: channel.id,
-        text: content.text,
-        ...(threadTs ? { thread_ts: threadTs } : {}),
-      } as SlackPostMessagePayload;
       const response = await client.chat.postMessage(payload);
       const channelId = response.channel ?? channel.id;
+      // Own observation immediately after irreversible response (before
+      // engagement / subscription bookkeeping that can throw).
+      if (response.ts) {
+        await observeOwnOutboundPost({
+          agentId,
+          teamId,
+          channelId,
+          messageTs: response.ts,
+          ...(threadTs ? { threadTs } : {}),
+          text,
+          botUserId: agent.slack.botUserId,
+        });
+      }
       const permalink = slackMessageRedirectLink({ channelId, messageTs: response.ts });
       if (!channel.dmUserId && !threadTs) {
         await recordOutboundEngagement({ agentId, channelId });
