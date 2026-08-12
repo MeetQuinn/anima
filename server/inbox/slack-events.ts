@@ -43,6 +43,36 @@ export interface RoutableSlackMessage extends SlackRawMessageEvent {
   user: string;
 }
 
+/**
+ * Observable for the local observed-conversation journal — broader than runtime
+ * routability. Captures userless `bot_message` (bot_id only) and file-only posts
+ * without requiring a human `user`. Wake routing still uses isRoutableSlackMessage.
+ */
+export interface ObservableSlackMessage extends SlackRawMessageEvent {
+  channel: string;
+  ts: string;
+  type: 'app_mention' | 'message';
+  /** At least one of user / bot_id is present (enforced by the predicate). */
+  bot_id?: string;
+  user?: string;
+}
+
+export function isObservableSlackMessage(event: SlackRawMessageEvent): event is ObservableSlackMessage {
+  if (event.type !== 'message' && event.type !== 'app_mention') return false;
+  if (typeof event.channel !== 'string' || typeof event.ts !== 'string') return false;
+  if (event.subtype !== undefined && event.subtype !== 'bot_message' && event.subtype !== 'file_share') {
+    return false;
+  }
+  const hasUser = typeof event.user === 'string' && event.user.length > 0;
+  const hasBot = typeof event.bot_id === 'string' && event.bot_id.length > 0;
+  if (!hasUser && !hasBot) return false;
+  // text may be missing on bot_message; empty + files still counts.
+  const text = typeof event.text === 'string' ? event.text : '';
+  const hasText = text.trim().length > 0;
+  const hasFiles = Array.isArray(event.files) && event.files.length > 0;
+  return hasText || hasFiles;
+}
+
 export function isRoutableSlackMessage(event: SlackRawMessageEvent): event is RoutableSlackMessage {
   return (
     (event.type === 'message' || event.type === 'app_mention') &&

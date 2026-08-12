@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import type { WebClient } from '@slack/web-api';
 
-import { observeRoutableSlackMessage } from '../inbox/observed-conversation.js';
+import { observeObservableSlackMessage, observeSlackEventAtIngress } from '../inbox/observed-conversation.js';
+import { isObservableSlackMessage, isRoutableSlackMessage } from '../inbox/slack-events.js';
+import { SlackInboxSubscriber } from '../inbox/slack-subscriber.js';
+import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { SlackProfileResolver } from '../slack/profiles.js';
 import { withAnimaHome } from './anima-home.js';
 import {
   conversationThreadTs,
@@ -31,6 +36,33 @@ async function withAgentStore<T>(
   }
 }
 
+/** Ingress-level handleSlackEvent (mirrors ingest-golden pattern). */
+async function invokeHandleSlackEvent(input: {
+  agentId: string;
+  body?: { team_id?: string };
+  event: Record<string, unknown>;
+}): Promise<void> {
+  const queue = new WakeQueueService(input.agentId);
+  const subscriber = Object.create(SlackInboxSubscriber.prototype) as Record<string, unknown>;
+  subscriber['options'] = {
+    agentRuntimeKind: 'codex-cli',
+    appToken: 'xapp-test',
+    botUserId: 'U-bot',
+    botToken: 'xoxb-test',
+    queue,
+  };
+  subscriber['slackProfiles'] = new SlackProfileResolver();
+  subscriber['botDisplayInfoSyncInFlight'] = false;
+  const client = {
+    chat: { getPermalink: async () => ({ ok: true, permalink: 'https://example.test/p' }) },
+    conversations: { info: async () => ({ ok: true, channel: { name: 'test' } }) },
+    users: { info: async () => ({ ok: true, user: { id: 'U1', name: 'u' } }) },
+  } as unknown as WebClient;
+  await (subscriber as unknown as {
+    handleSlackEvent(body: unknown, event: unknown, client?: WebClient): Promise<void>;
+  }).handleSlackEvent(input.body ?? { team_id: 'T1' }, input.event, client);
+}
+
 test('conversationThreadTs partitions top-level from thread replies', () => {
   assert.equal(conversationThreadTs({ messageTs: '1.0' }), undefined);
   assert.equal(conversationThreadTs({ messageTs: '1.0', threadTs: '1.0' }), undefined);
@@ -55,7 +87,6 @@ test('surfaceIdForObservation keys DM, channel, and thread distinctly', () => {
     }),
     'slack:T1:C1:thread:1.0',
   );
-  // Parent message of a thread stays on the channel surface.
   assert.equal(
     surfaceIdForObservation({
       teamId: 'T1',
@@ -65,6 +96,37 @@ test('surfaceIdForObservation keys DM, channel, and thread distinctly', () => {
     }),
     'slack:T1:C1',
   );
+});
+
+test('isObservableSlackMessage accepts userless bot_message; isRoutable does not', () => {
+  const botOnly = {
+    type: 'message',
+    subtype: 'bot_message',
+    channel: 'C1',
+    ts: '1.0',
+    text: 'from a bot',
+    bot_id: 'B1',
+  };
+  assert.equal(isObservableSlackMessage(botOnly), true);
+  assert.equal(isRoutableSlackMessage(botOnly), false);
+
+  const human = {
+    type: 'message',
+    channel: 'C1',
+    ts: '2.0',
+    text: 'hi',
+    user: 'U1',
+  };
+  assert.equal(isObservableSlackMessage(human), true);
+  assert.equal(isRoutableSlackMessage(human), true);
+
+  const noActor = {
+    type: 'message',
+    channel: 'C1',
+    ts: '3.0',
+    text: 'orphan',
+  };
+  assert.equal(isObservableSlackMessage(noActor), false);
 });
 
 test('observe assigns monotonic ordinals and updates the conversation index', async () => {
@@ -142,6 +204,64 @@ test('observe dedupes stable Slack event ids within a conversation', async () =>
   });
 });
 
+test('stale index after journal append is repaired on replay; next ordinal advances', async () => {
+  // Milo red control: append ordinal 1 → restore stale tail 0 → replay → index
+  // repair → next event ordinal 2 (never [1,1]).
+  await withAgentStore(async (store) => {
+    const surfaceId = 'slack:T1:C1';
+    const first = await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '700.001',
+      text: 'alpha',
+      userId: 'U1',
+    });
+    assert.equal(first.appended, true);
+    if (!first.appended) return;
+    assert.equal(first.entry.ordinal, 1);
+
+    // Simulate crash: journal has row 1, index restored to empty/stale tail 0.
+    await store.writeIndexForTest({
+      lastEventId: '',
+      lastMessageTs: '',
+      surfaceId,
+      tailOrdinal: 0,
+      updatedAt: new Date(0).toISOString(),
+    });
+    assert.equal(await store.getIndex(surfaceId), undefined);
+
+    const replay = await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '700.001',
+      text: 'alpha',
+      userId: 'U1',
+    });
+    assert.equal(replay.appended, false);
+    if (replay.appended) return;
+    assert.equal(replay.reason, 'duplicate');
+
+    const repaired = await store.getIndex(surfaceId);
+    assert.equal(repaired?.tailOrdinal, 1);
+    assert.equal(repaired?.lastEventId, 'slack:T1:C1:700.001');
+
+    const next = await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '700.002',
+      text: 'beta',
+      userId: 'U2',
+    });
+    assert.equal(next.appended, true);
+    if (!next.appended) return;
+    assert.equal(next.entry.ordinal, 2);
+
+    const journal = await store.readJournal(surfaceId);
+    assert.deepEqual(journal.map((r) => r.ordinal), [1, 2]);
+    assert.deepEqual(journal.map((r) => r.text), ['alpha', 'beta']);
+  });
+});
+
 test('top-level and thread observations are independent ordinal sequences', async () => {
   await withAgentStore(async (store) => {
     await store.observe({
@@ -192,30 +312,195 @@ test('DM conversations are journaled under the DM surface id', async () => {
   });
 });
 
-test('observeRoutableSlackMessage records events that would be ignored for wake', async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-obs-ignore-'));
+test('userless bot_message is journaled with botId actor (no userId)', async () => {
+  await withAgentStore(async (store) => {
+    const result = await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '800.1',
+      text: 'bot says hi',
+      botId: 'B99',
+    });
+    assert.equal(result.appended, true);
+    if (!result.appended) return;
+    assert.equal(result.entry.botId, 'B99');
+    assert.equal(result.entry.userId, undefined);
+    assert.equal(result.entry.ordinal, 1);
+  });
+});
+
+test('file-only observation stores file descriptors (readable delta marker)', async () => {
+  await withAgentStore(async (store) => {
+    const result = await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '900.1',
+      text: '',
+      userId: 'U1',
+      files: [{ id: 'F1', name: 'notes.pdf', mimetype: 'application/pdf' }],
+    });
+    assert.equal(result.appended, true);
+    if (!result.appended) return;
+    assert.equal(result.entry.text, '');
+    assert.deepEqual(result.entry.files, [
+      { id: 'F1', name: 'notes.pdf', mimetype: 'application/pdf' },
+    ]);
+  });
+});
+
+test('delivered cursor: confirmed-absent vs ordinal-0; CAS advance is monotonic', async () => {
+  await withAgentStore(async (store) => {
+    const surfaceId = 'slack:T1:C1';
+
+    // Never written → confirmed absent (distinct from present@0).
+    const absent = await store.getCursor(surfaceId);
+    assert.equal(absent.status, 'absent');
+
+    // CAS: absent → present@0
+    const toZero = await store.advanceCursor({
+      surfaceId,
+      expected: { status: 'absent' },
+      nextDeliveredOrdinal: 0,
+    });
+    assert.equal(toZero.advanced, true);
+    if (!toZero.advanced) return;
+    assert.equal(toZero.cursor.status, 'present');
+    assert.equal(toZero.cursor.deliveredOrdinal, 0);
+
+    const present0 = await store.getCursor(surfaceId);
+    assert.equal(present0.status, 'present');
+    if (present0.status !== 'present') return;
+    assert.equal(present0.deliveredOrdinal, 0);
+
+    // Wrong expected → cas_mismatch
+    const mismatch = await store.advanceCursor({
+      surfaceId,
+      expected: { status: 'absent' },
+      nextDeliveredOrdinal: 1,
+    });
+    assert.equal(mismatch.advanced, false);
+    if (mismatch.advanced) return;
+    assert.equal(mismatch.reason, 'cas_mismatch');
+
+    // Advance 0 → 2
+    const toTwo = await store.advanceCursor({
+      surfaceId,
+      expected: { status: 'present', deliveredOrdinal: 0 },
+      nextDeliveredOrdinal: 2,
+      lastDeliveredEventId: 'slack:T1:C1:1.0',
+      lastDeliveredMessageTs: '1.0',
+    });
+    assert.equal(toTwo.advanced, true);
+    if (!toTwo.advanced) return;
+    assert.equal(toTwo.cursor.deliveredOrdinal, 2);
+    assert.equal(toTwo.cursor.lastDeliveredEventId, 'slack:T1:C1:1.0');
+
+    // Regression blocked
+    const reg = await store.advanceCursor({
+      surfaceId,
+      expected: { status: 'present', deliveredOrdinal: 2 },
+      nextDeliveredOrdinal: 1,
+    });
+    assert.equal(reg.advanced, false);
+    if (reg.advanced) return;
+    assert.equal(reg.reason, 'regression');
+    assert.equal((await store.getCursor(surfaceId) as { deliveredOrdinal?: number }).deliveredOrdinal, 2);
+  });
+});
+
+test('continuity degrades on write failure and persists across store re-instantiation', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-obs-cont-'));
   try {
     await writeAgentConfigs(stateDir, [defaultAgentConfig('anima')]);
+    // Agent home exists; block only the journal directory (file where a dir must be).
+    // Continuity lives as a sibling path so it remains writable + queryable.
+    const agentHome = join(stateDir, 'agents', 'anima');
+    await mkdir(agentHome, { recursive: true });
+    await writeFile(join(agentHome, 'observed-conversations'), 'not-a-dir', 'utf8');
     await withAnimaHome(stateDir, async () => {
-      // Channel message with no mention / follow — still observed.
-      const result = await observeRoutableSlackMessage({
+      const soft = await observeObservableSlackMessage({
         agentId: 'anima',
         envelope: { team_id: 'T1' },
         event: {
-          channel: 'C99',
-          channel_type: 'channel',
-          text: 'noise in channel',
-          ts: '400.001',
+          channel: 'C1',
+          text: 'x',
+          ts: '1.0',
           type: 'message',
-          user: 'U99',
+          user: 'U1',
         },
-        throwOnError: true,
       });
-      assert.equal(result?.appended, true);
-      const store = new ObservedConversationStore('anima');
-      const index = await store.getIndex('slack:T1:C99');
-      assert.equal(index?.tailOrdinal, 1);
-      assert.equal((await store.readJournal('slack:T1:C99'))[0]?.text, 'noise in channel');
+      assert.equal(soft, undefined);
+
+      // Continuity is queryable and survives a new store instance (restart).
+      const storeA = new ObservedConversationStore('anima');
+      const contA = await storeA.getContinuity();
+      assert.equal(contA.status, 'degraded');
+      assert.ok(contA.lastFailureAt);
+      assert.ok(contA.lastFailureMessage);
+
+      const storeB = new ObservedConversationStore('anima');
+      const contB = await storeB.getContinuity();
+      assert.equal(contB.status, 'degraded');
+      assert.equal(contB.lastFailureAt, contA.lastFailureAt);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('successful observe clears continuity to ok after prior degrade', async () => {
+  await withAgentStore(async (store) => {
+    await store.markDegraded({ message: 'prior failure', surfaceId: 'slack:T1:C1' });
+    assert.equal((await store.getContinuity()).status, 'degraded');
+
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '1.0',
+      text: 'recovered',
+      userId: 'U1',
+    });
+    const cont = await store.getContinuity();
+    assert.equal(cont.status, 'ok');
+    assert.ok(cont.lastSuccessAt);
+  });
+});
+
+test('observe write failure surfaces when throwOnError is set', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-obs-fail-'));
+  try {
+    await writeAgentConfigs(stateDir, [defaultAgentConfig('anima')]);
+    const agentHome = join(stateDir, 'agents', 'anima');
+    await mkdir(agentHome, { recursive: true });
+    await writeFile(join(agentHome, 'observed-conversations'), 'not-a-dir', 'utf8');
+    await withAnimaHome(stateDir, async () => {
+      await assert.rejects(
+        observeObservableSlackMessage({
+          agentId: 'anima',
+          envelope: { team_id: 'T1' },
+          event: {
+            channel: 'C1',
+            text: 'x',
+            ts: '1.0',
+            type: 'message',
+            user: 'U1',
+          },
+          throwOnError: true,
+        }),
+      );
+      const soft = await observeObservableSlackMessage({
+        agentId: 'anima',
+        envelope: { team_id: 'T1' },
+        event: {
+          channel: 'C1',
+          text: 'x',
+          ts: '1.0',
+          type: 'message',
+          user: 'U1',
+        },
+      });
+      assert.equal(soft, undefined);
+      assert.equal((await new ObservedConversationStore('anima').getContinuity()).status, 'degraded');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
@@ -223,9 +508,6 @@ test('observeRoutableSlackMessage records events that would be ignored for wake'
 });
 
 test('journal rotation keeps retained segments recoverable; index stays monotonic', async () => {
-  // With a small maxBytes, rotation produces multiple archives. maxArchives caps
-  // retention (oldest pruned); readAll recovers live + retained archives only.
-  // The index still tracks the full ordinal sequence across rotations.
   await withAgentStore(async (store, agentId) => {
     for (let i = 0; i < 30; i += 1) {
       const result = await store.observe({
@@ -245,7 +527,6 @@ test('journal rotation keeps retained segments recoverable; index stays monotoni
     const retained = await store.readJournal('slack:T1:Crot', { limit: 1000 });
     assert.ok(retained.length >= 1, 'expected retained journal rows after rotation');
     assert.ok(retained.length < 30, 'maxArchives should prune some early rows');
-    // Retained rows are a contiguous suffix of the ordinal sequence.
     assert.equal(retained[retained.length - 1]?.ordinal, 30);
     for (let i = 1; i < retained.length; i += 1) {
       assert.equal(retained[i]!.ordinal, retained[i - 1]!.ordinal + 1);
@@ -295,54 +576,129 @@ test('readJournal afterOrdinal and limit slice by conversation ordinal', async (
   });
 });
 
-test('observe write failure surfaces when throwOnError is set', async () => {
-  // Invalid agent id path still constructs, but we can force failure by using a
-  // non-writable anima home after teardown — simpler: spy via broken channel of
-  // empty team that still writes. Instead assert soft-fail path returns undefined
-  // without throw when the store path cannot be created under a file-as-home.
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-obs-fail-'));
-  const blocker = join(stateDir, 'agents');
+test('file stem is filesystem-safe for surface ids', () => {
+  const stem = observedConversationFileStem('slack:T1:C1:thread:1.0');
+  assert.equal(stem.includes('/'), false);
+  assert.equal(stem.includes(':'), false);
+  assert.ok(stem.length > 0);
+});
+
+// --- Ingress-level (handleSlackEvent) ---
+
+test('ingress: ignored human post (unfollowed thread reply) is journaled before wake filter', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-obs-ingress-human-'));
   try {
-    // Create a FILE where the agents directory must live → writes fail.
-    const { writeFile, mkdir } = await import('node:fs/promises');
-    await mkdir(stateDir, { recursive: true });
-    await writeFile(blocker, 'not-a-dir', 'utf8');
+    await writeAgentConfigs(stateDir, [defaultAgentConfig('anima')]);
     await withAnimaHome(stateDir, async () => {
-      await assert.rejects(
-        observeRoutableSlackMessage({
-          agentId: 'anima',
-          envelope: { team_id: 'T1' },
-          event: {
-            channel: 'C1',
-            text: 'x',
-            ts: '1.0',
-            type: 'message',
-            user: 'U1',
-          },
-          throwOnError: true,
-        }),
-      );
-      const soft = await observeRoutableSlackMessage({
+      // Thread reply with no thread follow → not_addressed for wake; still observed.
+      // (Top-level channel posts auto channel_follow in this runtime.)
+      await invokeHandleSlackEvent({
         agentId: 'anima',
-        envelope: { team_id: 'T1' },
         event: {
-          channel: 'C1',
-          text: 'x',
-          ts: '1.0',
           type: 'message',
-          user: 'U1',
+          channel: 'C99',
+          channel_type: 'channel',
+          text: 'noise in unfollowed thread',
+          ts: '400.002',
+          thread_ts: '400.001',
+          user: 'U99',
         },
       });
-      assert.equal(soft, undefined);
+
+      const store = new ObservedConversationStore('anima');
+      const surfaceId = 'slack:T1:C99:thread:400.001';
+      const index = await store.getIndex(surfaceId);
+      assert.equal(index?.tailOrdinal, 1);
+      assert.equal(
+        (await store.readJournal(surfaceId))[0]?.text,
+        'noise in unfollowed thread',
+      );
+      // Not wake-queued (no thread follow / mention).
+      const queued = await new WakeQueueService('anima').list();
+      assert.equal(queued.length, 0);
+      assert.equal((await store.getContinuity()).status, 'ok');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }
 });
 
-test('file stem is filesystem-safe for surface ids', () => {
-  const stem = observedConversationFileStem('slack:T1:C1:thread:1.0');
-  assert.equal(stem.includes('/'), false);
-  assert.equal(stem.includes(':'), false);
-  assert.ok(stem.length > 0);
+test('ingress: userless bot_message is journaled; not routable for wake', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-obs-ingress-bot-'));
+  try {
+    await writeAgentConfigs(stateDir, [defaultAgentConfig('anima')]);
+    await withAnimaHome(stateDir, async () => {
+      await invokeHandleSlackEvent({
+        agentId: 'anima',
+        event: {
+          type: 'message',
+          subtype: 'bot_message',
+          channel: 'C50',
+          text: 'integration bot chatter',
+          ts: '410.001',
+          bot_id: 'B-integration',
+          // no user
+        },
+      });
+
+      const store = new ObservedConversationStore('anima');
+      const rows = await store.readJournal('slack:T1:C50');
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]?.botId, 'B-integration');
+      assert.equal(rows[0]?.userId, undefined);
+      assert.equal(rows[0]?.text, 'integration bot chatter');
+      assert.equal((await store.getIndex('slack:T1:C50'))?.tailOrdinal, 1);
+      assert.equal((await new WakeQueueService('anima').list()).length, 0);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('ingress: observation failure marks queryable degraded continuity', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-obs-ingress-fail-'));
+  try {
+    await writeAgentConfigs(stateDir, [defaultAgentConfig('anima')]);
+    const agentHome = join(stateDir, 'agents', 'anima');
+    await mkdir(agentHome, { recursive: true });
+    await writeFile(join(agentHome, 'observed-conversations'), 'not-a-dir', 'utf8');
+    await withAnimaHome(stateDir, async () => {
+      // Ingress must not throw; continuity must be queryable after.
+      await invokeHandleSlackEvent({
+        agentId: 'anima',
+        event: {
+          type: 'message',
+          channel: 'C1',
+          text: 'will fail to journal',
+          ts: '420.001',
+          user: 'U1',
+        },
+      });
+
+      const cont = await new ObservedConversationStore('anima').getContinuity();
+      assert.equal(cont.status, 'degraded');
+      assert.ok(cont.lastFailureMessage);
+      assert.ok(cont.lastFailureAt);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('observeSlackEventAtIngress skips non-observable subtypes', async () => {
+  await withAgentStore(async () => {
+    const result = await observeSlackEventAtIngress({
+      agentId: 'anima',
+      envelope: { team_id: 'T1' },
+      event: {
+        type: 'message',
+        subtype: 'message_changed',
+        channel: 'C1',
+        ts: '1.0',
+        user: 'U1',
+        text: 'edit',
+      },
+    });
+    assert.equal(result, undefined);
+  });
 });

@@ -33,7 +33,7 @@ import {
   slackAttentionSuggestionPayload,
 } from './attention-suggestion-activity.js';
 import { runIngestPipeline } from './ingest-pipeline.js';
-import { observeRoutableSlackMessage } from './observed-conversation.js';
+import { observeSlackEventAtIngress } from './observed-conversation.js';
 import { buildSlackInboxItemWithLatePreview } from './slack-ingest.js';
 import { slackShortcutHandoffServiceForAgent } from './slack-shortcut-handoff.service.js';
 import { slackRuntimeDecision, type SlackRuntimeDecision } from './slack-subscription.service.js';
@@ -229,18 +229,21 @@ export class SlackInboxSubscriber {
     // `text` can truncate before a trailing user mention; enrichment after an
     // ignore never runs, so mention detection must see the full body first.
     const rawEvent = withCanonicalSlackVisibleText(event as SlackRawMessageEvent);
-    if (!isRoutableSlackMessage(rawEvent)) return;
-
     const envelope = body as SlackMessageEnvelope;
-    const teamId = slackEventTeamId(envelope, rawEvent);
-    // Observed-conversation journal (send-hold cut a): record every routable
-    // Slack message this agent process sees, before wake/subscription filtering.
-    // Failures are logged and never block routing.
-    await observeRoutableSlackMessage({
+
+    // Observed-conversation journal (send-hold cut a): record every observable
+    // Slack message this agent process sees — including userless bot_message —
+    // BEFORE wake/subscription filtering and BEFORE isRoutableSlackMessage.
+    // Failures mark continuity degraded and never block routing.
+    await observeSlackEventAtIngress({
       agentId: this.options.queue.agentId,
       envelope,
       event: rawEvent,
     });
+
+    if (!isRoutableSlackMessage(rawEvent)) return;
+
+    const teamId = slackEventTeamId(envelope, rawEvent);
     let latePreview: ((item: SlackInboxItem) => Promise<SlackInboxItem | undefined>) | undefined;
     await runIngestPipeline<SlackInboxItem, SlackRuntimeDecision>({
       agentId: this.options.queue.agentId,
