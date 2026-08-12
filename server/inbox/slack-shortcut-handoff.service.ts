@@ -3,8 +3,10 @@ import type {
   SlackShortcutHandoffResult,
   SlackShortcutHandoffService,
 } from '../slack-interactions/shortcut.service.js';
+import type { SlackInboxItem } from '../../shared/inbox.js';
 import { nowIso } from '../ids.js';
-import { wakeQueueServiceForAgent, type InboxItem } from './wake-queue.service.js';
+import { observeSlackWakeInJournal } from '../runtime/cursor-wake-journal-backfill.js';
+import { wakeQueueServiceForAgent } from './wake-queue.service.js';
 
 export function slackShortcutHandoffServiceForAgent(agentId: string): SlackShortcutHandoffService {
   return new SlackShortcutWakeQueueHandoffService(agentId);
@@ -15,6 +17,11 @@ class SlackShortcutWakeQueueHandoffService implements SlackShortcutHandoffServic
 
   async handMessageToAgent(input: SlackShortcutHandoffInput): Promise<SlackShortcutHandoffResult> {
     const item = slackShortcutInboxItem(input);
+    // Journal before enqueue so cursor-delivery prepare can find the trigger
+    // even for post-start shortcut wakes (not only upgrade-time backfill).
+    // Fail-soft: store.observe marks continuity degraded on write failure;
+    // pre-drain backfill still retries active wakes on later drains.
+    await observeSlackWakeInJournal({ agentId: this.agentId, item });
     const result = await wakeQueueServiceForAgent(this.agentId).enqueue(item);
     return {
       duplicate: result.duplicate,
@@ -24,11 +31,15 @@ class SlackShortcutWakeQueueHandoffService implements SlackShortcutHandoffServic
   }
 }
 
-function slackShortcutInboxItem(input: SlackShortcutHandoffInput): InboxItem {
+function slackShortcutInboxItem(input: SlackShortcutHandoffInput): SlackInboxItem {
   const now = nowIso();
+  // Prefer source message author; fall back to shortcut invoker when Slack
+  // omits message.user (legal for some source messages). Observation still
+  // has a stable botId fallback if both are absent (see observeInputFromSlackWake).
+  const actorUserId = input.sourceUserId?.trim() || input.invokerUserId?.trim() || undefined;
   return {
     actor: {
-      ...(input.sourceUserId ? { userId: input.sourceUserId } : {}),
+      ...(actorUserId ? { userId: actorUserId } : {}),
     },
     channelId: input.channelId,
     ...(input.channelName ? { channelName: input.channelName } : {}),

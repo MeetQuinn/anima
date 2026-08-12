@@ -55,8 +55,11 @@ type ReminderServiceFactory = (agentId: string) => ReminderService;
 export interface SlackShortcutHandoffInput {
   channelId: string;
   channelName?: string;
+  /** User who invoked the shortcut (body.user); fallback actor when source omits user. */
+  invokerUserId?: string;
   messageTs: string;
   receivedAt: string;
+  /** Author of the source message when Slack provides message.user. */
   sourceUserId?: string;
   teamId: string;
   text: string;
@@ -243,6 +246,7 @@ export class SlackShortcutService {
     const result = await this.handoffService.handMessageToAgent({
       channelId,
       ...(input.body.channel?.name ? { channelName: input.body.channel.name } : {}),
+      ...(input.body.user?.id ? { invokerUserId: input.body.user.id } : {}),
       messageTs: message.ts,
       receivedAt,
       ...(message.user ? { sourceUserId: message.user } : {}),
