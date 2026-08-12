@@ -120,6 +120,43 @@ describe('ConfirmModal focus contract', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(document.activeElement).toBe(trigger);
   });
+
+  // Milo's gate red on 7309dece. Opening while busy legitimately parks focus on
+  // the dialog container. If the commit then finishes and the controls become
+  // enabled while the dialog stays open, focus is still on the container — and
+  // `root.contains(root)` is true, so an "am I inside?" test alone concludes
+  // there is nothing to do and lets the key through to the page underneath.
+  // The container has to be a boundary in both directions, not an interior.
+  it('routes Tab and Shift+Tab off the container after busy clears', () => {
+    const props = {
+      open: true,
+      title: 'Delete agent',
+      description: 'This removes the agent and its history.',
+      onCancel: vi.fn(),
+      onConfirm: vi.fn(),
+    };
+    const { rerender } = render(<ConfirmModal {...props} busy />);
+
+    const dialog = screen.getByRole('dialog');
+    expect(document.activeElement).toBe(dialog);
+
+    // Commit finishes; buttons become enabled, focus stays where it was.
+    rerender(<ConfirmModal {...props} busy={false} />);
+    const cancel = screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement;
+    const confirm = screen.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement;
+    expect(cancel.disabled).toBe(false);
+    expect(document.activeElement).toBe(dialog);
+
+    // Backward off the container must land on the last control, not escape.
+    fireEvent.keyDown(window, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(confirm);
+
+    // Forward off the container must land on the first control.
+    dialog.focus();
+    expect(document.activeElement).toBe(dialog);
+    fireEvent.keyDown(window, { key: 'Tab' });
+    expect(document.activeElement).toBe(cancel);
+  });
 });
 
 describe('BusyConfirmModal focus contract', () => {

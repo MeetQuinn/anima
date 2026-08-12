@@ -90,14 +90,22 @@ export function useDialogFocus(open: boolean): DialogFocusResult {
       const active = document.activeElement;
       const inside = active instanceof Node && root.contains(active);
 
+      // The container itself is a reachable resting place, not just a wrapper:
+      // opening while busy focuses it, and it keeps focus if the controls are
+      // enabled later while the dialog stays open. `root.contains(root)` is
+      // true, so treating that as "already inside" would let Tab fall through
+      // to the page underneath — it must be handled as a boundary in both
+      // directions instead.
+      const atRoot = active === root;
+
       if (event.shiftKey) {
-        if (!inside || active === first) {
+        if (!inside || atRoot || active === first) {
           event.preventDefault();
           last.focus();
         }
         return;
       }
-      if (!inside || active === last) {
+      if (!inside || atRoot || active === last) {
         event.preventDefault();
         first.focus();
       }
