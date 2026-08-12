@@ -37,6 +37,12 @@ export interface CodeAgentPromptContext {
     homePath?: string;
   };
   reminder?: Reminder;
+  /**
+   * Cut (b): when present, Slack wakes use the cursor-delivery prompt body
+   * instead of the single-message form. Gate-off leaves this undefined so
+   * Feishu/reminder/choice/onboarding paths stay byte-identical.
+   */
+  cursorDeliveryPromptBody?: string;
 }
 
 /**
@@ -61,11 +67,18 @@ export interface CodeAgentPromptContext {
  *   Scheduled from: [channel_id=C-team thread_ts=1770000020.000001 message_ts=1770000010.000001]
  */
 export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgentPromptContext = {}): string {
+  // Restart continuation first — but when a cursor delta was prepared, append it
+  // so rows that arrived during the crash are shown before the cursor advances.
   if (event.handling.resumeReason === 'runtime_restart') {
-    return buildRuntimeRestartContinuationDeliveryPrompt({
+    const continuation = buildRuntimeRestartContinuationDeliveryPrompt({
       itemId: event.id,
       time: event.handling.startedAt ?? event.receivedAt,
     });
+    // Cursor body is already the full provider-facing envelope (incl. files/previews).
+    if (context.cursorDeliveryPromptBody && event.kind === 'slack') {
+      return `${continuation}\n\n${context.cursorDeliveryPromptBody}`;
+    }
+    return continuation;
   }
   if (event.kind === 'reminder') return buildReminderDeliveryPrompt(event, context);
   if (event.kind === 'memory_coherence') return buildMemoryCoherenceDeliveryPrompt(event, context.memoryCoherence);
@@ -74,7 +87,19 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
   if (event.kind === 'feishu_onboarding') return buildFeishuOnboardingDeliveryPrompt(event);
   if (event.kind === 'feishu') return buildFeishuMessageDeliveryPrompt(event);
 
+  // Cursor-delivery body is the full final envelope (20/16KiB bound includes
+  // previews and file metadata). Do not append extras outside the cap.
+  if (context.cursorDeliveryPromptBody && event.kind === 'slack') {
+    return context.cursorDeliveryPromptBody;
+  }
   return buildSlackMessageDeliveryPrompt(event);
+}
+
+/** Render Slack unfurl previews + attached_files for inclusion in the cursor envelope. */
+export function renderSlackCursorExtras(event: SlackInboxItem): string {
+  return [formatSlackMessagePreviews(event.previews), formatAttachedFiles(event.files)]
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 function buildSlackMessageDeliveryPrompt(event: SlackInboxItem): string {

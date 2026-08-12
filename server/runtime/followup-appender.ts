@@ -10,6 +10,14 @@ import type { AgentRuntime } from '../providers/contract.js';
 import type { AgentRuntimeBridge } from './runtime-bridge.js';
 import { readRestartDrainActive } from './intake-gate.js';
 import type { RuntimeItemContext, RuntimeWorkerConfig } from './types.js';
+import {
+  commitCursorDelivery,
+  mergeCursorDeliveryPlans,
+  prepareCursorDelivery,
+  primarySurfaceId,
+  type CursorDeliveryPlan,
+} from './cursor-delivery.js';
+import type { SlackInboxItem } from '../../shared/inbox.js';
 
 const FOLLOWUP_POLL_MS = 100;
 export const FOLLOWUP_BATCH_MAX_ITEMS = 16;
@@ -92,25 +100,80 @@ async function tryFollowupBatch(
 ): Promise<void> {
   let contexts: RuntimeItemContext[] = [];
   let failedItemIds = claimedItemIds;
+  /** True only after appendToActiveRun accepted — never requeue after that. */
   let accepted = false;
   try {
     contexts = await Promise.all(claimedItemIds.map(
       (itemId) => runtimeContextForItemId(itemId, input.runtimeConfig, input.queue),
     ));
+    // Prepare cursor plans (flag-off → disabled). Commit only after accept.
+    const keep: RuntimeItemContext[] = [];
+    for (const context of contexts) {
+      const prepared = await prepareCursorDelivery({
+        agentId: input.runtimeConfig.agentId,
+        item: context.item,
+      });
+      if (prepared.kind === 'already_delivered') {
+        await input.queue.complete(context.item.id).catch(() => undefined);
+        continue;
+      }
+      if (prepared.kind === 'failed') {
+        skippedItemIds.add(context.item.id);
+        await input.queue.requeueBatch([context.item.id]);
+        continue;
+      }
+      if (prepared.kind === 'prepared') {
+        context.cursorDelivery = prepared.plan;
+      }
+      keep.push(context);
+    }
+    contexts = keep;
+    if (contexts.length === 0) return;
+
     const drainAfterContext = await probeRestartDrain(input);
     if (isPaused(input) || drainAfterContext) {
-      await input.queue.requeueBatch(claimedItemIds);
+      await input.queue.requeueBatch(contexts.map((c) => c.item.id));
       return;
     }
+
+    // Merge Slack cursor plans by primary surface, unioning every exact child
+    // surface (so two C1 roots keep both response-threads). Non-Slack units
+    // pass through; bridge builds all prompts (async reminder context).
+    const grouped = groupFollowupContexts(contexts);
     const followupInput = await input.runtimeBridge.followupInput({
       activeContext: input.activeContext,
-      contexts,
+      contexts: grouped.bridgeContexts,
       maxPromptBytes: FOLLOWUP_BATCH_MAX_PROMPT_BYTES,
     });
-    contexts = contexts.slice(0, followupInput.itemIds.length);
-    const overflowIds = claimedItemIds.slice(contexts.length);
+
+    // Expand selected lead ids to full group membership for mark/append.
+    const selectedLeadIds = new Set(followupInput.itemIds);
+    const itemIds: string[] = [];
+    const contextsInBatch: RuntimeItemContext[] = [];
+    const plansForSelected: CursorDeliveryPlan[] = [];
+    for (const unit of grouped.units) {
+      if (unit.kind === 'solo') {
+        if (!selectedLeadIds.has(unit.context.item.id)) continue;
+        itemIds.push(unit.context.item.id);
+        contextsInBatch.push(unit.context);
+        continue;
+      }
+      // Slack group: selected if lead is in the bridge batch.
+      if (!selectedLeadIds.has(unit.lead.item.id)) continue;
+      for (const context of unit.members) {
+        itemIds.push(context.item.id);
+        contextsInBatch.push(context);
+      }
+      plansForSelected.push(unit.mergedPlan);
+    }
+
+    const selectedSet = new Set(itemIds);
+    const overflowIds = keep.map((c) => c.item.id).filter((id) => !selectedSet.has(id));
     if (overflowIds.length > 0) await input.queue.requeueBatch(overflowIds);
-    failedItemIds = followupInput.itemIds;
+    contexts = contextsInBatch;
+    failedItemIds = itemIds;
+    if (itemIds.length === 0) return;
+    const prompt = followupInput.prompt;
 
     // Pre-append: drain probe, sync pause, then appendToActiveRun starts in this
     // same continuation (no await of a helper that already sampled pause).
@@ -120,14 +183,19 @@ async function tryFollowupBatch(
       return;
     }
 
-    const result = await input.agentRuntime.appendToActiveRun(followupInput);
+    const result = await input.agentRuntime.appendToActiveRun({
+      activeItemId: input.activeContext.item.id,
+      itemIds,
+      prompt,
+    });
     if (!result.accepted) {
-      await input.queue.requeueBatch(contexts.map((context) => context.item.id));
+      // Rejected: do not advance cursors or coalesce.
+      await input.queue.requeueBatch(itemIds);
       if (result.retryable) {
         await sleep(FOLLOWUP_POLL_MS, input.itemDone);
         return;
       }
-      for (const context of contexts) skippedItemIds.add(context.item.id);
+      for (const itemId of itemIds) skippedItemIds.add(itemId);
       await recordRuntimePending(
         { agentId: input.runtimeConfig.agentId },
         {
@@ -140,6 +208,24 @@ async function tryFollowupBatch(
       return;
     }
 
+    // Irreversible accept: never requeue from here, even if commit fails.
+    accepted = true;
+
+    // Commit each unique merged plan once. On failure: still mark appended
+    // (provider already has the text) and surface a durable error — no requeue.
+    let commitError: unknown;
+    try {
+      for (const plan of plansForSelected) {
+        await commitCursorDelivery({
+          plan,
+          queue: input.queue,
+          excludeItemIds: itemIds,
+        });
+      }
+    } catch (error) {
+      commitError = error;
+    }
+
     await recordRuntimeFollowupAppended(
       { agentId: input.runtimeConfig.agentId },
       {
@@ -150,21 +236,36 @@ async function tryFollowupBatch(
     );
     input.onFollowupAccepted();
     await input.queue.markAppendedBatch({
-      itemIds: contexts.map((context) => context.item.id),
+      itemIds,
       parentItemId: input.activeContext.item.id,
       workerId: input.workerId,
     });
-    accepted = true;
     await Promise.all(contexts.map((context) => input.onFollowupAppended(context, result.text)));
     input.logger.log(JSON.stringify({
       activeItemId: input.activeContext.item.id,
       agentRuntime: input.agentRuntime.kind,
       event: 'runtime.followup_appended',
-      itemIds: contexts.map((context) => context.item.id),
+      itemIds,
       text: result.text,
       workerId: input.workerId,
     }, null, 2));
+
+    if (commitError) {
+      await recordRuntimeFollowupFailed(
+        { agentId: input.runtimeConfig.agentId },
+        {
+          activeItemId: input.activeContext.item.id,
+          agentRuntime: input.agentRuntime.kind,
+          error: errorMessage(commitError),
+          reason: 'followup_commit_failed',
+        },
+      );
+      input.logger.error(
+        `Cursor commit after follow-up accept failed for items ${itemIds.join(', ')}: ${errorMessage(commitError)}`,
+      );
+    }
   } catch (error) {
+    // After accept, provider already has the text — do not requeue (duplicate path).
     if (!accepted) await input.queue.requeueBatch(failedItemIds);
     for (const itemId of failedItemIds) skippedItemIds.add(itemId);
     await recordRuntimeFollowupFailed(
@@ -190,6 +291,118 @@ async function tryFollowupBatch(
       }
     }
   }
+}
+
+type FollowupUnit =
+  | { kind: 'solo'; context: RuntimeItemContext }
+  | {
+      kind: 'slack_group';
+      lead: RuntimeItemContext;
+      members: RuntimeItemContext[];
+      mergedPlan: CursorDeliveryPlan;
+    };
+
+/**
+ * Group Slack cursor contexts that share a primary surface. Merge every exact
+ * surface across the group (channel + each response-thread) rather than picking
+ * one whole plan. Bridge sees one lead context per group (one prompt); members
+ * expand into append/mark item ids after selection.
+ */
+export function groupFollowupContexts(contexts: RuntimeItemContext[]): {
+  bridgeContexts: RuntimeItemContext[];
+  units: FollowupUnit[];
+} {
+  type Acc = { members: RuntimeItemContext[]; plans: CursorDeliveryPlan[] };
+  const groups = new Map<string, Acc>();
+  const units: FollowupUnit[] = [];
+  const seenGroup = new Set<string>();
+
+  for (const context of contexts) {
+    const plan = context.cursorDelivery;
+    if (!plan || context.item.kind !== 'slack') {
+      units.push({ kind: 'solo', context });
+      continue;
+    }
+    const key = primarySurfaceId(plan);
+    const existing = groups.get(key);
+    if (!existing) {
+      groups.set(key, { members: [context], plans: [plan] });
+      if (!seenGroup.has(key)) {
+        seenGroup.add(key);
+        // Placeholder; filled below once all members known.
+        units.push({
+          kind: 'slack_group',
+          lead: context,
+          members: [],
+          mergedPlan: plan,
+        });
+      }
+      continue;
+    }
+    existing.members.push(context);
+    existing.plans.push(plan);
+  }
+
+  // Finalize slack groups in unit order.
+  const bridgeContexts: RuntimeItemContext[] = [];
+  for (let i = 0; i < units.length; i += 1) {
+    const unit = units[i]!;
+    if (unit.kind === 'solo') {
+      bridgeContexts.push(unit.context);
+      continue;
+    }
+    const key = primarySurfaceId(unit.mergedPlan);
+    const acc = groups.get(key)!;
+    // Union files onto trigger before merge so envelope budget includes them.
+    const baseTrigger = acc.members[acc.members.length - 1]!.item as SlackInboxItem;
+    const triggerItem = mergeSlackInboxAttachments(
+      acc.members.map((m) => m.item as SlackInboxItem),
+      baseTrigger,
+    );
+    const mergedPlan = mergeCursorDeliveryPlans(acc.plans, triggerItem);
+    // Union files/previews from every member onto the lead so the bridge's
+    // single rendered inbox item still carries full attachment metadata for
+    // non-lead wakes whose cursors advance with the group.
+    const leadItem = mergeSlackInboxAttachments(
+      acc.members.map((m) => m.item as SlackInboxItem),
+      triggerItem,
+    );
+    const lead: RuntimeItemContext = {
+      ...acc.members[0]!,
+      item: leadItem,
+      cursorDelivery: mergedPlan,
+    };
+    units[i] = {
+      kind: 'slack_group',
+      lead,
+      members: acc.members,
+      mergedPlan,
+    };
+    bridgeContexts.push(lead);
+  }
+
+  return { bridgeContexts, units };
+}
+
+/** Union files + previews from all group members onto one Slack inbox item. */
+export function mergeSlackInboxAttachments(
+  members: SlackInboxItem[],
+  base: SlackInboxItem,
+): SlackInboxItem {
+  const filesById = new Map<string, NonNullable<SlackInboxItem['files']>[number]>();
+  const previews: NonNullable<SlackInboxItem['previews']> = [];
+  for (const member of members) {
+    for (const file of member.files ?? []) {
+      filesById.set(file.id, file);
+    }
+    if (member.previews?.length) previews.push(...member.previews);
+  }
+  const files = [...filesById.values()];
+  return {
+    ...base,
+    ...(files.length > 0 ? { files } : {}),
+    ...(previews.length > 0 ? { previews } : {}),
+  };
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {

@@ -59,6 +59,7 @@ const groups = {
     'outbound-effects.test.js',
     'outcome-line.test.js',
     'observed-conversation.test.js',
+    'cursor-delivery.test.js',
     'workspace-directory.test.js',
     'prompt-attachments.test.js',
     'prompt-template.test.js',

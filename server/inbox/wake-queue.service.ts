@@ -114,6 +114,15 @@ export class WakeQueueService {
   }
 
   /**
+   * Atomically settle multiple still-claimable queued items to seen (one store
+   * update). Cursor-delivery coalescing uses this so the selected same-surface
+   * set cannot partially land.
+   */
+  async withdrawQueuedBatch(itemIds: string[]): Promise<InboxItem[]> {
+    return this.store.withdrawQueuedBatch(itemIds);
+  }
+
+  /**
    * Drop an uncommitted staged wake without a seen tombstone so the same fire
    * id remains reusable after cancel/snooze CAS miss.
    */
@@ -194,6 +203,15 @@ export class WakeQueueService {
   async requeue(itemId: string, options: { resumeReason?: 'runtime_restart' } = {}): Promise<void> {
     await this.store.requeue(itemId, options);
     signalWake(this.agentId);
+  }
+
+  /**
+   * Requeue without signalWake. Used when cursor-delivery prepare fails closed
+   * mid-drain: a wake would set pendingWake and immediately reclaim the same
+   * item in a hot loop. The regular poll timer retries later.
+   */
+  async requeueQuiet(itemId: string, options: { resumeReason?: 'runtime_restart' } = {}): Promise<void> {
+    await this.store.requeue(itemId, options);
   }
 
   async requeueBatch(itemIds: string[]): Promise<InboxItem[]> {

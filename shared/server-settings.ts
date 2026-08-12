@@ -78,3 +78,12 @@ export const MemoryCoherenceConfig = z.object({
   windowStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
 }).strict();
 export type MemoryCoherenceConfig = z.infer<typeof MemoryCoherenceConfig>;
+
+/**
+ * Cut (b) of send-hold/cursor-view: turn-start cursor delivery + same-surface
+ * queue coalescing. Default off — production behavior unchanged until enable.
+ */
+export const CursorDeliveryConfig = z.object({
+  enabled: z.boolean().optional(),
+}).strict();
+export type CursorDeliveryConfig = z.infer<typeof CursorDeliveryConfig>;

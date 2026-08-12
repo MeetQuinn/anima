@@ -37,6 +37,8 @@ export class AgentRuntimeBridge {
     context: RuntimeItemContext;
     onActivity?: () => void;
     onProviderProgress?: () => void;
+    /** Cut (b): commit cursor delivery once at runtime.started, then release follow-ups. */
+    onRuntimeStarted?: () => Promise<void>;
     profile: AnimaRuntimeProfile;
     retryNotice?: string;
     session?: Session;
@@ -47,7 +49,12 @@ export class AgentRuntimeBridge {
     const prompt = buildCodeAgentDeliveryPrompt(input.context.item, promptContext);
     return {
       cwd: input.context.homePath,
-      effects: this.effects(input.context, input.onActivity, input.onProviderProgress),
+      effects: this.effects(
+        input.context,
+        input.onActivity,
+        input.onProviderProgress,
+        input.onRuntimeStarted,
+      ),
       env: runtimeEnv(input.context, this.runtime.env),
       onActivity: input.onActivity,
       prompt: input.retryNotice ? `${prompt}\n\n${input.retryNotice}` : prompt,
@@ -69,6 +76,7 @@ export class AgentRuntimeBridge {
     const prompts: string[] = [];
     let promptBytes = 0;
     for (const context of input.contexts) {
+      // Prefer a prepared cursor-delivery body when cut (b) is active for this item.
       const promptContext = await this.promptContext(context);
       const prompt = buildCodeAgentDeliveryPrompt(context.item, promptContext);
       const separator = prompts.length > 0 ? '\n\n' : '';
@@ -100,17 +108,24 @@ export class AgentRuntimeBridge {
         },
       };
     }
-    if (event.kind !== 'reminder') return {};
-    const agentId = context.agentId;
-    const reminder = await reminderServiceForAgent(agentId).findReminder(event.reminderId);
-    if (!reminder) throw new Error(`Reminder context not found: ${event.reminderId}`);
-    return { reminder };
+    if (event.kind === 'reminder') {
+      const agentId = context.agentId;
+      const reminder = await reminderServiceForAgent(agentId).findReminder(event.reminderId);
+      if (!reminder) throw new Error(`Reminder context not found: ${event.reminderId}`);
+      return { reminder };
+    }
+    // Slack (and only Slack) may carry a cut-(b) cursor-delivery prompt body.
+    if (context.cursorDelivery?.promptBody) {
+      return { cursorDeliveryPromptBody: context.cursorDelivery.promptBody };
+    }
+    return {};
   }
 
   private effects(
     context: RuntimeItemContext,
     onActivity?: () => void,
     onProviderProgress?: () => void,
+    onRuntimeStarted?: () => Promise<void>,
   ): AgentRuntimeEffects {
     const runtimeKind = this.runtime.kind;
     const target: RuntimeActivityTarget = {
@@ -146,9 +161,14 @@ export class AgentRuntimeBridge {
           console.error(`Token usage record failed for ${context.agentId}/${context.item.id}:`, error);
         }
       },
-      recordRuntime: (type, payload) => {
+      recordRuntime: async (type, payload) => {
         noteActivity();
-        return recordRuntimeActivity(target, this.runtime.kind, type, payload);
+        await recordRuntimeActivity(target, this.runtime.kind, type, payload);
+        // Provider-neutral commit seam: once per run start (retries re-enter
+        // commitCursorDelivery which is idempotent).
+        if (type === 'runtime.started' && onRuntimeStarted) {
+          await onRuntimeStarted();
+        }
       },
       async recordToolFailed(payload) {
         noteActivity();

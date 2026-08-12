@@ -1,5 +1,6 @@
 import type { InboxItem } from '../inbox/wake-queue.service.js';
 import type { Session } from './runtime-session.service.js';
+import type { CursorDeliveryPlan } from './cursor-delivery.js';
 
 export interface RuntimeWorkerConfig {
   agentId: string;
@@ -14,6 +15,8 @@ export interface RuntimeItemContext {
   session: Session;
   stateDir: string;
   homePath: string;
+  /** Cut (b): prepared cursor-delivery plan; commit at runtime.started. */
+  cursorDelivery?: CursorDeliveryPlan;
 }
 
 export type ItemStopReason =
