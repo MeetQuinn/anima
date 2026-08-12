@@ -21,8 +21,10 @@ import { isClaimableQueuedInboxItem } from '../../shared/inbox.js';
 import { envelopeTime, renderEnvelope } from '../messages/envelope.js';
 import { slackDisplayLabel } from '../slack/slack.helper.js';
 import { renderSlackCursorExtras } from './delivery-prompt.js';
+import { ACTORLESS_SLACK_WAKE_BOT_ID } from './cursor-wake-journal-backfill.js';
 import {
   exactEarlierMessagesMarker,
+  observedSenderLabel,
   truncatedMarkerSuffix,
 } from './send-hold-copy.js';
 
@@ -936,11 +938,7 @@ export function selectNewestFittingForEnvelope(
 }
 
 export function formatObservedLine(entry: ObservedConversationEntry): string {
-  const actor = entry.userId
-    ? slackDisplayLabel({ userId: entry.userId })
-    : entry.botId
-      ? `bot:${entry.botId}`
-      : 'unknown';
+  const actor = observedSenderLabel(entry);
   let text = entry.text;
   if (!text && entry.files?.length) {
     text = entry.files.map((f) => f.name ?? f.id).join(', ');
@@ -953,11 +951,14 @@ export function formatObservedLine(entry: ObservedConversationEntry): string {
     const bodyBudget = Math.max(1, CURSOR_DELIVERY_MAX_MESSAGE_CHARS - suffixBytes);
     text = `${truncateUtf8(text, bodyBudget)}${suffix}`;
   }
+  // Keep synthetic storage bot ids out of the agent-facing envelope; sender
+  // label already maps them (e.g. B_ANIMA_SHORTCUT → "shortcut").
+  const envelopeBotId = entry.botId === ACTORLESS_SLACK_WAKE_BOT_ID ? undefined : entry.botId;
   const env = renderEnvelope([
     { key: 'message_ts', value: entry.messageTs },
     { key: 'time', value: envelopeTime(entry.receivedAt) },
     { key: 'user_id', value: entry.userId },
-    { key: 'bot_id', value: entry.botId },
+    { key: 'bot_id', value: envelopeBotId },
     { key: 'ordinal', value: entry.ordinal },
   ]);
   return `${env} ${actor}: ${text}`;

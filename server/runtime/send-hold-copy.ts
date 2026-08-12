@@ -3,12 +3,27 @@
 
 import type { ObservedConversationEntry } from '../storage/schema/observed-conversation.store.js';
 import { slackDisplayLabel } from '../slack/slack.helper.js';
+import { ACTORLESS_SLACK_WAKE_BOT_ID } from './cursor-wake-journal-backfill.js';
 
 /** Noun in the HELD outcome: message send / ask → "message"; file send → "file". */
 export type HeldNoun = 'message' | 'file';
 
 /** Soft per-row budget for HELD delta lines (shared spirit with cursor view). */
 export const HELD_MAX_MESSAGE_CHARS = 2_000;
+
+/**
+ * Readable sender for HELD delta and cursor-view journal rows.
+ * Storage may keep synthetic bot ids (e.g. actorless shortcut); agents must not
+ * read the raw placeholder as a teammate name.
+ */
+export function observedSenderLabel(
+  entry: Pick<ObservedConversationEntry, 'userId' | 'botId'>,
+): string {
+  if (entry.userId) return slackDisplayLabel({ userId: entry.userId });
+  if (entry.botId === ACTORLESS_SLACK_WAKE_BOT_ID) return 'shortcut';
+  if (entry.botId) return `bot:${entry.botId}`;
+  return 'unknown';
+}
 
 /** UTF-8 safe clip (no surrogate split). Local copy to avoid cycle with cursor-delivery. */
 function truncateUtf8(text: string, maxBytes: number): string {
@@ -60,9 +75,7 @@ export function clipHeldRowText(text: string, maxChars = HELD_MAX_MESSAGE_CHARS)
 }
 
 function heldSenderLabel(entry: ObservedConversationEntry): string {
-  if (entry.userId) return slackDisplayLabel({ userId: entry.userId });
-  if (entry.botId) return `bot:${entry.botId}`;
-  return 'unknown';
+  return observedSenderLabel(entry);
 }
 
 /** Clock time from receivedAt/messageTs for HELD lines (`13:44:59`). */

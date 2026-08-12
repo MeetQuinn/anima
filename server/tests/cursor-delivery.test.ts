@@ -489,6 +489,25 @@ test('formatObservedLine marks file-only rows', () => {
   assert.match(line, /\[file: doc\.pdf\]/);
 });
 
+test('formatObservedLine maps actorless shortcut botId to readable sender (not raw placeholder)', async () => {
+  const { ACTORLESS_SLACK_WAKE_BOT_ID } = await import('../runtime/cursor-wake-journal-backfill.js');
+  const line = formatObservedLine({
+    botId: ACTORLESS_SLACK_WAKE_BOT_ID,
+    channelId: 'C1',
+    eventId: 'slack:T1:C1:1.0',
+    messageTs: '1.0',
+    observedAt: new Date().toISOString(),
+    ordinal: 1,
+    receivedAt: '2026-08-12T17:00:00.000Z',
+    surfaceId: 'slack:T1:C1',
+    teamId: 'T1',
+    text: 'handed via shortcut',
+  });
+  assert.match(line, / shortcut: handed via shortcut/);
+  assert.doesNotMatch(line, /B_ANIMA_SHORTCUT/);
+  assert.doesNotMatch(line, /bot:B_ANIMA/);
+});
+
 test('follow-up accept advances cursor; reject does not (unit of commit semantics)', async () => {
   await withEnabledStore(async (store, agentId, queue) => {
     await store.observe({

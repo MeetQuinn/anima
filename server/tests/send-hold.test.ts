@@ -15,10 +15,13 @@ import {
 } from '../runtime/send-hold.js';
 import {
   exactEarlierMessagesMarker,
+  formatHeldDeltaLine,
+  observedSenderLabel,
   renderHeldCopy,
   renderHeldCopyZh,
   unknownEarlierMessagesMarker,
 } from '../runtime/send-hold-copy.js';
+import { ACTORLESS_SLACK_WAKE_BOT_ID } from '../runtime/cursor-wake-journal-backfill.js';
 import {
   renderCursorDeliveryEnvelopeFromEntries,
   setCursorDeliveryEnabledForTests,
@@ -92,6 +95,26 @@ test('held copy EN matches Iris template (message + file noun)', () => {
     noun: 'file',
   });
   assert.match(fileCopy, /1 new message arrived, so your file was not sent:/);
+
+  // Actorless shortcut storage botId must render as readable "shortcut", not raw id.
+  assert.equal(
+    observedSenderLabel({ botId: ACTORLESS_SLACK_WAKE_BOT_ID }),
+    'shortcut',
+  );
+  const shortcutLine = formatHeldDeltaLine({
+    botId: ACTORLESS_SLACK_WAKE_BOT_ID,
+    channelId: 'C1',
+    eventId: 'slack:T1:C1:9.0',
+    messageTs: '9.0',
+    observedAt: '2026-01-01T13:46:00.000Z',
+    ordinal: 9,
+    receivedAt: '2026-01-01T13:46:00.000Z',
+    surfaceId: 'slack:T1:C1',
+    teamId: 'T1',
+    text: 'via shortcut',
+  });
+  assert.match(shortcutLine, /\[shortcut 13:46:00\] via shortcut/);
+  assert.doesNotMatch(shortcutLine, /B_ANIMA_SHORTCUT/);
 
   const zh = renderHeldCopyZh({
     totalNewCount: 2,
