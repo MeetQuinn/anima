@@ -434,14 +434,18 @@ interface SurfaceCandidates {
 }
 
 /**
- * Exact after-cursor count from reconciled ordinal index, not retained-window
- * length. Fail-closed when the index cannot support the claim (missing index
- * with retained rows, or index tail behind retained max / retained length).
+ * Exact after-cursor count from a captured reconciled ordinal tail, not
+ * retained-window length. Fail-closed when the index cannot support the claim
+ * (missing index with retained rows, tail behind retained max, retained longer
+ * than the ordinal span, or captured tail row absent from the journal window).
+ *
+ * `candidates` must already be filtered through the same captured tail
+ * (`afterOrdinal < ordinal <= tail`).
  */
 export function exactCandidateCountFromIndex(input: {
   afterOrdinal: number;
   candidates: ObservedConversationEntry[];
-  /** Reconciled journal-tail index; undefined when empty / unknown. */
+  /** Captured reconciled journal-tail index; undefined when empty / unknown. */
   index: { tailOrdinal: number; lastEventId?: string } | undefined;
   isResponseThreadEstablish: boolean;
   surfaceId: string;
@@ -481,6 +485,14 @@ export function exactCandidateCountFromIndex(input: {
       `index candidateCount ${count} < retained rows ${input.candidates.length} on ${input.surfaceId}`,
     );
   }
+  // Split snapshot: index claims a later tail than any retained row we hold.
+  // Never treat that future ordinal as an “earlier message not shown.”
+  if (tail > input.afterOrdinal && !input.candidates.some((row) => row.ordinal === tail)) {
+    throw new CursorDeliveryError(
+      'store_error',
+      `captured index tail ${tail} missing from journal snapshot on ${input.surfaceId}`,
+    );
+  }
   return count;
 }
 
@@ -508,9 +520,14 @@ async function buildSharedBudgetSurfacePlans(
         ? { status: 'absent' }
         : { status: 'present', deliveredOrdinal: cursor.deliveredOrdinal };
     const afterOrdinal = cursor.status === 'present' ? cursor.deliveredOrdinal : 0;
-    // Selection window is capped/retained; exact population comes from the index.
-    const candidates = await store.readJournal(surfaceId, { afterOrdinal, limit: 5_000 });
-    const index = await store.getIndexReconciled(surfaceId);
+    // Locked snapshot: capture reconciled tail first, journal filtered through it.
+    // Never pair a later index tail with an earlier journal window (would label a
+    // future row as “earlier message not shown”).
+    const snapshot = await store.readCursorDeliverySnapshot(surfaceId, {
+      afterOrdinal,
+      limit: 5_000,
+    });
+    const { candidates, index } = snapshot;
     const indexPopulation =
       index && index.lastEventId && index.tailOrdinal > 0
         ? Math.max(0, index.tailOrdinal - afterOrdinal)

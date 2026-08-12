@@ -1103,6 +1103,19 @@ test('exactCandidateCountFromIndex uses ordinal index not retained-window length
       }),
     /missing reconciled index/,
   );
+
+  // Fail-closed: index tail ahead of journal window (split snapshot).
+  assert.throws(
+    () =>
+      exactCandidateCountFromIndex({
+        afterOrdinal: 0,
+        candidates: retained.filter((r) => r.ordinal <= 2),
+        index: { tailOrdinal: 3, lastEventId: 'slack:T1:C1:3.0' },
+        isResponseThreadEstablish: false,
+        surfaceId: 'slack:T1:C1',
+      }),
+    /captured index tail 3 missing/,
+  );
 });
 
 test('prepare candidateCount is index population when retained window is truncated', async () => {
@@ -1141,21 +1154,26 @@ test('prepare candidateCount is index population when retained window is truncat
       override async getCursor(sid: string) {
         return { status: 'absent' as const, surfaceId: sid };
       }
-      override async getIndexReconciled(sid: string) {
-        if (sid === surfaceId) return index;
-        return undefined;
-      }
-      override async readJournal(
+      override async readCursorDeliverySnapshot(
         sid: string,
         options: { afterOrdinal?: number; limit?: number } = {},
       ) {
-        if (sid !== surfaceId) return [];
+        if (sid !== surfaceId) {
+          return { index: undefined, candidates: [], capturedTailOrdinal: 0 };
+        }
         const after = options.afterOrdinal ?? 0;
         const limit = options.limit ?? 100;
-        const filtered = retained.filter((r) => r.ordinal > after);
-        return filtered.length <= limit
+        const filtered = retained.filter(
+          (r) => r.ordinal > after && r.ordinal <= index.tailOrdinal,
+        );
+        const candidates = filtered.length <= limit
           ? filtered
           : filtered.slice(filtered.length - limit);
+        return {
+          index,
+          candidates,
+          capturedTailOrdinal: index.tailOrdinal,
+        };
       }
       override async readTail(sid: string, limit: number) {
         if (sid !== surfaceId) return [];
@@ -1182,6 +1200,158 @@ test('prepare candidateCount is index population when retained window is truncat
     assert.ok(child);
     assert.equal(child!.establishOnly, true);
     assert.equal(child!.candidateCount, 0);
+  });
+});
+
+test('prepare never pairs a later index tail with an earlier journal window', async () => {
+  // Red control: journal holds 1..2; a concurrent observe would advance index to 3.
+  // Captured-tail snapshot must either use tail 2 (count=2) or fail closed — never
+  // candidateCount=3 with advance through 2.
+  await withEnabledStore(async (_store, agentId) => {
+    const surfaceId = 'slack:T1:C1';
+    const rows: ObservedConversationEntry[] = [1, 2].map((ord) => ({
+      channelId: 'C1',
+      eventId: `slack:T1:C1:${ord}.0`,
+      messageTs: `${ord}.0`,
+      observedAt: '2026-01-01T00:00:00.000Z',
+      ordinal: ord,
+      receivedAt: '2026-01-01T00:00:00.000Z',
+      surfaceId,
+      teamId: 'T1',
+      text: `row-${ord}`,
+      userId: 'U1',
+    }));
+    const indexAt2: ConversationIndex = {
+      lastEventId: 'slack:T1:C1:2.0',
+      lastMessageTs: '2.0',
+      surfaceId,
+      tailOrdinal: 2,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    // Inconsistent split the old journal-then-index order could produce.
+    const indexAt3: ConversationIndex = {
+      lastEventId: 'slack:T1:C1:3.0',
+      lastMessageTs: '3.0',
+      surfaceId,
+      tailOrdinal: 3,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    class ConsistentTailStore extends ObservedConversationStore {
+      override async getContinuity() {
+        return { status: 'ok' as const, updatedAt: '2026-01-01T00:00:00.000Z' };
+      }
+      override async getCursor(sid: string) {
+        return { status: 'absent' as const, surfaceId: sid };
+      }
+      override async readCursorDeliverySnapshot(
+        sid: string,
+        options: { afterOrdinal?: number; limit?: number } = {},
+      ) {
+        if (sid !== surfaceId) {
+          return { index: undefined, candidates: [], capturedTailOrdinal: 0 };
+        }
+        // Capture tail 2, filter through it (later ordinal 3 never enters).
+        const after = options.afterOrdinal ?? 0;
+        const candidates = rows.filter(
+          (r) => r.ordinal > after && r.ordinal <= indexAt2.tailOrdinal,
+        );
+        return {
+          index: indexAt2,
+          candidates,
+          capturedTailOrdinal: indexAt2.tailOrdinal,
+        };
+      }
+      override async readTail(sid: string, limit: number) {
+        if (sid !== surfaceId) return [];
+        return rows.slice(-limit);
+      }
+    }
+
+    class SplitSnapshotStore extends ObservedConversationStore {
+      override async getContinuity() {
+        return { status: 'ok' as const, updatedAt: '2026-01-01T00:00:00.000Z' };
+      }
+      override async getCursor(sid: string) {
+        return { status: 'absent' as const, surfaceId: sid };
+      }
+      override async readCursorDeliverySnapshot(sid: string) {
+        if (sid !== surfaceId) {
+          return { index: undefined, candidates: [], capturedTailOrdinal: 0 };
+        }
+        // Old race shape: journal 1..2 + index tail 3 without row 3.
+        return {
+          index: indexAt3,
+          candidates: rows,
+          capturedTailOrdinal: 3,
+        };
+      }
+      override async readTail(sid: string, limit: number) {
+        if (sid !== surfaceId) return [];
+        return rows.slice(-limit);
+      }
+    }
+
+    const item = slackItem({
+      channelId: 'C1',
+      messageTs: '2.0',
+      text: 'row-2',
+      userId: 'U1',
+    });
+
+    const ok = await prepareCursorDelivery({
+      agentId,
+      item,
+      store: new ConsistentTailStore(agentId),
+    });
+    assert.equal(ok.kind, 'prepared');
+    if (ok.kind !== 'prepared') return;
+    const primary = ok.plan.surfaces.find((s) => s.surfaceId === surfaceId)!;
+    assert.equal(primary.candidateCount, 2);
+    assert.equal(primary.entries.length + primary.omittedCount, 2);
+    assert.ok(primary.nextDeliveredOrdinal <= 2);
+    assert.ok(!primary.entries.some((e) => e.ordinal === 3));
+
+    const split = await prepareCursorDelivery({
+      agentId,
+      item,
+      store: new SplitSnapshotStore(agentId),
+    });
+    assert.equal(split.kind, 'failed');
+    if (split.kind === 'failed') {
+      assert.equal(split.error.reason, 'store_error');
+      assert.match(split.error.message, /captured index tail 3 missing/);
+    }
+  });
+});
+
+test('readCursorDeliverySnapshot filters journal through captured tail under lock', async () => {
+  await withEnabledStore(async (store) => {
+    for (let i = 1; i <= 3; i += 1) {
+      await store.observe({
+        teamId: 'T1',
+        channelId: 'Csnap',
+        messageTs: `${i}.0`,
+        text: `snap-${i}`,
+        userId: 'U1',
+      });
+    }
+    const surfaceId = 'slack:T1:Csnap';
+    const snap = await store.readCursorDeliverySnapshot(surfaceId, {
+      afterOrdinal: 0,
+      limit: 5_000,
+    });
+    assert.equal(snap.capturedTailOrdinal, 3);
+    assert.equal(snap.index?.tailOrdinal, 3);
+    assert.deepEqual(snap.candidates.map((c) => c.ordinal), [1, 2, 3]);
+
+    // through-tail filter: after 1 → only 2,3
+    const mid = await store.readCursorDeliverySnapshot(surfaceId, {
+      afterOrdinal: 1,
+      limit: 5_000,
+    });
+    assert.deepEqual(mid.candidates.map((c) => c.ordinal), [2, 3]);
+    assert.equal(mid.capturedTailOrdinal, 3);
   });
 });
 

@@ -364,6 +364,65 @@ export class ObservedConversationStore {
     return result;
   }
 
+  /**
+   * Consistent cursor-delivery snapshot for one surface.
+   *
+   * Runs under the same index lock as `observe`, so a concurrent append cannot
+   * land between the captured tail and the journal rows. Candidates are filtered
+   * through the captured tail (`afterOrdinal < ordinal <= capturedTail`); the
+   * exact candidate population is `capturedTail − afterOrdinal` when the index
+   * is present.
+   */
+  async readCursorDeliverySnapshot(
+    surfaceId: string,
+    options: { afterOrdinal?: number; limit?: number } = {},
+  ): Promise<{
+    index: ConversationIndex | undefined;
+    candidates: ObservedConversationEntry[];
+    /** Captured reconciled tail (0 when empty). */
+    capturedTailOrdinal: number;
+  }> {
+    const afterOrdinal = options.afterOrdinal ?? 0;
+    const limit = options.limit ?? 100;
+    let snapshot: {
+      index: ConversationIndex | undefined;
+      candidates: ObservedConversationEntry[];
+      capturedTailOrdinal: number;
+    } | undefined;
+    await this.indexStore(surfaceId).update(async (current) => {
+      // Full retained read under the lock (same as readJournal) so later appends
+      // cannot enter the window mid-snapshot. observe() also holds this lock
+      // around journal.append + index write.
+      const all = await this.journal(surfaceId).readAll();
+      const recent = all.length <= OBSERVED_CONVERSATION_DEDUPE_RECENT
+        ? all
+        : all.slice(all.length - OBSERVED_CONVERSATION_DEDUPE_RECENT);
+      const reconciled = reconcileIndexFromJournal(current, recent, surfaceId);
+      const capturedTailOrdinal = reconciled.tailOrdinal;
+      const index =
+        capturedTailOrdinal > 0 && reconciled.lastEventId ? reconciled : undefined;
+      if (limit <= 0) {
+        snapshot = { index, candidates: [], capturedTailOrdinal };
+        return reconciled;
+      }
+      // Bound both ends: after the delivered cursor, and not past the captured tail.
+      // Rows observed after this snapshot (or with ordinal > capturedTail) are excluded.
+      const filtered = all.filter(
+        (row) => row.ordinal > afterOrdinal && row.ordinal <= capturedTailOrdinal,
+      );
+      const candidates = filtered.length <= limit
+        ? filtered
+        : filtered.slice(filtered.length - limit);
+      snapshot = { index, candidates, capturedTailOrdinal };
+      return reconciled;
+    });
+    return snapshot ?? {
+      index: undefined,
+      candidates: [],
+      capturedTailOrdinal: 0,
+    };
+  }
+
   async readJournal(
     surfaceId: string,
     options: { afterOrdinal?: number; limit?: number } = {},
