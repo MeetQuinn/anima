@@ -100,6 +100,56 @@ test('truncation markers match Iris exact/unknown forms', () => {
   assert.equal(unknownEarlierMessagesMarker(), '(earlier messages not shown)');
 });
 
+test('held copy places earlier-omitted marker above shown rows', () => {
+  const older = {
+    channelId: 'C1',
+    eventId: 'slack:T1:C1:1.0',
+    messageTs: '1.0',
+    observedAt: '2026-01-01T13:40:00.000Z',
+    ordinal: 1,
+    receivedAt: '2026-01-01T13:40:00.000Z',
+    surfaceId: 'slack:T1:C1',
+    teamId: 'T1',
+    text: 'old',
+    userId: 'U_A',
+  };
+  const newer = {
+    channelId: 'C1',
+    eventId: 'slack:T1:C1:2.0',
+    messageTs: '2.0',
+    observedAt: '2026-01-01T13:45:00.000Z',
+    ordinal: 2,
+    receivedAt: '2026-01-01T13:45:00.000Z',
+    surfaceId: 'slack:T1:C1',
+    teamId: 'T1',
+    text: 'new',
+    userId: 'U_B',
+  };
+  // Shown is newest-fitting only; totalNewCount includes omitted earlier.
+  const en = renderHeldCopy({
+    totalNewCount: 5,
+    shown: [newer],
+    noun: 'message',
+  });
+  const enLines = en.split('\n');
+  const markerIdx = enLines.findIndex((l) => l.includes('earlier message'));
+  const rowIdx = enLines.findIndex((l) => l.includes('] new'));
+  assert.ok(markerIdx >= 0 && rowIdx >= 0);
+  assert.ok(markerIdx < rowIdx, `marker should be above shown rows: ${en}`);
+
+  const zh = renderHeldCopyZh({
+    totalNewCount: 5,
+    shown: [newer],
+    noun: 'message',
+  });
+  const zhLines = zh.split('\n');
+  const zhMarker = zhLines.findIndex((l) => l.includes('更早消息'));
+  const zhRow = zhLines.findIndex((l) => l.includes('] new'));
+  assert.ok(zhMarker >= 0 && zhRow >= 0);
+  assert.ok(zhMarker < zhRow, `ZH marker above rows: ${zh}`);
+  void older;
+});
+
 test('gate-off: evaluateSendHold returns disabled / allow without comparing', async () => {
   setCursorDeliveryEnabledForTests(false);
   try {

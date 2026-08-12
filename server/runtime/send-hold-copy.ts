@@ -113,12 +113,14 @@ export function renderHeldCopy(input: {
   const lines: string[] = [
     `HELD: the conversation moved while you were composing. ${arrived}, so your ${input.noun} was not sent:`,
   ];
-  for (const entry of input.shown) {
-    lines.push(formatHeldDeltaLine(entry));
-  }
+  // Omitted rows are chronologically before the newest-fitting shown set —
+  // marker sits above the first row so a top-to-bottom reader hits the gap first.
   const omitted = Math.max(0, n - input.shown.length);
   if (omitted > 0) {
     lines.push(`  ${exactEarlierMessagesMarker(omitted)}`);
+  }
+  for (const entry of input.shown) {
+    lines.push(formatHeldDeltaLine(entry));
   }
   lines.push(
     'Read them, then resend to post it (revised or unchanged). To stay silent, do nothing.',
@@ -140,12 +142,13 @@ export function renderHeldCopyZh(input: {
   const lines: string[] = [
     `HELD:你组稿期间会话有 ${n} 条新消息,这条${nounZh}没有发出:`,
   ];
-  for (const entry of input.shown) {
-    lines.push(formatHeldDeltaLine(entry));
-  }
+  // Same placement as EN: gap-above-shown (omitted is earlier than shown).
   const omitted = Math.max(0, n - input.shown.length);
   if (omitted > 0) {
     lines.push(`  (另有 ${omitted} 条更早消息未显示)`);
+  }
+  for (const entry of input.shown) {
+    lines.push(formatHeldDeltaLine(entry));
   }
   lines.push('看完这些消息后,重发即可发出(改不改由你);不想发就什么都不做。');
   return lines.join('\n');
