@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
 import { Check, Download, RefreshCw, X } from 'lucide-react';
 import { fetchServerInfo } from '@/api/system';
+import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { queryKeys } from '@/lib/query-keys';
 
 // ---------------------------------------------------------------------------
@@ -61,6 +62,9 @@ export function BusyConfirmModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [onCancel]);
 
+  // This modal only exists while it is open, so the focus lifecycle is always on.
+  const { dialogRef, initialFocusRef, titleId, descriptionId } = useDialogFocus(true);
+
   const count = runningNames.length;
   const subject = runningSubject(runningNames);
   const verb = count === 1 ? 'is' : 'are';
@@ -81,17 +85,20 @@ export function BusyConfirmModal({
       role="presentation"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="busy-confirm-title"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
         className="relative w-full max-w-xl rounded-sm border border-accent/40 bg-surface p-7 pl-8 shadow-deep"
         onClick={(e) => e.stopPropagation()}
       >
         <span aria-hidden className="absolute left-0 top-4 bottom-4 w-px bg-accent" />
-        <div id="busy-confirm-title" className="font-serif text-[17px] font-semibold text-text">
+        <div id={titleId} className="font-serif text-[17px] font-semibold text-text">
           {title}
         </div>
-        <div className="font-serif mt-2 text-[15px] leading-relaxed text-text-muted">
+        <div id={descriptionId} className="font-serif mt-2 text-[15px] leading-relaxed text-text-muted">
           {/* Continuity-first: named, saved, resumes — never "interrupt". */}
           {subject} {verb} working. Their work is saved. After the {action} they&apos;ll continue
           right where they left off. Nothing is lost.
@@ -103,6 +110,7 @@ export function BusyConfirmModal({
         )}
         <div className="mt-5 flex justify-end gap-2">
           <button
+            ref={initialFocusRef}
             type="button"
             onClick={onCancel}
             className="rounded-sm border border-border-soft px-3.5 py-2 text-[13px] text-text-muted transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"

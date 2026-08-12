@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { Button } from './ui/button';
 
 export interface ConfirmModalProps {
@@ -47,6 +48,8 @@ export default function ConfirmModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, busy, onCancel]);
 
+  const { dialogRef, initialFocusRef, titleId, descriptionId } = useDialogFocus(open);
+
   if (!open) return null;
 
   const palette =
@@ -66,8 +69,12 @@ export default function ConfirmModal({
       role="presentation"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
         className={[
           'relative w-full rounded-sm border shadow-deep',
           palette.border,
@@ -81,6 +88,7 @@ export default function ConfirmModal({
           className={`absolute left-0 top-4 bottom-4 w-px ${palette.rule}`}
         />
         <div
+          id={titleId}
           className={[
             'font-serif font-semibold text-text',
             isLarge ? 'text-[17px]' : 'text-[16px]',
@@ -89,6 +97,7 @@ export default function ConfirmModal({
           {title}
         </div>
         <div
+          id={descriptionId}
           className={[
             'font-serif mt-2 leading-relaxed text-text-muted',
             isLarge ? 'text-[15px]' : 'text-[14px]',
@@ -103,6 +112,7 @@ export default function ConfirmModal({
         )}
         <div className="mt-4 flex justify-end gap-2">
           <Button
+            ref={initialFocusRef}
             disabled={busy}
             onClick={onCancel}
             variant="outline"
