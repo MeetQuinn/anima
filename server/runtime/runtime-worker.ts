@@ -40,6 +40,7 @@ import {
   prepareCursorDelivery,
   surfacesForSlackWake,
 } from './cursor-delivery.js';
+import { backfillActiveSlackWakeJournal } from './cursor-wake-journal-backfill.js';
 import { observedConversationStoreForAgent } from '../storage/schema/observed-conversation.store.js';
 
 // Executor for one agent: claims queued inbox items, runs the provider runtime,
@@ -80,6 +81,8 @@ export class AgentRuntimeWorker {
   private pendingWake = false;
   private pollTimer?: NodeJS.Timeout;
   private unsubscribeWake?: () => void;
+  /** Shared first-drain gate: backfill pre-journal Slack wakes before any claim. */
+  private journalBackfill?: Promise<void>;
 
   constructor(
     private readonly options: AgentRuntimeWorkerOptions,
@@ -114,9 +117,33 @@ export class AgentRuntimeWorker {
   }
 
   private async drainLoop(): Promise<number> {
+    // Before any claim: ensure active Slack wakes exist in the observed journal
+    // (pre-journal wakes would otherwise fail prepare → quiet-requeue forever).
+    await this.ensureJournalBackfill();
     let processed = 0;
     while (!this.closing && await this.runOne()) processed += 1;
     return processed;
+  }
+
+  /**
+   * Idempotent pre-drain migration. Awaits the same promise from start() and
+   * drainOnce() so the first claim never races an incomplete backfill.
+   */
+  private ensureJournalBackfill(): Promise<void> {
+    if (!this.journalBackfill) {
+      this.journalBackfill = backfillActiveSlackWakeJournal({
+        agentId: this.options.agentId,
+        queue: this.queue,
+        logger: this.logger,
+      }).then(() => undefined).catch((error: unknown) => {
+        // Fail-soft on the migration itself: prepare remains fail-closed for
+        // any still-missing trigger. Do not block the worker forever.
+        this.logger.error(
+          `cursor-wake journal backfill failed for ${this.options.agentId}: ${errorMessage(error)}`,
+        );
+      });
+    }
+    return this.journalBackfill;
   }
 
   start(): NodeJS.Timeout {
@@ -124,7 +151,10 @@ export class AgentRuntimeWorker {
     this.unsubscribeWake = onWake(this.options.agentId, () => this.tick());
     // Fallback covers stale-running crash recovery and cross-process onboarding enqueues.
     this.pollTimer = setInterval(() => this.tick(), intervalMs);
-    this.tick();
+    // Kick backfill then drain; do not claim until ensureJournalBackfill resolves.
+    void this.ensureJournalBackfill().then(() => {
+      if (!this.closing) this.tick();
+    });
     return this.pollTimer;
   }
 
