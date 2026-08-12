@@ -62,6 +62,7 @@ const groups = {
     'cursor-delivery.test.js',
     'send-hold.test.js',
     'send-hold-tools.test.js',
+    'cursor-delivery-enable.test.js',
     'workspace-directory.test.js',
     'prompt-attachments.test.js',
     'prompt-template.test.js',

@@ -80,12 +80,12 @@ export const MemoryCoherenceConfig = z.object({
 export type MemoryCoherenceConfig = z.infer<typeof MemoryCoherenceConfig>;
 
 /**
- * Cursor view (cut b) + pre-commit send hold (cut c). Default off.
- * Enable atomically: both halves share this flag so view and hold never
- * ship independently against a half-built contract. No runtime upgrade
- * until acceptance turns this on.
+ * Cursor view (cut b) + pre-commit send hold (cut c). Default **on** after
+ * product acceptance (enable cut). Both halves share this flag so they never
+ * ship independently. Set `cursorDelivery.enabled: false` to opt out.
  */
 export const CursorDeliveryConfig = z.object({
+  /** Default true when omitted. Explicit false disables view + hold. */
   enabled: z.boolean().optional(),
 }).strict();
 export type CursorDeliveryConfig = z.infer<typeof CursorDeliveryConfig>;
