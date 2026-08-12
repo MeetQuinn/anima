@@ -22,6 +22,7 @@ import {
   PROVIDER_IDLE_TIMEOUT_MS_DEFAULT,
 } from '../../shared/agent-config.js';
 import {
+  isSupportedReasoningEffort,
   providerCatalogEntry,
   reasoningEffortsForModel,
 } from '../../shared/provider-catalog.js';
@@ -585,6 +586,28 @@ test('grok-cli effort write-validates the provider vocabulary; per-model support
     }).provider.reasoningEffort,
     'xhigh',
   );
+  // Live menu present for the model → that menu is authoritative at write time.
+  assert.equal(
+    isSupportedReasoningEffort('grok-cli', 'xhigh', 'grok-4.6', {
+      modelReasoningEfforts: { 'grok-4.6': ['low', 'medium', 'high', 'xhigh'] },
+    }),
+    true,
+  );
+  assert.equal(
+    isSupportedReasoningEffort('grok-cli', 'xhigh', 'grok-4.6', {
+      modelReasoningEfforts: { 'grok-4.6': ['low', 'medium', 'high'] },
+    }),
+    false,
+  );
+  // Empty live menu (e.g. composer) ⇒ no effort may be stored when Live is present.
+  assert.equal(
+    isSupportedReasoningEffort('grok-cli', 'low', 'grok-composer-2.5-fast', {
+      modelReasoningEfforts: { 'grok-composer-2.5-fast': [] },
+    }),
+    false,
+  );
+  // No live snapshot ⇒ vocabulary fallback still accepts xhigh.
+  assert.equal(isSupportedReasoningEffort('grok-cli', 'xhigh', 'grok-4.6'), true);
   assert.throws(
     () =>
       AgentCreateRequest.parse({

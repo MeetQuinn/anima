@@ -468,8 +468,9 @@ Model and context authority:
 - Optional `reasoningEffort` is **model-scoped** in Grok Build (ACP
   `supportsReasoningEffort` / `reasoningEfforts` per catalog entry), and is knowable only from the
   live ACP catalog: never inferred from the model name. Launch argv never carries `--effort`.
-  Config writes validate Grok's effort vocabulary (`low` / `medium` / `high` / `xhigh`)
-  and store the token as a preference. They do not decide per-model support. After
+  Config writes: when the live ACP catalog is available for the selected model, that
+  per-model menu is authoritative; otherwise the write vocabulary
+  (`low` / `medium` / `high` / `xhigh`) is used so offline saves still work. After
   session init (new or loaded) and before the first prompt, the runtime sends at most one same-model
   `session/set_model` with `_meta.reasoningEffort`, and only when the exact live current model
   advertises that effort. Unknown current model, missing capability for that exact model, or an

@@ -36,8 +36,22 @@ import {
   type ArchivedProviderSession,
   type Session,
 } from '../storage/schema/session.store.js';
+import { defaultSystemService } from '../services/system.service.js';
+import type { ReasoningEffortAvailability } from '../../shared/provider-catalog.js';
 
 export { AgentConfigError } from './agent-config-ops.js';
+
+/** Best-effort live Grok ACP effort menus for write-time validation. */
+async function loadGrokReasoningAvailability(): Promise<ReasoningEffortAvailability> {
+  try {
+    const { providers } = await defaultSystemService.providerAvailability();
+    const grok = providers.find((entry) => entry.kind === 'grok-cli');
+    if (!grok?.modelReasoningEfforts) return null;
+    return { modelReasoningEfforts: grok.modelReasoningEfforts };
+  } catch {
+    return null;
+  }
+}
 
 export interface RotateSessionResult {
   agentId: string;
@@ -96,7 +110,16 @@ export class AgentService {
 
   async updateProvider(provider: AgentUpdateProviderRequest): Promise<AgentConfig> {
     const current = await this.getConfig();
-    const next = await this.saveConfig(agentConfigWithProviderUpdate(current, provider));
+    const nextKind = provider.kind ?? current.provider.kind;
+    // Grok: when live ACP catalog is reachable, write-time effort validation
+    // follows the per-model menu (same source as the Profile UI). Probe failure
+    // falls back to the write vocabulary so offline saves still work.
+    const availability = nextKind === 'grok-cli'
+      ? await loadGrokReasoningAvailability()
+      : undefined;
+    const next = await this.saveConfig(
+      agentConfigWithProviderUpdate(current, provider, availability),
+    );
     const archiveNote = providerSessionArchiveNote(current.provider, next.provider);
     if (archiveNote) {
       await this.archiveCurrentProviderSession(archiveNote);
