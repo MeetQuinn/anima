@@ -12,7 +12,6 @@ import {
   resolveCursorDeliveryEnabled,
   setCursorDeliveryEnabledForTests,
 } from '../runtime/cursor-delivery.js';
-import { evaluateSendHold } from '../runtime/send-hold.js';
 import { ObservedConversationStore } from '../storage/schema/observed-conversation.store.js';
 import { runMessageSend } from '../tools/messages.js';
 import { withAnimaHome } from './anima-home.js';
@@ -44,7 +43,7 @@ async function writeAgent(stateDir: string, serverConfig: object = {}): Promise<
   );
 }
 
-function slackHandlers(posts: unknown[]) {
+function slackHandlers(posts: Array<Record<string, unknown>>) {
   return (method: string, body: string) => {
     if (method === 'auth.test') return { ok: true, team_id: TEAM, user_id: BOT };
     if (method === 'users.list') return { ok: true, members: [{ id: 'U_MILO', name: 'milo' }, { id: 'U_TESS', name: 'tess' }] };
@@ -100,19 +99,19 @@ test('explicit cursorDelivery.enabled:false still disables', async () => {
   }
 });
 
-test('acceptance-1 under enabled flag: view → HELD → revised resend lands', async () => {
-  // Counting-game shape (artifact pin under default-on):
-  // 1) channel-root wake establishes cursor + response-thread present@0
-  // 2) foreign posts land in journal past cursor
-  // 3) send while stale → HELD (zero postMessage) with delta
-  // 4) revised resend after HELD lands
+test('acceptance-1 under enabled flag: threaded counting shape', async () => {
+  // Live counting shape (artifact pin under default-on):
+  // channel-root wake → response-thread present@0 → foreign thread replies 1/2
+  // → real runMessageSend(threadTs) HELD (zero posts) → revised threaded resend lands
+  // Hold basis is the **child thread** cursor, not the channel root.
   setCursorDeliveryEnabledForTests(undefined); // use default-on
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-enable-a1-'));
-  const posts: unknown[] = [];
+  const posts: Array<Record<string, unknown>> = [];
   const previousAgent = process.env.ANIMA_AGENT_ID;
   const previousSlack = process.env.ANIMA_SLACK_API_URL;
   const slackApi = await startSlackApiMock(slackHandlers(posts));
-  const heldLines: string[] = [];
+  const stdoutLines: string[] = [];
+  const threadSurface = `slack:${TEAM}:${CHANNEL}:thread:100.0`;
   try {
     process.env.ANIMA_AGENT_ID = 'iris';
     process.env.ANIMA_SLACK_API_URL = slackApi.url;
@@ -156,9 +155,7 @@ test('acceptance-1 under enabled flag: view → HELD → revised resend lands', 
       assert.equal(prepared.kind, 'prepared');
       if (prepared.kind !== 'prepared') return;
       assert.match(prepared.plan.promptBody, /Slack conversation update:/);
-      const child = prepared.plan.surfaces.find(
-        (s) => s.surfaceId === `slack:${TEAM}:${CHANNEL}:thread:100.0`,
-      );
+      const child = prepared.plan.surfaces.find((s) => s.surfaceId === threadSurface);
       assert.ok(child?.establishOnly, 'response-thread established for first reply');
 
       // Simulate commit of the wake cursor (runtime.started).
@@ -170,16 +167,22 @@ test('acceptance-1 under enabled flag: view → HELD → revised resend lands', 
         lastDeliveredMessageTs: '100.0',
       });
       await store.advanceCursor({
-        surfaceId: `slack:${TEAM}:${CHANNEL}:thread:100.0`,
+        surfaceId: threadSurface,
         expected: { status: 'absent' },
         nextDeliveredOrdinal: 0,
       });
+      const childBefore = await store.getCursor(threadSurface);
+      assert.equal(childBefore.status, 'present');
+      if (childBefore.status === 'present') {
+        assert.equal(childBefore.deliveredOrdinal, 0);
+      }
 
-      // 2) Foreign room movement during the turn (milo "1", tess "2").
+      // 2) Foreign replies *in the response thread* (milo "1", tess "2").
       await store.observe({
         teamId: TEAM,
         channelId: CHANNEL,
         messageTs: '101.0',
+        threadTs: '100.0',
         text: '1',
         userId: 'U_MILO',
         receivedAt: '2026-01-01T13:44:59.000Z',
@@ -188,45 +191,53 @@ test('acceptance-1 under enabled flag: view → HELD → revised resend lands', 
         teamId: TEAM,
         channelId: CHANNEL,
         messageTs: '102.0',
+        threadTs: '100.0',
         text: '2',
         userId: 'U_TESS',
         receivedAt: '2026-01-01T13:45:20.000Z',
       });
 
-      // 3) Send while stale → HELD, zero postMessage.
-      const hold = await evaluateSendHold({
-        agentId: 'iris',
-        teamId: TEAM,
-        channelId: CHANNEL,
-        tool: 'anima.message.send',
-        botUserId: BOT,
-        store,
-        writeOutput: (line) => heldLines.push(line),
-      });
-      assert.equal(hold.kind, 'held');
-      if (hold.kind !== 'held') return;
-      assert.equal(hold.deltaCount, 2);
-      assert.match(hold.stdout, /^HELD:/);
-      assert.match(hold.stdout, /1 new message|2 new messages/);
-      assert.match(hold.stdout, /1/);
-      assert.match(hold.stdout, /2/);
-      assert.equal(posts.length, 0, 'HELD must not land');
+      // 3) First attempted send is the real tool seam into the thread → HELD.
+      await runMessageSend(
+        { agent: 'iris', channel: CHANNEL, threadTs: '100.0', text: '1' },
+        { writeOutput: (line) => stdoutLines.push(line) },
+      );
+      assert.equal(posts.length, 0, 'stale runMessageSend must not postMessage');
+      assert.equal(stdoutLines.length, 1, 'sole HELD stdout outcome');
+      assert.match(stdoutLines[0]!, /^HELD:/);
+      assert.match(stdoutLines[0]!, /2 new messages arrived/);
+      assert.match(stdoutLines[0]!, /1/);
+      assert.match(stdoutLines[0]!, /2/);
 
-      // Cursor advanced through foreign tail so retry is a plain re-check.
-      const afterHold = await store.getCursor(`slack:${TEAM}:${CHANNEL}`);
-      assert.equal(afterHold.status, 'present');
-      if (afterHold.status === 'present') {
-        assert.equal(afterHold.deliveredOrdinal, 3);
+      // Child thread cursor advanced through foreign tail (hold basis is the thread).
+      const childAfterHold = await store.getCursor(threadSurface);
+      assert.equal(childAfterHold.status, 'present');
+      if (childAfterHold.status === 'present') {
+        assert.equal(
+          childAfterHold.deliveredOrdinal,
+          2,
+          'child thread cursor must advance through foreign 1/2',
+        );
+      }
+      // Root is not the hold basis — remains at wake commit.
+      const rootAfterHold = await store.getCursor(`slack:${TEAM}:${CHANNEL}`);
+      assert.equal(rootAfterHold.status, 'present');
+      if (rootAfterHold.status === 'present') {
+        assert.equal(rootAfterHold.deliveredOrdinal, 1);
       }
 
-      // 4) Revised resend ("3") lands.
+      // 4) Revised threaded resend ("3") lands once with thread_ts=100.0.
+      stdoutLines.length = 0;
       await runMessageSend(
-        { agent: 'iris', channel: CHANNEL, text: '3' },
-        { writeOutput: () => {} },
+        { agent: 'iris', channel: CHANNEL, threadTs: '100.0', text: '3' },
+        { writeOutput: (line) => stdoutLines.push(line) },
       );
-      assert.equal(posts.length, 1, 'revised resend must land once');
-      const body = posts[0] as { text?: string };
-      assert.match(String(body.text ?? ''), /3/);
+      assert.equal(posts.length, 1, 'revised threaded resend must land once');
+      assert.doesNotMatch(stdoutLines.join('\n'), /^HELD:/m);
+      assert.match(stdoutLines.join('\n'), /sent successfully/);
+      const body = posts[0]!;
+      assert.equal(body['thread_ts'], '100.0');
+      assert.match(String(body['text'] ?? ''), /3/);
     });
   } finally {
     setCursorDeliveryEnabledForTests(undefined);
