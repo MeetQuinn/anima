@@ -984,6 +984,96 @@ test('merge re-windows to ≤20 rows after union of two bounded plans', async ()
   });
 });
 
+test('extras-alone overflow is clipped so prepared envelope stays ≤16 KiB', async () => {
+  await withEnabledStore(async (store, agentId) => {
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '1.0',
+      text: 'hi',
+      userId: 'U1',
+    });
+    const item = slackItem({ channelId: 'C1', messageTs: '1.0', text: 'hi', userId: 'U1' });
+    item.previews = [{ text: 'P'.repeat(20_000), fromUrl: 'https://example.test/huge' }];
+    const prepared = await prepareCursorDelivery({ agentId, item, store });
+    assert.equal(prepared.kind, 'prepared');
+    if (prepared.kind !== 'prepared') return;
+    assert.ok(
+      Buffer.byteLength(prepared.plan.promptBody, 'utf8') <= CURSOR_DELIVERY_MAX_BYTES,
+      `envelope ${Buffer.byteLength(prepared.plan.promptBody, 'utf8')}`,
+    );
+  });
+});
+
+test('merge does not double-count overlapping omissions on the same surface', async () => {
+  await withEnabledStore(async (store, agentId) => {
+    for (let i = 1; i <= 40; i += 1) {
+      await store.observe({
+        teamId: 'T1',
+        channelId: 'C1',
+        messageTs: `${i}.0`,
+        text: `row-${i}`,
+        userId: 'U1',
+      });
+    }
+    const a = await prepareCursorDelivery({
+      agentId,
+      item: slackItem({ channelId: 'C1', messageTs: '40.0', text: 'row-40', id: 'a' }),
+      store,
+    });
+    const b = await prepareCursorDelivery({
+      agentId,
+      item: slackItem({ channelId: 'C1', messageTs: '40.0', text: 'row-40', id: 'b' }),
+      store,
+    });
+    assert.equal(a.kind, 'prepared');
+    assert.equal(b.kind, 'prepared');
+    if (a.kind !== 'prepared' || b.kind !== 'prepared') return;
+    const omittedA = a.plan.surfaces.reduce((n, s) => n + s.omittedCount, 0);
+    assert.ok(omittedA >= 1);
+    // Force multi-plan merge path with two identical overlapping windows.
+    const merged = mergeCursorDeliveryPlans(
+      [a.plan, b.plan],
+      slackItem({ channelId: 'C1', messageTs: '40.0', text: 'row-40' }),
+    );
+    const shown = merged.surfaces.reduce((n, s) => n + s.entries.length, 0);
+    const omitted = merged.surfaces.reduce((n, s) => n + s.omittedCount, 0);
+    // Unique pool is still ~40: shown + omitted ≈ 40, not 20+40.
+    assert.ok(shown + omitted <= 45, `shown=${shown} omitted=${omitted}`);
+    assert.ok(omitted <= omittedA + 5, `omitted ${omitted} should not be ~2× ${omittedA}`);
+    assert.match(merged.promptBody, /earlier message/);
+  });
+});
+
+test('settings read failure is fail-closed (not silent disable)', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cursor-settings-fail-'));
+  setCursorDeliveryEnabledForTests(undefined);
+  try {
+    // No agent configs; force ANIMA_HOME to a path without readable config
+    // by writing a file where config.json should be.
+    const { writeFile, mkdir } = await import('node:fs/promises');
+    await mkdir(stateDir, { recursive: true });
+    // settings service reads config.json as JSON store — corrupt it so parse throws.
+    await writeFile(join(stateDir, 'config.json'), '{not-json', 'utf8');
+    await withAnimaHome(stateDir, async () => {
+      // Override must be undefined so we hit readConfig.
+      const prepared = await prepareCursorDelivery({
+        agentId: 'anima',
+        item: slackItem({ channelId: 'C1', messageTs: '1.0', text: 'x' }),
+      });
+      // Fail-closed: not disabled.
+      assert.notEqual(prepared.kind, 'disabled');
+      // Either failed (settings) or failed later (no agents) — never silent off.
+      if (prepared.kind === 'failed') {
+        assert.equal(prepared.error.reason, 'store_error');
+      }
+    });
+  } finally {
+    setCursorDeliveryEnabledForTests(undefined);
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('prepare failure requeues without tombstone (retryable)', async () => {
   await withEnabledStore(async (store, agentId, queue) => {
     await store.markDegraded({ message: 'gap' });

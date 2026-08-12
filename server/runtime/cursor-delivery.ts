@@ -87,14 +87,40 @@ export function setCursorDeliveryEnabledForTests(enabled: boolean | undefined): 
   enabledOverride = enabled;
 }
 
-export async function isCursorDeliveryEnabled(): Promise<boolean> {
-  if (enabledOverride !== undefined) return enabledOverride;
+/**
+ * Resolve whether cursor delivery is on. Settings/read failures are errors
+ * (fail-closed), not silent disable — "enabled but unreadable" must not look
+ * like intentional off.
+ */
+export async function resolveCursorDeliveryEnabled(): Promise<
+  | { kind: 'enabled' }
+  | { kind: 'disabled' }
+  | { kind: 'error'; error: CursorDeliveryError }
+> {
+  if (enabledOverride !== undefined) {
+    return enabledOverride ? { kind: 'enabled' } : { kind: 'disabled' };
+  }
   try {
     const config = await defaultServerSettingsService.readConfig();
-    return config.cursorDelivery?.enabled === true;
-  } catch {
-    return false;
+    return config.cursorDelivery?.enabled === true
+      ? { kind: 'enabled' }
+      : { kind: 'disabled' };
+  } catch (error) {
+    return {
+      kind: 'error',
+      error: new CursorDeliveryError(
+        'store_error',
+        `cursorDelivery settings unreadable: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+    };
   }
+}
+
+/** Convenience: true only when explicitly enabled (throws on settings error). */
+export async function isCursorDeliveryEnabled(): Promise<boolean> {
+  const resolved = await resolveCursorDeliveryEnabled();
+  if (resolved.kind === 'error') throw resolved.error;
+  return resolved.kind === 'enabled';
 }
 
 /**
@@ -149,7 +175,9 @@ export async function prepareCursorDelivery(input: {
   item: InboxItem;
   store?: ObservedConversationStore;
 }): Promise<PrepareCursorDeliveryResult> {
-  if (!(await isCursorDeliveryEnabled())) return { kind: 'disabled' };
+  const enabled = await resolveCursorDeliveryEnabled();
+  if (enabled.kind === 'disabled') return { kind: 'disabled' };
+  if (enabled.kind === 'error') return { kind: 'failed', error: enabled.error };
   if (input.item.kind !== 'slack') return { kind: 'disabled' };
   const item = input.item;
   const store = input.store ?? observedConversationStoreForAgent(input.agentId);
@@ -200,6 +228,10 @@ export async function prepareCursorDelivery(input: {
       return { kind: 'already_delivered', settledItemIds: [item.id] };
     }
 
+    // Clip previews/files so extras alone cannot blow the 16 KiB envelope.
+    // Selection then budgets rows against the remaining capacity.
+    const triggerForEnvelope = clipTriggerExtrasForEnvelope(item);
+
     // Build raw per-surface candidates, then allocate ONE shared 20/16KiB budget
     // for the final provider-facing envelope (rows + Latest wake + previews/files).
     // nextDeliveredOrdinal is computed only from rows that survive that budget —
@@ -208,10 +240,20 @@ export async function prepareCursorDelivery(input: {
       triggerEventId: eventId,
       triggerSurfaceId,
       triggerOrdinal: triggerEntry.ordinal,
-      triggerItem: item,
+      triggerItem: triggerForEnvelope,
     });
 
-    const promptBody = renderCursorDeliveryEnvelope(item, surfaces);
+    const promptBody = renderCursorDeliveryEnvelope(triggerForEnvelope, surfaces);
+    if (Buffer.byteLength(promptBody, 'utf8') > CURSOR_DELIVERY_MAX_BYTES) {
+      // Pathological: should not happen after envelope-aware selection + clip.
+      return {
+        kind: 'failed',
+        error: new CursorDeliveryError(
+          'store_error',
+          `cursor envelope exceeds ${CURSOR_DELIVERY_MAX_BYTES} bytes after budgeting`,
+        ),
+      };
+    }
     return {
       kind: 'prepared',
       plan: {
@@ -512,7 +554,9 @@ export function compareByConversationTime(
 /**
  * Pure union of plans by exact surface id (no re-window). Entries deduped by
  * eventId; cursorExpected prefers the more conservative (lower) present ordinal.
- * omittedCount is summed for later totalCandidates accounting.
+ *
+ * Per-surface omitted pool is max(entries_i + omitted_i) − unique(entries), not
+ * a sum of plan-local omitted counts (overlapping windows would double-count).
  */
 export function mergeSurfacePlans(plans: CursorDeliveryPlan[]): SurfaceDeliveryPlan[] {
   type Acc = {
@@ -520,11 +564,13 @@ export function mergeSurfacePlans(plans: CursorDeliveryPlan[]): SurfaceDeliveryP
     cursorExpected: AdvanceCursorExpected;
     establishOnly: boolean;
     entries: ObservedConversationEntry[];
-    omittedCount: number;
+    /** Max journal pool size seen for this surface (shown+omitted) across plans. */
+    maxPool: number;
   };
   const bySurface = new Map<string, Acc>();
   for (const plan of plans) {
     for (const surface of plan.surfaces) {
+      const pool = surface.entries.length + surface.omittedCount;
       const existing = bySurface.get(surface.surfaceId);
       if (!existing) {
         bySurface.set(surface.surfaceId, {
@@ -532,7 +578,7 @@ export function mergeSurfacePlans(plans: CursorDeliveryPlan[]): SurfaceDeliveryP
           cursorExpected: surface.cursorExpected,
           establishOnly: surface.establishOnly,
           entries: [...surface.entries],
-          omittedCount: surface.omittedCount,
+          maxPool: pool,
         });
         continue;
       }
@@ -542,7 +588,7 @@ export function mergeSurfacePlans(plans: CursorDeliveryPlan[]): SurfaceDeliveryP
       existing.entries = [...entryById.values()].sort((a, b) => a.ordinal - b.ordinal);
       existing.establishOnly =
         existing.establishOnly && surface.establishOnly && existing.entries.length === 0;
-      existing.omittedCount = Math.max(existing.omittedCount, surface.omittedCount);
+      existing.maxPool = Math.max(existing.maxPool, pool);
       if (
         existing.cursorExpected.status === 'present'
         && surface.cursorExpected.status === 'present'
@@ -556,6 +602,8 @@ export function mergeSurfacePlans(plans: CursorDeliveryPlan[]): SurfaceDeliveryP
     const last = acc.entries[acc.entries.length - 1];
     let floor = 0;
     if (acc.cursorExpected.status === 'present') floor = acc.cursorExpected.deliveredOrdinal;
+    // Dedupe: omitted = pool − unique shown (never sum of overlapping plan omissions).
+    const omittedCount = Math.max(0, acc.maxPool - acc.entries.length);
     return {
       surfaceId: acc.surfaceId,
       cursorExpected: acc.cursorExpected,
@@ -564,7 +612,7 @@ export function mergeSurfacePlans(plans: CursorDeliveryPlan[]): SurfaceDeliveryP
         ? { lastDeliveredEventId: last.eventId, lastDeliveredMessageTs: last.messageTs }
         : {}),
       entries: acc.entries,
-      omittedCount: acc.omittedCount,
+      omittedCount,
       establishOnly: acc.establishOnly && acc.entries.length === 0,
     };
   });
@@ -584,32 +632,33 @@ export function mergeCursorDeliveryPlans(
   }
   if (plans.length === 1) {
     const only = plans[0]!;
+    const clipped = clipTriggerExtrasForEnvelope(triggerItem);
     return {
       ...only,
-      promptBody: renderCursorDeliveryEnvelope(triggerItem, only.surfaces),
+      promptBody: renderCursorDeliveryEnvelope(clipped, only.surfaces),
       committed: false,
     };
   }
 
   const unioned = mergeSurfacePlans(plans);
-  let sourceOmitted = 0;
-  for (const plan of plans) {
-    for (const s of plan.surfaces) sourceOmitted += s.omittedCount;
-  }
+  // totalCandidates = unique shown + per-surface deduped omitted (already on unioned).
+  let totalCandidates = 0;
   type Tagged = ObservedConversationEntry & { _surfaceId: string };
   const tagged: Tagged[] = [];
   for (const surface of unioned) {
     if (surface.establishOnly) continue;
+    totalCandidates += surface.entries.length + surface.omittedCount;
     for (const entry of surface.entries) {
       tagged.push({ ...entry, _surfaceId: surface.surfaceId });
     }
   }
-  const totalCandidates = tagged.length + sourceOmitted;
+  totalCandidates = Math.max(totalCandidates, tagged.length);
+  const clippedTrigger = clipTriggerExtrasForEnvelope(triggerItem);
   tagged.sort(compareByConversationTime);
   const selected = selectNewestFittingForEnvelope(tagged, {
     maxMessages: CURSOR_DELIVERY_MAX_MESSAGES,
     maxBytes: CURSOR_DELIVERY_MAX_BYTES,
-    triggerItem,
+    triggerItem: clippedTrigger,
     totalCandidates,
   });
   const raw: SurfaceCandidates[] = unioned.map((s) => ({
@@ -637,7 +686,7 @@ export function mergeCursorDeliveryPlans(
     triggerItemId: primary.triggerItemId,
     triggerEventId: primary.triggerEventId,
     surfaces,
-    promptBody: renderCursorDeliveryEnvelope(triggerItem, surfaces),
+    promptBody: renderCursorDeliveryEnvelope(clippedTrigger, surfaces),
     committed: false,
   };
 }
@@ -704,11 +753,8 @@ export function selectNewestFittingForEnvelope(
   for (let i = ordered.length - 1; i >= 0; i -= 1) {
     const trial = [...selected, ordered[i]!].sort(compareByConversationTime);
     if (!fits(trial)) {
-      if (selected.length === 0) {
-        // Single oversized row: keep it (clipped lines still may exceed with extras);
-        // still include so trigger isn't lost; envelope builder clips message text.
-        selected.push(ordered[i]!);
-      }
+      // Never force-keep a row that makes the envelope over-cap (extras-alone
+      // overflow is handled by clipping trigger extras before selection).
       break;
     }
     selected.length = 0;
@@ -843,12 +889,15 @@ export function renderCursorDeliveryEnvelopeFromEntries(
 
 /**
  * Truncate to maxBytes UTF-8 without splitting code points / surrogate pairs.
- * Used for per-message clip only — not for post-plan envelope mutation.
+ * Used for per-message clip and extras clipping — not for post-plan row mutation.
  */
 export function truncateUtf8(text: string, maxBytes: number): string {
+  if (maxBytes <= 0) return '';
   if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
   const ellipsis = '…';
-  const budget = Math.max(0, maxBytes - Buffer.byteLength(ellipsis, 'utf8'));
+  const ellipsisBytes = Buffer.byteLength(ellipsis, 'utf8');
+  if (maxBytes < ellipsisBytes) return '';
+  const budget = maxBytes - ellipsisBytes;
   let result = '';
   for (const ch of text) {
     // for...of yields full code points (no lone surrogates).
@@ -857,6 +906,84 @@ export function truncateUtf8(text: string, maxBytes: number): string {
     result = next;
   }
   return `${result}${ellipsis}`;
+}
+
+/**
+ * Clip previews/files so chrome + Latest wake + extras fit in the envelope
+ * budget even with zero snapshot rows. Never leave an over-cap prepared plan.
+ */
+export function clipTriggerExtrasForEnvelope(trigger: SlackInboxItem): SlackInboxItem {
+  // Start from empty-row envelope; shrink extras until under cap.
+  let previews = trigger.previews?.map((p) => ({ ...p }));
+  let files = trigger.files?.map((f) => ({ ...f }));
+  let attention = trigger.attentionSuggestion;
+
+  const measure = (): number => {
+    const item: SlackInboxItem = {
+      ...trigger,
+      ...(previews ? { previews } : { previews: undefined }),
+      ...(files ? { files } : { files: undefined }),
+      ...(attention ? { attentionSuggestion: attention } : {}),
+    };
+    // Clear optional fields properly
+    const cleaned = { ...item };
+    if (!previews?.length) delete (cleaned as { previews?: unknown }).previews;
+    else cleaned.previews = previews;
+    if (!files?.length) delete (cleaned as { files?: unknown }).files;
+    else cleaned.files = files;
+    if (!attention) delete (cleaned as { attentionSuggestion?: unknown }).attentionSuggestion;
+    else cleaned.attentionSuggestion = attention;
+    return Buffer.byteLength(
+      renderCursorDeliveryEnvelopeFromEntries(cleaned, [], 0),
+      'utf8',
+    );
+  };
+
+  // Drop attention first if needed.
+  if (measure() > CURSOR_DELIVERY_MAX_BYTES) {
+    attention = undefined;
+  }
+  // Progressively clip preview texts.
+  if (previews?.length) {
+    let guard = 0;
+    while (measure() > CURSOR_DELIVERY_MAX_BYTES && guard < 40) {
+      guard += 1;
+      let clippedAny = false;
+      previews = previews.map((p) => {
+        const bytes = Buffer.byteLength(p.text, 'utf8');
+        if (bytes <= 32) return p;
+        clippedAny = true;
+        return { ...p, text: truncateUtf8(p.text, Math.max(32, Math.floor(bytes / 2))) };
+      });
+      if (!clippedAny) {
+        // Drop previews entirely.
+        previews = undefined;
+        break;
+      }
+    }
+  }
+  if (measure() > CURSOR_DELIVERY_MAX_BYTES && files?.length) {
+    // Strip file display names, then drop files if still over.
+    files = files.map((f) => ({ ...f, name: f.id }));
+    if (measure() > CURSOR_DELIVERY_MAX_BYTES) {
+      files = undefined;
+    }
+  }
+  // Last resort: empty extras; Latest wake text already clipped per-message.
+  if (measure() > CURSOR_DELIVERY_MAX_BYTES) {
+    previews = undefined;
+    files = undefined;
+    attention = undefined;
+  }
+
+  const out: SlackInboxItem = { ...trigger };
+  if (previews?.length) out.previews = previews;
+  else delete (out as { previews?: unknown }).previews;
+  if (files?.length) out.files = files;
+  else delete (out as { files?: unknown }).files;
+  if (attention) out.attentionSuggestion = attention;
+  else delete (out as { attentionSuggestion?: unknown }).attentionSuggestion;
+  return out;
 }
 
 /** Primary surface id for a plan (grouping key for follow-up batching). */
