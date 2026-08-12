@@ -195,15 +195,13 @@ export async function prepareCursorDelivery(input: {
       return { kind: 'already_delivered', settledItemIds: [item.id] };
     }
 
-    const surfaces: SurfaceDeliveryPlan[] = [];
-    for (const surfaceId of surfaceIds) {
-      const plan = await buildSurfacePlan(store, surfaceId, {
-        triggerEventId: eventId,
-        triggerOrdinal: surfaceId === triggerSurfaceId ? triggerEntry.ordinal : undefined,
-        isResponseThreadEstablish: surfaceId !== triggerSurfaceId,
-      });
-      surfaces.push(plan);
-    }
+    // Build raw per-surface candidates, then allocate ONE shared 20/16KiB budget
+    // across the whole cursor view (not per surface).
+    const surfaces = await buildSharedBudgetSurfacePlans(store, surfaceIds, {
+      triggerEventId: eventId,
+      triggerSurfaceId,
+      triggerOrdinal: triggerEntry.ordinal,
+    });
 
     const promptBody = renderCursorDeliveryPrompt(item, surfaces);
     return {
@@ -361,61 +359,186 @@ export async function coalesceCoveredWakes(input: {
 
 // --- internals ---
 
-async function buildSurfacePlan(
+interface SurfaceCandidates {
+  surfaceId: string;
+  cursorExpected: AdvanceCursorExpected;
+  cursorDeliveredOrdinal: number; // 0 if absent
+  isResponseThreadEstablish: boolean;
+  candidates: ObservedConversationEntry[];
+}
+
+/**
+ * Collect candidates per surface, then select under a single shared budget.
+ * Surfaces with no selected rows do not advance past their current cursor
+ * (except empty child-thread establish → present@0).
+ */
+async function buildSharedBudgetSurfacePlans(
   store: ObservedConversationStore,
-  surfaceId: string,
+  surfaceIds: string[],
   opts: {
     triggerEventId: string;
-    triggerOrdinal?: number;
-    isResponseThreadEstablish: boolean;
+    triggerSurfaceId: string;
+    triggerOrdinal: number;
   },
-): Promise<SurfaceDeliveryPlan> {
-  const cursor = await store.getCursor(surfaceId);
-  const cursorExpected: AdvanceCursorExpected =
-    cursor.status === 'absent'
-      ? { status: 'absent' }
-      : { status: 'present', deliveredOrdinal: cursor.deliveredOrdinal };
-
-  const afterOrdinal =
-    cursor.status === 'present' ? cursor.deliveredOrdinal : 0;
-  // Read a generous window; bound selection is separate.
-  const all = await store.readJournal(surfaceId, { afterOrdinal, limit: 5_000 });
-
-  // Response-thread with no rows yet: establish present@0 only.
-  if (opts.isResponseThreadEstablish && all.length === 0) {
-    return {
+): Promise<SurfaceDeliveryPlan[]> {
+  const raw: SurfaceCandidates[] = [];
+  for (const surfaceId of surfaceIds) {
+    const cursor = await store.getCursor(surfaceId);
+    const cursorExpected: AdvanceCursorExpected =
+      cursor.status === 'absent'
+        ? { status: 'absent' }
+        : { status: 'present', deliveredOrdinal: cursor.deliveredOrdinal };
+    const afterOrdinal = cursor.status === 'present' ? cursor.deliveredOrdinal : 0;
+    const candidates = await store.readJournal(surfaceId, { afterOrdinal, limit: 5_000 });
+    const isResponseThreadEstablish =
+      surfaceId !== opts.triggerSurfaceId && candidates.length === 0;
+    raw.push({
       surfaceId,
       cursorExpected,
-      nextDeliveredOrdinal: 0,
-      entries: [],
-      omittedCount: 0,
-      establishOnly: true,
-    };
+      cursorDeliveredOrdinal: cursor.status === 'present' ? cursor.deliveredOrdinal : 0,
+      isResponseThreadEstablish,
+      candidates,
+    });
   }
 
-  const bounded = selectNewestFitting(all, {
+  // Tagged candidates for shared selection (establish-only surfaces contribute none).
+  type Tagged = ObservedConversationEntry & { _surfaceId: string };
+  const tagged: Tagged[] = [];
+  for (const surface of raw) {
+    if (surface.isResponseThreadEstablish) continue;
+    for (const entry of surface.candidates) {
+      tagged.push({ ...entry, _surfaceId: surface.surfaceId });
+    }
+  }
+
+  const mustInclude =
+    tagged.some((t) => t.eventId === opts.triggerEventId)
+      ? opts.triggerEventId
+      : undefined;
+  const selected = selectNewestFitting(tagged, {
     maxMessages: CURSOR_DELIVERY_MAX_MESSAGES,
     maxBytes: CURSOR_DELIVERY_MAX_BYTES,
-    mustIncludeEventId: opts.triggerOrdinal !== undefined ? opts.triggerEventId : undefined,
+    mustIncludeEventId: mustInclude,
   });
+  const selectedBySurface = new Map<string, ObservedConversationEntry[]>();
+  for (const entry of selected.entries) {
+    const surfaceId = (entry as Tagged)._surfaceId;
+    const list = selectedBySurface.get(surfaceId) ?? [];
+    // Strip tag before storing.
+    const { _surfaceId: _, ...rest } = entry as Tagged;
+    list.push(rest);
+    selectedBySurface.set(surfaceId, list);
+  }
 
-  const last = bounded.entries[bounded.entries.length - 1];
-  const nextDeliveredOrdinal = last
-    ? last.ordinal
-    : cursor.status === 'present'
-      ? cursor.deliveredOrdinal
-      : 0;
+  // Total omitted across the whole view (exact count for the shared bound).
+  const totalCandidates = tagged.length;
+  const totalSelected = selected.entries.length;
+  const totalOmitted = Math.max(0, totalCandidates - totalSelected);
 
+  // Assign omitted count to the primary/trigger surface for display; others 0
+  // so the prompt shows one exact total.
+  const plans: SurfaceDeliveryPlan[] = [];
+  for (const surface of raw) {
+    if (surface.isResponseThreadEstablish) {
+      plans.push({
+        surfaceId: surface.surfaceId,
+        cursorExpected: surface.cursorExpected,
+        nextDeliveredOrdinal: 0,
+        entries: [],
+        omittedCount: 0,
+        establishOnly: true,
+      });
+      continue;
+    }
+    const entries = selectedBySurface.get(surface.surfaceId) ?? [];
+    const last = entries[entries.length - 1];
+    // Only advance through what was actually selected/shown.
+    const nextDeliveredOrdinal = last
+      ? last.ordinal
+      : surface.cursorDeliveredOrdinal;
+    const isTriggerSurface = surface.surfaceId === opts.triggerSurfaceId;
+    plans.push({
+      surfaceId: surface.surfaceId,
+      cursorExpected: surface.cursorExpected,
+      nextDeliveredOrdinal,
+      ...(last
+        ? { lastDeliveredEventId: last.eventId, lastDeliveredMessageTs: last.messageTs }
+        : {}),
+      entries,
+      omittedCount: isTriggerSurface ? totalOmitted : 0,
+      establishOnly: false,
+    });
+  }
+  return plans;
+}
+
+/**
+ * Merge multiple delivery plans by exact surface id (not primary only).
+ * Used when batching two channel-root wakes that share a channel surface but
+ * have distinct response-thread surfaces.
+ */
+export function mergeSurfacePlans(plans: CursorDeliveryPlan[]): SurfaceDeliveryPlan[] {
+  const bySurface = new Map<string, SurfaceDeliveryPlan>();
+  for (const plan of plans) {
+    for (const surface of plan.surfaces) {
+      const existing = bySurface.get(surface.surfaceId);
+      if (!existing) {
+        bySurface.set(surface.surfaceId, {
+          ...surface,
+          entries: [...surface.entries],
+        });
+        continue;
+      }
+      // Keep farthest nextDeliveredOrdinal and union entries by eventId.
+      const entryById = new Map<string, ObservedConversationEntry>();
+      for (const e of existing.entries) entryById.set(e.eventId, e);
+      for (const e of surface.entries) entryById.set(e.eventId, e);
+      const entries = [...entryById.values()].sort((a, b) => a.ordinal - b.ordinal);
+      const farther = surface.nextDeliveredOrdinal >= existing.nextDeliveredOrdinal
+        ? surface
+        : existing;
+      bySurface.set(surface.surfaceId, {
+        surfaceId: surface.surfaceId,
+        // Prefer the expectation from the farther plan (same prepare epoch when batched).
+        cursorExpected: farther.cursorExpected,
+        nextDeliveredOrdinal: farther.nextDeliveredOrdinal,
+        ...(farther.lastDeliveredEventId
+          ? { lastDeliveredEventId: farther.lastDeliveredEventId }
+          : {}),
+        ...(farther.lastDeliveredMessageTs
+          ? { lastDeliveredMessageTs: farther.lastDeliveredMessageTs }
+          : {}),
+        entries,
+        omittedCount: Math.max(existing.omittedCount, surface.omittedCount),
+        establishOnly: existing.establishOnly && surface.establishOnly && entries.length === 0,
+      });
+    }
+  }
+  return [...bySurface.values()];
+}
+
+/** Merge plans and rebuild prompt from the primary trigger item. */
+export function mergeCursorDeliveryPlans(
+  plans: CursorDeliveryPlan[],
+  triggerItem: SlackInboxItem,
+): CursorDeliveryPlan {
+  if (plans.length === 0) {
+    throw new Error('mergeCursorDeliveryPlans requires at least one plan');
+  }
+  const surfaces = mergeSurfacePlans(plans);
+  const primary = plans.reduce((a, b) =>
+    Math.max(...a.surfaces.map((s) => s.nextDeliveredOrdinal))
+      >= Math.max(...b.surfaces.map((s) => s.nextDeliveredOrdinal))
+      ? a
+      : b,
+  );
   return {
-    surfaceId,
-    cursorExpected,
-    nextDeliveredOrdinal,
-    ...(last
-      ? { lastDeliveredEventId: last.eventId, lastDeliveredMessageTs: last.messageTs }
-      : {}),
-    entries: bounded.entries,
-    omittedCount: bounded.omittedCount,
-    establishOnly: false,
+    agentId: primary.agentId,
+    triggerItemId: primary.triggerItemId,
+    triggerEventId: primary.triggerEventId,
+    surfaces,
+    promptBody: renderCursorDeliveryPrompt(triggerItem, surfaces),
+    committed: false,
   };
 }
 

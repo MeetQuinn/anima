@@ -218,8 +218,9 @@ export class AgentRuntimeWorker {
         await this.queue.requeue(item.id);
         return false;
       }
-      await this.processClaimedItem(item);
-      return true;
+      const outcome = await this.processClaimedItem(item);
+      // 'deferred' stops this drain cycle (item requeued without tombstone).
+      return outcome !== 'deferred';
     } finally {
       releaseRunSlot();
     }
@@ -239,7 +240,13 @@ export class AgentRuntimeWorker {
     return result;
   }
 
-  private async processClaimedItem(item: InboxItem): Promise<void> {
+  /**
+   * @returns `'ran'` when a provider turn ran; `'settled'` when the item was
+   * completed without a turn; `'deferred'` when the item was requeued without
+   * tombstone (e.g. cursor-delivery prepare fail-closed) — stop this drain
+   * cycle to avoid a hot reclaim loop.
+   */
+  private async processClaimedItem(item: InboxItem): Promise<'ran' | 'settled' | 'deferred'> {
     let context: RuntimeItemContext | undefined;
     let memoryCoherenceBeforeDigest: string | undefined;
     let runtimeFailureRecorded = false;
@@ -293,10 +300,17 @@ export class AgentRuntimeWorker {
           });
         }
         releaseFollowups?.();
-        return;
+        return 'settled';
       }
       if (prepared.kind === 'failed') {
-        throw prepared.error;
+        // Fail-closed without tombstone: requeue so repair can retry later.
+        // Do not queue.fail — that moves the id to seen and loses the wake.
+        this.logger.error(
+          `Cursor delivery prepare failed for item ${item.id}: ${prepared.error.message} (${prepared.error.reason})`,
+        );
+        await this.queue.requeue(item.id);
+        releaseFollowups?.();
+        return 'deferred';
       }
       if (prepared.kind === 'prepared') {
         context.cursorDelivery = prepared.plan;
@@ -441,6 +455,7 @@ export class AgentRuntimeWorker {
       await this.queue.complete(item.id);
       await this.queue.completeAppendedTo(item.id);
       appendedFollowupsSettled = true;
+      return 'ran';
     } catch (error) {
       releaseFollowups?.();
       if (!itemAbort.signal.aborted) itemAbort.abort('failed');
@@ -479,6 +494,7 @@ export class AgentRuntimeWorker {
         }
         this.logger.error(`Runtime worker failed for item ${item.id}: ${errorMessage(error)}`);
       }
+      return 'ran';
     } finally {
       if (context) {
         await clearActiveRuntimeItem({

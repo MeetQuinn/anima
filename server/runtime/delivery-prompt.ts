@@ -67,11 +67,22 @@ export interface CodeAgentPromptContext {
  *   Scheduled from: [channel_id=C-team thread_ts=1770000020.000001 message_ts=1770000010.000001]
  */
 export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgentPromptContext = {}): string {
+  // Restart continuation first — but when a cursor delta was prepared, append it
+  // so rows that arrived during the crash are shown before the cursor advances.
   if (event.handling.resumeReason === 'runtime_restart') {
-    return buildRuntimeRestartContinuationDeliveryPrompt({
+    const continuation = buildRuntimeRestartContinuationDeliveryPrompt({
       itemId: event.id,
       time: event.handling.startedAt ?? event.receivedAt,
     });
+    if (context.cursorDeliveryPromptBody && event.kind === 'slack') {
+      return [
+        continuation,
+        context.cursorDeliveryPromptBody,
+        formatSlackMessagePreviews(event.previews),
+        formatAttachedFiles(event.files),
+      ].filter(Boolean).join('\n\n');
+    }
+    return continuation;
   }
   if (event.kind === 'reminder') return buildReminderDeliveryPrompt(event, context);
   if (event.kind === 'memory_coherence') return buildMemoryCoherenceDeliveryPrompt(event, context.memoryCoherence);

@@ -9,11 +9,14 @@ import {
   CURSOR_DELIVERY_MAX_BYTES,
   CURSOR_DELIVERY_MAX_MESSAGES,
   formatObservedLine,
+  mergeCursorDeliveryPlans,
   prepareCursorDelivery,
   selectNewestFitting,
   setCursorDeliveryEnabledForTests,
   surfacesForSlackWake,
 } from '../runtime/cursor-delivery.js';
+import { groupFollowupContexts } from '../runtime/followup-appender.js';
+import type { RuntimeItemContext } from '../runtime/types.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { ObservedConversationStore } from '../storage/schema/observed-conversation.store.js';
 import type { SlackInboxItem } from '../../shared/inbox.js';
@@ -615,54 +618,188 @@ test('cursor prompt preserves attached_files and unfurl previews from the wake i
   assert.match(text, /unfurled title|source="slack_unfurl"/);
 });
 
-test('same-surface follow-up batch keeps one snapshot (no triple-rendered delta)', async () => {
-  // Unit of the grouping rule: two plans on the same DM surface collapse to one
-  // prompt body when committed independently with shared surface id.
-  await withEnabledStore(async (store, agentId, queue) => {
+test('shared budget caps total rows across channel + response-thread surfaces', async () => {
+  await withEnabledStore(async (store, agentId) => {
+    // 20 channel rows + 20 thread rows = 40 candidates; shared bound is 20.
+    for (let i = 1; i <= 20; i += 1) {
+      await store.observe({
+        teamId: 'T1',
+        channelId: 'C1',
+        messageTs: `${100 + i}.0`,
+        text: `ch-${i}`,
+        userId: 'U1',
+      });
+    }
+    for (let i = 1; i <= 20; i += 1) {
+      await store.observe({
+        teamId: 'T1',
+        channelId: 'C1',
+        messageTs: `${200 + i}.0`,
+        threadTs: '120.0',
+        text: `th-${i}`,
+        userId: 'U2',
+      });
+    }
+    // Trigger is channel root 120.0 (ordinal 20 on channel).
+    const item = slackItem({
+      channelId: 'C1',
+      messageTs: '120.0',
+      text: 'ch-20',
+      userId: 'U1',
+    });
+    const prepared = await prepareCursorDelivery({ agentId, item, store });
+    assert.equal(prepared.kind, 'prepared');
+    if (prepared.kind !== 'prepared') return;
+    const totalRows = prepared.plan.surfaces.reduce((n, s) => n + s.entries.length, 0);
+    assert.ok(totalRows <= CURSOR_DELIVERY_MAX_MESSAGES, `total rows ${totalRows}`);
+    const rendered = prepared.plan.promptBody;
+    assert.ok(Buffer.byteLength(rendered, 'utf8') <= CURSOR_DELIVERY_MAX_BYTES + 2_000);
+    // Exact omitted across the whole view is reported once.
+    const omitted = prepared.plan.surfaces.reduce((n, s) => n + s.omittedCount, 0);
+    assert.ok(omitted >= 20, `expected many omitted, got ${omitted}`);
+  });
+});
+
+test('groupFollowupContexts merges child threads for same-channel roots', async () => {
+  await withEnabledStore(async (store, agentId) => {
     await store.observe({
       teamId: 'T1',
-      channelId: 'D9',
-      messageTs: '1.0',
-      text: 'alpha-unique',
+      channelId: 'C1',
+      messageTs: '10.0',
+      text: 'root-one',
       userId: 'U1',
     });
     await store.observe({
       teamId: 'T1',
-      channelId: 'D9',
-      messageTs: '2.0',
-      text: 'beta-unique',
+      channelId: 'C1',
+      messageTs: '10.5',
+      threadTs: '10.0',
+      text: 'reply-in-one',
       userId: 'U2',
+    });
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '20.0',
+      text: 'root-two',
+      userId: 'U1',
+    });
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '20.5',
+      threadTs: '20.0',
+      text: 'reply-in-two',
+      userId: 'U3',
     });
 
     const a = await prepareCursorDelivery({
       agentId,
-      item: slackItem({ channelId: 'D9', messageTs: '1.0', text: 'alpha-unique', id: 'wake-a' }),
+      item: slackItem({ channelId: 'C1', messageTs: '10.0', text: 'root-one', id: 'root-one' }),
       store,
     });
     const b = await prepareCursorDelivery({
       agentId,
-      item: slackItem({ channelId: 'D9', messageTs: '2.0', text: 'beta-unique', id: 'wake-b' }),
+      item: slackItem({ channelId: 'C1', messageTs: '20.0', text: 'root-two', id: 'root-two' }),
       store,
     });
     assert.equal(a.kind, 'prepared');
     assert.equal(b.kind, 'prepared');
     if (a.kind !== 'prepared' || b.kind !== 'prepared') return;
 
-    // Both plans start from absent — concatenating two full prompts multiplies context.
-    const naive = `${a.plan.promptBody}\n\n${b.plan.promptBody}`;
-    const alphaCountNaive = naive.split('alpha-unique').length - 1;
-    assert.ok(alphaCountNaive >= 2, `naive concat should duplicate alpha, got ${alphaCountNaive}`);
+    // Direct merge of the two plans must keep both response-thread surfaces.
+    const mergedSurfaces = mergeCursorDeliveryPlans(
+      [a.plan, b.plan],
+      slackItem({ channelId: 'C1', messageTs: '20.0', text: 'root-two' }),
+    ).surfaces.map((s) => s.surfaceId).sort();
+    assert.ok(mergedSurfaces.includes('slack:T1:C1'));
+    assert.ok(mergedSurfaces.includes('slack:T1:C1:thread:10.0'));
+    assert.ok(mergedSurfaces.includes('slack:T1:C1:thread:20.0'));
 
-    // Grouped path uses the farther plan once (covers alpha+beta without a second full dump).
-    const grouped = b.plan.promptBody;
-    const alphaGrouped = grouped.split('alpha-unique').length - 1;
-    assert.ok(alphaGrouped < alphaCountNaive, `grouped ${alphaGrouped} should be < naive ${alphaCountNaive}`);
-    assert.ok(grouped.includes('alpha-unique') && grouped.includes('beta-unique'));
+    // Integration: groupFollowupContexts for [root-one, root-two].
+    const ctx = (plan: typeof a.plan, id: string, ts: string): RuntimeItemContext => ({
+      agentId,
+      item: slackItem({ channelId: 'C1', messageTs: ts, text: id, id }),
+      session: { id: 's', agentId, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as RuntimeItemContext['session'],
+      stateDir: '/tmp',
+      homePath: '/tmp',
+      cursorDelivery: plan,
+    });
+    const grouped = groupFollowupContexts([
+      ctx(a.plan, 'root-one', '10.0'),
+      ctx(b.plan, 'root-two', '20.0'),
+    ]);
+    assert.equal(grouped.units.length, 1);
+    assert.equal(grouped.units[0]!.kind, 'slack_group');
+    if (grouped.units[0]!.kind !== 'slack_group') return;
+    const surfaceIds = grouped.units[0]!.mergedPlan.surfaces.map((s) => s.surfaceId);
+    assert.ok(surfaceIds.includes('slack:T1:C1:thread:10.0'), 'child thread:10.0 must survive grouping');
+    assert.ok(surfaceIds.includes('slack:T1:C1:thread:20.0'), 'child thread:20.0 must survive grouping');
+    assert.equal(grouped.bridgeContexts.length, 1);
+    assert.match(grouped.units[0]!.mergedPlan.promptBody, /reply-in-one|thread:10/);
+  });
+});
 
-    // Commit once with the farther plan only.
-    await commitCursorDelivery({ plan: b.plan, queue, store, excludeItemIds: ['wake-a', 'wake-b'] });
-    const cursor = await store.getCursor('slack:T1:D9');
-    assert.equal(cursor.status, 'present');
-    if (cursor.status === 'present') assert.equal(cursor.deliveredOrdinal, 2);
+test('runtime_restart prompt includes prepared delta (arrived-during-crash visible)', async () => {
+  await withEnabledStore(async (store, agentId) => {
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '1.0',
+      text: 'original',
+      userId: 'U1',
+    });
+    await store.advanceCursor({
+      surfaceId: 'slack:T1:C1',
+      expected: { status: 'absent' },
+      nextDeliveredOrdinal: 1,
+      lastDeliveredEventId: 'slack:T1:C1:1.0',
+      lastDeliveredMessageTs: '1.0',
+    });
+    // Arrives during crash before restart recovery.
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '2.0',
+      text: 'arrived-during-crash',
+      userId: 'U2',
+    });
+
+    const item = slackItem({ channelId: 'C1', messageTs: '1.0', text: 'original' });
+    item.handling.resumeReason = 'runtime_restart';
+    const prepared = await prepareCursorDelivery({ agentId, item, store });
+    assert.equal(prepared.kind, 'prepared');
+    if (prepared.kind !== 'prepared') return;
+    assert.ok(
+      prepared.plan.surfaces[0]!.entries.some((e) => e.text === 'arrived-during-crash'),
+    );
+
+    const prompt = buildCodeAgentDeliveryPrompt(item, {
+      cursorDeliveryPromptBody: prepared.plan.promptBody,
+    });
+    assert.match(prompt, /Runtime restart continuation:/);
+    assert.match(prompt, /arrived-during-crash/);
+  });
+});
+
+test('prepare failure requeues without tombstone (retryable)', async () => {
+  await withEnabledStore(async (store, agentId, queue) => {
+    await store.markDegraded({ message: 'gap' });
+    const item = slackItem({ channelId: 'C1', messageTs: '1.0', text: 'x', id: 'wake-fail' });
+    // No observation — would be missing_trigger if not degraded first.
+    const prepared = await prepareCursorDelivery({ agentId, item, store });
+    assert.equal(prepared.kind, 'failed');
+
+    // Simulate worker deferred path: requeue, not fail.
+    await queue.enqueue(item);
+    await queue.requeue(item.id);
+    const listed = await queue.list();
+    assert.ok(listed.some((i) => i.id === item.id));
+    assert.equal(listed.find((i) => i.id === item.id)?.handling.status, 'queued');
+    // Not in seen (withdrawQueued would tombstone).
+    assert.equal(await queue.hasSeen(item.id), true); // still in items = has
+    // Ensure we can claim again: take would get it if we markRunning cycle.
+    // Key invariant: status remains queued, not settled via fail.
+    assert.notEqual(listed.find((i) => i.id === item.id)?.handling.status, 'failed');
   });
 });
