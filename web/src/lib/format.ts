@@ -12,10 +12,47 @@ export function formatBytes(bytes: number): string {
 
 // ---- tokens ---------------------------------------------------------------
 
-export function formatTokens(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 999_500) return `${Math.round(n / 1000)}k`;
-  return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+/**
+ * Units for `formatTokens`, largest first. Index order is load-bearing: a
+ * mantissa that rounds up to 1000 is re-formatted against the entry one step
+ * earlier in this list.
+ */
+const TOKEN_UNITS = [
+  { limit: 1_000_000_000, suffix: 'B' },
+  { limit: 1_000_000, suffix: 'M' },
+  { limit: 1_000, suffix: 'K' },
+] as const;
+
+/**
+ * Roughly three significant figures: a mantissa below 100 keeps one decimal,
+ * 100 and above drops it. `87.6` and `876` carry the same information, and the
+ * decimal on the larger one is noise in a column of numbers meant to be
+ * compared at a glance.
+ */
+function trimFixed(value: number): string {
+  return value >= 100 ? value.toFixed(0) : value.toFixed(1).replace(/\.0$/, '');
+}
+
+/**
+ * "2.4K" / "87.6K" / "1M" / "2.5B" — a token count at reading precision.
+ *
+ * Rounding can carry the mantissa into the next unit: 999,500 divided by 1,000
+ * is 999.5, which rounds to a printed `1000`. A "1000K" is a number wearing the
+ * wrong unit, so the value is re-formatted one unit up and reads `1M`. There is
+ * no unit above `B`, so a mantissa that large is printed as-is.
+ */
+export function formatTokens(value: number): string {
+  for (let i = 0; i < TOKEN_UNITS.length; i++) {
+    const { limit, suffix } = TOKEN_UNITS[i]!;
+    if (value < limit) continue;
+    const mantissa = trimFixed(value / limit);
+    if (Number(mantissa) >= 1000 && i > 0) {
+      const promoted = TOKEN_UNITS[i - 1]!;
+      return `${trimFixed(value / promoted.limit)}${promoted.suffix}`;
+    }
+    return `${mantissa}${suffix}`;
+  }
+  return value.toLocaleString();
 }
 
 // ---- date / time ----------------------------------------------------------

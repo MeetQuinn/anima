@@ -7,11 +7,11 @@ import { useNavigate } from 'react-router-dom';
 import type { AgentTokenUsageSummary } from '@shared/agent-token-usage';
 import { currentTokenUsageRange, fetchAgentTokenUsage } from '@/api/token-usage';
 import { agentColor, initialOf } from '@/lib/avatars';
+import { formatTokens } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
 import {
   USAGE_RAMP,
   UsageHeatmap,
-  formatTokens,
   formatUsageDate,
   mergeUsageDays,
   peakUsageDay,

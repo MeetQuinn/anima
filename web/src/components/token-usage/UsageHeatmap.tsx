@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 
 import type { AgentTokenUsageDay } from '@shared/agent-token-usage';
 import { localDate } from '@/api/token-usage';
+import { formatTokens } from '@/lib/format';
 
 interface UsageHeatmapProps {
   coverageStartedAt?: string;
@@ -264,13 +265,6 @@ export function peakUsageDay(days: AgentTokenUsageDay[]): AgentTokenUsageDay | u
   );
 }
 
-export function formatTokens(value: number): string {
-  if (value >= 1_000_000_000) return `${trimFixed(value / 1_000_000_000)}B`;
-  if (value >= 1_000_000) return `${trimFixed(value / 1_000_000)}M`;
-  if (value >= 1_000) return `${trimFixed(value / 1_000)}K`;
-  return value.toLocaleString();
-}
-
 export function formatUsageDate(date: string): string {
   return parseLocalDate(date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 }
@@ -323,8 +317,4 @@ function usageDayTitle(
 function parseLocalDate(value: string): Date {
   const [year, month, day] = value.split('-').map(Number);
   return new Date(year!, month! - 1, day!, 12);
-}
-
-function trimFixed(value: number): string {
-  return value >= 100 ? value.toFixed(0) : value.toFixed(1).replace(/\.0$/, '');
 }

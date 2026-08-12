@@ -1,5 +1,5 @@
 import type { TokenUsageTotals } from '@shared/agent-token-usage';
-import { formatTokens } from './UsageHeatmap';
+import { formatTokens } from '@/lib/format';
 
 export function UsageTotals({ totals, compact = false }: { totals: TokenUsageTotals; compact?: boolean }) {
   const rows = [
