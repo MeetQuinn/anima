@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import {
   afterCursorIndexPopulation,
+  entryAtOrdinal,
   evaluateSendHold,
   isOwnObservedEntry,
   messageTsFromSlackFileInfo,
@@ -584,6 +585,120 @@ test('own posts after cursor do not hold; cursor advances through own tail', asy
     if (cursor.status === 'present') {
       assert.equal(cursor.deliveredOrdinal, 2, 'own rows must be consumed on allow');
     }
+  });
+});
+
+test('advance metadata uses ordinal-tail row, not conversation-time last', async () => {
+  // Red: ordinal2 messageTs=3.0; late-arriving ordinal3 messageTs=2.0.
+  // nextDeliveredOrdinal=3 must pair lastDeliveredEventId with ordinal3 (…:2.0).
+  await withHoldStore(async (store, agentId) => {
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '1.0',
+      text: 'root',
+      userId: 'U1',
+    });
+    await store.advanceCursor({
+      surfaceId: 'slack:T1:C1',
+      expected: { status: 'absent' },
+      nextDeliveredOrdinal: 1,
+      lastDeliveredEventId: 'slack:T1:C1:1.0',
+      lastDeliveredMessageTs: '1.0',
+    });
+    // Journal via store.observe assigns ordinals in append order; plant out-of-ts
+    // order by writing rows through observe then overriding is hard. Use a mock
+    // snapshot path via direct entries + entryAtOrdinal unit + full evaluate with
+    // a store that returns fixed candidates.
+    const candidates = [
+      {
+        channelId: 'C1',
+        eventId: 'slack:T1:C1:3.0',
+        messageTs: '3.0',
+        observedAt: '2026-01-01T00:00:00.000Z',
+        ordinal: 2,
+        receivedAt: '2026-01-01T00:00:00.000Z',
+        surfaceId: 'slack:T1:C1',
+        teamId: 'T1',
+        text: 'ord2-later-ts',
+        userId: 'U_BOT',
+      },
+      {
+        channelId: 'C1',
+        eventId: 'slack:T1:C1:2.0',
+        messageTs: '2.0',
+        observedAt: '2026-01-01T00:00:01.000Z',
+        ordinal: 3,
+        receivedAt: '2026-01-01T00:00:01.000Z',
+        surfaceId: 'slack:T1:C1',
+        teamId: 'T1',
+        text: 'ord3-earlier-ts',
+        userId: 'U_BOT',
+      },
+    ];
+    assert.equal(entryAtOrdinal(candidates, 3)?.eventId, 'slack:T1:C1:2.0');
+    // Conversation-time last would wrongly pick ordinal2 (messageTs 3.0).
+    const byTs = [...candidates].sort((a, b) => a.messageTs.localeCompare(b.messageTs, undefined, { numeric: true }));
+    assert.equal(byTs[byTs.length - 1]!.ordinal, 2);
+
+    class OutOfOrderStore extends ObservedConversationStore {
+      override async getContinuity() {
+        return { status: 'ok' as const, updatedAt: '2026-01-01T00:00:00.000Z' };
+      }
+      override async getCursor() {
+        return {
+          status: 'present' as const,
+          deliveredOrdinal: 1,
+          surfaceId: 'slack:T1:C1',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        };
+      }
+      override async readCursorDeliverySnapshot() {
+        return {
+          index: {
+            lastEventId: 'slack:T1:C1:2.0',
+            lastMessageTs: '2.0',
+            surfaceId: 'slack:T1:C1',
+            tailOrdinal: 3,
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          },
+          candidates,
+          capturedTailOrdinal: 3,
+        };
+      }
+      override async advanceCursor(input: {
+        expected: { status: 'present'; deliveredOrdinal: number };
+        nextDeliveredOrdinal: number;
+        lastDeliveredEventId?: string;
+        lastDeliveredMessageTs?: string;
+        surfaceId: string;
+      }) {
+        assert.equal(input.nextDeliveredOrdinal, 3);
+        assert.equal(input.lastDeliveredEventId, 'slack:T1:C1:2.0');
+        assert.equal(input.lastDeliveredMessageTs, '2.0');
+        return {
+          advanced: true as const,
+          cursor: {
+            status: 'present' as const,
+            deliveredOrdinal: 3,
+            surfaceId: input.surfaceId,
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            lastDeliveredEventId: input.lastDeliveredEventId,
+            lastDeliveredMessageTs: input.lastDeliveredMessageTs,
+          },
+        };
+      }
+    }
+
+    const result = await evaluateSendHold({
+      agentId,
+      teamId: 'T1',
+      channelId: 'C1',
+      tool: 'anima.message.send',
+      botUserId: 'U_BOT',
+      store: new OutOfOrderStore(agentId),
+    });
+    assert.equal(result.kind, 'allow');
   });
 });
 

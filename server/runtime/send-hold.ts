@@ -160,16 +160,17 @@ export async function evaluateSendHold(input: {
     }
 
     const self = { botUserId: input.botUserId, botId: input.botId };
-    const orderedCandidates = [...snapshot.candidates].sort(compareByConversationTime);
-    const nonOwn = orderedCandidates.filter((row) => !isOwnObservedEntry(row, self));
+    // HELD display uses conversation time; cursor advance metadata must use
+    // ordinal order (Slack delivery/retry can be out of messageTs order).
+    const byConversationTime = [...snapshot.candidates].sort(compareByConversationTime);
+    const nonOwn = byConversationTime.filter((row) => !isOwnObservedEntry(row, self));
+    // Advance metadata: the row whose ordinal equals the captured tail (max ordinal),
+    // never the conversation-time last row (cursor-delivery uses the same invariant).
+    const tailEntry = entryAtOrdinal(snapshot.candidates, tail);
 
     // Always consume the full captured tail (own + foreign). Leaving known-own
     // rows behind the cursor makes the 5k retained-window guard fail-closed
     // forever after ~5k self sends even with no foreign movement.
-    const tailEntry = orderedCandidates.length > 0
-      ? orderedCandidates[orderedCandidates.length - 1]!
-      : undefined;
-
     if (nonOwn.length === 0) {
       // No foreign movement: advance through captured tail (if any), then land.
       if (tail > afterOrdinal && tailEntry) {
@@ -180,6 +181,11 @@ export async function evaluateSendHold(input: {
           nextDeliveredOrdinal: tail,
           last: tailEntry,
         });
+      } else if (tail > afterOrdinal && !tailEntry) {
+        throw new SendHoldError(
+          'store_error',
+          `send-hold missing ordinal-tail row ${tail} on ${surfaceId}`,
+        );
       }
       return { kind: 'allow' };
     }
@@ -200,7 +206,13 @@ export async function evaluateSendHold(input: {
     // Advance through the *captured tail* (not merely the last foreign ordinal)
     // so any own rows after the foreign delta are also consumed.
     const advancedToOrdinal = tail;
-    const lastForAdvance = tailEntry ?? nonOwn[nonOwn.length - 1]!;
+    if (!tailEntry) {
+      throw new SendHoldError(
+        'store_error',
+        `send-hold missing ordinal-tail row ${tail} on ${surfaceId}`,
+      );
+    }
+    const lastForAdvance = tailEntry;
 
     // 1) Deliver HELD copy first — failed write must not consume the delta.
     const write = input.writeOutput ?? console.log;
@@ -250,6 +262,14 @@ export async function evaluateSendHold(input: {
       error instanceof Error ? error.message : String(error),
     );
   }
+}
+
+/** Row whose ordinal equals the captured tail, independent of messageTs order. */
+export function entryAtOrdinal(
+  candidates: ObservedConversationEntry[],
+  ordinal: number,
+): ObservedConversationEntry | undefined {
+  return candidates.find((row) => row.ordinal === ordinal);
 }
 
 /**
