@@ -372,6 +372,9 @@ export class ObservedConversationStore {
    * through the captured tail (`afterOrdinal < ordinal <= capturedTail`); the
    * exact candidate population is `capturedTail − afterOrdinal` when the index
    * is present.
+   *
+   * Bounded read: under the lock we only `readTail(max(limit, dedupeWindow))` —
+   * never a full retained-history parse (archives can be tens of MiB per surface).
    */
   async readCursorDeliverySnapshot(
     surfaceId: string,
@@ -384,20 +387,21 @@ export class ObservedConversationStore {
   }> {
     const afterOrdinal = options.afterOrdinal ?? 0;
     const limit = options.limit ?? 100;
+    // Newest selection window + enough for index reconcile / dedupe — not full history.
+    const tailRead = Math.max(limit, OBSERVED_CONVERSATION_DEDUPE_RECENT);
     let snapshot: {
       index: ConversationIndex | undefined;
       candidates: ObservedConversationEntry[];
       capturedTailOrdinal: number;
     } | undefined;
     await this.indexStore(surfaceId).update(async (current) => {
-      // Full retained read under the lock (same as readJournal) so later appends
-      // cannot enter the window mid-snapshot. observe() also holds this lock
-      // around journal.append + index write.
-      const all = await this.journal(surfaceId).readAll();
-      const recent = all.length <= OBSERVED_CONVERSATION_DEDUPE_RECENT
-        ? all
-        : all.slice(all.length - OBSERVED_CONVERSATION_DEDUPE_RECENT);
-      const reconciled = reconcileIndexFromJournal(current, recent, surfaceId);
+      // Bounded tail under the lock. observe() also holds this lock around
+      // journal.append + index write, so concurrent appends cannot interleave.
+      const recent = await this.journal(surfaceId).readTail(tailRead);
+      const reconcileWindow = recent.length <= OBSERVED_CONVERSATION_DEDUPE_RECENT
+        ? recent
+        : recent.slice(recent.length - OBSERVED_CONVERSATION_DEDUPE_RECENT);
+      const reconciled = reconcileIndexFromJournal(current, reconcileWindow, surfaceId);
       const capturedTailOrdinal = reconciled.tailOrdinal;
       const index =
         capturedTailOrdinal > 0 && reconciled.lastEventId ? reconciled : undefined;
@@ -407,7 +411,7 @@ export class ObservedConversationStore {
       }
       // Bound both ends: after the delivered cursor, and not past the captured tail.
       // Rows observed after this snapshot (or with ordinal > capturedTail) are excluded.
-      const filtered = all.filter(
+      const filtered = recent.filter(
         (row) => row.ordinal > afterOrdinal && row.ordinal <= capturedTailOrdinal,
       );
       const candidates = filtered.length <= limit
@@ -574,6 +578,11 @@ export class ObservedConversationStore {
   /** Test/recovery helper: force-write journal-tail index without observing. */
   async writeIndexForTest(index: ConversationIndex): Promise<void> {
     await this.indexStore(index.surfaceId).write(index);
+  }
+
+  /** Test/recovery helper: force-write delivered cursor without advanceCursor CAS. */
+  async writeCursorForTest(record: ConversationCursorRecord): Promise<void> {
+    await this.cursorStore(record.surfaceId).write(record);
   }
 
   private journal(surfaceId: string): JsonlAppendLog<ObservedConversationEntry> {

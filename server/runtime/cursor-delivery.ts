@@ -229,13 +229,27 @@ export async function prepareCursorDelivery(input: {
     // Recovery: trigger already covered by cursor → settle without provider.
     // Never skip a runtime_restart primary — that is interrupted work, not a
     // coalesced duplicate wake. Cursor coverage may skip later queued wakes only.
+    // Fail-closed first: cursor past the reconciled journal tail is corruption /
+    // partial restore — must not silently swallow reused ordinals as delivered.
     const primaryCursor = await store.getCursor(triggerSurfaceId);
-    if (
-      item.handling.resumeReason !== 'runtime_restart'
-      && primaryCursor.status === 'present'
-      && primaryCursor.deliveredOrdinal >= triggerEntry.ordinal
-    ) {
-      return { kind: 'already_delivered', settledItemIds: [item.id] };
+    if (primaryCursor.status === 'present') {
+      const primaryIndex = await store.getIndexReconciled(triggerSurfaceId);
+      const reconciledTail = primaryIndex?.tailOrdinal ?? 0;
+      if (primaryCursor.deliveredOrdinal > reconciledTail) {
+        return {
+          kind: 'failed',
+          error: new CursorDeliveryError(
+            'store_error',
+            `cursor deliveredOrdinal ${primaryCursor.deliveredOrdinal} beyond reconciled tail ${reconciledTail} on ${triggerSurfaceId}`,
+          ),
+        };
+      }
+      if (
+        item.handling.resumeReason !== 'runtime_restart'
+        && primaryCursor.deliveredOrdinal >= triggerEntry.ordinal
+      ) {
+        return { kind: 'already_delivered', settledItemIds: [item.id] };
+      }
     }
 
     // Clip previews/files so extras alone cannot blow the 16 KiB envelope.

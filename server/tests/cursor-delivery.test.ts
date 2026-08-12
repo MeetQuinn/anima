@@ -371,6 +371,43 @@ test('crash between cursor and queue: later claim self-heals without provider (a
   });
 });
 
+test('already_delivered refuses cursor beyond reconciled journal tail', async () => {
+  // Partial restore/corruption: cursor present@3 while index/journal tail is 2.
+  // Wake for ordinal 2 must not silently already_deliver and swallow reused ordinals.
+  await withEnabledStore(async (store, agentId) => {
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '1.0',
+      text: 'one',
+      userId: 'U1',
+    });
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'C1',
+      messageTs: '2.0',
+      text: 'two',
+      userId: 'U1',
+    });
+    assert.equal((await store.getIndex('slack:T1:C1'))?.tailOrdinal, 2);
+
+    await store.writeCursorForTest({
+      surfaceId: 'slack:T1:C1',
+      deliveredOrdinal: 3,
+      updatedAt: new Date().toISOString(),
+      lastDeliveredEventId: 'slack:T1:C1:ghost.0',
+      lastDeliveredMessageTs: '3.0',
+    });
+
+    const item = slackItem({ channelId: 'C1', messageTs: '2.0', text: 'two', userId: 'U1' });
+    const prepared = await prepareCursorDelivery({ agentId, item, store });
+    assert.equal(prepared.kind, 'failed');
+    if (prepared.kind !== 'failed') return;
+    assert.equal(prepared.error.reason, 'store_error');
+    assert.match(prepared.error.message, /beyond reconciled tail/);
+  });
+});
+
 test('degraded continuity and missing trigger are fail-closed (not absent)', async () => {
   await withEnabledStore(async (store, agentId) => {
     await store.markDegraded({ message: 'gap', surfaceId: 'slack:T1:C1' });
@@ -1352,6 +1389,35 @@ test('readCursorDeliverySnapshot filters journal through captured tail under loc
     });
     assert.deepEqual(mid.candidates.map((c) => c.ordinal), [2, 3]);
     assert.equal(mid.capturedTailOrdinal, 3);
+  });
+});
+
+test('readCursorDeliverySnapshot uses bounded readTail not full retained history', async () => {
+  // Under the index lock we must not parse all archives (~50 MiB). Prove the
+  // snapshot path only needs a bounded newest window even when many rows exist.
+  await withEnabledStore(async (store) => {
+    for (let i = 1; i <= 40; i += 1) {
+      await store.observe({
+        teamId: 'T1',
+        channelId: 'Cbound',
+        messageTs: `${i}.0`,
+        text: `b-${i}`,
+        userId: 'U1',
+      });
+    }
+    const surfaceId = 'slack:T1:Cbound';
+    const snap = await store.readCursorDeliverySnapshot(surfaceId, {
+      afterOrdinal: 0,
+      limit: 10,
+    });
+    assert.equal(snap.capturedTailOrdinal, 40);
+    assert.equal(snap.candidates.length, 10);
+    assert.deepEqual(
+      snap.candidates.map((c) => c.ordinal),
+      [31, 32, 33, 34, 35, 36, 37, 38, 39, 40],
+    );
+    // Exact population remains index-derived, not window length.
+    assert.equal(snap.index?.tailOrdinal, 40);
   });
 });
 
