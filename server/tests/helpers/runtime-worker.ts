@@ -34,6 +34,15 @@ export async function enqueueInbox(
 export const queueFor = (agentId: string): WakeQueueService => new WakeQueueService(agentId);
 
 export async function ensureTestAgentConfig(options: RuntimeWorkerConfig): Promise<void> {
+  // Server config: keep cursor view+hold off unless a test opts in. Production
+  // default is on (enable cut); worker tests enqueue Slack without planting
+  // observed-conversation journals, which would fail prepare under gate-on.
+  await mkdir(options.stateDir, { recursive: true });
+  await writeFile(
+    join(options.stateDir, 'config.json'),
+    `${JSON.stringify({ cursorDelivery: { enabled: false } }, null, 2)}\n`,
+    'utf8',
+  );
   const agentDir = join(options.stateDir, 'agents', options.agentId);
   await mkdir(agentDir, { recursive: true });
   await writeFile(join(agentDir, 'config.json'), `${JSON.stringify({ id: options.agentId }, null, 2)}\n`, 'utf8');

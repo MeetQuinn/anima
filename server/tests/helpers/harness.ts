@@ -38,9 +38,18 @@ export async function withTempAnimaHome<T>(body: (stateDir: string) => Promise<T
   }
 }
 
+/**
+ * Test server config: cursor view + hold stay off unless a test opts in.
+ * Production default is on (enable cut); harnesses often enqueue Slack without
+ * planting journal rows, which would fail prepare under gate-on.
+ */
+export const TEST_SERVER_CONFIG_CURSOR_OFF = {
+  cursorDelivery: { enabled: false },
+} as const;
+
 export async function writeAgentConfigs(configDir: string, agents: TestAgentConfig[] = [defaultAgentConfig('anima')]): Promise<void> {
   await mkdir(configDir, { recursive: true });
-  await writeJson(join(configDir, 'config.json'), {});
+  await writeJson(join(configDir, 'config.json'), { ...TEST_SERVER_CONFIG_CURSOR_OFF });
   for (const agent of agents) {
     const agentDir = join(configDir, 'agents', agent.id);
     const homePath = agent.homePath ?? join(configDir, 'agent-homes', agent.id);
@@ -61,7 +70,7 @@ export async function writeSlackAgentConfig(
   };
   const agentDir = join(configDir, 'agents', agent.id);
   await mkdir(agentDir, { recursive: true });
-  await writeJson(join(configDir, 'config.json'), {});
+  await writeJson(join(configDir, 'config.json'), { ...TEST_SERVER_CONFIG_CURSOR_OFF });
   await writeJson(join(agentDir, 'config.json'), agent);
 }
 
@@ -70,7 +79,7 @@ export async function writeFeishuAgentConfig(configDir: string, feishu: Partial<
   const homePath = join(configDir, 'home');
   await mkdir(agentDir, { recursive: true });
   await mkdir(homePath, { recursive: true });
-  await writeJson(join(configDir, 'config.json'), {});
+  await writeJson(join(configDir, 'config.json'), { ...TEST_SERVER_CONFIG_CURSOR_OFF });
   await writeJson(join(agentDir, 'config.json'), {
       feishu: { appId: 'cli_test', appSecret: 'secret', ...feishu },
       homePath,

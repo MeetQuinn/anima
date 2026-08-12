@@ -99,9 +99,10 @@ export function setCursorDeliveryEnabledForTests(enabled: boolean | undefined): 
 }
 
 /**
- * Resolve whether cursor delivery is on. Settings/read failures are errors
- * (fail-closed), not silent disable — "enabled but unreadable" must not look
- * like intentional off.
+ * Resolve whether cursor delivery + send hold are on.
+ * Default on (enable cut); explicit `cursorDelivery.enabled: false` opts out.
+ * Settings/read failures are errors (fail-closed), not silent disable —
+ * "enabled but unreadable" must not look like intentional off.
  */
 export async function resolveCursorDeliveryEnabled(): Promise<
   | { kind: 'enabled' }
@@ -113,9 +114,10 @@ export async function resolveCursorDeliveryEnabled(): Promise<
   }
   try {
     const config = await defaultServerSettingsService.readConfig();
-    return config.cursorDelivery?.enabled === true
-      ? { kind: 'enabled' }
-      : { kind: 'disabled' };
+    // Default on: only explicit false disables.
+    return config.cursorDelivery?.enabled === false
+      ? { kind: 'disabled' }
+      : { kind: 'enabled' };
   } catch (error) {
     return {
       kind: 'error',
@@ -127,7 +129,7 @@ export async function resolveCursorDeliveryEnabled(): Promise<
   }
 }
 
-/** Convenience: true only when explicitly enabled (throws on settings error). */
+/** Convenience: true unless explicitly disabled (throws on settings error). */
 export async function isCursorDeliveryEnabled(): Promise<boolean> {
   const resolved = await resolveCursorDeliveryEnabled();
   if (resolved.kind === 'error') throw resolved.error;
