@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { currentTokenUsageRange, fetchAgentTokenUsage } from '@/api/token-usage';
+import { formatTokens } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
-import { UsageHeatmap, formatTokens } from './UsageHeatmap';
+import { UsageHeatmap } from './UsageHeatmap';
 import { UsageTotals } from './UsageTotals';
 
 export function AgentUsageSection({ agentId }: { agentId: string }) {
