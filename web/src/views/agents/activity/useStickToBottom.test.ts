@@ -22,7 +22,10 @@ interface MockContainer {
 
 function makeContainer(scrollHeight = 1000, clientHeight = 500): MockContainer {
   let _scrollHeight = scrollHeight;
-  const _clientHeight = clientHeight;
+  // The viewport is settable: the timeline is `flex-1` under a column whose other
+  // children (status summary, banners, error bar) mount late, which changes how
+  // much of the content fits without changing the content itself.
+  let _clientHeight = clientHeight;
   let _scrollTop = 0;
   const listeners = new Map<string, Set<(e: unknown) => void>>();
   return {
@@ -35,8 +38,8 @@ function makeContainer(scrollHeight = 1000, clientHeight = 500): MockContainer {
     get clientHeight() {
       return _clientHeight;
     },
-    set clientHeight(_v: number) {
-      /* fixed viewport */
+    set clientHeight(v: number) {
+      _clientHeight = v;
     },
     get scrollTop() {
       return _scrollTop;
@@ -66,22 +69,34 @@ function gap(c: MockContainer): number {
   return c.scrollHeight - c.scrollTop - c.clientHeight;
 }
 
-// Controllable ResizeObserver.
+// Controllable ResizeObserver. It records WHAT it was asked to observe and only
+// notifies for those elements, exactly as a browser does. A stub that fires for
+// any target is reachable without the wiring under test, so deleting an
+// `ro.observe(...)` call would still pass and the harness would prove nothing.
 class MockResizeObserver {
   static instances: MockResizeObserver[] = [];
   cb: () => void;
   disconnected = false;
+  targets = new Set<unknown>();
   constructor(cb: () => void) {
     this.cb = cb;
     MockResizeObserver.instances.push(this);
   }
-  observe() {}
-  unobserve() {}
+  observe(target: unknown) {
+    this.targets.add(target);
+  }
+  unobserve(target: unknown) {
+    this.targets.delete(target);
+  }
   disconnect() {
     this.disconnected = true;
+    this.targets.clear();
   }
-  trigger() {
-    if (!this.disconnected) this.cb();
+  triggerFor(target: unknown) {
+    if (!this.disconnected && this.targets.has(target)) this.cb();
+  }
+  observes(target: unknown) {
+    return this.targets.has(target);
   }
 }
 function latestRO(): MockResizeObserver {
@@ -99,8 +114,15 @@ function flushRaf(levels = 1): void {
   }
 }
 
+// The two elements the current setup() handed the hook, so the growth/resize
+// helpers can name the exact target the browser would notify for.
+let currentContent: HTMLElement | null = null;
+let currentContainer: HTMLElement | null = null;
+
 beforeEach(() => {
   MockResizeObserver.instances = [];
+  currentContent = null;
+  currentContainer = null;
   rafMap = new Map();
   rafSeq = 0;
   vi.stubGlobal('ResizeObserver', MockResizeObserver);
@@ -124,8 +146,12 @@ afterEach(() => {
 
 function setup(overrides: Partial<StickToBottomOptions> = {}) {
   const container = makeContainer();
-  const contentRef = { current: {} as HTMLElement };
-  const containerRef = { current: container as unknown as HTMLElement };
+  const contentEl = {} as HTMLElement;
+  const containerEl = container as unknown as HTMLElement;
+  const contentRef = { current: contentEl };
+  const containerRef = { current: containerEl };
+  currentContent = contentEl;
+  currentContainer = containerEl;
   const onReachTop = vi.fn();
   let props: StickToBottomOptions = {
     containerRef,
@@ -146,24 +172,29 @@ function setup(overrides: Partial<StickToBottomOptions> = {}) {
     props = { ...props, ...patch };
     act(() => view.rerender(props));
   };
-  return { container, onReachTop, view, rerender };
+  return { container, containerEl, contentEl, onReachTop, view, rerender };
 }
 
 // Fire a mock DOM event inside act so any resulting setState is flushed.
 function fire(container: MockContainer, type: string, ev?: unknown) {
   act(() => container._fire(type, ev));
 }
-function triggerRO() {
-  act(() => latestRO().trigger());
-}
 function flush(levels = 1) {
   act(() => flushRaf(levels));
 }
 // Grow content (for a prepend the delta lands above; the RO only sees a total
-// height delta either way), then let the observer react.
+// height delta either way), then let the observer react. The browser notifies
+// for the CONTENT wrapper here, so this fires nothing unless it is observed.
 function growTo(container: MockContainer, height: number) {
   container.scrollHeight = height;
-  triggerRO();
+  act(() => latestRO().triggerFor(currentContent));
+}
+// Change the viewport without touching the content: something above the timeline
+// mounted, unmounted or resized. The browser notifies for the CONTAINER, so this
+// fires nothing unless the container itself is observed.
+function resizeViewportBy(container: MockContainer, px: number) {
+  container.clientHeight = container.clientHeight + px;
+  act(() => latestRO().triggerFor(currentContainer));
 }
 
 describe('useStickToBottom', () => {
@@ -363,5 +394,86 @@ describe('useStickToBottom', () => {
     // Unmount removes the listeners.
     view.unmount();
     expect(container._listenerCount('scroll')).toBe(0);
+  });
+
+  // --- Viewport change with no content change --------------------------------
+  // The reported "activity tab 每次刚打开都会抖几下才稳定": the timeline is `flex-1`
+  // in a column that also holds the status summary, the onboarding banners and
+  // the error bar. ActivityStatusSummary renders null until the agent status
+  // query resolves (index.tsx `if (!status) return null`), then mounts ABOVE the
+  // scroll container. The content height does not change at all — only how much
+  // of it fits — so a content-only observer sees nothing and the pinned bottom
+  // slides away by exactly the height that appeared.
+
+  it('observes the scroll container itself, not only the content wrapper', () => {
+    // The catching mutation for the three tests below is "delete ro.observe(el)";
+    // assert the wiring directly so it cannot hide behind a passing assertion.
+    const { containerEl, contentEl } = setup({ settling: false });
+    expect(latestRO().observes(contentEl)).toBe(true);
+    expect(latestRO().observes(containerEl)).toBe(true);
+  });
+
+  it('stuck: a bar mounting above the timeline shrinks the viewport and the bottom is re-pinned', () => {
+    const { container, view } = setup({ settling: false });
+    flush(1); // stuck + revealed, pinned at the bottom
+    expect(gap(container)).toBe(0);
+
+    resizeViewportBy(container, -44); // status summary mounts above
+
+    expect(view.result.current.stuck).toBe(true);
+    expect(gap(container)).toBe(0);
+  });
+
+  it('stuck: a bar unmounting (viewport grows) re-pins as well', () => {
+    const { container, view } = setup({ settling: false });
+    flush(1);
+    resizeViewportBy(container, -44);
+    expect(gap(container)).toBe(0);
+
+    resizeViewportBy(container, 44); // the banner is dismissed again
+
+    expect(view.result.current.stuck).toBe(true);
+    expect(gap(container)).toBe(0);
+  });
+
+  it('reading: a viewport change never yanks a scrolled-up reader', () => {
+    const { container, view } = setup({ settling: false });
+    flush(1);
+    fire(container, 'wheel', { deltaY: -120 });
+    container.scrollTop = 100;
+    fire(container, 'scroll');
+    expect(view.result.current.stuck).toBe(false); // reading
+
+    resizeViewportBy(container, -44);
+
+    expect(container.scrollTop).toBe(100); // position untouched
+    expect(view.result.current.stuck).toBe(false);
+  });
+
+  it('harness liveness: the observer stub only notifies for elements it observes', () => {
+    // If triggerFor() fired unconditionally, every growth and viewport test in
+    // this file would pass with the corresponding ro.observe() deleted.
+    const { container } = setup({ settling: false });
+    flush(1);
+    const stranger = {} as HTMLElement;
+
+    container.clientHeight = container.clientHeight - 44;
+    act(() => latestRO().triggerFor(stranger));
+
+    expect(latestRO().observes(stranger)).toBe(false);
+    expect(gap(container)).toBe(44); // uncorrected: no notification was delivered
+  });
+
+  it('reveal safety valve: a feed that never settles is still revealed at 800ms', () => {
+    // setTimeout is faked so the valve never fires during the tests above; this
+    // one drives it on purpose, since it is the only path that reveals without
+    // an observed stable bottom.
+    const { view } = setup({ settling: true });
+    expect(view.result.current.revealed).toBe(false);
+    act(() => vi.advanceTimersByTime(799));
+    expect(view.result.current.revealed).toBe(false);
+    act(() => vi.advanceTimersByTime(1));
+    expect(view.result.current.revealed).toBe(true);
+    expect(view.result.current.stuck).toBe(true);
   });
 });
