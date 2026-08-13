@@ -5,6 +5,7 @@ import { sleep, waitFor } from './helpers/harness.js';
 import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
 import {
   CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW,
+  CLAUDE_DISABLE_AUTO_MEMORY,
   CLAUDE_DISALLOWED_TOOLS,
   claudeAutoCompactWindowFor,
   claudeCommonArgs,
@@ -44,17 +45,23 @@ test('provider runtimes use catalog commands by default and accept one executabl
   }
 });
 
-test('claude provider env defaults the auto-compact window and lets config env override it', () => {
+test('claude provider env keeps configured values but hard-disables native auto-memory', () => {
   assert.deepEqual(claudeProviderEnv({ kind: 'claude-code' }), {
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW),
+    CLAUDE_CODE_DISABLE_AUTO_MEMORY: CLAUDE_DISABLE_AUTO_MEMORY,
   });
   assert.deepEqual(
     claudeProviderEnv({
-      env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '120000', EXTRA: 'kept' },
+      env: {
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '120000',
+        CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+        EXTRA: 'kept',
+      },
       kind: 'claude-code',
     }),
     {
       CLAUDE_CODE_AUTO_COMPACT_WINDOW: '120000',
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: CLAUDE_DISABLE_AUTO_MEMORY,
       EXTRA: 'kept',
     },
   );
