@@ -30,6 +30,17 @@ export async function withToolActivity<T>(input: {
   effectType?: string;
   op: () => Promise<{ result: T; completedPayload?: Record<string, unknown> }>;
 }): Promise<T> {
+  // Memory-coherence seal: deny side-effecting tools at the Anima layer before
+  // any external.effect is recorded or executed.
+  if (input.audit && input.effectType) {
+    const { assertMemoryCoherenceSealAllowsSideEffect } = await import(
+      '../runtime/memory-coherence-seal.js'
+    );
+    await assertMemoryCoherenceSealAllowsSideEffect(
+      input.audit.agentId,
+      input.effectType,
+    );
+  }
   const startedType = input.effectType ? 'external.effect.started' : 'tool.call.started';
   const completedType = input.effectType ? 'external.effect.completed' : 'tool.call.completed';
   const failedType = input.effectType ? 'external.effect.failed' : 'tool.call.failed';

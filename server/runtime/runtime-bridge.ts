@@ -29,6 +29,7 @@ import type {
   ProviderSessionRecord,
 } from '../providers/contract.js';
 import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
+import { ANIMA_MEMORY_COHERENCE_SEAL_ENV } from './memory-coherence-seal.js';
 
 export class AgentRuntimeBridge {
   constructor(private readonly runtime: AgentRuntime) {}
@@ -138,7 +139,11 @@ export class AgentRuntimeBridge {
       onProviderProgress?.();
     };
     return {
-      persistProviderSession: (session) => persistProviderSession(context, this.runtime.kind, session),
+      // Maintenance sessions must not replace the agent's primary business session.
+      persistProviderSession: async (session) => {
+        if (context.item.kind === 'memory_coherence') return;
+        await persistProviderSession(context, this.runtime.kind, session);
+      },
       recordAgentText: (text, payload) => {
         noteProviderProgress();
         return recordAgentText(target, this.runtime.kind, text, payload);
@@ -194,6 +199,8 @@ export function runtimeEnv(context: RuntimeItemContext, env?: Record<string, str
     ANIMA_AGENT_ID: context.agentId,
     ANIMA_HOME: context.stateDir,
     ANIMA_INBOX_ITEM_ID: context.item.id,
+    // Seal flag for provider launch (Claude disallowed tools) and CLI denials.
+    ...(context.item.kind === 'memory_coherence' ? { [ANIMA_MEMORY_COHERENCE_SEAL_ENV]: '1' } : {}),
     NO_COLOR: '1',
     PATH: path,
   };
@@ -204,6 +211,8 @@ function providerSessionFor(
   kind: string,
   session: Session = context.session,
 ): ProviderSession | undefined {
+  // Memory-coherence seal: never resume a long-lived business session (Grant root cause).
+  if (context.item.kind === 'memory_coherence') return undefined;
   const current = session.current?.kind === kind ? session.current : undefined;
   if (
     current

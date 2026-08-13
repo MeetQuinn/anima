@@ -89,6 +89,21 @@ test('claude common args carry the shared launch flags and optional config flags
   );
 });
 
+test('claude common args expand disallowed tools under memory-coherence seal', () => {
+  const sealed = claudeCommonArgs(
+    { kind: 'claude-code' },
+    undefined,
+    { ANIMA_MEMORY_COHERENCE_SEAL: '1' },
+  );
+  const disallowed = sealed[sealed.indexOf('--disallowedTools') + 1] ?? '';
+  assert.match(disallowed, /Bash/);
+  assert.match(disallowed, /Task/);
+  assert.match(disallowed, /WebSearch/);
+  for (const tool of CLAUDE_DISALLOWED_TOOLS) {
+    assert.match(disallowed, new RegExp(tool));
+  }
+});
+
 test('claude auto-compact window resolution keeps env override semantics', () => {
   assert.equal(claudeAutoCompactWindowFor('claude-code', undefined), CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW);
   assert.equal(claudeAutoCompactWindowFor('claude-code', {}), CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW);

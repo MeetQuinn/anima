@@ -260,6 +260,8 @@ function readableShellArg(value: string): string {
 
 async function runSchedule(opts: ScheduleOptions): Promise<void> {
   const agentId = await resolveReminderAgentId(opts);
+  const { assertMemoryCoherenceSealAllowsSideEffect } = await import('../runtime/memory-coherence-seal.js');
+  await assertMemoryCoherenceSealAllowsSideEffect(agentId, 'reminder.schedule');
   const reminderService = reminderServiceForAgent(agentId);
   const instructions = opts.instructions ?? opts.message ?? opts.note ?? (await stdinText());
   const delaySeconds = opts.in ? Math.ceil(parseDurationMs(opts.in) / 1000) : undefined;
@@ -378,12 +380,16 @@ async function runShow(opts: ShowOptions): Promise<void> {
 
 async function runCancel(opts: CancelOptions): Promise<void> {
   const agentId = await resolveReminderAgentId(opts);
+  const { assertMemoryCoherenceSealAllowsSideEffect } = await import('../runtime/memory-coherence-seal.js');
+  await assertMemoryCoherenceSealAllowsSideEffect(agentId, 'reminder.cancel');
   const reminder = await reminderServiceForAgent(agentId).cancelReminder({ id: opts.id });
   printReminderResult('cancelled', reminder);
 }
 
 async function runSnooze(opts: SnoozeOptions): Promise<void> {
   const agentId = await resolveReminderAgentId(opts);
+  const { assertMemoryCoherenceSealAllowsSideEffect } = await import('../runtime/memory-coherence-seal.js');
+  await assertMemoryCoherenceSealAllowsSideEffect(agentId, 'reminder.snooze');
   const reminder = await reminderServiceForAgent(agentId).snoozeReminder({ by: opts.by, id: opts.id });
   printReminderResult('snoozed', reminder);
 }

@@ -142,7 +142,11 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
       input.signal,
       () => this.slot.get() ?? this.spawnController(
         {
-          args: this.claudeArgs(input.providerSession, systemPromptFilePath),
+          args: this.claudeArgs(
+            input.providerSession,
+            systemPromptFilePath,
+            stringEnv(input.env),
+          ),
           command: this.command,
           label: 'Claude Code runtime',
         },
@@ -172,7 +176,11 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
     }
   }
 
-  private claudeArgs(providerSession: ProviderSessionRecord | undefined, systemPromptFilePath: string | undefined): string[] {
+  private claudeArgs(
+    providerSession: ProviderSessionRecord | undefined,
+    systemPromptFilePath: string | undefined,
+    runtimeEnv?: Record<string, string>,
+  ): string[] {
     const args = [
       '--output-format', 'stream-json',
       '--verbose',
@@ -181,9 +189,18 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
       '--input-format', 'stream-json',
     ];
     if (providerSession) args.push('--resume', providerSession.id);
-    args.push(...claudeCommonArgs(this.config, systemPromptFilePath));
+    args.push(...claudeCommonArgs(this.config, systemPromptFilePath, runtimeEnv));
     return args;
   }
+}
+
+function stringEnv(env: NodeJS.ProcessEnv | undefined): Record<string, string> | undefined {
+  if (!env) return undefined;
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value === 'string') out[key] = value;
+  }
+  return out;
 }
 
 async function flushClaudeMapper(jsonlMapper: ReturnType<typeof createClaudeJsonlActivityMapper>): Promise<string | undefined> {

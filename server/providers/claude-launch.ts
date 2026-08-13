@@ -15,6 +15,18 @@ export const CLAUDE_DISALLOWED_TOOLS = [
   'PushNotification',
 ];
 
+/** Extra native tools denied when ANIMA_MEMORY_COHERENCE_SEAL=1 (see memory-coherence-seal.ts). */
+export const CLAUDE_MEMORY_COHERENCE_DISALLOWED_TOOLS = [
+  'Bash',
+  'Task',
+  'Agent',
+  'WebSearch',
+  'WebFetch',
+  'NotebookEdit',
+  'BashOutput',
+  'KillShell',
+] as const;
+
 export function claudeProviderEnv(config: ClaudeCodeAgentProviderConfig): Record<string, string> {
   return {
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW),
@@ -23,14 +35,26 @@ export function claudeProviderEnv(config: ClaudeCodeAgentProviderConfig): Record
   };
 }
 
+export function claudeDisallowedToolsForEnv(env?: Record<string, string>): string[] {
+  const base = [...CLAUDE_DISALLOWED_TOOLS];
+  if (env?.['ANIMA_MEMORY_COHERENCE_SEAL'] === '1') {
+    for (const tool of CLAUDE_MEMORY_COHERENCE_DISALLOWED_TOOLS) {
+      if (!base.includes(tool)) base.push(tool);
+    }
+  }
+  return base;
+}
+
 export function claudeCommonArgs(
   config: ClaudeCodeAgentProviderConfig,
   systemPromptFilePath: string | undefined,
+  runtimeEnv?: Record<string, string>,
 ): string[] {
+  const disallowed = claudeDisallowedToolsForEnv(runtimeEnv ?? config.env);
   const args = [
     '--chrome',
     '--permission-mode', 'bypassPermissions',
-    '--disallowedTools', CLAUDE_DISALLOWED_TOOLS.join(','),
+    '--disallowedTools', disallowed.join(','),
   ];
   if (config.model) args.push('--model', config.model);
   if (config.reasoningEffort) args.push('--effort', config.reasoningEffort);

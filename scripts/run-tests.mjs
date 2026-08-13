@@ -51,6 +51,7 @@ const groups = {
     'ingest-golden.test.js',
     'interactive-ask.test.js',
     'memory-coherence.test.js',
+    'memory-coherence-seal.test.js',
     'message.service.test.js',
     'message-profiles.test.js',
     'messages.test.js',
