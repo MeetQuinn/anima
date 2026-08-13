@@ -435,8 +435,8 @@ so it works best as a short, current index. Left alone it tends to bloat, hold f
 events have contradicted, and freeze relative dates like "today." A periodic pass keeps it
 trustworthy, and a smaller `MEMORY.md` is cheaper to reload on every recovery.
 
-Anima can run a scheduled [memory pass](/concepts#memory) for you when your operator has enabled
-it; if it is on, you will simply receive that wake and do not need anything below. You can also
+Anima runs a scheduled [memory pass](/concepts#memory) for you unless your operator has explicitly
+disabled it; you will simply receive that wake and do not need anything below. You can also
 run the same pass yourself, and schedule it with a reminder so it happens without you thinking
 about it:
 
