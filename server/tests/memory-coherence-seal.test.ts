@@ -10,11 +10,21 @@ import {
   runtimeEnv,
 } from '../runtime/runtime-bridge.js';
 import {
+  ANIMA_MEMORY_COHERENCE_HOME_ENV,
   ANIMA_MEMORY_COHERENCE_SEAL_ENV,
   assertMemoryCoherenceSealAllowsSideEffect,
+  evaluateMemoryCoherenceWriteFence,
+  isMemoryCoherenceAllowedWritePath,
   isMemoryCoherenceItem,
   MemoryCoherenceSealError,
 } from '../runtime/memory-coherence-seal.js';
+import {
+  MEMORY_COHERENCE_WRITE_FENCE_HOOK_SOURCE,
+  memoryCoherenceSealSettingsJson,
+  writeMemoryCoherenceSealSettings,
+} from '../runtime/memory-coherence-seal-settings.js';
+import { spawnSync } from 'node:child_process';
+import { writeFile } from 'node:fs/promises';
 import { withToolActivity } from '../tools/tool-context.js';
 import {
   ensureTestAgentConfig,
@@ -231,5 +241,151 @@ test('claude launch under seal disallows Bash/Task/web class tools', () => {
   assert.match(list, /WebFetch/);
   for (const tool of CLAUDE_DISALLOWED_TOOLS) {
     assert.ok(list.includes(tool), `expected base disallow ${tool}`);
+  }
+});
+
+test('write path allowlist: only MEMORY.md and notes/ under agent home', () => {
+  const home = '/agents/grant';
+  assert.equal(isMemoryCoherenceAllowedWritePath(home, 'MEMORY.md'), true);
+  assert.equal(isMemoryCoherenceAllowedWritePath(home, `${home}/MEMORY.md`), true);
+  assert.equal(isMemoryCoherenceAllowedWritePath(home, 'notes/archive.md'), true);
+  assert.equal(isMemoryCoherenceAllowedWritePath(home, `${home}/notes/deep/a.md`), true);
+  // Escape / other homes / repo root
+  assert.equal(isMemoryCoherenceAllowedWritePath(home, 'notes/../secret.md'), false);
+  assert.equal(isMemoryCoherenceAllowedWritePath(home, `${home}/notes/../../other/MEMORY.md`), false);
+  assert.equal(isMemoryCoherenceAllowedWritePath(home, '/agents/other/MEMORY.md'), false);
+  assert.equal(isMemoryCoherenceAllowedWritePath(home, '/tmp/deliverable.md'), false);
+  assert.equal(isMemoryCoherenceAllowedWritePath(home, 'config.json'), false);
+});
+
+test('write fence evaluates Write/Edit tool payloads (allowlist deny-by-default)', () => {
+  const home = '/agents/grant';
+  assert.equal(
+    evaluateMemoryCoherenceWriteFence({
+      homePath: home,
+      toolName: 'Write',
+      toolInput: { file_path: `${home}/MEMORY.md` },
+    }).allow,
+    true,
+  );
+  assert.equal(
+    evaluateMemoryCoherenceWriteFence({
+      homePath: home,
+      toolName: 'Edit',
+      toolInput: { file_path: `${home}/notes/x.md` },
+    }).allow,
+    true,
+  );
+  const denied = evaluateMemoryCoherenceWriteFence({
+    homePath: home,
+    toolName: 'Write',
+    toolInput: { file_path: '/agents/other/MEMORY.md' },
+  });
+  assert.equal(denied.allow, false);
+  if (!denied.allow) assert.match(denied.reason, /write path denied/);
+
+  // MultiEdit: any bad path fails the whole call.
+  const multi = evaluateMemoryCoherenceWriteFence({
+    homePath: home,
+    toolName: 'MultiEdit',
+    toolInput: {
+      edits: [
+        { file_path: `${home}/MEMORY.md` },
+        { file_path: '/tmp/evil.md' },
+      ],
+    },
+  });
+  assert.equal(multi.allow, false);
+});
+
+test('PreToolUse write-fence hook rejects absolute path outside agent home', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-seal-hook-'));
+  try {
+    const hookPath = join(dir, 'hook.mjs');
+    await writeFile(hookPath, MEMORY_COHERENCE_WRITE_FENCE_HOOK_SOURCE, 'utf8');
+    const home = '/tmp/anima-seal-home-test';
+    const payload = JSON.stringify({
+      tool_name: 'Write',
+      tool_input: { file_path: '/tmp/outside-deliverable.md', content: 'x' },
+    });
+    const result = spawnSync(process.execPath, [hookPath], {
+      env: { ...process.env, [ANIMA_MEMORY_COHERENCE_HOME_ENV]: home },
+      input: payload,
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 2, `expected deny exit 2, got ${result.status}: ${result.stderr}`);
+    assert.match(result.stderr, /write path denied/);
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test('PreToolUse write-fence hook allows MEMORY.md under agent home', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-seal-hook-ok-'));
+  try {
+    const hookPath = join(dir, 'hook.mjs');
+    await writeFile(hookPath, MEMORY_COHERENCE_WRITE_FENCE_HOOK_SOURCE, 'utf8');
+    const home = '/tmp/anima-seal-home-test';
+    const payload = JSON.stringify({
+      tool_name: 'Edit',
+      tool_input: { file_path: `${home}/MEMORY.md`, old_string: 'a', new_string: 'b' },
+    });
+    const result = spawnSync(process.execPath, [hookPath], {
+      env: { ...process.env, [ANIMA_MEMORY_COHERENCE_HOME_ENV]: home },
+      input: payload,
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, `expected allow exit 0, got ${result.status}: ${result.stderr}`);
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test('claude sealed launch installs write-fence settings when path provided', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-seal-settings-'));
+  try {
+    const settingsPath = join(dir, 'settings.json');
+    const written = await writeMemoryCoherenceSealSettings({
+      homePath: '/agents/grant',
+      settingsPath,
+    });
+    const args = claudeCommonArgs(
+      { kind: 'claude-code' },
+      undefined,
+      { ANIMA_MEMORY_COHERENCE_SEAL: '1' },
+      { sealSettingsPath: written.settingsPath },
+    );
+    assert.ok(args.includes('--settings'));
+    assert.equal(args[args.indexOf('--settings') + 1], written.settingsPath);
+    const settings = memoryCoherenceSealSettingsJson('/agents/grant', written.hookPath);
+    assert.match(settings, /PreToolUse/);
+    assert.match(settings, /Write\|Edit\|MultiEdit/);
+    assert.match(settings, /memory-coherence-write-fence-hook/);
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test('runtimeEnv carries agent home for write fence under seal', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-seal-home-env-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await ensureTestAgentConfig({ agentId: 'scout', stateDir });
+      const memory = makeMemoryCoherenceInboxItem({
+        scheduledSlotAt: '2026-08-12T05:47:00.000Z',
+        timestamp: '2026-08-12T05:47:00.000Z',
+      });
+      const homePath = join(stateDir, 'agent-home');
+      const env = runtimeEnv({
+        agentId: 'scout',
+        homePath,
+        item: memory,
+        session: { createdAt: memory.receivedAt, currentStartedAt: memory.receivedAt, updatedAt: memory.receivedAt },
+        stateDir,
+      });
+      assert.equal(env[ANIMA_MEMORY_COHERENCE_HOME_ENV], homePath);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
   }
 });

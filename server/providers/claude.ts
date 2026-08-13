@@ -137,6 +137,7 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
     const existing = this.slot.get();
     if (existing) return existing;
     const systemPromptFilePath = await writeSystemPromptFile(input);
+    const sealSettingsPath = await prepareMemoryCoherenceSealSettings(input);
     return withProviderCliLaunchPermit(
       this.kind,
       input.signal,
@@ -146,6 +147,7 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
             input.providerSession,
             systemPromptFilePath,
             stringEnv(input.env),
+            sealSettingsPath,
           ),
           command: this.command,
           label: 'Claude Code runtime',
@@ -180,6 +182,7 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
     providerSession: ProviderSessionRecord | undefined,
     systemPromptFilePath: string | undefined,
     runtimeEnv?: Record<string, string>,
+    sealSettingsPath?: string,
   ): string[] {
     const args = [
       '--output-format', 'stream-json',
@@ -189,9 +192,30 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
       '--input-format', 'stream-json',
     ];
     if (providerSession) args.push('--resume', providerSession.id);
-    args.push(...claudeCommonArgs(this.config, systemPromptFilePath, runtimeEnv));
+    args.push(...claudeCommonArgs(
+      this.config,
+      systemPromptFilePath,
+      runtimeEnv,
+      sealSettingsPath ? { sealSettingsPath } : undefined,
+    ));
     return args;
   }
+}
+
+async function prepareMemoryCoherenceSealSettings(
+  input: AgentRuntimeInput,
+): Promise<string | undefined> {
+  if (input.env?.['ANIMA_MEMORY_COHERENCE_SEAL'] !== '1') return undefined;
+  const homePath = input.env?.['ANIMA_MEMORY_COHERENCE_HOME']?.trim() || input.cwd;
+  if (!homePath) {
+    throw new Error('memory coherence seal: agent home path missing; refuse to launch unfenced');
+  }
+  const { writeMemoryCoherenceSealSettings, memoryCoherenceSealSettingsPath } = await import(
+    '../runtime/memory-coherence-seal-settings.js'
+  );
+  const settingsPath = memoryCoherenceSealSettingsPath(input.systemPromptFilePath, input.itemId);
+  const written = await writeMemoryCoherenceSealSettings({ homePath, settingsPath });
+  return written.settingsPath;
 }
 
 function stringEnv(env: NodeJS.ProcessEnv | undefined): Record<string, string> | undefined {

@@ -49,6 +49,7 @@ export function claudeCommonArgs(
   config: ClaudeCodeAgentProviderConfig,
   systemPromptFilePath: string | undefined,
   runtimeEnv?: Record<string, string>,
+  options?: { sealSettingsPath?: string },
 ): string[] {
   const disallowed = claudeDisallowedToolsForEnv(runtimeEnv ?? config.env);
   const args = [
@@ -59,6 +60,8 @@ export function claudeCommonArgs(
   if (config.model) args.push('--model', config.model);
   if (config.reasoningEffort) args.push('--effort', config.reasoningEffort);
   if (systemPromptFilePath) args.push('--system-prompt-file', systemPromptFilePath);
+  // Memory-coherence write fence: PreToolUse hook allowlists MEMORY.md + notes/.
+  if (options?.sealSettingsPath) args.push('--settings', options.sealSettingsPath);
   return args;
 }
 
