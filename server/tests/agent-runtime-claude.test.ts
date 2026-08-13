@@ -1,11 +1,14 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { sleep, waitFor, withTimeout } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentRuntime } from '../providers/factory.js';
-import { CLAUDE_DISALLOWED_TOOLS } from '../providers/claude-launch.js';
+import {
+  CLAUDE_DISABLE_AUTO_MEMORY,
+  CLAUDE_DISALLOWED_TOOLS,
+} from '../providers/claude-launch.js';
 import type { AgentRuntime } from '../providers/contract.js';
 import { makeSlackEvent } from './helpers/slack.js';
 import { ingestEvent } from './helpers/inbox.js';
@@ -22,6 +25,15 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
   try {
     await withAnimaHome(stateDir, async () => {
     const callsPath = join(stateDir, 'claude-calls.jsonl');
+    const claudeConfigDir = join(stateDir, 'claude-config');
+    const claudeMdSentinel = 'VISIBLE_CLAUDE_MD_SENTINEL';
+    const existingNativeMemoryPath = join(
+      claudeConfigDir,
+      'projects',
+      'existing-project',
+      'memory',
+      'MEMORY.md',
+    );
     const claudeProjectsDir = join(stateDir, 'claude-projects');
     const claudeSubagentCwd = '/tmp/anima-claude-subagent-cwd';
     const claudeProjectRoot = join(claudeProjectsDir, claudeSubagentCwd.replace(/\/+$/, '').replaceAll('/', '-'));
@@ -30,6 +42,9 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
     const claudeResultSubagentLog = join(claudeProjectDir, 'agent-claude-child-result.jsonl');
     process.env.CLAUDE_PROJECTS_DIR = claudeProjectsDir;
     await mkdir(claudeProjectDir, { recursive: true });
+    await mkdir(dirname(existingNativeMemoryPath), { recursive: true });
+    await writeFile(join(stateDir, 'CLAUDE.md'), `${claudeMdSentinel}\n`, 'utf8');
+    await writeFile(existingNativeMemoryPath, 'existing native auto-memory\n', 'utf8');
     await writeFile(
       join(claudeProjectDir, 'agent-claude-child-meta.meta.json'),
       `${JSON.stringify({ agentType: 'general-purpose', description: 'metadata child', toolUseId: 'toolu_parent_task' })}\n`,
@@ -69,6 +84,8 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
         'if (argv[argv.indexOf("--model") + 1] !== "opus") process.exit(56);',
         'if (argv[argv.indexOf("--effort") + 1] !== "max") process.exit(57);',
         'if (process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== "272000") process.exit(59);',
+        `if (process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY !== ${JSON.stringify(CLAUDE_DISABLE_AUTO_MEMORY)}) process.exit(64);`,
+        `if (!readFileSync('CLAUDE.md', 'utf8').includes(${JSON.stringify(claudeMdSentinel)})) process.exit(65);`,
         'if (!systemPrompt.includes("You are Anima, general-purpose Anima agent.")) process.exit(53);',
         'if (!systemPrompt.includes("anima message send <target flags>")) process.exit(54);',
         'console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "claude-session-1", cwd: process.env.CLAUDE_SUBAGENT_CWD, claude_code_version: "test", model: "opus", permissionMode: "bypassPermissions", tools: ["Read", "Bash"], mcp_servers: ["filesystem"], agents: ["Explore"], skills: ["frontend"], plugins: ["Browser"], memory_paths: ["/tmp/MEMORY.md"] }));',
@@ -152,6 +169,8 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
     runtime = createAgentRuntime({
       env: {
         CALLS_PATH: callsPath,
+        CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+        CLAUDE_CONFIG_DIR: claudeConfigDir,
         ...runtimeTestEnv(stateDir, {
           CLAUDE_RESULT_SUBAGENT_LOG: claudeResultSubagentLog,
           CLAUDE_PARENT_TRANSCRIPT_LOG: claudeParentTranscriptLog,
@@ -305,6 +324,7 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
     assert.equal(usage.totalTokens, 2256);
     assert.equal(usage.reportedRuns, 2);
     assert.equal(usage.unknownRuns, 0);
+    assert.equal(await readFile(existingNativeMemoryPath, 'utf8'), 'existing native auto-memory\n');
     await runtime.close?.();
     runtime = undefined;
     });

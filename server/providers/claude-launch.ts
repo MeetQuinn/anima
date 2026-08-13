@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import type { AgentRuntimeInput, ClaudeCodeAgentProviderConfig } from './contract.js';
 
 export const CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW = 272000;
+export const CLAUDE_DISABLE_AUTO_MEMORY = '1';
 export const CLAUDE_DISALLOWED_TOOLS = [
   'AskUserQuestion',
   'CronCreate',
@@ -18,6 +19,7 @@ export function claudeProviderEnv(config: ClaudeCodeAgentProviderConfig): Record
   return {
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW),
     ...(config.env ?? {}),
+    CLAUDE_CODE_DISABLE_AUTO_MEMORY: CLAUDE_DISABLE_AUTO_MEMORY,
   };
 }
 
