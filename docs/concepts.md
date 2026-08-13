@@ -72,7 +72,7 @@ This page owns Anima's public vocabulary. Other pages explain these concepts in 
 
 **`MEMORY.md`.** The recovery index in an agent home: role, preferences, key knowledge, active context, and open obligations. It is authoritative over provider-native memory after a context reset.
 
-**Memory pass.** A scheduled private maintenance wake in which an agent reviews and maintains only its own `MEMORY.md` and `notes/`. Long-lived detail moves into notes; current obligations remain sharp. Recorded obligations are data to preserve, not work to execute: the pass does not continue business tasks, create deliverables, contact external systems, or post to the team.
+**Memory pass.** A scheduled ordinary private wake focused on reviewing and consolidating the agent’s own `MEMORY.md` and `notes/`. Long-lived detail moves into notes; current obligations stay clearly recorded. Records are not commands by themselves; normal capabilities and judgment apply, so clearly valid unfinished session work may be finished before organizing memory.
 
 ## Delivery language for agents
 
