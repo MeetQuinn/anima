@@ -14,11 +14,20 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 //   • stuck — the user is at/near the bottom; content growth follows the bottom.
 //   • reading — the user deliberately scrolled up; growth never yanks them.
 //
-// One writer: a ResizeObserver on the content wrapper is the ONLY thing that
-// reacts to content growth. It branches on the current mode:
+// One writer: a single ResizeObserver, watching BOTH the content wrapper and the
+// scroll container, is the only thing that reacts to size change. It branches on
+// the current mode:
 //   stuck / initialPin       -> scrollTop = scrollHeight   (follow bottom)
 //   reading + prepend active -> scrollTop += delta          (preserve viewport)
 //   reading + bottom growth  -> nothing                     (never yank)
+//
+// The container is observed as well as the content because the timeline is
+// `flex-1` in a column that also holds the status summary, the onboarding
+// banners and the error bar, all of which mount LATE (the status summary renders
+// null until the agent status query resolves). Those change the viewport without
+// changing the content, so a content-only observer sees nothing at all while the
+// pinned bottom silently slides away by the height of whatever appeared. That
+// was the "opens, then jitters a few times before settling" report.
 //
 // Determinism: the container uses `overflow-anchor: none` so the browser never
 // adjusts scrollTop on content change. Every adjustment is hook-owned, which
@@ -109,6 +118,14 @@ export function useStickToBottom({
 
   // Last observed scroll height, so a growth delta can be computed.
   const prevHeightRef = useRef(0);
+  // Last observed VIEWPORT height. The timeline is `flex-1` under a column that
+  // also holds the status summary, the onboarding banners and the error bar, and
+  // each of those mounts late (the status summary renders null until the agent
+  // status query resolves). When one appears the content does not change at all
+  // — only how much of it fits — so a content-only observer sees nothing and the
+  // pinned bottom silently slides away. Tracked so that case can be told apart
+  // from real growth.
+  const prevClientHeightRef = useRef(0);
   // A prepend (older page) is in flight; the next top-growth must be preserved.
   const prependPendingRef = useRef(false);
   // The user made a deliberate upward gesture; the next scroll that leaves the
@@ -230,6 +247,7 @@ export function useStickToBottom({
     const el = containerRef.current;
     if (!content || !el) return;
     prevHeightRef.current = el.scrollHeight;
+    prevClientHeightRef.current = el.clientHeight;
     if (typeof ResizeObserver === 'undefined') {
       roActiveRef.current = false;
       return;
@@ -239,12 +257,27 @@ export function useStickToBottom({
       const node = containerRef.current;
       if (!node) return;
       const newHeight = node.scrollHeight;
+      const newClientHeight = node.clientHeight;
       const delta = newHeight - prevHeightRef.current;
+      const viewportDelta = newClientHeight - prevClientHeightRef.current;
       prevHeightRef.current = newHeight;
-      if (delta === 0) return;
+      prevClientHeightRef.current = newClientHeight;
+      if (delta === 0 && viewportDelta === 0) return;
+      // A viewport-only change (delta 0, viewportDelta non-zero) is something
+      // above the timeline mounting or resizing — the status summary, a banner,
+      // the error bar — or a window resize / mobile keyboard. The content did not
+      // move, only how much of it fits, so a pinned bottom is now off by exactly
+      // the viewport delta. `applyGrowth` is already the right writer for it with
+      // delta 0: the bottom-following modes re-pin, and `reading` is untouched
+      // because its only correction is gated on delta > 0.
       applyGrowth(node, delta);
     });
     ro.observe(content);
+    // Observe the scroll container too, so a viewport change with no content
+    // change is still seen. A scroll write resizes nothing, so the pin above
+    // cannot re-enter this observer; and the initial observe-time callback for
+    // either target reads back both deltas as 0 and returns.
+    ro.observe(el);
     return () => {
       ro.disconnect();
       roActiveRef.current = false;
@@ -308,6 +341,7 @@ export function useStickToBottom({
     prependPendingRef.current = false;
     const el = containerRef.current;
     prevHeightRef.current = el ? el.scrollHeight : 0;
+    prevClientHeightRef.current = el ? el.clientHeight : 0;
     if (el) scrollToBottom(el);
     lastScrollTopRef.current = el ? el.scrollTop : 0;
   }, [feedKey, containerRef]);
