@@ -122,7 +122,7 @@ export function normalizeMemoryCoherenceConfig(
   raw: MemoryCoherenceConfig | undefined,
 ): MemoryCoherenceSchedulerConfig {
   return {
-    enabled: raw?.enabled === true,
+    enabled: raw?.enabled !== false,
     maxConcurrent: raw?.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
     scopeAgentIds: raw?.scopeAgentIds ?? [],
     timezone: raw?.timezone ?? DEFAULT_TIMEZONE,

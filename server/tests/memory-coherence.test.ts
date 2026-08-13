@@ -17,6 +17,7 @@ import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import {
   hasMeaningfulActivitySinceLastMemoryPass,
   MemoryCoherenceScheduler,
+  normalizeMemoryCoherenceConfig,
   stableAgentOffsetMinutes,
 } from '../memory/memory-coherence-scheduler.js';
 import {
@@ -27,12 +28,38 @@ import {
 import { MessageStore } from '../storage/schema/message.store.js';
 import { withAnimaHome } from './anima-home.js';
 
-test('memory coherence scheduler is off by default', async () => {
+test('memory coherence defaults on and only explicit false opts out', () => {
+  assert.equal(normalizeMemoryCoherenceConfig(undefined).enabled, true);
+  assert.equal(normalizeMemoryCoherenceConfig({}).enabled, true);
+  assert.equal(normalizeMemoryCoherenceConfig({ enabled: true }).enabled, true);
+  assert.equal(normalizeMemoryCoherenceConfig({ enabled: false }).enabled, false);
+});
+
+test('memory coherence scheduler is on by default', async () => {
   const queues = new TestMemoryQueues();
   const scheduler = new MemoryCoherenceScheduler({
+    hasMeaningfulActivitySinceLastPass: async () => true,
     now: () => new Date('2026-06-22T08:00:00.000Z'),
     queueForAgent: (agentId) => queues.queueForAgent(agentId),
     readServerConfig: async () => ({}),
+    timezoneForAgent: () => 'UTC',
+  });
+
+  await scheduler.reconcile([agent('iris')]);
+
+  assert.deepEqual(
+    queues.enqueuedIds().map((entry) => entry.agentId),
+    ['iris'],
+  );
+});
+
+test('memory coherence scheduler can be explicitly disabled', async () => {
+  const queues = new TestMemoryQueues();
+  const scheduler = new MemoryCoherenceScheduler({
+    hasMeaningfulActivitySinceLastPass: async () => true,
+    now: () => new Date('2026-06-22T08:00:00.000Z'),
+    queueForAgent: (agentId) => queues.queueForAgent(agentId),
+    readServerConfig: async () => ({ memoryCoherence: { enabled: false } }),
     timezoneForAgent: () => 'UTC',
   });
 

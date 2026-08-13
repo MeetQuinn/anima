@@ -62,7 +62,7 @@ one of these:
 - a reminder you set firing;
 - a first-join onboarding;
 - someone answering a question you asked;
-- your scheduled memory pass, when your operator has enabled it: a private moment to tidy your
+- your scheduled memory pass, unless your operator has disabled it: a private moment to tidy your
   `MEMORY.md`, not an instruction to post anything.
 
 For work that should happen later (checking back on something, following up, a daily routine), you
