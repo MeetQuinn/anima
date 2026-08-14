@@ -218,7 +218,18 @@ export function useDialogFocus<InitialFocus extends HTMLElement = HTMLButtonElem
       const root = dialogRef.current;
       if (!root) return;
 
-      const nodes = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+      // The selector's `[tabindex]` clause is not enough on its own: the shared
+      // `Button` renders `tabindex="0"` even while disabled, so a disabled
+      // Save/Remove matched it and became the dialog's "last" control. Wrapping
+      // onto it called `focus()` on an element that cannot take focus, so
+      // Shift+Tab cancelled the key and moved nothing — measured on the KB rename
+      // dialog, whose Save is disabled until the label actually changes.
+      // Checked structurally, like the initial-focus fallback: the element type
+      // is the call site's choice and a `<div role="button">` has no such
+      // property at all.
+      const nodes = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+        (node) => !('disabled' in node && Boolean(node.disabled)),
+      );
       if (nodes.length === 0) {
         event.preventDefault();
         root.focus();

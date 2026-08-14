@@ -9,6 +9,7 @@ import {
   startAgentFeishuAppRegistration,
 } from '@/api/agents';
 import { Button } from '@/components/ui/button';
+import { useDialogFocus } from '@/hooks/useDialogFocus';
 import {
   FeishuRecommendedPermissionsChecklist,
   recommendedScopesForDisplay,
@@ -304,6 +305,16 @@ export function RecommendedPermissionsState({
   const [recheckResult, setRecheckResult] = useState<'granted' | 'missing' | null>(null);
   const [showPerms, setShowPerms] = useState(false);
   const [skipModal, setSkipModal] = useState(false);
+
+  // The skip warning is the only dialog on this screen, and until now it had no
+  // focus lifecycle at all: opening it left focus on the "Skip for now" link
+  // behind it, Tab walked the whole onboarding form underneath, and closing it
+  // left focus wherever it happened to be. The hook lands focus on the safe
+  // control, contains Tab, and hands focus back to the link that opened it.
+  //
+  // `open` is the state flag rather than a constant because this dialog is a
+  // conditional branch of a component that stays mounted around it.
+  const { dialogRef, initialFocusRef } = useDialogFocus(skipModal);
   const scopeQuery = useQuery({
     queryKey: queryKeys.agentFeishuScopes(agentId),
     queryFn: () => fetchAgentFeishuScopeStatus(agentId),
@@ -387,6 +398,8 @@ export function RecommendedPermissionsState({
 
       {skipModal && (
         <div
+          ref={dialogRef}
+          tabIndex={-1}
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4"
           role="dialog"
           aria-modal="true"
@@ -417,7 +430,7 @@ export function RecommendedPermissionsState({
               >
                 Skip anyway
               </button>
-              <Button size="sm" onClick={() => setSkipModal(false)}>
+              <Button ref={initialFocusRef} size="sm" onClick={() => setSkipModal(false)}>
                 Keep setting up
               </Button>
             </div>

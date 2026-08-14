@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import ClaudeAccountLoginModal from './ClaudeAccountLoginModal';
@@ -103,5 +104,63 @@ describe('ClaudeAccountLoginModal', () => {
     );
     expect(screen.getByRole('dialog', { name: 'Add Claude account' })).toBeTruthy();
     expect(onClose).not.toHaveBeenCalled();
+  });
+  it('keeps Tab inside the dialog and hands focus back to what opened it', async () => {
+    // Adopting `useDialogFocus` (batch B-flat) adds containment and restore here.
+    // The landing spot deliberately stays the dialog container: at open the only
+    // control is Cancel, and the code field only appears once the provider
+    // answers, so focus is not put on "abandon the sign-in you just started".
+    api.startClaudeAccountLogin.mockResolvedValueOnce({
+      createdAt,
+      id,
+      loginUrl: 'https://claude.com/cai/oauth/authorize?state=test',
+      status: 'waiting',
+      updatedAt: createdAt,
+    });
+    api.fetchClaudeAccountLogin.mockResolvedValue({
+      createdAt,
+      id,
+      status: 'waiting',
+      updatedAt: createdAt,
+    });
+
+    function Host() {
+      const [open, setOpen] = useState(true);
+      return (
+        <>
+          <button type="button">Add account</button>
+          {open && (
+            <ClaudeAccountLoginModal onClose={() => setOpen(false)} onSucceeded={() => {}} />
+          )}
+        </>
+      );
+    }
+
+    const opener = document.createElement('button');
+    opener.textContent = 'Providers';
+    document.body.append(opener);
+    opener.focus();
+
+    render(<Host />);
+    const dialog = await screen.findByRole('dialog', { name: 'Add Claude account' });
+    expect(document.activeElement).toBe(dialog);
+
+    // A Tab from the container is a boundary: it moves inside instead of leaving
+    // for the panel behind the dialog.
+    const forward = fireEvent.keyDown(dialog, { key: 'Tab' });
+    expect(forward).toBe(false);
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).not.toBe(opener);
+
+    // Closing goes through an async cancel of the managed login, so the unmount
+    // lands outside the act() around the click and React flushes the effect
+    // cleanup that restores focus in a later task. Waiting on the DOM being gone
+    // is therefore NOT enough to wait on the restore — measured: asserting it
+    // synchronously here passes alone and fails under load.
+    const cancel = await screen.findByRole('button', { name: 'Cancel' });
+    fireEvent.click(cancel);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+    opener.remove();
   });
 });

@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { addKb } from '@/api/kb';
 import { Button } from '@/components/ui/button';
+import { useDialogFocus } from '@/hooks/useDialogFocus';
 import DirectoryPicker from '@/components/DirectoryPicker';
 import { slugify, basename } from './utils';
 import type { KbView } from '@shared/kb';
@@ -21,6 +22,14 @@ export function AddKbModal({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Focus lifecycle: contain Tab and hand focus back to the sidebar control that
+  // opened this. No `initialFocusRef`: every control inside belongs to
+  // DirectoryPicker, which owns its own arrow-key row navigation, so naming one
+  // of its rows "the safe control" from out here would be this file deciding
+  // something it does not own. Focus lands on the container instead, which is a
+  // resting place the hook keeps and Tab moves off immediately.
+  const { dialogRef } = useDialogFocus(true);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -54,6 +63,8 @@ export function AddKbModal({
       role="presentation"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         className="relative w-full max-w-2xl rounded-sm border border-border-soft bg-surface p-5 shadow-deep"
@@ -92,11 +103,16 @@ export function RenameKbModal({
   onCancel: () => void;
 }) {
   const [label, setLabel] = useState(kb.label);
-  const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    setTimeout(() => inputRef.current?.focus(), 0);
-  }, []);
+  // A rename dialog is a form: the field is the safe control, not Cancel. That
+  // is what the hook's call-site type parameter is for — the ref is typed to the
+  // element it will be attached to, so landing focus on a button here would be a
+  // compile error rather than a keyboard user typing into nothing.
+  //
+  // This also replaces a `setTimeout(…, 0)` that focused the input a tick after
+  // mount. The hook focuses in the effect, which is already after the browser
+  // has the node.
+  const { dialogRef, initialFocusRef } = useDialogFocus<HTMLInputElement>(true);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -115,6 +131,8 @@ export function RenameKbModal({
       role="presentation"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         className="relative w-full max-w-sm rounded-sm border border-border-soft bg-surface p-6 shadow-deep"
@@ -129,7 +147,7 @@ export function RenameKbModal({
           className="mt-3 space-y-3"
         >
           <input
-            ref={inputRef}
+            ref={initialFocusRef}
             type="text"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
@@ -168,6 +186,11 @@ export function ConfirmDeleteModal({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  // Destructive confirm, so the safe control gets focus: Cancel, never Remove.
+  // Same choice ConfirmModal and BusyConfirmModal already make, which is why the
+  // ref stays button-typed here.
+  const { dialogRef, initialFocusRef } = useDialogFocus(true);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !busy) onCancel();
@@ -185,6 +208,8 @@ export function ConfirmDeleteModal({
       role="presentation"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         className="relative w-full max-w-sm rounded-sm border border-health-error/30 bg-surface p-6 pl-8 shadow-deep"
@@ -197,7 +222,7 @@ export function ConfirmDeleteModal({
           the sidebar. Files on disk are not affected.
         </div>
         <div className="mt-5 flex justify-end gap-2">
-          <Button onClick={onCancel} variant="outline" disabled={busy}>
+          <Button ref={initialFocusRef} onClick={onCancel} variant="outline" disabled={busy}>
             Cancel
           </Button>
           <Button onClick={onConfirm} variant="destructive" disabled={busy}>
