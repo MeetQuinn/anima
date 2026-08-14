@@ -35,7 +35,9 @@ import { createSlackWebClient } from '../slack/client.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
 import { agentHasConnectedTransport } from '../../shared/agent-transports.js';
 import {
+  effectiveProviderRuntimeArgs,
   effectiveProviderRuntimeCommand,
+  type ProviderRuntimeArgsConfig,
   type ProviderRuntimeCommandsConfig,
 } from '../../shared/provider-runtime-commands.js';
 import {
@@ -84,12 +86,14 @@ interface ManagedAgent {
   config: AgentConfig;
   configReloadWait?: ConfigReloadWait;
   lastLoggedStatus?: string;
+  providerArgs: string[];
   providerCommand: string;
   running?: RunningAgentRecord;
 }
 
 export interface StartAgentOptions {
   forceStopAfterMs: number;
+  providerArgs: readonly string[];
   providerCommand: string;
   runLimiter: TeamRunLimiter;
   startTimeoutMs: number;
@@ -100,6 +104,7 @@ export interface RuntimeHostDependencies {
   forceRestartTimeoutMs?: number;
   loadAgents?: (opts: RuntimeHostOptions) => Promise<AgentConfig[]>;
   loadMaxConcurrentAgentRuns?: () => Promise<number>;
+  loadProviderArgs?: () => Promise<ProviderRuntimeArgsConfig>;
   loadProviderCommands?: () => Promise<ProviderRuntimeCommandsConfig>;
   ensureDefaultSkills?: () => Promise<void>;
   healthIntervalMs?: number;
@@ -133,6 +138,7 @@ export class RuntimeHost {
   private readonly animaHome: string;
   private readonly loadAgents: (opts: RuntimeHostOptions) => Promise<AgentConfig[]>;
   private readonly loadMaxConcurrentAgentRuns: () => Promise<number>;
+  private readonly loadProviderArgs: () => Promise<ProviderRuntimeArgsConfig>;
   private readonly loadProviderCommands: () => Promise<ProviderRuntimeCommandsConfig>;
   private readonly ensureDefaultSkills: () => Promise<void>;
   private readonly logger: Pick<Console, 'error' | 'log'>;
@@ -165,6 +171,8 @@ export class RuntimeHost {
     const settings = new ServerSettingsService(new ServerConfigStore(this.animaHome));
     this.loadMaxConcurrentAgentRuns = deps.loadMaxConcurrentAgentRuns
       ?? (() => settings.getMaxConcurrentAgentRuns());
+    this.loadProviderArgs = deps.loadProviderArgs
+      ?? (() => settings.getProviderRuntimeArgs());
     this.loadProviderCommands = deps.loadProviderCommands
       ?? (() => settings.getProviderRuntimeCommands());
     this.ensureDefaultSkills = deps.ensureDefaultSkills ?? (async () => {
@@ -262,9 +270,10 @@ export class RuntimeHost {
   }
 
   private async reconcileAgents(): Promise<void> {
-    const [agents, maxConcurrentAgentRuns, providerCommands] = await Promise.all([
+    const [agents, maxConcurrentAgentRuns, providerArgs, providerCommands] = await Promise.all([
       this.loadAgents(this.opts),
       this.loadMaxConcurrentAgentRuns(),
+      this.loadProviderArgs(),
       this.loadProviderCommands(),
     ]);
     this.runLimiter.setLimit(maxConcurrentAgentRuns);
@@ -279,7 +288,8 @@ export class RuntimeHost {
         agent.provider.kind,
         providerCommands,
       );
-      const record = this.managedAgent(agent, providerCommand);
+      const args = effectiveProviderRuntimeArgs(agent.provider.kind, providerArgs);
+      const record = this.managedAgent(agent, providerCommand, args);
       const running = record.running;
       try {
         await this.validateAgent(agent);
@@ -313,7 +323,7 @@ export class RuntimeHost {
           });
           continue;
         }
-        await this.startAndStore(agent, providerCommand);
+        await this.startAndStore(agent, providerCommand, args);
       } catch (error) {
         const action = running ? 'failed to reconcile' : 'failed to start';
         const message = `Agent ${agent.id} ${action}: ${errorMessage(error)}`;
@@ -352,14 +362,23 @@ export class RuntimeHost {
     }
   }
 
-  private managedAgent(agent: AgentConfig, providerCommand: string): ManagedAgent {
+  private managedAgent(
+    agent: AgentConfig,
+    providerCommand: string,
+    providerArgs: readonly string[],
+  ): ManagedAgent {
     const existing = this.agents.get(agent.id);
     if (existing) {
       existing.config = agent;
+      existing.providerArgs = [...providerArgs];
       existing.providerCommand = providerCommand;
       return existing;
     }
-    const record: ManagedAgent = { config: agent, providerCommand };
+    const record: ManagedAgent = {
+      config: agent,
+      providerArgs: [...providerArgs],
+      providerCommand,
+    };
     this.agents.set(agent.id, record);
     return record;
   }
@@ -424,7 +443,12 @@ export class RuntimeHost {
         );
         record.running = undefined;
       }
-      await this.startAndStore(agent, record.providerCommand, command);
+      await this.startAndStore(
+        agent,
+        record.providerCommand,
+        record.providerArgs,
+        command,
+      );
     } catch (error) {
       await this.writeRestartFailed(agent.id, command, 'restart_failed');
       throw error;
@@ -453,7 +477,11 @@ export class RuntimeHost {
       return;
     }
 
-    const nextFingerprint = runtimeFingerprint(agent, record.providerCommand);
+    const nextFingerprint = runtimeFingerprint(
+      agent,
+      record.providerCommand,
+      record.providerArgs,
+    );
     if (running.fingerprint === nextFingerprint) {
       this.clearConfigReloadWait(record);
       running.handle.setIntakePaused?.(false);
@@ -481,7 +509,7 @@ export class RuntimeHost {
       forceAfterMs: this.forceRestartTimeoutMs,
     });
     record.running = undefined;
-    await this.startAndStore(agent, record.providerCommand);
+    await this.startAndStore(agent, record.providerCommand, record.providerArgs);
   }
 
   /**
@@ -534,9 +562,10 @@ export class RuntimeHost {
   private async startAndStore(
     agent: AgentConfig,
     providerCommand: string,
+    providerArgs: readonly string[],
     restartCommand?: AgentRestartCommand,
   ): Promise<void> {
-    const record = this.managedAgent(agent, providerCommand);
+    const record = this.managedAgent(agent, providerCommand, providerArgs);
     this.clearConfigReloadWait(record);
     await this.health.writeHealth({
       agentId: agent.id,
@@ -547,11 +576,23 @@ export class RuntimeHost {
       state: 'starting',
       updatedAt: nowIso(),
     });
-    const started = await this.startAgentWithTimeout(agent, providerCommand);
-    const startedRecord = this.managedAgent(started.agent, providerCommand);
+    const started = await this.startAgentWithTimeout(
+      agent,
+      providerCommand,
+      providerArgs,
+    );
+    const startedRecord = this.managedAgent(
+      started.agent,
+      providerCommand,
+      providerArgs,
+    );
     this.clearConfigReloadWait(startedRecord);
     startedRecord.running = {
-      fingerprint: runtimeFingerprint(started.agent, providerCommand),
+      fingerprint: runtimeFingerprint(
+        started.agent,
+        providerCommand,
+        providerArgs,
+      ),
       handle: started.handle,
     };
     startedRecord.lastLoggedStatus = undefined;
@@ -561,6 +602,7 @@ export class RuntimeHost {
   private async startAgentWithTimeout(
     agent: AgentConfig,
     providerCommand: string,
+    providerArgs: readonly string[],
   ): Promise<{ agent: AgentConfig; handle: RunningAgentHandle }> {
     let timeout: NodeJS.Timeout | undefined;
     let timedOut = false;
@@ -568,6 +610,7 @@ export class RuntimeHost {
       const startAgent = await this.agentAfterSlackDisplayInfoSync(agent);
       const handle = await this.startAgent(startAgent, this.animaHome, {
         forceStopAfterMs: this.forceRestartTimeoutMs,
+        providerArgs,
         providerCommand,
         runLimiter: this.runLimiter,
         startTimeoutMs: this.startAgentTimeoutMs,
@@ -937,6 +980,7 @@ async function startAgentFromConfig(
   return startRunningAgent({
     ...server.config,
     agentRuntime: createAgentRuntime(runtimeWithEnv(server.runtime, runtimeEnv), {
+      args: options.providerArgs,
       command: options.providerCommand,
     }),
     animaHome,
@@ -986,7 +1030,11 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-function runtimeFingerprint(agent: AgentConfig, providerCommand: string): string {
+function runtimeFingerprint(
+  agent: AgentConfig,
+  providerCommand: string,
+  providerArgs: readonly string[],
+): string {
   return stableJson({
     enabled: agent.enabled,
     homePath: resolveAgentHomePath(agent),
@@ -995,6 +1043,7 @@ function runtimeFingerprint(agent: AgentConfig, providerCommand: string): string
       role: agent.profile.role,
     },
     provider: agent.provider,
+    providerArgs,
     providerCommand,
     feishu: {
       appId: agent.feishu.appId,

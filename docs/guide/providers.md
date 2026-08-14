@@ -33,21 +33,36 @@ The create-agent flow checks whether `claude`, `codex`, `kimi`, `grok`, and `ope
 
 Detection proves that an executable exists. The first real turn proves that its authentication and provider account are usable.
 
-## Override the runtime command
+## Customize the runtime launch
 
-Each provider has a machine-wide **Runtime command** field under **Providers → Settings**. Leave it
-blank to use the default shown in the placeholder: `claude`, `codex`, `kimi`, `grok`, or
-`opencode`. Set it to another executable name or an absolute executable path when every Anima agent
-using that provider should launch through a compatible wrapper, for example `mcodex` for Codex.
+Each provider has machine-wide **Runtime command** and **Arguments** fields under
+**Providers → Settings**. Leave the command blank to use the default shown in the placeholder:
+`claude`, `codex`, `kimi`, `grok`, or `opencode`. Set it to another executable name or an absolute
+executable path when every Anima agent using that provider should launch through a compatible
+wrapper, for example `mcodex` for Codex.
 
-The value is one executable name or absolute path, not a shell command: arguments, pipes, redirects,
-relative paths, and environment assignments are not supported. Anima validates that the executable
-resolves and is runnable before saving it. A change applies only to agents using that provider,
-after their active turn and provider background work reach a safe boundary.
+The command is one executable name or absolute path, not a shell command. Put optional CLI arguments
+in **Arguments**, one exact argv entry per line. Spaces within a line are preserved; Anima does not
+invoke a shell or split quotes, pipes, redirects, or environment assignments. For example, add
+`--chrome` as one line for Claude Code when that machine has a paired Claude in Chrome extension.
 
-This setting changes runtime launch only. Provider detection, version reporting, installation, and
-updates continue to use the official CLI named in the table above. The wrapper remains operator-owned
-and must preserve the provider protocol that Anima expects.
+Arguments are inserted before Anima's managed transport and subcommand arguments. Anima validates
+the executable before saving it. A command or argument change applies only to agents using that
+provider, after their active turn and provider background work reach a safe boundary.
+
+The same setting can be written directly in `config.json`:
+
+```json
+{
+  "providerArgs": {
+    "claude-code": ["--chrome"]
+  }
+}
+```
+
+These settings change runtime launch only. Provider detection, version reporting, installation, and
+updates continue to use the official CLI named in the table above. Any wrapper or added arguments
+remain operator-owned and must preserve the provider protocol that Anima expects.
 
 ## Authentication ownership
 

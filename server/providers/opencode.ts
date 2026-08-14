@@ -29,10 +29,12 @@ import {
 
 const OPENCODE_RUNTIME_KIND = 'opencode-cli';
 
-export function openCodeAcpLaunchArgs(): string[] {
+export function openCodeAcpLaunchArgs(
+  providerArgs: readonly string[] = [],
+): string[] {
   // `--pure` disables external OpenCode plugins. Anima supplies the orchestration
   // boundary, while OpenCode's built-in tools and first-party providers remain.
-  return ['acp', '--pure'];
+  return [...providerArgs, 'acp', '--pure'];
 }
 
 export function openCodeLaunchEnvironment(
@@ -64,12 +66,18 @@ export class OpenCodeCliAgentRuntime extends ControllerAgentRuntime<OpenCodeAcpC
   readonly env: Record<string, string> | undefined;
   readonly kind = OPENCODE_RUNTIME_KIND;
   private readonly config: OpenCodeCliAgentProviderConfig;
+  private readonly providerArgs: readonly string[];
 
-  constructor(config: OpenCodeCliAgentProviderConfig, command: string) {
+  constructor(
+    config: OpenCodeCliAgentProviderConfig,
+    command: string,
+    providerArgs: readonly string[] = [],
+  ) {
     super({ providerChildIdleTimeoutMs: config.providerChildIdleTimeoutMs });
     this.config = config;
     this.command = command;
     this.env = config.env;
+    this.providerArgs = [...providerArgs];
   }
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
@@ -128,7 +136,7 @@ export class OpenCodeCliAgentRuntime extends ControllerAgentRuntime<OpenCodeAcpC
         if (current) return current;
         return this.spawnController(
           {
-            args: openCodeAcpLaunchArgs(),
+            args: openCodeAcpLaunchArgs(this.providerArgs),
             command: this.command,
             label: 'OpenCode ACP runtime',
           },

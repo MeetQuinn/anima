@@ -38,14 +38,20 @@ export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerC
   readonly env: Record<string, string> | undefined;
   readonly kind = 'codex-cli';
   private readonly config: CodexCliAgentProviderConfig;
+  private readonly providerArgs: readonly string[];
   private pendingSessionCorruption?: ProviderSessionCorruptionReason;
   private resumedProviderSessionId?: string;
 
-  constructor(config: CodexCliAgentProviderConfig, command: string) {
+  constructor(
+    config: CodexCliAgentProviderConfig,
+    command: string,
+    providerArgs: readonly string[] = [],
+  ) {
     super({ providerChildIdleTimeoutMs: config.providerChildIdleTimeoutMs });
     this.config = config;
     this.command = command;
     this.env = config.env;
+    this.providerArgs = [...providerArgs];
   }
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
@@ -119,7 +125,7 @@ export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerC
       input.signal,
       () => this.slot.get() ?? this.spawnController(
         {
-          args: codexAppServerArgs(this.env),
+          args: codexAppServerArgs(this.env, this.providerArgs),
           command: this.command,
           label: 'Codex app-server runtime',
         },
@@ -186,8 +192,12 @@ export function codexAutoCompactTokenLimitFor(
   return value;
 }
 
-export function codexAppServerArgs(env: Record<string, string> | undefined): string[] {
+export function codexAppServerArgs(
+  env: Record<string, string> | undefined,
+  providerArgs: readonly string[] = [],
+): string[] {
   return [
+    ...providerArgs,
     'app-server',
     '-c',
     'shell_environment_policy.inherit=all',

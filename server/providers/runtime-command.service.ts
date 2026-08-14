@@ -3,6 +3,7 @@ import { isAbsolute } from 'node:path';
 import {
   providerRuntimeCommandsResponse,
   type ProviderRuntimeCommandRequest,
+  type ProviderRuntimeArgsConfig,
   type ProviderRuntimeCommandsConfig,
   type ProviderRuntimeCommandsResponse,
 } from '../../shared/provider-runtime-commands.js';
@@ -12,11 +13,16 @@ import { resolveProviderExecutable } from '../provider-cli/provider-inspection.j
 import { defaultServerSettingsService } from '../settings/settings.service.js';
 
 interface ProviderRuntimeCommandSettings {
+  getProviderRuntimeArgs(): Promise<ProviderRuntimeArgsConfig>;
   getProviderRuntimeCommands(): Promise<ProviderRuntimeCommandsConfig>;
-  setProviderRuntimeCommand(
+  setProviderRuntimeSettings(
     provider: ProviderUsageKind,
     command: string | null,
-  ): Promise<ProviderRuntimeCommandsConfig>;
+    args?: string[],
+  ): Promise<{
+    args: ProviderRuntimeArgsConfig;
+    commands: ProviderRuntimeCommandsConfig;
+  }>;
 }
 
 interface ProviderRuntimeCommandServiceOptions {
@@ -44,9 +50,11 @@ export class ProviderRuntimeCommandService {
   }
 
   async status(): Promise<ProviderRuntimeCommandsResponse> {
-    return providerRuntimeCommandsResponse(
-      await this.settings.getProviderRuntimeCommands(),
-    );
+    const [commands, args] = await Promise.all([
+      this.settings.getProviderRuntimeCommands(),
+      this.settings.getProviderRuntimeArgs(),
+    ]);
+    return providerRuntimeCommandsResponse(commands, args);
   }
 
   async set(
@@ -75,11 +83,12 @@ export class ProviderRuntimeCommandService {
         `Runtime command was not found or is not executable: ${command}`,
       );
     }
-    const commands = await this.settings.setProviderRuntimeCommand(
+    const settings = await this.settings.setProviderRuntimeSettings(
       input.provider,
       command,
+      input.args,
     );
-    return providerRuntimeCommandsResponse(commands);
+    return providerRuntimeCommandsResponse(settings.commands, settings.args);
   }
 }
 

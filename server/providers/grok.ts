@@ -36,9 +36,13 @@ const GROK_RUNTIME_KIND = 'grok-cli';
  * is the single authority (a name heuristic could pass `--effort` to a model that
  * silently ignores it).
  */
-export function grokAcpLaunchArgs(config: GrokCliAgentProviderConfig): string[] {
+export function grokAcpLaunchArgs(
+  config: GrokCliAgentProviderConfig,
+  providerArgs: readonly string[] = [],
+): string[] {
   const model = config.model?.trim();
   return [
+    ...providerArgs,
     '--no-auto-update',
     'agent',
     '--no-leader',
@@ -63,14 +67,20 @@ export class GrokCliAgentRuntime extends ControllerAgentRuntime<GrokAcpControlle
   readonly env: Record<string, string> | undefined;
   readonly kind = GROK_RUNTIME_KIND;
   private readonly config: GrokCliAgentProviderConfig;
+  private readonly providerArgs: readonly string[];
   // Keep accepted prompts outside the child controller so same-item crash retry can replay them.
   private retainedFollowups?: { itemId: string; prompts: string[] };
 
-  constructor(config: GrokCliAgentProviderConfig, command: string) {
+  constructor(
+    config: GrokCliAgentProviderConfig,
+    command: string,
+    providerArgs: readonly string[] = [],
+  ) {
     super({ providerChildIdleTimeoutMs: config.providerChildIdleTimeoutMs });
     this.config = config;
     this.command = command;
     this.env = config.env;
+    this.providerArgs = [...providerArgs];
   }
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
@@ -139,7 +149,7 @@ export class GrokCliAgentRuntime extends ControllerAgentRuntime<GrokAcpControlle
         );
         return this.spawnController(
           {
-            args: grokAcpLaunchArgs(this.config),
+            args: grokAcpLaunchArgs(this.config, this.providerArgs),
             command: this.command,
             label: 'Grok ACP runtime',
           },

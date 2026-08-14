@@ -155,11 +155,12 @@ export default function UsagePanel({ onClose }: Props) {
   async function changeRuntimeCommand(
     provider: ProviderUsageKind,
     command: string | null,
+    args: string[],
   ): Promise<void> {
     setSavingRuntimeCommandProvider(provider);
     setRuntimeCommandFailure(undefined);
     try {
-      const next = await saveProviderRuntimeCommand(provider, command);
+      const next = await saveProviderRuntimeCommand(provider, command, args);
       queryClient.setQueryData(queryKeys.providerRuntimeCommands(), next);
     } catch (error) {
       setRuntimeCommandFailure({
@@ -369,6 +370,7 @@ export default function UsagePanel({ onClose }: Props) {
                           runtimeCommands?.providers.find(
                             (candidate) => candidate.provider === row.provider,
                           ) ?? {
+                            args: [],
                             command: null,
                             defaultCommand:
                               providerCatalogEntry(row.provider)?.command ?? row.provider,
@@ -383,8 +385,8 @@ export default function UsagePanel({ onClose }: Props) {
                         runtimeCommandSaving={
                           savingRuntimeCommandProvider === row.provider
                         }
-                        onRuntimeCommandSave={(command) => {
-                          void changeRuntimeCommand(row.provider, command);
+                        onRuntimeCommandSave={(command, args) => {
+                          void changeRuntimeCommand(row.provider, command, args);
                         }}
                         onRetryAccount={() => {
                           if (row.provider === 'claude-code' && claudeAccountState) {

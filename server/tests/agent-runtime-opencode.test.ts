@@ -124,19 +124,22 @@ test('opencode-cli ACP uses global DeepSeek auth, selects the model, and appends
 
       const firstCtx = await ingestOpenCodeEvent(stateDir, 'Start OpenCode.', '1785000000.000001');
       const secondCtx = await ingestOpenCodeEvent(stateDir, 'Steer OpenCode.', '1785000000.000002');
-      runtime = createAgentRuntime({
-        env: runtimeTestEnv(stateDir, {
-          CALLS_PATH: callsPath,
-          DEEPSEEK_API_KEY: 'per-agent-secret-must-be-removed',
-          LAUNCH_PATH: launchPath,
-          OPENCODE_AUTH_CONTENT: '{"deepseek":"must-be-removed"}',
-          OPENCODE_CONFIG_CONTENT: '{"provider":{"deepseek":{"options":{"apiKey":"must-be-removed"}}}}',
-          PERMISSION_PATH: permissionPath,
-        }),
-        kind: 'opencode-cli',
-        model: 'deepseek/deepseek-v4-pro',
-        reasoningEffort: 'max',
-      });
+      runtime = createAgentRuntime(
+        {
+          env: runtimeTestEnv(stateDir, {
+            CALLS_PATH: callsPath,
+            DEEPSEEK_API_KEY: 'per-agent-secret-must-be-removed',
+            LAUNCH_PATH: launchPath,
+            OPENCODE_AUTH_CONTENT: '{"deepseek":"must-be-removed"}',
+            OPENCODE_CONFIG_CONTENT: '{"provider":{"deepseek":{"options":{"apiKey":"must-be-removed"}}}}',
+            PERMISSION_PATH: permissionPath,
+          }),
+          kind: 'opencode-cli',
+          model: 'deepseek/deepseek-v4-pro',
+          reasoningEffort: 'max',
+        },
+        { args: ['--profile', 'team one'] },
+      );
 
       const runPromise = runtime.run(await runtimeInput(runtime, firstCtx, await loadState()));
       await waitFor(() => readFile(callsPath, 'utf8').then((text) => text.includes('"method":"session/prompt"')));
@@ -149,7 +152,7 @@ test('opencode-cli ACP uses global DeepSeek auth, selects the model, and appends
       assert.equal((await withTimeout(runPromise, 2_000)).text, 'handled first + appended');
 
       const launch = JSON.parse(await readFile(launchPath, 'utf8')) as Record<string, unknown>;
-      assert.deepEqual(launch.argv, ['acp', '--pure']);
+      assert.deepEqual(launch.argv, ['--profile', 'team one', 'acp', '--pure']);
       assert.equal(launch.autoUpdate, '1');
       assert.equal(launch.deepseek, undefined);
       assert.equal(launch.authContent, undefined);

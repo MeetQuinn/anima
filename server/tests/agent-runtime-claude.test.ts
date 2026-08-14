@@ -18,6 +18,66 @@ import { withAnimaHome } from './anima-home.js';
 import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
 import { runtimeInput, runtimeFollowupInput, assertFollowupPrompt, providerSessionStartedPayload, runtimeTestEnv } from './helpers/agent-runtime.js';
 
+test('claude-code runtime prepends configured argv entries without shell parsing', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-claude-provider-args-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const argvPath = join(stateDir, 'argv.json');
+      const fakeClaude = join(stateDir, 'claude');
+      await writeFile(
+        fakeClaude,
+        [
+          '#!/usr/bin/env node',
+          "import { writeFileSync } from 'node:fs';",
+          "import readline from 'node:readline';",
+          "writeFileSync(process.env.ARGV_PATH, JSON.stringify(process.argv.slice(2)));",
+          "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
+          "send({ type: 'system', subtype: 'init', session_id: 'claude-args-session', cwd: process.cwd(), claude_code_version: 'test' });",
+          "readline.createInterface({ input: process.stdin }).once('line', () => {",
+          "  send({ type: 'assistant', message: { content: [{ type: 'text', text: 'args ok' }] }, session_id: 'claude-args-session' });",
+          "  send({ type: 'result', subtype: 'success', result: 'args ok', session_id: 'claude-args-session' });",
+          '});',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      await chmod(fakeClaude, 0o755);
+
+      const ctx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-anima',
+          teamId: 'T-demo',
+          text: 'check provider args',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+      runtime = createAgentRuntime(
+        {
+          env: runtimeTestEnv(stateDir, { ARGV_PATH: argvPath }),
+          kind: 'claude-code',
+        },
+        {
+          args: ['--chrome', '--profile', 'team one'],
+          command: fakeClaude,
+        },
+      );
+
+      assert.equal(
+        (await runtime.run(await runtimeInput(runtime, ctx, await loadState()))).text,
+        'args ok',
+      );
+      const argv = JSON.parse(await readFile(argvPath, 'utf8')) as string[];
+      assert.deepEqual(argv.slice(0, 3), ['--chrome', '--profile', 'team one']);
+      assert.equal(argv.includes('--output-format'), true);
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('claude-code runtime streams activity, persists Claude session metadata, and resumes it', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
   const previousClaudeProjectsDir = process.env.CLAUDE_PROJECTS_DIR;

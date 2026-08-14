@@ -109,15 +109,18 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
 
       const first = await ingestGrokEvent(stateDir, 'Start Grok.', '1771000000.000001');
       const followup = await ingestGrokEvent(stateDir, 'Continue Grok.', '1771000000.000002');
-      runtime = createAgentRuntime({
-        env: runtimeTestEnv(stateDir, {
-          CALLS_PATH: callsPath,
-          GROK_HOME: grokHome,
-        }),
-        kind: 'grok-cli',
-        model: 'grok-4.5',
-        reasoningEffort: 'high',
-      });
+      runtime = createAgentRuntime(
+        {
+          env: runtimeTestEnv(stateDir, {
+            CALLS_PATH: callsPath,
+            GROK_HOME: grokHome,
+          }),
+          kind: 'grok-cli',
+          model: 'grok-4.5',
+          reasoningEffort: 'high',
+        },
+        { args: ['--profile', 'team one'] },
+      );
       const runPromise = runtime.run(await runtimeInput(runtime, first, await loadState()));
       await waitFor(() => readFile(callsPath, 'utf8').then((value) => value.includes('session/prompt')));
       assert.deepEqual(
@@ -132,6 +135,8 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
       // Launch argv never carries --effort: effort is applied post-init via
       // session/set_model against the live ACP catalog, never as a spawn flag.
       assert.deepEqual(launch.argv, [
+        '--profile',
+        'team one',
         '--no-auto-update',
         'agent',
         '--no-leader',
