@@ -47,6 +47,7 @@ export function messageFromActivity(activity: Activity): AgentMessageRecord | un
   const payload = activity.payload ?? {};
   const classified = classifyOutboundEffect({
     effect: stringField(payload, 'effect'),
+    status: stringField(payload, 'status'),
     tool: stringField(payload, 'tool'),
   });
   if (!classified) return undefined;

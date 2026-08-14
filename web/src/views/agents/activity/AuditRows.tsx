@@ -8,6 +8,7 @@ import { shortenModelLabel, subagentDelegationLabel } from '@/lib/activity-feed'
 import type { Activity as ActivityRecord } from '@shared/activity';
 import { ChevronRight } from 'lucide-react';
 import { MessageOutRow, FileOutRow } from './MessageRows';
+import { SystemEventRow } from '@/views/agents/conversation/SlackTimeline';
 
 // ---------------------------------------------------------------------------
 // Reaction row
@@ -237,6 +238,8 @@ function SubagentStreamSection({
           return <FileOutRow key={i} item={child} time={t} agentId="" />;
         if (child.kind === 'reaction-out')
           return <ReactOutRow key={i} item={child} time={t} />;
+        if (child.kind === 'system-event')
+          return <SystemEventRow key={i} item={child} />;
         if (child.kind === 'step') {
           const row = activityRow(child.activity);
           if (row.kind === 'unknown') return null;

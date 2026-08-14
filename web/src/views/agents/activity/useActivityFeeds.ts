@@ -37,7 +37,10 @@ export function useActivityFeeds(agentId: string | undefined) {
 
   const messagesData = useMemo(() => mergeMessagePages(messageQuery.data?.pages), [messageQuery.data]);
 
-  const conversationItems = useMemo(() => buildConversationItems(messagesData), [messagesData]);
+  const conversationItems = useMemo(
+    () => buildConversationItems(messagesData, activitiesData),
+    [messagesData, activitiesData],
+  );
   const stepItems = useMemo(() => buildStepItems(activitiesData), [activitiesData]);
 
   return { activityQuery, messageQuery, activitiesData, messagesData, conversationItems, stepItems };

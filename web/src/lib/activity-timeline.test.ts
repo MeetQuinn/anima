@@ -113,6 +113,29 @@ describe('activity timeline builders', () => {
     expect(items.map((item) => item.kind)).toEqual(['message-in', 'system-event']);
   });
 
+  it('merges held activity rows into the conversation spine (not the message ledger)', () => {
+    const items = buildConversationItems(
+      { entries: [message('m1', '2026-07-04T10:00:00.000Z')] },
+      {
+        events: [
+          activity('held-1', 'tool.call.completed', '2026-07-04T10:00:30.000Z', {
+            deltaCount: 2,
+            status: 'held',
+            tool: 'anima.message.send',
+          }),
+        ],
+      },
+    );
+
+    expect(items.map((item) => item.kind)).toEqual(['message-in', 'system-event']);
+    const held = items[1];
+    if (held?.kind !== 'system-event') throw new Error('expected held system-event');
+    expect(held.eventKind).toBe('held');
+    expect(held.body).toBe(
+      'Send held: 2 new messages arrived while composing; nothing was sent.',
+    );
+  });
+
   it('builds narrative step items and suppresses started rows with matching failure rows', () => {
     const started = activity('started', 'tool.call.started', '2026-07-04T10:00:00.000Z', {
       providerToolId: 'toolu_1',

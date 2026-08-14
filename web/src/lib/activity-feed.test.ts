@@ -338,6 +338,97 @@ describe('buildActivityFeed', () => {
     };
     expect(buildActivityFeed(page)).toEqual([]);
   });
+
+  it('projects status:held as a neutral system row for all three hold tools (main + child)', () => {
+    const heldMessage = activityEvent(
+      'actv_held_msg',
+      'tool.call.completed',
+      {
+        advancedToOrdinal: 12,
+        deltaCount: 1,
+        status: 'held',
+        surfaceId: 'slack:T:C:main',
+        tool: 'anima.message.send',
+      },
+      '2026-07-04T14:00:01.000Z',
+    );
+    const heldAsk = activityEvent(
+      'actv_held_ask',
+      'tool.call.completed',
+      {
+        deltaCount: 2,
+        status: 'held',
+        tool: 'anima.ask',
+      },
+      '2026-07-04T14:00:02.000Z',
+    );
+    const heldFile = activityEvent(
+      'actv_held_file',
+      'tool.call.completed',
+      {
+        deltaCount: 1,
+        status: 'held',
+        tool: 'anima.file.send',
+      },
+      '2026-07-04T14:00:03.000Z',
+    );
+    const parent = activityEvent(
+      'actv_parent',
+      'tool.call.started',
+      { providerToolId: 'toolu_parent', providerToolName: 'Agent' },
+      '2026-07-04T14:00:00.000Z',
+    );
+    const heldChild = activityEvent(
+      'actv_held_child',
+      'tool.call.completed',
+      {
+        deltaCount: 3,
+        parentToolCallId: 'toolu_parent',
+        status: 'held',
+        subRunId: 'child-1',
+        tool: 'anima.message.send',
+      },
+      '2026-07-04T14:00:04.000Z',
+    );
+
+    const items = buildActivityFeed({
+      events: [heldMessage, heldAsk, heldFile, parent, heldChild],
+      nextCursor: null,
+    });
+
+    expect(items.map((i) => i.kind)).toEqual([
+      'step',
+      'system-event',
+      'system-event',
+      'system-event',
+    ]);
+    const heldRows = items.filter(
+      (i): i is Extract<ActivityFeedItem, { kind: 'system-event' }> =>
+        i.kind === 'system-event',
+    );
+    expect(heldRows.every((row) => row.eventKind === 'held')).toBe(true);
+    expect(heldRows.map((row) => row.body)).toEqual([
+      'Send held: 1 new message arrived while composing; nothing was sent.',
+      'Send held: 2 new messages arrived while composing; nothing was sent.',
+      // File hold: delta is still conversation messages that arrived.
+      'Send held: 1 new message arrived while composing; nothing was sent.',
+    ]);
+    expect(heldRows.every((row) => row.label === 'Send held')).toBe(true);
+    // Never misrender as outbound message/file/ask rows.
+    expect(items.some((i) => i.kind === 'message-out' || i.kind === 'file-out')).toBe(false);
+
+    const parentStep = items.find((i) => i.kind === 'step');
+    if (parentStep?.kind !== 'step') throw new Error('expected parent step');
+    expect(parentStep.subagentStreams?.[0]?.items).toEqual([
+      {
+        kind: 'system-event',
+        eventKind: 'held',
+        label: 'Send held',
+        body: 'Send held: 3 new messages arrived while composing; nothing was sent.',
+        timestamp: '2026-07-04T14:00:04.000Z',
+      },
+    ]);
+  });
 });
 
 describe('buildMessageFeed', () => {
