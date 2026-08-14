@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import ConfirmModal from '@/components/ConfirmModal';
 import DirectoryPicker from '@/components/DirectoryPicker';
+import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { EditAffordance, ErrorHint, Field, SavedHint } from './Primitives';
 import { ANIMA_MANAGED_PROVIDER_ENV_KEYS } from '@shared/agent-config';
 import type { TeamConfig } from '@shared/server-settings';
@@ -132,6 +133,30 @@ function WorkspacePickerModal({
   onChoose: (path: string) => void;
   onClose: () => void;
 }) {
+  // Focus lifecycle. `HomeRow` renders this as `{showPicker && …}` and there is
+  // no early return, so "mounted" already IS the open state.
+  //
+  // No `initialFocusRef`: the picker asks nothing, so its first control is not a
+  // safe ANSWER the way a confirm's Cancel is — it is undo. Focus lands on the
+  // container, which the hook keeps as a real resting place and Tab leaves at
+  // once. Same reading as the team dialog's `HomeFolderPickerDialog`, which is
+  // the same widget one screen over.
+  //
+  // No `descriptionId`: the body is a file tree, not prose.
+  //
+  // `titleId` replaces `aria-label="Choose workspace"`, which is the reason this
+  // one is worth its own note. The visible title reads "Choose home folder", so
+  // a screen reader announced a DIFFERENT name than the one on screen, and the
+  // announced one used a word the product does not use anywhere else. Pointing
+  // the name at the heading makes the two impossible to drift apart again.
+  const { dialogRef, titleId } = useDialogFocus(true);
+
+  // Escape is NOT gated on `isTopmostDialog()`, deliberately. Nothing can layer
+  // over this dialog: `DirectoryPicker` declares no dialog of its own, so this
+  // is always the top of the stack while it is open. The Server panel needed
+  // the gate because it hosts `BusyConfirmModal`; adding one here would be a
+  // rule with no case behind it. If a nested dialog ever appears under this
+  // subtree, the predicate is the one-line answer.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -143,13 +168,17 @@ function WorkspacePickerModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-page/70 backdrop-blur-sm" onClick={onClose}>
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
-        aria-label="Choose workspace"
+        aria-labelledby={titleId}
         className="mx-4 w-full max-w-2xl rounded-sm border border-border bg-surface p-5 shadow-deep"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-4 font-serif text-[16px] font-semibold text-text">Choose home folder</div>
+        <div id={titleId} className="mb-4 font-serif text-[16px] font-semibold text-text">
+          Choose home folder
+        </div>
         <DirectoryPicker startPath={startPath} onChoose={onChoose} onCancel={onClose} confirmLabel="Choose" />
       </div>
     </div>
