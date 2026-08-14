@@ -70,9 +70,6 @@ export async function observeSlackEventAtIngress(input: {
   });
 }
 
-/** @deprecated Use observeObservableSlackMessage / observeSlackEventAtIngress. */
-export const observeRoutableSlackMessage = observeObservableSlackMessage;
-
 export function observedFilesFromSlack(
   files: SlackRawFile[] | undefined,
 ): ObservedFileDescriptor[] {
