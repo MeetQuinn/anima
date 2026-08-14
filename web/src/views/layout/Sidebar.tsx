@@ -372,7 +372,7 @@ export default function Sidebar({
             </button>
             <button
               onClick={() => setUsagePanelOpen((v) => !v)}
-              title={providerUpdateAvailable ? 'Providers — update available' : 'Providers'}
+              title={providerUpdateAvailable ? 'Providers: update available' : 'Providers'}
               className="relative flex h-8 w-8 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             >
               <Gauge className="h-3.5 w-3.5" />
@@ -383,7 +383,7 @@ export default function Sidebar({
             <button
               data-server-panel-trigger
               onClick={() => setServerPanelOpen((v) => !v)}
-              title={updateAvailable ? 'Server — update available' : 'Server status & restart'}
+              title={updateAvailable ? 'Server: update available' : 'Server status & restart'}
               className="relative flex h-8 w-8 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             >
               <Server className="h-3.5 w-3.5" />
@@ -554,7 +554,7 @@ export default function Sidebar({
             <button
               onClick={() => setUsagePanelOpen((v) => !v)}
               className="chrome flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-2.5 text-left text-[11px] uppercase tracking-[0.1em] text-text-on-spine-muted transition-colors hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              title={providerUpdateAvailable ? 'Providers — update available' : 'Providers'}
+              title={providerUpdateAvailable ? 'Providers: update available' : 'Providers'}
             >
               <Gauge className="h-3.5 w-3.5" />
               <span>Providers</span>
