@@ -9,6 +9,7 @@ import { currentTokenUsageRange, fetchAgentTokenUsage } from '@/api/token-usage'
 import { agentColor, initialOf } from '@/lib/avatars';
 import { formatTokens } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
+import { useDialogFocus } from '@/hooks/useDialogFocus';
 import {
   USAGE_RAMP,
   UsageHeatmap,
@@ -50,6 +51,16 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
     refetchInterval: 30_000,
   });
 
+  // Focus lifecycle for the sheet: focus lands on Close, Tab stays inside, and
+  // the sidebar/mobile button that opened it gets focus back on close. Both
+  // call sites mount this component only while open, so `open` is constant true
+  // for the life of the instance.
+  //
+  // Esc stays here rather than moving into the hook: dismissal rules differ
+  // across these dialogs (some gate it on a busy commit), so the hook owns
+  // focus only.
+  const { dialogRef, initialFocusRef } = useDialogFocus(true);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
@@ -67,9 +78,11 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-stretch justify-end bg-page/55 backdrop-blur-[2px]" onMouseDown={onClose}>
       <section
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Token usage"
+        tabIndex={-1}
         className="flex h-full w-full max-w-[960px] flex-col border-l border-border-soft bg-surface shadow-deep"
         onMouseDown={(event) => event.stopPropagation()}
       >
@@ -77,6 +90,7 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
           <h2 className="display text-[24px] font-semibold text-text md:text-[26px]">Token usage</h2>
           <button
             type="button"
+            ref={initialFocusRef}
             onClick={onClose}
             aria-label="Close token usage"
             className="flex h-9 w-9 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
