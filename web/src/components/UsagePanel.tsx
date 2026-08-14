@@ -5,15 +5,12 @@ import { RefreshCw, X } from 'lucide-react';
 import {
   applyProviderCliUpdate,
   checkProviderClis,
-  fetchProviderAccounts,
   fetchProviderContextLimits,
   fetchProviderRuntimeCommands,
   fetchProviderUsage,
-  removeClaudeAccount,
   refreshProviderUsage,
   saveProviderContextLimit,
   saveProviderRuntimeCommand,
-  selectClaudeAccount,
 } from '@/api/system';
 import { queryKeys } from '@/lib/query-keys';
 import { useDialogFocus } from '@/hooks/useDialogFocus';
@@ -22,10 +19,8 @@ import { useConfirm } from '@/hooks/useConfirm';
 import { useProviderCliStatus } from '@/hooks/useProviderCliStatus';
 import type { ProviderCliRow } from '@shared/provider-cli';
 import type { ProviderUsageKind, ProviderUsageRow } from '@shared/provider-usage';
-import type { ClaudeCodeAccountState, ProviderAccountSummary } from '@shared/provider-accounts';
 import type { ProviderContextLimitRow } from '@shared/provider-context-limits';
 import { providerCatalogEntry } from '@shared/provider-catalog';
-import ClaudeAccountLoginModal from './ClaudeAccountLoginModal';
 import { ProviderUnit } from './usage/ProviderUnit';
 import { UsageSkeleton } from './usage/UsageSkeleton';
 import { loadExpandedProviders, persistExpandedProviders } from './usage/expanded-providers';
@@ -42,7 +37,6 @@ interface Props {
 export default function UsagePanel({ onClose }: Props) {
   const queryClient = useQueryClient();
   const { confirm, modal } = useConfirm();
-  const [loginTarget, setLoginTarget] = useState<ProviderAccountSummary | 'new'>();
   const [expandedProviders, setExpandedProviders] = useState<Record<string, true>>(loadExpandedProviders);
   const [savingContextProvider, setSavingContextProvider] = useState<ProviderUsageKind>();
   const [contextLimitFailure, setContextLimitFailure] = useState<{
@@ -84,16 +78,6 @@ export default function UsagePanel({ onClose }: Props) {
     queryFn: fetchProviderContextLimits,
     staleTime: 30_000,
   });
-  const {
-    data: accountData,
-    isFetching: accountsFetching,
-    refetch: refetchAccounts,
-  } = useQuery({
-    queryKey: queryKeys.providerAccounts(),
-    queryFn: fetchProviderAccounts,
-    refetchInterval: (query) => query.state.data?.providers.some((provider) => provider.status === 'switching') ? 1_000 : false,
-    staleTime: 30_000,
-  });
 
   // Ticks every minute — keeps reset countdowns and "updated X ago" current.
   const now = useNow();
@@ -118,19 +102,7 @@ export default function UsagePanel({ onClose }: Props) {
   const { dialogRef, titleId, isTopmostDialog } = useDialogFocus(true);
 
   // Esc to close — but only while nothing is layered over the panel.
-  //
-  // This USED to read `!loginTarget`, a hand-rolled version of the same idea
-  // that knew about exactly one of the two dialogs this panel can host. The
-  // other is `useConfirm`'s ConfirmModal, reached from all three of the account
-  // switch, account removal and CLI update paths — and with one of those open,
-  // a single Escape cancelled the confirm AND closed the panel underneath it.
-  // `isTopmostDialog()` asks the stack instead of enumerating, so it is right
-  // for any dialog this panel grows later, including ones nested deeper than
-  // this component can see.
-  //
-  // The rule stays here rather than in the hook: what to do about being covered
-  // is dismissal policy and differs per dialog. The predicate is stable for the
-  // life of the instance, so listing it does not reattach the listener.
+  // `isTopmostDialog()` covers ConfirmModal opened from CLI update.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isTopmostDialog()) onClose();
@@ -145,9 +117,8 @@ export default function UsagePanel({ onClose }: Props) {
   }, undefined);
 
   async function refreshAll(): Promise<void> {
-    const [usage, , , , status] = await Promise.all([
+    const [usage, , , status] = await Promise.all([
       refreshProviderUsage(),
-      refetchAccounts(),
       refetchContextLimits(),
       refetchRuntimeCommands(),
       checkProviderClis(),
@@ -208,59 +179,6 @@ export default function UsagePanel({ onClose }: Props) {
     }
   }
 
-  function requestAccountSwitch(state: ClaudeCodeAccountState, accountId: string, retry = false): void {
-    if (accountId === state.activeAccountId && !retry) return;
-    const target = state.accounts.find((account) => account.id === accountId);
-    if (!target) return;
-    confirm({
-      title: retry ? `Retry ${target.account ?? target.label}?` : `Switch to ${target.account ?? target.label}?`,
-      description: (
-        <p>
-          {retry
-            ? 'Only agents that did not reload this account will try again. Active turns on those agents are requeued to resume after reload.'
-            : 'Active Claude turns are requeued to resume after the account reload; sessions, MCP servers, and shared state stay in place.'}
-        </p>
-      ),
-      variant: 'warn',
-      confirmVariant: 'default',
-      confirmLabel: retry ? 'Retry' : 'Switch account',
-      busyLabel: retry ? 'Retrying…' : 'Switching…',
-      onConfirm: async () => {
-        const next = await selectClaudeAccount(accountId);
-        queryClient.setQueryData(queryKeys.providerAccounts(), { providers: [next] });
-        queryClient.setQueryData(queryKeys.providerUsage(), await refreshProviderUsage());
-      },
-    });
-  }
-
-  function requestAccountRemoval(account: ProviderAccountSummary): void {
-    const name = account.account ?? account.label;
-    confirm({
-      title: `Remove ${name}?`,
-      description: (
-        <div className="space-y-2">
-          <p>This removes the local Claude sign-in and archives its isolated profile.</p>
-          <p>Shared Claude projects and history stay in place. To use this account again, add it and sign in.</p>
-        </div>
-      ),
-      variant: 'warn',
-      confirmVariant: 'destructive',
-      confirmLabel: 'Remove account',
-      busyLabel: 'Removing…',
-      onConfirm: async () => {
-        const next = await removeClaudeAccount(account.id);
-        queryClient.setQueryData(queryKeys.providerAccounts(), { providers: [next] });
-        try {
-          queryClient.setQueryData(queryKeys.providerUsage(), await refreshProviderUsage());
-        } catch {
-          // The account removal already committed. Avoid presenting a refresh
-          // failure as a failed destructive action; retry usage in the background.
-          void queryClient.invalidateQueries({ queryKey: queryKeys.providerUsage() });
-        }
-      },
-    });
-  }
-
   function requestApply(row: ProviderCliRow): void {
     const enabledAgents = row.agents.filter((agent) => agent.enabled);
     confirm({
@@ -295,7 +213,6 @@ export default function UsagePanel({ onClose }: Props) {
     rows.push(row);
     usageByProvider.set(row.provider, rows);
   }
-  const claudeAccountState = accountData?.providers.find((row) => row.provider === 'claude-code');
   // A provider whose binary genuinely isn't on this machine has nothing to show
   // or act on — hide it. State 'unknown' (binary present, version unverified)
   // still renders, with the honest 'version unknown' label (#520).
@@ -307,7 +224,6 @@ export default function UsagePanel({ onClose }: Props) {
   const fetching =
     usageFetching ||
     cliFetching ||
-    accountsFetching ||
     contextLimitsFetching ||
     runtimeCommandsFetching;
 
@@ -332,9 +248,6 @@ export default function UsagePanel({ onClose }: Props) {
             style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
           >
             {/* ── Panel header ── */}
-            {/* Mobile full-screen pages share the home header height (h-14 = 3.5rem,
-            which is 52.5px at the app's 15px root, not 56px);
-            the desktop modal keeps its compact h-10 chrome. */}
             <div className="flex h-14 shrink-0 items-center justify-between border-b border-border-soft px-3 md:h-10">
               <span id={titleId} className="caps text-text">
                 Providers
@@ -393,10 +306,6 @@ export default function UsagePanel({ onClose }: Props) {
                         }}
                         onToggleExpanded={() => toggleProviderExpanded(row.provider)}
                         usages={usageByProvider.get(row.provider) ?? []}
-                        accountState={row.provider === 'claude-code' ? claudeAccountState : undefined}
-                        onAddAccount={() => setLoginTarget('new')}
-                        onLoginAccount={(account) => setLoginTarget(account)}
-                        onRemoveAccount={requestAccountRemoval}
                         onContextLimitChange={(maxTokens) => {
                           const limit = contextLimits?.providers.find(
                             (candidate) => candidate.provider === row.provider,
@@ -425,16 +334,6 @@ export default function UsagePanel({ onClose }: Props) {
                         onRuntimeCommandSave={(command, args) => {
                           void changeRuntimeCommand(row.provider, command, args);
                         }}
-                        onRetryAccount={() => {
-                          if (row.provider === 'claude-code' && claudeAccountState) {
-                            requestAccountSwitch(claudeAccountState, claudeAccountState.activeAccountId, true);
-                          }
-                        }}
-                        onSelectAccount={(accountId) => {
-                          if (row.provider === 'claude-code' && claudeAccountState) {
-                            requestAccountSwitch(claudeAccountState, accountId);
-                          }
-                        }}
                       />
                     </div>
                   ))}
@@ -448,20 +347,6 @@ export default function UsagePanel({ onClose }: Props) {
         document.body,
       )}
       {modal}
-      {loginTarget && (
-        <ClaudeAccountLoginModal
-          account={loginTarget === 'new' ? undefined : loginTarget}
-          onClose={() => setLoginTarget(undefined)}
-          onSucceeded={() => {
-            void Promise.all([
-              queryClient.invalidateQueries({ queryKey: queryKeys.providerAccounts() }),
-              refreshProviderUsage().then((usage) => {
-                queryClient.setQueryData(queryKeys.providerUsage(), usage);
-              }),
-            ]);
-          }}
-        />
-      )}
     </Fragment>
   );
 }

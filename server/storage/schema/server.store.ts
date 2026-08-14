@@ -11,7 +11,6 @@ import {
   CursorDeliveryConfig,
   DashboardAuth,
   MemoryCoherenceConfig,
-  ProviderAccountsConfig,
   ProviderContextLimitsConfig,
   ProviderRuntimeArgsConfig,
   ProviderRuntimeCommandsConfig,
@@ -23,13 +22,13 @@ import {
   WorkspacePlatform,
 } from '../../../shared/server-settings.js';
 
+// Strict: leftover `providerAccounts` in config.json must fail visibly (not stripped).
 export const ServerConfig = z.object({
   cursorDelivery: CursorDeliveryConfig.optional(),
   dashboardAuth: DashboardAuth.optional(),
   dashboardHost: z.string().min(1).optional(),
   dashboardPort: z.number().int().positive().max(65535).optional(),
   memoryCoherence: MemoryCoherenceConfig.optional(),
-  providerAccounts: ProviderAccountsConfig.optional(),
   providerContextLimits: ProviderContextLimitsConfig.optional(),
   providerArgs: ProviderRuntimeArgsConfig.optional(),
   providerCommands: ProviderRuntimeCommandsConfig.optional(),

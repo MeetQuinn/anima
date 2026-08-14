@@ -109,7 +109,6 @@ Some services are collections or platform-level resources rather than one-agent 
 - `AgentRegistryService` lists and creates agents. Agent creation side effects live here: home creation, default Team KB registration, seed memory, and notes directory bootstrap.
 - `KbRegistryService` owns KB collection operations: list, create, browse possible roots, default Team KB registration, and `serviceFor(id)`.
 - `KbService` owns one KB root: config read/rename/remove, tree/file/download/raw views, ignore policy, symlink/traversal safety, and response metadata.
-- `ProviderAccountService` owns machine-wide Claude account discovery and selection, account continuity and MCP synchronization, reload queuing, and switch convergence status.
 - `ProviderContextLimitService` owns machine-wide Kimi and Grok context caps, provider config adoption and removal, settings rollback, and launch-time application under the shared provider configuration gate.
 - `ServerSettingsService` owns Anima-home level settings such as dashboard host/port and sidebar order. Routes and process launch code should use it instead of reading `config.json` directly.
 - `SlackFileService` owns Slack file cache semantics: download-to-cache, cache lookup, cached file reads, cache path construction, and download size limits.

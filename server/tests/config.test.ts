@@ -688,40 +688,6 @@ test('claude-code provider transport defaults to stream-json', async () => {
   }
 });
 
-test('Claude account assignment persists an id, clears to inheritance, and rejects non-Claude agents', async () => {
-  const configDir = await mkdtemp(join(tmpdir(), 'anima-config-claude-account-test-'));
-  try {
-    await writeConfig(configDir, [
-      {
-        id: 'claude',
-        provider: { kind: 'claude-code', model: 'opus' },
-        homePath: 'agents/claude',
-      },
-      {
-        id: 'codex',
-        provider: { kind: 'codex-cli', model: 'gpt-5.5' },
-        homePath: 'agents/codex',
-      },
-    ]);
-    await withAnimaHome(configDir, async () => {
-      const pinned = await agentService('claude').setClaudeAccount('secondary');
-      assert.equal(pinned.provider.kind, 'claude-code');
-      assert.equal(pinned.provider.accountId, 'secondary');
-
-      const inherited = await agentService('claude').setClaudeAccount(null);
-      assert.equal(inherited.provider.kind, 'claude-code');
-      assert.equal(inherited.provider.accountId, undefined);
-
-      await assert.rejects(
-        agentService('codex').setClaudeAccount('secondary'),
-        /Claude account assignment is unavailable for codex-cli/,
-      );
-    });
-  } finally {
-    await rm(configDir, { force: true, recursive: true });
-  }
-});
-
 test('removed tmux transport is rejected and leaves the provider session untouched', async () => {
   const configDir = await mkdtemp(join(tmpdir(), 'anima-config-claude-transport-switch-test-'));
   try {

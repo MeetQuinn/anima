@@ -45,7 +45,6 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
     const jsonlMapper = createClaudeJsonlActivityMapper(input.effects, this.kind, {
-      ...(this.config.accountId ? { accountId: this.config.accountId } : {}),
       ...(this.config.model ? { model: this.config.model } : {}),
     });
     return this.runTurnLifecycle(input, {

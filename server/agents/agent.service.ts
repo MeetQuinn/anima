@@ -5,14 +5,12 @@ import {
   type AgentUpdateProfileRequest,
   type AgentUpdateProviderRequest,
 } from '../../shared/agent-config.js';
-import type { ProviderAccountId } from '../../shared/provider-accounts.js';
 import { DEFAULT_TEAM_ID } from '../../shared/server-settings.js';
 import { defaultTeamService, type TeamService } from '../teams/team.service.js';
 import type { AgentSkills } from '../../shared/skills.js';
 import {
   AgentConfigError,
   agentConfigWithProviderUpdate,
-  agentConfigWithClaudeAccount,
   agentConfigFromCreateInput,
   assertAgentConfigId,
   ensureCreateAgentHome,
@@ -125,10 +123,6 @@ export class AgentService {
       await this.archiveCurrentProviderSession(archiveNote);
     }
     return next;
-  }
-
-  async setClaudeAccount(accountId: ProviderAccountId | null): Promise<AgentConfig> {
-    return this.saveConfig(agentConfigWithClaudeAccount(await this.getConfig(), accountId));
   }
 
   async getSession(): Promise<Session | null> {

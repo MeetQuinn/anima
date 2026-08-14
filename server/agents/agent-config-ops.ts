@@ -21,7 +21,6 @@ import {
   reasoningEffortsForModel,
   type ReasoningEffortAvailability,
 } from '../../shared/provider-catalog.js';
-import { ProviderAccountId } from '../../shared/provider-accounts.js';
 import { resolveAnimaHome } from '../anima-home.js';
 import { AGENT_ID } from '../storage/schema/agent.store.js';
 
@@ -90,19 +89,6 @@ export function agentConfigWithProviderUpdate(
   // Zod re-checks against write vocabulary only (no live map on the schema).
   // Live rejection already happened in mergeProviderSelection when availability was set.
   return { ...current, provider: AgentProviderConfig.parse(selection) };
-}
-
-export function agentConfigWithClaudeAccount(
-  current: AgentConfig,
-  accountId: ProviderAccountId | null,
-): AgentConfig {
-  if (current.provider.kind !== 'claude-code') {
-    throw new AgentConfigError(409, `Claude account assignment is unavailable for ${current.provider.kind}`);
-  }
-  const provider = { ...current.provider };
-  if (accountId === null) delete provider.accountId;
-  else provider.accountId = ProviderAccountId.parse(accountId);
-  return { ...current, provider: AgentProviderConfig.parse(provider) };
 }
 
 // Returns the provider's kind/model/effort (and any kind-specific fields), env stripped.

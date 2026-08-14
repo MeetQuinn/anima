@@ -4,7 +4,6 @@ import type { CursorDeliveryPlan } from './cursor-delivery.js';
 
 export interface RuntimeWorkerConfig {
   agentId: string;
-  claudeAccountFingerprint?: string;
   stateDir: string;
   homePath?: string;
 }

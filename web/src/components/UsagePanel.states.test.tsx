@@ -92,27 +92,6 @@ vi.mock('@/api/system', () => ({
       { args: [], command: null, defaultCommand: 'grok', provider: 'grok-cli' as const },
     ],
   })),
-  fetchProviderAccounts: vi.fn(async () => ({
-    providers: [
-      {
-        accounts: [
-          {
-            account: 'op@example.com',
-            id: 'primary',
-            label: 'Primary',
-            profile: 'default' as const,
-            selected: true,
-            status: 'available' as const,
-          },
-        ],
-        activeAccountId: 'primary',
-        errorAgentIds: [],
-        pendingAgentIds: [],
-        provider: 'claude-code' as const,
-        status: 'active' as const,
-      },
-    ],
-  })),
   fetchProviderUsage: vi.fn(async () => ({
     providers: [
       {
@@ -139,7 +118,6 @@ vi.mock('@/api/system', () => ({
   })),
   fetchProviderUsageProvider: vi.fn(),
   refreshProviderUsage: vi.fn(async () => ({ providers: [] })),
-  selectClaudeAccount: vi.fn(),
   saveProviderContextLimit: contextApi.save,
   saveProviderRuntimeCommand: runtimeCommandApi.save,
 }));
@@ -176,10 +154,9 @@ describe('UsagePanel version slot', () => {
     expect(await screen.findByText('op@example.com')).toBeTruthy();
     expect(screen.getByText('80%')).toBeTruthy();
     expect(screen.getByText('· cached')).toBeTruthy();
-    // Version/binary rows stay gone. Runtime command makes Settings available for
-    // every provider, while Add account remains outside the disclosure.
+    // Version/binary rows stay gone. Runtime command makes Settings available.
     expect(screen.queryByText('Binary')).toBeNull();
-    expect(screen.getByRole('button', { name: /Add account/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Add account/i })).toBeNull();
     fireEvent.click(screen.getByText(/Settings/i));
     const command = screen.getByRole('textbox', { name: 'Claude Code runtime command' });
     expect((command as HTMLInputElement).value).toBe('');

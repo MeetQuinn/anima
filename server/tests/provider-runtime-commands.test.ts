@@ -163,3 +163,17 @@ test('provider runtime args reject ambiguous or unbounded argv values at config 
     }),
   );
 });
+
+test('ServerConfig rejects leftover providerAccounts (fail-visible, not stripped)', () => {
+  assert.throws(
+    () => ServerConfig.parse({
+      providerAccounts: {
+        claudeCode: {
+          accounts: [{ id: 'primary', label: 'Primary' }],
+          activeAccountId: 'primary',
+        },
+      },
+    }),
+    /unrecognized key|providerAccounts/i,
+  );
+});

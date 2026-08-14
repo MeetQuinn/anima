@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { ProviderAccountsConfig } from './provider-accounts.js';
 import { ProviderContextLimitsConfig } from './provider-context-limits.js';
 import {
   ProviderRuntimeArgsConfig,
@@ -56,7 +55,6 @@ export const WorkspacePlatform = z.enum(['slack', 'feishu']);
 export type WorkspacePlatform = z.infer<typeof WorkspacePlatform>;
 
 export {
-  ProviderAccountsConfig,
   ProviderContextLimitsConfig,
   ProviderRuntimeArgsConfig,
   ProviderRuntimeCommandsConfig,

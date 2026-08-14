@@ -1,27 +1,21 @@
 import { useState } from 'react';
-import { ArrowUp, ChevronDown, Copy, RefreshCw, UserPlus } from 'lucide-react';
+import { ArrowUp, ChevronDown, Copy } from 'lucide-react';
 
 import type { ProviderCliRow } from '@shared/provider-cli';
-import type { ClaudeCodeAccountState, ProviderAccountSummary } from '@shared/provider-accounts';
 import type { ProviderContextLimitRow } from '@shared/provider-context-limits';
 import type { ProviderRuntimeCommandRow } from '@shared/provider-runtime-commands';
 import type { ProviderUsageRow } from '@shared/provider-usage';
-import { ActiveAccountCard } from './ActiveAccountCard';
 import { BrandIcon } from './BrandIcon';
-import { OtherAccountRow } from './OtherAccountRow';
-import { formatContextTokens, providerCollapsedSummary } from './format';
+import { WindowRow } from './WindowRow';
+import { extraValue, formatContextTokens, providerCollapsedSummary, providerUsageErrorMessage, splitExtras } from './format';
 
 // ---------------------------------------------------------------------------
 // Provider unit
 // ---------------------------------------------------------------------------
 
 // Refreshing is a panel-level act, not a per-row one: the header's "Refresh
-// providers" re-reads every provider at once, and a second per-row copy of the
-// same verb bought nothing but a lone icon marooned at the right edge of every
-// identity row. The row itself stays pure identity: icon + name. Accounts and
-// their plans live in the blocks below — usage is per account now, not per
-// active account, and switching is a deliberate button there, not a select
-// here (totoday, 2026-07-18).
+// providers" re-reads every provider at once. The row is identity + usage for
+// the single native credential; multi-account add/switch lives outside Anima.
 export function ProviderUnit({
   expanded,
   globallyLocked = false,
@@ -31,12 +25,6 @@ export function ProviderUnit({
   onCopyCommand,
   onToggleExpanded,
   usages,
-  accountState,
-  onAddAccount,
-  onLoginAccount,
-  onRemoveAccount,
-  onRetryAccount,
-  onSelectAccount,
   contextLimit,
   contextLimitError,
   contextLimitSaving = false,
@@ -54,12 +42,6 @@ export function ProviderUnit({
   onCopyCommand: () => void;
   onToggleExpanded: () => void;
   usages: ProviderUsageRow[];
-  accountState?: ClaudeCodeAccountState;
-  onAddAccount: () => void;
-  onLoginAccount: (account: ProviderAccountSummary) => void;
-  onRemoveAccount: (account: ProviderAccountSummary) => void;
-  onRetryAccount: () => void;
-  onSelectAccount: (accountId: string) => void;
   contextLimit?: ProviderContextLimitRow;
   contextLimitError?: string;
   contextLimitSaving?: boolean;
@@ -87,9 +69,7 @@ export function ProviderUnit({
     runtimeArgsEdit.source === storedRuntimeArgs
       ? runtimeArgsEdit.value
       : storedRuntimeArgs;
-  const sortedUsages = [...usages].sort((a, b) => Number(b.active ?? false) - Number(a.active ?? false));
-  const featured = sortedUsages.find((row) => row.active) ?? sortedUsages[0];
-  const others = sortedUsages.filter((row) => row !== featured);
+  const usage = usages[0];
   const operation = management.operation.provider === management.provider ? management.operation : undefined;
   const runningAgents = management.agents.filter((agent) => agent.runningVersion);
   const canApply = management.updateAvailable && management.updateMode === 'managed';
@@ -100,19 +80,14 @@ export function ProviderUnit({
   const staleSessions =
     operation?.status === 'succeeded' &&
     runningAgents.some((agent) => agent.runningVersion !== management.installedVersion);
-  const accountSwitching = accountState?.status === 'switching';
-  const accountSwitchFailed = accountState?.status === 'error';
   // Errors and in-flight operations force open so they are never trapped
-  // behind a fold. A mere update offer does NOT auto-expand (totoday 08-02) —
-  // it renders when the user opens the provider, and the footer dot still
-  // signals it globally.
+  // behind a fold. A mere update offer does NOT auto-expand — it renders when
+  // the user opens the provider, and the footer dot still signals it globally.
   const needsAttention = installing
     || operation?.status === 'failed'
-    || staleSessions
-    || accountSwitching
-    || accountSwitchFailed;
+    || staleSessions;
   const open = expanded || needsAttention;
-  const collapsedSummary = providerCollapsedSummary(sortedUsages);
+  const collapsedSummary = providerCollapsedSummary(usage ? [usage] : []);
   const normalizedRuntimeCommand = runtimeCommandDraft.trim();
   const normalizedRuntimeArgs = runtimeArgsFromEditor(runtimeArgsDraft);
   const runtimeCommandChanged =
@@ -155,44 +130,9 @@ export function ProviderUnit({
 
       {open && (
         <div className="mt-2 space-y-3 pl-[42px]">
-          {/* Status/action block: attention states force the accordion open;
-              an update offer renders here too but only once manually expanded. */}
           {(needsAttention || updateOffer) && (
             <div className="space-y-1.5">
               {installing && <p className="font-sans text-[11px] text-text-muted">Installing…</p>}
-              {accountSwitching && (
-                <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-                  <p className="font-sans text-[11px] text-text-muted">
-                    Switching account
-                    {accountState.pendingAgentIds.length > 0
-                      ? ` · waiting for ${accountState.pendingAgentIds.length} agent${accountState.pendingAgentIds.length === 1 ? '' : 's'}`
-                      : ''}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={onRetryAccount}
-                    className="inline-flex min-h-[44px] items-center gap-1 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-                  >
-                    <RefreshCw className="h-3 w-3" />
-                    Retry
-                  </button>
-                </div>
-              )}
-              {accountSwitchFailed && (
-                <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-                  <p className="font-sans text-[11px] text-health-error">
-                    Account switch failed{accountState.errorAgentIds.length > 0 ? `: ${accountState.errorAgentIds.join(', ')}` : ''}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={onRetryAccount}
-                    className="inline-flex min-h-[44px] items-center gap-1 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-                  >
-                    <RefreshCw className="h-3 w-3" />
-                    Retry
-                  </button>
-                </div>
-              )}
               {operation?.status === 'failed' && (
                 <p className="font-sans text-[11px] leading-relaxed text-health-error">
                   {operation.error ?? 'Update failed'}
@@ -238,46 +178,12 @@ export function ProviderUnit({
             </div>
           )}
 
-          {featured ? (
-            <div className="space-y-3">
-              <ActiveAccountCard
-                accountState={accountState}
-                now={now}
-                onLoginAccount={onLoginAccount}
-                onRemoveAccount={onRemoveAccount}
-                usage={featured}
-              />
-              {others.length > 0 && (
-                <div className="space-y-2">
-                  {others.map((row) => (
-                    <OtherAccountRow
-                      key={row.accountId ?? row.account}
-                      accountState={accountState}
-                      now={now}
-                      onLoginAccount={onLoginAccount}
-                      onRemoveAccount={onRemoveAccount}
-                      onSelectAccount={onSelectAccount}
-                      usage={row}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+          {usage ? (
+            <UsageCard now={now} usage={usage} />
           ) : (
             <div className="space-y-0.5 opacity-60">
               <span className="font-sans text-[12px] text-text-muted">Not configured</span>
             </div>
-          )}
-
-          {accountState && (
-            <button
-              type="button"
-              onClick={onAddAccount}
-              className="inline-flex min-h-[40px] items-center gap-1.5 font-sans text-[11px] font-medium text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-            >
-              <UserPlus className="h-3.5 w-3.5" />
-              Add account
-            </button>
           )}
 
           <details className="group">
@@ -389,6 +295,63 @@ export function ProviderUnit({
               )}
             </div>
           </details>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UsageCard({ now, usage }: { now: Date; usage: ProviderUsageRow }) {
+  const isAvailable = usage.status === 'available';
+  const errorMessage = providerUsageErrorMessage(usage);
+  const { plan, rest } = splitExtras(usage.extras);
+  const name = usage.account;
+
+  return (
+    <div className="rounded-md border border-border-soft bg-surface-raised px-3.5 py-3 shadow-lift">
+      {(name || plan || usage.stale) && (
+        <div className="flex min-w-0 items-baseline gap-2">
+          {name && (
+            <span className="min-w-0 truncate font-mono text-[12px] text-text" title={name}>
+              {name}
+            </span>
+          )}
+          {plan && (
+            <span className="shrink-0 font-sans text-[11px] text-text-subtle">{plan}</span>
+          )}
+          {usage.stale && (
+            <span className="shrink-0 font-sans text-[10px] text-text-subtle">· cached</span>
+          )}
+        </div>
+      )}
+      {isAvailable ? (
+        <div className={name || plan ? 'mt-3 space-y-2' : 'space-y-2'}>
+          {usage.windows.map((w, i) => (
+            <WindowRow key={i} w={w} now={now} />
+          ))}
+          {rest.length > 0 && (
+            <div className="flex flex-wrap gap-x-4 gap-y-0.5">
+              {rest.map((e, i) => (
+                <div key={i} className="flex items-baseline gap-1.5">
+                  <span className="font-sans text-[11px] text-text-subtle">{e.label}</span>
+                  <span className="font-mono text-[12px] tabular-nums text-text-muted">{extraValue(e)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="mt-2 space-y-1">
+          <span className="font-sans text-[12px] text-text-muted">
+            {usage.error?.type === 'not_configured'
+              ? 'Not configured'
+              : usage.error?.type === 'unauthorized'
+                ? 'Auth expired'
+                : usage.error?.type === 'network_error'
+                  ? 'Unreachable'
+                  : 'Unavailable'}
+          </span>
+          {errorMessage && <p className="font-sans text-[11px] leading-relaxed text-text-subtle">{errorMessage}</p>}
         </div>
       )}
     </div>

@@ -10,7 +10,6 @@ import { messageServiceForAgent } from '../messages/message.service.js';
 import { buildAgentChannelList } from './agent-channels.js';
 import { enrichInboundAvatars } from './message-profiles.js';
 import { reminderServiceForAgent } from '../reminders/reminder.service.js';
-import { defaultProviderAccountService } from '../provider-accounts/provider-account.service.js';
 import {
   AgentAssignTeamRequest,
   AgentCreateRequest,
@@ -18,7 +17,6 @@ import {
   AgentUpdateProfileRequest,
   AgentUpdateProviderRequest,
 } from '../../shared/agent-config.js';
-import { AssignAgentClaudeAccountRequest } from '../../shared/provider-accounts.js';
 import { registerAgentFeishuRoutes } from './agent-feishu-routes.js';
 import { registerAgentFileRoutes } from './agent-file-routes.js';
 import { registerAgentHomeFileRoutes } from './agent-home-file-routes.js';
@@ -67,15 +65,6 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
         .serviceFor(request.params.agentId)
         .updateProvider(AgentUpdateProviderRequest.parse(request.body)),
     ),
-  );
-  fastify.post<{ Params: { agentId: string } }>(
-    '/api/agents/:agentId/provider/claude-account',
-    async (request) => {
-      const { accountId } = AssignAgentClaudeAccountRequest.parse(request.body);
-      return redactAgentConfig(
-        await defaultProviderAccountService.assignClaudeAccount(request.params.agentId, accountId),
-      );
-    },
   );
   // Team reassignment (label-only; existing home is never moved).
   fastify.post<{ Params: { agentId: string } }>('/api/agents/:agentId/team', async (request) => {
