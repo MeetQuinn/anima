@@ -1,5 +1,6 @@
 import {
   Bell,
+  CirclePause,
   CornerDownRight,
   Lightbulb,
   MessageSquareQuote,
@@ -369,8 +370,12 @@ function GroupSurfaceChip({ chip, agentId }: { chip: SurfaceChip; agentId: strin
 // detail (reminder title / onboarding note). Short hairlines flank the pill on
 // wider viewports to echo the Slack centered-system-notice convention; they
 // drop on narrow widths so the pill never gets crushed.
-const SYSTEM_EVENT_ICON: Record<'reminder' | 'onboarding' | 'attention', LucideIcon> = {
+const SYSTEM_EVENT_ICON: Record<
+  'reminder' | 'onboarding' | 'attention' | 'held',
+  LucideIcon
+> = {
   attention: Lightbulb,
+  held: CirclePause,
   reminder: Bell,
   onboarding: UserPlus,
 };

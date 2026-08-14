@@ -41,10 +41,46 @@ const REACTION_EFFECTS = new Set(['feishu.reaction', 'slack.reaction']);
 const ASK_TOOL = 'anima.ask';
 const ASK_EFFECTS = new Set(['slack.ask.post']);
 
+/** True when a completed tool activity is a send-hold outcome, not a post. */
+export function isHeldSendStatus(status: unknown): boolean {
+  return status === 'held';
+}
+
+/**
+ * Activity-tab copy for a held send. Noun follows the held tool: file send uses
+ * "file(s)"; message send and ask use "message(s)". No draft text — hold never
+ * stores one.
+ */
+export function heldSendActivityCopy(input: {
+  deltaCount?: unknown;
+  tool?: string | undefined;
+}): string {
+  const raw = input.deltaCount;
+  const n =
+    typeof raw === 'number' && Number.isFinite(raw)
+      ? Math.max(0, Math.floor(raw))
+      : 0;
+  const fileNoun = input.tool === 'anima.file.send';
+  const noun = fileNoun
+    ? n === 1
+      ? 'file'
+      : 'files'
+    : n === 1
+      ? 'message'
+      : 'messages';
+  return `Send held: ${n} new ${noun} arrived while composing; nothing was sent.`;
+}
+
 export function classifyOutboundEffect(input: {
   effect?: string | undefined;
+  /** When `held`, never classifies as an outbound post (ledger / feed). */
+  status?: string | undefined;
   tool?: string | undefined;
 }): OutboundEffectClassification | undefined {
+  // Send-hold records a local tool.call.completed with status:held and no
+  // external.effect / outbox row. Tool name alone would still match message /
+  // file / ask — reject held first so every consumer stays aligned.
+  if (isHeldSendStatus(input.status)) return undefined;
   const { effect, tool } = input;
   if ((tool && MESSAGE_TOOLS.has(tool)) || (effect && MESSAGE_EFFECTS.has(effect))) {
     return {

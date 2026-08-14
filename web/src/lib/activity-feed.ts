@@ -6,7 +6,11 @@
 
 import type { Activity as ActivityRecord, AgentActivityFeedPage } from '@shared/activity';
 import type { AgentMessageHistoryPage, AgentMessageRecord } from '@shared/messages';
-import { classifyOutboundEffect } from '@shared/outbound-effects';
+import {
+  classifyOutboundEffect,
+  heldSendActivityCopy,
+  isHeldSendStatus,
+} from '@shared/outbound-effects';
 import { isRuntimeEventNoise } from '@shared/runtime-event-noise';
 
 // Hidden by default. Toggled on by "show all steps".
@@ -33,7 +37,7 @@ type CompletedOutboundEffectProjection =
       action: 'emit';
       item: Extract<
         ActivityFeedItem,
-        { kind: 'file-out' | 'message-out' | 'reaction-out' }
+        { kind: 'file-out' | 'message-out' | 'reaction-out' | 'system-event' }
       >;
       rememberText: boolean;
     }
@@ -162,7 +166,9 @@ export type ActivityFeedItem =
       // memory-coherence pass is NOT here: it is a `memory_coherence.outcome`
       // activity rendered in the tool-steps lane, never the conversation layer.
       kind: 'system-event';
-      eventKind: 'reminder' | 'onboarding' | 'attention';
+      // `held` = send-hold non-send (not a failure). Neutral system line so it
+      // never reads as message-out / file-out / ask.
+      eventKind: 'reminder' | 'onboarding' | 'attention' | 'held';
       label: string; // small-caps register label ('Reminder' | 'Onboarding')
       body: string; // muted descriptive line (reminder title / onboarding note)
       meta?: string; // optional trailing tag, e.g. recurring 'fire #3'
@@ -505,7 +511,27 @@ function projectCompletedOutboundEffect(
   const payload = activity.payload ?? {};
   const tool = typeof payload['tool'] === 'string' ? payload['tool'] : undefined;
   const effect = typeof payload['effect'] === 'string' ? payload['effect'] : undefined;
-  const classified = classifyOutboundEffect({ effect, tool });
+  const status = typeof payload['status'] === 'string' ? payload['status'] : undefined;
+
+  // Send-hold: never message-out / file-out / ask. Distinct neutral system row.
+  if (isHeldSendStatus(status)) {
+    return {
+      action: 'emit',
+      item: {
+        kind: 'system-event',
+        eventKind: 'held',
+        label: 'Send held',
+        body: heldSendActivityCopy({
+          deltaCount: payload['deltaCount'],
+          tool,
+        }),
+        timestamp: activity.createdAt,
+      },
+      rememberText: false,
+    };
+  }
+
+  const classified = classifyOutboundEffect({ effect, status, tool });
   if (classified?.kind === 'message') {
     const text = payload['text'];
     const permalink =

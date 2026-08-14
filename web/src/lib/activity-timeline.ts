@@ -47,10 +47,25 @@ export function mergeMessagePages(
 
 export function buildConversationItems(
   messagesData: Pick<AgentMessageHistoryPage, 'entries'> | undefined,
+  activitiesData?: Pick<AgentActivityFeedPage, 'events'> | undefined,
 ): ActivityFeedItem[] {
-  if (!messagesData) return [];
-  return buildMessageFeed(messagesData).filter(
-    (item) => isMessageItem(item) || item.kind === 'system-event',
+  const fromMessages = messagesData
+    ? buildMessageFeed(messagesData).filter(
+        (item) => isMessageItem(item) || item.kind === 'system-event',
+      )
+    : [];
+  // Send-hold rows live only on the activity stream (never the message ledger).
+  // Merge them into the conversation spine so held never silently vanishes and
+  // never renders as an empty message-out.
+  const fromHeld = activitiesData
+    ? buildActivityFeed(activitiesData, false).filter(
+        (item): item is Extract<ActivityFeedItem, { kind: 'system-event' }> =>
+          item.kind === 'system-event' && item.eventKind === 'held',
+      )
+    : [];
+  if (fromHeld.length === 0) return fromMessages;
+  return [...fromMessages, ...fromHeld].sort((a, b) =>
+    a.timestamp.localeCompare(b.timestamp),
   );
 }
 

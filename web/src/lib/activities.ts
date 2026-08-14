@@ -5,7 +5,10 @@
 
 import { formatTimeShort } from './format';
 import type { Activity as ActivityRecord } from '@shared/activity';
-import { classifyOutboundEffect } from '@shared/outbound-effects';
+import {
+  classifyOutboundEffect,
+  heldSendActivityCopy,
+} from '@shared/outbound-effects';
 
 type ActivityKind = 'tool' | 'lifecycle' | 'failure' | 'output' | 'unknown';
 
@@ -95,7 +98,15 @@ export function isNarrativeStep(activity: ActivityRecord): boolean {
   if (activity.type === 'tool.call.completed' || activity.type === 'external.effect.completed') {
     const tool = String(activity.payload?.['tool'] ?? '').toLowerCase();
     const effect = String(activity.payload?.['effect'] ?? '').toLowerCase();
-    if (classifyOutboundEffect({ effect, tool })) return true;
+    const status =
+      typeof activity.payload?.['status'] === 'string'
+        ? activity.payload['status']
+        : undefined;
+    // Held is a successful non-send; it surfaces as its own feed row, not an
+    // outbound message count. Still narrative so nothing silent-drops it if a
+    // caller only keeps narrative steps.
+    if (status === 'held') return true;
+    if (classifyOutboundEffect({ effect, status, tool })) return true;
     // anima.message.read + reminder management DO emit completed (CLI tools).
     if (tool === 'anima.message.read') return true;
     if (tool.startsWith('anima.reminder.') && tool !== 'anima.reminder.list') return true;
@@ -240,8 +251,26 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   }
 
   const effect = String(payload['effect'] ?? '').toLowerCase();
+  const status = typeof payload['status'] === 'string' ? payload['status'] : undefined;
 
-  const classifiedOutbound = classifyOutboundEffect({ effect, tool: normalized });
+  // Send-hold is not a tool failure and not a sent message — neutral copy only.
+  if (status === 'held') {
+    return {
+      title: 'Send held',
+      target: heldSendActivityCopy({
+        deltaCount: payload['deltaCount'],
+        tool: normalized,
+      }),
+      color: COLOR_TOOL,
+      kind: 'tool',
+    };
+  }
+
+  const classifiedOutbound = classifyOutboundEffect({
+    effect,
+    status,
+    tool: normalized,
+  });
 
   if (classifiedOutbound?.kind === 'file') {
     // Count belongs in the title (Sent file / Sent 3 files), not the target —

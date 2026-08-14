@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { classifyOutboundEffect } from '../../shared/outbound-effects.js';
+import {
+  classifyOutboundEffect,
+  heldSendActivityCopy,
+} from '../../shared/outbound-effects.js';
 import { isRuntimeEventNoise } from '../../shared/runtime-event-noise.js';
 
 test('classifyOutboundEffect maps message tools and effects', () => {
@@ -35,6 +38,40 @@ test('classifyOutboundEffect classifies ask posts and leaves unknown effects unc
   assert.deepEqual(classifyOutboundEffect({ tool: 'anima.ask' }), { kind: 'ask' });
   assert.equal(classifyOutboundEffect({ effect: 'slack.channel.join' }), undefined);
   assert.equal(classifyOutboundEffect({}), undefined);
+});
+
+test('classifyOutboundEffect never treats status:held as an outbound send', () => {
+  for (const tool of ['anima.message.send', 'anima.ask', 'anima.file.send'] as const) {
+    assert.equal(
+      classifyOutboundEffect({ status: 'held', tool }),
+      undefined,
+      `${tool} held must not classify as outbound`,
+    );
+  }
+  // Real completed posts still classify when status is completed / omitted.
+  assert.deepEqual(
+    classifyOutboundEffect({ status: 'completed', tool: 'anima.message.send' }),
+    { isEdit: false, kind: 'message' },
+  );
+});
+
+test('heldSendActivityCopy uses Iris singular/plural + file noun', () => {
+  assert.equal(
+    heldSendActivityCopy({ deltaCount: 1, tool: 'anima.message.send' }),
+    'Send held: 1 new message arrived while composing; nothing was sent.',
+  );
+  assert.equal(
+    heldSendActivityCopy({ deltaCount: 3, tool: 'anima.ask' }),
+    'Send held: 3 new messages arrived while composing; nothing was sent.',
+  );
+  assert.equal(
+    heldSendActivityCopy({ deltaCount: 1, tool: 'anima.file.send' }),
+    'Send held: 1 new file arrived while composing; nothing was sent.',
+  );
+  assert.equal(
+    heldSendActivityCopy({ deltaCount: 2, tool: 'anima.file.send' }),
+    'Send held: 2 new files arrived while composing; nothing was sent.',
+  );
 });
 
 test('isRuntimeEventNoise suppresses streaming frames and keeps lifecycle events', () => {
