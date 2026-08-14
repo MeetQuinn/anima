@@ -164,16 +164,22 @@ test('provider runtime args reject ambiguous or unbounded argv values at config 
   );
 });
 
-test('ServerConfig rejects leftover providerAccounts (fail-visible, not stripped)', () => {
-  assert.throws(
-    () => ServerConfig.parse({
-      providerAccounts: {
-        claudeCode: {
-          accounts: [{ id: 'primary', label: 'Primary' }],
-          activeAccountId: 'primary',
-        },
+test('ServerConfig ignores leftover providerAccounts (stale key stripped, feature stays dead)', () => {
+  const parsed = ServerConfig.parse({
+    providerAccounts: {
+      claudeCode: {
+        accounts: [{ id: 'secondary', label: 'Secondary' }],
+        activeAccountId: 'secondary',
       },
-    }),
-    /unrecognized key|providerAccounts/i,
+    },
+    runtime: { maxConcurrentAgentRuns: 5 },
+  });
+  assert.deepEqual(parsed, { runtime: { maxConcurrentAgentRuns: 5 } });
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(parsed, 'providerAccounts'),
+    false,
+    'parsed config must not retain providerAccounts',
   );
+  // Other unknown keys still fail under strict fields.
+  assert.throws(() => ServerConfig.parse({ notARealKey: true }), /unrecognized key/i);
 });
