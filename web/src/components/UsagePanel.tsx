@@ -16,6 +16,7 @@ import {
   selectClaudeAccount,
 } from '@/api/system';
 import { queryKeys } from '@/lib/query-keys';
+import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { useNow } from '@/hooks/useNow';
 import { useConfirm } from '@/hooks/useConfirm';
 import { useProviderCliStatus } from '@/hooks/useProviderCliStatus';
@@ -97,14 +98,46 @@ export default function UsagePanel({ onClose }: Props) {
   // Ticks every minute — keeps reset countdowns and "updated X ago" current.
   const now = useNow();
 
-  // Esc to close
+  // Focus lifecycle. Both call sites render this as `{open && <UsagePanel/>}`
+  // and there is no early return past the dialog, so "mounted" already IS the
+  // open state and the hook can be handed the constant.
+  //
+  // No `initialFocusRef`. Neither header control is a safe landing spot: Close
+  // undoes the action that opened the panel, and Refresh re-checks every
+  // provider CLI and re-reads provider usage — so a keyboard user who opens the
+  // panel and presses Enter would fire a machine-wide provider sweep they never
+  // asked for. A confirm lands on Cancel because a confirm ASKS something and
+  // Cancel is the safe answer; a panel asks nothing. Focus lands on the
+  // container, which the hook keeps as a real resting place and Tab leaves at
+  // once. Same reading as the Server panel, which is the same chrome.
+  //
+  // No `descriptionId`: the body is provider rows, not prose.
+  //
+  // `titleId` replaces the hardcoded `aria-label="Providers"` so the announced
+  // name and the visible header cannot drift apart.
+  const { dialogRef, titleId, isTopmostDialog } = useDialogFocus(true);
+
+  // Esc to close — but only while nothing is layered over the panel.
+  //
+  // This USED to read `!loginTarget`, a hand-rolled version of the same idea
+  // that knew about exactly one of the two dialogs this panel can host. The
+  // other is `useConfirm`'s ConfirmModal, reached from all three of the account
+  // switch, account removal and CLI update paths — and with one of those open,
+  // a single Escape cancelled the confirm AND closed the panel underneath it.
+  // `isTopmostDialog()` asks the stack instead of enumerating, so it is right
+  // for any dialog this panel grows later, including ones nested deeper than
+  // this component can see.
+  //
+  // The rule stays here rather than in the hook: what to do about being covered
+  // is dismissal policy and differs per dialog. The predicate is stable for the
+  // life of the instance, so listing it does not reattach the listener.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !loginTarget) onClose();
+      if (e.key === 'Escape' && isTopmostDialog()) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [loginTarget, onClose]);
+  }, [onClose, isTopmostDialog]);
 
   const usageCheckedAt = usageData?.providers.reduce<string | undefined>((latest, row) => {
     if (!latest) return row.checkedAt;
@@ -286,9 +319,11 @@ export default function UsagePanel({ onClose }: Props) {
           <div className="hidden md:block fixed inset-0 bg-page/70 backdrop-blur-sm" onClick={onClose} />
 
           <div
+            ref={dialogRef}
+            tabIndex={-1}
             role="dialog"
             aria-modal="true"
-            aria-label="Providers"
+            aria-labelledby={titleId}
             className={[
               'relative flex h-full w-full flex-col bg-surface',
               'md:absolute md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2',
@@ -301,7 +336,9 @@ export default function UsagePanel({ onClose }: Props) {
             which is 52.5px at the app's 15px root, not 56px);
             the desktop modal keeps its compact h-10 chrome. */}
             <div className="flex h-14 shrink-0 items-center justify-between border-b border-border-soft px-3 md:h-10">
-              <span className="caps text-text">Providers</span>
+              <span id={titleId} className="caps text-text">
+                Providers
+              </span>
               <div className="flex items-center gap-2">
                 {checkedAt && (
                   <span className="font-sans text-[10px] text-text-subtle">checked {formatAgo(checkedAt, now)}</span>
