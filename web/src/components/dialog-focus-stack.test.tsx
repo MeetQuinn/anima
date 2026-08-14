@@ -58,7 +58,7 @@ import { BusyConfirmModal } from './restart-shared';
 // runtime ones — a button-typed ref on an <input> is a compile error, which is
 // the whole point of the widening.
 //
-// NOTE: web vitest is not wired into CI yet (#344) - run locally.
+// NOTE: web vitest is not wired into CI yet (issue #344) - run locally.
 
 /** Records every element focus lands on, in order. */
 function recordFocusMoves() {
