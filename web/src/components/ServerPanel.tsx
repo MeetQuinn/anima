@@ -67,16 +67,31 @@ export default function ServerPanel({ onClose }: Props) {
   // with no prose that a description should read out. `titleId` replaces the
   // hardcoded `aria-label="Server"` so the announced name and the visible header
   // cannot drift apart.
-  const { dialogRef, titleId } = useDialogFocus(true);
+  const { dialogRef, titleId, isTopmostDialog } = useDialogFocus(true);
 
-  // Esc to close
+  // Esc to close — but only while nothing is layered over the panel.
+  //
+  // RestartButton and the runtime upgrade row both mount BusyConfirmModal, which
+  // portals to `document.body` and listens on `window` exactly as this does. So
+  // one Escape ran both handlers: the confirm cancelled AND the panel behind it
+  // closed, taking away the thing the user was still deciding about. Measured on
+  // the restart path before this guard: `confirmClosed=true panelClosed=true`.
+  //
+  // The rule stays here rather than in the hook. `isTopmostDialog()` answers a
+  // question about layering; what to do about it is dismissal policy, which
+  // differs per dialog — TeamModal answers the same question by closing its
+  // picker first, and a confirm mid-commit refuses Escape altogether. A hook
+  // that owned the rule would have to know all three.
+  //
+  // The predicate is stable for the life of the instance, so listing it here
+  // does not reattach the listener.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && isTopmostDialog()) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, isTopmostDialog]);
 
   const healthColor =
     health === 'loading'

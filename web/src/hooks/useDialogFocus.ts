@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from 'react';
+import { useCallback, useEffect, useId, useRef } from 'react';
 
 /**
  * Focus lifecycle for modal dialogs.
@@ -122,6 +122,33 @@ export interface DialogFocusResult<InitialFocus extends HTMLElement = HTMLButton
   titleId: string;
   /** Wire to the description element's `id` and the dialog's `aria-describedby`. */
   descriptionId: string;
+  /**
+   * Whether THIS dialog is currently the topmost open one.
+   *
+   * For call sites that own a dismissal rule and need to know whether another
+   * dialog sits above them. The Server panel's Escape handler is the case that
+   * forced it: the restart confirm portals over the panel, both listen on
+   * `window`, and one Escape closed the confirm AND the panel underneath it.
+   *
+   * Deliberately shaped so that a caller can ask only about ITSELF. It takes no
+   * argument and is bound to this instance, so there is no way to name, observe
+   * or reach another dialog through it — the hook's token stays private and the
+   * stack stays unreachable. The alternative, a free function taking a ref or a
+   * token, would hand every call site the whole stack to answer a yes/no
+   * question about one layer.
+   *
+   * Reads the stack when called, not when rendered, so an effect that closes
+   * over it once still gets the current answer. The identity is stable for the
+   * life of the instance, so it belongs in a dependency array without
+   * re-subscribing the listener it guards.
+   *
+   * A dialog that is not open is never topmost: it is not in the stack at all.
+   *
+   * What this is NOT: a dismissal rule. It answers a question about layering;
+   * what to do with the answer — close, close something else, ignore — stays at
+   * the call site, for the same reason Escape itself is not in this hook.
+   */
+  isTopmostDialog: () => boolean;
 }
 
 export function useDialogFocus<InitialFocus extends HTMLElement = HTMLButtonElement>(
@@ -133,6 +160,12 @@ export function useDialogFocus<InitialFocus extends HTMLElement = HTMLButtonElem
   // renders so the same instance keeps its place in the stack.
   const token = useRef<object>({});
   const baseId = useId();
+
+  // Empty dependency list on purpose: the answer lives in the module-level
+  // stack and is read at call time, so nothing here goes stale, and the stable
+  // identity is what lets a call site put this in an effect's dependency array
+  // without tearing down and reattaching the listener it guards on every render.
+  const isTopmostDialog = useCallback(() => isTopmost(token.current), []);
 
   // Stack membership and focus live in ONE effect so that "was I topmost when I
   // closed" can be answered at cleanup time. Splitting them meant the answer
@@ -271,5 +304,6 @@ export function useDialogFocus<InitialFocus extends HTMLElement = HTMLButtonElem
     initialFocusRef,
     titleId: `${baseId}-title`,
     descriptionId: `${baseId}-description`,
+    isTopmostDialog,
   };
 }
