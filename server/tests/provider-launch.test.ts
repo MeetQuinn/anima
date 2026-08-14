@@ -67,9 +67,8 @@ test('claude provider env keeps configured values but hard-disables native auto-
   );
 });
 
-test('claude common args carry the shared launch flags and optional config flags', () => {
+test('claude common args leave Chrome disabled by default and carry optional config flags', () => {
   assert.deepEqual(claudeCommonArgs({ kind: 'claude-code' }, undefined), [
-    '--chrome',
     '--permission-mode', 'bypassPermissions',
     '--disallowedTools', CLAUDE_DISALLOWED_TOOLS.join(','),
   ]);
@@ -79,7 +78,6 @@ test('claude common args carry the shared launch flags and optional config flags
       '/tmp/system-prompt.md',
     ),
     [
-      '--chrome',
       '--permission-mode', 'bypassPermissions',
       '--disallowedTools', CLAUDE_DISALLOWED_TOOLS.join(','),
       '--model', 'claude-opus-4-8',

@@ -74,7 +74,7 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
         "const systemPrompt = systemPromptFile ? readFileSync(systemPromptFile, 'utf8') : '';",
         'if (argv.includes("-p")) process.exit(41);',
         'if (argv.includes("--append-system-prompt")) process.exit(58);',
-        'if (!argv.includes("--chrome")) process.exit(63);',
+        'if (argv.includes("--chrome")) process.exit(63);',
         'if (!argv.includes("--verbose")) process.exit(42);',
         'if (!argv.includes("--include-partial-messages")) process.exit(60);',
         'if (!argv.includes("--include-hook-events")) process.exit(61);',
