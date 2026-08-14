@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Check, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
 
 import type {
@@ -22,7 +22,6 @@ interface Props {
 }
 
 export default function ClaudeAccountLoginModal({ account, onClose, onSucceeded }: Props) {
-  const titleId = useId();
   // Focus lifecycle: contain Tab and hand focus back to whatever opened this on
   // close. Mounted only while open, so `open` is constant true for this instance.
   //
@@ -34,7 +33,14 @@ export default function ClaudeAccountLoginModal({ account, onClose, onSucceeded 
   //
   // Esc stays below rather than moving into the hook: it is gated on `!busy`
   // here, and dismissal rules differ across these dialogs.
-  const { dialogRef } = useDialogFocus(true);
+  //
+  // `titleId` comes from the hook rather than a second local `useId()`, so the
+  // dialog has exactly one source of ids. No `aria-describedby`: this dialog's
+  // explanatory copy is state-dependent — at open there is only a spinner, the
+  // paragraph arrives with the login URL, and it is replaced by the success or
+  // failure text. A description that points at a node which is absent for the
+  // first frames and then says something else is worse than none.
+  const { dialogRef, titleId } = useDialogFocus(true);
   const closing = useRef(false);
   const started = useRef(false);
   const reportedSuccess = useRef(false);

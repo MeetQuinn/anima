@@ -305,16 +305,6 @@ export function RecommendedPermissionsState({
   const [recheckResult, setRecheckResult] = useState<'granted' | 'missing' | null>(null);
   const [showPerms, setShowPerms] = useState(false);
   const [skipModal, setSkipModal] = useState(false);
-
-  // The skip warning is the only dialog on this screen, and until now it had no
-  // focus lifecycle at all: opening it left focus on the "Skip for now" link
-  // behind it, Tab walked the whole onboarding form underneath, and closing it
-  // left focus wherever it happened to be. The hook lands focus on the safe
-  // control, contains Tab, and hands focus back to the link that opened it.
-  //
-  // `open` is the state flag rather than a constant because this dialog is a
-  // conditional branch of a component that stays mounted around it.
-  const { dialogRef, initialFocusRef } = useDialogFocus(skipModal);
   const scopeQuery = useQuery({
     queryKey: queryKeys.agentFeishuScopes(agentId),
     queryFn: () => fetchAgentFeishuScopeStatus(agentId),
@@ -397,47 +387,87 @@ export function RecommendedPermissionsState({
       />
 
       {skipModal && (
-        <div
-          ref={dialogRef}
-          tabIndex={-1}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4"
-          role="dialog"
-          aria-modal="true"
-        >
-          <div className="w-full max-w-sm space-y-4 rounded-lg border border-border-soft bg-surface px-5 py-4 shadow-lg">
-            <div className="flex items-start gap-2.5">
-              <CircleAlert className="mt-0.5 h-[18px] w-[18px] shrink-0 text-health-error" aria-hidden />
-              <div className="space-y-1.5">
-                <div className="font-serif text-[14px] font-semibold leading-tight text-text">
-                  Skipping leaves some teammate and document features off
-                </div>
-                <p className="font-serif text-[13px] leading-relaxed text-text-muted">
-                  Your Feishu bot keeps sending and receiving messages, but it won&rsquo;t recognize
-                  teammates by name, work fully in group chats with people and other bots, or work
-                  with Feishu Drive and cloud documents. Looking people up by email or phone also
-                  stays off. You can authorize anytime from the agent&rsquo;s profile.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center justify-end gap-4 pt-0.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setSkipModal(false);
-                  onContinue();
-                }}
-                className="font-sans text-[12px] text-text-muted underline decoration-text-subtle/40 underline-offset-2 transition-colors hover:text-text"
-              >
-                Skip anyway
-              </button>
-              <Button ref={initialFocusRef} size="sm" onClick={() => setSkipModal(false)}>
-                Keep setting up
-              </Button>
-            </div>
-          </div>
-        </div>
+        <SkipWarningDialog
+          onKeepSettingUp={() => setSkipModal(false)}
+          onSkipAnyway={() => {
+            setSkipModal(false);
+            onContinue();
+          }}
+        />
       )}
     </>
+  );
+}
+
+/**
+ * The skip warning, as its own mounted component.
+ *
+ * It is a separate component so that its focus registration cannot outlive the
+ * node it belongs to. Calling `useDialogFocus(skipModal)` from the parent looked
+ * equivalent and was not: the parent returns early while the permissions query
+ * is loading and again once the scopes read `granted`, and neither of those
+ * returns clears `skipModal`. A background refetch that flips the step to
+ * granted therefore removed the dialog while the hook stayed registered with
+ * `open === true` — a layer in the focus stack with nothing rendered under it,
+ * which never pops and holds focus ownership for the rest of the session.
+ *
+ * The alternative was to recompute the parent's early-return conditions into the
+ * hook's `open` argument. That is the same condition written twice, and the copy
+ * in the hook call is the one nobody updates when a branch is added. Mounting is
+ * the condition, so the hook reads it by being here.
+ */
+function SkipWarningDialog({
+  onKeepSettingUp,
+  onSkipAnyway,
+}: {
+  onKeepSettingUp: () => void;
+  onSkipAnyway: () => void;
+}) {
+  // Mounted only while open, so `open` is constant true for this instance.
+  const { dialogRef, initialFocusRef, titleId, descriptionId } = useDialogFocus(true);
+
+  return (
+    <div
+      ref={dialogRef}
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+    >
+      <div className="w-full max-w-sm space-y-4 rounded-lg border border-border-soft bg-surface px-5 py-4 shadow-lg">
+        <div className="flex items-start gap-2.5">
+          <CircleAlert className="mt-0.5 h-[18px] w-[18px] shrink-0 text-health-error" aria-hidden />
+          <div className="space-y-1.5">
+            <div
+              id={titleId}
+              className="font-serif text-[14px] font-semibold leading-tight text-text"
+            >
+              Skipping leaves some teammate and document features off
+            </div>
+            <p id={descriptionId} className="font-serif text-[13px] leading-relaxed text-text-muted">
+              Your Feishu bot keeps sending and receiving messages, but it won&rsquo;t recognize
+              teammates by name, work fully in group chats with people and other bots, or work
+              with Feishu Drive and cloud documents. Looking people up by email or phone also
+              stays off. You can authorize anytime from the agent&rsquo;s profile.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-4 pt-0.5">
+          <button
+            type="button"
+            onClick={onSkipAnyway}
+            className="font-sans text-[12px] text-text-muted underline decoration-text-subtle/40 underline-offset-2 transition-colors hover:text-text"
+          >
+            Skip anyway
+          </button>
+          <Button ref={initialFocusRef} size="sm" onClick={onKeepSettingUp}>
+            Keep setting up
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 

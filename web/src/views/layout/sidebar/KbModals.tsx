@@ -29,7 +29,11 @@ export function AddKbModal({
   // of its rows "the safe control" from out here would be this file deciding
   // something it does not own. Focus lands on the container instead, which is a
   // resting place the hook keeps and Tab moves off immediately.
-  const { dialogRef } = useDialogFocus(true);
+  //
+  // `titleId` wires the visible heading as the accessible name. No
+  // `descriptionId`: this dialog's body is the picker itself, and pointing
+  // `aria-describedby` at a live directory listing would read the whole tree.
+  const { dialogRef, titleId } = useDialogFocus(true);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -67,10 +71,13 @@ export function AddKbModal({
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
         className="relative w-full max-w-2xl rounded-sm border border-border-soft bg-surface p-5 shadow-deep"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-3 font-serif text-[17px] font-semibold text-text">Add Knowledge Base</div>
+        <div id={titleId} className="mb-3 font-serif text-[17px] font-semibold text-text">
+          Add Knowledge Base
+        </div>
         <DirectoryPicker
           onChoose={handleSelect}
           onCancel={onClose}
@@ -112,7 +119,10 @@ export function RenameKbModal({
   // This also replaces a `setTimeout(…, 0)` that focused the input a tick after
   // mount. The hook focuses in the effect, which is already after the browser
   // has the node.
-  const { dialogRef, initialFocusRef } = useDialogFocus<HTMLInputElement>(true);
+  //
+  // No `descriptionId`: the field IS the explanation, and a description that
+  // repeats the title is noise read out on every focus.
+  const { dialogRef, initialFocusRef, titleId } = useDialogFocus<HTMLInputElement>(true);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -135,10 +145,13 @@ export function RenameKbModal({
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
         className="relative w-full max-w-sm rounded-sm border border-border-soft bg-surface p-6 shadow-deep"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="font-serif text-[17px] font-semibold text-text">Rename Knowledge Base</div>
+        <div id={titleId} className="font-serif text-[17px] font-semibold text-text">
+          Rename Knowledge Base
+        </div>
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -189,7 +202,10 @@ export function ConfirmDeleteModal({
   // Destructive confirm, so the safe control gets focus: Cancel, never Remove.
   // Same choice ConfirmModal and BusyConfirmModal already make, which is why the
   // ref stays button-typed here.
-  const { dialogRef, initialFocusRef } = useDialogFocus(true);
+  //
+  // A destructive confirm is the one dialog where the description carries the
+  // decision — what is removed, and what is not — so it gets `descriptionId`.
+  const { dialogRef, initialFocusRef, titleId, descriptionId } = useDialogFocus(true);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -212,12 +228,16 @@ export function ConfirmDeleteModal({
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
         className="relative w-full max-w-sm rounded-sm border border-health-error/30 bg-surface p-6 pl-8 shadow-deep"
         onClick={(e) => e.stopPropagation()}
       >
         <span aria-hidden className="absolute left-0 top-4 bottom-4 w-px bg-health-error/50" />
-        <div className="font-serif text-[17px] font-semibold text-text">Remove Knowledge Base?</div>
-        <div className="font-serif mt-2 text-[14px] leading-relaxed text-text-muted">
+        <div id={titleId} className="font-serif text-[17px] font-semibold text-text">
+          Remove Knowledge Base?
+        </div>
+        <div id={descriptionId} className="font-serif mt-2 text-[14px] leading-relaxed text-text-muted">
           <span className="font-semibold text-text">{kb.label}</span> will be removed from
           the sidebar. Files on disk are not affected.
         </div>

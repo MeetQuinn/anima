@@ -120,7 +120,9 @@ describe('KB sidebar dialogs — focus contract', () => {
     const wrapped = fireEvent.keyDown(field, { key: 'Tab', shiftKey: true });
     expect(wrapped).toBe(false);
     expect(document.activeElement).not.toBe(opener);
-    expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true);
+    expect(
+      screen.getByRole('dialog', { name: 'Rename Knowledge Base' }).contains(document.activeElement),
+    ).toBe(true);
 
     // Save is disabled until the label actually changes, so the last control a
     // keyboard can reach is Cancel; a forward Tab from there wraps to the field.
@@ -176,7 +178,9 @@ describe('KB sidebar dialogs — focus contract', () => {
     render(<DeleteHost busy />);
     fireEvent.click(screen.getByRole('button', { name: 'Remove knowledge base' }));
 
-    expect(document.activeElement).toBe(screen.getByRole('dialog'));
+    expect(document.activeElement).toBe(
+      screen.getByRole('dialog', { name: 'Remove Knowledge Base?' }),
+    );
   });
 
   it('returns focus to the control that opened the delete dialog', () => {
@@ -200,7 +204,7 @@ describe('KB sidebar dialogs — focus contract', () => {
     opener.focus();
     fireEvent.click(opener);
 
-    const dialog = screen.getByRole('dialog');
+    const dialog = screen.getByRole('dialog', { name: 'Add Knowledge Base' });
     expect(document.activeElement).toBe(dialog);
 
     const forward = fireEvent.keyDown(dialog, { key: 'Tab' });
@@ -218,5 +222,35 @@ describe('KB sidebar dialogs — focus contract', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel picking' }));
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(document.activeElement).toBe(opener);
+  });
+  it('gives each dialog a resolvable accessible name', () => {
+    // Anonymous dialogs are the failure mode the previous head shipped: three
+    // `role="dialog"` nodes with no `aria-label` or `aria-labelledby` at all,
+    // announced as "dialog" and nothing else. Queried BY NAME so the assertion
+    // fails if the wiring is dropped, rather than by reading the attribute back
+    // as a string — an `aria-labelledby` pointing at a missing id passes a
+    // string check and still announces nothing.
+    render(<RenameHost />);
+    fireEvent.click(screen.getByRole('button', { name: 'Rename knowledge base' }));
+    expect(screen.getByRole('dialog', { name: 'Rename Knowledge Base' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    render(<AddHost />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add knowledge base' }));
+    expect(screen.getByRole('dialog', { name: 'Add Knowledge Base' })).toBeTruthy();
+  });
+
+  it('describes the delete confirm with the copy that carries the decision', () => {
+    // The one dialog here whose body is load-bearing: it is the sentence that
+    // says files on disk survive. Resolved through the DOM, not compared as an
+    // attribute string.
+    render(<DeleteHost />);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove knowledge base' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Remove Knowledge Base?' });
+    const describedBy = dialog.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    const description = document.getElementById(describedBy!);
+    expect(description?.textContent).toContain('Files on disk are not affected');
   });
 });
