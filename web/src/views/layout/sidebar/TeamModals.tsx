@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Folder, FolderOpen, X } from 'lucide-react';
 import { createTeam, updateTeam, type TeamConfig } from '@/api/teams';
@@ -6,6 +6,7 @@ import { queryClient } from '@/query-client';
 import { queryKeys } from '@/lib/query-keys';
 import { Button } from '@/components/ui/button';
 import DirectoryPicker from '@/components/DirectoryPicker';
+import { useDialogFocus } from '@/hooks/useDialogFocus';
 
 // ---------------------------------------------------------------------------
 // Team modal — create ("+ New team") and edit (rename / change home) share one
@@ -31,11 +32,25 @@ function TeamModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    setTimeout(() => inputRef.current?.focus(), 0);
-  }, []);
+  // Focus lifecycle. Both call sites render this as `{open && <TeamModal/>}` and
+  // nothing here returns early past the dialog, so mounting IS the open state.
+  //
+  // This is the first pair in the app where two dialogs of the app's own are
+  // live at once: the picker below portals to `document.body` at `z-[60]`, so it
+  // is NOT inside this dialog's subtree, and before the shared stack existed
+  // this instance's Tab listener would have hauled focus back out of the picker
+  // the user was looking at. The picker opens from a control inside this dialog,
+  // one commit later — the ordering the stack models — so it registers second
+  // and owns Tab while it is up.
+  //
+  // The name field is the safe control, not Cancel: this is a form, and the
+  // point of opening it is to type. That replaces a `setTimeout(…, 0)` which
+  // focused the field a tick after the dialog appeared. The explanatory
+  // paragraph is the description because it carries the decision — what a rename
+  // does NOT touch, and where new agents land.
+  const { dialogRef, initialFocusRef, titleId, descriptionId } =
+    useDialogFocus<HTMLInputElement>(true);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -88,15 +103,19 @@ function TeamModal({
       role="presentation"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
         className="relative max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-sm border border-border-soft bg-surface p-6 shadow-deep"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="font-serif text-[17px] font-semibold text-text">
+        <div id={titleId} className="font-serif text-[17px] font-semibold text-text">
           {isEdit ? 'Edit team' : 'New team'}
         </div>
-        <div className="font-serif mt-1 text-[13px] leading-relaxed text-text-muted">
+        <div id={descriptionId} className="font-serif mt-1 text-[13px] leading-relaxed text-text-muted">
           {isEdit
             ? "Rename the team or change where new agents land. Renaming won't affect existing agents."
             : "A team groups your agents. New agents created in this team get their home under the team's folder. Existing agents stay visible."}
@@ -113,7 +132,7 @@ function TeamModal({
               Name
             </label>
             <input
-              ref={inputRef}
+              ref={initialFocusRef}
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -178,47 +197,87 @@ function TeamModal({
     </div>,
         document.body,
       )}
-      {showPicker &&
-        createPortal(
-          <div
-            className="fixed inset-0 z-[60] flex items-center justify-center bg-page/70 p-4 backdrop-blur-sm"
-            onClick={() => setShowPicker(false)}
-            role="presentation"
-          >
-            <div
-              role="dialog"
-              aria-modal="true"
-              className="relative flex max-h-[92dvh] w-full max-w-2xl flex-col rounded-sm border border-border-soft bg-surface shadow-deep"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex shrink-0 items-center justify-between border-b border-border-soft px-5 py-4">
-                <span className="font-serif text-[15px] font-semibold text-text">
-                  Choose home folder
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setShowPicker(false)}
-                  className="flex h-8 w-8 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text"
-                  aria-label="Close"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="min-h-0 flex-1 overflow-y-auto p-5">
-                <DirectoryPicker
-                  startPath={home.trim() || undefined}
-                  onChoose={(dir) => {
-                    setHome(dir);
-                    setShowPicker(false);
-                  }}
-                  onCancel={() => setShowPicker(false)}
-                />
-              </div>
-            </div>
-          </div>,
-          document.body,
-        )}
+      {showPicker && (
+        <HomeFolderPickerDialog
+          startPath={home.trim() || undefined}
+          onChoose={(dir) => {
+            setHome(dir);
+            setShowPicker(false);
+          }}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
     </>
+  );
+}
+
+/**
+ * The home-folder picker, layered over the team dialog.
+ *
+ * Its own component rather than a `{showPicker && …}` block inside TeamModal, so
+ * that its focus registration cannot outlive the node it belongs to: unmounting
+ * IS the close, and there is no second copy of the open condition to fall out of
+ * sync with the render. (Learned on the Feishu skip warning in PR #667, where
+ * the flag and the render condition were two different things.)
+ */
+function HomeFolderPickerDialog({
+  startPath,
+  onChoose,
+  onClose,
+}: {
+  startPath?: string;
+  onChoose: (dir: string) => void;
+  onClose: () => void;
+}) {
+  // No `initialFocusRef`. The first control here is Close, and landing on it
+  // would mean Enter-on-open dismisses the picker the user just asked for —
+  // a confirm's Cancel is the safe ANSWER to a question, but this dialog asks
+  // nothing. Everything below Close belongs to DirectoryPicker, which owns its
+  // own arrow-key row navigation, so naming one of its rows from out here would
+  // be this file deciding something it does not own. Focus lands on the
+  // container, which the hook keeps as a real resting place and Tab leaves at
+  // once.
+  //
+  // No `descriptionId`: the body is a live directory listing, and pointing
+  // `aria-describedby` at it would read the whole tree on every focus.
+  const { dialogRef, titleId } = useDialogFocus(true);
+
+  // Escape is handled by TeamModal's window listener, which closes the picker
+  // first and the modal second — the hook deliberately owns focus only.
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-page/70 p-4 backdrop-blur-sm"
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="relative flex max-h-[92dvh] w-full max-w-2xl flex-col rounded-sm border border-border-soft bg-surface shadow-deep"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-center justify-between border-b border-border-soft px-5 py-4">
+          <span id={titleId} className="font-serif text-[15px] font-semibold text-text">
+            Choose home folder
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-8 w-8 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+          <DirectoryPicker startPath={startPath} onChoose={onChoose} onCancel={onClose} />
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

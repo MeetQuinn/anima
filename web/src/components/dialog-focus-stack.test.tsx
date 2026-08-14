@@ -3,6 +3,7 @@ import { StrictMode, useState } from 'react';
 import { describe, expect, it } from 'vitest';
 
 import { useDialogFocus } from '@/hooks/useDialogFocus';
+import { recordFocusMoves } from '@/test/focus-moves';
 import { BusyConfirmModal } from './restart-shared';
 
 // Topmost-dialog stack + call-site-typed initial focus for `useDialogFocus`.
@@ -15,7 +16,11 @@ import { BusyConfirmModal } from './restart-shared';
 // It cancelled keypresses that were nobody's boundary and moved focus through a
 // control in the dialog underneath on its way.
 //
-// The real shapes this unblocks:
+// The real shapes this unblocks, both of which have since adopted the hook and
+// are covered against the real components in `ServerPanel.focus.test.tsx` and
+// `TeamModals.focus.test.tsx`. The doubles here stay because they can be posed
+// in orderings the real ones cannot reach — closing a lower dialog first, three
+// layers deep, both unmounting in one commit:
 //   - ServerPanel hosts RestartButton / RuntimeUpgradeRow, both of which mount
 //     BusyConfirmModal — itself a useDialogFocus instance, portaled to body.
 //   - TeamModals renders its own dialog plus a second aria-modal picker portal,
@@ -65,16 +70,6 @@ import { BusyConfirmModal } from './restart-shared';
 // the whole point of the widening.
 //
 // NOTE: web vitest is not wired into CI yet (issue #344) - run locally.
-
-/** Records every element focus lands on, in order. */
-function recordFocusMoves() {
-  const targets: Element[] = [];
-  const onFocusIn = (event: Event) => {
-    if (event.target instanceof Element) targets.push(event.target);
-  };
-  document.addEventListener('focusin', onFocusIn, true);
-  return { targets, stop: () => document.removeEventListener('focusin', onFocusIn, true) };
-}
 
 /** An outer dialog on the hook, hosting a nested BusyConfirmModal. ServerPanel's shape. */
 function OuterHostingConfirm() {
