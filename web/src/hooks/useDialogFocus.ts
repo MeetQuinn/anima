@@ -1,20 +1,29 @@
 import { useEffect, useId, useRef } from 'react';
 
 /**
- * Focus lifecycle for modal confirm dialogs.
+ * Focus lifecycle for modal dialogs.
  *
- * Two independent confirm implementations exist — `ConfirmModal` (per-agent and
- * global destructive actions) and `BusyConfirmModal` (restart / upgrade). They
- * keep separate visual and copy APIs on purpose, but the focus contract must not
- * drift between them, so it lives here once:
+ * Several independent dialog implementations share this primitive — the two
+ * destructive confirms (`ConfirmModal`, `BusyConfirmModal`), the Activity image
+ * lightbox and the token usage sheet, with the remaining `aria-modal` dialogs
+ * migrating in batches. They keep separate visual and copy APIs on purpose, but
+ * the focus contract must not drift between them, so it lives here once:
  *
- *   - on open, focus moves into the dialog, landing on the safe choice (Cancel);
+ *   - on open, focus moves into the dialog, landing on the safe control;
  *   - Tab and Shift+Tab stay inside the dialog;
  *   - on close, focus returns to whatever opened it.
  *
+ * Deliberately NOT here: Escape. Dismissal rules differ per dialog (some gate it
+ * on a busy commit, one closes a nested picker first), so each call site owns its
+ * own Esc handling and this hook owns focus only.
+ *
+ * The count of call sites is deliberately not written down — it changes with
+ * every batch, and a number in a comment is a claim the next commit falsifies.
+ * `git grep -l useDialogFocus -- web/src` is the answer that cannot go stale.
+ *
  * Returns per-instance `titleId` / `descriptionId` from `useId()` rather than
- * fixed strings: five call sites render these dialogs, and a hardcoded id would
- * make `aria-labelledby` ambiguous the moment two instances coexist.
+ * fixed strings: a hardcoded id would make `aria-labelledby` ambiguous the
+ * moment two instances coexist, which they now do.
  */
 
 const FOCUSABLE_SELECTOR = [
@@ -26,45 +35,171 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
-export interface DialogFocusResult {
-  /** Attach to the element carrying `role="dialog"`. Needs `tabIndex={-1}`. */
+/**
+ * The stack of open dialogs, oldest first. Only the last one — the topmost
+ * dialog — traps Tab and restores focus on close.
+ *
+ * Without this, every open instance ran its own `window` capture-phase Tab
+ * listener and contained focus to its own dialog unconditionally. Two live
+ * instances then both handled one keypress: a Tab pressed mid-way through a
+ * nested confirm was cancelled by the OUTER instance and dragged through the
+ * outer dialog's own first control on the way, because the confirm portals to
+ * `document.body` and so is not inside the outer dialog's subtree. The visible
+ * result is a Tab that does not advance inside the confirm the user is looking
+ * at, plus focus/blur on a control they cannot see.
+ *
+ * "Topmost" is "most recently opened", which is what a modal stack means and
+ * what every real sequence in this app produces: a dialog is opened by a control
+ * inside the dialog under it, one commit later. The one ordering this does NOT
+ * model is a parent and child dialog opening in the SAME commit — React runs
+ * child effects first, so the child would register first and the parent would
+ * win. No call site does that today; a call site that needs it should say so
+ * rather than rely on this comment being read.
+ */
+/**
+ * One unfinished focus restoration: "focus came from here".
+ *
+ * A dialog that closes while another is open above it must not move focus — its
+ * invoker sits behind the dialog the user is looking at. But it still holds the
+ * only record of where focus came from, and dropping that record strands focus
+ * on `document.body` the moment the dialog above it closes too: by then that one
+ * is restoring to an invoker that was inside the dialog already gone. (Milo's
+ * second red, on c6030732: the two closes happen in separate commits, so nothing
+ * scheduled inside one commit can carry the chain.)
+ */
+interface PendingRestore {
+  invoker: HTMLElement | null;
+  dialog: HTMLElement | null;
+}
+
+interface OpenDialog {
+  token: object;
+  /**
+   * Claims handed up by dialogs that closed underneath THIS one, nearest first.
+   *
+   * A claim belongs to a layer, not to the page. Keeping them in one global list
+   * let any later close consume all of them, which is Milo's third red on
+   * 3ad1d2af: with A, B and C open, closing A and then C focused A's opener —
+   * behind the still-open B, a jump across a live modal layer. A closing dialog's
+   * chain therefore travels to the dialog immediately above it and waits there.
+   */
+  inherited: PendingRestore[];
+}
+
+/**
+ * Open instances, oldest first. Only the last one — the topmost dialog — traps
+ * Tab and restores focus on close, and it restores only from its OWN chain.
+ */
+const openDialogs: OpenDialog[] = [];
+
+function isTopmost(token: object): boolean {
+  const top = openDialogs[openDialogs.length - 1];
+  return top !== undefined && top.token === token;
+}
+
+export interface DialogFocusResult<InitialFocus extends HTMLElement = HTMLButtonElement> {
+  /**
+   * Attach to the element carrying `role="dialog"`. Needs `tabIndex={-1}`.
+   *
+   * Stays `HTMLDivElement`: a narrower ref object goes into any wider element's
+   * `ref` slot, so this already fits the `<section>` sheet as well as the `<div>`
+   * dialogs. The only root it would not fit is a native `<dialog>`, which no call
+   * site uses — and if one appears, its `ref` type is a compile error, not a
+   * silent focus bug.
+   */
   dialogRef: React.RefObject<HTMLDivElement | null>;
-  /** Attach to the cancel/dismiss control — the safe landing spot on open. */
-  initialFocusRef: React.RefObject<HTMLButtonElement | null>;
+  /**
+   * Attach to the control that should hold focus when the dialog opens: the
+   * cancel/dismiss button on a confirm, the first field on a form.
+   *
+   * Defaults to a button because every dialog on the hook today opens on one, but
+   * a form dialog passes its own element type (`useDialogFocus<HTMLInputElement>`)
+   * — landing a rename dialog's focus on Cancel instead of the field is a keyboard
+   * user typing into nothing.
+   */
+  initialFocusRef: React.RefObject<InitialFocus | null>;
   /** Wire to the title element's `id` and the dialog's `aria-labelledby`. */
   titleId: string;
   /** Wire to the description element's `id` and the dialog's `aria-describedby`. */
   descriptionId: string;
 }
 
-export function useDialogFocus(open: boolean): DialogFocusResult {
+export function useDialogFocus<InitialFocus extends HTMLElement = HTMLButtonElement>(
+  open: boolean,
+): DialogFocusResult<InitialFocus> {
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  const initialFocusRef = useRef<HTMLButtonElement | null>(null);
+  const initialFocusRef = useRef<InitialFocus | null>(null);
+  // Identity only — never read, only compared. A ref keeps it stable across
+  // renders so the same instance keeps its place in the stack.
+  const token = useRef<object>({});
   const baseId = useId();
 
-  // Move focus in on open, and hand it back to the invoker on close/unmount.
+  // Stack membership and focus live in ONE effect so that "was I topmost when I
+  // closed" can be answered at cleanup time. Splitting them meant the answer
+  // depended on which cleanup React happened to run first, which is not a fact
+  // this hook should be built on.
   useEffect(() => {
     if (!open) return;
+
+    const self = token.current;
+    openDialogs.push({ token: self, inherited: [] });
 
     // Captured for the cleanup: by the time it runs the dialog is usually
     // already unmounted, so reading the ref there would see null.
     const dialog = dialogRef.current;
     const invoker = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
-    // Cancel is the safe default for a destructive confirm. When it is
-    // unavailable — ConfirmModal disables both buttons while a commit is in
-    // flight — fall back to the dialog container so focus is never stranded on
-    // the page underneath, which is what makes the dialog escapable by Tab.
-    const cancel = initialFocusRef.current;
-    const target = cancel && !cancel.disabled ? cancel : dialog;
+    // The safe control is the call site's choice. When it is unavailable —
+    // ConfirmModal disables both buttons while a commit is in flight — fall back
+    // to the dialog container so focus is never stranded on the page underneath,
+    // which is what makes the dialog escapable by Tab.
+    // Checked structurally rather than as `initial.disabled`: the element type is
+    // the call site's choice now, and a `<div role="button">` has no such property
+    // at all.
+    const initial = initialFocusRef.current;
+    const unavailable = initial !== null && 'disabled' in initial && Boolean(initial.disabled);
+    const target = initial && !unavailable ? initial : dialog;
     target?.focus();
 
     return () => {
-      // Only restore if focus is still ours to move; if something else took it
-      // in the meantime, stealing it back would be the more surprising behavior.
+      const at = openDialogs.findIndex((entry) => entry.token === self);
+      if (at === -1) return;
+      const [closing] = openDialogs.splice(at, 1);
+
+      // What this close is responsible for: its own invoker first, then whatever
+      // closed underneath it and handed its chain up. Nearest the top first, so
+      // restoring picks the shallowest place the user can carry on from.
+      const chain: PendingRestore[] = [{ invoker, dialog }, ...(closing?.inherited ?? [])];
+
+      // After the splice, index `at` holds the dialog that was immediately above
+      // this one. Its existence IS "I was not topmost", and it is the layer the
+      // chain belongs to now: closing under an open dialog must not move focus,
+      // and the claim must not become consumable by some unrelated close higher
+      // up the stack either.
+      const above = openDialogs[at];
+      if (above) {
+        above.inherited = [...above.inherited, ...chain];
+        return;
+      }
+
+      // Closing while topmost means this instance owned the page's focus, so it
+      // is the one that hands it back — for itself and for the layers that closed
+      // underneath it. Nothing outside its own chain is touched.
+
+      // Only restore if focus is still ours to move; if something else took it in
+      // the meantime, stealing it back would be the more surprising behavior.
+      // "Ours" covers every dialog in the chain, not just this one.
       const active = document.activeElement;
-      const stillInside = active instanceof Node && dialog?.contains(active);
-      if (invoker && (stillInside || active === document.body)) invoker.focus();
+      const ours =
+        active === document.body ||
+        !(active instanceof Node) ||
+        chain.some((claim) => claim.dialog?.contains(active));
+      if (!ours) return;
+
+      // The first claim with a connected invoker wins. Later claims point at
+      // controls that were inside dialogs which have since closed, so they are
+      // skipped rather than focused into nothing.
+      chain.find((claim) => claim.invoker?.isConnected)?.invoker?.focus();
     };
   }, [open]);
 
@@ -72,9 +207,14 @@ export function useDialogFocus(open: boolean): DialogFocusResult {
   // still fires if focus has escaped the dialog subtree.
   useEffect(() => {
     if (!open) return;
+    const self = token.current;
 
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== 'Tab') return;
+      // A dialog under an open one is inert: it must not cancel keys, and it
+      // must not move focus. Its own listener is still attached because it is
+      // still mounted, which is exactly the bug this guard fixes.
+      if (!isTopmost(self)) return;
       const root = dialogRef.current;
       if (!root) return;
 
