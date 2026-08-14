@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { addKb } from '@/api/kb';
 import { Button } from '@/components/ui/button';
+import { useDialogFocus } from '@/hooks/useDialogFocus';
 import DirectoryPicker from '@/components/DirectoryPicker';
 import { slugify, basename } from './utils';
 import type { KbView } from '@shared/kb';
@@ -21,6 +22,18 @@ export function AddKbModal({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Focus lifecycle: contain Tab and hand focus back to the sidebar control that
+  // opened this. No `initialFocusRef`: every control inside belongs to
+  // DirectoryPicker, which owns its own arrow-key row navigation, so naming one
+  // of its rows "the safe control" from out here would be this file deciding
+  // something it does not own. Focus lands on the container instead, which is a
+  // resting place the hook keeps and Tab moves off immediately.
+  //
+  // `titleId` wires the visible heading as the accessible name. No
+  // `descriptionId`: this dialog's body is the picker itself, and pointing
+  // `aria-describedby` at a live directory listing would read the whole tree.
+  const { dialogRef, titleId } = useDialogFocus(true);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -54,12 +67,17 @@ export function AddKbModal({
       role="presentation"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
         className="relative w-full max-w-2xl rounded-sm border border-border-soft bg-surface p-5 shadow-deep"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-3 font-serif text-[17px] font-semibold text-text">Add Knowledge Base</div>
+        <div id={titleId} className="mb-3 font-serif text-[17px] font-semibold text-text">
+          Add Knowledge Base
+        </div>
         <DirectoryPicker
           onChoose={handleSelect}
           onCancel={onClose}
@@ -92,11 +110,19 @@ export function RenameKbModal({
   onCancel: () => void;
 }) {
   const [label, setLabel] = useState(kb.label);
-  const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    setTimeout(() => inputRef.current?.focus(), 0);
-  }, []);
+  // A rename dialog is a form: the field is the safe control, not Cancel. That
+  // is what the hook's call-site type parameter is for — the ref is typed to the
+  // element it will be attached to, so landing focus on a button here would be a
+  // compile error rather than a keyboard user typing into nothing.
+  //
+  // This also replaces a `setTimeout(…, 0)` that focused the input a tick after
+  // mount. The hook focuses in the effect, which is already after the browser
+  // has the node.
+  //
+  // No `descriptionId`: the field IS the explanation, and a description that
+  // repeats the title is noise read out on every focus.
+  const { dialogRef, initialFocusRef, titleId } = useDialogFocus<HTMLInputElement>(true);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -115,12 +141,17 @@ export function RenameKbModal({
       role="presentation"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
         className="relative w-full max-w-sm rounded-sm border border-border-soft bg-surface p-6 shadow-deep"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="font-serif text-[17px] font-semibold text-text">Rename Knowledge Base</div>
+        <div id={titleId} className="font-serif text-[17px] font-semibold text-text">
+          Rename Knowledge Base
+        </div>
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -129,7 +160,7 @@ export function RenameKbModal({
           className="mt-3 space-y-3"
         >
           <input
-            ref={inputRef}
+            ref={initialFocusRef}
             type="text"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
@@ -168,6 +199,14 @@ export function ConfirmDeleteModal({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  // Destructive confirm, so the safe control gets focus: Cancel, never Remove.
+  // Same choice ConfirmModal and BusyConfirmModal already make, which is why the
+  // ref stays button-typed here.
+  //
+  // A destructive confirm is the one dialog where the description carries the
+  // decision — what is removed, and what is not — so it gets `descriptionId`.
+  const { dialogRef, initialFocusRef, titleId, descriptionId } = useDialogFocus(true);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !busy) onCancel();
@@ -185,19 +224,25 @@ export function ConfirmDeleteModal({
       role="presentation"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
         className="relative w-full max-w-sm rounded-sm border border-health-error/30 bg-surface p-6 pl-8 shadow-deep"
         onClick={(e) => e.stopPropagation()}
       >
         <span aria-hidden className="absolute left-0 top-4 bottom-4 w-px bg-health-error/50" />
-        <div className="font-serif text-[17px] font-semibold text-text">Remove Knowledge Base?</div>
-        <div className="font-serif mt-2 text-[14px] leading-relaxed text-text-muted">
+        <div id={titleId} className="font-serif text-[17px] font-semibold text-text">
+          Remove Knowledge Base?
+        </div>
+        <div id={descriptionId} className="font-serif mt-2 text-[14px] leading-relaxed text-text-muted">
           <span className="font-semibold text-text">{kb.label}</span> will be removed from
           the sidebar. Files on disk are not affected.
         </div>
         <div className="mt-5 flex justify-end gap-2">
-          <Button onClick={onCancel} variant="outline" disabled={busy}>
+          <Button ref={initialFocusRef} onClick={onCancel} variant="outline" disabled={busy}>
             Cancel
           </Button>
           <Button onClick={onConfirm} variant="destructive" disabled={busy}>

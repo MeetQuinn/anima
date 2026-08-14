@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Check, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
 
 import type {
@@ -13,6 +13,7 @@ import {
 } from '@/api/system';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useDialogFocus } from '@/hooks/useDialogFocus';
 
 interface Props {
   account?: ProviderAccountSummary;
@@ -21,8 +22,25 @@ interface Props {
 }
 
 export default function ClaudeAccountLoginModal({ account, onClose, onSucceeded }: Props) {
-  const titleId = useId();
-  const dialogRef = useRef<HTMLDivElement>(null);
+  // Focus lifecycle: contain Tab and hand focus back to whatever opened this on
+  // close. Mounted only while open, so `open` is constant true for this instance.
+  //
+  // No `initialFocusRef` on purpose. At open this dialog is a spinner — the only
+  // control on screen is Cancel, and the code field appears later, when the
+  // provider hands back a login URL. Landing on Cancel would put Enter on
+  // "abandon the sign-in you just started", so focus stays on the container,
+  // which is what it did before the hook and is a resting place the hook keeps.
+  //
+  // Esc stays below rather than moving into the hook: it is gated on `!busy`
+  // here, and dismissal rules differ across these dialogs.
+  //
+  // `titleId` comes from the hook rather than a second local `useId()`, so the
+  // dialog has exactly one source of ids. No `aria-describedby`: this dialog's
+  // explanatory copy is state-dependent — at open there is only a spinner, the
+  // paragraph arrives with the login URL, and it is replaced by the success or
+  // failure text. A description that points at a node which is absent for the
+  // first frames and then says something else is worse than none.
+  const { dialogRef, titleId } = useDialogFocus(true);
   const closing = useRef(false);
   const started = useRef(false);
   const reportedSuccess = useRef(false);
@@ -74,7 +92,6 @@ export default function ClaudeAccountLoginModal({ account, onClose, onSucceeded 
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    dialogRef.current?.focus();
     void begin();
   }, [begin]);
 
