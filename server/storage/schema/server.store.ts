@@ -15,6 +15,7 @@ import {
   ProviderContextLimitsConfig,
   ProviderRuntimeCommandsConfig,
   ReleaseTrack,
+  RuntimeConfig,
   ServerTrack,
   SidebarOrder,
   TeamConfig,
@@ -31,6 +32,7 @@ export const ServerConfig = z.object({
   providerContextLimits: ProviderContextLimitsConfig.optional(),
   providerCommands: ProviderRuntimeCommandsConfig.optional(),
   releaseTrack: ReleaseTrack.optional(),
+  runtime: RuntimeConfig.optional(),
   sidebarOrder: SidebarOrder.optional(),
   // Team registry. Optional + never schema-defaulted, so a legacy/empty config still loads
   // as `{}` (zero-touch upgrade). The default team is synthesized in TeamService, not here.

@@ -20,6 +20,7 @@ import type { AgentProviderConfig } from '../providers/contract.js';
 import { isRestartDrainActive } from '../services/restart-drain.js';
 import { cacheDelete } from '../storage/json-file.js';
 import { ServerConfigStore } from '../storage/schema/server.store.js';
+import { ServerSettingsService } from '../settings/settings.service.js';
 import {
   applyClaudeAccountToAgent,
   claudeAccountRuntimeFingerprint,
@@ -98,6 +99,7 @@ export interface RuntimeHostDependencies {
   animaHome?: string;
   forceRestartTimeoutMs?: number;
   loadAgents?: (opts: RuntimeHostOptions) => Promise<AgentConfig[]>;
+  loadMaxConcurrentAgentRuns?: () => Promise<number>;
   loadProviderCommands?: () => Promise<ProviderRuntimeCommandsConfig>;
   ensureDefaultSkills?: () => Promise<void>;
   healthIntervalMs?: number;
@@ -130,6 +132,7 @@ export class RuntimeHost {
   private readonly agents = new Map<string, ManagedAgent>();
   private readonly animaHome: string;
   private readonly loadAgents: (opts: RuntimeHostOptions) => Promise<AgentConfig[]>;
+  private readonly loadMaxConcurrentAgentRuns: () => Promise<number>;
   private readonly loadProviderCommands: () => Promise<ProviderRuntimeCommandsConfig>;
   private readonly ensureDefaultSkills: () => Promise<void>;
   private readonly logger: Pick<Console, 'error' | 'log'>;
@@ -159,10 +162,11 @@ export class RuntimeHost {
   ) {
     this.animaHome = deps.animaHome ?? resolveAnimaHome();
     this.loadAgents = deps.loadAgents ?? loadRuntimeAgents;
-    this.loadProviderCommands = deps.loadProviderCommands ?? (async () => {
-      const config = await new ServerConfigStore(this.animaHome).read();
-      return config.providerCommands ?? {};
-    });
+    const settings = new ServerSettingsService(new ServerConfigStore(this.animaHome));
+    this.loadMaxConcurrentAgentRuns = deps.loadMaxConcurrentAgentRuns
+      ?? (() => settings.getMaxConcurrentAgentRuns());
+    this.loadProviderCommands = deps.loadProviderCommands
+      ?? (() => settings.getProviderRuntimeCommands());
     this.ensureDefaultSkills = deps.ensureDefaultSkills ?? (async () => {
       await ensureDefaultSkills();
     });
@@ -258,10 +262,12 @@ export class RuntimeHost {
   }
 
   private async reconcileAgents(): Promise<void> {
-    const [agents, providerCommands] = await Promise.all([
+    const [agents, maxConcurrentAgentRuns, providerCommands] = await Promise.all([
       this.loadAgents(this.opts),
+      this.loadMaxConcurrentAgentRuns(),
       this.loadProviderCommands(),
     ]);
+    this.runLimiter.setLimit(maxConcurrentAgentRuns);
     await this.cleanupExpiredHandoffs(agents);
     await this.initializeBootHealth(agents);
     this.syncConfigWatchers(agents.map((agent) => agent.id));

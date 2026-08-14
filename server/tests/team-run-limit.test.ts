@@ -9,6 +9,8 @@ import type {
 } from '../providers/contract.js';
 import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
 import { TEAM_ACTIVE_RUN_LIMIT, TeamRunLimiter } from '../runtime/team-run-limiter.js';
+import { ServerSettingsService } from '../settings/settings.service.js';
+import { ServerConfigStore } from '../storage/schema/server.store.js';
 import { makeSlackEvent } from './helpers/slack.js';
 import { sleep, waitFor, withTempAnimaHome } from './helpers/harness.js';
 import {
@@ -20,8 +22,67 @@ import {
   waitForInboxItemAppendedTo,
 } from './helpers/runtime-worker.js';
 
-test('team run limit is five active provider runs', () => {
+test('team run limit defaults to five active provider runs', () => {
   assert.equal(TEAM_ACTIVE_RUN_LIMIT, 5);
+});
+
+test('server config controls the runtime-wide active provider run limit', async () => {
+  await withTempAnimaHome(async (stateDir) => {
+    const store = new ServerConfigStore(stateDir);
+    const settings = new ServerSettingsService(store);
+
+    assert.equal(await settings.getMaxConcurrentAgentRuns(), 5);
+    await store.write({ runtime: { maxConcurrentAgentRuns: 9 } });
+    assert.equal(await settings.getMaxConcurrentAgentRuns(), 9);
+
+    await assert.rejects(
+      store.write({ runtime: { maxConcurrentAgentRuns: 0 } }),
+      /expected number to be >0/,
+    );
+    await assert.rejects(
+      store.write({ runtime: { maxConcurrentAgentRuns: 101 } }),
+      /expected number to be <=100/,
+    );
+  });
+});
+
+test('team run limiter applies increases and decreases without interrupting active runs', async () => {
+  const limiter = new TeamRunLimiter(1);
+  const firstRelease = await limiter.acquire();
+  let secondRelease: (() => void) | undefined;
+  let thirdRelease: (() => void) | undefined;
+
+  void limiter.acquire().then((release) => {
+    secondRelease = release;
+  });
+  await sleep(10);
+  assert.equal(secondRelease, undefined);
+
+  limiter.setLimit(2);
+  await waitFor(() => secondRelease !== undefined, {
+    description: 'increased limit to admit a queued run',
+  });
+  assert.equal(limiter.currentLimit(), 2);
+
+  limiter.setLimit(1);
+  void limiter.acquire().then((release) => {
+    thirdRelease = release;
+  });
+  firstRelease();
+  await sleep(10);
+  assert.equal(thirdRelease, undefined);
+
+  secondRelease!();
+  await waitFor(() => thirdRelease !== undefined, {
+    description: 'decreased limit to admit after active runs drain',
+  });
+  thirdRelease!();
+});
+
+test('team run limiter rejects invalid limits', () => {
+  assert.throws(() => new TeamRunLimiter(0), /positive integer/);
+  const limiter = new TeamRunLimiter();
+  assert.throws(() => limiter.setLimit(1.5), /positive integer/);
 });
 
 test('team run limiter admits waiters in request order', async () => {
