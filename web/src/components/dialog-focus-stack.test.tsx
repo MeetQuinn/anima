@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { StrictMode, useState } from 'react';
+import { StrictMode, useEffect, useState } from 'react';
 import { describe, expect, it } from 'vitest';
 
 import { useDialogFocus } from '@/hooks/useDialogFocus';
@@ -519,5 +519,147 @@ describe('useDialogFocus — initial focus is not button-only', () => {
     // than stay on the page underneath. The structural `disabled` check must not
     // have been dropped along with the button type.
     expect(document.activeElement).toBe(screen.getByRole('dialog'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `isTopmostDialog()` — the read-only layering predicate.
+//
+// Added so a call site that owns a DISMISSAL rule can ask whether anything sits
+// above it. Escape stays out of the hook, so the hook answers the question and
+// the call site decides what to do with the answer; ServerPanel is the first
+// caller (`ServerPanel.focus.test.tsx` pins what it does with it).
+//
+// Zero-argument and bound to the instance on purpose: a caller can ask only
+// about ITSELF, never name or reach another dialog, so the stack and the tokens
+// stay private.
+//
+// MEASURED against hand-built variants of the current hook, across these three
+// focus files (38 cases green at baseline):
+//   - predicate always true — 3 red: "goes false under an open dialog", "answers
+//     false for a dialog that is not open", and ServerPanel's two-press case.
+//   - predicate always false — 4 red: "answers true for the only open dialog",
+//     "goes false under an open dialog", and BOTH ServerPanel Escape cases. The
+//     standalone one is why it is there: a gate can fail by being too tight, and
+//     the two-press case alone cannot see that.
+//   - identity not stable (plain arrow instead of useCallback) — 1 red: "hands
+//     back the same predicate across renders". Nothing else notices, which is
+//     the point — the cost of a fresh identity is a listener torn down and
+//     reattached, not a wrong answer, so only a case that watches identity
+//     catches it.
+//   - answer computed at render and closed over, rather than read at call time —
+//     5 red: three here plus both ServerPanel Escape cases. The registration
+//     effect has not run on the first render, so a render-time answer is `false`
+//     for a dialog that is in fact topmost.
+// ---------------------------------------------------------------------------
+
+/**
+ * Reports its own answer on demand, the way a real caller does — from inside an
+ * event handler, not during render. Reading it during render would answer for
+ * the commit BEFORE the registration effect and be stale forever after.
+ */
+function TopmostReporter({
+  label,
+  open = true,
+  onPredicate,
+  children,
+}: {
+  label: string;
+  open?: boolean;
+  onPredicate?: (predicate: () => boolean) => void;
+  children?: React.ReactNode;
+}) {
+  const { dialogRef, isTopmostDialog } = useDialogFocus(open);
+  const [answer, setAnswer] = useState('unasked');
+  const [, bumpRender] = useState(0);
+  // Hands the test every predicate identity this instance is given — from an
+  // effect with no dependency list, so it fires after EVERY render, and the test
+  // owns the collection. Counting identities in a ref during render would be the
+  // same measurement but it reads a ref while rendering, which is exactly what
+  // the hook lint rule is for.
+  useEffect(() => {
+    onPredicate?.(isTopmostDialog);
+  });
+  return (
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1}>
+      <button type="button" onClick={() => setAnswer(String(isTopmostDialog()))}>
+        Ask {label}
+      </button>
+      <button type="button" onClick={() => bumpRender((n) => n + 1)}>
+        Re-render {label}
+      </button>
+      <span data-testid={`answer-${label}`}>{answer}</span>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * A lower dialog that can open an upper one, one commit later — the ordering the
+ * stack models. The upper sits inside the lower's DOM here, which the predicate
+ * does not care about: it answers on registration order, and the portaled shapes
+ * are already covered above.
+ */
+function TopmostHost({ onPredicate }: { onPredicate?: (predicate: () => boolean) => void }) {
+  const [upperOpen, setUpperOpen] = useState(false);
+  return (
+    <TopmostReporter label="lower" onPredicate={onPredicate}>
+      <button type="button" onClick={() => setUpperOpen(true)}>
+        Open upper
+      </button>
+      <button type="button" onClick={() => setUpperOpen(false)}>
+        Close upper
+      </button>
+      {upperOpen && <TopmostReporter label="upper" />}
+    </TopmostReporter>
+  );
+}
+
+function ask(label: string) {
+  fireEvent.click(screen.getByRole('button', { name: `Ask ${label}` }));
+  return screen.getByTestId(`answer-${label}`).textContent;
+}
+
+describe('useDialogFocus — isTopmostDialog', () => {
+  it('answers true for the only open dialog', () => {
+    render(<TopmostHost />);
+    expect(ask('lower')).toBe('true');
+  });
+
+  it('goes false under an open dialog and true again once it closes', () => {
+    // The whole point: ServerPanel must be able to tell that the restart confirm
+    // is above it, and must go back to owning Escape the moment it is not.
+    render(<TopmostHost />);
+    expect(ask('lower')).toBe('true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open upper' }));
+    expect(ask('lower')).toBe('false');
+    expect(ask('upper')).toBe('true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close upper' }));
+    expect(ask('lower')).toBe('true');
+  });
+
+  it('answers false for a dialog that is not open', () => {
+    // Not in the stack at all, so "topmost" cannot be true. A caller that keeps
+    // its dialog mounted while closed would otherwise act on a stale yes.
+    render(<TopmostReporter label="closed" open={false} />);
+    expect(ask('closed')).toBe('false');
+  });
+
+  it('hands back the same predicate across renders', () => {
+    // A caller lists this in a dependency array to guard a window listener. A
+    // fresh identity per render would detach and reattach that listener on every
+    // unrelated re-render, which is how a keypress goes missing between the two.
+    const seen = new Set<() => boolean>();
+    render(<TopmostHost onPredicate={(predicate) => seen.add(predicate)} />);
+    expect(seen.size).toBe(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Re-render lower' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Re-render lower' }));
+
+    // Three renders reported, one identity. The Set is typed `() => boolean`, so
+    // widening the predicate to take an argument fails the typecheck here too.
+    expect(seen.size).toBe(1);
   });
 });

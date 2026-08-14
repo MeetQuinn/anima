@@ -231,3 +231,47 @@ describe('Team dialog + home-folder picker — focus contract', () => {
     expect(screen.getByPlaceholderText('e.g. ~/content')).toHaveProperty('value', '/tmp/picked');
   });
 });
+
+describe('Team dialog + home-folder picker — Escape dismissal', () => {
+  // CHARACTERIZATION ONLY. This cut does not touch TeamModals; the pair is here
+  // because it is the second answer to the same question the Server panel now
+  // asks, and the reason the answer stays at the call site rather than in the
+  // hook.
+  //
+  // Both layers are dismissed by ONE listener, on the team dialog, which routes
+  // by its own state: picker first, dialog second. That is a different rule from
+  // the panel's ("ignore Escape while covered") and reaches the same outcome,
+  // because here the lower dialog owns the upper one's existence. A hook that
+  // decided dismissal would have to encode both, plus the confirm's third rule
+  // of refusing Escape mid-commit.
+  //
+  // Pinned so that giving the picker its own Escape handler later — an easy and
+  // reasonable-looking change — cannot silently close both layers at once.
+
+  it('closes the picker on the first Escape and the team dialog on the second', () => {
+    const { browse } = openPicker();
+    expect(screen.getByRole('dialog', { name: 'Choose home folder' })).toBeTruthy();
+
+    fireEvent.keyDown(screen.getByRole('dialog', { name: 'Choose home folder' }), {
+      key: 'Escape',
+    });
+
+    expect(screen.queryByRole('dialog', { name: 'Choose home folder' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'New team' })).toBeTruthy();
+    expect(document.activeElement).toBe(browse);
+
+    fireEvent.keyDown(browse, { key: 'Escape' });
+
+    expect(screen.queryByRole('dialog', { name: 'New team' })).toBeNull();
+  });
+
+  it('closes the team dialog on Escape when no picker is open', () => {
+    render(<CreateHost />);
+    fireEvent.click(screen.getByRole('button', { name: 'New team' }));
+    const dialog = screen.getByRole('dialog', { name: 'New team' });
+
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+
+    expect(screen.queryByRole('dialog', { name: 'New team' })).toBeNull();
+  });
+});
