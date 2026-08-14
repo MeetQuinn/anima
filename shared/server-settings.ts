@@ -2,7 +2,10 @@ import { z } from 'zod';
 
 import { ProviderAccountsConfig } from './provider-accounts.js';
 import { ProviderContextLimitsConfig } from './provider-context-limits.js';
-import { ProviderRuntimeCommandsConfig } from './provider-runtime-commands.js';
+import {
+  ProviderRuntimeArgsConfig,
+  ProviderRuntimeCommandsConfig,
+} from './provider-runtime-commands.js';
 
 export const SidebarOrder = z.object({
   agents: z.array(z.string()).optional(),
@@ -55,6 +58,7 @@ export type WorkspacePlatform = z.infer<typeof WorkspacePlatform>;
 export {
   ProviderAccountsConfig,
   ProviderContextLimitsConfig,
+  ProviderRuntimeArgsConfig,
   ProviderRuntimeCommandsConfig,
 };
 

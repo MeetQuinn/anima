@@ -187,7 +187,7 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
     if (!parsed.success) {
       return reply
         .status(400)
-        .send({ error: 'Invalid provider runtime command payload' });
+        .send({ error: 'Invalid provider runtime launch payload' });
     }
     try {
       return await defaultProviderRuntimeCommandService.set(parsed.data);

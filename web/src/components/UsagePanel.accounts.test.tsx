@@ -88,7 +88,7 @@ vi.mock('@/api/system', () => ({
   fetchProviderContextLimits: vi.fn(async () => ({ providers: [] })),
   fetchProviderRuntimeCommands: vi.fn(async () => ({
     providers: [
-      { command: null, defaultCommand: 'claude', provider: 'claude-code' as const },
+      { args: [], command: null, defaultCommand: 'claude', provider: 'claude-code' as const },
     ],
   })),
   fetchProviderAccounts: vi.fn(async () => ({

@@ -67,9 +67,10 @@ export function ProviderUnit({
   runtimeCommand: ProviderRuntimeCommandRow;
   runtimeCommandError?: string;
   runtimeCommandSaving?: boolean;
-  onRuntimeCommandSave: (command: string | null) => void;
+  onRuntimeCommandSave: (command: string | null, args: string[]) => void;
 }) {
   const storedRuntimeCommand = runtimeCommand.command ?? '';
+  const storedRuntimeArgs = runtimeCommand.args.join('\n');
   const [runtimeCommandEdit, setRuntimeCommandEdit] = useState({
     source: storedRuntimeCommand,
     value: storedRuntimeCommand,
@@ -78,6 +79,14 @@ export function ProviderUnit({
     runtimeCommandEdit.source === storedRuntimeCommand
       ? runtimeCommandEdit.value
       : storedRuntimeCommand;
+  const [runtimeArgsEdit, setRuntimeArgsEdit] = useState({
+    source: storedRuntimeArgs,
+    value: storedRuntimeArgs,
+  });
+  const runtimeArgsDraft =
+    runtimeArgsEdit.source === storedRuntimeArgs
+      ? runtimeArgsEdit.value
+      : storedRuntimeArgs;
   const sortedUsages = [...usages].sort((a, b) => Number(b.active ?? false) - Number(a.active ?? false));
   const featured = sortedUsages.find((row) => row.active) ?? sortedUsages[0];
   const others = sortedUsages.filter((row) => row !== featured);
@@ -105,7 +114,10 @@ export function ProviderUnit({
   const open = expanded || needsAttention;
   const collapsedSummary = providerCollapsedSummary(sortedUsages);
   const normalizedRuntimeCommand = runtimeCommandDraft.trim();
-  const runtimeCommandChanged = normalizedRuntimeCommand !== storedRuntimeCommand;
+  const normalizedRuntimeArgs = runtimeArgsFromEditor(runtimeArgsDraft);
+  const runtimeCommandChanged =
+    normalizedRuntimeCommand !== storedRuntimeCommand ||
+    JSON.stringify(normalizedRuntimeArgs) !== JSON.stringify(runtimeCommand.args);
 
   return (
     <div>
@@ -278,7 +290,10 @@ export function ProviderUnit({
                 className="space-y-1.5"
                 onSubmit={(event) => {
                   event.preventDefault();
-                  onRuntimeCommandSave(normalizedRuntimeCommand || null);
+                  onRuntimeCommandSave(
+                    normalizedRuntimeCommand || null,
+                    normalizedRuntimeArgs,
+                  );
                 }}
               >
                 <label className="block font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
@@ -300,9 +315,29 @@ export function ProviderUnit({
                     value={runtimeCommandDraft}
                   />
                 </label>
+                <label className="block font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
+                  Arguments
+                  <textarea
+                    aria-label={`${management.label} runtime arguments`}
+                    autoCapitalize="off"
+                    autoComplete="off"
+                    className="mt-1.5 block min-h-[88px] w-full resize-y rounded-sm border border-border-soft bg-surface-elevated px-3 py-2.5 font-mono text-[12px] leading-relaxed text-text placeholder:text-text-subtle focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-wait disabled:opacity-60"
+                    disabled={runtimeCommandSaving}
+                    onChange={(event) =>
+                      setRuntimeArgsEdit({
+                        source: storedRuntimeArgs,
+                        value: event.currentTarget.value,
+                      })
+                    }
+                    placeholder={management.provider === 'claude-code' ? '--chrome' : '--flag'}
+                    rows={3}
+                    spellCheck={false}
+                    value={runtimeArgsDraft}
+                  />
+                </label>
                 <div className="flex items-start justify-between gap-3">
                   <p className="font-sans text-[10px] leading-relaxed text-text-subtle">
-                    Global for every agent using this provider. Leave blank for the default. Executable name or absolute path only; arguments are not supported.
+                    Global for every agent using this provider. Command is an executable name or absolute path. Arguments are one argv entry per line; spaces are preserved and no shell parsing is used.
                   </p>
                   <button
                     type="submit"
@@ -358,4 +393,11 @@ export function ProviderUnit({
       )}
     </div>
   );
+}
+
+export function runtimeArgsFromEditor(value: string): string[] {
+  return value
+    .replaceAll('\r\n', '\n')
+    .split('\n')
+    .filter((line) => line.trim().length > 0);
 }

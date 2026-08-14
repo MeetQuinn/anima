@@ -446,6 +446,39 @@ test('a provider runtime command change reloads only agents using that provider'
   await host.stop();
 });
 
+test('a provider runtime args change reloads only agents using that provider', async () => {
+  const alpha = runtimeHostAgent('alpha', { connected: true });
+  const beta = runtimeHostAgent('beta', { connected: true });
+  beta.provider = { kind: 'codex-cli', model: 'gpt-5.6-sol' };
+  let providerArgs: Record<string, string[]> = {};
+  const started: string[] = [];
+  const stopped: string[] = [];
+  const host = new RuntimeHost({}, {
+    animaHome: testHome,
+    loadAgents: async () => [alpha, beta],
+    loadProviderArgs: async () => providerArgs,
+    logger: silentLogger,
+    startAgent: async (agent, _animaHome, options) => {
+      started.push(`${agent.id}:${JSON.stringify(options.providerArgs)}`);
+      return stopHandle(agent.id, stopped);
+    },
+    validateAgent: async () => {},
+  });
+
+  await host.reconcileOnce();
+  providerArgs = { 'claude-code': ['--chrome', '--profile', 'team one'] };
+  await host.reconcileOnce();
+  await host.reconcileOnce();
+
+  assert.deepEqual(started, [
+    'alpha:[]',
+    'beta:[]',
+    'alpha:["--chrome","--profile","team one"]',
+  ]);
+  assert.deepEqual(stopped, ['alpha']);
+  await host.stop();
+});
+
 test('runtime host refreshes Slack display info before starting an agent', async () => {
   const scout = runtimeHostAgent('scout', { connected: true });
   scout.provider.env = { CLAUDE_CONFIG_DIR: '/profiles/secondary' };

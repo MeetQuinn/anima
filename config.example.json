@@ -7,6 +7,9 @@
     "windowDurationMinutes": 120,
     "windowStart": "05:00"
   },
+  "providerArgs": {
+    "claude-code": []
+  },
   "runtime": {
     "maxConcurrentAgentRuns": 5
   }

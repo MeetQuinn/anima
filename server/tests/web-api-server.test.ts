@@ -221,6 +221,7 @@ test('web API manages validated provider runtime command overrides in server con
         assert.equal(before.status, 200);
         const beforeBody = (await before.json()) as {
           providers: Array<{
+            args: string[];
             command: string | null;
             defaultCommand: string;
             provider: string;
@@ -228,11 +229,12 @@ test('web API manages validated provider runtime command overrides in server con
         };
         assert.deepEqual(
           beforeBody.providers.find((row) => row.provider === 'codex-cli'),
-          { command: null, defaultCommand: 'codex', provider: 'codex-cli' },
+          { args: [], command: null, defaultCommand: 'codex', provider: 'codex-cli' },
         );
 
         const saved = await fetch(`${base}/api/provider-runtime-commands`, {
           body: JSON.stringify({
+            args: ['--profile', 'team one'],
             command: process.execPath,
             provider: 'codex-cli',
           }),
@@ -256,6 +258,14 @@ test('web API manages validated provider runtime command overrides in server con
           ).providerCommands?.['codex-cli'],
           process.execPath,
         );
+        assert.deepEqual(
+          (
+            JSON.parse(
+              await readFile(join(stateDir, 'config.json'), 'utf8'),
+            ) as { providerArgs?: Record<string, string[]> }
+          ).providerArgs?.['codex-cli'],
+          ['--profile', 'team one'],
+        );
 
         const rejected = await fetch(`${base}/api/provider-runtime-commands`, {
           body: JSON.stringify({
@@ -276,7 +286,7 @@ test('web API manages validated provider runtime command overrides in server con
         );
 
         const reset = await fetch(`${base}/api/provider-runtime-commands`, {
-          body: JSON.stringify({ command: null, provider: 'codex-cli' }),
+          body: JSON.stringify({ args: [], command: null, provider: 'codex-cli' }),
           headers: { 'content-type': 'application/json' },
           method: 'PUT',
         });
@@ -287,6 +297,14 @@ test('web API manages validated provider runtime command overrides in server con
               await readFile(join(stateDir, 'config.json'), 'utf8'),
             ) as { providerCommands?: Record<string, string> }
           ).providerCommands,
+          undefined,
+        );
+        assert.equal(
+          (
+            JSON.parse(
+              await readFile(join(stateDir, 'config.json'), 'utf8'),
+            ) as { providerArgs?: Record<string, string[]> }
+          ).providerArgs,
           undefined,
         );
       } finally {

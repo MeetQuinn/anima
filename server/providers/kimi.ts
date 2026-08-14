@@ -30,17 +30,29 @@ import {
 
 const KIMI_RUNTIME_KIND = 'kimi-cli';
 
+export function kimiAcpLaunchArgs(
+  providerArgs: readonly string[] = [],
+): string[] {
+  return [...providerArgs, '--yolo', 'acp'];
+}
+
 export class KimiCliAgentRuntime extends ControllerAgentRuntime<KimiAcpController> {
   readonly command: string;
   readonly env: Record<string, string> | undefined;
   readonly kind = KIMI_RUNTIME_KIND;
   private readonly config: KimiCliAgentProviderConfig;
+  private readonly providerArgs: readonly string[];
 
-  constructor(config: KimiCliAgentProviderConfig, command: string) {
+  constructor(
+    config: KimiCliAgentProviderConfig,
+    command: string,
+    providerArgs: readonly string[] = [],
+  ) {
     super({ providerChildIdleTimeoutMs: config.providerChildIdleTimeoutMs });
     this.config = config;
     this.command = command;
     this.env = config.env;
+    this.providerArgs = [...providerArgs];
   }
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
@@ -92,7 +104,7 @@ export class KimiCliAgentRuntime extends ControllerAgentRuntime<KimiAcpControlle
         );
         return this.spawnController(
           {
-            args: ['--yolo', 'acp'],
+            args: kimiAcpLaunchArgs(this.providerArgs),
             command: this.command,
             label: 'Kimi ACP runtime',
           },

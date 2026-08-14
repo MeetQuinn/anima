@@ -3,6 +3,7 @@ import type {
   DashboardAuth,
   ProviderAccountsConfig,
   ProviderContextLimitsConfig,
+  ProviderRuntimeArgsConfig,
   ProviderRuntimeCommandsConfig,
   ReleaseTrack,
   ServerTrack,
@@ -80,6 +81,11 @@ export class ServerSettingsService {
     return config.providerCommands ?? {};
   }
 
+  async getProviderRuntimeArgs(): Promise<ProviderRuntimeArgsConfig> {
+    const config = await this.store.read();
+    return config.providerArgs ?? {};
+  }
+
   async getMaxConcurrentAgentRuns(): Promise<number> {
     const config = await this.store.read();
     return config.runtime?.maxConcurrentAgentRuns ?? DEFAULT_MAX_CONCURRENT_AGENT_RUNS;
@@ -138,20 +144,36 @@ export class ServerSettingsService {
     return config.providerContextLimits ?? {};
   }
 
-  async setProviderRuntimeCommand(
+  async setProviderRuntimeSettings(
     provider: ProviderUsageKind,
     command: string | null,
-  ): Promise<ProviderRuntimeCommandsConfig> {
+    args?: string[],
+  ): Promise<{
+    args: ProviderRuntimeArgsConfig;
+    commands: ProviderRuntimeCommandsConfig;
+  }> {
     const config = await this.store.update((current) => {
       const providerCommands = { ...current.providerCommands };
       if (command === null) delete providerCommands[provider];
       else providerCommands[provider] = command;
+
+      const providerArgs = { ...current.providerArgs };
+      if (args !== undefined) {
+        if (args.length === 0) delete providerArgs[provider];
+        else providerArgs[provider] = [...args];
+      }
+
       const next = { ...current };
       if (Object.keys(providerCommands).length === 0) delete next.providerCommands;
       else next.providerCommands = providerCommands;
+      if (Object.keys(providerArgs).length === 0) delete next.providerArgs;
+      else next.providerArgs = providerArgs;
       return next;
     });
-    return config.providerCommands ?? {};
+    return {
+      args: config.providerArgs ?? {},
+      commands: config.providerCommands ?? {},
+    };
   }
 
   async setWorkspacePlatform(workspacePlatform: WorkspacePlatform): Promise<WorkspacePlatform> {

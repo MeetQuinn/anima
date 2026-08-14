@@ -153,10 +153,11 @@ export async function fetchProviderRuntimeCommands(): Promise<ProviderRuntimeCom
 export async function saveProviderRuntimeCommand(
   provider: ProviderUsageKind,
   command: string | null,
+  args: string[],
 ): Promise<ProviderRuntimeCommandsResponse> {
   return apiRequest(
     '/api/provider-runtime-commands',
-    jsonInit('PUT', { command, provider }),
+    jsonInit('PUT', { args, command, provider }),
   );
 }
 

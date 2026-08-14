@@ -87,9 +87,9 @@ vi.mock('@/api/system', () => ({
   })),
   fetchProviderRuntimeCommands: vi.fn(async () => ({
     providers: [
-      { command: null, defaultCommand: 'claude', provider: 'claude-code' as const },
-      { command: null, defaultCommand: 'kimi', provider: 'kimi-cli' as const },
-      { command: null, defaultCommand: 'grok', provider: 'grok-cli' as const },
+      { args: [], command: null, defaultCommand: 'claude', provider: 'claude-code' as const },
+      { args: [], command: null, defaultCommand: 'kimi', provider: 'kimi-cli' as const },
+      { args: [], command: null, defaultCommand: 'grok', provider: 'grok-cli' as const },
     ],
   })),
   fetchProviderAccounts: vi.fn(async () => ({
@@ -204,7 +204,7 @@ describe('UsagePanel version slot', () => {
     });
     runtimeCommandApi.save.mockResolvedValueOnce({
       providers: [
-        { command: 'kimi-wrapper', defaultCommand: 'kimi', provider: 'kimi-cli' },
+        { args: ['--profile', 'team one'], command: 'kimi-wrapper', defaultCommand: 'kimi', provider: 'kimi-cli' },
       ],
     });
     renderPanel();
@@ -217,9 +217,15 @@ describe('UsagePanel version slot', () => {
     const command = screen.getByRole('textbox', { name: 'Kimi CLI runtime command' });
     expect(command.getAttribute('placeholder')).toBe('kimi');
     fireEvent.change(command, { target: { value: 'kimi-wrapper' } });
+    const args = screen.getByRole('textbox', { name: 'Kimi CLI runtime arguments' });
+    fireEvent.change(args, { target: { value: '--profile\nteam one\n' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
-      expect(runtimeCommandApi.save).toHaveBeenCalledWith('kimi-cli', 'kimi-wrapper'),
+      expect(runtimeCommandApi.save).toHaveBeenCalledWith(
+        'kimi-cli',
+        'kimi-wrapper',
+        ['--profile', 'team one'],
+      ),
     );
 
     const select = await screen.findByRole('combobox', { name: 'Kimi CLI context limit' });

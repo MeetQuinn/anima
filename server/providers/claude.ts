@@ -29,12 +29,18 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
   readonly env: Record<string, string>;
   readonly kind = 'claude-code';
   private readonly config: ClaudeCodeAgentProviderConfig;
+  private readonly providerArgs: readonly string[];
 
-  constructor(config: ClaudeCodeAgentProviderConfig, command: string) {
+  constructor(
+    config: ClaudeCodeAgentProviderConfig,
+    command: string,
+    providerArgs: readonly string[] = [],
+  ) {
     super({ providerChildIdleTimeoutMs: config.providerChildIdleTimeoutMs });
     this.config = config;
     this.command = command;
     this.env = claudeProviderEnv(config);
+    this.providerArgs = [...providerArgs];
   }
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
@@ -182,7 +188,7 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
     ];
     if (providerSession) args.push('--resume', providerSession.id);
     args.push(...claudeCommonArgs(this.config, systemPromptFilePath));
-    return args;
+    return [...this.providerArgs, ...args];
   }
 }
 

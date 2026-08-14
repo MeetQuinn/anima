@@ -14,8 +14,32 @@ export type ProviderRuntimeCommandsConfig = z.infer<
   typeof ProviderRuntimeCommandsConfig
 >;
 
+export const ProviderRuntimeArg = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine((value) => value.trim().length > 0, 'Runtime arguments cannot be blank')
+  .refine((value) => !value.includes('\0'), 'Runtime arguments cannot contain NUL bytes')
+  .refine(
+    (value) => !value.includes('\n') && !value.includes('\r'),
+    'Runtime arguments cannot contain line breaks',
+  );
+export type ProviderRuntimeArg = z.infer<typeof ProviderRuntimeArg>;
+
+export const ProviderRuntimeArgs = z.array(ProviderRuntimeArg).max(128);
+export type ProviderRuntimeArgs = z.infer<typeof ProviderRuntimeArgs>;
+
+export const ProviderRuntimeArgsConfig = z.partialRecord(
+  ProviderUsageKind,
+  ProviderRuntimeArgs,
+);
+export type ProviderRuntimeArgsConfig = z.infer<
+  typeof ProviderRuntimeArgsConfig
+>;
+
 export const ProviderRuntimeCommandRequest = z
   .object({
+    args: ProviderRuntimeArgs.optional(),
     command: ProviderRuntimeCommand.nullable(),
     provider: ProviderUsageKind,
   })
@@ -25,6 +49,7 @@ export type ProviderRuntimeCommandRequest = z.infer<
 >;
 
 export const ProviderRuntimeCommandRow = z.object({
+  args: ProviderRuntimeArgs,
   command: ProviderRuntimeCommand.nullable(),
   defaultCommand: ProviderRuntimeCommand,
   provider: ProviderUsageKind,
@@ -47,11 +72,20 @@ export function effectiveProviderRuntimeCommand(
   return commands[provider] ?? providerCatalogEntry(provider)?.command ?? provider;
 }
 
+export function effectiveProviderRuntimeArgs(
+  provider: ProviderKind,
+  args: ProviderRuntimeArgsConfig,
+): string[] {
+  return [...(args[provider] ?? [])];
+}
+
 export function providerRuntimeCommandsResponse(
   commands: ProviderRuntimeCommandsConfig,
+  args: ProviderRuntimeArgsConfig = {},
 ): ProviderRuntimeCommandsResponse {
   return {
     providers: PROVIDER_CATALOG.map((provider) => ({
+      args: effectiveProviderRuntimeArgs(provider.kind, args),
       command: commands[provider.kind] ?? null,
       defaultCommand: provider.command,
       provider: provider.kind,

@@ -8,13 +8,14 @@ import type { AgentRuntime, AgentProviderConfig } from './contract.js';
 
 export function createAgentRuntime(
   config: AgentProviderConfig,
-  options: { command?: string } = {},
+  options: { args?: readonly string[]; command?: string } = {},
 ): AgentRuntime {
   const command = options.command ?? effectiveProviderRuntimeCommand(config.kind, {});
-  if (config.kind === 'codex-cli') return new CodexCliAgentRuntime(config, command);
-  if (config.kind === 'claude-code') return new ClaudeCodeAgentRuntime(config, command);
-  if (config.kind === 'grok-cli') return new GrokCliAgentRuntime(config, command);
-  if (config.kind === 'kimi-cli') return new KimiCliAgentRuntime(config, command);
-  if (config.kind === 'opencode-cli') return new OpenCodeCliAgentRuntime(config, command);
+  const args = [...(options.args ?? [])];
+  if (config.kind === 'codex-cli') return new CodexCliAgentRuntime(config, command, args);
+  if (config.kind === 'claude-code') return new ClaudeCodeAgentRuntime(config, command, args);
+  if (config.kind === 'grok-cli') return new GrokCliAgentRuntime(config, command, args);
+  if (config.kind === 'kimi-cli') return new KimiCliAgentRuntime(config, command, args);
+  if (config.kind === 'opencode-cli') return new OpenCodeCliAgentRuntime(config, command, args);
   throw new Error(`Unsupported agent provider kind: ${(config as { kind?: string }).kind ?? 'missing'}`);
 }

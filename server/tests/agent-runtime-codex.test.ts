@@ -44,8 +44,13 @@ test('codex-cli app-server launch allows managed provider env into tool shells',
   assert.equal(include.includes('CODEX_*'), false);
   assert.equal(include.includes('CODEX_THREAD_ID'), false);
 
-  const args = codexAppServerArgs({ SLACK_BOT_TOKEN: 'xoxb-agent' });
-  assert.deepEqual(args.slice(0, 6), [
+  const args = codexAppServerArgs(
+    { SLACK_BOT_TOKEN: 'xoxb-agent' },
+    ['--profile', 'team one'],
+  );
+  assert.deepEqual(args.slice(0, 8), [
+    '--profile',
+    'team one',
     'app-server',
     '-c',
     'shell_environment_policy.inherit=all',

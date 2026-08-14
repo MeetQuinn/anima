@@ -118,15 +118,18 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
         { agentId: 'anima', stateDir },
       );
 
-      runtime = createAgentRuntime({
-        env: runtimeTestEnv(stateDir, {
-          CALLS_PATH: callsPath,
-          KIMI_CODE_HOME: join(stateDir, 'kimi-home'),
-        }),
-        kind: 'kimi-cli',
-        model: 'kimi-code/k3',
-        reasoningEffort: 'max',
-      });
+      runtime = createAgentRuntime(
+        {
+          env: runtimeTestEnv(stateDir, {
+            CALLS_PATH: callsPath,
+            KIMI_CODE_HOME: join(stateDir, 'kimi-home'),
+          }),
+          kind: 'kimi-cli',
+          model: 'kimi-code/k3',
+          reasoningEffort: 'max',
+        },
+        { args: ['--profile', 'team one'] },
+      );
       const runPromise = runtime.run(await runtimeInput(runtime, firstCtx, await loadState()));
       await waitFor(() => readFile(callsPath, 'utf8').then((text) => text.includes('"method":"session/prompt"')));
       assert.deepEqual(
@@ -140,7 +143,7 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
       const sessionId = state.sessions.anima?.current?.id;
       assert.equal(sessionId, 'kimi-session-1');
       const args = JSON.parse((await readFile(callsPath, 'utf8')).split('\n')[0] ?? '{}') as { argv: string[] };
-      assert.deepEqual(args.argv, ['--yolo', 'acp']);
+      assert.deepEqual(args.argv, ['--profile', 'team one', '--yolo', 'acp']);
       const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) =>
         JSON.parse(line) as {
           method?: string;
