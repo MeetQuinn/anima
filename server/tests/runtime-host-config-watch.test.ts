@@ -32,27 +32,27 @@ test('runtime host root agents watch events schedule reconcile without config ca
   assert.equal(invalidateConfigCacheForWatchEvent('agents', '/tmp/anima/agents', 'scout'), true);
 });
 
-test('runtime host server config watch event invalidates provider command config cache', async () => {
+test('runtime host server config watch event invalidates runtime config cache', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'anima-server-config-watch-'));
   try {
     const configPath = join(dir, 'config.json');
-    await writeFile(configPath, '{"providerCommands":{"codex-cli":"mcodex"}}\n', 'utf8');
+    await writeFile(configPath, '{"runtime":{"maxConcurrentAgentRuns":9}}\n', 'utf8');
 
     const fileStat = await statOrNull(configPath);
     assert.ok(fileStat);
-    cacheSet(configPath, { providerCommands: { 'codex-cli': 'codex' } }, fileStat);
+    cacheSet(configPath, { runtime: { maxConcurrentAgentRuns: 5 } }, fileStat);
 
-    const file = new JsonFile<{ providerCommands: Record<string, string> }>(
+    const file = new JsonFile<{ runtime: { maxConcurrentAgentRuns: number } }>(
       configPath,
-      () => ({ providerCommands: {} }),
+      () => ({ runtime: { maxConcurrentAgentRuns: 5 } }),
     );
-    assert.equal((await file.read()).providerCommands['codex-cli'], 'codex');
+    assert.equal((await file.read()).runtime.maxConcurrentAgentRuns, 5);
 
     assert.equal(
       invalidateConfigCacheForWatchEvent('server', dir, 'config.json'),
       true,
     );
-    assert.equal((await file.read()).providerCommands['codex-cli'], 'mcodex');
+    assert.equal((await file.read()).runtime.maxConcurrentAgentRuns, 9);
   } finally {
     await rm(dir, { force: true, recursive: true });
   }

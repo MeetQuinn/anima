@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_CONCURRENT_AGENT_RUNS } from '../../shared/server-settings.js';
 import type {
   DashboardAuth,
   ProviderAccountsConfig,
@@ -77,6 +78,11 @@ export class ServerSettingsService {
   async getProviderRuntimeCommands(): Promise<ProviderRuntimeCommandsConfig> {
     const config = await this.store.read();
     return config.providerCommands ?? {};
+  }
+
+  async getMaxConcurrentAgentRuns(): Promise<number> {
+    const config = await this.store.read();
+    return config.runtime?.maxConcurrentAgentRuns ?? DEFAULT_MAX_CONCURRENT_AGENT_RUNS;
   }
 
   async getTrack(): Promise<ServerTrack> {
