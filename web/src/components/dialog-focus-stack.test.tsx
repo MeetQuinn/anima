@@ -33,21 +33,27 @@ import { BusyConfirmModal } from './restart-shared';
 // pinned by at least one case that goes red when that mechanism is removed. The
 // lists below are measured against each earlier head of this PR and against
 // hand-built variants of the current hook, not reasoned about:
-//   - pre-change hook (46b83c9c), no stack at all — 7 red: "leaves a mid-dialog
+//   - pre-change hook (46b83c9c), no stack at all — 8 red: "leaves a mid-dialog
 //     Tab alone", "moves focus nowhere", "never touches a control underneath",
 //     "does not restore from body-focus", both one-at-a-time cases, "skips
-//     claims whose invoker went with its own dialog".
-//   - ee5cfba8, Tab stack but restore not stack-aware — 4 red: "does not restore
-//     from body-focus", both one-at-a-time cases, "skips claims".
-//   - c6030732, stack-aware restore deferred by a microtask — 4 red: both
-//     one-at-a-time cases, "both dialogs unmount together", "skips claims". The
-//     upper dialog outlives the commit, so a one-shot deferred callback cannot
-//     carry the restore chain.
-//   - variant that drops a non-topmost dialog's claim instead of filing it — the
-//     same 4 red. The claim chain is what those four cases actually measure.
+//     claims", "leaves a lower dialog's claim with the layer above".
+//   - ee5cfba8, Tab stack but restore not stack-aware — 5 red: "does not restore
+//     from body-focus", both one-at-a-time cases, "skips claims", "lower claim".
+//   - c6030732, stack-aware restore deferred by a microtask — 5 red: both
+//     one-at-a-time cases, "both dialogs unmount together", "skips claims",
+//     "lower claim". The upper dialog outlives the commit, so a one-shot
+//     deferred callback cannot carry the restore chain.
+//   - 3ad1d2af, claims kept but in ONE global list — 1 red: "lower claim". Any
+//     later topmost close could consume a claim belonging to a layer that is
+//     still open, and focus jumped behind a live dialog.
+//   - variant that drops a non-topmost dialog's chain instead of handing it up —
+//     5 red: both one-at-a-time cases, "both dialogs unmount together", "skips
+//     claims", "lower claim".
+//   - variant that hands the chain to the TOPMOST dialog rather than the
+//     immediate layer above — 1 red: "lower claim". Same defect as the global
+//     list, reached a different way.
 //   - variant that takes the oldest claim without checking the invoker is still
-//     connected — 1 red: "skips claims". That case is the only shape in the
-//     suite where the oldest claim is the wrong one, which is why it exists.
+//     connected — the same 5 as the drop-the-chain variant.
 // The StrictMode case is a guard, not an instrument: green against every variant
 // above, because a lone dialog is topmost and restores synchronously. It is here
 // so that deferring restoration again — which would make the dev remount hand
@@ -417,6 +423,40 @@ describe('useDialogFocus — topmost dialog wins', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Done with C' }));
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(document.activeElement).toBe(opener);
+  });
+
+  it('leaves a lower dialog"s claim with the layer that survives above it', () => {
+    // Milo's third red, on 3ad1d2af. A, B and C are open; A closes underneath
+    // them, then C closes while B is still open. C owns a perfectly good invoker
+    // of its own inside B, so that is where focus belongs. Holding claims in one
+    // global list let C consume A's claim as well and focus A's opener BEHIND the
+    // open B — focus jumping across a live modal layer, which is the same class
+    // of defect as the Tab steal this PR exists to fix.
+    //
+    // The second half matters just as much: A's claim must still be there when B
+    // finally closes, or the fix for the third red re-breaks the second one.
+    render(<DeepStackHost />);
+    const openA = screen.getByRole('button', { name: 'Open A' });
+    openA.focus();
+    fireEvent.click(openA);
+    const openB = screen.getByRole('button', { name: 'Open B' });
+    openB.focus();
+    fireEvent.click(openB);
+    const openC = screen.getByRole('button', { name: 'Open C' });
+    openC.focus();
+    fireEvent.click(openC);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close A from outside' }));
+    expect(screen.queryByRole('dialog', { name: 'A' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'B' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Done with C' }));
+    expect(screen.getByRole('dialog', { name: 'B' })).toBeTruthy();
+    expect(document.activeElement).toBe(openC);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close B from outside' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(openA);
   });
 
   it('leaves focus alone when the dialog underneath it closes', () => {

@@ -36,8 +36,8 @@ const FOCUSABLE_SELECTOR = [
 ].join(',');
 
 /**
- * Open instances, oldest first. Only the last one — the topmost dialog — traps
- * Tab and restores focus on close.
+ * The stack of open dialogs, oldest first. Only the last one — the topmost
+ * dialog — traps Tab and restores focus on close.
  *
  * Without this, every open instance ran its own `window` capture-phase Tab
  * listener and contained focus to its own dialog unconditionally. Two live
@@ -56,14 +56,8 @@ const FOCUSABLE_SELECTOR = [
  * win. No call site does that today; a call site that needs it should say so
  * rather than rely on this comment being read.
  */
-const openDialogs: object[] = [];
-
-function isTopmost(token: object): boolean {
-  return openDialogs.length > 0 && openDialogs[openDialogs.length - 1] === token;
-}
-
 /**
- * Unfinished focus restorations, from dialogs that closed underneath an open one.
+ * One unfinished focus restoration: "focus came from here".
  *
  * A dialog that closes while another is open above it must not move focus — its
  * invoker sits behind the dialog the user is looking at. But it still holds the
@@ -72,18 +66,36 @@ function isTopmost(token: object): boolean {
  * is restoring to an invoker that was inside the dialog already gone. (Milo's
  * second red, on c6030732: the two closes happen in separate commits, so nothing
  * scheduled inside one commit can carry the chain.)
- *
- * So the claim is kept instead, and whichever instance closes while it owns the
- * page's focus — the topmost one — hands focus to the first filed claim whose
- * invoker is still connected. That is the dialog nearest the page, because a
- * deeper dialog's opener lived inside the one that closed under it.
  */
 interface PendingRestore {
   invoker: HTMLElement | null;
   dialog: HTMLElement | null;
 }
 
-const pendingRestores: PendingRestore[] = [];
+interface OpenDialog {
+  token: object;
+  /**
+   * Claims handed up by dialogs that closed underneath THIS one, nearest first.
+   *
+   * A claim belongs to a layer, not to the page. Keeping them in one global list
+   * let any later close consume all of them, which is Milo's third red on
+   * 3ad1d2af: with A, B and C open, closing A and then C focused A's opener —
+   * behind the still-open B, a jump across a live modal layer. A closing dialog's
+   * chain therefore travels to the dialog immediately above it and waits there.
+   */
+  inherited: PendingRestore[];
+}
+
+/**
+ * Open instances, oldest first. Only the last one — the topmost dialog — traps
+ * Tab and restores focus on close, and it restores only from its OWN chain.
+ */
+const openDialogs: OpenDialog[] = [];
+
+function isTopmost(token: object): boolean {
+  const top = openDialogs[openDialogs.length - 1];
+  return top !== undefined && top.token === token;
+}
 
 export interface DialogFocusResult<InitialFocus extends HTMLElement = HTMLButtonElement> {
   /**
@@ -130,7 +142,7 @@ export function useDialogFocus<InitialFocus extends HTMLElement = HTMLButtonElem
     if (!open) return;
 
     const self = token.current;
-    openDialogs.push(self);
+    openDialogs.push({ token: self, inherited: [] });
 
     // Captured for the cleanup: by the time it runs the dialog is usually
     // already unmounted, so reading the ref there would see null.
@@ -150,23 +162,29 @@ export function useDialogFocus<InitialFocus extends HTMLElement = HTMLButtonElem
     target?.focus();
 
     return () => {
-      const at = openDialogs.lastIndexOf(self);
-      const wasTopmost = at === openDialogs.length - 1;
-      if (at !== -1) openDialogs.splice(at, 1);
+      const at = openDialogs.findIndex((entry) => entry.token === self);
+      if (at === -1) return;
+      const [closing] = openDialogs.splice(at, 1);
 
-      // Every close files a claim: "focus came from here". A dialog closing
-      // underneath an open one files it and stops — moving focus would pull the
-      // user out of the dialog above. The claim is what makes that safe rather
-      // than lossy; it is still there when the dialog above closes.
-      pendingRestores.push({ invoker, dialog });
-      if (!wasTopmost) return;
+      // What this close is responsible for: its own invoker first, then whatever
+      // closed underneath it and handed its chain up. Nearest the top first, so
+      // restoring picks the shallowest place the user can carry on from.
+      const chain: PendingRestore[] = [{ invoker, dialog }, ...(closing?.inherited ?? [])];
+
+      // After the splice, index `at` holds the dialog that was immediately above
+      // this one. Its existence IS "I was not topmost", and it is the layer the
+      // chain belongs to now: closing under an open dialog must not move focus,
+      // and the claim must not become consumable by some unrelated close higher
+      // up the stack either.
+      const above = openDialogs[at];
+      if (above) {
+        above.inherited = [...above.inherited, ...chain];
+        return;
+      }
 
       // Closing while topmost means this instance owned the page's focus, so it
-      // is the one that has to hand it back — for itself and for anything that
-      // closed underneath it earlier. Claims are consumed in the order they were
-      // filed, which is closing order; the last dialog to close is always topmost,
-      // so the list never outlives the stack that produced it.
-      const claims = pendingRestores.splice(0, pendingRestores.length);
+      // is the one that hands it back — for itself and for the layers that closed
+      // underneath it. Nothing outside its own chain is touched.
 
       // Only restore if focus is still ours to move; if something else took it in
       // the meantime, stealing it back would be the more surprising behavior.
@@ -175,13 +193,13 @@ export function useDialogFocus<InitialFocus extends HTMLElement = HTMLButtonElem
       const ours =
         active === document.body ||
         !(active instanceof Node) ||
-        claims.some((claim) => claim.dialog?.contains(active));
+        chain.some((claim) => claim.dialog?.contains(active));
       if (!ours) return;
 
       // The first claim with a connected invoker wins. Later claims point at
       // controls that were inside dialogs which have since closed, so they are
       // skipped rather than focused into nothing.
-      claims.find((claim) => claim.invoker?.isConnected)?.invoker?.focus();
+      chain.find((claim) => claim.invoker?.isConnected)?.invoker?.focus();
     };
   }, [open]);
 
