@@ -90,48 +90,6 @@ export const GOVERNED_ROUTES: readonly GovernedRoute[] = [
       "Writes the machine user's Kimi or Grok CLI configuration outside ANIMA_HOME. Those files control every provider process owned by this machine user, including processes started by other Anima homes.",
   },
   {
-    id: 'POST /api/provider-accounts/claude-code/select',
-    method: 'POST',
-    pattern: /^\/api\/provider-accounts\/claude-code\/select$/,
-    evidence:
-      'Switches every Claude runtime to a different machine-user credential profile and creates shared-state links under the machine user\'s Claude configuration directories. Those directories and Keychain credentials live outside ANIMA_HOME and are shared with Claude Code processes this runtime does not own.',
-  },
-  {
-    id: 'POST /api/agents/:agentId/provider/claude-account',
-    method: 'POST',
-    pattern: /^\/api\/agents\/[^/]+\/provider\/claude-account$/,
-    evidence:
-      'Assigns a machine-user Claude credential profile to one agent and can create shared-state links under machine-user Claude configuration directories outside ANIMA_HOME.',
-  },
-  {
-    id: 'DELETE /api/provider-accounts/claude-code/:accountId',
-    method: 'DELETE',
-    pattern: /^\/api\/provider-accounts\/claude-code\/[^/]+$/,
-    evidence:
-      'Removes a machine-user Claude credential from Keychain and moves its isolated configuration directory outside the shared Claude profile discovery root. Both locations live outside ANIMA_HOME and are visible to other Claude Code processes owned by this machine user.',
-  },
-  {
-    id: 'POST /api/provider-accounts/claude-code/login',
-    method: 'POST',
-    pattern: /^\/api\/provider-accounts\/claude-code\/login$/,
-    evidence:
-      'Starts Claude Code OAuth authentication in a machine-user credential profile. The subprocess writes Claude metadata and credentials outside ANIMA_HOME, including the machine user\'s service-keyed Keychain entry on macOS.',
-  },
-  {
-    id: 'POST /api/provider-accounts/claude-code/login/:operationId/code',
-    method: 'POST',
-    pattern: /^\/api\/provider-accounts\/claude-code\/login\/[^/]+\/code$/,
-    evidence:
-      'Submits a one-time OAuth code to a live Claude authentication subprocess, which can persist machine-user credentials outside ANIMA_HOME and into the macOS Keychain.',
-  },
-  {
-    id: 'POST /api/provider-accounts/claude-code/login/:operationId/cancel',
-    method: 'POST',
-    pattern: /^\/api\/provider-accounts\/claude-code\/login\/[^/]+\/cancel$/,
-    evidence:
-      'Terminates a live machine-user authentication subprocess whose in-progress OAuth flow and credential writes are outside ANIMA_HOME.',
-  },
-  {
     id: 'POST /api/provider-cli-status/:provider/apply',
     method: 'POST',
     pattern: /^\/api\/provider-cli-status\/[^/]+\/apply$/,

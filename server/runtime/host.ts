@@ -21,10 +21,6 @@ import { isRestartDrainActive } from '../services/restart-drain.js';
 import { cacheDelete } from '../storage/json-file.js';
 import { ServerConfigStore } from '../storage/schema/server.store.js';
 import { ServerSettingsService } from '../settings/settings.service.js';
-import {
-  applyClaudeAccountToAgent,
-  claudeAccountRuntimeFingerprint,
-} from '../provider-accounts/claude-account-config.js';
 import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import {
   FEISHU_OPEN_API_BASE_URL,
@@ -425,21 +421,15 @@ export class RuntimeHost {
       if (running) await this.reconcileRunningAgent(record, running, skipStatus);
       return;
     }
-    this.logger.log(
-      command.reason === 'account_switch'
-        ? `Agent ${agent.id}: Claude account changed; reloading runtime (${command.requestId}).`
-        : `Agent ${agent.id}: restart requested by operator (${command.requestId}).`,
-    );
+    this.logger.log(`Agent ${agent.id}: restart requested by operator (${command.requestId}).`);
     await this.writeRestartPending(agent.id, command, running?.handle.health?.());
     try {
       await this.resolveStaleRestartItem(agent.id, running?.handle.health?.());
       if (running) {
         await running.handle.stop(
-          command.reason === 'account_switch'
-            ? { abortReason: 'restart_drain', forceAfterMs: this.forceRestartTimeoutMs }
-            : command.whenIdle
-              ? { drainActive: true, forceAfterMs: this.forceRestartTimeoutMs }
-              : { abortReason: command.reason, forceAfterMs: this.forceRestartTimeoutMs },
+          command.whenIdle
+            ? { drainActive: true, forceAfterMs: this.forceRestartTimeoutMs }
+            : { abortReason: command.reason, forceAfterMs: this.forceRestartTimeoutMs },
         );
         record.running = undefined;
       }
@@ -652,8 +642,7 @@ export class RuntimeHost {
 
   private async agentAfterSlackDisplayInfoSync(agent: AgentConfig): Promise<AgentConfig> {
     try {
-      const synced = await this.syncSlackDisplayInfo(agent);
-      return preserveClaudeAccountSelection(agent, synced);
+      return await this.syncSlackDisplayInfo(agent);
     } catch (error) {
       this.logger.error(`Agent ${agent.id}: Slack display-info sync failed before runtime start: ${errorMessage(error)}`);
       return agent;
@@ -920,29 +909,11 @@ export class RuntimeHost {
   }
 }
 
-function preserveClaudeAccountSelection(runtimeAgent: AgentConfig, persistedAgent: AgentConfig): AgentConfig {
-  if (runtimeAgent.provider.kind !== 'claude-code' || persistedAgent.provider.kind !== 'claude-code') {
-    return persistedAgent;
-  }
-  const env = { ...(persistedAgent.provider.env ?? {}) };
-  delete env.CLAUDE_CONFIG_DIR;
-  const selectedConfigDir = runtimeAgent.provider.env?.CLAUDE_CONFIG_DIR;
-  if (selectedConfigDir) env.CLAUDE_CONFIG_DIR = selectedConfigDir;
-  return {
-    ...persistedAgent,
-    provider: {
-      ...persistedAgent.provider,
-      ...(Object.keys(env).length > 0 ? { env } : { env: undefined }),
-    },
-  };
-}
-
 export async function loadRuntimeAgents(opts: RuntimeHostOptions = {}): Promise<AgentConfig[]> {
-  const agents = opts.agent
-    ? [await defaultAgentRegistryService.serviceFor(opts.agent).getConfig()]
-    : await defaultAgentRegistryService.listAgentConfigs();
-  const providerAccounts = await new ServerConfigStore().read().then((config) => config.providerAccounts);
-  return agents.map((agent) => applyClaudeAccountToAgent(agent, providerAccounts?.claudeCode));
+  if (opts.agent) {
+    return [await defaultAgentRegistryService.serviceFor(opts.agent).getConfig()];
+  }
+  return defaultAgentRegistryService.listAgentConfigs();
 }
 
 async function syncSlackDisplayInfoForRuntimeStart(
@@ -1166,10 +1137,8 @@ export async function managedProviderEnvForAgent(
 
 export function runtimeWorkerConfigForAgent(agent: AgentConfig): RuntimeWorkerConfig {
   const stateDir = resolveAnimaHome();
-  const claudeAccountFingerprint = claudeAccountRuntimeFingerprint(agent);
   return {
     agentId: agent.id,
-    ...(claudeAccountFingerprint ? { claudeAccountFingerprint } : {}),
     homePath: resolveAgentHomePath(agent),
     stateDir,
   };

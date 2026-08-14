@@ -8,7 +8,7 @@ import { available, unavailable, usageError } from '../result.js';
 import {
   claudeKeychainService,
   normalizedConfigDir,
-} from '../../provider-accounts/claude-account-config.js';
+} from './claude-credentials.js';
 import {
   clampPercent,
   homePath,

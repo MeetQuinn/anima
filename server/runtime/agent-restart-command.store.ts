@@ -12,7 +12,7 @@ const RESTART_COMMANDS_FILE = 'agent-restart-requests.json';
 
 const AgentRestartCommandSchema = z.object({
   agentId: z.string().min(1),
-  reason: z.enum(['account_switch', 'operator_restart']),
+  reason: z.enum(['operator_restart']),
   requestId: z.string().min(1),
   requestedAt: z.string().min(1),
   whenIdle: z.boolean().optional(),

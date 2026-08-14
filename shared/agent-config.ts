@@ -12,8 +12,6 @@ import {
   isSupportedProviderKind,
   isSupportedProviderModel,
 } from './provider-catalog.js';
-import { ProviderAccountId } from './provider-accounts.js';
-
 export const PROVIDER_IDLE_TIMEOUT_MS_DEFAULT = 30 * 60 * 1000;
 export const PROVIDER_CHILD_IDLE_TIMEOUT_MS_DEFAULT = 10 * 60 * 1000;
 // 'tmux' was removed 2026-07 (unused; git history has the transport if ever needed).
@@ -292,7 +290,6 @@ export const CodexCliAgentProviderConfig = z.object({
 export type CodexCliAgentProviderConfig = z.infer<typeof CodexCliAgentProviderConfig>;
 
 export const ClaudeCodeAgentProviderConfig = z.object({
-  accountId: ProviderAccountId.optional(),
   env: z.record(z.string(), z.string()).optional(),
   idleTimeoutMs: z.number().optional(),
   kind: z.literal('claude-code'),

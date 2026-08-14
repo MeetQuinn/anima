@@ -124,8 +124,6 @@ export function providerCollapsedSummary(usages: ProviderUsageRow[]): string {
     if (active.error?.type === 'network_error') return 'Unreachable';
     return 'Unavailable';
   }
-  const sum = windowSummary(active.windows, 2);
-  const n = usages.length;
-  const summary = n > 1 ? (sum ? `${sum} · ${n} accounts` : `${n} accounts`) : (sum || 'Available');
+  const summary = windowSummary(active.windows, 2) || 'Available';
   return active.stale ? `${summary} · cached` : summary;
 }

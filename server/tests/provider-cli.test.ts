@@ -15,7 +15,7 @@ import {
   ProviderCliService,
   type ProviderCliCommandRunner,
 } from '../provider-cli/provider-cli.service.js';
-import { claudeKeychainService } from '../provider-accounts/claude-account-config.js';
+import { claudeKeychainService } from '../provider-usage/providers/claude-credentials.js';
 import {
   providerCliUpgradeLocked,
   tryAcquireProviderCliUpgradeLease,

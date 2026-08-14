@@ -22,8 +22,6 @@ import {
   providerUnavailableLabel,
 } from '@/lib/provider-availability';
 import { providerKindLabel, providerValueLabel } from '@/lib/provider-display';
-import type { ClaudeCodeAccountState, ProviderAccountSummary } from '@shared/provider-accounts';
-
 const RESERVED_ENV_KEYS = new Set<string>(ANIMA_MANAGED_PROVIDER_ENV_KEYS);
 
 // ── InlineTextRow ─────────────────────────────────────────────────────────────
@@ -585,202 +583,6 @@ function defaultEffortForModel(
     : (options[0] ?? '');
 }
 
-// ── ClaudeAccountRow ────────────────────────────────────────────────────────
-
-const MACHINE_DEFAULT_ACCOUNT = '__machine_default__';
-
-export function ClaudeAccountRow({
-  accountId,
-  accountState,
-  loading = false,
-  onRequestSave,
-}: {
-  accountId?: string;
-  accountState?: ClaudeCodeAccountState;
-  loading?: boolean;
-  onRequestSave: (accountId: string | null) => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(MACHINE_DEFAULT_ACCOUNT);
-  const machineDefault = accountState?.accounts.find(
-    (account) => account.id === accountState.activeAccountId,
-  );
-  // Only real signed-in identities; no Primary/Secondary/Machine-default labels.
-  const visibleAccounts = accountState?.accounts.filter((account) => account.account) ?? [];
-  const labelsById = providerAccountLabels(visibleAccounts);
-  const assigned = accountId
-    ? accountState?.accounts.find((account) => account.id === accountId)
-    : machineDefault;
-
-  function begin() {
-    setDraft(accountId ?? (machineDefault ? MACHINE_DEFAULT_ACCOUNT : ''));
-    setEditing(true);
-  }
-
-  function save() {
-    // Selecting the Providers-active account restores inheritance (null pin).
-    const next = draft === MACHINE_DEFAULT_ACCOUNT ? null : draft;
-    if ((next ?? undefined) === accountId) {
-      setEditing(false);
-      return;
-    }
-    setEditing(false);
-    onRequestSave(next);
-  }
-
-  if (loading) {
-    return (
-      <Field label="Claude account">
-        <span className="font-serif text-[13px] text-text-subtle">Loading accounts…</span>
-      </Field>
-    );
-  }
-
-  const draftAccount = draft === MACHINE_DEFAULT_ACCOUNT
-    ? machineDefault
-    : accountState?.accounts.find((account) => account.id === draft);
-  const saveBlocked = !accountState || !draftAccount || draftAccount.status !== 'available';
-  const inheritsMachineDefault = !accountId;
-  const currentLabel = accountId
-    ? assigned
-      ? accountOptionLabel(assigned, labelsById)
-      : `Unavailable · ${accountId}`
-    : machineDefault
-      ? accountOptionLabel(machineDefault, labelsById)
-      : 'Unavailable';
-  const draftInherits = draft === MACHINE_DEFAULT_ACCOUNT;
-  const draftLabel = draftAccount
-    ? accountOptionLabel(draftAccount, labelsById)
-    : `Unavailable · ${draft}`;
-
-  return (
-    <Field label="Claude account">
-      {editing && accountState ? (
-        <div className="flex flex-col gap-2.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <Select value={draft} onValueChange={(value) => value && setDraft(value)}>
-              <SelectTrigger className="h-8 w-80 max-w-full font-serif text-[14px]">
-                <span className="min-w-0 flex-1 truncate text-left">
-                  {draftInherits && draftAccount
-                    ? inheritAccountLabel(draftLabel)
-                    : draftLabel}
-                </span>
-              </SelectTrigger>
-              <SelectContent className="w-80 max-w-[calc(100vw-2rem)]">
-                {visibleAccounts.map((account) => {
-                  // Providers-active account maps to inheritance sentinel so
-                  // choosing it while pinned clears the pin (Save → null).
-                  const inherits = account.id === machineDefault?.id;
-                  const value = inherits ? MACHINE_DEFAULT_ACCOUNT : account.id;
-                  const optionLabel = accountOptionLabel(account, labelsById);
-                  return (
-                    <SelectItem
-                      key={account.id}
-                      value={value}
-                      disabled={account.status !== 'available'}
-                      className="font-serif text-[14px]"
-                    >
-                      {inherits ? inheritAccountLabel(optionLabel) : optionLabel}
-                    </SelectItem>
-                  );
-                })}
-                {accountId && !visibleAccounts.some((account) => account.id === accountId) && (
-                  <SelectItem value={accountId} disabled className="font-serif text-[14px]">
-                    Sign in required
-                  </SelectItem>
-                )}
-              </SelectContent>
-            </Select>
-            <Button size="xs" disabled={saveBlocked} onClick={save}>
-              <Check />
-              Save
-            </Button>
-            <Button size="xs" variant="ghost" onClick={() => setEditing(false)}>
-              <X />
-              Cancel
-            </Button>
-          </div>
-        </div>
-      ) : (
-        accountState ? (
-          <EditAffordance onEdit={begin}>
-            <ClaudeAccountDisplay label={currentLabel} inherits={inheritsMachineDefault && Boolean(machineDefault)} />
-          </EditAffordance>
-        ) : (
-          <ClaudeAccountDisplay
-            label={currentLabel}
-            inherits={inheritsMachineDefault && Boolean(machineDefault)}
-            muted
-          />
-        )
-      )}
-    </Field>
-  );
-}
-
-/** Resting/edit mark for unpinned inheritance — identity stays email · plan. */
-function inheritAccountLabel(identity: string): string {
-  return `${identity} · Default`;
-}
-
-function ClaudeAccountDisplay({
-  inherits,
-  label,
-  muted = false,
-}: {
-  inherits: boolean;
-  label: string;
-  muted?: boolean;
-}) {
-  return (
-    <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-      <span
-        className={[
-          'min-w-0 truncate font-serif text-[13px] md:text-[15px]',
-          muted ? 'text-text-muted' : 'text-text',
-        ].join(' ')}
-      >
-        {label}
-      </span>
-      {inherits && (
-        <span className="shrink-0 font-sans text-[12px] text-text-muted" title="Uses the account selected in Providers">
-          Default
-        </span>
-      )}
-    </span>
-  );
-}
-
-/** Display: `email · plan` (subscription). No Primary / Secondary registry labels. */
-function providerAccountLabels(accounts: ProviderAccountSummary[]): Map<string, string> {
-  const baseById = new Map(accounts.map((account) => [account.id, rawAccountOptionLabel(account)]));
-  const countByBase = new Map<string, number>();
-  for (const label of baseById.values()) countByBase.set(label, (countByBase.get(label) ?? 0) + 1);
-  const ordinalByBase = new Map<string, number>();
-  return new Map(accounts.map((account) => {
-    const base = baseById.get(account.id)!;
-    if ((countByBase.get(base) ?? 0) < 2) return [account.id, base];
-    const ordinal = (ordinalByBase.get(base) ?? 0) + 1;
-    ordinalByBase.set(base, ordinal);
-    return [account.id, `${base} · ${ordinal}`];
-  }));
-}
-
-function accountLabel(account: ProviderAccountSummary): string {
-  if (!account.account) return 'Sign in required';
-  return `${account.account} · ${account.plan ?? 'Plan unknown'}`;
-}
-
-function accountOptionLabel(account: ProviderAccountSummary, labelsById: Map<string, string>): string {
-  return labelsById.get(account.id) ?? rawAccountOptionLabel(account);
-}
-
-function rawAccountOptionLabel(account: ProviderAccountSummary): string {
-  const label = accountLabel(account);
-  if (!account.account) return label;
-  return `${label}${account.status === 'available' ? '' : ' · Sign in required'}`;
-}
-
 // ── ProviderEnvRow ──────────────────────────────────────────────────────────
 
 interface EnvDraftRow {
@@ -945,14 +747,12 @@ export function ProviderEnvRow({
 
 // Confirms changes that require this agent provider to reload before they apply.
 export function ConfirmRestartModal({
-  accountChanged = false,
   isActive,
   sessionBoundaryChanged = false,
   saving,
   onConfirm,
   onCancel,
 }: {
-  accountChanged?: boolean;
   isActive: boolean;
   sessionBoundaryChanged?: boolean;
   saving: boolean;
@@ -962,17 +762,14 @@ export function ConfirmRestartModal({
   const sessionCopy = sessionBoundaryChanged
     ? ' Switching provider or Claude Code session mode starts a fresh provider session; MEMORY.md, notes, and activity history stay intact.'
     : '';
-  const accountCopy = accountChanged
-    ? ' Only this agent changes; other agents keep their current account. The provider reload waits for active and background work to finish.'
-    : '';
   return (
     <ConfirmModal
       open={true}
       title={isActive ? 'Save and apply when idle?' : 'Apply provider change?'}
       description={
         isActive
-          ? `Anima is mid-item. Save this config now; this agent will reload itself after the item finishes.${sessionCopy}${accountCopy}`
-          : `Save this config now; this agent will reload itself automatically.${sessionCopy}${accountCopy}`
+          ? `Anima is mid-item. Save this config now; this agent will reload itself after the item finishes.${sessionCopy}`
+          : `Save this config now; this agent will reload itself automatically.${sessionCopy}`
       }
       variant="warn"
       busy={saving}

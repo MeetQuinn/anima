@@ -57,7 +57,6 @@ export interface ProviderChildHealthSnapshot {
 export interface AgentRuntimeHandleSnapshot {
   activeItemId?: string;
   activeItemStartedAt?: string;
-  claudeAccountFingerprint?: string;
   processId?: number;
   providerChild?: ProviderChildHealthSnapshot;
   providerChildExpected: boolean;

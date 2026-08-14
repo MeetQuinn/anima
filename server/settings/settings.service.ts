@@ -1,7 +1,6 @@
 import { DEFAULT_MAX_CONCURRENT_AGENT_RUNS } from '../../shared/server-settings.js';
 import type {
   DashboardAuth,
-  ProviderAccountsConfig,
   ProviderContextLimitsConfig,
   ProviderRuntimeArgsConfig,
   ProviderRuntimeCommandsConfig,
@@ -66,11 +65,6 @@ export class ServerSettingsService {
     return config.releaseTrack ?? 'stable';
   }
 
-  async getProviderAccounts(): Promise<ProviderAccountsConfig> {
-    const config = await this.store.read();
-    return config.providerAccounts ?? {};
-  }
-
   async getProviderContextLimits(): Promise<ProviderContextLimitsConfig> {
     const config = await this.store.read();
     return config.providerContextLimits ?? {};
@@ -123,12 +117,6 @@ export class ServerSettingsService {
     const config = await this.store.read();
     await this.store.write({ ...config, dashboardAuth });
     return dashboardAuth;
-  }
-
-  async setProviderAccounts(providerAccounts: ProviderAccountsConfig): Promise<ProviderAccountsConfig> {
-    const config = await this.store.read();
-    await this.store.write({ ...config, providerAccounts });
-    return providerAccounts;
   }
 
   async setProviderContextLimit(

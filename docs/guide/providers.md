@@ -72,11 +72,10 @@ All Anima agents launched under the same host user can reach the same provider c
 
 The **Providers** panel shows the account label or identifier when the provider exposes one safely. It never stores or displays access tokens. An unavailable usage check can still show the last account Anima identified from local credentials.
 
-When more than one Claude Code account is authenticated on the host, **Providers** selects the
-machine default. A Claude agent can instead pin one available account from its Profile tab. The
-agent config stores only the account id; credentials remain in Claude Code's machine-user profile.
-Choosing **Machine default** removes the pin. Only that agent reloads, after its active turn and
-Claude background work are quiescent. Team-level account defaults are not supported.
+Claude accounts are managed outside Anima (native Claude Code login or your own switcher).
+Anima does not add, switch, or pin Claude accounts in the dashboard. Usage and quota for the
+active native `~/.claude` credential appear in **Providers**. Agents share that host credential;
+there is no per-agent credential isolation in Anima.
 
 ## Pick the provider for an agent
 

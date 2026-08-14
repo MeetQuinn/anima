@@ -47,7 +47,6 @@ export const queryKeys = {
   providerUsage: () => ['provider-usage'] as const,
   tokenUsage: (from: string, through: string, timezone: string) =>
     ['agent-token-usage', 'all', from, through, timezone] as const,
-  providerAccounts: () => ['provider-accounts'] as const,
   health: () => ['health'] as const,
   serverInfo: () => ['server-info'] as const,
   sidebarOrder: () => ['sidebar-order'] as const,

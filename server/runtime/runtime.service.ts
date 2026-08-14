@@ -59,21 +59,6 @@ export class RuntimeService {
     return { requestId: command.requestId };
   }
 
-  async reloadAgentForAccountSwitch(agentId: string): Promise<{ requestId: string }> {
-    const agent = await defaultAgentRegistryService.serviceFor(agentId).getConfig().catch(() => undefined);
-    if (!agent) throw new RuntimeServiceError(404, 'Agent not found');
-    if (!agent.enabled) throw new RuntimeServiceError(409, 'Agent is disabled. Enable it to run.');
-    const command = await defaultAgentRestartCommandStore.request(agentId, {
-      // Issue a fresh command after the global account write so the runtime cannot
-      // satisfy this switch with a config snapshot taken before that write. Account
-      // switches abort and requeue active items with the runtime-restart continuation
-      // path: an old-profile child must not remain live after the selected account
-      // changes, because Claude can refresh and rewrite that profile's Keychain item.
-      reason: 'account_switch',
-    });
-    return { requestId: command.requestId };
-  }
-
   private async statusForAgent(agent: AgentConfig): Promise<AgentStatusSummary> {
     const queue = wakeQueueServiceForAgent(agent.id);
     const items = await queue.list();
