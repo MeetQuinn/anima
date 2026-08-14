@@ -5,6 +5,7 @@ import { X } from 'lucide-react';
 import { fetchServerInfo, pingHealth } from '@/api/system';
 import { shortIso, formatUptime } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
+import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { useNow } from '@/hooks/useNow';
 import RestartButton from './RestartButton';
 import RuntimeUpgradeRow from './RuntimeUpgrade';
@@ -47,6 +48,27 @@ export default function ServerPanel({ onClose }: Props) {
   // Ticks every minute — keeps uptime current.
   const now = useNow();
 
+  // Focus lifecycle. Both call sites render this as `{open && <ServerPanel/>}`
+  // and there is no early return past the dialog, so "mounted" already IS the
+  // open state and the hook can be handed the constant.
+  //
+  // No `initialFocusRef` — deliberately, and not for the AddKbModal reason
+  // ("every control belongs to someone else"). This panel owns all three of its
+  // controls and NONE of them is a safe landing spot: Close undoes the action
+  // that opened the panel, and Restart / the runtime upgrade row are
+  // machine-scoped — a keyboard user who opens the panel and presses Enter would
+  // restart the server. The confirm dialogs land on Cancel because a confirm
+  // ASKS something and Cancel is the safe answer; a panel asks nothing, so its
+  // dismiss button is not a safe answer, it is undo. Focus lands on the
+  // container, which the hook keeps as a real resting place and Tab leaves at
+  // once.
+  //
+  // No `descriptionId` either: the body is a status hero and a key-value list,
+  // with no prose that a description should read out. `titleId` replaces the
+  // hardcoded `aria-label="Server"` so the announced name and the visible header
+  // cannot drift apart.
+  const { dialogRef, titleId } = useDialogFocus(true);
+
   // Esc to close
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -83,9 +105,11 @@ export default function ServerPanel({ onClose }: Props) {
       <div className="hidden md:block fixed inset-0 bg-page/70 backdrop-blur-sm" onClick={onClose} />
 
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
-        aria-label="Server"
+        aria-labelledby={titleId}
         className={[
           'relative flex h-full w-full flex-col bg-surface',
           'md:absolute md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2',
@@ -100,7 +124,9 @@ export default function ServerPanel({ onClose }: Props) {
             which is 52.5px at the app's 15px root, not 56px);
             the desktop modal keeps its compact h-10 chrome. */}
         <div className="flex h-14 shrink-0 items-center justify-between border-b border-border-soft px-3 md:h-10">
-          <span className="caps text-text">Server</span>
+          <span id={titleId} className="caps text-text">
+            Server
+          </span>
           <button
             onClick={onClose}
             className="flex h-7 w-7 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
