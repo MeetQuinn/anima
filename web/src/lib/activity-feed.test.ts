@@ -410,7 +410,8 @@ describe('buildActivityFeed', () => {
     expect(heldRows.map((row) => row.body)).toEqual([
       'Send held: 1 new message arrived while composing; nothing was sent.',
       'Send held: 2 new messages arrived while composing; nothing was sent.',
-      'Send held: 1 new file arrived while composing; nothing was sent.',
+      // File hold: delta is still conversation messages that arrived.
+      'Send held: 1 new message arrived while composing; nothing was sent.',
     ]);
     expect(heldRows.every((row) => row.label === 'Send held')).toBe(true);
     // Never misrender as outbound message/file/ask rows.

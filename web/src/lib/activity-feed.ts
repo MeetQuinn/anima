@@ -523,7 +523,6 @@ function projectCompletedOutboundEffect(
         label: 'Send held',
         body: heldSendActivityCopy({
           deltaCount: payload['deltaCount'],
-          tool,
         }),
         timestamp: activity.createdAt,
       },

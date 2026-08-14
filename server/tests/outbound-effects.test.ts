@@ -55,22 +55,19 @@ test('classifyOutboundEffect never treats status:held as an outbound send', () =
   );
 });
 
-test('heldSendActivityCopy uses Iris singular/plural + file noun', () => {
+test('heldSendActivityCopy uses message noun for every held tool (delta is conversation)', () => {
   assert.equal(
-    heldSendActivityCopy({ deltaCount: 1, tool: 'anima.message.send' }),
+    heldSendActivityCopy({ deltaCount: 1 }),
     'Send held: 1 new message arrived while composing; nothing was sent.',
   );
   assert.equal(
-    heldSendActivityCopy({ deltaCount: 3, tool: 'anima.ask' }),
+    heldSendActivityCopy({ deltaCount: 3 }),
     'Send held: 3 new messages arrived while composing; nothing was sent.',
   );
+  // File holds still name the *arrived* conversation messages, not files.
   assert.equal(
-    heldSendActivityCopy({ deltaCount: 1, tool: 'anima.file.send' }),
-    'Send held: 1 new file arrived while composing; nothing was sent.',
-  );
-  assert.equal(
-    heldSendActivityCopy({ deltaCount: 2, tool: 'anima.file.send' }),
-    'Send held: 2 new files arrived while composing; nothing was sent.',
+    heldSendActivityCopy({ deltaCount: 2 }),
+    'Send held: 2 new messages arrived while composing; nothing was sent.',
   );
 });
 

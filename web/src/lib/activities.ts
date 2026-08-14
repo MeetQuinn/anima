@@ -259,7 +259,6 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
       title: 'Send held',
       target: heldSendActivityCopy({
         deltaCount: payload['deltaCount'],
-        tool: normalized,
       }),
       color: COLOR_TOOL,
       kind: 'tool',
