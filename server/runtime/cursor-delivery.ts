@@ -964,14 +964,6 @@ export function formatObservedLine(entry: ObservedConversationEntry): string {
   return `${env} ${actor}: ${text}`;
 }
 
-/** @deprecated Use renderCursorDeliveryEnvelope — same output, full envelope. */
-export function renderCursorDeliveryPrompt(
-  trigger: SlackInboxItem,
-  surfaces: SurfaceDeliveryPlan[],
-): string {
-  return renderCursorDeliveryEnvelope(trigger, surfaces);
-}
-
 /**
  * Final provider-facing cursor envelope: chronological rows + Latest wake +
  * previews/files. Must not post-truncate after nextDeliveredOrdinal is chosen;
