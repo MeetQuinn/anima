@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { FileText, FileWarning, Paperclip, ExternalLink, X } from 'lucide-react';
 import { formatBytes } from '@/lib/format';
+import { useDialogFocus } from '@/hooks/useDialogFocus';
 import type { OutboundFile } from '@/lib/activity-feed';
 import type { SlackFile } from '@/types';
 
@@ -198,6 +199,16 @@ export function ImageLightbox({
   const fullThumb = slackThumbHref(agentId, file.fileId, 720);
   const [imgFailed, setImgFailed] = useState(false);
 
+  // Focus lifecycle: land on Close, keep Tab between Close and the "Open in
+  // Slack" link, and hand focus back to the thumbnail button that opened this.
+  // Mounted only while open (see the caller's `{lightboxOpen && …}`), so `open`
+  // is constant true for the life of the instance.
+  //
+  // Esc stays below rather than moving into the hook: dismissal rules differ
+  // across these dialogs (some gate it on a busy commit), so the hook owns
+  // focus only.
+  const { dialogRef, initialFocusRef } = useDialogFocus(true);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -215,14 +226,17 @@ export function ImageLightbox({
 
   return (
     <div
+      ref={dialogRef}
       className="fixed inset-0 z-50 flex items-center justify-center bg-page/85 p-6 backdrop-blur-md"
       role="dialog"
       aria-modal="true"
       aria-label={`${file.filename} preview`}
+      tabIndex={-1}
       onClick={onClose}
     >
       <button
         type="button"
+        ref={initialFocusRef}
         onClick={onClose}
         className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-sm border border-border-soft bg-surface text-text-muted shadow-deep hover:border-border-strong hover:text-text"
         title="Close (Esc)"

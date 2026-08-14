@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { useState } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -220,5 +221,108 @@ describe('TokenUsagePanel', () => {
     expect(screen.queryByText('Agent 10')).toBeNull();
     expect(screen.queryByText('Agent 12')).toBeNull();
     expect(screen.queryByText(/more agents/)).toBeNull();
+  });
+});
+
+// Focus contract, adopted from the shared `useDialogFocus` primitive (batch A of
+// the residual `aria-modal` work). The panel declares `aria-modal="true"`, which
+// is a promise that focus cannot reach the page behind it.
+//
+// jsdom does not implement native Tab movement, so "focus moved to the next
+// control" is not observable here. What IS observable is whether the hook
+// cancelled the event at a containment boundary — the behaviour that keeps focus
+// off the page underneath. fireEvent returns dispatchEvent's boolean, so `false`
+// means defaultPrevented.
+function renderWithTrigger() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  function Harness() {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>
+          open token usage
+        </button>
+        <button type="button">decoy after trigger</button>
+        {open && <TokenUsagePanel onClose={() => setOpen(false)} />}
+      </>
+    );
+  }
+  return render(
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <Harness />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+}
+
+describe('TokenUsagePanel focus contract', () => {
+  it('moves focus to Close on open', async () => {
+    api.fetchAgentTokenUsage.mockResolvedValue(report([agent('mira', 'Mira', 350)]));
+    renderWithTrigger();
+    fireEvent.click(screen.getByRole('button', { name: 'open token usage' }));
+
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close token usage' }));
+    // Let the query settle so the assertion above is not racing a re-render
+    // that could move focus after the test ends.
+    expect(await screen.findByText('Mira')).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close token usage' }));
+  });
+
+  it('wraps Tab and Shift+Tab inside the sheet once rows are loaded', async () => {
+    api.fetchAgentTokenUsage.mockResolvedValue(report([agent('mira', 'Mira', 350), agent('bram', 'Bram', 10)]));
+    renderWithTrigger();
+    fireEvent.click(screen.getByRole('button', { name: 'open token usage' }));
+    expect(await screen.findByText('Mira')).toBeTruthy();
+
+    const dialog = screen.getByRole('dialog');
+    const close = screen.getByRole('button', { name: 'Close token usage' });
+    expect(document.activeElement).toBe(close);
+
+    // Close is the first control, so Shift+Tab must wrap to the LAST control
+    // inside the sheet rather than reaching "decoy after trigger" behind it.
+    // Which element that is belongs to the layout, so it is discovered rather
+    // than hardcoded — pinning a specific row here would fail the next time a
+    // control is appended to the sheet, for no defect.
+    expect(fireEvent.keyDown(window, { key: 'Tab', shiftKey: true })).toBe(false);
+    const last = document.activeElement as HTMLElement;
+    expect(last).not.toBe(close);
+    expect(dialog.contains(last)).toBe(true);
+
+    // And from that last control, Tab wraps back to Close.
+    expect(fireEvent.keyDown(window, { key: 'Tab' })).toBe(false);
+    expect(document.activeElement).toBe(close);
+  });
+
+  it('keeps focus in the sheet while it is still loading and Close is the only control', () => {
+    // A never-settling fetch holds the loading state, where the sheet renders a
+    // skeleton and no rows: Close is both the first and the last control, so
+    // both directions have to land back on it. A containment check that only
+    // handled "wrap from last to first" would let Shift+Tab escape here.
+    api.fetchAgentTokenUsage.mockReturnValue(new Promise(() => {}));
+    renderWithTrigger();
+    fireEvent.click(screen.getByRole('button', { name: 'open token usage' }));
+
+    const close = screen.getByRole('button', { name: 'Close token usage' });
+    expect(screen.queryByText('Top agents')).toBeNull();
+    expect(document.activeElement).toBe(close);
+
+    expect(fireEvent.keyDown(window, { key: 'Tab' })).toBe(false);
+    expect(document.activeElement).toBe(close);
+    expect(fireEvent.keyDown(window, { key: 'Tab', shiftKey: true })).toBe(false);
+    expect(document.activeElement).toBe(close);
+  });
+
+  it('returns focus to the button that opened it', async () => {
+    api.fetchAgentTokenUsage.mockResolvedValue(report([agent('mira', 'Mira', 350)]));
+    renderWithTrigger();
+    const trigger = screen.getByRole('button', { name: 'open token usage' });
+    trigger.focus();
+    fireEvent.click(trigger);
+    expect(await screen.findByText('Mira')).toBeTruthy();
+    expect(document.activeElement).not.toBe(trigger);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close token usage' }));
+    expect(document.activeElement).toBe(trigger);
   });
 });
