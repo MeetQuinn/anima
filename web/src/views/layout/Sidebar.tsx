@@ -541,7 +541,7 @@ export default function Sidebar({
             </div>
           </div>
 
-          {/* Footer — usage, provider accounts, then server operations. */}
+          {/* Footer: token usage, providers, then server operations. */}
           <div className="border-t border-spine-border p-2 space-y-0.5">
             <button
               onClick={() => setTokenUsagePanelOpen((v) => !v)}
