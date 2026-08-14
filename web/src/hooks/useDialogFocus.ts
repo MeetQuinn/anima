@@ -62,6 +62,29 @@ function isTopmost(token: object): boolean {
   return openDialogs.length > 0 && openDialogs[openDialogs.length - 1] === token;
 }
 
+/**
+ * Unfinished focus restorations, from dialogs that closed underneath an open one.
+ *
+ * A dialog that closes while another is open above it must not move focus — its
+ * invoker sits behind the dialog the user is looking at. But it still holds the
+ * only record of where focus came from, and dropping that record strands focus
+ * on `document.body` the moment the dialog above it closes too: by then that one
+ * is restoring to an invoker that was inside the dialog already gone. (Milo's
+ * second red, on c6030732: the two closes happen in separate commits, so nothing
+ * scheduled inside one commit can carry the chain.)
+ *
+ * So the claim is kept instead, and whichever instance closes while it owns the
+ * page's focus — the topmost one — hands focus to the first filed claim whose
+ * invoker is still connected. That is the dialog nearest the page, because a
+ * deeper dialog's opener lived inside the one that closed under it.
+ */
+interface PendingRestore {
+  invoker: HTMLElement | null;
+  dialog: HTMLElement | null;
+}
+
+const pendingRestores: PendingRestore[] = [];
+
 export interface DialogFocusResult<InitialFocus extends HTMLElement = HTMLButtonElement> {
   /**
    * Attach to the element carrying `role="dialog"`. Needs `tabIndex={-1}`.
@@ -131,45 +154,34 @@ export function useDialogFocus<InitialFocus extends HTMLElement = HTMLButtonElem
       const wasTopmost = at === openDialogs.length - 1;
       if (at !== -1) openDialogs.splice(at, 1);
 
+      // Every close files a claim: "focus came from here". A dialog closing
+      // underneath an open one files it and stops — moving focus would pull the
+      // user out of the dialog above. The claim is what makes that safe rather
+      // than lossy; it is still there when the dialog above closes.
+      pendingRestores.push({ invoker, dialog });
+      if (!wasTopmost) return;
+
+      // Closing while topmost means this instance owned the page's focus, so it
+      // is the one that has to hand it back — for itself and for anything that
+      // closed underneath it earlier. Claims are consumed in the order they were
+      // filed, which is closing order; the last dialog to close is always topmost,
+      // so the list never outlives the stack that produced it.
+      const claims = pendingRestores.splice(0, pendingRestores.length);
+
       // Only restore if focus is still ours to move; if something else took it in
-      // the meantime, stealing it back would be the more surprising behavior. A
-      // detached invoker means this instance's opener went in the same teardown,
-      // so there is nothing to hand focus back to — the dialog below it, if any,
-      // will do that instead.
-      const restore = () => {
-        const active = document.activeElement;
-        const stillInside = active instanceof Node && dialog?.contains(active);
-        if (invoker?.isConnected && (stillInside || active === document.body)) invoker.focus();
-      };
+      // the meantime, stealing it back would be the more surprising behavior.
+      // "Ours" covers every dialog in the chain, not just this one.
+      const active = document.activeElement;
+      const ours =
+        active === document.body ||
+        !(active instanceof Node) ||
+        claims.some((claim) => claim.dialog?.contains(active));
+      if (!ours) return;
 
-      // The topmost dialog owns the page's focus, so its answer is already known:
-      // restore now, synchronously, which is what every single-dialog call site
-      // and its tests expect.
-      if (wasTopmost) {
-        restore();
-        return;
-      }
-
-      // A dialog closing UNDERNEATH another one is the case with no synchronous
-      // answer. Its invoker sits behind a dialog the user may still be looking
-      // at — but if the whole stack is unmounting in this same commit, it is also
-      // the instance that has to hand focus back, and the dialog above it has not
-      // torn down yet. So the decision waits one microtask, by which time every
-      // cleanup in the commit has run. One microtask is the same frame; nothing
-      // paints in between.
-      //
-      // The "focus is still ours" condition above does NOT cover this on its own.
-      // It looked like it did, because focus is normally inside the upper dialog
-      // — but when the upper dialog's focused control is removed or disabled,
-      // focus falls to `document.body`, and that is an explicit restore branch.
-      // (Milo's red on ee5cfba8.)
-      queueMicrotask(() => {
-        // Still, or again, dialogs open above: leave their focus alone. Includes
-        // the React StrictMode dev remount, where this same instance is back in
-        // the stack under the same token.
-        if (openDialogs.length > 0) return;
-        restore();
-      });
+      // The first claim with a connected invoker wins. Later claims point at
+      // controls that were inside dialogs which have since closed, so they are
+      // skipped rather than focused into nothing.
+      claims.find((claim) => claim.invoker?.isConnected)?.invoker?.focus();
     };
   }, [open]);
 

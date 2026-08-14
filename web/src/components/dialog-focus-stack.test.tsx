@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { StrictMode, useState } from 'react';
 import { describe, expect, it } from 'vitest';
 
@@ -29,27 +29,34 @@ import { BusyConfirmModal } from './restart-shared';
 // element focus passed through (recorded via `focusin`). Boundary keypresses are
 // additionally asserted by focus identity, which the hook does move.
 //
-// WHICH CASES ARE INSTRUMENTS, and against what. Each was run against the code
-// it is supposed to discriminate:
-//   - red against the pre-change hook (46b83c9c): "leaves a mid-dialog Tab
-//     alone", "moves focus nowhere", "never touches a control in the dialog
-//     underneath", "does not restore from body-focus".
-//   - red against the first attempt at this fix (ee5cfba8), which had the Tab
-//     stack but no stack-aware restore: "does not restore from body-focus".
-//   - red against a stack-aware restore that never defers — the obvious fix,
-//     which strands focus on `body` when a whole nested tree unmounts at once:
-//     "returns focus to the outside opener when both dialogs unmount together".
-//   - red against a deferred restore that skips the "anything still open" check:
-//     "does not restore from body-focus".
-// The StrictMode case is a guard, not an instrument: it is green against every
-// variant tried, because a lone dialog is topmost and takes the synchronous
-// path. It is here so that widening the deferral to all closes — which would
-// make the dev remount restore focus to the page — fails loudly.
+// WHICH CASES ARE INSTRUMENTS, and against what. Every mechanism in the hook is
+// pinned by at least one case that goes red when that mechanism is removed. The
+// lists below are measured against each earlier head of this PR and against
+// hand-built variants of the current hook, not reasoned about:
+//   - pre-change hook (46b83c9c), no stack at all — 7 red: "leaves a mid-dialog
+//     Tab alone", "moves focus nowhere", "never touches a control underneath",
+//     "does not restore from body-focus", both one-at-a-time cases, "skips
+//     claims whose invoker went with its own dialog".
+//   - ee5cfba8, Tab stack but restore not stack-aware — 4 red: "does not restore
+//     from body-focus", both one-at-a-time cases, "skips claims".
+//   - c6030732, stack-aware restore deferred by a microtask — 4 red: both
+//     one-at-a-time cases, "both dialogs unmount together", "skips claims". The
+//     upper dialog outlives the commit, so a one-shot deferred callback cannot
+//     carry the restore chain.
+//   - variant that drops a non-topmost dialog's claim instead of filing it — the
+//     same 4 red. The claim chain is what those four cases actually measure.
+//   - variant that takes the oldest claim without checking the invoker is still
+//     connected — 1 red: "skips claims". That case is the only shape in the
+//     suite where the oldest claim is the wrong one, which is why it exists.
+// The StrictMode case is a guard, not an instrument: green against every variant
+// above, because a lone dialog is topmost and restores synchronously. It is here
+// so that deferring restoration again — which would make the dev remount hand
+// focus back to the page — fails loudly.
 // The rest are regression guards: green before and after by design, so that
 // topmost behavior cannot be bought by breaking single-dialog containment or
 // invoker restore. The two initial-focus cases are typecheck instruments, not
-// runtime ones — a button ref on an <input> is a compile error, which is the
-// whole point of the widening.
+// runtime ones — a button-typed ref on an <input> is a compile error, which is
+// the whole point of the widening.
 //
 // NOTE: web vitest is not wired into CI yet (#344) - run locally.
 
@@ -85,15 +92,6 @@ function OuterHostingConfirm() {
       )}
     </div>
   );
-}
-
-/**
- * Focus restoration is deferred by one microtask inside the hook — "is a dialog
- * above me actually staying open" has no answer until the commit's cleanups have
- * all run. Tests that assert on restoration have to let that microtask run.
- */
-async function flushRestore() {
-  await act(async () => {});
 }
 
 /** The lower dialog on its own, without the nested confirm inside it. */
@@ -135,6 +133,63 @@ function StackHost() {
           onCancel={() => setConfirmOpen(false)}
           onConfirm={() => setConfirmOpen(false)}
         />
+      )}
+    </>
+  );
+}
+
+/** A plain hook-backed dialog with one control, for stacking more than two deep. */
+function StackDialog({ label, children }: { label: string; children?: React.ReactNode }) {
+  const { dialogRef, initialFocusRef } = useDialogFocus(true);
+  return (
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1}>
+      <button type="button" ref={initialFocusRef}>
+        Close {label}
+      </button>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Three dialogs, each opened from the one below it and each closable on its own.
+ * Only shape in the suite where the first claim filed is NOT the one that can be
+ * restored to — B's opener lives inside A, and A closes before the stack drains.
+ */
+function DeepStackHost() {
+  const [open, setOpen] = useState({ a: false, b: false, c: false });
+  const set = (patch: Partial<typeof open>) => setOpen((prev) => ({ ...prev, ...patch }));
+  return (
+    <>
+      <button type="button" onClick={() => set({ a: true })}>
+        Open A
+      </button>
+      <button type="button" onClick={() => set({ a: false })}>
+        Close A from outside
+      </button>
+      <button type="button" onClick={() => set({ b: false })}>
+        Close B from outside
+      </button>
+      {open.a && (
+        <StackDialog label="A">
+          <button type="button" onClick={() => set({ b: true })}>
+            Open B
+          </button>
+        </StackDialog>
+      )}
+      {open.b && (
+        <StackDialog label="B">
+          <button type="button" onClick={() => set({ c: true })}>
+            Open C
+          </button>
+        </StackDialog>
+      )}
+      {open.c && (
+        <StackDialog label="C">
+          <button type="button" onClick={() => set({ c: false })}>
+            Done with C
+          </button>
+        </StackDialog>
       )}
     </>
   );
@@ -218,7 +273,7 @@ describe('useDialogFocus — topmost dialog wins', () => {
     expect(document.activeElement).toBe(confirm);
   });
 
-  it('hands containment back to the lower dialog once the upper one closes', async () => {
+  it('hands containment back to the lower dialog once the upper one closes', () => {
     // Regression guard: leaving the stack in a wrong state would show up here.
     render(<OuterHostingConfirm />);
     const closePanel = screen.getByRole('button', { name: 'Close server panel' });
@@ -226,7 +281,6 @@ describe('useDialogFocus — topmost dialog wins', () => {
 
     fireEvent.click(restart);
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    await flushRestore();
     expect(screen.queryByRole('button', { name: 'Restart now' })).toBeNull();
 
     restart.focus();
@@ -236,7 +290,7 @@ describe('useDialogFocus — topmost dialog wins', () => {
     expect(document.activeElement).toBe(restart);
   });
 
-  it('returns focus to the control that opened the upper dialog', async () => {
+  it('returns focus to the control that opened the upper dialog', () => {
     // Regression guard for the restore half of the contract.
     render(<OuterHostingConfirm />);
     const restart = screen.getByRole('button', { name: 'Restart' });
@@ -245,7 +299,6 @@ describe('useDialogFocus — topmost dialog wins', () => {
     expect(document.activeElement).not.toBe(restart);
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    await flushRestore();
     expect(document.activeElement).toBe(restart);
   });
 
@@ -262,7 +315,7 @@ describe('useDialogFocus — topmost dialog wins', () => {
     expect(document.activeElement).toBe(closePanel);
   });
 
-  it('does not restore from body-focus while a dialog is open above', async () => {
+  it('does not restore from body-focus while a dialog is open above', () => {
     // Milo's red on ee5cfba8, and the case that killed "the existing condition
     // already covers it": focus is normally inside the upper dialog, but when the
     // upper dialog's focused control is removed or disabled, focus falls to
@@ -280,7 +333,6 @@ describe('useDialogFocus — topmost dialog wins', () => {
     expect(document.activeElement).toBe(document.body);
 
     fireEvent.click(screen.getByRole('button', { name: 'Close panel from outside' }));
-    await flushRestore();
     expect(screen.queryByRole('button', { name: 'Close server panel' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Restart now' })).toBeTruthy();
 
@@ -288,7 +340,7 @@ describe('useDialogFocus — topmost dialog wins', () => {
     expect(document.activeElement).toBe(document.body);
   });
 
-  it('returns focus to the outside opener when both dialogs unmount together', async () => {
+  it('returns focus to the outside opener when both dialogs unmount together', () => {
     // The other half of the stack-aware restore: skipping restore for a
     // non-topmost dialog must not strand focus when the whole tree goes at once.
     render(<NestedHostWithOpener />);
@@ -299,12 +351,75 @@ describe('useDialogFocus — topmost dialog wins', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Close panel from outside' }));
-    await flushRestore();
     expect(screen.queryByRole('button', { name: 'Restart now' })).toBeNull();
     expect(document.activeElement).toBe(opener);
   });
 
-  it('leaves focus alone when the dialog underneath it closes', async () => {
+  it('returns focus to the outside opener when the dialogs close one at a time', () => {
+    // Milo's second red, on c6030732. The lower dialog closes first and correctly
+    // moves nothing — but it holds the only record of where focus came from. The
+    // upper dialog closes in a LATER commit, and its own invoker is the Restart
+    // button that went with the lower dialog, so restoring "its" focus reaches a
+    // disconnected element. Dropping the lower dialog's record leaves focus on
+    // `body` with no owner; nothing scheduled inside the first commit can carry
+    // it, because the upper dialog outlives that commit.
+    render(<StackHost />);
+    const opener = screen.getByRole('button', { name: 'Open server panel' });
+    opener.focus();
+    fireEvent.click(opener);
+    fireEvent.click(screen.getByRole('button', { name: 'Restart' }));
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close panel from outside' }));
+    expect(screen.queryByRole('button', { name: 'Close server panel' })).toBeNull();
+    expect(document.activeElement).toBe(cancel);
+
+    fireEvent.click(cancel);
+    expect(screen.queryByRole('button', { name: 'Restart now' })).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('returns focus to the outside opener after a one-at-a-time close from body-focus', () => {
+    // Same sequence with focus dropped to `body` in between — the state that made
+    // the first restore steal possible. The chain still has to end on the opener.
+    render(<StackHost />);
+    const opener = screen.getByRole('button', { name: 'Open server panel' });
+    opener.focus();
+    fireEvent.click(opener);
+    fireEvent.click(screen.getByRole('button', { name: 'Restart' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close panel from outside' }));
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    cancel.blur();
+    expect(document.activeElement).toBe(document.body);
+
+    fireEvent.click(cancel);
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('skips claims whose invoker went with its own dialog', () => {
+    // Three deep, closed middle-out. The FIRST claim filed belongs to B, whose
+    // opener is a button inside A — and A closes before the stack drains, so that
+    // claim points at a detached control. Taking the oldest claim blindly would
+    // focus nothing at all; the still-connected outside opener is the one place
+    // the user can carry on from.
+    render(<DeepStackHost />);
+    const opener = screen.getByRole('button', { name: 'Open A' });
+    opener.focus();
+    fireEvent.click(opener);
+    fireEvent.click(screen.getByRole('button', { name: 'Open B' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open C' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close B from outside' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close A from outside' }));
+    expect(screen.getByRole('dialog', { name: 'C' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Done with C' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('leaves focus alone when the dialog underneath it closes', () => {
     // Same shape as the body-focus case above, but with focus still inside the
     // upper dialog — the branch that made the missing stack check look redundant.
     render(<StackHost />);
@@ -314,14 +429,13 @@ describe('useDialogFocus — topmost dialog wins', () => {
     expect(document.activeElement).toBe(cancel);
 
     fireEvent.click(screen.getByRole('button', { name: 'Close panel from outside' }));
-    await flushRestore();
     expect(screen.queryByRole('button', { name: 'Close server panel' })).toBeNull();
     expect(document.activeElement).toBe(cancel);
   });
 });
 
 describe('useDialogFocus — StrictMode', () => {
-  it('keeps focus inside the dialog through the dev remount', async () => {
+  it('keeps focus inside the dialog through the dev remount', () => {
     // StrictMode is on in `main.tsx`, so in dev every effect mounts, tears down
     // and mounts again. The teardown queues a restore like any close would; if it
     // ran, the dialog would open and immediately throw focus back to the page.
@@ -335,7 +449,6 @@ describe('useDialogFocus — StrictMode', () => {
         <OuterHostingConfirm />
       </StrictMode>,
     );
-    await flushRestore();
 
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close server panel' }));
     opener.remove();
