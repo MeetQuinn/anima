@@ -28,7 +28,6 @@ export function claudeCommonArgs(
   systemPromptFilePath: string | undefined,
 ): string[] {
   const args = [
-    '--chrome',
     '--permission-mode', 'bypassPermissions',
     '--disallowedTools', CLAUDE_DISALLOWED_TOOLS.join(','),
   ];
