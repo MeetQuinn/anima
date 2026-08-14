@@ -99,23 +99,15 @@ export function useDialogFocus<InitialFocus extends HTMLElement = HTMLButtonElem
   const token = useRef<object>({});
   const baseId = useId();
 
-  // Registration is its own effect on purpose: membership is about which dialog
-  // owns the keyboard, not about focus, and keeping the push and its splice in
-  // one place means neither of the effects below can leave a stale entry behind
-  // by returning early.
+  // Stack membership and focus live in ONE effect so that "was I topmost when I
+  // closed" can be answered at cleanup time. Splitting them meant the answer
+  // depended on which cleanup React happened to run first, which is not a fact
+  // this hook should be built on.
   useEffect(() => {
     if (!open) return;
+
     const self = token.current;
     openDialogs.push(self);
-    return () => {
-      const at = openDialogs.lastIndexOf(self);
-      if (at !== -1) openDialogs.splice(at, 1);
-    };
-  }, [open]);
-
-  // Move focus in on open, and hand it back to the invoker on close/unmount.
-  useEffect(() => {
-    if (!open) return;
 
     // Captured for the cleanup: by the time it runs the dialog is usually
     // already unmounted, so reading the ref there would see null.
@@ -135,19 +127,49 @@ export function useDialogFocus<InitialFocus extends HTMLElement = HTMLButtonElem
     target?.focus();
 
     return () => {
-      // Restore deliberately does NOT consult the stack. A dialog closing while
-      // another is open above it must not pull focus out of that one — and the
-      // condition below already refuses, because focus is then inside the other
-      // dialog: neither inside this one nor on `document.body`. Adding a
-      // "something is above me" branch here would be a second gate for a case the
-      // first one already holds, and an untestable one. Covered by "leaves focus
-      // alone when the dialog underneath it closes".
+      const at = openDialogs.lastIndexOf(self);
+      const wasTopmost = at === openDialogs.length - 1;
+      if (at !== -1) openDialogs.splice(at, 1);
+
+      // Only restore if focus is still ours to move; if something else took it in
+      // the meantime, stealing it back would be the more surprising behavior. A
+      // detached invoker means this instance's opener went in the same teardown,
+      // so there is nothing to hand focus back to — the dialog below it, if any,
+      // will do that instead.
+      const restore = () => {
+        const active = document.activeElement;
+        const stillInside = active instanceof Node && dialog?.contains(active);
+        if (invoker?.isConnected && (stillInside || active === document.body)) invoker.focus();
+      };
+
+      // The topmost dialog owns the page's focus, so its answer is already known:
+      // restore now, synchronously, which is what every single-dialog call site
+      // and its tests expect.
+      if (wasTopmost) {
+        restore();
+        return;
+      }
+
+      // A dialog closing UNDERNEATH another one is the case with no synchronous
+      // answer. Its invoker sits behind a dialog the user may still be looking
+      // at — but if the whole stack is unmounting in this same commit, it is also
+      // the instance that has to hand focus back, and the dialog above it has not
+      // torn down yet. So the decision waits one microtask, by which time every
+      // cleanup in the commit has run. One microtask is the same frame; nothing
+      // paints in between.
       //
-      // Only restore if focus is still ours to move; if something else took it
-      // in the meantime, stealing it back would be the more surprising behavior.
-      const active = document.activeElement;
-      const stillInside = active instanceof Node && dialog?.contains(active);
-      if (invoker && (stillInside || active === document.body)) invoker.focus();
+      // The "focus is still ours" condition above does NOT cover this on its own.
+      // It looked like it did, because focus is normally inside the upper dialog
+      // — but when the upper dialog's focused control is removed or disabled,
+      // focus falls to `document.body`, and that is an explicit restore branch.
+      // (Milo's red on ee5cfba8.)
+      queueMicrotask(() => {
+        // Still, or again, dialogs open above: leave their focus alone. Includes
+        // the React StrictMode dev remount, where this same instance is back in
+        // the stack under the same token.
+        if (openDialogs.length > 0) return;
+        restore();
+      });
     };
   }, [open]);
 
