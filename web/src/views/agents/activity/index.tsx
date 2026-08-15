@@ -99,12 +99,15 @@ function StepsDisclosure({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  // Tap target grew from ~20px to ~32px: the padding is the hit area and the
+  // negative margins cancel it out of the layout, so the label sits exactly
+  // where the old px-1 py-0.5 version did in the dense timeline.
   return (
     <button
       type="button"
       onClick={onToggle}
       aria-expanded={expanded}
-      className="chrome -ml-1 mt-0.5 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-text-subtle transition-colors hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      className="chrome -mb-1.5 -ml-2 -mt-1 inline-flex items-center gap-1 rounded-sm px-2 py-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-text-subtle transition-colors hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
     >
       <ChevronRight
         className={['h-3 w-3 transition-transform', expanded ? 'rotate-90' : ''].join(' ')}
@@ -372,7 +375,7 @@ function FeishuHelloBanner({ onDismiss }: { onDismiss: () => void }) {
         type="button"
         onClick={onDismiss}
         aria-label="Dismiss"
-        className="-mr-1 -mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-surface hover:text-text"
+        className="-mr-2.5 -mt-2 flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-surface hover:text-text md:-mr-1 md:-mt-0.5 md:h-6 md:w-6"
       >
         <X className="h-4 w-4" aria-hidden />
       </button>
@@ -423,7 +426,7 @@ function FeishuRecommendedPermissionsConnectBanner({
         type="button"
         onClick={onDismiss}
         aria-label="Dismiss"
-        className="-mr-1 -mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-surface hover:text-text"
+        className="-mr-2.5 -mt-2 flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-surface hover:text-text md:-mr-1 md:-mt-0.5 md:h-6 md:w-6"
       >
         <X className="h-4 w-4" aria-hidden />
       </button>

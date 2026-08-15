@@ -72,7 +72,7 @@ export function AddKbModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative w-full max-w-2xl rounded-sm border border-border-soft bg-surface p-5 shadow-deep"
+        className="relative mx-4 max-h-[90dvh] w-full max-w-2xl overflow-y-auto rounded-sm border border-border-soft bg-surface p-5 shadow-deep"
         onClick={(e) => e.stopPropagation()}
       >
         <div id={titleId} className="mb-3 font-serif text-[17px] font-semibold text-text">
@@ -146,7 +146,7 @@ export function RenameKbModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative w-full max-w-sm rounded-sm border border-border-soft bg-surface p-6 shadow-deep"
+        className="relative mx-4 max-h-[90dvh] w-full max-w-sm overflow-y-auto rounded-sm border border-border-soft bg-surface p-6 shadow-deep"
         onClick={(e) => e.stopPropagation()}
       >
         <div id={titleId} className="font-serif text-[17px] font-semibold text-text">

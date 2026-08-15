@@ -373,7 +373,7 @@ export default function DirectoryPicker({
                 setExpandedPaths(new Set());
                 setSelectedPath(rootPath);
               }}
-              className="flex shrink-0 items-center gap-1 font-mono text-[11px] text-text-muted hover:text-text"
+              className="flex min-h-[44px] shrink-0 items-center gap-1 font-mono text-[11px] text-text-muted hover:text-text md:min-h-0"
               title="Home"
             >
               <Home className="h-3 w-3" />~
@@ -385,7 +385,7 @@ export default function DirectoryPicker({
                   type="button"
                   onClick={() => setSelectedPath(crumb.path)}
                   className={[
-                    'font-mono text-[11px] hover:text-text',
+                    'flex min-h-[44px] items-center font-mono text-[11px] hover:text-text md:min-h-0',
                     i === breadcrumbs.length - 1 ? 'font-semibold text-text' : 'text-text-muted',
                   ].join(' ')}
                 >
@@ -400,7 +400,7 @@ export default function DirectoryPicker({
               setMkdirError(null);
               setCreating(true);
             }}
-            className="font-sans flex shrink-0 items-center gap-1 rounded-sm border border-border px-2.5 py-1.5 text-[12px] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+            className="font-sans flex min-h-[44px] shrink-0 items-center gap-1 rounded-sm border border-border px-2.5 py-1.5 text-[12px] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text md:min-h-0"
           >
             <FolderPlus className="h-3.5 w-3.5" />
             New folder

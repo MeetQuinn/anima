@@ -123,8 +123,10 @@ export default function MobileNavScreen({
           Anima wordmark with a faint caret (still tappable, so "New team" is
           reachable on mobile); at N>=2 it shows the current team name and the
           menu lists teams to switch/edit. */}
+      {/* Height grows by the notch inset and pt pushes the tappable row below
+          the status bar in standalone/notched contexts (0 in a browser tab). */}
       <div
-        className="relative flex h-14 shrink-0 items-center border-b border-spine-border bg-page"
+        className="relative flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center border-b border-spine-border bg-page pt-[env(safe-area-inset-top)]"
         style={{ position: 'sticky', top: 0, zIndex: 10 }}
       >
         <button
@@ -210,7 +212,7 @@ export default function MobileNavScreen({
                             setEditTeam(team);
                             setShowTeamMenu(false);
                           }}
-                          className="mr-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-on-spine-muted hover:bg-surface-hover hover:text-text-on-spine"
+                          className="mr-0.5 flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-md text-text-on-spine-muted hover:bg-surface-hover hover:text-text-on-spine"
                         >
                           <Pencil className="h-3.5 w-3.5" />
                         </button>
@@ -251,7 +253,7 @@ export default function MobileNavScreen({
               </span>
               <button
                 onClick={() => setShowAddKbModal(true)}
-                className="flex h-11 w-11 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine"
+                className="flex h-[44px] w-[44px] items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine"
                 aria-label="Add Knowledge Base"
                 title="Add Knowledge Base"
               >
@@ -296,7 +298,7 @@ export default function MobileNavScreen({
               </span>
               <button
                 onClick={() => setShowAddAgentModal(true)}
-                className="flex h-11 w-11 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine"
+                className="flex h-[44px] w-[44px] items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine"
                 aria-label="Add agent"
                 title="Add agent"
               >

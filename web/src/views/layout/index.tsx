@@ -181,7 +181,9 @@ export default function Layout() {
             {/* Top spacer on mobile to compensate for fixed top bar.
                 Only needed on Screen 2 (agentId set); kb mode
                 and Screen 1 don't have a fixed top bar. */}
-            {agentId && <div className="h-14 shrink-0 md:hidden" />}
+            {agentId && (
+              <div className="h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 md:hidden" />
+            )}
             <ErrorBoundary key={location.pathname}>
               <Outlet />
             </ErrorBoundary>

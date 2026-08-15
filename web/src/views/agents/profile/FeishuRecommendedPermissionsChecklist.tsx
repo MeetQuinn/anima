@@ -247,7 +247,7 @@ export function FeishuRecommendedPermissionsChecklist({
                 type="button"
                 onClick={onRecheck}
                 disabled={isRechecking}
-                className="inline-flex min-h-8 items-center justify-center gap-1 rounded-sm font-sans text-[12px] text-text-muted underline decoration-text-subtle/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex min-h-[44px] items-center justify-center gap-1 rounded-sm md:min-h-8 font-sans text-[12px] text-text-muted underline decoration-text-subtle/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isRechecking ? (
                   <Loader2 className="h-3 w-3 animate-spin" />

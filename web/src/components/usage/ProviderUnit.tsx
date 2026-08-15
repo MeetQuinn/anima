@@ -149,7 +149,7 @@ export function ProviderUnit({
                       onClick={onApply}
                       disabled={updateLocked}
                       title={management.latestVersion ? `Update to v${management.latestVersion}` : 'Update'}
-                      className="flex h-6 shrink-0 items-center gap-1 rounded-sm bg-accent px-2 font-sans text-[10px] font-semibold text-white hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
+                      className="flex h-[44px] shrink-0 items-center gap-1 rounded-sm bg-accent px-3 font-sans text-[10px] font-semibold text-white hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40 md:h-6 md:px-2"
                     >
                       <ArrowUp className="h-3 w-3" />
                       Update
@@ -159,7 +159,7 @@ export function ProviderUnit({
                       <button
                         type="button"
                         onClick={onCopyCommand}
-                        className="flex min-w-0 items-center gap-1.5 text-left font-mono text-[10px] text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                        className="flex min-h-[44px] min-w-0 items-center gap-1.5 text-left font-mono text-[10px] text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent md:min-h-0"
                         title="Copy update command"
                       >
                         <Copy className="h-3 w-3 shrink-0" />

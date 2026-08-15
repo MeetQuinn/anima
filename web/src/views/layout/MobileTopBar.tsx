@@ -58,8 +58,10 @@ export default function MobileTopBar() {
   };
 
   return (
+    // pt-[env(safe-area-inset-top)] keeps the bar below the status bar in
+    // standalone/notched contexts; bg on this wrapper paints the notch area.
     <div
-      className="relative md:hidden"
+      className="relative bg-surface pt-[env(safe-area-inset-top)] md:hidden"
       style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 40 }}
     >
       <div className="flex h-14 items-center gap-1.5 border-b border-border-soft bg-surface px-2">
@@ -106,19 +108,28 @@ export default function MobileTopBar() {
           )}
         </div>
 
-        {/* Stop — only visible while the agent has active work */}
+        {/* Stop — only visible while the agent has active work. The pill keeps
+            its compact visual, but the actual button extends to the 44px touch
+            target (this is the only stop control on mobile). */}
         {currentItemId && (
-          <div className="flex flex-col items-end gap-0.5">
+          <div className="flex shrink-0 items-center gap-1.5">
+            {stopError && (
+              <span
+                className="font-sans max-w-[9rem] truncate text-[10px] text-health-error"
+                title={stopError}
+              >
+                {stopError}
+              </span>
+            )}
             <button
               onClick={() => void handleStop()}
               disabled={stopping}
-              className="chrome rounded-sm border border-border-soft px-2 py-1 text-[10px] font-medium uppercase tracking-[0.1em] text-text-muted hover:border-border-strong hover:text-text disabled:opacity-50"
+              className="group flex min-h-[44px] items-center disabled:opacity-50"
             >
-              {stopping ? 'Stopping…' : 'Stop'}
+              <span className="chrome rounded-sm border border-border-soft px-2 py-1 text-[10px] font-medium uppercase tracking-[0.1em] text-text-muted group-hover:border-border-strong group-hover:text-text">
+                {stopping ? 'Stopping…' : 'Stop'}
+              </span>
             </button>
-            {stopError && (
-              <span className="font-sans text-[10px] text-health-error">{stopError}</span>
-            )}
           </div>
         )}
         {/* ⋯ menu — lifecycle actions on every tab */}

@@ -455,7 +455,7 @@ function CheckNowButton({
       disabled={checking}
       aria-label={checking ? 'Checking for updates' : 'Check for updates'}
       title={checking ? 'Checking for updates…' : 'Check for updates'}
-      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-subtle opacity-40 transition hover:bg-surface-elevated hover:text-text hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-default disabled:opacity-70 group-hover/update-row:opacity-100"
+      className="flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-sm text-text-subtle opacity-40 transition hover:bg-surface-elevated hover:text-text hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-default disabled:opacity-70 group-hover/update-row:opacity-100 md:h-6 md:w-6 [@media(hover:none)]:opacity-100"
     >
       <RefreshCw aria-hidden className={`h-3.5 w-3.5 ${checking ? 'animate-spin' : ''}`} />
     </button>

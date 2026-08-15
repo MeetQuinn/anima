@@ -252,7 +252,7 @@ function ConversationPane({
               type="button"
               onClick={() => void messageQuery.fetchNextPage()}
               disabled={messageQuery.isFetchingNextPage}
-              className="chrome rounded-sm border border-border-soft px-3 py-1 text-[11px] text-text-muted transition-colors hover:text-text disabled:opacity-60"
+              className="chrome min-h-[44px] rounded-sm border border-border-soft px-4 py-1 text-[11px] text-text-muted transition-colors hover:text-text disabled:opacity-60 md:min-h-0 md:px-3"
             >
               {messageQuery.isFetchingNextPage ? 'Loading…' : 'Load older messages'}
             </button>
