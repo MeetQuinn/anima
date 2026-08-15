@@ -16,10 +16,11 @@ import {
   inboundAuthorName,
   inboundSlackUserId,
   isMessageItem,
-  DayDivider,
-  MessageGroupRow,
   type Author,
-} from '../conversation/SlackTimeline';
+} from '@/lib/message-model';
+import { EmptyMessage } from '@/components/EmptyMessage';
+import { DayDivider } from '@/components/TimelineRows';
+import { MessageGroupRow } from '../conversation/SlackTimeline';
 import type { AgentChannelSummary, AgentMessageRecord } from '@shared/messages';
 
 // Channel/DM title: a channel shows its `#` flush against the name (one token);
@@ -259,11 +260,9 @@ function ConversationPane({
           </div>
         )}
         {items.length === 0 ? (
-          <div className="mt-20 text-center">
-            <p className="font-serif italic text-[15px] text-text-subtle">
-              {loading ? 'Loading conversation…' : 'No messages in this channel yet.'}
-            </p>
-          </div>
+          <EmptyMessage>
+            {loading ? 'Loading conversation…' : 'No messages in this channel yet.'}
+          </EmptyMessage>
         ) : (
           byDay.map(([day, dayItems]) => (
             <div key={day}>

@@ -6,7 +6,6 @@
 
 export {
   AGENT_TABS,
-  AGENT_FILES_SEGMENT,
   DEFAULT_TAB,
   buildPath,
   buildKbPath,
@@ -15,7 +14,6 @@ export {
   buildAgentFileRawPath,
   parseLocation,
   parseKbPath,
-  parseAgentFilePath,
   reconcileLocation,
 } from '@shared/url-routes';
 export type {

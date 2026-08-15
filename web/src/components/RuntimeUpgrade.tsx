@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { useMutation } from '@tanstack/react-query';
 import { AlertTriangle, Download, ExternalLink, RefreshCw } from 'lucide-react';
 import {
@@ -13,7 +12,7 @@ import { useRuntimeUpgrade } from '@/hooks/useRuntimeUpgrade';
 import { agentDisplayName } from '@/lib/agent-avatar';
 import { queryKeys } from '@/lib/query-keys';
 import { queryClient } from '@/query-client';
-import { BusyConfirmModal, restartEcho, resumedText } from './restart-shared';
+import { BusyConfirmModal, ProgressOverlay, restartEcho, resumedText } from './restart-shared';
 import type { RuntimeUpgradeGateBlocker, RuntimeUpgradeOperation } from '@shared/runtime-upgrade';
 
 // Apply lifecycle: the worker installs the target (dashboard stays up), then
@@ -262,7 +261,13 @@ export default function RuntimeUpgradeRow() {
           onConfirm={() => void performUpgrade()}
         />
       )}
-      {phase === 'applying' && <UpgradeOverlay target={availableTarget} />}
+      {phase === 'applying' && (
+        <ProgressOverlay
+          above
+          title={availableTarget ? `Installing ${availableTarget}…` : 'Installing update…'}
+          body="Your current version keeps running while Anima installs and verifies the new one, then asks any working agents to pause before restart. The dashboard reloads automatically when it's back."
+        />
+      )}
     </>
   );
 }
@@ -471,28 +476,6 @@ function CheckFailedLabel() {
 // ---------------------------------------------------------------------------
 // Overlay (editorial style, mirrors RestartButton)
 // ---------------------------------------------------------------------------
-
-function UpgradeOverlay({ target }: { target?: string }) {
-  // Portal to body — same drawer-trapping reason as BusyConfirmModal: this row
-  // lives inside the ServerPanel, whose positioned/scroll container would
-  // otherwise confine `fixed inset-0` to the ~330px drawer.
-  return createPortal(
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-page/70 p-4 backdrop-blur-sm">
-      <div className="flex max-w-sm flex-col items-center gap-3 rounded-sm border border-border-soft bg-surface px-10 py-7 text-center shadow-deep">
-        <RefreshCw className="h-6 w-6 animate-spin text-accent" />
-        <div className="font-serif text-[16px] font-medium text-text">
-          {target ? `Installing ${target}…` : 'Installing update…'}
-        </div>
-        <div className="font-sans text-[12px] leading-relaxed text-text-muted">
-          Your current version keeps running while Anima installs and verifies the new one, then
-          asks any working agents to pause before restart. The dashboard reloads automatically when
-          it&apos;s back.
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Helpers

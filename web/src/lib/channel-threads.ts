@@ -16,7 +16,7 @@ import {
   inboundText,
   type ThreadContext,
   type ThreadParentInfo,
-} from '@/views/agents/conversation/SlackTimeline';
+} from '@/lib/message-model';
 import type { AgentMessageRecord } from '@shared/messages';
 
 // Strip the inline/leading Markdown that would otherwise leak into a plain-text

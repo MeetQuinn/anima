@@ -6,7 +6,6 @@ import type {
   KbRenameRequest,
   KbSearchResult,
   KbView,
-  KbTree,
 } from '@shared/kb';
 
 export interface KbBrowseResult {
@@ -62,10 +61,6 @@ export async function removeKb(id: string): Promise<KbView[]> {
     { method: 'DELETE' },
   );
   return body.kbs;
-}
-
-export async function fetchKbTree(id: string): Promise<KbTree> {
-  return apiRequest(`/api/kbs/${encodeURIComponent(id)}/tree`);
 }
 
 export async function fetchKbDirectory(

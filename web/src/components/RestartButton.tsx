@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { RefreshCw } from 'lucide-react';
 import { pingHealth, restartServices } from '@/api/system';
 import { useAgents, useAgentStatuses } from '@/hooks/useAgentDirectory';
 import { agentDisplayName } from '@/lib/agent-avatar';
-import { BusyConfirmModal } from './restart-shared';
+import { BusyConfirmModal, ProgressOverlay } from './restart-shared';
 
 type Phase = 'idle' | 'restarting' | 'recovered' | 'failed';
 
@@ -139,7 +138,12 @@ export default function RestartButton({ compact = false }: { compact?: boolean }
           onConfirm={() => void performRestart()}
         />
       )}
-      {phase === 'restarting' && <RestartOverlay />}
+      {phase === 'restarting' && (
+        <ProgressOverlay
+          title="Restarting Anima services…"
+          body="Any working agents are asked to pause and resume where they left off. The web app reloads automatically when services are back."
+        />
+      )}
     </>
   );
 }
@@ -160,25 +164,4 @@ function computeRunningAgentNames(
     }
   }
   return running;
-}
-
-function RestartOverlay() {
-  // Portal to body — same drawer-trapping reason as BusyConfirmModal: this
-  // overlay can be triggered from the compact button inside the ServerPanel,
-  // whose positioned/scroll container would otherwise confine `fixed inset-0`.
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-page/70 backdrop-blur-sm">
-      <div className="flex max-w-sm flex-col items-center gap-3 rounded-sm border border-border-soft bg-surface px-10 py-7 text-center shadow-deep">
-        <RefreshCw className="h-6 w-6 animate-spin text-accent" />
-        <div className="font-serif text-[16px] font-medium text-text">
-          Restarting Anima services…
-        </div>
-        <div className="font-sans text-[12px] leading-relaxed text-text-muted">
-          Any working agents are asked to pause and resume where they left off. The web app reloads
-          automatically when services are back.
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
 }

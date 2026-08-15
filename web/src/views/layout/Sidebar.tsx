@@ -33,7 +33,7 @@ import { agentHasConnectedTransport } from '@shared/agent-transports';
 import { AgentRow, sidebarDotColor, sidebarDotTitle } from './sidebar/AgentRow';
 import { KbRow, isKbActive } from './sidebar/KbRow';
 import { agentOptionId, useSidebarAgentKeyboardNav } from './sidebar/useSidebarAgentKeyboardNav';
-import { AgentCreateModal } from '@/views/onboarding';
+import { AgentCreateModal } from './AgentCreateModalLazy';
 import {
   AddKbModal,
   ConfirmDeleteModal,
@@ -44,7 +44,6 @@ import type { KbView } from '@shared/kb';
 import type { AgentConfig } from '@shared/agent-config';
 
 // Re-exports for MobileNavScreen — no import-path changes needed in consumers.
-export { AgentCreateModal } from '@/views/onboarding';
 export { AddKbModal } from './sidebar/KbModals';
 
 // ---------------------------------------------------------------------------

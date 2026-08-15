@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useRouteError } from 'react-router-dom';
-import { AlertCircle, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
+
+import { ErrorFallback, ErrorFallbackButton } from '@/components/ErrorFallback';
 
 // Session-storage key: stores the timestamp of the last auto-reload triggered
 // by a chunk load failure. Used to break reload loops — if we reloaded within
@@ -63,24 +65,19 @@ export default function RouteErrorBoundary() {
   const message = error instanceof Error ? error.message : String(error);
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
-      <AlertCircle className="h-8 w-8 text-health-error" aria-hidden />
-      <div>
-        <div className="font-serif text-[16px] font-semibold text-text">
-          Something went wrong
-        </div>
-        <div className="mt-1 font-mono text-[12px] text-text-muted">{message}</div>
-      </div>
-      <button
-        onClick={() => {
-          sessionStorage.removeItem(CHUNK_RELOAD_TS_KEY);
-          window.location.reload();
-        }}
-        className="flex items-center gap-1.5 rounded-sm border border-border-soft bg-surface px-4 py-2 font-sans text-[13px] text-text hover:bg-surface-elevated"
-      >
-        <RefreshCw className="h-3.5 w-3.5" aria-hidden />
-        Reload
-      </button>
-    </div>
+    <ErrorFallback
+      message={message}
+      action={
+        <ErrorFallbackButton
+          onClick={() => {
+            sessionStorage.removeItem(CHUNK_RELOAD_TS_KEY);
+            window.location.reload();
+          }}
+        >
+          <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+          Reload
+        </ErrorFallbackButton>
+      }
+    />
   );
 }

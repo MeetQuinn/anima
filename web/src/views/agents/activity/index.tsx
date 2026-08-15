@@ -38,12 +38,10 @@ import {
   agentHealthReasonText,
   agentHealthRecoveredFresh,
 } from '@/components/AgentHealthIndicator';
-import {
-  groupByAuthor,
-  DayLabelPill,
-  MessageGroupRow,
-  SystemEventRow,
-} from '../conversation/SlackTimeline';
+import { groupByAuthor } from '@/lib/message-model';
+import { EmptyMessage } from '@/components/EmptyMessage';
+import { DayLabelPill, SystemEventRow } from '@/components/TimelineRows';
+import { MessageGroupRow } from '../conversation/SlackTimeline';
 import { StepRow, WorkingIndicator } from './AuditRows';
 import { useActivityCoverageAutoFetch } from './useActivityCoverageAutoFetch';
 import { useActivityFeeds } from './useActivityFeeds';
@@ -790,11 +788,9 @@ export default function Activity() {
           <FirstRunHero agentName={agent?.profile?.displayName} platform={heroPlatform!} />
         ) : (
           timelineByDay.length === 0 && (
-            <div className="mt-20 text-center">
-              <p className="font-serif italic text-[15px] text-text-subtle">
-                {loadingActivities ? 'Loading activity...' : 'No activity yet.'}
-              </p>
-            </div>
+            <EmptyMessage>
+              {loadingActivities ? 'Loading activity...' : 'No activity yet.'}
+            </EmptyMessage>
           )
         )}
         {timelineByDay.length > 0 &&

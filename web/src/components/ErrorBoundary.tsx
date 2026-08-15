@@ -1,6 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
-import { AlertCircle } from 'lucide-react';
 
+import { ErrorFallback, ErrorFallbackButton } from '@/components/ErrorFallback';
 import { reportClientError } from '@/lib/client-error-report';
 
 interface Props {
@@ -47,19 +47,10 @@ export class ErrorBoundary extends Component<Props, State> {
     if (!error) return children;
     if (fallback) return fallback(error, this.reset);
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
-        <AlertCircle className="h-8 w-8 text-health-error" aria-hidden />
-        <div>
-          <div className="font-serif text-[16px] font-semibold text-text">Something went wrong</div>
-          <div className="mt-1 font-mono text-[12px] text-text-muted">{error.message}</div>
-        </div>
-        <button
-          onClick={this.reset}
-          className="rounded-sm border border-border-soft bg-surface px-4 py-2 font-sans text-[13px] text-text hover:bg-surface-elevated"
-        >
-          Try again
-        </button>
-      </div>
+      <ErrorFallback
+        message={error.message}
+        action={<ErrorFallbackButton onClick={this.reset}>Try again</ErrorFallbackButton>}
+      />
     );
   }
 }
