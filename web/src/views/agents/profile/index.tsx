@@ -21,14 +21,9 @@ import { providerCatalogForAvailability } from '@/lib/provider-availability';
 import { providerCatalog } from '@shared/provider-catalog';
 import { useParams } from 'react-router-dom';
 import { formatRelative, shortIso } from '@/lib/format';
-import { EditAffordance, Field, ReadonlyValue, Section, extractError } from './Primitives';
-import {
-  ConfirmRestartModal,
-  HomeRow,
-  ProviderEnvRow,
-  ProviderInlineRow,
-  TeamRow,
-} from './AgentFields';
+import { EditAffordance, Field, ReadonlyValue, Section } from './Primitives';
+import { HomeRow, TeamRow } from './AgentFields';
+import { RuntimeRow } from './RuntimeField';
 import { ProfileHero } from './ProfileHero';
 import { useTeams, useTeamWarnings } from '@/hooks/useTeams';
 import { assignAgentTeam } from '@/api/teams';
@@ -42,13 +37,7 @@ import { SkillsSection } from './SkillsSection';
 import { AgentUsageSection } from '@/components/token-usage/AgentUsageSection';
 import { OwnerPickerForm } from './OwnerPickerForm';
 import { agentFeishuConnected, agentHasConnectedTransport, agentSlackConnected } from '@shared/agent-transports';
-import type { AgentConfig, AgentUpdateProviderRequest } from '@shared/agent-config';
-
-type PendingRestart = {
-  kind: string;
-  model: string;
-  effort?: string;
-};
+import type { AgentUpdateProviderRequest } from '@shared/agent-config';
 
 function FeishuMeta({ label, value }: { label: string; value?: string }) {
   return (
@@ -106,11 +95,6 @@ export default function Profile() {
 
   // Feishu ledger-row details expand (App/Bot IDs, credentials note).
   const [feishuDetailsOpen, setFeishuDetailsOpen] = useState(false);
-
-  // Provider-bound changes are applied by the agent host without bouncing other agents.
-  const [pendingRestart, setPendingRestart] = useState<PendingRestart | null>(null);
-  const [restartSaving, setRestartSaving] = useState(false);
-  const [restartSaveError, setRestartSaveError] = useState<string | null>(null);
 
   const [applyNotice, setApplyNotice] = useState<string | null>(null);
   function flashApplyNotice(message = 'Saved. This agent will apply the change when the current item finishes.') {
@@ -232,28 +216,16 @@ export default function Profile() {
     queryClient.invalidateQueries({ queryKey: queryKeys.teams() });
   }
 
-  async function commitProviderEnv(env: Record<string, string | null>) {
+  // One atomic save from the Runtime modal (provider selection, command/args
+  // overrides, and env patch travel in a single provider update). Errors are
+  // thrown back to the modal, which shows them inline and stays open.
+  async function commitRuntime(update: AgentUpdateProviderRequest, opts: { envOnly: boolean }) {
     if (!agentId) return;
-    await updateAgentProvider(agentId, { env });
-    showApplyNoticeIfActive('Saved. This agent will apply launch env changes when the current item finishes.');
+    await updateAgentProvider(agentId, update);
+    showApplyNoticeIfActive(
+      opts.envOnly ? 'Saved. This agent will apply launch env changes when the current item finishes.' : undefined,
+    );
     refreshAgentData(agentId);
-  }
-
-  async function handleConfirmRestart() {
-    if (!pendingRestart || restartSaving || !agentId || !agent) return;
-    setRestartSaving(true);
-    setRestartSaveError(null);
-    try {
-      await updateAgentProvider(agentId, providerUpdateForRestart(pendingRestart));
-      setPendingRestart(null);
-      showApplyNoticeIfActive();
-      refreshAgentData(agentId);
-    } catch (e) {
-      setRestartSaveError(extractError(e));
-      setPendingRestart(null);
-    } finally {
-      setRestartSaving(false);
-    }
   }
 
   return (
@@ -324,15 +296,13 @@ export default function Profile() {
                 </span>
               </div>
             )}
-            <ProviderInlineRow
-              kind={agent.provider.kind}
-              model={agent.provider.model ?? ''}
-              effort={('reasoningEffort' in agent.provider ? agent.provider.reasoningEffort : undefined) ?? ''}
+            <RuntimeRow
+              provider={agent.provider}
               providerOptions={providerOptions}
               providerAvailability={providerAvailability}
-              onRequestSave={(kind, model, effort) => setPendingRestart({ kind, model, effort })}
+              isActive={isActive}
+              onCommit={commitRuntime}
             />
-            <ProviderEnvRow env={agent.provider.env} onCommit={commitProviderEnv} />
             <Field label="Owner">
               {agent.owner ? (
                 (() => {
@@ -551,45 +521,6 @@ export default function Profile() {
           <SkillsSection agentId={agentId} homePath={agent.homePath ?? ''} />
         </Section>
       </div>
-
-      {pendingRestart && (
-        <ConfirmRestartModal
-          isActive={isActive}
-          sessionBoundaryChanged={providerSessionBoundaryWillChange(agent.provider, pendingRestart)}
-          saving={restartSaving}
-          onConfirm={() => void handleConfirmRestart()}
-          onCancel={() => setPendingRestart(null)}
-        />
-      )}
-
-
-      {restartSaveError && (
-        <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-sm border border-health-error/40 bg-health-error-soft px-4 py-2 shadow-deep">
-          <span className="font-sans text-[12px] text-health-error">{restartSaveError}</span>
-          <button
-            className="ml-3 font-sans text-[11px] text-text-muted hover:text-text"
-            onClick={() => setRestartSaveError(null)}
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
     </div>
   );
-}
-
-function providerSessionBoundaryWillChange(
-  current: NonNullable<AgentConfig['provider']>,
-  next: PendingRestart,
-): boolean {
-  return next.kind !== current.kind;
-}
-
-function providerUpdateForRestart(next: PendingRestart): AgentUpdateProviderRequest {
-  const update: AgentUpdateProviderRequest = {
-    kind: next.kind,
-    model: next.model,
-    ...(next.effort ? { reasoningEffort: next.effort } : {}),
-  };
-  return update;
 }

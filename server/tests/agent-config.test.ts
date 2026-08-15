@@ -517,6 +517,117 @@ test('legacy operator field is migrated to owner on read, persisted as owner on 
   }
 });
 
+// Task #183: agent-level launch overrides (runtimeCommand/runtimeArgs) on the
+// provider config. Semantics mirror AgentProviderUpdateRequest: undefined
+// keeps, null clears (inherit machine-wide Providers settings), a value
+// replaces wholesale; a kind change drops overrides written for the old CLI.
+test('agent provider runtime overrides: set, keep, clear, and drop on kind change', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-runtime-override-'));
+  try {
+    await writeConfig(configDir, {
+      agents: [
+        {
+          id: 'milo',
+          homePath: 'agents/milo',
+          // Catalog-valid model: updateProvider re-validates the current
+          // selection on every save, even override-only ones.
+          provider: { kind: 'codex-cli', model: 'gpt-5.6-sol' },
+        },
+      ],
+    });
+
+    await withAnimaHome(configDir, async () => {
+      const milo = agentService('milo');
+
+      // Set: both overrides persist to the raw file and survive redaction
+      // (the Profile UI needs them to render the Runtime rows).
+      const set = await milo.updateProvider({
+        runtimeCommand: '/bin/echo',
+        runtimeArgs: ['--flag', 'value with spaces'],
+      });
+      assert.equal(set.provider.runtimeCommand, '/bin/echo');
+      assert.deepEqual(set.provider.runtimeArgs, ['--flag', 'value with spaces']);
+      let raw = await readRawAgentFile(configDir, 'milo');
+      assert.equal(raw.provider?.runtimeCommand, '/bin/echo');
+      assert.deepEqual(raw.provider?.runtimeArgs, ['--flag', 'value with spaces']);
+      const redacted = redactAgentConfig(set);
+      assert.equal(redacted.provider?.runtimeCommand, '/bin/echo');
+      assert.deepEqual(redacted.provider?.runtimeArgs, ['--flag', 'value with spaces']);
+
+      // Keep: an unrelated update (undefined overrides) leaves both in place.
+      const kept = await milo.updateProvider({ model: 'gpt-5.6-luna' });
+      assert.equal(kept.provider.runtimeCommand, '/bin/echo');
+      assert.deepEqual(kept.provider.runtimeArgs, ['--flag', 'value with spaces']);
+
+      // Clear one: null deletes runtimeArgs (inherit machine-wide), command stays.
+      const cleared = await milo.updateProvider({ runtimeArgs: null });
+      assert.equal(cleared.provider.runtimeCommand, '/bin/echo');
+      assert.equal('runtimeArgs' in cleared.provider, false);
+      raw = await readRawAgentFile(configDir, 'milo');
+      assert.equal('runtimeArgs' in (raw.provider ?? {}), false);
+
+      // Kind change: the override written for the old provider's CLI does not
+      // transfer; only values the update itself provides would apply.
+      const switched = await milo.updateProvider({ kind: 'claude-code' });
+      assert.equal(switched.provider.kind, 'claude-code');
+      assert.equal('runtimeCommand' in switched.provider, false);
+      assert.equal('runtimeArgs' in switched.provider, false);
+      raw = await readRawAgentFile(configDir, 'milo');
+      assert.equal('runtimeCommand' in (raw.provider ?? {}), false);
+
+      // Kind change WITH an override in the same update applies to the new kind.
+      const switchedWithOverride = await milo.updateProvider({
+        kind: 'kimi-cli',
+        runtimeCommand: '/bin/echo',
+      });
+      assert.equal(switchedWithOverride.provider.kind, 'kimi-cli');
+      assert.equal(switchedWithOverride.provider.runtimeCommand, '/bin/echo');
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+  }
+});
+
+// Same bar as the machine-wide Providers command: a path-shaped command must
+// be absolute and must resolve to an executable at save time (409), so a typo
+// fails the save instead of the next launch. A rejected save changes nothing.
+test('agent runtime command validation rejects relative paths and non-executables with 409', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-runtime-validate-'));
+  try {
+    await writeConfig(configDir, {
+      agents: [
+        {
+          id: 'milo',
+          homePath: 'agents/milo',
+          provider: { kind: 'codex-cli', model: 'gpt-5.6-sol' },
+        },
+      ],
+    });
+
+    await withAnimaHome(configDir, async () => {
+      const milo = agentService('milo');
+
+      const rejects = async (runtimeCommand: string, why: string) => {
+        await assert.rejects(
+          milo.updateProvider({ runtimeCommand }),
+          (error: unknown) =>
+            error instanceof Error && (error as { statusCode?: number }).statusCode === 409,
+          why,
+        );
+      };
+      await rejects('relative/wrapper', 'path-shaped command must be absolute');
+      await rejects('/nonexistent-anima-183-wrapper', 'command must resolve to an executable');
+
+      // Failed saves leave the config untouched.
+      const raw = await readRawAgentFile(configDir, 'milo');
+      assert.equal('runtimeCommand' in (raw.provider ?? {}), false);
+      assert.equal(raw.provider?.model, 'gpt-5.6-sol');
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+  }
+});
+
 async function writeConfig(configDir: string, config: TestConfig): Promise<void> {
   await mkdir(configDir, { recursive: true });
   await writeFile(

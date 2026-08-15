@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  agentProviderRuntimeArgs,
+  agentProviderRuntimeCommand,
   effectiveProviderRuntimeArgs,
   effectiveProviderRuntimeCommand,
   providerRuntimeCommandsResponse,
@@ -42,6 +44,60 @@ test('provider runtime launch settings expose catalog defaults without persistin
     }),
     ['--chrome'],
   );
+});
+
+// Task #183: agent-level overrides sit ABOVE the machine-wide layer — set
+// replaces wholesale (no concatenation), unset inherits machine-wide, which
+// falls back to the catalog default. Command and args resolve independently.
+test('agent-level runtime overrides replace machine-wide values wholesale, unset inherits', () => {
+  const machineCommands: ProviderRuntimeCommandsConfig = { 'codex-cli': 'mcodex' };
+  const machineArgs: ProviderRuntimeArgsConfig = { 'codex-cli': ['--machine-flag'] };
+
+  // Set: agent value wins over both machine-wide and catalog.
+  assert.equal(
+    agentProviderRuntimeCommand(
+      { kind: 'codex-cli', runtimeCommand: '/opt/agent-wrapper' },
+      machineCommands,
+    ),
+    '/opt/agent-wrapper',
+  );
+  assert.deepEqual(
+    agentProviderRuntimeArgs(
+      { kind: 'codex-cli', runtimeArgs: ['--agent-flag'] },
+      machineArgs,
+    ),
+    ['--agent-flag'],
+  );
+
+  // Unset: inherit the machine-wide value.
+  assert.equal(agentProviderRuntimeCommand({ kind: 'codex-cli' }, machineCommands), 'mcodex');
+  assert.deepEqual(agentProviderRuntimeArgs({ kind: 'codex-cli' }, machineArgs), ['--machine-flag']);
+
+  // Unset everywhere: catalog default command, empty args.
+  assert.equal(agentProviderRuntimeCommand({ kind: 'codex-cli' }, {}), 'codex');
+  assert.deepEqual(agentProviderRuntimeArgs({ kind: 'codex-cli' }, {}), []);
+
+  // Independence: an agent runtimeCommand alone does not shadow machine args
+  // (and vice versa), and empty agent args are an OVERRIDE (suppress machine
+  // args), not an unset.
+  assert.deepEqual(
+    agentProviderRuntimeArgs(
+      { kind: 'codex-cli', runtimeCommand: '/opt/agent-wrapper' },
+      machineArgs,
+    ),
+    ['--machine-flag'],
+  );
+  assert.equal(
+    agentProviderRuntimeCommand({ kind: 'codex-cli', runtimeArgs: ['--agent-flag'] }, machineCommands),
+    'mcodex',
+  );
+  assert.deepEqual(agentProviderRuntimeArgs({ kind: 'codex-cli', runtimeArgs: [] }, machineArgs), []);
+
+  // Resolved args are a copy, not a live reference to the config.
+  const overrides = { kind: 'codex-cli' as const, runtimeArgs: ['--agent-flag'] };
+  const resolved = agentProviderRuntimeArgs(overrides, {});
+  resolved.push('--mutated');
+  assert.deepEqual(overrides.runtimeArgs, ['--agent-flag']);
 });
 
 test('provider runtime launch save validates the executable and persists exact argv entries', async () => {

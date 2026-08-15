@@ -25,7 +25,8 @@ import {
   AgentStore,
 } from '../storage/schema/agent.store.js';
 import { mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
+import { resolveProviderExecutable } from '../provider-cli/provider-inspection.js';
 import { nowIso } from '../ids.js';
 import { writeSeedMemory } from './seed-memory.js';
 import { defaultKbRegistryService, type KbRegistryService } from '../kb/kb.service.js';
@@ -108,6 +109,7 @@ export class AgentService {
 
   async updateProvider(provider: AgentUpdateProviderRequest): Promise<AgentConfig> {
     const current = await this.getConfig();
+    await validateAgentRuntimeCommand(provider.runtimeCommand);
     const nextKind = provider.kind ?? current.provider.kind;
     // Grok: when live ACP catalog is reachable, write-time effort validation
     // follows the per-model menu (same source as the Profile UI). Probe failure
@@ -263,4 +265,18 @@ export const defaultAgentRegistryService = new AgentRegistryService();
 
 function dedupeArchivedSessions(sessions: ArchivedProviderSession[]): ArchivedProviderSession[] {
   return [...new Map(sessions.map((s) => [`${s.kind}:${s.id}`, s])).values()];
+}
+
+// Same bar as the machine-wide runtime command (ProviderRuntimeCommandService.set):
+// a path-shaped command must be absolute, and whatever is given must resolve to an
+// executable NOW, so a typo fails the save instead of the next launch. null (clear)
+// and undefined (keep) skip validation.
+async function validateAgentRuntimeCommand(command: string | null | undefined): Promise<void> {
+  if (command === undefined || command === null) return;
+  if ((command.includes('/') || command.includes('\\')) && !isAbsolute(command)) {
+    throw new AgentConfigError(409, 'Runtime command paths must be absolute');
+  }
+  if (!(await resolveProviderExecutable(command, process.env))) {
+    throw new AgentConfigError(409, `Runtime command was not found or is not executable: ${command}`);
+  }
 }

@@ -127,6 +127,7 @@ function mergeProviderSelection(
     if (update.reasoningEffort !== undefined) next.reasoningEffort = update.reasoningEffort;
     else if (currentEffort && !reasoningEffort) delete next.reasoningEffort;
     if (update.transport !== undefined) next.transport = update.transport;
+    applyRuntimeOverrides(next, update);
     return next;
   }
 
@@ -147,7 +148,27 @@ function mergeProviderSelection(
   }
   if (reasoningEffort !== undefined) next.reasoningEffort = reasoningEffort;
   if (entry.kind === 'claude-code' && update.transport !== undefined) next.transport = update.transport;
+  // A launch override written for the old provider's CLI does not transfer to a
+  // different provider: kind change drops current overrides; only values the
+  // update itself provides apply to the new kind.
+  applyRuntimeOverrides(next, update);
   return next;
+}
+
+// Agent-level launch overrides: undefined keeps, null clears (inherit the
+// machine-wide providerCommands/providerArgs), a value replaces it wholesale.
+function applyRuntimeOverrides(
+  next: Record<string, unknown>,
+  update: AgentUpdateProviderRequest,
+): void {
+  if (update.runtimeCommand !== undefined) {
+    if (update.runtimeCommand === null) delete next.runtimeCommand;
+    else next.runtimeCommand = update.runtimeCommand;
+  }
+  if (update.runtimeArgs !== undefined) {
+    if (update.runtimeArgs === null) delete next.runtimeArgs;
+    else next.runtimeArgs = [...update.runtimeArgs];
+  }
 }
 
 function mergeProviderEnv(

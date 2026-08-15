@@ -79,6 +79,30 @@ export function effectiveProviderRuntimeArgs(
   return [...(args[provider] ?? [])];
 }
 
+// Agent-level launch resolution (task #183): an agent's own runtimeCommand /
+// runtimeArgs replace the machine-wide value WHOLESALE (no concatenation);
+// unset inherits the Providers-page setting, which in turn falls back to the
+// catalog default. Command and args resolve independently.
+export interface AgentRuntimeOverrides {
+  kind: ProviderKind;
+  runtimeArgs?: ProviderRuntimeArgs;
+  runtimeCommand?: ProviderRuntimeCommand;
+}
+
+export function agentProviderRuntimeCommand(
+  provider: AgentRuntimeOverrides,
+  commands: ProviderRuntimeCommandsConfig,
+): string {
+  return provider.runtimeCommand ?? effectiveProviderRuntimeCommand(provider.kind, commands);
+}
+
+export function agentProviderRuntimeArgs(
+  provider: AgentRuntimeOverrides,
+  args: ProviderRuntimeArgsConfig,
+): string[] {
+  return provider.runtimeArgs ? [...provider.runtimeArgs] : effectiveProviderRuntimeArgs(provider.kind, args);
+}
+
 export function providerRuntimeCommandsResponse(
   commands: ProviderRuntimeCommandsConfig,
   args: ProviderRuntimeArgsConfig = {},

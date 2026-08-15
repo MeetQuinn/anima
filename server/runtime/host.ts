@@ -31,8 +31,8 @@ import { createSlackWebClient } from '../slack/client.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
 import { agentHasConnectedTransport } from '../../shared/agent-transports.js';
 import {
-  effectiveProviderRuntimeArgs,
-  effectiveProviderRuntimeCommand,
+  agentProviderRuntimeArgs,
+  agentProviderRuntimeCommand,
   type ProviderRuntimeArgsConfig,
   type ProviderRuntimeCommandsConfig,
 } from '../../shared/provider-runtime-commands.js';
@@ -280,11 +280,11 @@ export class RuntimeHost {
     const seenAgentIds = new Set<string>();
     for (const agent of agents) {
       seenAgentIds.add(agent.id);
-      const providerCommand = effectiveProviderRuntimeCommand(
-        agent.provider.kind,
-        providerCommands,
-      );
-      const args = effectiveProviderRuntimeArgs(agent.provider.kind, providerArgs);
+      // Agent-level overrides replace the machine-wide value wholesale; unset
+      // inherits. Both feed the managed-agent fingerprint, so an override
+      // change reloads exactly like a machine-wide one.
+      const providerCommand = agentProviderRuntimeCommand(agent.provider, providerCommands);
+      const args = agentProviderRuntimeArgs(agent.provider, providerArgs);
       const record = this.managedAgent(agent, providerCommand, args);
       const running = record.running;
       try {

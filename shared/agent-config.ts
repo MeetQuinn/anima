@@ -3,6 +3,7 @@
 import { z } from 'zod';
 
 import { defaultAgentHomePath } from './agent-home.js';
+import { ProviderRuntimeArgs, ProviderRuntimeCommand } from './provider-runtime-commands.js';
 import { DEFAULT_TEAM_ID } from './server-settings.js';
 import { FEISHU_PROFILE_NAME_SCOPE, type FeishuRecommendedScopeCapability } from './feishu-recommended-scopes.js';
 import {
@@ -117,6 +118,9 @@ const AgentProviderCreateRequest = z
 const AgentProviderUpdateRequest = z
   .object({
     env: z.record(z.string(), z.string().nullable()).optional(),
+    // null clears the agent-level override (inherit the machine-wide value).
+    runtimeArgs: ProviderRuntimeArgs.nullable().optional(),
+    runtimeCommand: ProviderRuntimeCommand.nullable().optional(),
     kind: z.string().trim().min(1).optional(),
     model: z.string().trim().min(1).optional(),
     reasoningEffort: z.string().trim().min(1).optional(),
@@ -283,6 +287,11 @@ export const CodexCliAgentProviderConfig = z.object({
   kind: z.literal('codex-cli'),
   model: z.string().optional(),
   providerChildIdleTimeoutMs: z.number().nonnegative().optional(),
+  // Agent-level launch overrides (aligned with the machine-wide
+  // providerCommands/providerArgs from shared/provider-runtime-commands.ts).
+  // When set they replace the machine-wide value for this agent; unset inherits.
+  runtimeArgs: ProviderRuntimeArgs.optional(),
+  runtimeCommand: ProviderRuntimeCommand.optional(),
   reasoningEffort: z.string().optional(),
   reasoningSummary: z.enum(['auto', 'concise', 'detailed', 'none']).optional(),
 });
@@ -295,6 +304,11 @@ export const ClaudeCodeAgentProviderConfig = z.object({
   kind: z.literal('claude-code'),
   model: z.string().optional(),
   providerChildIdleTimeoutMs: z.number().nonnegative().optional(),
+  // Agent-level launch overrides (aligned with the machine-wide
+  // providerCommands/providerArgs from shared/provider-runtime-commands.ts).
+  // When set they replace the machine-wide value for this agent; unset inherits.
+  runtimeArgs: ProviderRuntimeArgs.optional(),
+  runtimeCommand: ProviderRuntimeCommand.optional(),
   reasoningEffort: z.string().optional(),
   transport: ClaudeCodeTransport.optional(),
 });
@@ -307,6 +321,11 @@ export const KimiCliAgentProviderConfig = z.object({
   kind: z.literal('kimi-cli'),
   model: z.string().optional(),
   providerChildIdleTimeoutMs: z.number().nonnegative().optional(),
+  // Agent-level launch overrides (aligned with the machine-wide
+  // providerCommands/providerArgs from shared/provider-runtime-commands.ts).
+  // When set they replace the machine-wide value for this agent; unset inherits.
+  runtimeArgs: ProviderRuntimeArgs.optional(),
+  runtimeCommand: ProviderRuntimeCommand.optional(),
   reasoningEffort: z.string().optional(),
 });
 
@@ -318,6 +337,11 @@ export const GrokCliAgentProviderConfig = z.object({
   kind: z.literal('grok-cli'),
   model: z.string().optional(),
   providerChildIdleTimeoutMs: z.number().nonnegative().optional(),
+  // Agent-level launch overrides (aligned with the machine-wide
+  // providerCommands/providerArgs from shared/provider-runtime-commands.ts).
+  // When set they replace the machine-wide value for this agent; unset inherits.
+  runtimeArgs: ProviderRuntimeArgs.optional(),
+  runtimeCommand: ProviderRuntimeCommand.optional(),
   reasoningEffort: z.string().optional(),
 });
 
@@ -329,6 +353,11 @@ export const OpenCodeCliAgentProviderConfig = z.object({
   kind: z.literal('opencode-cli'),
   model: z.string().optional(),
   providerChildIdleTimeoutMs: z.number().nonnegative().optional(),
+  // Agent-level launch overrides (aligned with the machine-wide
+  // providerCommands/providerArgs from shared/provider-runtime-commands.ts).
+  // When set they replace the machine-wide value for this agent; unset inherits.
+  runtimeArgs: ProviderRuntimeArgs.optional(),
+  runtimeCommand: ProviderRuntimeCommand.optional(),
   reasoningEffort: z.string().optional(),
 });
 
