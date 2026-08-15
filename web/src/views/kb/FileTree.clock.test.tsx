@@ -18,8 +18,7 @@ import Kb from './index';
 // minute→hour boundary purely via the clock. Reverting the surface's useNow
 // wiring, or the `now` prop threading, makes it fail.
 //
-// NOTE: web vitest is not wired into CI yet (#344) - run locally via
-// `pnpm --dir web test`.
+// Runs in CI (`pnpm --dir web test`) and locally the same way.
 
 const h = vi.hoisted(() => {
   const MTIME = '2026-01-02T00:00:00.000Z';

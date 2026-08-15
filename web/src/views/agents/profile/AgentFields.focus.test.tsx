@@ -23,7 +23,7 @@ import { HomeRow } from './AgentFields';
 // asserting it comes back — otherwise it passes trivially against a dialog that
 // never moved focus at all.
 //
-// NOTE: web vitest is not wired into CI yet (issue #344) - run locally.
+// Runs in CI (`pnpm --dir web test`) and locally the same way.
 
 // The picker fetches directories and owns its own arrow-key row navigation.
 // Stubbed to two plain buttons so these cases measure the dialog lifecycle

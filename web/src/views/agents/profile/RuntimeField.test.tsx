@@ -19,7 +19,7 @@ import { RuntimeRow } from './RuntimeField';
 // drafts, and the diff builder sending only typed values — not the dropdown's
 // internals, which are third-party and exercised by real input in production.
 //
-// NOTE: web vitest is not wired into CI yet (issue #344) - run locally.
+// Runs in CI (`pnpm --dir web test`) and locally the same way.
 vi.mock('@/components/ui/select', async () => {
   const React = await import('react');
   const Ctx = React.createContext<(value: string | null) => void>(() => {});

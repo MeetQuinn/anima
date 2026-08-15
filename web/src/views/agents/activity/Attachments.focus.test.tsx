@@ -19,7 +19,7 @@ import type { OutboundFile } from '@/lib/activity-feed';
 // off the page underneath. fireEvent returns dispatchEvent's boolean, so
 // `false` means defaultPrevented.
 //
-// NOTE: web vitest is not wired into CI yet (#344) - run locally.
+// Runs in CI (`pnpm --dir web test`) and locally the same way.
 
 const file: OutboundFile = {
   fileId: 'F123',

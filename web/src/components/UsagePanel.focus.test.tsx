@@ -12,7 +12,7 @@ import UsagePanel from './UsagePanel';
 // Escape must respect topmost dialog: with a confirm layered over Providers,
 // the first Escape answers only the confirm.
 //
-// NOTE: web vitest is not wired into CI yet (issue #344) - run locally.
+// Runs in CI (`pnpm --dir web test`) and locally the same way.
 
 const api = vi.hoisted(() => ({
   applyProviderCliUpdate: vi.fn(),

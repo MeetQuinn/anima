@@ -17,7 +17,7 @@ import { BusyConfirmModal } from './restart-shared';
 // UsagePanel.tsx — files that also render ConfirmModal, and so must not be read
 // as "fully accessible" on the strength of these tests.
 //
-// NOTE: web vitest is not wired into CI yet (#344) - run locally.
+// Runs in CI (`pnpm --dir web test`) and locally the same way.
 
 function ConfirmHarness({ busy = false }: { busy?: boolean }) {
   const [open, setOpen] = useState(false);

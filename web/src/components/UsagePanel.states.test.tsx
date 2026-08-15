@@ -22,8 +22,7 @@ const runtimeCommandApi = vi.hoisted(() => ({
 // reserved for state === 'not_installed'; anything else without a parsed
 // version says `version unknown`.
 //
-// NOTE: web vitest is not wired into CI yet (#344) - run locally via
-// `pnpm --dir web test`.
+// Runs in CI (`pnpm --dir web test`) and locally the same way.
 
 vi.mock('@/api/system', () => ({
   applyProviderCliUpdate: vi.fn(),
