@@ -85,20 +85,29 @@ export default function RestartButton({ compact = false }: { compact?: boolean }
       {compact ? (
         /* Compact variant — icon + label, right-aligned in a row.
            Used by ServerPanel to keep the trigger away from the sidebar
-           footer Server button. All modal/overlay/polling logic unchanged. */
+           footer Server button. All modal/overlay/polling logic unchanged.
+           The pill keeps its compact visual; the button itself extends to the
+           44px touch target on mobile, where this is the only restart path. */
         <button
           onClick={requestRestart}
           disabled={phase === 'restarting'}
           className={[
-            'flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] transition-colors',
-            phase === 'restarting'
-              ? 'cursor-wait text-text-subtle'
-              : 'cursor-pointer border border-border-soft/60 text-text-muted hover:border-border-soft hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
+            'group flex min-h-[44px] items-center focus-visible:outline-none md:min-h-0',
+            phase === 'restarting' ? 'cursor-wait' : 'cursor-pointer',
           ].join(' ')}
           title={phase === 'failed' && error ? error : 'Restart Anima services'}
         >
-          <RefreshCw className={`h-2.5 w-2.5 ${phase === 'restarting' ? 'animate-spin' : ''}`} />
-          <span>{phase === 'restarting' ? 'Restarting…' : 'Restart'}</span>
+          <span
+            className={[
+              'flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] transition-colors',
+              phase === 'restarting'
+                ? 'text-text-subtle'
+                : 'border border-border-soft/60 text-text-muted group-hover:border-border-soft group-hover:text-text group-focus-visible:ring-1 group-focus-visible:ring-accent',
+            ].join(' ')}
+          >
+            <RefreshCw className={`h-2.5 w-2.5 ${phase === 'restarting' ? 'animate-spin' : ''}`} />
+            <span>{phase === 'restarting' ? 'Restarting…' : 'Restart'}</span>
+          </span>
         </button>
       ) : (
         /* Default variant — full-width chrome bar (sidebar footer). */

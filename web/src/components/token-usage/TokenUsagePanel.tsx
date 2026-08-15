@@ -93,13 +93,13 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
             ref={initialFocusRef}
             onClick={onClose}
             aria-label="Close token usage"
-            className="flex h-9 w-9 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            className="flex h-[44px] w-[44px] items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent md:h-9 md:w-9"
           >
             <X className="h-4 w-4" />
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-6 md:px-8 md:py-8">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:px-8 md:py-8">
           {isLoading && <div className="h-64 animate-pulse rounded-sm bg-surface-elevated" />}
           {isError && <p className="font-serif text-[14px] text-text-muted">Token usage is unavailable right now.</p>}
           {data && (

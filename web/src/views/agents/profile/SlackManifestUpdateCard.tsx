@@ -97,7 +97,7 @@ export function SlackManifestUpdateCard({ agentId }: Props) {
               <button
                 type="button"
                 onClick={() => void copyManifestUpdate()}
-                className="inline-flex items-center gap-1 rounded-sm border border-border-soft px-2 py-1 font-sans text-[11px] text-text hover:border-border hover:bg-surface"
+                className="inline-flex min-h-[44px] items-center gap-1 rounded-sm border border-border-soft px-2 py-1 font-sans text-[11px] text-text hover:border-border hover:bg-surface md:min-h-0"
               >
                 {copied ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
                 {copied ? 'Copied' : 'Copy full manifest'}
@@ -107,7 +107,7 @@ export function SlackManifestUpdateCard({ agentId }: Props) {
                   href={data.appManifestUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 font-sans text-[11px] text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+                  className="inline-flex min-h-[44px] items-center gap-1 font-sans text-[11px] text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent md:min-h-0"
                 >
                   Open App Manifest <ExternalLink className="h-3 w-3" />
                 </a>

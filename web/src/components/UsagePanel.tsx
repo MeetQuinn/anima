@@ -259,7 +259,7 @@ export default function UsagePanel({ onClose }: Props) {
                 <button
                   onClick={() => void refreshAll()}
                   disabled={fetching}
-                  className="flex h-7 w-7 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40"
+                  className="flex h-[44px] w-[44px] items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40 md:h-7 md:w-7"
                   aria-label="Refresh providers"
                   title="Refresh"
                 >
@@ -267,7 +267,7 @@ export default function UsagePanel({ onClose }: Props) {
                 </button>
                 <button
                   onClick={onClose}
-                  className="flex h-7 w-7 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  className="flex h-[44px] w-[44px] items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent md:h-7 md:w-7"
                   aria-label="Close providers panel"
                 >
                   <X className="h-3.5 w-3.5" />

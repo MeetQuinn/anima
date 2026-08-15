@@ -79,7 +79,7 @@ export default function ConfirmModal({
           'relative w-full rounded-sm border shadow-deep',
           palette.border,
           palette.bg,
-          isLarge ? 'max-w-xl p-7 pl-8' : 'mx-4 max-w-md p-6 pl-7',
+          isLarge ? 'mx-4 max-w-xl p-7 pl-8' : 'mx-4 max-w-md p-6 pl-7',
         ].join(' ')}
         onClick={(e) => e.stopPropagation()}
       >

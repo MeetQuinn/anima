@@ -164,7 +164,7 @@ function WorkspacePickerModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="mx-4 w-full max-w-2xl rounded-sm border border-border bg-surface p-5 shadow-deep"
+        className="mx-4 max-h-[90dvh] w-full max-w-2xl overflow-y-auto rounded-sm border border-border bg-surface p-5 shadow-deep"
         onClick={(e) => e.stopPropagation()}
       >
         <div id={titleId} className="mb-4 font-serif text-[16px] font-semibold text-text">

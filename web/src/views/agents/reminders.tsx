@@ -111,7 +111,7 @@ function ExpandedDetail({
                 `/agents/${agentId}/channels?c=${encodeURIComponent(reminder.provenance!.channelId)}`,
               )
             }
-            className="chrome text-[11px] uppercase tracking-[0.12em] text-text-muted underline decoration-border-soft underline-offset-4 hover:text-accent hover:decoration-accent"
+            className="chrome flex min-h-[44px] items-center text-[11px] uppercase tracking-[0.12em] text-text-muted underline decoration-border-soft underline-offset-4 hover:text-accent hover:decoration-accent md:min-h-0"
           >
             View conversation →
           </button>
@@ -119,7 +119,7 @@ function ExpandedDetail({
         {reminder.lastFiredAt && (
           <button
             onClick={onViewStream}
-            className="chrome text-[11px] uppercase tracking-[0.12em] text-text-muted underline decoration-border-soft underline-offset-4 hover:text-accent hover:decoration-accent"
+            className="chrome flex min-h-[44px] items-center text-[11px] uppercase tracking-[0.12em] text-text-muted underline decoration-border-soft underline-offset-4 hover:text-accent hover:decoration-accent md:min-h-0"
           >
             View activity stream →
           </button>

@@ -144,7 +144,7 @@ export default function ServerPanel({ onClose }: Props) {
           </span>
           <button
             onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            className="flex h-[44px] w-[44px] items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent md:h-7 md:w-7"
             aria-label="Close server panel"
           >
             <X className="h-3.5 w-3.5" />

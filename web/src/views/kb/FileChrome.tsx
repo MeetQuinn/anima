@@ -72,6 +72,9 @@ export function HeadingAnchor({ id }: { id: string }) {
     };
   }, []);
 
+  // Touch devices have no hover to reveal the anchor and the left-gutter slot
+  // sits off the text column at 375px: flow inline after the heading instead,
+  // always visible (same [@media(hover:none)] convention as CopyButton).
   return (
     <a
       href={`#${id}`}
@@ -79,7 +82,7 @@ export function HeadingAnchor({ id }: { id: string }) {
       aria-label={copied ? 'Link copied' : 'Copy link to this section'}
       title={copied ? 'Link copied!' : 'Copy link to this section'}
       contentEditable={false}
-      className="absolute right-full top-[0.1em] mr-1 inline-flex items-center px-1 text-text-subtle no-underline opacity-0 transition-opacity duration-100 hover:text-accent focus-visible:opacity-100 group-hover:opacity-100"
+      className="absolute right-full top-[0.1em] mr-1 inline-flex items-center px-1 text-text-subtle no-underline opacity-0 transition-opacity duration-100 hover:text-accent focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:static [@media(hover:none)]:ml-1 [@media(hover:none)]:mr-0 [@media(hover:none)]:px-1.5 [@media(hover:none)]:opacity-60"
     >
       <Link2 className="h-[0.7em] w-[0.7em]" strokeWidth={2.5} aria-hidden="true" />
     </a>

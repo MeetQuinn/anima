@@ -378,7 +378,7 @@ export default function Profile() {
                         target="_blank"
                         rel="noreferrer"
                         title="Slack App Settings"
-                        className="flex h-7 w-7 items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-surface-elevated hover:opacity-100"
+                        className="flex h-[44px] w-[44px] items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-surface-elevated hover:opacity-100 md:h-7 md:w-7"
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
                       </a>
@@ -387,7 +387,7 @@ export default function Profile() {
                       onClick={() => void handleSyncAvatar()}
                       disabled={syncingAvatar}
                       title="Sync avatar from Slack"
-                      className="flex h-7 w-7 items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-surface-elevated hover:opacity-100 disabled:opacity-20"
+                      className="flex h-[44px] w-[44px] items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-surface-elevated hover:opacity-100 disabled:opacity-20 md:h-7 md:w-7"
                     >
                       <RotateCcw className={`h-3.5 w-3.5 ${syncingAvatar ? 'animate-spin' : ''}`} />
                     </button>
@@ -421,7 +421,7 @@ export default function Profile() {
                       onClick={() => void handleSyncFeishuAvatar()}
                       disabled={syncingFeishuAvatar}
                       title="Sync avatar from Feishu"
-                      className="flex h-7 w-7 items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-surface-elevated hover:opacity-100 disabled:opacity-20"
+                      className="flex h-[44px] w-[44px] items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-surface-elevated hover:opacity-100 disabled:opacity-20 md:h-7 md:w-7"
                     >
                       <RotateCcw className={`h-3.5 w-3.5 ${syncingFeishuAvatar ? 'animate-spin' : ''}`} />
                     </button>
@@ -458,7 +458,7 @@ export default function Profile() {
         {/* Owner picker modal */}
         {ownerPickerOpen && slackConnected && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-page/70 backdrop-blur-sm">
-            <div className="relative w-full max-w-md rounded-sm border border-border-soft bg-surface shadow-deep">
+            <div className="relative mx-4 max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-sm border border-border-soft bg-surface shadow-deep">
               <div className="flex items-center justify-between border-b border-border-soft px-5 py-4">
                 <span className="font-serif text-[15px] font-semibold text-text">
                   {agent.owner ? 'Change owner' : 'Assign owner'}

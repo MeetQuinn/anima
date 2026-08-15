@@ -518,25 +518,31 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
 
   if (showPicker) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-page/70 backdrop-blur-sm">
-        <div className="relative w-full max-w-2xl rounded-sm border border-border-soft bg-surface shadow-deep">
-          <div className="flex items-center justify-between border-b border-border-soft px-5 py-4">
-            <span className="font-serif text-[15px] font-semibold text-text">Choose home folder</span>
-            <button
-              onClick={() => setShowPicker(false)}
-              className="flex h-8 w-8 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <div className="p-5">
-            <DirectoryPicker
-              onChoose={(dir) => {
-                setCustomParent(dir);
-                setShowPicker(false);
-              }}
-              onCancel={() => setShowPicker(false)}
-            />
+      // overflow-y-auto on the overlay (not the card) sidesteps
+      // body { overflow: hidden }: when the picker is taller than the viewport
+      // (short screens, open keyboard) the overlay scrolls instead of clipping
+      // the card at both ends behind items-center.
+      <div className="fixed inset-0 z-50 overflow-y-auto bg-page/70 backdrop-blur-sm">
+        <div className="flex min-h-full w-full items-center justify-center px-4 py-8">
+          <div className="relative w-full max-w-2xl rounded-sm border border-border-soft bg-surface shadow-deep">
+            <div className="flex items-center justify-between border-b border-border-soft px-5 py-4">
+              <span className="font-serif text-[15px] font-semibold text-text">Choose home folder</span>
+              <button
+                onClick={() => setShowPicker(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-5">
+              <DirectoryPicker
+                onChoose={(dir) => {
+                  setCustomParent(dir);
+                  setShowPicker(false);
+                }}
+                onCancel={() => setShowPicker(false)}
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -658,10 +664,12 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                   No providers detected. Install Claude Code, Codex CLI, Kimi CLI, Grok Build, or OpenCode first.
                 </p>
               ) : (
+                /* Stack on phones: three columns inside the card leave ~100px
+                   per select at 375px, truncating every provider/model name. */
                 <div
                   className={[
-                    'grid gap-2',
-                    selectedEffortOptions.length > 0 ? 'grid-cols-3' : 'grid-cols-2',
+                    'grid grid-cols-1 gap-2',
+                    selectedEffortOptions.length > 0 ? 'sm:grid-cols-3' : 'sm:grid-cols-2',
                   ].join(' ')}
                 >
                   <Select
@@ -962,27 +970,34 @@ export function AgentCreateModal({
 }) {
   const navigate = useNavigate();
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-page/70 backdrop-blur-sm">
-      <AgentCreateFlow
-        firstRun={false}
-        teams={teams}
-        defaultTeamId={defaultTeamId}
-        onClose={(createdAgentId) => {
-          onClose();
-          if (createdAgentId) navigate(`/agents/${createdAgentId}/profile`);
-        }}
-        onComplete={(id, justConnected, greetingBanner) => {
-          onClose();
-          navigate(`/agents/${id}/activity`, {
-            state: justConnected
-              ? {
-                  onboardingConnected: justConnected,
-                  feishuGreetingBanner: Boolean(greetingBanner),
-                }
-              : undefined,
-          });
-        }}
-      />
+    // overflow-y-auto on the overlay sidesteps body { overflow: hidden }: when
+    // the create form is taller than the viewport (small phones, open
+    // keyboard) the overlay scrolls; items-center alone would clip the card at
+    // BOTH ends with no way to reach the fields or the Create button. Same
+    // pattern as the first-run route's wrapper above.
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-page/70 backdrop-blur-sm">
+      <div className="flex min-h-full w-full items-center justify-center px-4 py-8">
+        <AgentCreateFlow
+          firstRun={false}
+          teams={teams}
+          defaultTeamId={defaultTeamId}
+          onClose={(createdAgentId) => {
+            onClose();
+            if (createdAgentId) navigate(`/agents/${createdAgentId}/profile`);
+          }}
+          onComplete={(id, justConnected, greetingBanner) => {
+            onClose();
+            navigate(`/agents/${id}/activity`, {
+              state: justConnected
+                ? {
+                    onboardingConnected: justConnected,
+                    feishuGreetingBanner: Boolean(greetingBanner),
+                  }
+                : undefined,
+            });
+          }}
+        />
+      </div>
     </div>
   );
 }
