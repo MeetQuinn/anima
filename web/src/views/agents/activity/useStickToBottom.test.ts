@@ -477,3 +477,195 @@ describe('useStickToBottom', () => {
     expect(view.result.current.stuck).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Gesture window: while a user gesture is plausibly in progress, bottom pins
+// are deferred, never written. Without it, a live agent's near-continuous
+// growth ticks re-pin the bottom while the user is still inside the 80px
+// re-stick zone — resetting the distance they must escape (and on iOS also
+// cancelling the native pan gesture), i.e. "can't scroll up at all on mobile
+// while the agent works".
+// ---------------------------------------------------------------------------
+describe('useStickToBottom gesture window', () => {
+  function settle(ms = 250) {
+    act(() => {
+      vi.advanceTimersByTime(ms);
+    });
+  }
+
+  it('growth landing mid-drag is deferred, and the drag escapes to reading', () => {
+    const { container, view } = setup({ settling: false });
+    flush(1); // stuck; scrollHeight 1000, clientHeight 500, scrollTop 500
+    expect(view.result.current.stuck).toBe(true);
+
+    fire(container, 'touchstart');
+    container.scrollTop = 460; // gap 40, inside the re-stick zone
+    fire(container, 'scroll');
+    // Live agent output lands before the finger covers 80px.
+    growTo(container, 1100);
+    expect(container.scrollTop).toBe(460); // NOT yanked to 600
+    expect(view.result.current.stuck).toBe(true);
+
+    // The drag continues; growth widened the gap, so this crosses the threshold.
+    container.scrollTop = 420; // gap 180
+    fire(container, 'scroll');
+    expect(view.result.current.stuck).toBe(false); // reading
+
+    growTo(container, 1300);
+    expect(container.scrollTop).toBe(420); // reader stays put
+  });
+
+  it('a deferred pin is applied at gesture settle when still near the bottom', () => {
+    const { container, view } = setup({ settling: false });
+    flush(1); // stuck at 500
+
+    fire(container, 'touchstart');
+    container.scrollTop = 460; // gap 40
+    fire(container, 'scroll');
+    growTo(container, 1020); // deferred; gap now 60, still near bottom
+    expect(container.scrollTop).toBe(460);
+    fire(container, 'touchend');
+    settle();
+    expect(container.scrollTop).toBe(520); // pinned to the new bottom
+    expect(view.result.current.stuck).toBe(true);
+  });
+
+  it('an escape that only settles after lift-off drops to reading, never yanks', () => {
+    const { container, view } = setup({ settling: false });
+    flush(1); // stuck at 500
+
+    fire(container, 'touchstart');
+    container.scrollTop = 460; // gap 40 — the user DID move upward
+    fire(container, 'scroll');
+    growTo(container, 1100); // deferred; gap now 140, beyond the threshold
+    fire(container, 'touchend');
+    settle();
+    // The user moved upward and ended beyond the threshold: reading, no pin.
+    expect(container.scrollTop).toBe(460);
+    expect(view.result.current.stuck).toBe(false);
+  });
+
+  it('tap during streaming: growth is deferred, then pinned (no upward move)', () => {
+    const { container, view } = setup({ settling: false });
+    flush(1); // stuck at 500
+
+    fire(container, 'touchstart');
+    fire(container, 'touchend'); // a tap, no scroll at all
+    growTo(container, 1200); // lands inside the window
+    expect(container.scrollTop).toBe(500); // deferred while the window is open
+    settle();
+    // The user never moved upward: still following, even though the gap (200)
+    // exceeded the threshold purely from growth below.
+    expect(container.scrollTop).toBe(700);
+    expect(view.result.current.stuck).toBe(true);
+  });
+
+  it('a held finger keeps the window open past the settle timeout', () => {
+    const { container, view } = setup({ settling: false });
+    flush(1); // stuck at 500
+
+    fire(container, 'touchstart');
+    container.scrollTop = 460;
+    fire(container, 'scroll');
+    growTo(container, 1020); // deferred
+    settle(); // timeout fires while the finger is still down -> stays open
+    expect(container.scrollTop).toBe(460); // still not pinned
+    fire(container, 'touchend');
+    settle();
+    expect(container.scrollTop).toBe(520); // gap 60 <= threshold -> pinned
+    expect(view.result.current.stuck).toBe(true);
+  });
+
+  it('wheel-up inside the threshold defers growth; continued wheel escapes', () => {
+    const { container, view } = setup({ settling: false });
+    flush(1); // stuck at 500
+
+    fire(container, 'wheel', { deltaY: -100 });
+    container.scrollTop = 470; // gap 30
+    fire(container, 'scroll');
+    growTo(container, 1100); // deferred
+    expect(container.scrollTop).toBe(470); // NOT yanked
+    container.scrollTop = 400; // gap 200
+    fire(container, 'scroll');
+    expect(view.result.current.stuck).toBe(false); // reading
+
+    growTo(container, 1300);
+    expect(container.scrollTop).toBe(400);
+  });
+
+  it('scroll-only upward movement (scrollbar, keyboard) arms intent but never opens the window', () => {
+    // Layout can fake a scrollTop decrease (fold-collapse clamp + same-frame
+    // regrowth), so bare scroll movement must not defer pins. A scrollbar drag
+    // still escapes: one event that crosses the threshold flips to reading.
+    const { container, view } = setup({ settling: false });
+    flush(1); // stuck at 500
+
+    container.scrollTop = 460; // upward movement with no touch/wheel event
+    fire(container, 'scroll');
+    growTo(container, 1100); // NOT deferred: pins immediately (no real input seen)
+    expect(container.scrollTop).toBe(600);
+    fire(container, 'scroll');
+    container.scrollTop = 400; // one big jump crosses the threshold
+    fire(container, 'scroll');
+    expect(view.result.current.stuck).toBe(false); // reading
+
+    growTo(container, 1300);
+    expect(container.scrollTop).toBe(400); // reader stays put
+  });
+
+  it('a viewport change mid-touch is deferred like growth', () => {
+    const { container, view } = setup({ settling: false });
+    flush(1); // stuck at 500
+
+    fire(container, 'touchstart');
+    container.scrollTop = 460; // gap 40
+    fire(container, 'scroll');
+    resizeViewportBy(container, -20); // banner mounts while the finger is down
+    expect(container.scrollTop).toBe(460); // not written into the gesture
+    fire(container, 'touchend');
+    settle();
+    expect(container.scrollTop).toBe(520); // gap 60 <= threshold -> pinned
+    expect(view.result.current.stuck).toBe(true);
+  });
+
+  it('a content-shrink clamp (fold collapse) is not user input; following continues', () => {
+    const { container, view } = setup({ settling: false });
+    flush(1); // stuck at 500
+
+    // The live fold auto-collapses: content shrinks and the browser clamps
+    // scrollTop, firing a scroll event that reads as a decrease landing exactly
+    // at the bottom (gap 0). That clamp must not open the gesture window.
+    container.scrollHeight = 900;
+    container.scrollTop = 999999; // mock setter clamps to 400
+    fire(container, 'scroll');
+    act(() => latestRO().triggerFor(currentContent)); // RO sees the shrink
+
+    // The next growth must follow IMMEDIATELY (no deferral, no reading flip).
+    growTo(container, 1000);
+    expect(container.scrollTop).toBe(500);
+    expect(view.result.current.stuck).toBe(true);
+  });
+
+  it('growth with NO gesture in progress still pins immediately', () => {
+    const { container } = setup({ settling: false });
+    flush(1); // stuck at 500
+    growTo(container, 1400);
+    expect(container.scrollTop).toBe(900); // synchronous follow, no deferral
+  });
+
+  it('feed switch mid-gesture resets the window; no deferred pin leaks across', () => {
+    const { container, view, rerender } = setup({ settling: false });
+    flush(1); // stuck at 500
+
+    fire(container, 'touchstart');
+    container.scrollTop = 460;
+    fire(container, 'scroll');
+    growTo(container, 1100); // deferred under agent-a's gesture
+    rerender({ feedKey: 'agent-b' }); // switch pins to bottom + resets
+    expect(container.scrollTop).toBe(600);
+    settle(); // the stale gesture timer must be gone
+    expect(container.scrollTop).toBe(600); // no late close-time write
+    flush(1);
+    expect(view.result.current.stuck).toBe(true);
+  });
+});
