@@ -186,7 +186,7 @@ export function FileOverflowMenu({
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-md border border-border-soft bg-surface-raised shadow-lg"
+          className="absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-sm border border-border-soft bg-surface shadow-deep"
         >
           {size !== undefined && (
             <div className="border-b border-border-soft px-3 py-1.5 font-sans text-[11px] text-text-subtle">

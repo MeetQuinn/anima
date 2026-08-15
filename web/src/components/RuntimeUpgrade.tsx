@@ -371,7 +371,7 @@ function FailedCard({
           <span className="font-serif text-[14px] font-medium text-text">
             Update failed: still on{' '}
             <span className="font-mono text-[12px] text-text-muted">{currentVersion}</span>
-{' '}· nothing else changed
+            {' · nothing else changed'}
           </span>
         )}
       </div>
