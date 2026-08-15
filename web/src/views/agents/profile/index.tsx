@@ -34,6 +34,7 @@ import { FeishuConnectStepper } from './FeishuConnectStepper';
 import { FeishuScopeStatusCard } from './FeishuScopeStatusCard';
 import { SlackManifestUpdateCard } from './SlackManifestUpdateCard';
 import { SkillsSection } from './SkillsSection';
+import { ProfileActionsRail } from './ActionsRail';
 import { AgentUsageSection } from '@/components/token-usage/AgentUsageSection';
 import { OwnerPickerForm } from './OwnerPickerForm';
 import { agentFeishuConnected, agentHasConnectedTransport, agentSlackConnected } from '@shared/agent-transports';
@@ -230,7 +231,11 @@ export default function Profile() {
 
   return (
     <div ref={containerRef} className="absolute inset-0 overflow-y-auto bg-surface px-6 py-8 md:px-10 md:py-8">
-      <div className="max-w-3xl">
+      {/* Two columns at lg: content keeps its measure; the Actions rail
+          (task #185) rides the empty right space. Below lg the rail hides and
+          the header's ⋯ menu remains the only lifecycle surface. */}
+      <div className="flex gap-12">
+        <div className="min-w-0 max-w-3xl flex-1">
         {applyNotice && (
           <div className="relative mb-8 rounded-sm border border-health-warn/30 bg-health-warn-soft px-4 py-3 pl-5">
             <span aria-hidden className="absolute left-0 top-2 bottom-2 w-px bg-health-warn/60" />
@@ -520,6 +525,10 @@ export default function Profile() {
         <Section title="Skills">
           <SkillsSection agentId={agentId} homePath={agent.homePath ?? ''} />
         </Section>
+        </div>
+        <div className="hidden lg:block">
+          <ProfileActionsRail />
+        </div>
       </div>
     </div>
   );

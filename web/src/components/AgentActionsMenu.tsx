@@ -2,6 +2,10 @@
  * ⋯ overflow menu for per-agent lifecycle actions — Disable/Enable, Rotate
  * session, Remove agent. Used in both AgentHeader (desktop) and MobileTopBar.
  *
+ * Action logic (gating, confirms, side effects) lives in `useAgentActions`,
+ * shared with the desktop Profile ActionsRail (task #185) so the two surfaces
+ * cannot drift. This file owns only the dropdown chrome.
+ *
  * Renders the trigger button inline; confirm overlay modals use `fixed` so
  * they appear above everything regardless of containing context.
  */
@@ -10,7 +14,6 @@ import {
   AlertTriangle,
   Clipboard,
   ClipboardCheck,
-  ExternalLink,
   MoreHorizontal,
   Power,
   PowerOff,
@@ -18,28 +21,8 @@ import {
   RotateCcw,
   Trash2,
 } from 'lucide-react';
-import {
-  disableAgent,
-  enableAgent,
-  fetchAgentDiagnostics,
-  removeAgent,
-  restartAgent,
-  rotateAgentSession,
-  refreshDashboardData,
-} from '@/api/agents';
-import { useParams, useNavigate } from 'react-router-dom';
 import { Button } from './ui/button';
-import {
-  agentHealthBlocksRestart,
-  agentHealthProviderAction,
-  agentHealthSummaryText,
-} from './AgentHealthIndicator';
-import { useConfirm } from '@/hooks/useConfirm';
-import { formatAgentDiagnostics } from '@/lib/diagnostics';
-import { copyTextToClipboard } from '@/lib/clipboard';
-import { useAgents, useAgentStatuses } from '@/hooks/useAgentDirectory';
-
-
+import { useAgentActions } from '@/hooks/useAgentActions';
 
 // ── AgentActionsMenu ──────────────────────────────────────────────────────────
 
@@ -51,18 +34,25 @@ import { useAgents, useAgentStatuses } from '@/hooks/useAgentDirectory';
  * `buttonClassName` lets callers tweak sizing for desktop vs mobile contexts.
  */
 export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?: string }) {
-  const { data: agents = [] } = useAgents();
-  const { data: statuses = [] } = useAgentStatuses({ poll: true });
-  const { agentId } = useParams<{ agentId: string }>();
-  const navigate = useNavigate();
   const menuRef = useRef<HTMLDivElement>(null);
-  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { confirm, modal } = useConfirm();
-
   const [menuOpen, setMenuOpen] = useState(false);
-  const [copyingDiagnostics, setCopyingDiagnostics] = useState(false);
-  const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
-  const [toggling, setToggling] = useState(false);
+  const {
+    agent,
+    enabled,
+    running,
+    toggling,
+    copyingDiagnostics,
+    diagnosticsCopied,
+    providerAction,
+    restartBlocked,
+    toggleEnabled,
+    copyDiagnostics,
+    confirmRotateSession,
+    confirmRestart,
+    confirmRemove,
+    goToProviderSettings,
+    modal,
+  } = useAgentActions();
 
   // Click-outside to close the dropdown.
   useEffect(() => {
@@ -76,65 +66,7 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
     return () => document.removeEventListener('mousedown', handle);
   }, [menuOpen]);
 
-  useEffect(() => () => {
-    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
-  }, []);
-
-  if (!agentId) return null;
-  const agent = agents.find((a) => a.id === agentId);
   if (!agent) return null;
-  const enabled = agent.enabled !== false;
-  // A non-empty Feishu appId means the user created a Feishu bot app during
-  // onboarding. Removing the agent wipes the local config (appId included) but
-  // cannot delete the app on Feishu's side — there is no API for that — so the
-  // remove dialog surfaces a deep-link to that exact app's console page.
-  // Route the console domain by tenant brand silently (never shown to the user);
-  // the visible label always says "Feishu console" per our copy red line.
-  const feishuAppId = agent.feishu?.appId?.trim();
-  const feishuConsoleUrl = feishuAppId
-    ? `https://${
-        agent.feishu?.ownerTenantBrand === 'lark' ? 'open.larksuite.com' : 'open.feishu.cn'
-      }/app/${encodeURIComponent(feishuAppId)}`
-    : undefined;
-  const status = statuses.find((candidate) => candidate.agentId === agentId);
-  const running = Boolean(status?.currentItemId);
-  const health = status?.health;
-  const healthSummary = agentHealthSummaryText(health);
-  const providerAction = agentHealthProviderAction(health);
-  const restartBlocked = agentHealthBlocksRestart(health);
-
-  async function handleToggleEnabled(nextEnabled: boolean) {
-    if (!agentId || toggling) return;
-    setToggling(true);
-    try {
-      await (nextEnabled ? enableAgent(agentId) : disableAgent(agentId));
-      refreshDashboardData();
-    } catch {
-      // Error is surfaced by the caller if needed; this path is for the
-      // instant enable case that skips the confirm modal.
-    } finally {
-      setToggling(false);
-    }
-  }
-
-  async function handleCopyDiagnostics() {
-    if (!agentId || copyingDiagnostics) return;
-    setCopyingDiagnostics(true);
-    try {
-      const diagnostics = await fetchAgentDiagnostics(agentId);
-      await copyTextToClipboard(formatAgentDiagnostics(diagnostics));
-      setDiagnosticsCopied(true);
-      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
-      copiedTimerRef.current = setTimeout(() => {
-        setDiagnosticsCopied(false);
-        copiedTimerRef.current = null;
-      }, 2500);
-    } catch (error) {
-      console.error('[AgentActionsMenu] failed to copy diagnostics', error);
-    } finally {
-      setCopyingDiagnostics(false);
-    }
-  }
 
   return (
     <>
@@ -173,7 +105,7 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
                   className="flex min-h-[44px] w-full items-center gap-2.5 px-3 text-left font-sans text-[13px] text-text-muted hover:bg-surface-elevated hover:text-text disabled:opacity-50"
                   onClick={() => {
                     setMenuOpen(false);
-                    void handleToggleEnabled(false);
+                    void toggleEnabled(false);
                   }}
                 >
                   <PowerOff className="h-3.5 w-3.5 shrink-0" />
@@ -186,7 +118,7 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
                 className="flex min-h-[44px] w-full items-center gap-2.5 px-3 text-left font-sans text-[13px] text-text-muted hover:bg-surface-elevated hover:text-text disabled:opacity-50"
                 onClick={() => {
                   setMenuOpen(false);
-                  void handleToggleEnabled(true);
+                  void toggleEnabled(true);
                 }}
               >
                 <Power className="h-3.5 w-3.5 shrink-0" />
@@ -198,17 +130,7 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
               className="flex min-h-[44px] w-full items-center gap-2.5 px-3 text-left font-sans text-[13px] text-text-muted hover:bg-surface-elevated hover:text-text"
               onClick={() => {
                 setMenuOpen(false);
-                confirm({
-                  title: 'Rotate primary session?',
-                  description: 'The current work keeps running. Future work starts fresh, and the current provider session is archived.',
-                  variant: 'warn',
-                  confirmLabel: 'Confirm',
-                  busyLabel: 'Rotating…',
-                  onConfirm: async () => {
-                    await rotateAgentSession(agentId);
-                    refreshDashboardData();
-                  },
-                });
+                confirmRotateSession();
               }}
             >
               <RotateCcw className="h-3.5 w-3.5 shrink-0" />
@@ -226,7 +148,7 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
                 className="flex min-h-[44px] w-full items-start gap-2.5 px-3 py-2 text-left font-sans text-[13px] text-text-muted hover:bg-surface-elevated hover:text-text"
                 onClick={() => {
                   setMenuOpen(false);
-                  navigate(`/agents/${agentId}/profile`);
+                  goToProviderSettings();
                 }}
               >
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-health-error" />
@@ -244,29 +166,7 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
                 className="flex min-h-[44px] w-full items-center gap-2.5 px-3 text-left font-sans text-[13px] text-text-muted hover:bg-surface-elevated hover:text-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-muted"
                 onClick={() => {
                   setMenuOpen(false);
-                  confirm({
-                    title: 'Restart this agent?',
-                    description: (
-                      <>
-                        Use this only if the agent is hung. It will be forced to stop and start over
-                        immediately. Any current work is dropped and is not retried, so re-run it
-                        manually afterward. Memory, notes, and config are kept; queued work stays
-                        queued.
-                        {healthSummary && (
-                          <span className="mt-2 block font-sans text-[12px] text-text-muted">
-                            Current health: {healthSummary}
-                          </span>
-                        )}
-                      </>
-                    ),
-                    variant: 'warn',
-                    confirmLabel: 'Restart',
-                    busyLabel: 'Restarting…',
-                    onConfirm: async () => {
-                      await restartAgent(agentId);
-                      refreshDashboardData();
-                    },
-                  });
+                  confirmRestart();
                 }}
               >
                 <RefreshCw className="h-3.5 w-3.5 shrink-0" />
@@ -277,7 +177,7 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
               disabled={copyingDiagnostics}
               className="flex min-h-[44px] w-full items-center gap-2.5 px-3 text-left font-sans text-[13px] text-text-muted hover:bg-surface-elevated hover:text-text disabled:opacity-50"
               onClick={() => {
-                void handleCopyDiagnostics();
+                void copyDiagnostics();
               }}
             >
               {diagnosticsCopied ? (
@@ -294,39 +194,7 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
               className="flex min-h-[44px] w-full items-center gap-2.5 px-3 text-left font-sans text-[13px] text-health-error hover:bg-health-error-soft"
               onClick={() => {
                 setMenuOpen(false);
-                confirm({
-                  title: 'Remove this agent?',
-                  description: feishuConsoleUrl ? (
-                    <>
-                      <p>
-                        The agent will stop running and its local Anima config will be deleted. Home
-                        files are not affected.
-                      </p>
-                      <p className="mt-2">
-                        {"Removing this agent won't delete the Feishu bot you created. To remove it completely, delete the app in the Feishu console."}
-                      </p>
-                      <a
-                        href={feishuConsoleUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-2 inline-flex items-center gap-1 font-sans text-[13px] text-text underline decoration-text-subtle/40 underline-offset-2 transition-colors hover:decoration-text/40"
-                      >
-                        Open this app in the Feishu console
-                        <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-                      </a>
-                    </>
-                  ) : (
-                    'The agent will stop running and its local Anima config will be deleted. Home files are not affected.'
-                  ),
-                  variant: 'error',
-                  confirmLabel: 'Remove',
-                  busyLabel: 'Removing…',
-                  confirmVariant: 'destructive',
-                  onConfirm: async () => {
-                    await removeAgent(agentId);
-                    navigate('/');
-                  },
-                });
+                confirmRemove();
               }}
             >
               <Trash2 className="h-4 w-4 shrink-0" />
