@@ -118,6 +118,7 @@ const AgentProviderCreateRequest = z
 const AgentProviderUpdateRequest = z
   .object({
     env: z.record(z.string(), z.string().nullable()).optional(),
+    fastMode: z.boolean().optional(),
     // null clears the agent-level override (inherit the machine-wide value).
     runtimeArgs: ProviderRuntimeArgs.nullable().optional(),
     runtimeCommand: ProviderRuntimeCommand.nullable().optional(),
@@ -300,6 +301,7 @@ export type CodexCliAgentProviderConfig = z.infer<typeof CodexCliAgentProviderCo
 
 export const ClaudeCodeAgentProviderConfig = z.object({
   env: z.record(z.string(), z.string()).optional(),
+  fastMode: z.boolean().optional(),
   idleTimeoutMs: z.number().optional(),
   kind: z.literal('claude-code'),
   model: z.string().optional(),

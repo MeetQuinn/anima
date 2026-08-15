@@ -5,6 +5,7 @@ import type { AgentRuntimeInput, ClaudeCodeAgentProviderConfig } from './contrac
 
 export const CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW = 272000;
 export const CLAUDE_DISABLE_AUTO_MEMORY = '1';
+export const CLAUDE_FAST_MODE_SETTINGS = JSON.stringify({ fastMode: true });
 export const CLAUDE_DISALLOWED_TOOLS = [
   'AskUserQuestion',
   'CronCreate',
@@ -35,6 +36,10 @@ export function claudeCommonArgs(
   if (config.reasoningEffort) args.push('--effort', config.reasoningEffort);
   if (systemPromptFilePath) args.push('--system-prompt-file', systemPromptFilePath);
   return args;
+}
+
+export function claudeFastModeArgs(config: ClaudeCodeAgentProviderConfig): string[] {
+  return config.fastMode ? ['--settings', CLAUDE_FAST_MODE_SETTINGS] : [];
 }
 
 export function claudeAutoCompactWindowFor(

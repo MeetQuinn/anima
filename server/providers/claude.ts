@@ -3,6 +3,7 @@ import { classifyProviderFailureReason } from './provider-failure.js';
 import { type RunningChildProcess } from './child-process.js';
 import {
   claudeCommonArgs,
+  claudeFastModeArgs,
   claudeProviderEnv,
   writeSystemPromptFile,
 } from './claude-launch.js';
@@ -187,7 +188,9 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
     ];
     if (providerSession) args.push('--resume', providerSession.id);
     args.push(...claudeCommonArgs(this.config, systemPromptFilePath));
-    return [...this.providerArgs, ...args];
+    // Raw Runtime Arguments remain the advanced override when they also set
+    // `--settings`: Claude Code uses the last CLI settings source wholesale.
+    return [...claudeFastModeArgs(this.config), ...this.providerArgs, ...args];
   }
 }
 

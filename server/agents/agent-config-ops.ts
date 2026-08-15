@@ -119,6 +119,9 @@ function mergeProviderSelection(
     if (update.transport !== undefined && current.kind !== 'claude-code') {
       throw new AgentConfigError(400, `unsupported transport for ${current.kind}: ${update.transport}`);
     }
+    if (update.fastMode !== undefined && current.kind !== 'claude-code') {
+      throw new AgentConfigError(400, `unsupported fastMode for ${current.kind}`);
+    }
     validateProviderShape(current.kind, model, reasoningEffort, '', availability);
 
     const { env: _env, ...rest } = current;
@@ -127,6 +130,7 @@ function mergeProviderSelection(
     if (update.reasoningEffort !== undefined) next.reasoningEffort = update.reasoningEffort;
     else if (currentEffort && !reasoningEffort) delete next.reasoningEffort;
     if (update.transport !== undefined) next.transport = update.transport;
+    if (update.fastMode !== undefined) next.fastMode = update.fastMode;
     applyRuntimeOverrides(next, update);
     return next;
   }
@@ -136,6 +140,9 @@ function mergeProviderSelection(
   if (!entry) throw new AgentConfigError(400, `unsupported provider kind ${update.kind}`);
   if (update.transport !== undefined && entry.kind !== 'claude-code') {
     throw new AgentConfigError(400, `unsupported transport for ${entry.kind}: ${update.transport}`);
+  }
+  if (update.fastMode !== undefined && entry.kind !== 'claude-code') {
+    throw new AgentConfigError(400, `unsupported fastMode for ${entry.kind}`);
   }
   const model = update.model ?? entry.defaultModel;
   const reasoningEffort = update.reasoningEffort ?? defaultReasoningEffort(entry.kind, model);
@@ -148,6 +155,7 @@ function mergeProviderSelection(
   }
   if (reasoningEffort !== undefined) next.reasoningEffort = reasoningEffort;
   if (entry.kind === 'claude-code' && update.transport !== undefined) next.transport = update.transport;
+  if (entry.kind === 'claude-code' && update.fastMode !== undefined) next.fastMode = update.fastMode;
   // A launch override written for the old provider's CLI does not transfer to a
   // different provider: kind change drops current overrides; only values the
   // update itself provides apply to the new kind.

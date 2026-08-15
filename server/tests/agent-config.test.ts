@@ -588,6 +588,61 @@ test('agent provider runtime overrides: set, keep, clear, and drop on kind chang
   }
 });
 
+test('agent Claude fast mode opt-in persists, updates, and stays Claude-only', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-claude-fast-mode-'));
+  try {
+    await writeConfig(configDir, {
+      agents: [
+        {
+          id: 'milo',
+          homePath: 'agents/milo',
+          provider: { kind: 'claude-code', model: 'fable' },
+        },
+      ],
+    });
+
+    await withAnimaHome(configDir, async () => {
+      const milo = agentService('milo');
+
+      const enabled = await milo.updateProvider({ fastMode: true });
+      assert.equal(enabled.provider.kind, 'claude-code');
+      assert.equal(enabled.provider.fastMode, true);
+      let raw = await readRawAgentFile(configDir, 'milo');
+      assert.equal(raw.provider?.kind, 'claude-code');
+      assert.equal(raw.provider?.fastMode, true);
+      const redacted = redactAgentConfig(enabled);
+      assert.equal(redacted.provider.kind, 'claude-code');
+      assert.equal(redacted.provider.fastMode, true);
+
+      const kept = await milo.updateProvider({ reasoningEffort: 'xhigh' });
+      assert.equal(kept.provider.kind, 'claude-code');
+      assert.equal(kept.provider.fastMode, true);
+
+      const disabled = await milo.updateProvider({ fastMode: false });
+      assert.equal(disabled.provider.kind, 'claude-code');
+      assert.equal(disabled.provider.fastMode, false);
+
+      const switched = await milo.updateProvider({ kind: 'codex-cli' });
+      assert.equal(switched.provider.kind, 'codex-cli');
+      assert.equal('fastMode' in switched.provider, false);
+      raw = await readRawAgentFile(configDir, 'milo');
+      assert.equal('fastMode' in (raw.provider ?? {}), false);
+
+      await assert.rejects(
+        milo.updateProvider({ fastMode: true }),
+        /unsupported fastMode for codex-cli/,
+      );
+      assert.equal((await milo.getConfig()).provider.kind, 'codex-cli');
+
+      const switchedBack = await milo.updateProvider({ fastMode: true, kind: 'claude-code' });
+      assert.equal(switchedBack.provider.kind, 'claude-code');
+      assert.equal(switchedBack.provider.fastMode, true);
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+  }
+});
+
 // Same bar as the machine-wide Providers command: a path-shaped command must
 // be absolute and must resolve to an executable at save time (409), so a typo
 // fails the save instead of the next launch. A rejected save changes nothing.
