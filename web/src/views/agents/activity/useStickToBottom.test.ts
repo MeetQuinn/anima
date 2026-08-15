@@ -530,19 +530,61 @@ describe('useStickToBottom gesture window', () => {
     expect(view.result.current.stuck).toBe(true);
   });
 
-  it('an escape that only settles after lift-off drops to reading, never yanks', () => {
+  it('a drag that never leaves the threshold resumes following at settle', () => {
     const { container, view } = setup({ settling: false });
     flush(1); // stuck at 500
 
     fire(container, 'touchstart');
-    container.scrollTop = 460; // gap 40 — the user DID move upward
+    container.scrollTop = 460; // gap 40 — within the threshold, not an escape
     fire(container, 'scroll');
-    growTo(container, 1100); // deferred; gap now 140, beyond the threshold
+    growTo(container, 1100); // deferred; the finger is still notionally engaged
     fire(container, 'touchend');
     settle();
-    // The user moved upward and ended beyond the threshold: reading, no pin.
-    expect(container.scrollTop).toBe(460);
+    // The mode never left `stuck` (40px is noise by the threshold contract),
+    // so the owed pin lands once input is quiet. The finger is off the glass
+    // by now — this is follow-mode continuing, not a yank.
+    expect(container.scrollTop).toBe(600);
+    expect(view.result.current.stuck).toBe(true);
+  });
+
+  it('wheel: a reversal back to the bottom supersedes the earlier upward history', () => {
+    // Milo's gate repro on 3051c93f: up -> reading -> back to bottom (stuck)
+    // -> deferred growth -> settle. The user's LATEST decision was "back at
+    // the bottom", so the owed pin must land and the mode must stay stuck.
+    const { container, view } = setup({ settling: false });
+    flush(1); // stuck at 500
+
+    fire(container, 'wheel', { deltaY: -120 });
+    container.scrollTop = 350; // gap 150 -> reading
+    fire(container, 'scroll');
     expect(view.result.current.stuck).toBe(false);
+    container.scrollTop = 500; // back to the bottom -> re-stick
+    fire(container, 'scroll');
+    expect(view.result.current.stuck).toBe(true);
+    growTo(container, 1200); // deferred: the window is still open
+    expect(container.scrollTop).toBe(500);
+    settle();
+    expect(container.scrollTop).toBe(700); // owed pin lands
+    expect(view.result.current.stuck).toBe(true);
+  });
+
+  it('touch: a drag that reverses to the bottom before lift is pinned at settle', () => {
+    const { container, view } = setup({ settling: false });
+    flush(1); // stuck at 500
+
+    fire(container, 'touchstart');
+    container.scrollTop = 350; // gap 150 -> reading
+    fire(container, 'scroll');
+    expect(view.result.current.stuck).toBe(false);
+    container.scrollTop = 500; // reverses back down to the bottom
+    fire(container, 'scroll');
+    expect(view.result.current.stuck).toBe(true);
+    growTo(container, 1200); // deferred while the finger is down
+    expect(container.scrollTop).toBe(500);
+    fire(container, 'touchend');
+    settle();
+    expect(container.scrollTop).toBe(700);
+    expect(view.result.current.stuck).toBe(true);
   });
 
   it('tap during streaming: growth is deferred, then pinned (no upward move)', () => {

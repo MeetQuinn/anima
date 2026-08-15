@@ -44,10 +44,12 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 // must escape, and on iOS also cancelling the native pan gesture outright. The
 // reported symptom was "can't scroll up at all on mobile while the agent works".
 // The window closes once input has settled (no scroll/touch/wheel activity for
-// GESTURE_SETTLE_MS and no finger down); at close, a deferred pin is applied iff
-// still at/near the bottom, otherwise the mode drops to `reading`. The window is
-// input state, not a fourth mode: modes still decide policy; the window only
-// defers writes.
+// GESTURE_SETTLE_MS and no finger down); at close, the owed pin is applied iff
+// the MODE still follows the bottom (`stuck`/`initialPin`). The mode is the
+// user's latest threshold decision, updated per scroll event — including a
+// reversal back to the bottom mid-gesture — so no separate gesture history is
+// kept. The window is input state, not a fourth mode: modes still decide
+// policy; the window only defers writes.
 //
 // Non-goal (documented, intentional): a NON-prepend above-viewport reflow of
 // already-loaded content while `reading` is treated as bottom-growth (no scroll
@@ -160,12 +162,8 @@ export function useStickToBottom({
   // the settle timeout.
   const touchDownRef = useRef(false);
   // Growth (or a viewport change) arrived while the window was open; a pin is
-  // owed and gets applied at window close iff still at/near the bottom.
+  // owed and gets applied at window close iff the mode still follows the bottom.
   const pinMissedRef = useRef(false);
-  // The user actually moved UPWARD at some point during the open window. At
-  // close this separates "escaped upward" (drop to reading) from "content grew
-  // below a user who never moved" (a tap, a held finger — still following, pin).
-  const gestureScrolledUpRef = useRef(false);
   // The settle timer driving window close.
   const gestureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Last scrollTop seen by the scroll listener, to detect upward movement.
@@ -236,25 +234,25 @@ export function useStickToBottom({
     // without another scroll event) -> the user is reading, never yank.
     const closeGestureWindow = () => {
       gestureActiveRef.current = false;
-      const scrolledUp = gestureScrolledUpRef.current;
-      gestureScrolledUpRef.current = false;
       if (!pinMissedRef.current) return;
       pinMissedRef.current = false;
+      // The MODE already encodes the user's latest threshold decision — it is
+      // updated on every scroll event, including a reversal back to the bottom
+      // mid-gesture — so it alone decides the owed pin. Following modes absorb
+      // the deferred growth; `reading` leaves the reader exactly where they
+      // stopped. (An earlier revision kept a sticky scrolled-up flag here; a
+      // gesture that went up and then deliberately returned to the bottom
+      // closed into `reading` because the flag outlived the reversal.)
       const m = modeRef.current;
-      if (m !== 'stuck' && m !== 'initialPin') return;
-      if (bottomGap(el) <= BOTTOM_THRESHOLD || !scrolledUp) {
+      if (m === 'stuck' || m === 'initialPin') {
         scrollToBottom(el);
         lastScrollTopRef.current = el.scrollTop;
-      } else {
-        userIntentRef.current = false;
-        setMode('reading');
       }
     };
     // Open/refresh: any plausible user input restarts the settle timer. While a
     // finger is down the window stays open unconditionally; touchend restarts
     // the timer so the momentum tail (scroll events only) keeps refreshing it.
     const refreshGestureWindow = () => {
-      if (!gestureActiveRef.current) gestureScrolledUpRef.current = false;
       gestureActiveRef.current = true;
       if (gestureTimerRef.current !== null) clearTimeout(gestureTimerRef.current);
       gestureTimerRef.current = setTimeout(() => {
@@ -287,7 +285,6 @@ export function useStickToBottom({
       if (gestureActiveRef.current) {
         // Keep an open window open until quiet (drag ticks, momentum tail).
         refreshGestureWindow();
-        if (scrolledUp) gestureScrolledUpRef.current = true;
       }
       lastScrollTopRef.current = el.scrollTop;
       if (m === 'reading') {
@@ -455,7 +452,6 @@ export function useStickToBottom({
     gestureActiveRef.current = false;
     touchDownRef.current = false;
     pinMissedRef.current = false;
-    gestureScrolledUpRef.current = false;
     if (gestureTimerRef.current !== null) {
       clearTimeout(gestureTimerRef.current);
       gestureTimerRef.current = null;
