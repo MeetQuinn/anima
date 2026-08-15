@@ -3,7 +3,7 @@
 // a "kind" that picks the dot color. Also exports `isNarrativeStep` which
 // classifies activities as visible in the curated "Show tool steps" view.
 
-import { formatTimeShort } from './format';
+import { formatTimeShort, formatTokens } from './format';
 import type { Activity as ActivityRecord } from '@shared/activity';
 import {
   classifyOutboundEffect,
@@ -947,13 +947,7 @@ function sessionStatsTarget(payload: Record<string, unknown>): string | undefine
 
 function formatMetric(label: string, value: unknown): string | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
-  return `${label} ${formatCount(value)}`;
-}
-
-function formatCount(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
-  return String(value);
+  return `${label} ${formatTokens(value)}`;
 }
 
 function truncate(text: string, max: number): string {

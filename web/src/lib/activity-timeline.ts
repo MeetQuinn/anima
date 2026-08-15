@@ -1,7 +1,7 @@
 import { dateKey } from '@/lib/format';
 import { buildActivityFeed, buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
 import { isNarrativeStep } from '@/lib/activities';
-import { isMessageItem } from '@/views/agents/conversation/SlackTimeline';
+import { isMessageItem } from '@/lib/message-model';
 import type { Activity as ActivityRecord, AgentActivityFeedPage } from '@shared/activity';
 import type { AgentMessageHistoryPage, AgentMessageRecord } from '@shared/messages';
 

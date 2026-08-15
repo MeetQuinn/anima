@@ -8,7 +8,7 @@ import { shortenModelLabel, subagentDelegationLabel } from '@/lib/activity-feed'
 import type { Activity as ActivityRecord } from '@shared/activity';
 import { ChevronRight } from 'lucide-react';
 import { MessageOutRow, FileOutRow } from './MessageRows';
-import { SystemEventRow } from '@/views/agents/conversation/SlackTimeline';
+import { SystemEventRow } from '@/components/TimelineRows';
 
 // ---------------------------------------------------------------------------
 // Reaction row

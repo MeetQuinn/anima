@@ -1,23 +1,28 @@
 import {
-  Bell,
-  CirclePause,
   CornerDownRight,
-  Lightbulb,
   MessageSquareQuote,
   MessageSquareReply,
   SmilePlus,
-  UserPlus,
-  type LucideIcon,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { renderMrkdwn } from '@/lib/mrkdwn';
 import { emojiGlyph } from '@/lib/emoji';
-import { clockHM, dateLabel, dateTimeFull } from '@/lib/format';
+import { clockHM, dateTimeFull } from '@/lib/format';
+import {
+  inboundFiles,
+  inboundPreviews,
+  inboundText,
+  isReplyMeta,
+  threadDomId,
+  threadMetaOf,
+  type Author,
+  type MessageGroup,
+  type ThreadContext,
+  type ThreadParentInfo,
+} from '@/lib/message-model';
 import { AttachedFiles, UploadedFile } from '../activity/Attachments';
 import type { ActivityFeedItem, SurfaceChip } from '@/lib/activity-feed';
 import type { SlackMessagePreview } from '@shared/inbox';
-import type { AgentMessageRecord } from '@shared/messages';
-import type { SlackFile } from '@/types';
 
 // ---------------------------------------------------------------------------
 // Shared Slack-style conversation renderer
@@ -36,91 +41,13 @@ import type { SlackFile } from '@/types';
 //     `resolveSurface` adds a per-group surface chip + breaks groups when the
 //     channel changes (so two channels never collapse into one byline).
 //
-// Both consume the shared `ActivityFeedItem` normalization so the
-// in→file / out→file mapping stays in one tested place; this layer is
-// presentation only.
+// The presentation-free data model (message classification, author readers,
+// author grouping, thread meta) lives in `@/lib/message-model`; the shared
+// timeline chrome (day dividers, system-event pill) in
+// `@/components/TimelineRows`. This file is the message rendering only.
 // ---------------------------------------------------------------------------
 
-export const GROUP_GAP_MS = 5 * 60 * 1000; // start a fresh author block after a 5-min lull
-
-export interface Author {
-  key: string; // groups consecutive messages
-  name: string;
-  avatarUrl?: string;
-  initial: string;
-  isAgent: boolean;
-}
-
-export function isMessageItem(item: ActivityFeedItem): boolean {
-  return (
-    item.kind === 'message-in' ||
-    item.kind === 'message-out' ||
-    item.kind === 'file-out' ||
-    item.kind === 'reaction-out'
-  );
-}
-
-// A person's inbound message (slack/feishu), as opposed to a system wake or a
-// choice response. Author/file/preview readers key off this split.
-function isPersonMessage(message: AgentMessageRecord): boolean {
-  return (
-    message.kind === 'message' || message.kind === 'file' || message.kind === 'reaction'
-  );
-}
-
-// Inbound author byline (Slack only in v1; other kinds degrade to a label).
-export function inboundAuthorName(message: AgentMessageRecord): string {
-  if (message.kind === 'choice_response') {
-    return (
-      message.actorHandle?.replace(/^@/, '') || message.actorDisplayName || 'Choice response'
-    );
-  }
-  if (message.kind === 'reminder') return message.reminderTitle?.trim() || 'Reminder';
-  if (message.kind === 'onboarding') return 'Onboarding';
-  if (message.platform === 'feishu') {
-    return message.actorDisplayName || message.actorUserId || 'Feishu user';
-  }
-  return (
-    message.actorDisplayName ||
-    message.actorHandle?.replace(/^@/, '') ||
-    message.actorUserId ||
-    'Unknown user'
-  );
-}
-
-// Inbound sender's Slack user id — the author-grouping key. Undefined for
-// non-Slack sources (feishu / system wakes / choice responses) and when the
-// id is unknown, so callers fall back to the display name.
-export function inboundSlackUserId(message: AgentMessageRecord): string | undefined {
-  if (!isPersonMessage(message) || message.platform === 'feishu') return undefined;
-  return message.actorUserId || undefined;
-}
-
-export function inboundText(message: AgentMessageRecord): string {
-  if (message.kind === 'reminder') return '';
-  if (message.kind === 'choice_response')
-    return `Selected: ${message.optionLabel ?? message.text}`;
-  return message.text ?? '';
-}
-
-export function inboundFiles(message: AgentMessageRecord): SlackFile[] {
-  if (!isPersonMessage(message)) return [];
-  return (message.files ?? []).map((file, index) => ({
-    id: file.fileId ?? `${message.messageId}:file:${index}`,
-    mimetype: file.mimetype ?? 'application/octet-stream',
-    name: file.filename,
-    sizeBytes: file.sizeBytes ?? 0,
-  }));
-}
-
-function inboundPreviews(message: AgentMessageRecord): SlackMessagePreview[] {
-  if (!isPersonMessage(message) || message.platform === 'feishu') return [];
-  return (message.previews ?? []).filter(
-    (preview) => preview.platform === 'slack' && preview.type === 'message_unfurl',
-  );
-}
-
-export function MsgAvatar({ author }: { author: Author }) {
+function MsgAvatar({ author }: { author: Author }) {
   if (author.avatarUrl) {
     return (
       <img
@@ -145,7 +72,7 @@ export function MsgAvatar({ author }: { author: Author }) {
 }
 
 // One message's content (text + files), avatar/byline handled by the group.
-export function MessageBody({ item, agentId }: { item: ActivityFeedItem; agentId: string }) {
+function MessageBody({ item, agentId }: { item: ActivityFeedItem; agentId: string }) {
   if (item.kind === 'message-in') {
     const text = inboundText(item.message).trim();
     const files = inboundFiles(item.message);
@@ -255,85 +182,6 @@ function SlackPreviewCard({ preview }: { preview: SlackMessagePreview }) {
   );
 }
 
-// A run of consecutive messages from one author (in one surface): avatar +
-// byline once, bodies stacked beneath (the Slack grouping rhythm).
-export interface MessageGroup {
-  author: Author;
-  surfaceKey: string; // groups break when this changes (cross-channel axis)
-  surface?: SurfaceChip; // optional per-group chip (Activity cross-channel axis)
-  startTs: string;
-  items: { item: ActivityFeedItem; key: string }[];
-}
-
-// Resolve the author byline for an item. Channels passes a channel-scoped
-// closure; Activity passes a cross-channel resolver.
-export type AuthorResolver = (item: ActivityFeedItem) => Author;
-
-// Resolve a surface key (+ optional chip) for an item. Returning a stable key
-// for every item (e.g. the single channel id) means groups never break on
-// surface; returning per-item keys (the channel/thread/dm) breaks groups when
-// the conversation jumps channels. Omit entirely for the single-channel axis.
-export type SurfaceResolver = (item: ActivityFeedItem) => { key: string; chip?: SurfaceChip };
-
-export function groupByAuthor(
-  items: ActivityFeedItem[],
-  resolveAuthor: AuthorResolver,
-  resolveSurface?: SurfaceResolver,
-): MessageGroup[] {
-  const groups: MessageGroup[] = [];
-  for (let i = 0; i < items.length; i += 1) {
-    const item = items[i]!;
-    const author = resolveAuthor(item);
-    const surface = resolveSurface?.(item);
-    const surfaceKey = surface?.key ?? '';
-    const tsMs = Date.parse(item.timestamp);
-    const last = groups[groups.length - 1];
-    const lastMs = last ? Date.parse(last.startTs) : 0;
-    const continues =
-      last &&
-      last.author.key === author.key &&
-      last.surfaceKey === surfaceKey &&
-      Number.isFinite(tsMs) &&
-      tsMs - Date.parse(last.items[last.items.length - 1]!.item.timestamp) <= GROUP_GAP_MS &&
-      Number.isFinite(lastMs);
-    if (continues) {
-      last!.items.push({ item, key: `${i}` });
-    } else {
-      groups.push({
-        author,
-        surfaceKey,
-        ...(surface?.chip ? { surface: surface.chip } : {}),
-        startTs: item.timestamp,
-        items: [{ item, key: `${i}` }],
-      });
-    }
-  }
-  return groups;
-}
-
-// The date chip on its own. Shared so the Activity tab's sticky/floating day
-// header can render just the pill (no flanking rules): when the header is
-// pinned and floating over scrolling content, the two hairline rules read as a
-// divider cutting across the content. A lone centered pill (Slack-style) stays
-// clean both pinned and at rest.
-export function DayLabelPill({ iso }: { iso: string }) {
-  return (
-    <span className="chrome rounded-full border border-border-soft bg-surface px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.1em] text-text-subtle">
-      {dateLabel(iso)}
-    </span>
-  );
-}
-
-export function DayDivider({ iso }: { iso: string }) {
-  return (
-    <div className="my-3 flex items-center gap-3">
-      <span className="h-px flex-1 bg-border-soft" />
-      <DayLabelPill iso={iso} />
-      <span className="h-px flex-1 bg-border-soft" />
-    </div>
-  );
-}
-
 // Small muted surface chip for the cross-channel byline (Activity axis). The
 // label already carries its kind marker (`#prod` / `@handle`), so no icon.
 //
@@ -362,106 +210,6 @@ function GroupSurfaceChip({ chip, agentId }: { chip: SurfaceChip; agentId: strin
       {chip.label}
     </Link>
   );
-}
-
-// System-originated wake (reminder / onboarding): a centered, avatar-less line
-// so it reads as a timeline annotation, not a message someone sent. The type
-// icon + small-caps label name the event class; the muted body carries the
-// detail (reminder title / onboarding note). Short hairlines flank the pill on
-// wider viewports to echo the Slack centered-system-notice convention; they
-// drop on narrow widths so the pill never gets crushed.
-const SYSTEM_EVENT_ICON: Record<
-  'reminder' | 'onboarding' | 'attention' | 'held',
-  LucideIcon
-> = {
-  attention: Lightbulb,
-  held: CirclePause,
-  reminder: Bell,
-  onboarding: UserPlus,
-};
-
-export function SystemEventRow({
-  item,
-}: {
-  item: Extract<ActivityFeedItem, { kind: 'system-event' }>;
-}) {
-  const Icon = SYSTEM_EVENT_ICON[item.eventKind];
-  return (
-    <div className="flex items-center justify-center gap-2.5 px-1 py-1.5">
-      <span aria-hidden className="hidden h-px w-8 shrink-0 bg-border-soft sm:block" />
-      <span className="inline-flex max-w-[85%] items-center gap-1.5 rounded-full border border-border-soft bg-surface-raised px-2.5 py-0.5">
-        <Icon className="h-3 w-3 shrink-0 text-text-subtle" aria-hidden />
-        <span className="shrink-0 font-sans text-[9.5px] font-semibold uppercase tracking-[0.12em] text-text-subtle">
-          {item.label}
-        </span>
-        <span className="truncate font-sans text-[12px] text-text-muted">{item.body}</span>
-        {item.meta && (
-          <span className="min-w-0 truncate font-sans text-[10px] text-text-subtle">· {item.meta}</span>
-        )}
-        <span
-          className="shrink-0 cursor-default font-sans text-[10px] text-text-subtle"
-          title={dateTimeFull(item.timestamp)}
-        >
-          {clockHM(item.timestamp)}
-        </span>
-      </span>
-      <span aria-hidden className="hidden h-px w-8 shrink-0 bg-border-soft sm:block" />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Thread legibility (Channels axis only)
-//
-// The Channels detail is a calm flat chronological log, so a reply can render
-// far below its parent. `threadContext` lets a reply show a back-reference to
-// its parent ("↳ re: <author> · snippet", click-to-scroll) and a thread-starter
-// show a quiet "N replies" scent — just enough legibility to answer "is this a
-// reply, and to what?" without turning the surface into a threaded UI. Activity
-// passes NO context, so its rendering is byte-identical (no decoration reads).
-// ---------------------------------------------------------------------------
-
-export interface ThreadParentInfo {
-  author: string;
-  snippet: string; // '' for a text-less (file/system) parent → render author-only
-}
-
-export interface ThreadContext {
-  // parent messageTs → author + snippet, for a reply's back-reference.
-  parentByTs: Map<string, ThreadParentInfo>;
-  // thread-starter messageTs → count of loaded replies (only entries with > 0).
-  replyCountByTs: Map<string, number>;
-  // Whether the reply counts are exact. Under contiguous newest-first paging a
-  // visible parent's replies (always newer than the parent) are necessarily
-  // within the loaded window, so the count is exact. If a future paging model
-  // breaks contiguity, set this false and the badge renders "N+" (never lets an
-  // approximate count read as authoritative).
-  countsExact: boolean;
-}
-
-function threadMetaOf(item: ActivityFeedItem): { messageTs?: string; threadTs?: string } {
-  if (item.kind === 'message-in') {
-    return { messageTs: item.message.messageTs, threadTs: item.message.threadTs };
-  }
-  if (item.kind === 'message-out' || item.kind === 'file-out') {
-    return { messageTs: item.messageTs, threadTs: item.threadTs };
-  }
-  // reaction-out carries the *target* message's ts as messageTs. A reaction is
-  // never a thread parent or reply, so it must yield no thread metadata -
-  // otherwise it would claim a duplicate DOM id at the target ts and could
-  // hijack a degraded back-ref (pointing at "Reaction added…" instead of the
-  // real parent). Fall through to no metadata.
-  return {};
-}
-
-// A reply is a message whose threadTs points at a *different* message (the
-// parent). A thread parent carries threadTs absent or === its own messageTs.
-function isReplyMeta(meta: { messageTs?: string; threadTs?: string }): boolean {
-  return !!meta.threadTs && meta.threadTs !== meta.messageTs;
-}
-
-export function threadDomId(messageTs: string): string {
-  return `chan-msg-${messageTs}`;
 }
 
 function flashThreadTarget(threadTs: string) {

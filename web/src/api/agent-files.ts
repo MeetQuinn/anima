@@ -35,11 +35,6 @@ export async function fetchAgentHomeDirectory(
   return apiRequest(`/api/agents/${encodeURIComponent(agentId)}/home/files${qs}`);
 }
 
-/** @deprecated Prefer fetchAgentHomeDirectory — kept as alias for root listing. */
-export async function fetchAgentHomeManifest(agentId: string): Promise<AgentHomeDirectory> {
-  return fetchAgentHomeDirectory(agentId, '');
-}
-
 export async function fetchAgentHomeFile(
   agentId: string,
   filePath: string,

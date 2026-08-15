@@ -6,7 +6,7 @@ import {
   type Author,
   type AuthorResolver,
   type SurfaceResolver,
-} from '@/views/agents/conversation/SlackTimeline';
+} from '@/lib/message-model';
 import type { AgentConfig } from '@shared/agent-config';
 
 export function buildActivityAuthorResolvers(input: {

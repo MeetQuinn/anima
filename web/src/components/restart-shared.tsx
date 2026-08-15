@@ -29,6 +29,43 @@ export function runningSubject(names: string[]): string {
 }
 
 // ---------------------------------------------------------------------------
+// Progress overlay — parameterized for restart + upgrade
+// ---------------------------------------------------------------------------
+
+/**
+ * Full-screen wait overlay shown while services restart (RestartButton) or an
+ * update installs (RuntimeUpgrade). Portal to body — same drawer-trapping
+ * reason as BusyConfirmModal: both triggers can live inside the ServerPanel,
+ * whose positioned/scroll container would otherwise confine `fixed inset-0`
+ * to the ~330px drawer. The upgrade variant stacks at z-[60]; pass `above`.
+ */
+export function ProgressOverlay({
+  title,
+  body,
+  above = false,
+}: {
+  title: string;
+  body: string;
+  above?: boolean;
+}) {
+  return createPortal(
+    <div
+      className={[
+        'fixed inset-0 flex items-center justify-center bg-page/70 p-4 backdrop-blur-sm',
+        above ? 'z-[60]' : 'z-50',
+      ].join(' ')}
+    >
+      <div className="flex max-w-sm flex-col items-center gap-3 rounded-sm border border-border-soft bg-surface px-10 py-7 text-center shadow-deep">
+        <RefreshCw className="h-6 w-6 animate-spin text-accent" />
+        <div className="font-serif text-[16px] font-medium text-text">{title}</div>
+        <div className="font-sans text-[12px] leading-relaxed text-text-muted">{body}</div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Busy confirm modal — parameterized for restart + upgrade
 // ---------------------------------------------------------------------------
 
