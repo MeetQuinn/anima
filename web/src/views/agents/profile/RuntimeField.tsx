@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, Plus, Undo2, X } from 'lucide-react';
+import { Check, ChevronRight, Plus, Undo2, X } from 'lucide-react';
 import type { ProviderAvailability, ProviderCatalogEntry } from '@shared/provider-catalog';
 import type { AgentConfig, AgentUpdateProviderRequest } from '@shared/agent-config';
 import { Button } from '@/components/ui/button';
@@ -140,12 +140,21 @@ function RuntimeModal({
       ? (provider.reasoningEffort ?? '')
       : '';
 
+  const hadOverrides = Boolean(provider.runtimeCommand) || (provider.runtimeArgs?.length ?? 0) > 0;
+
   // Drafts (initialised on mount; the modal is conditionally rendered).
   const [draftKind, setDraftKind] = useState(provider.kind as string);
   const [draftModel, setDraftModel] = useState(provider.model);
   const [draftEffort, setDraftEffort] = useState(currentEffort);
   const [draftCommand, setDraftCommand] = useState(provider.runtimeCommand ?? '');
   const [draftArgs, setDraftArgs] = useState((provider.runtimeArgs ?? []).join('\n'));
+  // The launch override is an expert feature almost nobody sets (totoday,
+  // 08-15: the terminal card dominated the modal), so it lives at the bottom
+  // behind an Advanced disclosure, collapsed unless this agent already has an
+  // override. Collapsing back with dirty drafts is safe: launch-affecting
+  // saves still route through ConfirmRestartModal, and re-expanding shows the
+  // drafts untouched. Future expert settings join this section.
+  const [advancedOpen, setAdvancedOpen] = useState(hadOverrides);
   const [envRows, setEnvRows] = useState<EnvDraftRow[]>(() => draftRowsFor(provider.env));
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
@@ -183,7 +192,6 @@ function RuntimeModal({
   const draftEffortOptions = effortOptionsForSelectedModel(draftEntry, draftModel, providerAvailability);
   const hasDraftEffort = draftEffortOptions.length > 0;
   const kindChanged = draftKind !== provider.kind;
-  const hadOverrides = Boolean(provider.runtimeCommand) || (provider.runtimeArgs?.length ?? 0) > 0;
   const draftUnavailableHint = providerAvailability
     ? providerUnavailableHint(draftEntry, providerAvailability)
     : undefined;
@@ -423,54 +431,6 @@ function RuntimeModal({
             </div>
           </div>
 
-          {/* ── Command ── */}
-          <div className={groupRow}>
-            <div className={railLabel}>Command</div>
-            <div className="space-y-2">
-              {/* One quiet terminal card: prompt-prefixed command line, argv
-                  lines below it. The args gutter (pl-7) aligns with the text
-                  after the prompt glyph. */}
-              <div className="overflow-hidden rounded-sm border border-border-soft bg-surface-elevated/50 transition-colors focus-within:border-border">
-                <div className="flex items-center gap-2 px-3">
-                  <span aria-hidden className="select-none font-mono text-[12px] text-text-subtle">
-                    $
-                  </span>
-                  <input
-                    value={draftCommand}
-                    disabled={busy}
-                    autoCapitalize="off"
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder={draftEntry?.command ?? draftKind}
-                    onChange={(e) => {
-                      setDraftCommand(e.currentTarget.value);
-                      setError(undefined);
-                    }}
-                    className="h-9 w-full min-w-0 bg-transparent font-mono text-[12.5px] text-text placeholder:text-text-subtle focus:outline-none disabled:cursor-wait disabled:opacity-60"
-                  />
-                </div>
-                <textarea
-                  value={draftArgs}
-                  disabled={busy}
-                  autoCapitalize="off"
-                  autoComplete="off"
-                  spellCheck={false}
-                  rows={3}
-                  placeholder={draftKind === 'claude-code' ? '--chrome' : '--flag'}
-                  onChange={(e) => {
-                    setDraftArgs(e.currentTarget.value);
-                    setError(undefined);
-                  }}
-                  className="block min-h-[64px] w-full resize-y border-t border-border-soft/70 bg-transparent py-2 pl-7 pr-3 font-mono text-[12.5px] leading-relaxed text-text placeholder:text-text-subtle focus:outline-none disabled:cursor-wait disabled:opacity-60"
-                />
-              </div>
-              {/* Only the two non-obvious facts; the rest the editor shows. */}
-              <p className="font-sans text-[11px] leading-snug text-text-muted">
-                One argv entry per line. Empty falls back to the Providers-page settings.
-              </p>
-            </div>
-          </div>
-
           {/* ── Environment ── */}
           <div className={groupRow}>
             <div className={railLabel}>Environment</div>
@@ -533,6 +493,70 @@ function RuntimeModal({
                   never read back (placeholder says "unchanged") — totoday cut
                   the hint line explaining that; the placeholder carries it. */}
             </div>
+          </div>
+
+          {/* ── Advanced ── */}
+          <div>
+            <button
+              type="button"
+              aria-expanded={advancedOpen}
+              onClick={() => setAdvancedOpen((open) => !open)}
+              className="chrome flex min-h-[44px] w-full items-center gap-1.5 py-4 text-left text-[11px] tracking-wide text-text-muted transition-colors hover:text-text md:min-h-0"
+            >
+              <ChevronRight
+                aria-hidden
+                className={`h-3.5 w-3.5 transition-transform ${advancedOpen ? 'rotate-90' : ''}`}
+              />
+              Advanced
+            </button>
+            {advancedOpen && (
+              <div className="grid gap-2.5 pb-5 md:grid-cols-[6.5rem_1fr] md:gap-6">
+                <div className={railLabel}>Command</div>
+                <div className="space-y-2">
+                  {/* One quiet terminal card: prompt-prefixed command line, argv
+                      lines below it. The args gutter (pl-7) aligns with the text
+                      after the prompt glyph. */}
+                  <div className="overflow-hidden rounded-sm border border-border-soft bg-surface-elevated/50 transition-colors focus-within:border-border">
+                    <div className="flex items-center gap-2 px-3">
+                      <span aria-hidden className="select-none font-mono text-[12px] text-text-subtle">
+                        $
+                      </span>
+                      <input
+                        value={draftCommand}
+                        disabled={busy}
+                        autoCapitalize="off"
+                        autoComplete="off"
+                        spellCheck={false}
+                        placeholder={draftEntry?.command ?? draftKind}
+                        onChange={(e) => {
+                          setDraftCommand(e.currentTarget.value);
+                          setError(undefined);
+                        }}
+                        className="h-9 w-full min-w-0 bg-transparent font-mono text-[12.5px] text-text placeholder:text-text-subtle focus:outline-none disabled:cursor-wait disabled:opacity-60"
+                      />
+                    </div>
+                    <textarea
+                      value={draftArgs}
+                      disabled={busy}
+                      autoCapitalize="off"
+                      autoComplete="off"
+                      spellCheck={false}
+                      rows={3}
+                      placeholder={draftKind === 'claude-code' ? '--chrome' : '--flag'}
+                      onChange={(e) => {
+                        setDraftArgs(e.currentTarget.value);
+                        setError(undefined);
+                      }}
+                      className="block min-h-[64px] w-full resize-y border-t border-border-soft/70 bg-transparent py-2 pl-7 pr-3 font-mono text-[12.5px] leading-relaxed text-text placeholder:text-text-subtle focus:outline-none disabled:cursor-wait disabled:opacity-60"
+                    />
+                  </div>
+                  {/* Only the two non-obvious facts; the rest the editor shows. */}
+                  <p className="font-sans text-[11px] leading-snug text-text-muted">
+                    One argv entry per line. Empty falls back to the Providers-page settings.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
