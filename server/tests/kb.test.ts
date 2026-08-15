@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -93,6 +93,20 @@ async function withServer(
       defaultKbRegistryService.clearCaches();
     }
   });
+}
+
+// Issue #535: point the directory-browse root at a temp dir so browse/mkdir
+// tests never touch the operator's real home. kb.service.ts reads the env var
+// at call time, so per-test scoping with restore-on-failure is safe.
+async function withBrowseRoot<T>(root: string, body: () => Promise<T>): Promise<T> {
+  const previous = process.env.ANIMA_KB_BROWSE_ROOT;
+  process.env.ANIMA_KB_BROWSE_ROOT = root;
+  try {
+    return await body();
+  } finally {
+    if (previous === undefined) delete process.env.ANIMA_KB_BROWSE_ROOT;
+    else process.env.ANIMA_KB_BROWSE_ROOT = previous;
+  }
 }
 
 test('kb roots endpoint lists configured roots without paths', async () => {
@@ -196,81 +210,160 @@ test('kb roots can be added and removed without restarting the web app', async (
   }
 });
 
-test('kb directory browser is home-bound and returns directories only', async () => {
+test('kb directory browser is root-bound and returns directories only', async () => {
   const { homeDir, repoDir } = await setupKb('anima-kb-browse');
-  const browseRoot = await mkdtemp(join(homedir(), 'anima-kb-browse-'));
+  // realpath: the service canonicalizes paths, and tmpdir() is a symlink on
+  // macOS, so assertions must compare against the resolved root.
+  const browseRoot = await realpath(await mkdtemp(join(tmpdir(), 'anima-kb-browse-')));
+  // Outside-root dir reached through an in-root symlink (root/escape -> here):
+  // the lexical request path looks in-root, the canonical one is not.
+  const outsideDir = await realpath(await mkdtemp(join(tmpdir(), 'anima-kb-browse-outside-')));
   try {
     await mkdir(join(browseRoot, 'visible-dir'));
     await mkdir(join(browseRoot, '.hidden-dir'));
     await writeFile(join(browseRoot, 'file.txt'), 'not a dir\n', 'utf8');
+    await mkdir(join(outsideDir, 'existing'));
+    await symlink(outsideDir, join(browseRoot, 'escape'));
 
-    await withServer(homeDir, async (base) => {
-      const rootRes = await fetch(`${base}/api/filesystem/browse?path=${encodeURIComponent(browseRoot)}`);
-      assert.equal(rootRes.status, 200);
-      const body = (await rootRes.json()) as { path: string; entries: Array<{ name: string; path: string }> };
-      assert.equal(body.path, browseRoot);
-      assert.deepEqual(body.entries, [{ name: 'visible-dir', path: join(browseRoot, 'visible-dir') }]);
+    await withBrowseRoot(browseRoot, () =>
+      withServer(homeDir, async (base) => {
+        const rootRes = await fetch(`${base}/api/filesystem/browse?path=${encodeURIComponent(browseRoot)}`);
+        assert.equal(rootRes.status, 200);
+        const body = (await rootRes.json()) as { path: string; entries: Array<{ name: string; path: string }> };
+        assert.equal(body.path, browseRoot);
+        assert.deepEqual(body.entries, [{ name: 'visible-dir', path: join(browseRoot, 'visible-dir') }]);
 
-      const homeRes = await fetch(`${base}/api/filesystem/browse`);
-      assert.equal(homeRes.status, 200, 'omitted path defaults to the server home directory');
+        const defaulted = await fetch(`${base}/api/filesystem/browse`);
+        assert.equal(defaulted.status, 200, 'omitted path defaults to the browse root');
+        const defaultedBody = (await defaulted.json()) as { path: string };
+        assert.equal(defaultedBody.path, browseRoot, 'omitted path resolves to the configured root');
 
-      const outside = await fetch(`${base}/api/filesystem/browse?path=${encodeURIComponent(tmpdir())}`);
-      assert.equal(outside.status, 400, 'directory browser cannot escape $HOME');
-    });
+        // Regression guard: the operator's real home is OUTSIDE the test root.
+        // Goes red (200) if the route ever regresses to a hard-coded homedir().
+        // GET only — this probe cannot write.
+        const outsideHome = await fetch(`${base}/api/filesystem/browse?path=${encodeURIComponent(homedir())}`);
+        assert.equal(outsideHome.status, 400, 'directory browser cannot escape the browse root');
+
+        const outsideParent = await fetch(`${base}/api/filesystem/browse?path=${encodeURIComponent(tmpdir())}`);
+        assert.equal(outsideParent.status, 400, 'parent of the root is still outside the root');
+
+        // Symlinked-ancestor probe: root/escape -> outside dir. Both the
+        // existing and the MISSING target must answer 400 — a 404 on the
+        // missing one would let 400-vs-404 reveal whether outside-root
+        // paths exist (classification must follow the canonical ancestor,
+        // not the lexical in-root shape).
+        const viaEscapeExisting = await fetch(
+          `${base}/api/filesystem/browse?path=${encodeURIComponent(join(browseRoot, 'escape', 'existing'))}`,
+        );
+        assert.equal(viaEscapeExisting.status, 400, 'existing target behind escape symlink is outside');
+        const viaEscapeMissing = await fetch(
+          `${base}/api/filesystem/browse?path=${encodeURIComponent(join(browseRoot, 'escape', 'missing'))}`,
+        );
+        assert.equal(viaEscapeMissing.status, 400, 'missing target behind escape symlink must match the existing one');
+
+        // Control: a genuinely in-root miss still answers 404.
+        const inRootMissing = await fetch(
+          `${base}/api/filesystem/browse?path=${encodeURIComponent(join(browseRoot, 'visible-dir', 'missing'))}`,
+        );
+        assert.equal(inRootMissing.status, 404, 'in-root missing path stays a plain 404');
+      }),
+    );
   } finally {
     await rm(homeDir, { force: true, recursive: true });
     await rm(repoDir, { force: true, recursive: true });
     await rm(browseRoot, { force: true, recursive: true });
+    await rm(outsideDir, { force: true, recursive: true });
   }
 });
 
-test('kb directory mkdir creates a subfolder and enforces the home boundary', async () => {
+test('kb directory mkdir creates a subfolder and enforces the root boundary', async () => {
   const { homeDir, repoDir } = await setupKb('anima-kb-mkdir');
-  const browseRoot = await mkdtemp(join(homedir(), 'anima-kb-mkdir-'));
+  // Issue #535: mkdir is exercised against a tmpdir root; this file creates
+  // zero paths under the operator's real home.
+  const browseRoot = await realpath(await mkdtemp(join(tmpdir(), 'anima-kb-mkdir-')));
+  // Same escape-symlink shape as the browse test: root/escape -> outside dir.
+  const outsideDir = await realpath(await mkdtemp(join(tmpdir(), 'anima-kb-mkdir-outside-')));
   try {
-    await withServer(homeDir, async (base) => {
-      const mk = (payload: unknown) =>
-        fetch(`${base}/api/filesystem/mkdir`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
+    await mkdir(join(outsideDir, 'existing'));
+    await symlink(outsideDir, join(browseRoot, 'escape'));
+    await withBrowseRoot(browseRoot, () =>
+      withServer(homeDir, async (base) => {
+        const mk = (payload: unknown) =>
+          fetch(`${base}/api/filesystem/mkdir`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
 
-      // Happy path: creates the folder and returns the refreshed parent browse.
-      const ok = await mk({ parent: browseRoot, name: 'new-folder' });
-      assert.equal(ok.status, 200);
-      const body = (await ok.json()) as {
-        path: string;
-        entries: Array<{ name: string; path: string }>;
-      };
-      assert.equal(body.path, browseRoot);
-      assert.ok(
-        body.entries.some(
-          (e) => e.name === 'new-folder' && e.path === join(browseRoot, 'new-folder'),
-        ),
-        'new folder appears in the returned parent listing',
-      );
-      assert.ok((await stat(join(browseRoot, 'new-folder'))).isDirectory());
+        // Happy path: creates the folder and returns the refreshed parent browse.
+        const ok = await mk({ parent: browseRoot, name: 'new-folder' });
+        assert.equal(ok.status, 200);
+        const body = (await ok.json()) as {
+          path: string;
+          entries: Array<{ name: string; path: string }>;
+        };
+        assert.equal(body.path, browseRoot);
+        assert.ok(
+          body.entries.some(
+            (e) => e.name === 'new-folder' && e.path === join(browseRoot, 'new-folder'),
+          ),
+          'new folder appears in the returned parent listing',
+        );
+        assert.ok((await stat(join(browseRoot, 'new-folder'))).isDirectory());
 
-      // Duplicate name -> 409, no clobber.
-      assert.equal((await mk({ parent: browseRoot, name: 'new-folder' })).status, 409);
+        // Duplicate name -> 409, no clobber.
+        assert.equal((await mk({ parent: browseRoot, name: 'new-folder' })).status, 409);
 
-      // Traversal / separators / dotfiles in the name -> 400, nothing created.
-      assert.equal((await mk({ parent: browseRoot, name: '../escape' })).status, 400);
-      assert.equal((await mk({ parent: browseRoot, name: 'a/b' })).status, 400);
-      assert.equal((await mk({ parent: browseRoot, name: '..' })).status, 400);
-      assert.equal((await mk({ parent: browseRoot, name: '.hidden' })).status, 400);
+        // Traversal / separators / dotfiles in the name -> 400, nothing created.
+        assert.equal((await mk({ parent: browseRoot, name: '../escape' })).status, 400);
+        assert.equal((await mk({ parent: browseRoot, name: 'a/b' })).status, 400);
+        assert.equal((await mk({ parent: browseRoot, name: '..' })).status, 400);
+        assert.equal((await mk({ parent: browseRoot, name: '.hidden' })).status, 400);
 
-      // Parent outside the home browse root -> 400.
-      assert.equal((await mk({ parent: tmpdir(), name: 'nope' })).status, 400);
+        // Parent outside the browse root -> 400. The probe parent is a
+        // NONEXISTENT path under the real home: with the tmpdir root it is
+        // rejected as outside (400); if the route ever regressed to a
+        // homedir() root it would answer 404 (missing path) — red either
+        // way the seam breaks, and the probe itself can never write.
+        const guardParent = join(homedir(), 'anima-kb-535-guard-does-not-exist');
+        assert.equal((await mk({ parent: guardParent, name: 'nope' })).status, 400);
 
-      // Missing name -> 400 (schema rejects).
-      assert.equal((await mk({ parent: browseRoot })).status, 400);
-    });
+        // Parent directory of the root (an existing dir) is also outside.
+        assert.equal((await mk({ parent: tmpdir(), name: 'nope' })).status, 400);
+
+        // Symlinked-ancestor probe (mirrors the browse pins): parents behind
+        // root/escape -> outside must answer 400 whether the target exists
+        // or not — a 404 on the missing one would leak outside existence,
+        // and neither request may create anything outside the root.
+        assert.equal(
+          (await mk({ parent: join(browseRoot, 'escape', 'existing'), name: 'nope' })).status,
+          400,
+        );
+        assert.equal(
+          (await mk({ parent: join(browseRoot, 'escape', 'missing'), name: 'nope' })).status,
+          400,
+        );
+        assert.equal(
+          (await stat(join(outsideDir, 'existing', 'nope')).catch(() => undefined)),
+          undefined,
+          'nothing was created behind the escape symlink',
+        );
+
+        // Control: a genuinely in-root missing parent stays a plain 404.
+        assert.equal(
+          (await mk({ parent: join(browseRoot, 'new-folder', 'missing'), name: 'nope' })).status,
+          404,
+        );
+
+        // Missing name -> 400 (schema rejects).
+        assert.equal((await mk({ parent: browseRoot })).status, 400);
+      }),
+    );
   } finally {
     await rm(homeDir, { force: true, recursive: true });
     await rm(repoDir, { force: true, recursive: true });
     await rm(browseRoot, { force: true, recursive: true });
+    await rm(outsideDir, { force: true, recursive: true });
   }
 });
 

@@ -1,6 +1,6 @@
 import { lstat, mkdir, opendir, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 
 import ignore, { type Ignore } from 'ignore';
 
@@ -32,6 +32,48 @@ import {
   type ResolvedKbRoot,
 } from './kb.helper.js';
 
+// Test seam (issue #535): the directory-browse root defaults to the operator's
+// home, exactly as before, and is overridable via ANIMA_KB_BROWSE_ROOT so tests
+// can exercise browse/mkdir against a tmpdir instead of the real home. Read at
+// call time (tests swap env per test, mirroring ANIMA_HOME).
+// GOVERNANCE NOTE: this knob changes testability only. POST /api/filesystem/mkdir
+// stays in the governed table (server/web/read-only.ts) UNCONDITIONALLY wherever
+// the root points — the root bounds HOW FAR a caller may write, never WHETHER
+// the write lands outside ANIMA_HOME.
+function kbBrowseRoot(): string {
+  return process.env.ANIMA_KB_BROWSE_ROOT?.trim() || homedir();
+}
+
+// A missing path is classified by the CANONICAL realpath of its nearest
+// existing ancestor, not by its lexical shape. The lexical path can appear
+// in-root while a symlinked ancestor points outside it (root/escape ->
+// /outside, request root/escape/missing): classifying lexically would answer
+// 404 for a missing outside target but 400 for an existing one — exactly the
+// outside-root existence probe the boundary rule exists to close.
+async function nearestExistingAncestorRealpath(pathAbs: string): Promise<string | undefined> {
+  let current = pathAbs;
+  for (;;) {
+    const currentRealpath = await realpath(current).catch(() => undefined);
+    if (currentRealpath) return currentRealpath;
+    const parent = dirname(current);
+    if (parent === current) return undefined; // even the filesystem root failed to resolve
+    current = parent;
+  }
+}
+
+// Shared missing-path classifier for browse and mkdir: 400 when the nearest
+// existing ancestor canonicalizes outside the root (boundary before
+// existence), 404 only when the miss is genuinely inside the root. Returns
+// the error (rather than throwing) so call sites keep TS narrowing via
+// `throw await ...`.
+async function missingPathError(requestedResolved: string, root: string): Promise<KbError> {
+  const ancestor = await nearestExistingAncestorRealpath(dirname(requestedResolved));
+  if (!ancestor || (ancestor !== root && !ancestor.startsWith(root + sep))) {
+    return new KbError(400, 'path outside browse root');
+  }
+  return new KbError(404, 'path_not_found');
+}
+
 const DIRECTORY_PAGE_SIZE = 250;
 const SEARCH_MATCH_LIMIT = 200;
 const SEARCH_SCAN_LIMIT = 50_000;
@@ -58,11 +100,19 @@ export class KbRegistryService {
   }
 
   async browseKbDirectories(rawPath: string | undefined): Promise<KbDirectoryBrowse> {
-    const home = await realpath(homedir());
-    const requested = rawPath?.trim() ? expandHome(rawPath.trim()) : home;
-    const requestedRealpath = await realpath(resolve(requested)).catch(() => undefined);
-    if (!requestedRealpath) throw new KbError(404, 'path_not_found');
-    if (requestedRealpath !== home && !requestedRealpath.startsWith(home + sep)) {
+    const root = await realpath(kbBrowseRoot());
+    const requested = rawPath?.trim() ? expandHome(rawPath.trim()) : root;
+    const requestedResolved = resolve(requested);
+    const requestedRealpath = await realpath(requestedResolved).catch(() => undefined);
+    // Boundary before existence for the direct and symlinked-ANCESTOR cases:
+    // a missing path whose nearest existing ancestor canonicalizes outside the
+    // root answers 400 whether or not the target exists (previously
+    // nonexistent-outside answered 404), so neither a lexical outside path nor
+    // root/escape -> /outside turns 400-vs-404 into an existence probe. Known
+    // residual (issue #675, pre-existing): a dangling LEAF symlink inside the
+    // root still answers 404 while an outside-resolving one answers 400.
+    if (!requestedRealpath) throw await missingPathError(requestedResolved, root);
+    if (requestedRealpath !== root && !requestedRealpath.startsWith(root + sep)) {
       throw new KbError(400, 'path outside browse root');
     }
     const currentStat = await stat(requestedRealpath).catch(() => undefined);
@@ -78,19 +128,23 @@ export class KbRegistryService {
   }
 
   // Create a new subdirectory under an existing directory inside the browse
-  // root (home). Mirrors browseKbDirectories' sandboxing: parent must resolve
-  // to an existing directory within home, and the name is validated to a single
-  // path segment (no separators / traversal / dotfiles). Returns the refreshed
-  // browse of the parent so the caller can locate the new directory by name.
+  // root (the operator's home by default). Mirrors browseKbDirectories'
+  // sandboxing: parent must resolve to an existing directory within the root,
+  // and the name is validated to a single path segment (no separators /
+  // traversal / dotfiles). Returns the refreshed browse of the parent so the
+  // caller can locate the new directory by name.
   async createKbDirectory(
     rawParent: string | undefined,
     rawName: string,
   ): Promise<KbDirectoryBrowse> {
-    const home = await realpath(homedir());
-    const requested = rawParent?.trim() ? expandHome(rawParent.trim()) : home;
-    const parentRealpath = await realpath(resolve(requested)).catch(() => undefined);
-    if (!parentRealpath) throw new KbError(404, 'path_not_found');
-    if (parentRealpath !== home && !parentRealpath.startsWith(home + sep)) {
+    const root = await realpath(kbBrowseRoot());
+    const requested = rawParent?.trim() ? expandHome(rawParent.trim()) : root;
+    const parentResolved = resolve(requested);
+    const parentRealpath = await realpath(parentResolved).catch(() => undefined);
+    // Boundary before existence — same contract as browseKbDirectories,
+    // including the symlinked-ancestor classification for a missing parent.
+    if (!parentRealpath) throw await missingPathError(parentResolved, root);
+    if (parentRealpath !== root && !parentRealpath.startsWith(root + sep)) {
       throw new KbError(400, 'path outside browse root');
     }
     const parentStat = await stat(parentRealpath).catch(() => undefined);
