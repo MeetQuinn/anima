@@ -543,10 +543,19 @@ function RuntimeModal({
               <ErrorHint message={error} />
             </span>
           )}
-          <Button size="xs" variant="ghost" disabled={busy} onClick={onClose}>
+          <Button
+            variant="ghost"
+            disabled={busy}
+            onClick={onClose}
+            className="min-h-[44px] md:min-h-0"
+          >
             Cancel
           </Button>
-          <Button size="xs" disabled={busy || saveBlocked} onClick={handleSave}>
+          <Button
+            disabled={busy || saveBlocked}
+            onClick={handleSave}
+            className="min-h-[44px] md:min-h-0"
+          >
             <Check />
             {busy ? 'Saving…' : 'Save'}
           </Button>

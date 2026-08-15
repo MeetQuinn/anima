@@ -450,13 +450,19 @@ export default function DirectoryPicker({
           location bar at the top, so no separate readout here. Buttons are
           right-aligned with the primary on the far right, per app convention. */}
       <div className="mt-3 flex justify-end gap-2 border-t border-border-soft pt-3">
-        <Button type="button" variant="outline" onClick={onCancel}>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={onCancel}
+          className="min-h-[44px] md:min-h-0"
+        >
           Cancel
         </Button>
         <Button
           type="button"
           onClick={() => onChoose(selectedPath)}
           disabled={!selectedPath || confirmDisabled}
+          className="min-h-[44px] md:min-h-0"
         >
           {confirmLabel}
         </Button>

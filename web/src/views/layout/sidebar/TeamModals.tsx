@@ -185,10 +185,16 @@ function TeamModal({
             <div className="font-sans text-[12px] leading-snug text-health-error">{error}</div>
           )}
           <div className="flex justify-end gap-2">
-            <Button type="button" onClick={onClose} variant="outline" disabled={busy}>
+            <Button
+              type="button"
+              onClick={onClose}
+              variant="outline"
+              disabled={busy}
+              className="min-h-[44px] md:min-h-0"
+            >
               Cancel
             </Button>
-            <Button type="submit" disabled={!canSubmit}>
+            <Button type="submit" disabled={!canSubmit} className="min-h-[44px] md:min-h-0">
               {isEdit ? (busy ? 'Saving…' : 'Save changes') : busy ? 'Creating…' : 'Create team'}
             </Button>
           </div>

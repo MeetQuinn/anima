@@ -150,14 +150,14 @@ export function BusyConfirmModal({
             ref={initialFocusRef}
             type="button"
             onClick={onCancel}
-            className="rounded-sm border border-border-soft px-3.5 py-2 text-[13px] text-text-muted transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            className="min-h-[44px] rounded-sm border border-border-soft px-3.5 py-2 text-[13px] text-text-muted transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent md:min-h-0"
           >
             Cancel
           </button>
           <button
             type="button"
             onClick={onConfirm}
-            className="flex items-center gap-1.5 rounded-sm bg-accent px-3.5 py-2 text-[13px] font-medium text-white transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+            className="flex min-h-[44px] items-center gap-1.5 rounded-sm bg-accent px-3.5 py-2 text-[13px] font-medium text-white transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface md:min-h-0"
           >
             <ConfirmIcon aria-hidden className="h-3.5 w-3.5" />
             {confirmLabel}
