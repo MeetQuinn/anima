@@ -104,11 +104,13 @@ export class KbRegistryService {
     const requested = rawPath?.trim() ? expandHome(rawPath.trim()) : root;
     const requestedResolved = resolve(requested);
     const requestedRealpath = await realpath(requestedResolved).catch(() => undefined);
-    // Boundary before existence: a path outside the root answers 400 whether
-    // or not it exists, so the route never reveals whether host paths beyond
-    // the root exist (previously nonexistent-outside answered 404). Classified
-    // via the nearest existing ancestor's realpath, so a symlinked ancestor
-    // (root/escape -> /outside) cannot turn 400-vs-404 into an existence probe.
+    // Boundary before existence for the direct and symlinked-ANCESTOR cases:
+    // a missing path whose nearest existing ancestor canonicalizes outside the
+    // root answers 400 whether or not the target exists (previously
+    // nonexistent-outside answered 404), so neither a lexical outside path nor
+    // root/escape -> /outside turns 400-vs-404 into an existence probe. Known
+    // residual (issue #675, pre-existing): a dangling LEAF symlink inside the
+    // root still answers 404 while an outside-resolving one answers 400.
     if (!requestedRealpath) throw await missingPathError(requestedResolved, root);
     if (requestedRealpath !== root && !requestedRealpath.startsWith(root + sep)) {
       throw new KbError(400, 'path outside browse root');
