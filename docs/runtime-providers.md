@@ -251,6 +251,12 @@ Current process model:
 - It uses stream-json input/output over stdio.
 - It intentionally does not use `claude -p`.
 - If Anima has a stored Claude session id, startup includes `--resume <session_id>`.
+- Agent config `provider.fastMode: true` requests Claude Code fast mode for that
+  child with the official per-session `--settings '{"fastMode":true}'` seam.
+  It is an opt-in request, not an availability claim: Team and Enterprise owners
+  must enable fast mode and usage credits, and Claude can fall back to standard
+  speed. Provider result events remain the authority for the observed
+  `fast_mode_state`.
 - The adapter sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW=272000` by default to match Codex's current `gpt-5.5` context-window budget; agent config `provider.env` can override it.
 - The process stays alive across Anima items until abort or worker shutdown.
 
@@ -264,6 +270,7 @@ Command shape:
 
 ```text
 claude
+  [--settings '{"fastMode":true}']
   --output-format stream-json
   --verbose
   --input-format stream-json

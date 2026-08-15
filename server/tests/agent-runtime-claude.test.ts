@@ -8,6 +8,7 @@ import { createAgentRuntime } from '../providers/factory.js';
 import {
   CLAUDE_DISABLE_AUTO_MEMORY,
   CLAUDE_DISALLOWED_TOOLS,
+  CLAUDE_FAST_MODE_SETTINGS,
 } from '../providers/claude-launch.js';
 import type { AgentRuntime } from '../providers/contract.js';
 import { makeSlackEvent } from './helpers/slack.js';
@@ -18,7 +19,7 @@ import { withAnimaHome } from './anima-home.js';
 import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
 import { runtimeInput, runtimeFollowupInput, assertFollowupPrompt, providerSessionStartedPayload, runtimeTestEnv } from './helpers/agent-runtime.js';
 
-test('claude-code runtime prepends configured argv entries without shell parsing', async () => {
+test('claude-code runtime launches an agent fast-mode opt-in before raw argv overrides', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-claude-provider-args-'));
   let runtime: AgentRuntime | undefined;
   try {
@@ -56,10 +57,17 @@ test('claude-code runtime prepends configured argv entries without shell parsing
       runtime = createAgentRuntime(
         {
           env: runtimeTestEnv(stateDir, { ARGV_PATH: argvPath }),
+          fastMode: true,
           kind: 'claude-code',
         },
         {
-          args: ['--chrome', '--profile', 'team one'],
+          args: [
+            '--settings',
+            '{"fastMode":false,"outputStyle":"Explanatory"}',
+            '--chrome',
+            '--profile',
+            'team one',
+          ],
           command: fakeClaude,
         },
       );
@@ -69,7 +77,15 @@ test('claude-code runtime prepends configured argv entries without shell parsing
         'args ok',
       );
       const argv = JSON.parse(await readFile(argvPath, 'utf8')) as string[];
-      assert.deepEqual(argv.slice(0, 3), ['--chrome', '--profile', 'team one']);
+      assert.deepEqual(argv.slice(0, 7), [
+        '--settings',
+        CLAUDE_FAST_MODE_SETTINGS,
+        '--settings',
+        '{"fastMode":false,"outputStyle":"Explanatory"}',
+        '--chrome',
+        '--profile',
+        'team one',
+      ]);
       assert.equal(argv.includes('--output-format'), true);
     });
   } finally {

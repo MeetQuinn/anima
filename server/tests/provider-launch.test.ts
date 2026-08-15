@@ -7,8 +7,10 @@ import {
   CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW,
   CLAUDE_DISABLE_AUTO_MEMORY,
   CLAUDE_DISALLOWED_TOOLS,
+  CLAUDE_FAST_MODE_SETTINGS,
   claudeAutoCompactWindowFor,
   claudeCommonArgs,
+  claudeFastModeArgs,
   claudeProviderEnv,
 } from '../providers/claude-launch.js';
 import { ControllerAgentRuntime } from '../providers/provider-runtime.js';
@@ -85,6 +87,15 @@ test('claude common args leave Chrome disabled by default and carry optional con
       '--system-prompt-file', '/tmp/system-prompt.md',
     ],
   );
+});
+
+test('claude fast mode is an explicit per-agent launch opt-in', () => {
+  assert.deepEqual(claudeFastModeArgs({ kind: 'claude-code' }), []);
+  assert.deepEqual(claudeFastModeArgs({ fastMode: false, kind: 'claude-code' }), []);
+  assert.deepEqual(claudeFastModeArgs({ fastMode: true, kind: 'claude-code' }), [
+    '--settings',
+    CLAUDE_FAST_MODE_SETTINGS,
+  ]);
 });
 
 test('claude auto-compact window resolution keeps env override semantics', () => {
