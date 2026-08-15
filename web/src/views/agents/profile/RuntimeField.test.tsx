@@ -191,3 +191,62 @@ describe('Runtime modal — save/dismissal contract', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Runtime' })).toBeNull());
   });
 });
+
+// Pins for the Advanced disclosure (PR #684 gate): Milo's mutations
+// `useState(hadOverrides)` → `useState(true)` and Advanced onClick → no-op
+// both left the suite green, so the collapsed-unless-configured contract and
+// the toggle itself get durable instruments here. The argv textarea is the
+// marker for "command editor mounted": its placeholder ('--chrome' for
+// claude-code) exists only inside the expanded section.
+describe('Runtime modal — Advanced disclosure', () => {
+  it('opens collapsed with no override; toggling reveals the editor, a draft survives collapse, and a hidden dirty draft still routes through the restart confirm', async () => {
+    const onCommit = vi.fn(() => Promise.resolve());
+    const dialog = openModal({ kind: 'claude-code', model: 'fable' }, onCommit);
+
+    // Collapsed on arrival: the disclosure says so AND the editor is absent.
+    const advanced = dialog.getByRole('button', { name: 'Advanced' });
+    expect(advanced.getAttribute('aria-expanded')).toBe('false');
+    expect(dialog.queryByPlaceholderText('--chrome')).toBeNull();
+
+    // Toggle open (kills the onClick-no-op mutation), type an argv draft.
+    fireEvent.click(advanced);
+    expect(advanced.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.change(dialog.getByPlaceholderText('--chrome'), { target: { value: '--chrome' } });
+
+    // Collapse back: the editor unmounts but the draft is state, not DOM.
+    fireEvent.click(advanced);
+    expect(advanced.getAttribute('aria-expanded')).toBe('false');
+    expect(dialog.queryByPlaceholderText('--chrome')).toBeNull();
+
+    // Re-expand: the draft is exactly as typed.
+    fireEvent.click(advanced);
+    expect((dialog.getByPlaceholderText('--chrome') as HTMLTextAreaElement).value).toBe('--chrome');
+
+    // Collapse again and save while the dirty draft is hidden: folding the
+    // section must not fold the safety rail — the launch-affecting change
+    // still routes through ConfirmRestartModal, and the payload carries it.
+    fireEvent.click(advanced);
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect(onCommit).toHaveBeenCalledWith({ runtimeArgs: ['--chrome'] }, { envOnly: false });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Runtime' })).toBeNull());
+  });
+
+  it('opens expanded when the agent already has an override (kills useState(true): the collapsed branch is the one asserted above), with focus on the dialog container', () => {
+    const onCommit = vi.fn(() => Promise.resolve());
+    const dialog = openModal(
+      { kind: 'claude-code', model: 'fable', runtimeArgs: ['--chrome'] },
+      onCommit,
+    );
+
+    // Existing data is never hidden on arrival…
+    expect(dialog.getByRole('button', { name: 'Advanced' }).getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+    expect((dialog.getByPlaceholderText('--chrome') as HTMLTextAreaElement).value).toBe('--chrome');
+    // …and the auto-open must not steal focus from the dialog container
+    // (the focus contract: the first control is an edit, not a safe answer).
+    expect(document.activeElement).toBe(screen.getByRole('dialog', { name: 'Runtime' }));
+  });
+});
