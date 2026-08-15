@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Check, Plus, Undo2, X } from 'lucide-react';
 import type { ProviderAvailability, ProviderCatalogEntry } from '@shared/provider-catalog';
 import type { AgentConfig, AgentUpdateProviderRequest } from '@shared/agent-config';
@@ -159,16 +159,24 @@ function RuntimeModal({
   // focus rests on the container. `titleId` names the dialog by its heading.
   const { dialogRef, titleId, isTopmostDialog } = useDialogFocus(true);
 
+  // Every dismissal (Escape, header X, backdrop) is gated on `!busy`: while a
+  // save is pending the editor must stay mounted so a rejection can render
+  // inline with the drafts intact. Cancel/Save are disabled through the same
+  // flag; unmounting mid-flight would drop the error on the floor.
+  const requestClose = useCallback(() => {
+    if (!busy) onClose();
+  }, [busy, onClose]);
+
   // Escape IS gated on `isTopmostDialog()`: the reload confirm stacks on top
   // of this dialog while `confirming` is set, and its own Escape must not
   // also dismiss the editor underneath (drafts would be lost).
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape' && isTopmostDialog()) onClose();
+      if (e.key === 'Escape' && isTopmostDialog()) requestClose();
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, isTopmostDialog]);
+  }, [requestClose, isTopmostDialog]);
 
   const draftEntry = providerOptions.find((option) => option.kind === draftKind);
   const draftModelOptions = draftEntry?.models ?? [];
@@ -307,7 +315,7 @@ function RuntimeModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-stretch justify-center bg-page/70 backdrop-blur-sm md:items-center md:p-4"
-      onClick={onClose}
+      onClick={requestClose}
     >
       <div
         ref={dialogRef}
@@ -325,9 +333,10 @@ function RuntimeModal({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
+            disabled={busy}
             aria-label="Close"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-muted"
           >
             <X className="h-4 w-4" />
           </button>
