@@ -32,6 +32,18 @@ import {
   type ResolvedKbRoot,
 } from './kb.helper.js';
 
+// Test seam (issue #535): the directory-browse root defaults to the operator's
+// home, exactly as before, and is overridable via ANIMA_KB_BROWSE_ROOT so tests
+// can exercise browse/mkdir against a tmpdir instead of the real home. Read at
+// call time (tests swap env per test, mirroring ANIMA_HOME).
+// GOVERNANCE NOTE: this knob changes testability only. POST /api/filesystem/mkdir
+// stays in the governed table (server/web/read-only.ts) UNCONDITIONALLY wherever
+// the root points — the root bounds HOW FAR a caller may write, never WHETHER
+// the write lands outside ANIMA_HOME.
+function kbBrowseRoot(): string {
+  return process.env.ANIMA_KB_BROWSE_ROOT?.trim() || homedir();
+}
+
 const DIRECTORY_PAGE_SIZE = 250;
 const SEARCH_MATCH_LIMIT = 200;
 const SEARCH_SCAN_LIMIT = 50_000;
@@ -58,11 +70,20 @@ export class KbRegistryService {
   }
 
   async browseKbDirectories(rawPath: string | undefined): Promise<KbDirectoryBrowse> {
-    const home = await realpath(homedir());
-    const requested = rawPath?.trim() ? expandHome(rawPath.trim()) : home;
-    const requestedRealpath = await realpath(resolve(requested)).catch(() => undefined);
-    if (!requestedRealpath) throw new KbError(404, 'path_not_found');
-    if (requestedRealpath !== home && !requestedRealpath.startsWith(home + sep)) {
+    const root = await realpath(kbBrowseRoot());
+    const requested = rawPath?.trim() ? expandHome(rawPath.trim()) : root;
+    const requestedResolved = resolve(requested);
+    const requestedRealpath = await realpath(requestedResolved).catch(() => undefined);
+    // Boundary before existence: a path outside the root answers 400 whether
+    // or not it exists, so the route never reveals whether host paths beyond
+    // the root exist (previously nonexistent-outside answered 404).
+    if (!requestedRealpath) {
+      if (requestedResolved !== root && !requestedResolved.startsWith(root + sep)) {
+        throw new KbError(400, 'path outside browse root');
+      }
+      throw new KbError(404, 'path_not_found');
+    }
+    if (requestedRealpath !== root && !requestedRealpath.startsWith(root + sep)) {
       throw new KbError(400, 'path outside browse root');
     }
     const currentStat = await stat(requestedRealpath).catch(() => undefined);
@@ -78,19 +99,27 @@ export class KbRegistryService {
   }
 
   // Create a new subdirectory under an existing directory inside the browse
-  // root (home). Mirrors browseKbDirectories' sandboxing: parent must resolve
-  // to an existing directory within home, and the name is validated to a single
-  // path segment (no separators / traversal / dotfiles). Returns the refreshed
-  // browse of the parent so the caller can locate the new directory by name.
+  // root (the operator's home by default). Mirrors browseKbDirectories'
+  // sandboxing: parent must resolve to an existing directory within the root,
+  // and the name is validated to a single path segment (no separators /
+  // traversal / dotfiles). Returns the refreshed browse of the parent so the
+  // caller can locate the new directory by name.
   async createKbDirectory(
     rawParent: string | undefined,
     rawName: string,
   ): Promise<KbDirectoryBrowse> {
-    const home = await realpath(homedir());
-    const requested = rawParent?.trim() ? expandHome(rawParent.trim()) : home;
-    const parentRealpath = await realpath(resolve(requested)).catch(() => undefined);
-    if (!parentRealpath) throw new KbError(404, 'path_not_found');
-    if (parentRealpath !== home && !parentRealpath.startsWith(home + sep)) {
+    const root = await realpath(kbBrowseRoot());
+    const requested = rawParent?.trim() ? expandHome(rawParent.trim()) : root;
+    const parentResolved = resolve(requested);
+    const parentRealpath = await realpath(parentResolved).catch(() => undefined);
+    // Boundary before existence — same contract as browseKbDirectories.
+    if (!parentRealpath) {
+      if (parentResolved !== root && !parentResolved.startsWith(root + sep)) {
+        throw new KbError(400, 'path outside browse root');
+      }
+      throw new KbError(404, 'path_not_found');
+    }
+    if (parentRealpath !== root && !parentRealpath.startsWith(root + sep)) {
       throw new KbError(400, 'path outside browse root');
     }
     const parentStat = await stat(parentRealpath).catch(() => undefined);
