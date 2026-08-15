@@ -351,7 +351,7 @@ function UsageCard({ now, usage }: { now: Date; usage: ProviderUsageRow }) {
                   ? 'Unreachable'
                   : 'Unavailable'}
           </span>
-          {errorMessage && <p className="font-sans text-[11px] leading-relaxed text-text-subtle">{errorMessage}</p>}
+          {errorMessage && <p className="font-sans text-[11px] leading-relaxed text-text-muted">{errorMessage}</p>}
         </div>
       )}
     </div>

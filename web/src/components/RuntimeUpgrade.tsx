@@ -371,19 +371,17 @@ function FailedCard({
           <span className="font-serif text-[14px] font-medium text-text">
             Update failed: still on{' '}
             <span className="font-mono text-[12px] text-text-muted">{currentVersion}</span>
-            <span className="font-sans text-[12px] font-normal text-text-subtle">
-              {' '}· nothing else changed
-            </span>
+            {' · nothing else changed'}
           </span>
         )}
       </div>
       {error && (
-        <p className="mt-1.5 break-words font-mono text-[10px] leading-relaxed text-text-subtle">
+        <p className="mt-1.5 break-words font-mono text-[10px] leading-relaxed text-text-muted">
           {error}
         </p>
       )}
       {logPath && (
-        <p className="mt-1 break-all font-mono text-[10px] leading-relaxed text-text-subtle opacity-70">
+        <p className="mt-1 break-all font-mono text-[10px] leading-relaxed text-text-subtle">
           log: {logPath}
         </p>
       )}

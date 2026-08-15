@@ -50,8 +50,8 @@ export const USAGE_RAMP = ['#EAE5D8', '#F1D2B6', '#E0A377', '#C86E3C', '#AF3C1C'
 // Barely above the panel surface. Days before tracking started are the least
 // informative thing here, so they get the least ink while the 52-week frame
 // stays legible.
-const NO_DATA_FILL = '#F6F2E9';
-const COVERAGE_RULE = '#B0A488';
+const NO_DATA_FILL = 'var(--color-surface)';
+const COVERAGE_RULE = 'var(--color-border-strong)';
 
 const CELL = 11;
 const GAP = 3;

@@ -40,7 +40,7 @@ export function AgentUsageSection({ agentId }: { agentId: string }) {
         through={range.through}
       />
       <UsageTotals totals={usage} />
-      <p className="font-sans text-[11px] leading-relaxed text-text-subtle">
+      <p className="font-sans text-[11px] leading-relaxed text-text-muted">
         Provider-reported tokens only. Reasoning tokens are included in output and are never counted twice.
       </p>
     </div>
@@ -50,13 +50,13 @@ export function AgentUsageSection({ agentId }: { agentId: string }) {
 function TrackingNote({ coverageStartedAt }: { coverageStartedAt?: string }) {
   if (!coverageStartedAt) {
     return (
-      <span className="max-w-xs font-sans text-[11px] leading-relaxed text-text-subtle">
+      <span className="max-w-xs font-sans text-[11px] leading-relaxed text-text-muted">
         Exact tracking starts when this agent runtime next starts.
       </span>
     );
   }
   return (
-    <span className="max-w-xs text-right font-sans text-[11px] leading-relaxed text-text-subtle">
+    <span className="max-w-xs text-right font-sans text-[11px] leading-relaxed text-text-muted">
       Exact since {new Date(coverageStartedAt).toLocaleDateString()}
     </span>
   );

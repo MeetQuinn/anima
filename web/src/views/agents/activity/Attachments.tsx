@@ -43,7 +43,7 @@ export function AttachedFile({ file, agentId }: { file: SlackFile; agentId: stri
       >
         <FileWarning className="h-3.5 w-3.5 shrink-0" />
         <span className="min-w-0 flex-1 truncate">{file.name}</span>
-        <span className="shrink-0 text-text-subtle">download failed</span>
+        <span className="shrink-0">download failed</span>
       </span>
     );
   }

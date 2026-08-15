@@ -66,7 +66,7 @@ function SkillRow({
             </p>
           )}
           {skill.sourcePath && (
-            <div className="break-all font-mono text-[11px] text-text-subtle/60">
+            <div className="break-all font-mono text-[11px] text-text-subtle">
               {skill.sourcePath}
             </div>
           )}
@@ -138,7 +138,7 @@ function SourceGroup({
           className={`h-3 w-3 shrink-0 self-center text-text-subtle/50 transition-transform ${open ? 'rotate-180' : ''}`}
         />
         <span className="font-sans text-[12px] font-medium text-text-muted">{source.label}</span>
-        <span className="font-mono text-[11px] text-text-subtle/70">{source.skills.length}</span>
+        <span className="font-mono text-[11px] text-text-subtle">{source.skills.length}</span>
       </button>
       {open && (
         <div className="ml-5">
@@ -185,7 +185,7 @@ function SkillGroup({
         <div className="py-1">
           <p className="font-serif text-[13px] italic text-text-subtle">None yet</p>
           {emptyHint && (
-            <p className="mt-1 break-all font-mono text-[11px] text-text-subtle/50">{emptyHint}</p>
+            <p className="mt-1 break-all font-mono text-[11px] text-text-muted">{emptyHint}</p>
           )}
         </div>
       ) : visibleSources.length > 1 ? (

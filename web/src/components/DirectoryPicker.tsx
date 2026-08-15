@@ -349,7 +349,7 @@ export default function DirectoryPicker({
             onChange={(e) => setNewName(e.target.value)}
             disabled={mkdirBusy}
             placeholder={`New folder in ${createTargetLabel}`}
-            className="min-w-0 flex-1 rounded-sm border border-border bg-muted/30 px-2.5 py-1.5 font-sans text-[12px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-1 focus:ring-ring"
+            className="min-w-0 flex-1 rounded-sm border border-border-soft bg-surface-elevated px-2.5 py-1.5 font-sans text-[12px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-1 focus:ring-accent"
           />
           <Button type="submit" size="sm" disabled={!newName.trim() || mkdirBusy}>
             {mkdirBusy ? 'Creating…' : 'Create'}

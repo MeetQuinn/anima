@@ -248,7 +248,7 @@ export default function MobileNavScreen({
           <div className="mb-2 flex items-center justify-between pl-3">
             <span className="caps text-text-on-spine-subtle">Knowledge Base</span>
             <div className="flex items-center gap-1.5">
-              <span className="font-mono text-[10px] tabular-nums text-text-on-spine-subtle/70">
+              <span className="font-mono text-[10px] tabular-nums text-text-on-spine-muted">
                 {orderedKbs.length}
               </span>
               <button
@@ -293,7 +293,7 @@ export default function MobileNavScreen({
           <div className="mb-2 flex items-center justify-between pl-3">
             <span className="caps text-text-on-spine-subtle">Agents</span>
             <div className="flex items-center gap-1.5">
-              <span className="font-mono text-[10px] tabular-nums text-text-on-spine-subtle/70">
+              <span className="font-mono text-[10px] tabular-nums text-text-on-spine-muted">
                 {orderedAgents.length}
               </span>
               <button
