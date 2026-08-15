@@ -171,10 +171,20 @@ export function RenameKbModal({
             <div className="font-sans text-[12px] leading-snug text-health-error">{error}</div>
           )}
           <div className="flex justify-end gap-2">
-            <Button type="button" onClick={onCancel} variant="outline" disabled={busy}>
+            <Button
+              type="button"
+              onClick={onCancel}
+              variant="outline"
+              disabled={busy}
+              className="min-h-[44px] md:min-h-0"
+            >
               Cancel
             </Button>
-            <Button type="submit" disabled={busy || !label.trim() || label.trim() === kb.label}>
+            <Button
+              type="submit"
+              disabled={busy || !label.trim() || label.trim() === kb.label}
+              className="min-h-[44px] md:min-h-0"
+            >
               {busy ? 'Saving…' : 'Save'}
             </Button>
           </div>
@@ -242,10 +252,21 @@ export function ConfirmDeleteModal({
           the sidebar. Files on disk are not affected.
         </div>
         <div className="mt-5 flex justify-end gap-2">
-          <Button ref={initialFocusRef} onClick={onCancel} variant="outline" disabled={busy}>
+          <Button
+            ref={initialFocusRef}
+            onClick={onCancel}
+            variant="outline"
+            disabled={busy}
+            className="min-h-[44px] md:min-h-0"
+          >
             Cancel
           </Button>
-          <Button onClick={onConfirm} variant="destructive" disabled={busy}>
+          <Button
+            onClick={onConfirm}
+            variant="destructive"
+            disabled={busy}
+            className="min-h-[44px] md:min-h-0"
+          >
             {busy ? 'Removing…' : 'Remove'}
           </Button>
         </div>

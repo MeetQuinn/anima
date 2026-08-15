@@ -88,11 +88,17 @@ function HeroEditable({
           }}
           className={inputClassName}
         />
-        <Button size="xs" disabled={busy} onClick={() => void commit()}>
+        <Button size="sm" className="min-h-[44px] md:min-h-0" disabled={busy} onClick={() => void commit()}>
           <Check />
           {busy ? 'Saving…' : 'Save'}
         </Button>
-        <Button size="xs" variant="ghost" disabled={busy} onClick={() => setEditing(false)}>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="min-h-[44px] md:min-h-0"
+          disabled={busy}
+          onClick={() => setEditing(false)}
+        >
           <X />
           Cancel
         </Button>
