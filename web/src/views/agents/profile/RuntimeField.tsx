@@ -78,10 +78,21 @@ export function RuntimeRow({
                 </span>
               </>
             )}
+            {provider.kind === 'claude-code' && provider.fastMode && (
+              <>
+                <span className="font-sans mx-1.5 text-[12px] text-text-subtle">·</span>
+                <span className="font-serif text-[13px] md:text-[15px] text-text-muted">
+                  Fast mode
+                </span>
+              </>
+            )}
           </span>
           {/* Unset lines stay hidden (totoday 08-15: 如果command和env没设置就不要出). */}
           {commandSet && (
-            <span className="max-w-md truncate font-mono text-[12px] text-text-muted" title={commandLine}>
+            <span
+              className="max-w-md truncate font-mono text-[12px] text-text-muted"
+              title={commandLine}
+            >
               {commandLine}
             </span>
           )}
@@ -90,7 +101,9 @@ export function RuntimeRow({
               <span className="shrink-0 font-sans text-[12px] text-text-muted">
                 {envKeys.length} env var{envKeys.length === 1 ? '' : 's'}
               </span>
-              <span className="max-w-sm truncate font-mono text-[12px] text-text-subtle">{envKeys.join(', ')}</span>
+              <span className="max-w-sm truncate font-mono text-[12px] text-text-subtle">
+                {envKeys.join(', ')}
+              </span>
             </span>
           )}
         </span>
@@ -140,7 +153,13 @@ function RuntimeModal({
       ? (provider.reasoningEffort ?? '')
       : '';
 
-  const hadOverrides = Boolean(provider.runtimeCommand) || (provider.runtimeArgs?.length ?? 0) > 0;
+  const hadCommandOverride =
+    Boolean(provider.runtimeCommand) || (provider.runtimeArgs?.length ?? 0) > 0;
+  // Absent and false are the same launch (the server injects nothing for
+  // either), so the checkbox draft folds them together; an untouched box
+  // sends no key.
+  const currentFastMode = provider.kind === 'claude-code' && (provider.fastMode ?? false);
+  const hadOverrides = hadCommandOverride || currentFastMode;
 
   // Drafts (initialised on mount; the modal is conditionally rendered).
   const [draftKind, setDraftKind] = useState(provider.kind as string);
@@ -148,6 +167,7 @@ function RuntimeModal({
   const [draftEffort, setDraftEffort] = useState(currentEffort);
   const [draftCommand, setDraftCommand] = useState(provider.runtimeCommand ?? '');
   const [draftArgs, setDraftArgs] = useState((provider.runtimeArgs ?? []).join('\n'));
+  const [draftFastMode, setDraftFastMode] = useState(currentFastMode);
   // The launch override is an expert feature almost nobody sets (totoday,
   // 08-15: the terminal card dominated the modal), so it lives at the bottom
   // behind an Advanced disclosure, collapsed unless this agent already has an
@@ -189,7 +209,11 @@ function RuntimeModal({
 
   const draftEntry = providerOptions.find((option) => option.kind === draftKind);
   const draftModelOptions = draftEntry?.models ?? [];
-  const draftEffortOptions = effortOptionsForSelectedModel(draftEntry, draftModel, providerAvailability);
+  const draftEffortOptions = effortOptionsForSelectedModel(
+    draftEntry,
+    draftModel,
+    providerAvailability,
+  );
   const hasDraftEffort = draftEffortOptions.length > 0;
   const kindChanged = draftKind !== provider.kind;
   const draftUnavailableHint = providerAvailability
@@ -218,9 +242,11 @@ function RuntimeModal({
     setDraftModel(nextEntry.defaultModel);
     setDraftEffort(defaultEffortForModel(nextEntry, nextEntry.defaultModel, providerAvailability));
     // A launch override written for the old provider's CLI does not transfer
-    // (server drops it on kind change); the drafts mirror that.
+    // (server drops it on kind change); the drafts mirror that. Fast mode is
+    // Claude-only and the server drops it with the other overrides.
     setDraftCommand('');
     setDraftArgs('');
+    setDraftFastMode(false);
     setError(undefined);
   }
 
@@ -237,7 +263,10 @@ function RuntimeModal({
   }
 
   function addEnvRow() {
-    setEnvRows((current) => [...current, { id: `new-${Date.now()}-${current.length}`, key: '', value: '' }]);
+    setEnvRows((current) => [
+      ...current,
+      { id: `new-${Date.now()}-${current.length}`, key: '', value: '' },
+    ]);
     setError(undefined);
   }
 
@@ -257,9 +286,11 @@ function RuntimeModal({
     let launchAffecting = providerChanged;
     if (kindChanged) {
       // The server drops old-kind overrides; only send values the operator
-      // typed for the NEW kind.
+      // typed for the NEW kind. fastMode must NEVER ride along to a
+      // non-Claude kind — the server 400s the whole atomic update.
       if (commandDraft) update.runtimeCommand = commandDraft;
       if (nextArgs.length > 0) update.runtimeArgs = nextArgs;
+      if (draftKind === 'claude-code' && draftFastMode) update.fastMode = true;
     } else {
       const currentCommand = provider.runtimeCommand ?? '';
       const currentArgs = provider.runtimeArgs ?? [];
@@ -270,6 +301,12 @@ function RuntimeModal({
       }
       if (JSON.stringify(nextArgs) !== JSON.stringify(currentArgs)) {
         update.runtimeArgs = nextArgs.length > 0 ? nextArgs : null;
+        launchAffecting = true;
+      }
+      if (draftKind === 'claude-code' && draftFastMode !== currentFastMode) {
+        // Toggling changes the launch argv (--settings injection), so it
+        // routes through the restart confirm like command/args.
+        update.fastMode = draftFastMode;
         launchAffecting = true;
       }
     }
@@ -355,79 +392,97 @@ function RuntimeModal({
           <div className={groupRow}>
             <div className={railLabel}>Provider</div>
             <div className="space-y-2.5">
-            {/* Mobile: three equal columns; md+: content-sized inline row. */}
-            <div className="grid grid-cols-3 items-center gap-2 md:flex md:flex-wrap">
-              <Select value={draftKind} onValueChange={handleKindChange}>
-                <SelectTrigger className="!h-[44px] w-full font-serif text-[14px] md:!h-8 md:w-36" disabled={busy}>
-                  {providerKindLabel(draftKind, providerOptions)}
-                </SelectTrigger>
-                <SelectContent>
-                  {providerOptions.map((opt) => {
-                    const unavailableLabel = providerAvailability
-                      ? providerUnavailableLabel(opt, providerAvailability)
-                      : undefined;
-                    return (
-                      <SelectItem
-                        key={opt.kind}
-                        value={opt.kind}
-                        disabled={!providerSelectable(opt)}
-                        className="font-serif text-[14px]"
-                      >
-                        {opt.label}
-                        {unavailableLabel ? ` · ${unavailableLabel}` : ''}
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
-              <Select value={draftModel} onValueChange={handleModelChange}>
-                <SelectTrigger className="!h-[44px] w-full font-serif text-[14px] md:!h-8 md:w-48" disabled={busy}>
-                  {providerValueLabel(draftModel)}
-                </SelectTrigger>
-                <SelectContent>
-                  {draftModelOptions.map((opt) => (
-                    <SelectItem key={opt} value={opt} className="font-serif text-[14px]">
-                      {providerValueLabel(opt)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {hasDraftEffort && (
-                <Select
-                  value={draftEffort}
-                  onValueChange={(v) => {
-                    if (v) setDraftEffort(v);
-                  }}
-                >
-                  <SelectTrigger className="!h-[44px] w-full font-serif text-[14px] md:!h-8 md:w-28" disabled={busy}>
-                    {draftEffort ? (
-                      providerValueLabel(draftEffort)
-                    ) : (
-                      <span className="text-text-subtle">Effort</span>
-                    )}
+              {/* Mobile: three equal columns; md+: content-sized inline row. */}
+              <div className="grid grid-cols-3 items-center gap-2 md:flex md:flex-wrap">
+                <Select value={draftKind} onValueChange={handleKindChange}>
+                  <SelectTrigger
+                    className="!h-[44px] w-full font-serif text-[14px] md:!h-8 md:w-36"
+                    disabled={busy}
+                  >
+                    {providerKindLabel(draftKind, providerOptions)}
                   </SelectTrigger>
                   <SelectContent>
-                    {draftEffortOptions.map((opt) => (
+                    {providerOptions.map((opt) => {
+                      const unavailableLabel = providerAvailability
+                        ? providerUnavailableLabel(opt, providerAvailability)
+                        : undefined;
+                      return (
+                        <SelectItem
+                          key={opt.kind}
+                          value={opt.kind}
+                          disabled={!providerSelectable(opt)}
+                          className="font-serif text-[14px]"
+                        >
+                          {opt.label}
+                          {unavailableLabel ? ` · ${unavailableLabel}` : ''}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+                <Select value={draftModel} onValueChange={handleModelChange}>
+                  <SelectTrigger
+                    className="!h-[44px] w-full font-serif text-[14px] md:!h-8 md:w-48"
+                    disabled={busy}
+                  >
+                    {providerValueLabel(draftModel)}
+                  </SelectTrigger>
+                  <SelectContent>
+                    {draftModelOptions.map((opt) => (
                       <SelectItem key={opt} value={opt} className="font-serif text-[14px]">
                         {providerValueLabel(opt)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-              )}
-            </div>
-            {draftUnavailableHint && (
-              <div className="font-sans text-[11px] leading-snug text-text-muted">{draftUnavailableHint}</div>
-            )}
-            {draftAuthority && !draftUnavailableHint && (
-              <div className="font-sans text-[10px] leading-snug text-text-subtle">{draftAuthority}</div>
-            )}
-            {kindChanged && (
-              <div className="font-sans text-[11px] leading-snug text-text-muted">
-                Starts a fresh provider session; memory, notes, and history stay intact.
-                {hadOverrides ? ' The command override below was cleared; it was written for the old provider.' : ''}
+                {hasDraftEffort && (
+                  <Select
+                    value={draftEffort}
+                    onValueChange={(v) => {
+                      if (v) setDraftEffort(v);
+                    }}
+                  >
+                    <SelectTrigger
+                      className="!h-[44px] w-full font-serif text-[14px] md:!h-8 md:w-28"
+                      disabled={busy}
+                    >
+                      {draftEffort ? (
+                        providerValueLabel(draftEffort)
+                      ) : (
+                        <span className="text-text-subtle">Effort</span>
+                      )}
+                    </SelectTrigger>
+                    <SelectContent>
+                      {draftEffortOptions.map((opt) => (
+                        <SelectItem key={opt} value={opt} className="font-serif text-[14px]">
+                          {providerValueLabel(opt)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
-            )}
+              {draftUnavailableHint && (
+                <div className="font-sans text-[11px] leading-snug text-text-muted">
+                  {draftUnavailableHint}
+                </div>
+              )}
+              {draftAuthority && !draftUnavailableHint && (
+                <div className="font-sans text-[10px] leading-snug text-text-subtle">
+                  {draftAuthority}
+                </div>
+              )}
+              {kindChanged && (
+                <div className="font-sans text-[11px] leading-snug text-text-muted">
+                  Starts a fresh provider session; memory, notes, and history stay intact.
+                  {hadCommandOverride
+                    ? ' The command override below was cleared; it was written for the old provider.'
+                    : ''}
+                  {currentFastMode && draftKind !== 'claude-code'
+                    ? ' Fast mode was turned off; it is Claude-only.'
+                    : ''}
+                </div>
+              )}
             </div>
           </div>
 
@@ -448,7 +503,10 @@ function RuntimeModal({
                           onChange={(e) => updateEnvRow(row.id, { key: e.currentTarget.value })}
                           className={`h-[44px] w-36 shrink-0 font-mono text-[12px] sm:w-44 md:h-8 ${row.deleted ? 'line-through' : ''}`}
                         />
-                        <span aria-hidden className="select-none font-mono text-[12px] text-text-subtle">
+                        <span
+                          aria-hidden
+                          className="select-none font-mono text-[12px] text-text-subtle"
+                        >
                           =
                         </span>
                         <Input
@@ -461,14 +519,27 @@ function RuntimeModal({
                         <button
                           type="button"
                           disabled={busy}
-                          title={row.deleted ? 'Keep this variable' : row.originalKey ? 'Remove on save' : 'Discard'}
+                          title={
+                            row.deleted
+                              ? 'Keep this variable'
+                              : row.originalKey
+                                ? 'Remove on save'
+                                : 'Discard'
+                          }
                           onClick={() => {
                             if (row.originalKey) updateEnvRow(row.id, { deleted: !row.deleted });
-                            else setEnvRows((current) => current.filter((candidate) => candidate.id !== row.id));
+                            else
+                              setEnvRows((current) =>
+                                current.filter((candidate) => candidate.id !== row.id),
+                              );
                           }}
                           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-subtle transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-40"
                         >
-                          {row.deleted ? <Undo2 className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
+                          {row.deleted ? (
+                            <Undo2 className="h-3.5 w-3.5" />
+                          ) : (
+                            <X className="h-3.5 w-3.5" />
+                          )}
                         </button>
                       </div>
                       {RESERVED_ENV_KEYS.has(row.key.trim()) && !row.deleted && (
@@ -510,50 +581,84 @@ function RuntimeModal({
               Advanced
             </button>
             {advancedOpen && (
-              <div className="grid gap-2.5 pb-5 md:grid-cols-[6.5rem_1fr] md:gap-6">
-                <div className={railLabel}>Command</div>
-                <div className="space-y-2">
-                  {/* One quiet terminal card: prompt-prefixed command line, argv
+              <div className="space-y-5 pb-5">
+                {draftKind === 'claude-code' && (
+                  <div className="grid gap-2.5 md:grid-cols-[6.5rem_1fr] md:gap-6">
+                    <div className={railLabel}>Fast mode</div>
+                    <div className="space-y-1">
+                      <label className="flex min-h-[44px] w-fit cursor-pointer items-center gap-2.5 md:min-h-0">
+                        <input
+                          type="checkbox"
+                          checked={draftFastMode}
+                          disabled={busy}
+                          onChange={(e) => {
+                            setDraftFastMode(e.currentTarget.checked);
+                            setError(undefined);
+                          }}
+                          className="h-4 w-4 accent-accent"
+                        />
+                        <span className="font-sans text-[13px] text-text">Request fast mode</span>
+                      </label>
+                      {/* Honest copy (Milo's contract, PR #685): this is an
+                          opt-in REQUEST, never a guarantee — availability is
+                          decided org-side, and the observed fast_mode_state is
+                          runtime evidence only. */}
+                      <p className="font-sans pl-[26px] text-[11px] leading-snug text-text-muted">
+                        Asks Claude for faster responses each session. A request, not a guarantee:
+                        sessions run at standard speed unless the Anthropic organization has fast
+                        mode enabled with usage credits.
+                      </p>
+                    </div>
+                  </div>
+                )}
+                <div className="grid gap-2.5 md:grid-cols-[6.5rem_1fr] md:gap-6">
+                  <div className={railLabel}>Command</div>
+                  <div className="space-y-2">
+                    {/* One quiet terminal card: prompt-prefixed command line, argv
                       lines below it. The args gutter (pl-7) aligns with the text
                       after the prompt glyph. */}
-                  <div className="overflow-hidden rounded-sm border border-border-soft bg-surface-elevated/50 transition-colors focus-within:border-border">
-                    <div className="flex items-center gap-2 px-3">
-                      <span aria-hidden className="select-none font-mono text-[12px] text-text-subtle">
-                        $
-                      </span>
-                      <input
-                        value={draftCommand}
+                    <div className="overflow-hidden rounded-sm border border-border-soft bg-surface-elevated/50 transition-colors focus-within:border-border">
+                      <div className="flex items-center gap-2 px-3">
+                        <span
+                          aria-hidden
+                          className="select-none font-mono text-[12px] text-text-subtle"
+                        >
+                          $
+                        </span>
+                        <input
+                          value={draftCommand}
+                          disabled={busy}
+                          autoCapitalize="off"
+                          autoComplete="off"
+                          spellCheck={false}
+                          placeholder={draftEntry?.command ?? draftKind}
+                          onChange={(e) => {
+                            setDraftCommand(e.currentTarget.value);
+                            setError(undefined);
+                          }}
+                          className="h-9 w-full min-w-0 bg-transparent font-mono text-[12.5px] text-text placeholder:text-text-subtle focus:outline-none disabled:cursor-wait disabled:opacity-60"
+                        />
+                      </div>
+                      <textarea
+                        value={draftArgs}
                         disabled={busy}
                         autoCapitalize="off"
                         autoComplete="off"
                         spellCheck={false}
-                        placeholder={draftEntry?.command ?? draftKind}
+                        rows={3}
+                        placeholder={draftKind === 'claude-code' ? '--chrome' : '--flag'}
                         onChange={(e) => {
-                          setDraftCommand(e.currentTarget.value);
+                          setDraftArgs(e.currentTarget.value);
                           setError(undefined);
                         }}
-                        className="h-9 w-full min-w-0 bg-transparent font-mono text-[12.5px] text-text placeholder:text-text-subtle focus:outline-none disabled:cursor-wait disabled:opacity-60"
+                        className="block min-h-[64px] w-full resize-y border-t border-border-soft/70 bg-transparent py-2 pl-7 pr-3 font-mono text-[12.5px] leading-relaxed text-text placeholder:text-text-subtle focus:outline-none disabled:cursor-wait disabled:opacity-60"
                       />
                     </div>
-                    <textarea
-                      value={draftArgs}
-                      disabled={busy}
-                      autoCapitalize="off"
-                      autoComplete="off"
-                      spellCheck={false}
-                      rows={3}
-                      placeholder={draftKind === 'claude-code' ? '--chrome' : '--flag'}
-                      onChange={(e) => {
-                        setDraftArgs(e.currentTarget.value);
-                        setError(undefined);
-                      }}
-                      className="block min-h-[64px] w-full resize-y border-t border-border-soft/70 bg-transparent py-2 pl-7 pr-3 font-mono text-[12.5px] leading-relaxed text-text placeholder:text-text-subtle focus:outline-none disabled:cursor-wait disabled:opacity-60"
-                    />
+                    {/* Only the two non-obvious facts; the rest the editor shows. */}
+                    <p className="font-sans text-[11px] leading-snug text-text-muted">
+                      One argv entry per line. Empty falls back to the Providers-page settings.
+                    </p>
                   </div>
-                  {/* Only the two non-obvious facts; the rest the editor shows. */}
-                  <p className="font-sans text-[11px] leading-snug text-text-muted">
-                    One argv entry per line. Empty falls back to the Providers-page settings.
-                  </p>
                 </div>
               </div>
             )}
