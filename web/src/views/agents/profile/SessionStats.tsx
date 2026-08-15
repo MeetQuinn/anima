@@ -114,7 +114,7 @@ export function SessionSection({
         <VitalLabel>Started</VitalLabel>
         {startedAt ? (
           <div className="min-w-0">
-            <span className="font-serif text-[15px] leading-none text-text">
+            <span className="font-mono text-[15px] leading-none text-text">
               {shortIso(startedAt)}
             </span>
             <span className="font-sans ml-2 text-[11px] tracking-wide text-text-subtle">

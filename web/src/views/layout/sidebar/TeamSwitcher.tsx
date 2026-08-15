@@ -85,7 +85,7 @@ export function TeamSwitcher({
       {open && (
         <div
           role="menu"
-          className="absolute left-2.5 right-2.5 top-[60px] z-30 origin-top overflow-hidden rounded-xl border border-white/10 bg-spine-elevated p-1.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.6)] ring-1 ring-black/10 animate-in fade-in slide-in-from-top-1 duration-150"
+          className="absolute left-2.5 right-2.5 top-[60px] z-30 origin-top overflow-hidden rounded-xl border border-spine-border bg-spine-elevated p-1.5 shadow-deep animate-in fade-in slide-in-from-top-1 duration-150"
         >
           {grouped && (
             <>

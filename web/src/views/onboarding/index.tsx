@@ -554,7 +554,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
   // -------------------------------------------------------------------------
 
   const card = (
-    <div className="relative w-full max-w-xl rounded-sm border border-border-soft bg-white shadow-deep">
+    <div className="relative w-full max-w-xl rounded-sm border border-border-soft bg-surface shadow-deep">
       {/* hero lives outside the card now — see shell below */}
 
       {/* ---- Card header row ---- */}

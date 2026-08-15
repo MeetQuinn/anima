@@ -24,7 +24,7 @@ export function AgentHealthIndicator({
 }) {
   const { holdStarting, now } = useHealthDisplayClock(health);
   const display = healthDisplay(health, isRunning, now, holdStarting);
-  const textColor = surface === 'spine' ? 'text-text-on-spine-subtle' : 'text-text-muted';
+  const textColor = surface === 'spine' ? 'text-text-on-spine-muted' : 'text-text-muted';
   const recoveredStyle = display.kind === 'recovered'
     ? { color: 'var(--color-health-ok)' }
     : undefined;

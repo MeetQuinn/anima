@@ -417,7 +417,7 @@ function RuntimeModal({
             {kindChanged && (
               <div className="font-sans text-[11px] leading-snug text-text-muted">
                 Starts a fresh provider session; memory, notes, and history stay intact.
-                {hadOverrides ? ' The command override below was cleared — it was written for the old provider.' : ''}
+                {hadOverrides ? ' The command override below was cleared; it was written for the old provider.' : ''}
               </div>
             )}
             </div>
