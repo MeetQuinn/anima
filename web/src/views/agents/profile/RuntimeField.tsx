@@ -350,7 +350,7 @@ function RuntimeModal({
             {/* Mobile: three equal columns; md+: content-sized inline row. */}
             <div className="grid grid-cols-3 items-center gap-2 md:flex md:flex-wrap">
               <Select value={draftKind} onValueChange={handleKindChange}>
-                <SelectTrigger className="h-[44px] w-full font-serif text-[14px] md:h-8 md:w-36" disabled={busy}>
+                <SelectTrigger className="!h-[44px] w-full font-serif text-[14px] md:!h-8 md:w-36" disabled={busy}>
                   {providerKindLabel(draftKind, providerOptions)}
                 </SelectTrigger>
                 <SelectContent>
@@ -373,7 +373,7 @@ function RuntimeModal({
                 </SelectContent>
               </Select>
               <Select value={draftModel} onValueChange={handleModelChange}>
-                <SelectTrigger className="h-[44px] w-full font-serif text-[14px] md:h-8 md:w-48" disabled={busy}>
+                <SelectTrigger className="!h-[44px] w-full font-serif text-[14px] md:!h-8 md:w-48" disabled={busy}>
                   {providerValueLabel(draftModel)}
                 </SelectTrigger>
                 <SelectContent>
@@ -391,7 +391,7 @@ function RuntimeModal({
                     if (v) setDraftEffort(v);
                   }}
                 >
-                  <SelectTrigger className="h-[44px] w-full font-serif text-[14px] md:h-8 md:w-28" disabled={busy}>
+                  <SelectTrigger className="!h-[44px] w-full font-serif text-[14px] md:!h-8 md:w-28" disabled={busy}>
                     {draftEffort ? (
                       providerValueLabel(draftEffort)
                     ) : (
