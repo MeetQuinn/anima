@@ -1,6 +1,6 @@
 import { lstat, mkdir, opendir, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 
 import ignore, { type Ignore } from 'ignore';
 
@@ -44,6 +44,36 @@ function kbBrowseRoot(): string {
   return process.env.ANIMA_KB_BROWSE_ROOT?.trim() || homedir();
 }
 
+// A missing path is classified by the CANONICAL realpath of its nearest
+// existing ancestor, not by its lexical shape. The lexical path can appear
+// in-root while a symlinked ancestor points outside it (root/escape ->
+// /outside, request root/escape/missing): classifying lexically would answer
+// 404 for a missing outside target but 400 for an existing one — exactly the
+// outside-root existence probe the boundary rule exists to close.
+async function nearestExistingAncestorRealpath(pathAbs: string): Promise<string | undefined> {
+  let current = pathAbs;
+  for (;;) {
+    const currentRealpath = await realpath(current).catch(() => undefined);
+    if (currentRealpath) return currentRealpath;
+    const parent = dirname(current);
+    if (parent === current) return undefined; // even the filesystem root failed to resolve
+    current = parent;
+  }
+}
+
+// Shared missing-path classifier for browse and mkdir: 400 when the nearest
+// existing ancestor canonicalizes outside the root (boundary before
+// existence), 404 only when the miss is genuinely inside the root. Returns
+// the error (rather than throwing) so call sites keep TS narrowing via
+// `throw await ...`.
+async function missingPathError(requestedResolved: string, root: string): Promise<KbError> {
+  const ancestor = await nearestExistingAncestorRealpath(dirname(requestedResolved));
+  if (!ancestor || (ancestor !== root && !ancestor.startsWith(root + sep))) {
+    return new KbError(400, 'path outside browse root');
+  }
+  return new KbError(404, 'path_not_found');
+}
+
 const DIRECTORY_PAGE_SIZE = 250;
 const SEARCH_MATCH_LIMIT = 200;
 const SEARCH_SCAN_LIMIT = 50_000;
@@ -76,13 +106,10 @@ export class KbRegistryService {
     const requestedRealpath = await realpath(requestedResolved).catch(() => undefined);
     // Boundary before existence: a path outside the root answers 400 whether
     // or not it exists, so the route never reveals whether host paths beyond
-    // the root exist (previously nonexistent-outside answered 404).
-    if (!requestedRealpath) {
-      if (requestedResolved !== root && !requestedResolved.startsWith(root + sep)) {
-        throw new KbError(400, 'path outside browse root');
-      }
-      throw new KbError(404, 'path_not_found');
-    }
+    // the root exist (previously nonexistent-outside answered 404). Classified
+    // via the nearest existing ancestor's realpath, so a symlinked ancestor
+    // (root/escape -> /outside) cannot turn 400-vs-404 into an existence probe.
+    if (!requestedRealpath) throw await missingPathError(requestedResolved, root);
     if (requestedRealpath !== root && !requestedRealpath.startsWith(root + sep)) {
       throw new KbError(400, 'path outside browse root');
     }
@@ -112,13 +139,9 @@ export class KbRegistryService {
     const requested = rawParent?.trim() ? expandHome(rawParent.trim()) : root;
     const parentResolved = resolve(requested);
     const parentRealpath = await realpath(parentResolved).catch(() => undefined);
-    // Boundary before existence — same contract as browseKbDirectories.
-    if (!parentRealpath) {
-      if (parentResolved !== root && !parentResolved.startsWith(root + sep)) {
-        throw new KbError(400, 'path outside browse root');
-      }
-      throw new KbError(404, 'path_not_found');
-    }
+    // Boundary before existence — same contract as browseKbDirectories,
+    // including the symlinked-ancestor classification for a missing parent.
+    if (!parentRealpath) throw await missingPathError(parentResolved, root);
     if (parentRealpath !== root && !parentRealpath.startsWith(root + sep)) {
       throw new KbError(400, 'path outside browse root');
     }

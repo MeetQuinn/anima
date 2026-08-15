@@ -215,10 +215,15 @@ test('kb directory browser is root-bound and returns directories only', async ()
   // realpath: the service canonicalizes paths, and tmpdir() is a symlink on
   // macOS, so assertions must compare against the resolved root.
   const browseRoot = await realpath(await mkdtemp(join(tmpdir(), 'anima-kb-browse-')));
+  // Outside-root dir reached through an in-root symlink (root/escape -> here):
+  // the lexical request path looks in-root, the canonical one is not.
+  const outsideDir = await realpath(await mkdtemp(join(tmpdir(), 'anima-kb-browse-outside-')));
   try {
     await mkdir(join(browseRoot, 'visible-dir'));
     await mkdir(join(browseRoot, '.hidden-dir'));
     await writeFile(join(browseRoot, 'file.txt'), 'not a dir\n', 'utf8');
+    await mkdir(join(outsideDir, 'existing'));
+    await symlink(outsideDir, join(browseRoot, 'escape'));
 
     await withBrowseRoot(browseRoot, () =>
       withServer(homeDir, async (base) => {
@@ -241,12 +246,33 @@ test('kb directory browser is root-bound and returns directories only', async ()
 
         const outsideParent = await fetch(`${base}/api/filesystem/browse?path=${encodeURIComponent(tmpdir())}`);
         assert.equal(outsideParent.status, 400, 'parent of the root is still outside the root');
+
+        // Symlinked-ancestor probe: root/escape -> outside dir. Both the
+        // existing and the MISSING target must answer 400 — a 404 on the
+        // missing one would let 400-vs-404 reveal whether outside-root
+        // paths exist (classification must follow the canonical ancestor,
+        // not the lexical in-root shape).
+        const viaEscapeExisting = await fetch(
+          `${base}/api/filesystem/browse?path=${encodeURIComponent(join(browseRoot, 'escape', 'existing'))}`,
+        );
+        assert.equal(viaEscapeExisting.status, 400, 'existing target behind escape symlink is outside');
+        const viaEscapeMissing = await fetch(
+          `${base}/api/filesystem/browse?path=${encodeURIComponent(join(browseRoot, 'escape', 'missing'))}`,
+        );
+        assert.equal(viaEscapeMissing.status, 400, 'missing target behind escape symlink must match the existing one');
+
+        // Control: a genuinely in-root miss still answers 404.
+        const inRootMissing = await fetch(
+          `${base}/api/filesystem/browse?path=${encodeURIComponent(join(browseRoot, 'visible-dir', 'missing'))}`,
+        );
+        assert.equal(inRootMissing.status, 404, 'in-root missing path stays a plain 404');
       }),
     );
   } finally {
     await rm(homeDir, { force: true, recursive: true });
     await rm(repoDir, { force: true, recursive: true });
     await rm(browseRoot, { force: true, recursive: true });
+    await rm(outsideDir, { force: true, recursive: true });
   }
 });
 
@@ -255,7 +281,11 @@ test('kb directory mkdir creates a subfolder and enforces the root boundary', as
   // Issue #535: mkdir is exercised against a tmpdir root; this file creates
   // zero paths under the operator's real home.
   const browseRoot = await realpath(await mkdtemp(join(tmpdir(), 'anima-kb-mkdir-')));
+  // Same escape-symlink shape as the browse test: root/escape -> outside dir.
+  const outsideDir = await realpath(await mkdtemp(join(tmpdir(), 'anima-kb-mkdir-outside-')));
   try {
+    await mkdir(join(outsideDir, 'existing'));
+    await symlink(outsideDir, join(browseRoot, 'escape'));
     await withBrowseRoot(browseRoot, () =>
       withServer(homeDir, async (base) => {
         const mk = (payload: unknown) =>
@@ -301,6 +331,30 @@ test('kb directory mkdir creates a subfolder and enforces the root boundary', as
         // Parent directory of the root (an existing dir) is also outside.
         assert.equal((await mk({ parent: tmpdir(), name: 'nope' })).status, 400);
 
+        // Symlinked-ancestor probe (mirrors the browse pins): parents behind
+        // root/escape -> outside must answer 400 whether the target exists
+        // or not — a 404 on the missing one would leak outside existence,
+        // and neither request may create anything outside the root.
+        assert.equal(
+          (await mk({ parent: join(browseRoot, 'escape', 'existing'), name: 'nope' })).status,
+          400,
+        );
+        assert.equal(
+          (await mk({ parent: join(browseRoot, 'escape', 'missing'), name: 'nope' })).status,
+          400,
+        );
+        assert.equal(
+          (await stat(join(outsideDir, 'existing', 'nope')).catch(() => undefined)),
+          undefined,
+          'nothing was created behind the escape symlink',
+        );
+
+        // Control: a genuinely in-root missing parent stays a plain 404.
+        assert.equal(
+          (await mk({ parent: join(browseRoot, 'new-folder', 'missing'), name: 'nope' })).status,
+          404,
+        );
+
         // Missing name -> 400 (schema rejects).
         assert.equal((await mk({ parent: browseRoot })).status, 400);
       }),
@@ -309,6 +363,7 @@ test('kb directory mkdir creates a subfolder and enforces the root boundary', as
     await rm(homeDir, { force: true, recursive: true });
     await rm(repoDir, { force: true, recursive: true });
     await rm(browseRoot, { force: true, recursive: true });
+    await rm(outsideDir, { force: true, recursive: true });
   }
 });
 
