@@ -530,6 +530,29 @@ describe('useStickToBottom gesture window', () => {
     expect(view.result.current.stuck).toBe(true);
   });
 
+  it('an owed pin is DROPPED at close when the gesture escaped to reading', () => {
+    // The negative close branch — the safety property. A mutation that widens
+    // the close pin to `reading` reintroduces a settle-time yank for an
+    // escaped gesture; this case is the discriminating instrument (Milo's
+    // gate finding on 9e330dc0).
+    const { container, view } = setup({ settling: false });
+    flush(1); // stuck at 500
+
+    fire(container, 'touchstart');
+    container.scrollTop = 460; // gap 40, within the threshold
+    fire(container, 'scroll');
+    growTo(container, 1100); // deferred: a pin is now owed
+    expect(container.scrollTop).toBe(460);
+    container.scrollTop = 380; // continues past the threshold -> reading
+    fire(container, 'scroll');
+    expect(view.result.current.stuck).toBe(false);
+    fire(container, 'touchend');
+    settle();
+    // Close must NOT spend the owed pin on a reader.
+    expect(container.scrollTop).toBe(380);
+    expect(view.result.current.stuck).toBe(false);
+  });
+
   it('a drag that never leaves the threshold resumes following at settle', () => {
     const { container, view } = setup({ settling: false });
     flush(1); // stuck at 500
