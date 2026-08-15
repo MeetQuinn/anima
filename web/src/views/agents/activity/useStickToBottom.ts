@@ -35,6 +35,22 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 // growth vs bottom-growth is disambiguated by an explicit prepend flag driven by
 // `isFetchingOlder` (not by measuring viewport offsets).
 //
+// GESTURE WINDOW (input capture, orthogonal to the modes): while a user gesture
+// is plausibly in progress — a finger on the glass, a wheel-up, or the momentum
+// tail either leaves behind — bottom pins are DEFERRED, never written. Without
+// this, a live agent (streaming rows, the fold's 300ms height animation, the 3s
+// poll) produces near-continuous growth ticks, and each tick re-pins the bottom
+// while the user is still inside BOTTOM_THRESHOLD — resetting the distance they
+// must escape, and on iOS also cancelling the native pan gesture outright. The
+// reported symptom was "can't scroll up at all on mobile while the agent works".
+// The window closes once input has settled (no scroll/touch/wheel activity for
+// GESTURE_SETTLE_MS and no finger down); at close, the owed pin is applied iff
+// the MODE still follows the bottom (`stuck`/`initialPin`). The mode is the
+// user's latest threshold decision, updated per scroll event — including a
+// reversal back to the bottom mid-gesture — so no separate gesture history is
+// kept. The window is input state, not a fourth mode: modes still decide
+// policy; the window only defers writes.
+//
 // Non-goal (documented, intentional): a NON-prepend above-viewport reflow of
 // already-loaded content while `reading` is treated as bottom-growth (no scroll
 // correction). This cannot arise in the Activity timeline today — avatars carry
@@ -54,6 +70,11 @@ const TOP_THRESHOLD = 100;
 // `settling` never resolves (an agent with no data, a stalled fetch). Safety
 // valve only — the normal reveal is tied to observed bottom stability.
 const REVEAL_SAFETY_MS = 800;
+// Quiet time (no scroll/touch/wheel activity, no finger down) after which a user
+// gesture is considered settled and deferred bottom pins may be applied. Long
+// enough to bridge the gaps between momentum-scroll events; short enough that
+// follow resumes imperceptibly after a tap or an aborted drag.
+const GESTURE_SETTLE_MS = 200;
 
 export interface StickToBottomOptions {
   /** The scrolling element. */
@@ -132,6 +153,19 @@ export function useStickToBottom({
   // bottom flips to `reading`. Gated on gesture (not a derived not-at-bottom)
   // because a prepend momentarily reads as not-at-bottom before the RO re-pins.
   const userIntentRef = useRef(false);
+  // Gesture window (see the file header): true while a user gesture is plausibly
+  // in progress. While open, the growth writer defers bottom pins instead of
+  // fighting the gesture.
+  const gestureActiveRef = useRef(false);
+  // A finger is on the glass (touchstart seen, no touchend/touchcancel yet). The
+  // window never closes while this is true, even if the finger holds still past
+  // the settle timeout.
+  const touchDownRef = useRef(false);
+  // Growth (or a viewport change) arrived while the window was open; a pin is
+  // owed and gets applied at window close iff the mode still follows the bottom.
+  const pinMissedRef = useRef(false);
+  // The settle timer driving window close.
+  const gestureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Last scrollTop seen by the scroll listener, to detect upward movement.
   // While `stuck`, the hook itself only ever writes downward (bottom pins and
   // prepend restores both increase scrollTop), so an observed decrease is the
@@ -169,6 +203,12 @@ export function useStickToBottom({
     (node: HTMLElement, delta: number) => {
       const m = modeRef.current;
       if (m === 'stuck' || m === 'initialPin') {
+        // Never write into an in-progress gesture: defer the pin. It is applied
+        // (or dropped, if the user has left the bottom) at window close.
+        if (gestureActiveRef.current) {
+          pinMissedRef.current = true;
+          return;
+        }
         scrollToBottom(node);
         return;
       }
@@ -188,14 +228,63 @@ export function useStickToBottom({
     const el = containerRef.current;
     if (!el) return;
 
+    // --- Gesture window machinery. ---------------------------------------
+    // Close: settle the deferred pin. Still at/near the bottom -> apply it;
+    // clearly away from it (growth accumulated under a finger that then lifted
+    // without another scroll event) -> the user is reading, never yank.
+    const closeGestureWindow = () => {
+      gestureActiveRef.current = false;
+      if (!pinMissedRef.current) return;
+      pinMissedRef.current = false;
+      // The MODE already encodes the user's latest threshold decision — it is
+      // updated on every scroll event, including a reversal back to the bottom
+      // mid-gesture — so it alone decides the owed pin. Following modes absorb
+      // the deferred growth; `reading` leaves the reader exactly where they
+      // stopped. (An earlier revision kept a sticky scrolled-up flag here; a
+      // gesture that went up and then deliberately returned to the bottom
+      // closed into `reading` because the flag outlived the reversal.)
+      const m = modeRef.current;
+      if (m === 'stuck' || m === 'initialPin') {
+        scrollToBottom(el);
+        lastScrollTopRef.current = el.scrollTop;
+      }
+    };
+    // Open/refresh: any plausible user input restarts the settle timer. While a
+    // finger is down the window stays open unconditionally; touchend restarts
+    // the timer so the momentum tail (scroll events only) keeps refreshing it.
+    const refreshGestureWindow = () => {
+      gestureActiveRef.current = true;
+      if (gestureTimerRef.current !== null) clearTimeout(gestureTimerRef.current);
+      gestureTimerRef.current = setTimeout(() => {
+        gestureTimerRef.current = null;
+        if (touchDownRef.current) return; // held still; touchend re-arms
+        closeGestureWindow();
+      }, GESTURE_SETTLE_MS);
+    };
+
     const handleScroll = () => {
       const gap = bottomGap(el);
       const m = modeRef.current;
-      // Upward movement while stuck is always the user (see lastScrollTopRef):
-      // re-arm intent on every event so slow drags and momentum flicks flip to
-      // reading once they cross the threshold, exactly like repeated wheel-ups.
-      if (m === 'stuck' && el.scrollTop < lastScrollTopRef.current) {
+      // Upward movement while stuck re-arms intent on every event so slow drags
+      // and momentum flicks flip to reading once they cross the threshold,
+      // exactly like repeated wheel-ups.
+      // A decreasing scrollTop is USUALLY the user — but not always: when the
+      // live fold auto-collapses, the browser clamps scrollTop and can regrow
+      // in the same frame, so by the time this async handler reads the DOM the
+      // decrease is indistinguishable from a drag. Arming INTENT on it is
+      // harmless (intent is consumed at the ≤threshold branch); OPENING the
+      // gesture window on it is not (a deferral window that closes into
+      // `reading` strands the feed above the bottom with nobody touching it —
+      // observed live at feed open). So scroll movement arms intent but never
+      // opens the window; only real input events (touch, wheel-up), which
+      // layout cannot fake, open it.
+      const scrolledUp = el.scrollTop < lastScrollTopRef.current && gap > 0;
+      if (m === 'stuck' && scrolledUp) {
         userIntentRef.current = true;
+      }
+      if (gestureActiveRef.current) {
+        // Keep an open window open until quiet (drag ticks, momentum tail).
+        refreshGestureWindow();
       }
       lastScrollTopRef.current = el.scrollTop;
       if (m === 'reading') {
@@ -222,21 +311,42 @@ export function useStickToBottom({
     };
 
     // A wheel-up or any touch is the user taking over. Wheel-down toward the
-    // bottom is not an intent to leave, so only negative deltaY arms intent.
+    // bottom is not an intent to leave, so only negative deltaY arms intent
+    // (and only it opens the gesture window: pinning agrees with wheel-down).
     const handleWheel = (e: WheelEvent) => {
-      if (e.deltaY < 0) userIntentRef.current = true;
+      if (e.deltaY < 0) {
+        userIntentRef.current = true;
+        refreshGestureWindow();
+      }
     };
+    // ANY touch opens the window, regardless of direction or mode: content must
+    // never move under a finger that is on the glass (an iOS scrollTop write
+    // also cancels the native pan gesture outright).
     const handleTouchStart = () => {
       userIntentRef.current = true;
+      touchDownRef.current = true;
+      refreshGestureWindow();
+    };
+    const handleTouchEnd = () => {
+      touchDownRef.current = false;
+      refreshGestureWindow();
     };
 
     el.addEventListener('scroll', handleScroll, { passive: true });
     el.addEventListener('wheel', handleWheel, { passive: true });
     el.addEventListener('touchstart', handleTouchStart, { passive: true });
+    el.addEventListener('touchend', handleTouchEnd, { passive: true });
+    el.addEventListener('touchcancel', handleTouchEnd, { passive: true });
     return () => {
       el.removeEventListener('scroll', handleScroll);
       el.removeEventListener('wheel', handleWheel);
       el.removeEventListener('touchstart', handleTouchStart);
+      el.removeEventListener('touchend', handleTouchEnd);
+      el.removeEventListener('touchcancel', handleTouchEnd);
+      if (gestureTimerRef.current !== null) {
+        clearTimeout(gestureTimerRef.current);
+        gestureTimerRef.current = null;
+      }
     };
     // Mounted once; refs carry the latest state. setMode/setRevealed are stable.
   }, [containerRef, setMode, setRevealed]);
@@ -339,6 +449,13 @@ export function useStickToBottom({
     revealedRef.current = false;
     userIntentRef.current = false;
     prependPendingRef.current = false;
+    gestureActiveRef.current = false;
+    touchDownRef.current = false;
+    pinMissedRef.current = false;
+    if (gestureTimerRef.current !== null) {
+      clearTimeout(gestureTimerRef.current);
+      gestureTimerRef.current = null;
+    }
     const el = containerRef.current;
     prevHeightRef.current = el ? el.scrollHeight : 0;
     prevClientHeightRef.current = el ? el.clientHeight : 0;
@@ -354,10 +471,15 @@ export function useStickToBottom({
     if (modeRef.current !== 'initialPin' || revealedRef.current) return;
     if (settling) return;
     const el = containerRef.current;
-    if (el) scrollToBottom(el);
+    // The reveal pins are gated on the gesture window too: a user already
+    // dragging the (hidden) timeline must not be fought here either. The owed
+    // pin is recorded and settles at window close.
+    if (el && !gestureActiveRef.current) scrollToBottom(el);
+    else if (el) pinMissedRef.current = true;
     const id = requestAnimationFrame(() => {
       const node = containerRef.current;
-      if (node) scrollToBottom(node);
+      if (node && !gestureActiveRef.current) scrollToBottom(node);
+      else if (node) pinMissedRef.current = true;
       setMode('stuck');
       setRevealed(true);
     });
