@@ -59,7 +59,10 @@ vi.mock('@/components/ui/select', async () => {
 
 const providerOptions = providerCatalog();
 
-function openModal(provider: Record<string, unknown>, onCommit: (...args: never[]) => Promise<void>) {
+function openModal(
+  provider: Record<string, unknown>,
+  onCommit: (...args: never[]) => Promise<void>,
+) {
   render(
     <RuntimeRow
       provider={provider as never}
@@ -99,7 +102,10 @@ describe('Runtime modal — save/dismissal contract', () => {
     // through with envOnly: true and the ConfirmRestartModal never mounts.
     fireEvent.change(dialog.getByPlaceholderText('unchanged'), { target: { value: 'sk-new' } });
     fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
-    expect(onCommit).toHaveBeenCalledWith({ env: { MOONSHOT_API_KEY: 'sk-new' } }, { envOnly: true });
+    expect(onCommit).toHaveBeenCalledWith(
+      { env: { MOONSHOT_API_KEY: 'sk-new' } },
+      { envOnly: true },
+    );
     expect(screen.queryByRole('dialog', { name: 'Save and apply when idle?' })).toBeNull();
 
     // THE REGRESSION (Milo, PR #676 gate): with the save pending, Escape,
@@ -110,7 +116,9 @@ describe('Runtime modal — save/dismissal contract', () => {
     expect(screen.getByRole('dialog', { name: 'Runtime' })).toBe(editor);
     fireEvent.click(editor.parentElement!);
     expect(screen.getByRole('dialog', { name: 'Runtime' })).toBe(editor);
-    expect((dialog.getByRole('button', { name: 'Close' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((dialog.getByRole('button', { name: 'Close' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
 
     // 409 path: the rejection lands inline, the editor stays mounted, the
     // typed draft survives.
@@ -119,7 +127,15 @@ describe('Runtime modal — save/dismissal contract', () => {
     expect(screen.getByRole('dialog', { name: 'Runtime' })).toBe(editor);
     expect((dialog.getByPlaceholderText('unchanged') as HTMLInputElement).value).toBe('sk-new');
 
-    // Settled → dismissal works again.
+    // Settled → dismissal works again. Under CI load the rejection text can
+    // render a frame before `busy` clears (this exact race went red on #684
+    // and again on #686), so wait for a dismissible signal — Close re-enabled
+    // — before firing the final Escape.
+    await waitFor(() =>
+      expect((dialog.getByRole('button', { name: 'Close' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
     fireEvent.keyDown(window, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Runtime' })).toBeNull());
   });
@@ -157,7 +173,7 @@ describe('Runtime modal — save/dismissal contract', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Runtime' })).toBeNull());
   });
 
-  it('kind change clears the old provider\'s command/args drafts and sends neither unless retyped', async () => {
+  it("kind change clears the old provider's command/args drafts and sends neither unless retyped", async () => {
     const onCommit = vi.fn(() => Promise.resolve());
     const dialog = openModal(
       {
@@ -179,7 +195,10 @@ describe('Runtime modal — save/dismissal contract', () => {
     fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
 
     expect(onCommit).toHaveBeenCalledTimes(1);
-    const [update, opts] = onCommit.mock.calls[0] as unknown as [Record<string, unknown>, { envOnly: boolean }];
+    const [update, opts] = onCommit.mock.calls[0] as unknown as [
+      Record<string, unknown>,
+      { envOnly: boolean },
+    ];
     expect(update).toMatchObject({ kind: 'codex-cli', model: 'gpt-5.6-sol' });
     // The pin: no override keys ride along on a kind change the operator
     // typed nothing for — the server would otherwise persist the old kind's
@@ -264,6 +283,16 @@ describe('Runtime modal — fast mode', () => {
     fireEvent.click(dialog.getByRole('button', { name: 'Advanced' }));
     const box = dialog.getByRole('checkbox', { name: 'Request fast mode' }) as HTMLInputElement;
     expect(box.checked).toBe(false);
+    // The honest copy IS the contract (Milo's #686 gate: a wholesale rewrite
+    // to "Enables fast mode…" left the suite green). Pin the two load-bearing
+    // meanings: request-not-guarantee, and org enablement + usage credits as
+    // the availability condition.
+    expect(dialog.getByText(/A request, not a guarantee/)).toBeTruthy();
+    expect(
+      dialog.getByText(
+        /unless the Anthropic organization has fast mode enabled with usage credits/,
+      ),
+    ).toBeTruthy();
     fireEvent.click(box);
 
     // Toggling changes the launch argv (--settings injection) → the restart
@@ -281,9 +310,11 @@ describe('Runtime modal — fast mode', () => {
     const onCommit = vi.fn(() => Promise.resolve());
     const dialog = openModal({ kind: 'claude-code', model: 'fable', fastMode: true }, onCommit);
 
-    // The read-only row discloses it (regex is case-sensitive: matches the
-    // row's "Fast mode" line, not the checkbox label "Request fast mode").
-    expect(screen.getByRole('button', { name: /Fast mode/ })).toBeTruthy();
+    // The read-only row discloses the CONFIG, qualified: "Fast mode
+    // requested", never a bare "Fast mode" — on an org-blocked seat the
+    // session runs standard, and this surface must not read as activation
+    // (request ≠ availability; observed fast_mode_state lives elsewhere).
+    expect(screen.getByRole('button', { name: /Fast mode requested/ })).toBeTruthy();
     // fastMode counts as configured Advanced data: never hidden on arrival.
     expect(dialog.getByRole('button', { name: 'Advanced' }).getAttribute('aria-expanded')).toBe(
       'true',

@@ -81,8 +81,11 @@ export function RuntimeRow({
             {provider.kind === 'claude-code' && provider.fastMode && (
               <>
                 <span className="font-sans mx-1.5 text-[12px] text-text-subtle">·</span>
+                {/* "requested", never "on": this surface shows CONFIG. On an
+                    org-blocked seat the session still runs standard, and the
+                    observed fast_mode_state must not be implied here. */}
                 <span className="font-serif text-[13px] md:text-[15px] text-text-muted">
-                  Fast mode
+                  Fast mode requested
                 </span>
               </>
             )}
