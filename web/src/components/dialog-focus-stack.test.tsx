@@ -69,7 +69,7 @@ import { BusyConfirmModal } from './restart-shared';
 // runtime ones — a button-typed ref on an <input> is a compile error, which is
 // the whole point of the widening.
 //
-// NOTE: web vitest is not wired into CI yet (issue #344) - run locally.
+// Runs in CI (`pnpm --dir web test`) and locally the same way.
 
 /** An outer dialog on the hook, hosting a nested BusyConfirmModal. ServerPanel's shape. */
 function OuterHostingConfirm() {

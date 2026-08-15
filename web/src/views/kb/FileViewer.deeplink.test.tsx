@@ -14,8 +14,7 @@ import { FileContent, type RenderableFile } from './FileViewer';
 // rewriting the incoming hash. The fixed code never writes the URL from the
 // seed pass, so these tests fail loudly on any regression of that ordering.
 //
-// NOTE: web vitest is not wired into CI yet (#344) — run locally via
-// `pnpm --filter web test`.
+// Runs in CI (`pnpm --dir web test`) and locally the same way.
 
 const DOC = [
   '# Roadmap',

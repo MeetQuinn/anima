@@ -34,7 +34,7 @@ import type { TeamConfig } from '@/api/teams';
 // `dispatchEvent`'s boolean, so `false` is defaultPrevented) and where the
 // boundary wrap put focus.
 //
-// NOTE: web vitest is not wired into CI yet (issue #344) - run locally.
+// Runs in CI (`pnpm --dir web test`) and locally the same way.
 
 // The picker fetches directories and owns its own arrow-key row navigation.
 // Stubbed to two plain buttons so these cases measure the dialog lifecycle

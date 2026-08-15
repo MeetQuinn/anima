@@ -30,7 +30,7 @@ import ServerPanel from './ServerPanel';
 // duplicate the agent/system/upgrade scaffolding that makes Restart reach its
 // confirm at all, and the two copies would drift.
 //
-// NOTE: web vitest is not wired into CI yet (issue #344) - run locally.
+// Runs in CI (`pnpm --dir web test`) and locally the same way.
 
 vi.mock('@/api/system', () => ({
   fetchServerInfo: vi.fn().mockResolvedValue({

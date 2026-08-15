@@ -26,7 +26,7 @@ import type { KbView } from '@shared/kb';
 // jsdom implements no native Tab movement, so a mid-dialog Tab is unobservable.
 // What IS observable is the boundary wrap, where the hook moves focus itself.
 //
-// NOTE: web vitest is not wired into CI yet (issue #344) - run locally.
+// Runs in CI (`pnpm --dir web test`) and locally the same way.
 
 // The picker owns its own arrow-key row navigation and fetches directories.
 // Stubbed to two plain buttons so these cases measure the dialog's focus
