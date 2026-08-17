@@ -81,22 +81,10 @@ export function ActionsRail({
   onRemove: () => void;
 }) {
   const iconClass = 'h-4 w-4';
+  // Order (totoday 08-17): routine first, by frequency — Restart, Rotate,
+  // Copy diagnostics — then Disable last, next to the Remove card below:
+  // the two lifecycle-ending actions sit together at the bottom.
   const actions: RailAction[] = [
-    {
-      key: 'toggle',
-      label: toggling ? 'Saving…' : enabled ? 'Disable' : 'Enable',
-      icon: <Power className={iconClass} />,
-      disabled: toggling || (enabled && running),
-      disabledReason:
-        enabled && running ? 'Agent is running. Stop the agent before disabling.' : undefined,
-      onSelect: () => onToggleEnabled(!enabled),
-    },
-    {
-      key: 'rotate',
-      label: 'Rotate session',
-      icon: <RotateCcw className={iconClass} />,
-      onSelect: onRotateSession,
-    },
     // Restart is suppressed (not greyed) when provider health says restart is
     // not the remedy — mirroring the ⋯ menu. The menu swaps in a "go to
     // provider settings" row there; the rail lives ON the profile page, where
@@ -114,6 +102,12 @@ export function ActionsRail({
         ]
       : []),
     {
+      key: 'rotate',
+      label: 'Rotate session',
+      icon: <RotateCcw className={iconClass} />,
+      onSelect: onRotateSession,
+    },
+    {
       key: 'diagnostics',
       label: diagnosticsCopied ? 'Copied' : 'Copy diagnostics',
       icon: diagnosticsCopied ? (
@@ -123,6 +117,15 @@ export function ActionsRail({
       ),
       disabled: copyingDiagnostics,
       onSelect: onCopyDiagnostics,
+    },
+    {
+      key: 'toggle',
+      label: toggling ? 'Saving…' : enabled ? 'Disable' : 'Enable',
+      icon: <Power className={iconClass} />,
+      disabled: toggling || (enabled && running),
+      disabledReason:
+        enabled && running ? 'Agent is running. Stop the agent before disabling.' : undefined,
+      onSelect: () => onToggleEnabled(!enabled),
     },
   ];
 
