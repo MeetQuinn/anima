@@ -11,9 +11,13 @@
  *      Remove→removeAgent + navigate home — against the route agent's id.
  *   2. The immediate (no-confirm) Disable/Enable path hits
  *      disableAgent/enableAgent + refreshDashboardData.
- *   3. Presentational gating matrix: running blocks Disable, disabled blocks
- *      Restart, `showRestart={false}` (provider-health suppression) renders
- *      no Restart plate at all.
+ *   3. Disable while running (totoday 08-17): the button stays LIVE, the
+ *      click opens the "Agent is running" notice (single OK, no Cancel),
+ *      and disableAgent is NEVER called — the notice must not interrupt or
+ *      disable anything.
+ *   4. Presentational gating matrix: disabled blocks Restart,
+ *      `showRestart={false}` (provider-health suppression) renders no
+ *      Restart plate at all.
  *
  * Note: this setup registers no jest-dom matchers — use plain DOM assertions.
  */
@@ -113,6 +117,30 @@ describe('ProfileActionsRail (connected)', () => {
     expect(api.enableAgent.mock.calls.length).toBe(0);
   });
 
+  it('keeps Disable live while running and shows the notice instead of disabling', async () => {
+    directory.statuses = [{ agentId: 'agent-1', currentItemId: 'item-9' }];
+    render(<ProfileActionsRail />);
+
+    const disable = railButton(/^Disable$/);
+    expect(disable.disabled).toBe(false); // always clickable (totoday 08-17)
+
+    fireEvent.click(disable);
+    const dialog = await screen.findByRole('dialog', { name: 'Agent is running' });
+    // Notice, not a decision: exactly one button (OK), no Cancel.
+    const buttons = Array.from(dialog.querySelectorAll('button'));
+    expect(buttons.map((b) => b.textContent?.trim())).toEqual(['OK']);
+    // The notice promises it never interrupts work — pin that copy.
+    expect(dialog.textContent).toContain('Disabling never interrupts work in progress');
+
+    fireEvent.click(buttons[0]!);
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Agent is running' })).toBeNull();
+    });
+    // Nothing was disabled or refreshed — the click only explained.
+    expect(api.disableAgent.mock.calls.length).toBe(0);
+    expect(api.refreshDashboardData.mock.calls.length).toBe(0);
+  });
+
   it('runs the immediate Enable path when the agent is disabled', async () => {
     directory.agents = [{ id: 'agent-1', name: 'Nora', enabled: false }];
     render(<ProfileActionsRail />);
@@ -133,7 +161,6 @@ describe('ActionsRail (presentational gating matrix)', () => {
 
   const baseProps = {
     enabled: true,
-    running: false,
     toggling: false,
     copyingDiagnostics: false,
     diagnosticsCopied: false,
@@ -144,13 +171,6 @@ describe('ActionsRail (presentational gating matrix)', () => {
     onCopyDiagnostics: () => {},
     onRemove: () => {},
   };
-
-  it('blocks Disable while the agent is running, with the reason', () => {
-    render(<ActionsRail {...baseProps} running />);
-    const disable = railButton(/^Disable$/);
-    expect(disable.disabled).toBe(true);
-    expect(disable.title).toBe('Agent is running. Stop the agent before disabling.');
-  });
 
   it('leaves Disable live when idle and Restart live when enabled', () => {
     render(<ActionsRail {...baseProps} />);

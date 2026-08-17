@@ -9,9 +9,9 @@
  * paper language; Remove sits in its own card below so destruction never
  * neighbors routine. Hover raises the paper a shade; disabled rows fade.
  *
- * Logic lives in `useAgentActions` (shared with the ⋯ menu): a running agent
- * blocks Disable, a disabled agent blocks Restart, confirms and refresh side
- * effects are identical. `ActionsRail` itself is presentational;
+ * Logic lives in `useAgentActions` (shared with the ⋯ menu): Disable while
+ * running opens a notice instead of acting, a disabled agent blocks Restart,
+ * confirms and refresh side effects are identical. `ActionsRail` itself is presentational;
  * `ProfileActionsRail` is the connected surface the Profile page mounts.
  */
 import { ClipboardCheck, ClipboardCopy, Power, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
@@ -57,7 +57,6 @@ function RailButton({ action }: { action: RailAction }) {
 
 export function ActionsRail({
   enabled,
-  running,
   toggling,
   copyingDiagnostics,
   diagnosticsCopied,
@@ -69,7 +68,6 @@ export function ActionsRail({
   onRemove,
 }: {
   enabled: boolean;
-  running: boolean;
   toggling: boolean;
   copyingDiagnostics: boolean;
   diagnosticsCopied: boolean;
@@ -119,12 +117,13 @@ export function ActionsRail({
       onSelect: onCopyDiagnostics,
     },
     {
+      // Always clickable (totoday 08-17): while the agent runs, selecting
+      // Disable opens a notice dialog instead of disabling — the explanation
+      // lives in useAgentActions.requestDisable, not in a greyed-out row.
       key: 'toggle',
       label: toggling ? 'Saving…' : enabled ? 'Disable' : 'Enable',
       icon: <Power className={iconClass} />,
-      disabled: toggling || (enabled && running),
-      disabledReason:
-        enabled && running ? 'Agent is running. Stop the agent before disabling.' : undefined,
+      disabled: toggling,
       onSelect: () => onToggleEnabled(!enabled),
     },
   ];
@@ -158,13 +157,13 @@ export function ProfileActionsRail() {
   const {
     agent,
     enabled,
-    running,
     toggling,
     copyingDiagnostics,
     diagnosticsCopied,
     providerAction,
     restartBlocked,
     toggleEnabled,
+    requestDisable,
     copyDiagnostics,
     confirmRotateSession,
     confirmRestart,
@@ -178,12 +177,11 @@ export function ProfileActionsRail() {
     <>
       <ActionsRail
         enabled={enabled}
-        running={running}
         toggling={toggling}
         copyingDiagnostics={copyingDiagnostics}
         diagnosticsCopied={diagnosticsCopied}
         showRestart={!providerAction && !restartBlocked}
-        onToggleEnabled={(next) => void toggleEnabled(next)}
+        onToggleEnabled={(next) => (next ? void toggleEnabled(true) : requestDisable())}
         onRotateSession={confirmRotateSession}
         onRestart={confirmRestart}
         onCopyDiagnostics={() => void copyDiagnostics()}

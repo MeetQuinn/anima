@@ -14,6 +14,8 @@ export interface ConfirmModalProps {
   confirmLabel?: string;
   busyLabel?: string;
   confirmVariant?: 'destructive' | 'default';
+  /** Notice mode: a single acknowledge button, no Cancel (nothing to decide). */
+  hideCancel?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -36,6 +38,7 @@ export default function ConfirmModal({
   confirmLabel = 'Confirm',
   busyLabel = 'Saving…',
   confirmVariant = 'destructive',
+  hideCancel = false,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
@@ -58,7 +61,6 @@ export default function ConfirmModal({
       : { border: 'border-health-warn/40', bg: 'bg-health-warn-soft', rule: 'bg-health-warn' };
 
   const isLarge = size === 'large';
-
 
   return createPortal(
     <div
@@ -83,10 +85,7 @@ export default function ConfirmModal({
         ].join(' ')}
         onClick={(e) => e.stopPropagation()}
       >
-        <span
-          aria-hidden
-          className={`absolute left-0 top-4 bottom-4 w-px ${palette.rule}`}
-        />
+        <span aria-hidden className={`absolute left-0 top-4 bottom-4 w-px ${palette.rule}`} />
         <div
           id={titleId}
           className={[
@@ -106,22 +105,25 @@ export default function ConfirmModal({
           {description}
         </div>
         {error && (
-          <div className="mt-2 font-sans text-[11px] tracking-wide text-health-error">
-            {error}
-          </div>
+          <div className="mt-2 font-sans text-[11px] tracking-wide text-health-error">{error}</div>
         )}
         <div className="mt-4 flex justify-end gap-2">
+          {/* Focus contract: initial focus rests on the safe answer — Cancel
+              normally; in notice mode the single acknowledge button IS it. */}
+          {!hideCancel && (
+            <Button
+              ref={initialFocusRef}
+              disabled={busy}
+              onClick={onCancel}
+              variant="outline"
+              className={isLarge ? undefined : 'min-h-[44px]'}
+              size={isLarge ? undefined : 'sm'}
+            >
+              Cancel
+            </Button>
+          )}
           <Button
-            ref={initialFocusRef}
-            disabled={busy}
-            onClick={onCancel}
-            variant="outline"
-            className={isLarge ? undefined : 'min-h-[44px]'}
-            size={isLarge ? undefined : 'sm'}
-          >
-            Cancel
-          </Button>
-          <Button
+            ref={hideCancel ? initialFocusRef : undefined}
             disabled={busy}
             onClick={onConfirm}
             variant={confirmVariant}

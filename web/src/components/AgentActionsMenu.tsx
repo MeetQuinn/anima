@@ -39,13 +39,13 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
   const {
     agent,
     enabled,
-    running,
     toggling,
     copyingDiagnostics,
     diagnosticsCopied,
     providerAction,
     restartBlocked,
     toggleEnabled,
+    requestDisable,
     copyDiagnostics,
     confirmRotateSession,
     confirmRestart,
@@ -82,36 +82,21 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
         </Button>
         {menuOpen && (
           <div className="absolute right-0 top-full z-10 mt-1 min-w-[180px] rounded-sm border border-border-soft bg-surface py-1 shadow-deep">
-            {/* Disable / Enable — top, state-labeled, frequent + reversible */}
+            {/* Disable / Enable — top, state-labeled, frequent + reversible.
+                Always clickable while running (totoday 08-17): the click opens
+                a notice dialog via requestDisable instead of a dead row. */}
             {enabled ? (
-              running ? (
-                <div
-                  role="menuitem"
-                  aria-disabled="true"
-                  title="Agent is running. Stop the agent before disabling."
-                  className="flex min-h-[44px] w-full cursor-not-allowed items-start gap-2.5 px-3 py-2 text-left font-sans text-[13px] text-text-muted opacity-50"
-                >
-                  <PowerOff className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span className="flex min-w-0 flex-col">
-                    <span>Disable</span>
-                    <span className="mt-0.5 text-[11px] leading-tight">
-                      Agent is running. Stop the agent before disabling.
-                    </span>
-                  </span>
-                </div>
-              ) : (
-                <button
-                  disabled={toggling}
-                  className="flex min-h-[44px] w-full items-center gap-2.5 px-3 text-left font-sans text-[13px] text-text-muted hover:bg-surface-elevated hover:text-text disabled:opacity-50"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    void toggleEnabled(false);
-                  }}
-                >
-                  <PowerOff className="h-3.5 w-3.5 shrink-0" />
-                  {toggling ? 'Saving...' : 'Disable'}
-                </button>
-              )
+              <button
+                disabled={toggling}
+                className="flex min-h-[44px] w-full items-center gap-2.5 px-3 text-left font-sans text-[13px] text-text-muted hover:bg-surface-elevated hover:text-text disabled:opacity-50"
+                onClick={() => {
+                  setMenuOpen(false);
+                  requestDisable();
+                }}
+              >
+                <PowerOff className="h-3.5 w-3.5 shrink-0" />
+                {toggling ? 'Saving...' : 'Disable'}
+              </button>
             ) : (
               <button
                 disabled={toggling}
