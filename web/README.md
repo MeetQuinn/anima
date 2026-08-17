@@ -54,7 +54,10 @@ URL reconciliation (auto-select first agent, fill default tab, redirect not-conn
 
 **Code splitting**: every view loads lazily via the route `lazy` property; no manual `React.lazy` / `<Suspense>` needed at the route level.
 
-**`ErrorBoundary`** wraps `<Outlet>` in Layout; key resets on path change so a crash in one view doesn't trap the app.
+**`ErrorBoundary`** wraps `<Outlet>` in Layout; key resets on _surface_ change
+(`outletErrorBoundaryKey`: KB id, agent tab — not deep file paths) so a crash
+in one view doesn't trap the app, while KB / agent Files tree state survives
+in-surface file navigation.
 
 ## Commands
 

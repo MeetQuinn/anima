@@ -7,6 +7,7 @@ import {
   parseKbPath,
   reconcileLocation,
   buildPath,
+  outletErrorBoundaryKey,
   DEFAULT_TAB,
 } from '@/lib/url-state';
 import type { UrlLocation } from '@/lib/url-state';
@@ -184,7 +185,10 @@ export default function Layout() {
             {agentId && (
               <div className="h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 md:hidden" />
             )}
-            <ErrorBoundary key={location.pathname}>
+            {/* Surface-scoped key (kb id / agent tab), not full pathname —
+                deep file paths within the same browser must not remount the
+                outlet or the tree scroll resets on every click. */}
+            <ErrorBoundary key={outletErrorBoundaryKey(location.pathname)}>
               <Outlet />
             </ErrorBoundary>
             {/* Bottom spacer on mobile to compensate for fixed bottom nav.
