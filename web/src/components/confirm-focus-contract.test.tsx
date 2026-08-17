@@ -159,6 +159,68 @@ describe('ConfirmModal focus contract', () => {
   });
 });
 
+// Notice mode (`hideCancel`, PR #688): a single acknowledge button, nothing to
+// decide. The focus contract still holds — the safe answer IS the only button,
+// so initial focus, Tab containment and invoker restoration all bind to it.
+// Milo's gate red on 02e37a89: removing the OK button's `initialFocusRef` left
+// focus on the dialog container and every suite stayed green.
+function NoticeHarness() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        open notice
+      </button>
+      <button type="button">decoy after trigger</button>
+      <ConfirmModal
+        open={open}
+        title="Agent is running"
+        description="Disabling never interrupts work in progress."
+        variant="warn"
+        confirmLabel="OK"
+        confirmVariant="default"
+        hideCancel
+        onConfirm={() => setOpen(false)}
+        onCancel={() => setOpen(false)}
+      />
+    </>
+  );
+}
+
+describe('ConfirmModal notice mode (hideCancel) focus contract', () => {
+  it('moves focus to the single OK control on open, not the container', () => {
+    render(<NoticeHarness />);
+    fireEvent.click(screen.getByRole('button', { name: 'open notice' }));
+    // There is no Cancel to receive focus; OK is the safe answer now.
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'OK' }));
+  });
+
+  it('keeps Tab and Shift+Tab on OK — the only stop in the cycle', () => {
+    render(<NoticeHarness />);
+    fireEvent.click(screen.getByRole('button', { name: 'open notice' }));
+    const ok = screen.getByRole('button', { name: 'OK' });
+    expect(document.activeElement).toBe(ok);
+
+    fireEvent.keyDown(window, { key: 'Tab' });
+    expect(document.activeElement).toBe(ok);
+
+    fireEvent.keyDown(window, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(ok);
+  });
+
+  it('returns focus to the invoker when OK closes the notice', () => {
+    render(<NoticeHarness />);
+    const trigger = screen.getByRole('button', { name: 'open notice' });
+    trigger.focus();
+    fireEvent.click(trigger);
+    expect(document.activeElement).not.toBe(trigger);
+
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    expect(document.activeElement).toBe(trigger);
+  });
+});
+
 describe('BusyConfirmModal focus contract', () => {
   it('moves focus to Cancel on open', () => {
     render(<BusyHarness />);

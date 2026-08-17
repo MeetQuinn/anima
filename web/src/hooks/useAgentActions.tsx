@@ -6,9 +6,9 @@
  *   - `ProfileActionsRail` (task #185: the big-button rail on desktop Profile)
  *
  * Extracted from AgentActionsMenu verbatim so the two surfaces cannot drift:
- * same gating (a running agent blocks Disable, a disabled agent blocks
- * Restart, provider failures suppress Restart), same confirm copy, same
- * refresh side effects. Each consumer renders its own `modal` from useConfirm;
+ * same gating (Disable while running shows a notice instead of acting, a
+ * disabled agent blocks Restart, provider failures suppress Restart), same
+ * confirm copy, same refresh side effects. Each consumer renders its own `modal` from useConfirm;
  * two mounted consumers hold independent confirm state, which is correct —
  * a confirm belongs to the surface that launched it.
  */
@@ -88,6 +88,28 @@ export function useAgentActions() {
     }
   }
 
+  // Disable stays clickable while the agent runs (totoday 08-17: 按钮应该一直
+  // 可用,点击的时候给个警告); clicking explains instead of a dead greyed
+  // control. It NEVER interrupts running work — the server 409s a disable
+  // mid-run, and this notice is the honest UI for that boundary.
+  function requestDisable() {
+    if (!agentId) return;
+    if (running) {
+      confirm({
+        title: 'Agent is running',
+        description:
+          'Disabling never interrupts work in progress. Wait for the current run to finish, then disable.',
+        variant: 'warn',
+        confirmLabel: 'OK',
+        confirmVariant: 'default',
+        hideCancel: true,
+        onConfirm: async () => {},
+      });
+      return;
+    }
+    void toggleEnabled(false);
+  }
+
   async function copyDiagnostics() {
     if (!agentId || copyingDiagnostics) return;
     setCopyingDiagnostics(true);
@@ -160,7 +182,9 @@ export function useAgentActions() {
             not affected.
           </p>
           <p className="mt-2">
-            {"Removing this agent won't delete the Feishu bot you created. To remove it completely, delete the app in the Feishu console."}
+            {
+              "Removing this agent won't delete the Feishu bot you created. To remove it completely, delete the app in the Feishu console."
+            }
           </p>
           <a
             href={feishuConsoleUrl}
@@ -203,6 +227,7 @@ export function useAgentActions() {
     providerAction,
     restartBlocked,
     toggleEnabled,
+    requestDisable,
     copyDiagnostics,
     confirmRotateSession,
     confirmRestart,

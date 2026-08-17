@@ -3,14 +3,15 @@
  * surfaced as large, always-visible buttons in the Profile tab's right column
  * (desktop only; mobile and the header keep the ⋯ menu — totoday: 留着吧).
  *
- * Style: letterpress plates — the neo-brutalist reference (hard offset
- * shadow, chunky border) translated into house ink + paper. Hover nudges the
- * plate toward its shadow; press seats it flush (shadow gone). Disabled
- * plates lie flat: no shadow, faded ink. Approved by totoday 08-15.
+ * Style: quiet ledger cards (totoday 08-17: the letterpress plates read too
+ * heavy next to the Setup ledger, and the "Actions" rubric was noise — 直接
+ * button 就好). One soft-bordered card of rows sharing the page's rule-and-
+ * paper language; Remove sits in its own card below so destruction never
+ * neighbors routine. Hover raises the paper a shade; disabled rows fade.
  *
- * Logic lives in `useAgentActions` (shared with the ⋯ menu): a running agent
- * blocks Disable, a disabled agent blocks Restart, confirms and refresh side
- * effects are identical. `ActionsRail` itself is presentational;
+ * Logic lives in `useAgentActions` (shared with the ⋯ menu): Disable while
+ * running opens a notice instead of acting, a disabled agent blocks Restart,
+ * confirms and refresh side effects are identical. `ActionsRail` itself is presentational;
  * `ProfileActionsRail` is the connected surface the Profile page mounts.
  */
 import { ClipboardCheck, ClipboardCopy, Power, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
@@ -28,13 +29,11 @@ type RailAction = {
   danger?: boolean;
 };
 
-/* Letterpress plate buttons. */
+/* Quiet ledger rows: the card carries the border, rows carry only ink. */
 const baseButton =
-  'flex min-h-[48px] w-full items-center gap-3 border-[1.5px] px-4 text-left font-serif text-[15px] font-medium transition-all duration-100 disabled:cursor-not-allowed disabled:translate-x-0 disabled:translate-y-0 disabled:opacity-40 disabled:shadow-none';
-const quietButton =
-  'border-text bg-surface-raised text-text shadow-[3px_3px_0_0_var(--color-text)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[2px_2px_0_0_var(--color-text)] active:translate-x-[3px] active:translate-y-[3px] active:shadow-none';
-const dangerButton =
-  'border-health-error bg-health-error-soft/70 text-health-error shadow-[3px_3px_0_0_var(--color-health-error)] hover:translate-x-[1px] hover:translate-y-[1px] hover:bg-health-error-soft hover:shadow-[2px_2px_0_0_var(--color-health-error)] active:translate-x-[3px] active:translate-y-[3px] active:shadow-none';
+  'flex h-11 w-full items-center gap-2.5 px-3.5 text-left font-serif text-[14px] transition-colors disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent';
+const quietButton = 'text-text hover:bg-surface-elevated';
+const dangerButton = 'text-health-error hover:bg-health-error-soft/60';
 
 function RailButton({ action }: { action: RailAction }) {
   return (
@@ -45,7 +44,10 @@ function RailButton({ action }: { action: RailAction }) {
       onClick={action.onSelect}
       className={`${baseButton} ${action.danger ? dangerButton : quietButton}`}
     >
-      <span className={`shrink-0 ${action.danger ? 'text-health-error' : 'text-text'}`} aria-hidden>
+      <span
+        className={`shrink-0 ${action.danger ? 'text-health-error' : 'text-text-muted'}`}
+        aria-hidden
+      >
         {action.icon}
       </span>
       {action.label}
@@ -55,7 +57,6 @@ function RailButton({ action }: { action: RailAction }) {
 
 export function ActionsRail({
   enabled,
-  running,
   toggling,
   copyingDiagnostics,
   diagnosticsCopied,
@@ -67,7 +68,6 @@ export function ActionsRail({
   onRemove,
 }: {
   enabled: boolean;
-  running: boolean;
   toggling: boolean;
   copyingDiagnostics: boolean;
   diagnosticsCopied: boolean;
@@ -79,21 +79,10 @@ export function ActionsRail({
   onRemove: () => void;
 }) {
   const iconClass = 'h-4 w-4';
+  // Order (totoday 08-17): routine first, by frequency — Restart, Rotate,
+  // Copy diagnostics — then Disable last, next to the Remove card below:
+  // the two lifecycle-ending actions sit together at the bottom.
   const actions: RailAction[] = [
-    {
-      key: 'toggle',
-      label: toggling ? 'Saving…' : enabled ? 'Disable' : 'Enable',
-      icon: <Power className={iconClass} />,
-      disabled: toggling || (enabled && running),
-      disabledReason: enabled && running ? 'Agent is running. Stop the agent before disabling.' : undefined,
-      onSelect: () => onToggleEnabled(!enabled),
-    },
-    {
-      key: 'rotate',
-      label: 'Rotate session',
-      icon: <RotateCcw className={iconClass} />,
-      onSelect: onRotateSession,
-    },
     // Restart is suppressed (not greyed) when provider health says restart is
     // not the remedy — mirroring the ⋯ menu. The menu swaps in a "go to
     // provider settings" row there; the rail lives ON the profile page, where
@@ -111,6 +100,12 @@ export function ActionsRail({
         ]
       : []),
     {
+      key: 'rotate',
+      label: 'Rotate session',
+      icon: <RotateCcw className={iconClass} />,
+      onSelect: onRotateSession,
+    },
+    {
       key: 'diagnostics',
       label: diagnosticsCopied ? 'Copied' : 'Copy diagnostics',
       icon: diagnosticsCopied ? (
@@ -121,20 +116,28 @@ export function ActionsRail({
       disabled: copyingDiagnostics,
       onSelect: onCopyDiagnostics,
     },
+    {
+      // Always clickable (totoday 08-17): while the agent runs, selecting
+      // Disable opens a notice dialog instead of disabling — the explanation
+      // lives in useAgentActions.requestDisable, not in a greyed-out row.
+      key: 'toggle',
+      label: toggling ? 'Saving…' : enabled ? 'Disable' : 'Enable',
+      icon: <Power className={iconClass} />,
+      disabled: toggling,
+      onSelect: () => onToggleEnabled(!enabled),
+    },
   ];
 
   return (
     <aside aria-label="Agent actions" className="w-60 shrink-0">
-      <div className="flex items-center gap-3">
-        <span className="chrome text-[10px] tracking-[0.14em] text-text-subtle">Actions</span>
-        <span aria-hidden className="h-px flex-1 bg-border-strong" />
-      </div>
-      <div className="mt-4 flex flex-col gap-3">
+      {/* No rubric (totoday 08-17): the buttons name themselves. */}
+      <div className="divide-y divide-border-soft overflow-hidden rounded-sm border border-border-soft bg-surface">
         {actions.map((action) => (
           <RailButton key={action.key} action={action} />
         ))}
       </div>
-      <div className="mt-7 flex flex-col gap-3">
+      {/* Destruction keeps its own card: a rule is not enough distance. */}
+      <div className="mt-3 overflow-hidden rounded-sm border border-health-error/25 bg-surface">
         <RailButton
           action={{
             key: 'remove',
@@ -154,13 +157,13 @@ export function ProfileActionsRail() {
   const {
     agent,
     enabled,
-    running,
     toggling,
     copyingDiagnostics,
     diagnosticsCopied,
     providerAction,
     restartBlocked,
     toggleEnabled,
+    requestDisable,
     copyDiagnostics,
     confirmRotateSession,
     confirmRestart,
@@ -174,12 +177,11 @@ export function ProfileActionsRail() {
     <>
       <ActionsRail
         enabled={enabled}
-        running={running}
         toggling={toggling}
         copyingDiagnostics={copyingDiagnostics}
         diagnosticsCopied={diagnosticsCopied}
         showRestart={!providerAction && !restartBlocked}
-        onToggleEnabled={(next) => void toggleEnabled(next)}
+        onToggleEnabled={(next) => (next ? void toggleEnabled(true) : requestDisable())}
         onRotateSession={confirmRotateSession}
         onRestart={confirmRestart}
         onCopyDiagnostics={() => void copyDiagnostics()}

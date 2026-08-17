@@ -10,6 +10,8 @@ export interface ConfirmOptions {
   confirmLabel?: string;
   busyLabel?: string;
   confirmVariant?: 'destructive' | 'default';
+  /** Notice mode: single acknowledge button, no Cancel. */
+  hideCancel?: boolean;
   onConfirm: () => Promise<void>;
 }
 
@@ -84,6 +86,7 @@ export function useConfirm() {
       confirmLabel={state.confirmLabel}
       busyLabel={state.busyLabel}
       confirmVariant={state.confirmVariant}
+      hideCancel={state.hideCancel}
       onConfirm={handleConfirm}
       onCancel={close}
     />
