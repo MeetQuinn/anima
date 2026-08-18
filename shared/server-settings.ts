@@ -60,7 +60,7 @@ export {
   ProviderRuntimeCommandsConfig,
 };
 
-export const DEFAULT_MEMORY_COHERENCE_CONSOLIDATION_THRESHOLD_BYTES = 16 * 1024;
+export const DEFAULT_MEMORY_COHERENCE_CONSOLIDATION_THRESHOLD_BYTES = 20 * 1024;
 export const DEFAULT_MAX_CONCURRENT_AGENT_RUNS = 5;
 
 export const RuntimeConfig = z.object({
