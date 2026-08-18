@@ -68,6 +68,29 @@ describe('select menu rows keep the house idiom', () => {
     expect(popup!.getAttribute('data-align-trigger')).toBe('false');
   });
 
+  it('aligns the popup to the trigger start edge, below it', () => {
+    // Milo's owed pin at the #690 gate: reverting `align` 'start' -> 'center'
+    // alone left all 298 tests green. The header names an upstream re-sync as
+    // the regression surface, and a re-sync restores this default too.
+    renderOpenSelect();
+    const popup = document.querySelector('[data-slot=select-content]');
+    expect(popup!.getAttribute('data-align')).toBe('start');
+    expect(popup!.getAttribute('data-side')).toBe('bottom');
+  });
+
+  it('opens without an animation, like every other menu in the app', () => {
+    // The zoom/slide/fade set was dead under the old alignItemWithTrigger
+    // default (`data-[align-trigger=true]:animate-none` cancelled it). Turning
+    // that default off must not switch animation on as a side effect.
+    renderOpenSelect();
+    const className =
+      document.querySelector('[data-slot=select-content]')!.getAttribute('class') ?? '';
+    expect(className).not.toContain('animate-in');
+    expect(className).not.toContain('animate-out');
+    expect(className).not.toContain('zoom-in');
+    expect(className).not.toContain('slide-in-from');
+  });
+
   it('insets the rows so a highlighted row never collides with the popup border', () => {
     renderOpenSelect();
     const popup = document.querySelector('[data-slot=select-content]');

@@ -55,6 +55,13 @@ function SelectTrigger({
  * changing on open, then scanned the rows below it for the option that was now
  * sitting on top of the trigger. A menu that covers its own trigger has to earn
  * it; this one was not, so it drops below like the rest of the house.
+ *
+ * No open/close animation, which is not an omission. shadcn's zoom/slide/fade
+ * set was already dead here: `data-[align-trigger=true]:animate-none` cancelled
+ * it under the old default. Turning that default off would have switched the
+ * animation on at every call site as a side effect of a placement fix, and no
+ * other menu in the app animates, so the classes are gone rather than silently
+ * activated. (Milo's gate note on 51362b5a — it was unstated and unpinned.)
  */
 function SelectContent({
   className,
@@ -84,7 +91,7 @@ function SelectContent({
           data-slot="select-content"
           data-align-trigger={alignItemWithTrigger}
           className={cn(
-            'relative isolate z-50 max-h-(--available-height) w-(--anchor-width) min-w-36 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-sm border border-border-soft bg-surface p-1 text-popover-foreground shadow-deep duration-100 data-[align-trigger=true]:animate-none data-[side=bottom]:slide-in-from-top-2 data-[side=inline-end]:slide-in-from-left-2 data-[side=inline-start]:slide-in-from-right-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95',
+            'relative isolate z-50 max-h-(--available-height) w-(--anchor-width) min-w-36 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-sm border border-border-soft bg-surface p-1 text-popover-foreground shadow-deep',
             className,
           )}
           {...props}
