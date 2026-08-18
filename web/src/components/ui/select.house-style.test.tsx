@@ -56,6 +56,18 @@ describe('select menu rows keep the house idiom', () => {
     expect(item!.getAttribute('class') ?? '').toContain('data-selected:text-accent');
   });
 
+  it('drops below the trigger instead of covering it', () => {
+    // shadcn's `alignItemWithTrigger` default floated the popup OVER the
+    // trigger. Measured in a browser, the popup's FIRST row landed on the
+    // trigger at every position tried, so a select showing "Codex CLI" put
+    // "Claude Code" exactly where the value had been and hid the trigger
+    // (totoday 08-18: 展开之后当前位置就变成 claude code 了).
+    renderOpenSelect();
+    const popup = document.querySelector('[data-slot=select-content]');
+    expect(popup).toBeTruthy();
+    expect(popup!.getAttribute('data-align-trigger')).toBe('false');
+  });
+
   it('insets the rows so a highlighted row never collides with the popup border', () => {
     renderOpenSelect();
     const popup = document.querySelector('[data-slot=select-content]');

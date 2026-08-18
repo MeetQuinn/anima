@@ -42,14 +42,28 @@ function SelectTrigger({
   );
 }
 
+/**
+ * The popup. Drops BELOW the trigger, left edges aligned — the same placement
+ * every other menu in the app uses.
+ *
+ * shadcn ships `alignItemWithTrigger` on (the macOS native-select trick: the
+ * popup floats over the trigger so the selected row covers the closed value).
+ * In this build the overlap happened without the alignment: the popup's FIRST
+ * row landed on the trigger at every position measured, so opening a select
+ * whose value was "Codex CLI" put "Claude Code" exactly where "Codex CLI" had
+ * been and hid the trigger underneath. totoday 08-18 read that as the value
+ * changing on open, then scanned the rows below it for the option that was now
+ * sitting on top of the trigger. A menu that covers its own trigger has to earn
+ * it; this one was not, so it drops below like the rest of the house.
+ */
 function SelectContent({
   className,
   children,
   side = 'bottom',
   sideOffset = 4,
-  align = 'center',
+  align = 'start',
   alignOffset = 0,
-  alignItemWithTrigger = true,
+  alignItemWithTrigger = false,
   ...props
 }: SelectPrimitive.Popup.Props &
   Pick<
