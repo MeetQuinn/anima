@@ -1,7 +1,7 @@
 {
   "dashboardPort": 4174,
   "memoryCoherence": {
-    "consolidationThresholdBytes": 16384,
+    "consolidationThresholdBytes": 20480,
     "enabled": true,
     "maxConcurrent": 1,
     "windowDurationMinutes": 120,

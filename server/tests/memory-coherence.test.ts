@@ -274,7 +274,7 @@ test('memory coherence prompt uses the default consolidation threshold', async (
 
     assert.match(
       prompt,
-      /Your `MEMORY\.md` is currently 16\.5 KB, above the 16\.0 KB consolidation threshold/,
+      /Your `MEMORY\.md` is currently 20\.5 KB, above the 20\.0 KB consolidation threshold/,
     );
   } finally {
     await rm(homePath, { force: true, recursive: true });
