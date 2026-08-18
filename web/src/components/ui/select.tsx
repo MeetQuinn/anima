@@ -6,7 +6,6 @@ import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from 'lucide-react';
 
 const Select = SelectPrimitive.Root;
 
-
 function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
   return (
     <SelectPrimitive.Value
@@ -43,14 +42,35 @@ function SelectTrigger({
   );
 }
 
+/**
+ * The popup. Drops BELOW the trigger, left edges aligned — the same placement
+ * every other menu in the app uses.
+ *
+ * shadcn ships `alignItemWithTrigger` on (the macOS native-select trick: the
+ * popup floats over the trigger so the selected row covers the closed value).
+ * In this build the overlap happened without the alignment: the popup's FIRST
+ * row landed on the trigger at every position measured, so opening a select
+ * whose value was "Codex CLI" put "Claude Code" exactly where "Codex CLI" had
+ * been and hid the trigger underneath. totoday 08-18 read that as the value
+ * changing on open, then scanned the rows below it for the option that was now
+ * sitting on top of the trigger. A menu that covers its own trigger has to earn
+ * it; this one was not, so it drops below like the rest of the house.
+ *
+ * No open/close animation, which is not an omission. shadcn's zoom/slide/fade
+ * set was already dead here: `data-[align-trigger=true]:animate-none` cancelled
+ * it under the old default. Turning that default off would have switched the
+ * animation on at every call site as a side effect of a placement fix, and no
+ * other menu in the app animates, so the classes are gone rather than silently
+ * activated. (Milo's gate note on 51362b5a — it was unstated and unpinned.)
+ */
 function SelectContent({
   className,
   children,
   side = 'bottom',
   sideOffset = 4,
-  align = 'center',
+  align = 'start',
   alignOffset = 0,
-  alignItemWithTrigger = true,
+  alignItemWithTrigger = false,
   ...props
 }: SelectPrimitive.Popup.Props &
   Pick<
@@ -71,7 +91,7 @@ function SelectContent({
           data-slot="select-content"
           data-align-trigger={alignItemWithTrigger}
           className={cn(
-            'relative isolate z-50 max-h-(--available-height) w-(--anchor-width) min-w-36 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-sm border border-border-soft bg-surface text-popover-foreground shadow-deep duration-100 data-[align-trigger=true]:animate-none data-[side=bottom]:slide-in-from-top-2 data-[side=inline-end]:slide-in-from-left-2 data-[side=inline-start]:slide-in-from-right-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95',
+            'relative isolate z-50 max-h-(--available-height) w-(--anchor-width) min-w-36 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-sm border border-border-soft bg-surface p-1 text-popover-foreground shadow-deep',
             className,
           )}
           {...props}
@@ -85,13 +105,27 @@ function SelectContent({
   );
 }
 
-
+/**
+ * A menu row, styled to the house menu idiom — NOT shadcn's default.
+ *
+ * Upstream ships `focus:bg-accent focus:text-accent-foreground`, which assumes
+ * `--accent` is a subtle neutral. Our theme redefines `--accent` as the brand
+ * ink red (#b3401f, the primary-button fill), so that inherited class painted
+ * every hovered row as a CTA-strength slab — totoday 08-18: 一般dropdown是这样的吗.
+ * Highlight therefore uses `bg-surface-elevated`, the same paper tint the ⋯ menu
+ * and every other menu surface uses.
+ *
+ * Highlight and selection are also separated on purpose. Base UI drives the
+ * highlight off DOM focus, so it follows the pointer and leaves the selected row
+ * unmarked apart from the far-right check; `data-selected:text-accent` keeps the
+ * current value legible once the pointer moves elsewhere.
+ */
 function SelectItem({ className, children, ...props }: SelectPrimitive.Item.Props) {
   return (
     <SelectPrimitive.Item
       data-slot="select-item"
       className={cn(
-        "relative flex w-full cursor-default items-center gap-1.5 rounded-md py-1 pr-8 pl-1.5 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground not-data-[variant=destructive]:focus:**:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
+        "relative flex w-full cursor-default items-center gap-1.5 rounded-sm py-1 pr-8 pl-1.5 text-sm outline-hidden transition-colors select-none focus:bg-surface-elevated focus:text-text data-selected:text-accent data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
         className,
       )}
       {...props}
@@ -109,7 +143,6 @@ function SelectItem({ className, children, ...props }: SelectPrimitive.Item.Prop
     </SelectPrimitive.Item>
   );
 }
-
 
 function SelectScrollUpButton({
   className,
