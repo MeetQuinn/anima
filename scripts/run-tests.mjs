@@ -49,6 +49,7 @@ const groups = {
     'inbox.test.js',
     'ingest-golden.test.js',
     'interactive-ask.test.js',
+    'kb-file-types.test.js',
     'memory-coherence.test.js',
     'message.service.test.js',
     'message-profiles.test.js',

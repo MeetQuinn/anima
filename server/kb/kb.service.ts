@@ -379,9 +379,9 @@ export class KbService {
       const language = kbCodeLanguage(relPath);
       if (language) meta.language = language;
     }
-    // Image / HTML / binary render via the raw route (img src / iframe src), so
-    // we don't inline their bytes here. Text-ish kinds carry their content for
-    // the client renderer, capped.
+    // Image / HTML / PDF / binary render via the raw route (img / iframe src),
+    // so we don't inline their bytes here. Text-ish kinds carry their content
+    // for the client renderer, capped.
     if (kind === 'markdown' || kind === 'json' || kind === 'code' || kind === 'text') {
       if (fileStat.size > INLINE_TEXT_CAP) {
         meta.truncated = true;

@@ -157,6 +157,7 @@ const RAW_CONTENT_TYPES: Record<string, string> = {
   ico: 'image/x-icon',
   bmp: 'image/bmp',
   avif: 'image/avif',
+  pdf: 'application/pdf',
   woff2: 'font/woff2',
   woff: 'font/woff',
   md: 'text/markdown; charset=utf-8',

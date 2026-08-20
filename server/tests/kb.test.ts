@@ -645,6 +645,13 @@ test('kb file endpoint classifies and inlines tracked text', async () => {
       const htmlBody = (await htmlRes.json()) as { kind: string; content?: string };
       assert.equal(htmlBody.kind, 'html');
       assert.equal(htmlBody.content, undefined);
+
+      await writeFile(join(repoDir, 'docs', 'guide.pdf'), Buffer.from('%PDF-1.4 minimal'), 'utf8');
+      const pdfRes = await fetch(`${base}/api/kbs/test/file?path=docs/guide.pdf`);
+      const pdfBody = (await pdfRes.json()) as { kind: string; content?: string };
+      assert.equal(pdfRes.status, 200);
+      assert.equal(pdfBody.kind, 'pdf');
+      assert.equal(pdfBody.content, undefined);
     });
   } finally {
     await rm(homeDir, { force: true, recursive: true });
@@ -722,6 +729,14 @@ test('kb raw route serves tracked bytes with hardened headers', async () => {
       assert.match(csp, /object-src 'none'/);
       const html = await res.text();
       assert.match(html, /<script>console\.log/);
+
+      const pdfBytes = Buffer.from('%PDF-1.4 minimal');
+      await writeFile(join(repoDir, 'docs', 'guide.pdf'), pdfBytes);
+      const pdf = await fetch(`${base}/kb/raw/test/docs/guide.pdf`);
+      assert.equal(pdf.status, 200);
+      assert.equal(pdf.headers.get('content-type'), 'application/pdf');
+      assert.equal(pdf.headers.get('x-content-type-options'), 'nosniff');
+      assert.deepEqual(Buffer.from(await pdf.arrayBuffer()), pdfBytes);
     });
   } finally {
     await rm(homeDir, { force: true, recursive: true });

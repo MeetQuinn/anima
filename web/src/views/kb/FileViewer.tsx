@@ -544,6 +544,33 @@ export function FileContent({
     );
   }
 
+  // PDF uses the browser's native viewer inside an iframe (same raw-bytes
+  // route as HTML/images). No sandbox: sandboxed frames often break the
+  // built-in PDF plugin. Open-full-page keeps a shareable escape hatch.
+  if (file.kind === 'pdf') {
+    return (
+      <div className="flex h-full flex-col">
+        <div className="flex h-8 shrink-0 items-center justify-end border-b border-border-soft px-3">
+          <a
+            href={rawUrl}
+            target="_blank"
+            rel="noreferrer"
+            title="Open the PDF in a new tab"
+            className="chrome flex items-center gap-1 rounded-sm px-2 py-0.5 text-[10px] uppercase tracking-[0.08em] text-text-subtle transition-colors hover:bg-surface-elevated hover:text-text-muted"
+          >
+            <ExternalLink className="h-3 w-3" />
+            Open full page
+          </a>
+        </div>
+        <iframe
+          title={file.name}
+          src={rawUrl}
+          className="min-h-0 w-full flex-1 border-0 bg-surface-elevated/30"
+        />
+      </div>
+    );
+  }
+
   if (file.truncated) {
     return (
       <div className="p-6 font-sans text-[13px] text-text-muted">
