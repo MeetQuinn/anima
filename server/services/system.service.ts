@@ -339,6 +339,93 @@ async function grokAcpModelCatalog(command: string): Promise<GrokModelCatalog | 
   });
 }
 
+export interface ServicesRestartDetachedSpawnPlan {
+  args: string[];
+  command: string;
+  cwd: string;
+  detached: boolean;
+  env: NodeJS.ProcessEnv;
+  stdio: 'ignore' | 'log';
+  waitForExit: boolean;
+}
+
+export interface ServicesRestartDetachedSpawnPlanInput {
+  animaHome: string;
+  animactlScript: string;
+  env?: NodeJS.ProcessEnv;
+  logPath: string;
+  nodePath?: string;
+  nowMs?: number;
+  platform?: NodeJS.Platform;
+  projectRoot: string;
+  resultPath: string;
+}
+
+/**
+ * Build the spawn plan for a web-requested services restart.
+ *
+ * On Linux systemd hosts a plain detached child stays in the web unit's
+ * cgroup, so `systemctl --user stop` of the web unit SIGKILLs the restarter
+ * mid-restart (#693). Escape with a transient `systemd-run --user` unit —
+ * same shape as runtime-upgrade workers. Darwin/other keep detached node.
+ */
+export function servicesRestartDetachedSpawnPlan(
+  input: ServicesRestartDetachedSpawnPlanInput,
+): ServicesRestartDetachedSpawnPlan {
+  const nodePath = input.nodePath ?? process.execPath;
+  const workerArgs = [
+    input.animactlScript,
+    'services',
+    'restart',
+    '--drain-active',
+    '--resume-running',
+  ];
+  const env = {
+    ...cleanServiceEnv(input.env),
+    ANIMA_HOME: input.animaHome,
+    ANIMA_RESTART_RESULT_FILE: input.resultPath,
+  };
+  if ((input.platform ?? process.platform) === 'linux') {
+    return {
+      args: [
+        '--user',
+        '--quiet',
+        '--collect',
+        `--unit=${servicesRestartDetachedUnitName(input)}`,
+        `--property=WorkingDirectory=${input.projectRoot}`,
+        `--property=StandardOutput=append:${input.logPath}`,
+        `--property=StandardError=append:${input.logPath}`,
+        ...Object.entries(env)
+          .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+          .map(([key, value]) => `--setenv=${key}=${value}`),
+        nodePath,
+        ...workerArgs,
+      ],
+      command: 'systemd-run',
+      cwd: input.projectRoot,
+      detached: true,
+      env,
+      stdio: 'ignore',
+      waitForExit: true,
+    };
+  }
+  return {
+    args: workerArgs,
+    command: nodePath,
+    cwd: input.projectRoot,
+    detached: true,
+    env,
+    stdio: 'log',
+    waitForExit: false,
+  };
+}
+
+function servicesRestartDetachedUnitName(
+  input: Pick<ServicesRestartDetachedSpawnPlanInput, 'nowMs'>,
+): string {
+  return `anima-services-restart-${process.pid}-${input.nowMs ?? Date.now()}`;
+}
+
 async function restartServicesDetached(input: {
   animaHome: string;
   animactlScript: string;
@@ -358,25 +445,51 @@ async function restartServicesDetached(input: {
       `Failed to open restart log ${input.logPath}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  const child = spawn(
-    process.execPath,
-    [input.animactlScript, 'services', 'restart', '--drain-active', '--resume-running'],
-    {
-      cwd: input.projectRoot,
-      detached: true,
-      env: {
-        ...cleanServiceEnv(),
-        ANIMA_HOME: input.animaHome,
-        ANIMA_RESTART_RESULT_FILE: input.resultPath,
-      },
-      stdio: log ? ['ignore', log.fd, log.fd] : 'ignore',
-    },
-  );
-  child.on('error', (error) => {
-    console.error(`Failed to start services restart: ${error.message}`);
+  const plan = servicesRestartDetachedSpawnPlan({
+    animaHome: input.animaHome,
+    animactlScript: input.animactlScript,
+    logPath: input.logPath,
+    nodePath: process.execPath,
+    nowMs: input.now().getTime(),
+    projectRoot: input.projectRoot,
+    resultPath: input.resultPath,
   });
-  child.unref();
-  await log?.close();
+  const child = spawn(plan.command, plan.args, {
+    cwd: plan.cwd,
+    detached: plan.detached,
+    env: plan.env,
+    stdio: plan.stdio === 'log' && log ? ['ignore', log.fd, log.fd] : 'ignore',
+  });
+  try {
+    await waitForServicesRestartLaunch(plan, child);
+    child.unref();
+  } catch (error) {
+    console.error(
+      `Failed to start services restart: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  } finally {
+    await log?.close();
+  }
+}
+
+async function waitForServicesRestartLaunch(
+  plan: ServicesRestartDetachedSpawnPlan,
+  child: ReturnType<typeof spawn>,
+): Promise<void> {
+  await new Promise<void>((resolveSpawn, rejectSpawn) => {
+    child.once('error', rejectSpawn);
+    child.once('spawn', resolveSpawn);
+  });
+  if (!plan.waitForExit) return;
+  const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) => {
+    child.once('exit', (code, signal) => resolveExit({ code, signal }));
+  });
+  // systemd-run --collect exits once the transient unit is queued; non-zero means
+  // the restarter never escaped the web cgroup.
+  if (result.signal) throw new Error(`${plan.command} exited from signal ${result.signal}`);
+  if (result.code !== 0) {
+    throw new Error(`${plan.command} exited with code ${result.code ?? 'unknown'}`);
+  }
 }
 
 async function packageVersion(projectRoot: string): Promise<string> {
