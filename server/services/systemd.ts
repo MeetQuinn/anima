@@ -10,6 +10,7 @@ import type { ServiceSpec, SupervisorOptions } from './supervisor.js';
 export interface SystemdStatus {
   active: boolean;
   enabled: boolean;
+  failed: boolean;
   installed: boolean;
   loaded: boolean;
   manager: 'systemd';
@@ -22,6 +23,7 @@ export interface SystemdStatus {
 interface SystemdRuntime {
   active: boolean;
   enabled: boolean;
+  failed: boolean;
   loaded: boolean;
   pid?: number;
 }
@@ -121,10 +123,11 @@ export async function systemdServiceStatus(spec: ServiceSpec): Promise<SystemdSt
   const installed = await systemdServiceInstalled(spec);
   const runtime = installed
     ? await readSystemdRuntime(spec)
-    : { active: false, enabled: false, loaded: false };
+    : { active: false, enabled: false, failed: false, loaded: false };
   return {
     active: runtime.active,
     enabled: runtime.enabled,
+    failed: runtime.failed,
     installed,
     loaded: runtime.loaded,
     manager: 'systemd',
@@ -135,14 +138,21 @@ export async function systemdServiceStatus(spec: ServiceSpec): Promise<SystemdSt
   };
 }
 
-type SystemdAction = 'daemon-reload' | 'disable' | 'enable' | 'restart' | 'start' | 'stop';
+type SystemdAction = 'daemon-reload' | 'disable' | 'enable' | 'reset-failed' | 'restart' | 'start' | 'stop';
 
 export function systemdInstallActions(): SystemdAction[] {
   return ['daemon-reload', 'enable', 'restart'];
 }
 
-export function systemdStartActions(status: Pick<SystemdRuntime, 'loaded'> & Pick<SystemdStatus, 'running'>): SystemdAction[] {
+export function systemdStartActions(
+  status: Pick<SystemdRuntime, 'failed' | 'loaded'> & Pick<SystemdStatus, 'running'>,
+): SystemdAction[] {
   if (status.running) return [];
+  // After a TimeoutStopSec SIGKILL, the unit parks in ActiveState=failed.
+  // `systemctl start` alone is not enough — reset-failed first (#693).
+  if (status.failed) {
+    return status.loaded ? ['reset-failed', 'start'] : ['daemon-reload', 'reset-failed', 'start'];
+  }
   return status.loaded ? ['start'] : ['daemon-reload', 'start'];
 }
 
@@ -223,11 +233,15 @@ export function parseSystemdRuntime(result: { status: number | null; stdout: str
       }),
   );
   const loaded = fields.get('LoadState') === 'loaded';
-  const active = loaded && fields.get('ActiveState') === 'active';
+  const activeState = fields.get('ActiveState') ?? '';
+  const active = loaded && activeState === 'active';
+  const failed = loaded && activeState === 'failed';
   const enabled = loaded && fields.get('UnitFileState') === 'enabled';
   const rawPid = Number.parseInt(fields.get('MainPID') ?? '0', 10);
   const pid = active && Number.isFinite(rawPid) && rawPid > 0 ? rawPid : undefined;
-  return pid !== undefined ? { active, enabled, loaded, pid } : { active, enabled, loaded };
+  return pid !== undefined
+    ? { active, enabled, failed, loaded, pid }
+    : { active, enabled, failed, loaded };
 }
 
 async function readSystemdRuntime(spec: ServiceSpec): Promise<SystemdRuntime> {

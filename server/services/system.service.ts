@@ -339,6 +339,129 @@ async function grokAcpModelCatalog(command: string): Promise<GrokModelCatalog | 
   });
 }
 
+export interface ServicesRestartDetachedSpawnPlan {
+  args: string[];
+  command: string;
+  cwd: string;
+  detached: boolean;
+  env: NodeJS.ProcessEnv;
+  stdio: 'ignore' | 'log';
+  waitForExit: boolean;
+}
+
+export interface ServicesRestartDetachedSpawnPlanInput {
+  animaHome: string;
+  animactlScript: string;
+  env?: NodeJS.ProcessEnv;
+  logPath: string;
+  nodePath?: string;
+  nowMs?: number;
+  platform?: NodeJS.Platform;
+  projectRoot: string;
+  resultPath: string;
+}
+
+/**
+ * Build the spawn plan for a web-requested services restart.
+ *
+ * On Linux systemd hosts a plain detached child stays in the web unit's
+ * cgroup, so `systemctl --user stop` of the web unit SIGKILLs the restarter
+ * mid-restart (#693). Prefer a transient `systemd-run --user` unit — same
+ * shape as runtime-upgrade workers. Darwin/other keep detached node.
+ *
+ * Linux hosts without a reachable user systemd (pid-file mode, no linger,
+ * containers) fall back to the detached-node plan when systemd-run fails —
+ * that fallback is only unsafe where systemd-run would have succeeded.
+ */
+export function servicesRestartDetachedSpawnPlan(
+  input: ServicesRestartDetachedSpawnPlanInput,
+): ServicesRestartDetachedSpawnPlan {
+  if ((input.platform ?? process.platform) === 'linux') {
+    return servicesRestartDetachedSystemdRunPlan(input);
+  }
+  return servicesRestartDetachedNodePlan(input);
+}
+
+/** Detached node spawn used on non-Linux and as Linux systemd-run fallback. */
+export function servicesRestartDetachedNodePlan(
+  input: ServicesRestartDetachedSpawnPlanInput,
+): ServicesRestartDetachedSpawnPlan {
+  const nodePath = input.nodePath ?? process.execPath;
+  return {
+    args: [
+      input.animactlScript,
+      'services',
+      'restart',
+      '--drain-active',
+      '--resume-running',
+    ],
+    command: nodePath,
+    cwd: input.projectRoot,
+    detached: true,
+    env: servicesRestartDetachedEnv(input),
+    stdio: 'log',
+    waitForExit: false,
+  };
+}
+
+export function servicesRestartDetachedSystemdRunPlan(
+  input: ServicesRestartDetachedSpawnPlanInput,
+): ServicesRestartDetachedSpawnPlan {
+  const nodePath = input.nodePath ?? process.execPath;
+  const env = servicesRestartDetachedEnv(input);
+  return {
+    args: [
+      '--user',
+      '--quiet',
+      '--collect',
+      `--unit=${servicesRestartDetachedUnitName(input)}`,
+      `--property=WorkingDirectory=${input.projectRoot}`,
+      `--property=StandardOutput=append:${input.logPath}`,
+      `--property=StandardError=append:${input.logPath}`,
+      ...Object.entries(env)
+        .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+        .map(([key, value]) => `--setenv=${key}=${value}`),
+      nodePath,
+      input.animactlScript,
+      'services',
+      'restart',
+      '--drain-active',
+      '--resume-running',
+    ],
+    command: 'systemd-run',
+    cwd: input.projectRoot,
+    detached: true,
+    env,
+    stdio: 'ignore',
+    waitForExit: true,
+  };
+}
+
+/** When systemd-run cannot launch, fall back to detached node (Linux only). */
+export function servicesRestartDetachedFallbackPlan(
+  failedPlan: ServicesRestartDetachedSpawnPlan,
+  input: ServicesRestartDetachedSpawnPlanInput,
+): ServicesRestartDetachedSpawnPlan | undefined {
+  if (failedPlan.command !== 'systemd-run') return undefined;
+  return servicesRestartDetachedNodePlan(input);
+}
+
+function servicesRestartDetachedEnv(
+  input: ServicesRestartDetachedSpawnPlanInput,
+): NodeJS.ProcessEnv {
+  return {
+    ...cleanServiceEnv(input.env),
+    ANIMA_HOME: input.animaHome,
+    ANIMA_RESTART_RESULT_FILE: input.resultPath,
+  };
+}
+
+function servicesRestartDetachedUnitName(
+  input: Pick<ServicesRestartDetachedSpawnPlanInput, 'nowMs'>,
+): string {
+  return `anima-services-restart-${process.pid}-${input.nowMs ?? Date.now()}`;
+}
+
 async function restartServicesDetached(input: {
   animaHome: string;
   animactlScript: string;
@@ -358,25 +481,81 @@ async function restartServicesDetached(input: {
       `Failed to open restart log ${input.logPath}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  const child = spawn(
-    process.execPath,
-    [input.animactlScript, 'services', 'restart', '--drain-active', '--resume-running'],
-    {
-      cwd: input.projectRoot,
-      detached: true,
-      env: {
-        ...cleanServiceEnv(),
-        ANIMA_HOME: input.animaHome,
-        ANIMA_RESTART_RESULT_FILE: input.resultPath,
-      },
-      stdio: log ? ['ignore', log.fd, log.fd] : 'ignore',
-    },
-  );
-  child.on('error', (error) => {
-    console.error(`Failed to start services restart: ${error.message}`);
+  const planInput: ServicesRestartDetachedSpawnPlanInput = {
+    animaHome: input.animaHome,
+    animactlScript: input.animactlScript,
+    logPath: input.logPath,
+    nodePath: process.execPath,
+    nowMs: input.now().getTime(),
+    projectRoot: input.projectRoot,
+    resultPath: input.resultPath,
+  };
+  const primary = servicesRestartDetachedSpawnPlan(planInput);
+  try {
+    await spawnServicesRestartPlan(primary, log);
+  } catch (error) {
+    const fallback = servicesRestartDetachedFallbackPlan(primary, planInput);
+    if (!fallback) {
+      console.error(
+        `Failed to start services restart: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      await log?.close();
+      return;
+    }
+    const reason = error instanceof Error ? error.message : String(error);
+    const line = `systemd-run unavailable (${reason}); falling back to detached node spawn\n`;
+    console.error(line.trim());
+    try {
+      await log?.write(line);
+    } catch {
+      /* ignore log write failures */
+    }
+    try {
+      await spawnServicesRestartPlan(fallback, log);
+    } catch (fallbackError) {
+      console.error(
+        `Failed to start services restart fallback: ${
+          fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+        }`,
+      );
+    }
+  } finally {
+    await log?.close();
+  }
+}
+
+async function spawnServicesRestartPlan(
+  plan: ServicesRestartDetachedSpawnPlan,
+  log: Awaited<ReturnType<typeof open>> | undefined,
+): Promise<void> {
+  const child = spawn(plan.command, plan.args, {
+    cwd: plan.cwd,
+    detached: plan.detached,
+    env: plan.env,
+    stdio: plan.stdio === 'log' && log ? ['ignore', log.fd, log.fd] : 'ignore',
   });
+  await waitForServicesRestartLaunch(plan, child);
   child.unref();
-  await log?.close();
+}
+
+async function waitForServicesRestartLaunch(
+  plan: ServicesRestartDetachedSpawnPlan,
+  child: ReturnType<typeof spawn>,
+): Promise<void> {
+  await new Promise<void>((resolveSpawn, rejectSpawn) => {
+    child.once('error', rejectSpawn);
+    child.once('spawn', resolveSpawn);
+  });
+  if (!plan.waitForExit) return;
+  const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) => {
+    child.once('exit', (code, signal) => resolveExit({ code, signal }));
+  });
+  // systemd-run --collect exits once the transient unit is queued; non-zero means
+  // the restarter never escaped the web cgroup (or systemd-run is unavailable).
+  if (result.signal) throw new Error(`${plan.command} exited from signal ${result.signal}`);
+  if (result.code !== 0) {
+    throw new Error(`${plan.command} exited with code ${result.code ?? 'unknown'}`);
+  }
 }
 
 async function packageVersion(projectRoot: string): Promise<string> {

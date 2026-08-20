@@ -26,6 +26,10 @@ import {
   systemdUninstallActions,
 } from '../services/systemd.js';
 import { buildServiceEnvironment, buildServicePath, cleanServiceEnv } from '../services/env.js';
+import {
+  servicesRestartDetachedFallbackPlan,
+  servicesRestartDetachedSpawnPlan,
+} from '../services/system.service.js';
 import { stopPidFallbackService } from '../services/supervisor.js';
 
 const animactl = resolve('dist/server/cli/animactl.js');
@@ -210,9 +214,21 @@ test('systemd unit pins service command, environment, logs, restart, and install
 });
 
 test('systemd start/install/stop plans distinguish loaded from running', () => {
-  assert.deepEqual(systemdStartActions({ loaded: true, running: true }), []);
-  assert.deepEqual(systemdStartActions({ loaded: true, running: false }), ['start']);
-  assert.deepEqual(systemdStartActions({ loaded: false, running: false }), ['daemon-reload', 'start']);
+  assert.deepEqual(systemdStartActions({ failed: false, loaded: true, running: true }), []);
+  assert.deepEqual(systemdStartActions({ failed: false, loaded: true, running: false }), ['start']);
+  assert.deepEqual(systemdStartActions({ failed: false, loaded: false, running: false }), [
+    'daemon-reload',
+    'start',
+  ]);
+  assert.deepEqual(systemdStartActions({ failed: true, loaded: true, running: false }), [
+    'reset-failed',
+    'start',
+  ]);
+  assert.deepEqual(systemdStartActions({ failed: true, loaded: false, running: false }), [
+    'daemon-reload',
+    'reset-failed',
+    'start',
+  ]);
 
   assert.deepEqual(systemdInstallActions(), ['daemon-reload', 'enable', 'restart']);
 
@@ -254,15 +270,20 @@ test('systemd action invocations dispatch user service commands', () => {
     args: ['--user', 'stop', 'ai.meetquinn.anima.web.service'],
     options: {},
   });
+  assert.deepEqual(systemdActionInvocation('reset-failed', spec), {
+    args: ['--user', 'reset-failed', 'ai.meetquinn.anima.web.service'],
+    options: {},
+  });
 });
 
-test('systemd runtime parser reads active, inactive, and missing units', () => {
+test('systemd runtime parser reads active, inactive, failed, and missing units', () => {
   assert.deepEqual(parseSystemdRuntime({
     status: 0,
     stdout: 'LoadState=loaded\nActiveState=active\nMainPID=12345\nUnitFileState=enabled\n',
   }), {
     active: true,
     enabled: true,
+    failed: false,
     loaded: true,
     pid: 12345,
   });
@@ -272,6 +293,7 @@ test('systemd runtime parser reads active, inactive, and missing units', () => {
   }), {
     active: false,
     enabled: false,
+    failed: false,
     loaded: true,
   });
   assert.deepEqual(parseSystemdRuntime({
@@ -280,6 +302,16 @@ test('systemd runtime parser reads active, inactive, and missing units', () => {
   }), {
     active: false,
     enabled: true,
+    failed: false,
+    loaded: true,
+  });
+  assert.deepEqual(parseSystemdRuntime({
+    status: 0,
+    stdout: 'LoadState=loaded\nActiveState=failed\nMainPID=0\nUnitFileState=enabled\n',
+  }), {
+    active: false,
+    enabled: true,
+    failed: true,
     loaded: true,
   });
   assert.deepEqual(parseSystemdRuntime({
@@ -288,8 +320,115 @@ test('systemd runtime parser reads active, inactive, and missing units', () => {
   }), {
     active: false,
     enabled: false,
+    failed: false,
     loaded: false,
   });
+});
+
+test('web-requested services restart escapes the web cgroup on Linux via systemd-run', () => {
+  const plan = servicesRestartDetachedSpawnPlan({
+    animaHome: '/home/ubuntu/.anima',
+    animactlScript: '/opt/anima/current/node_modules/@meetquinn/animactl/dist/server/cli/animactl.js',
+    env: {
+      ANIMA_AGENT_ID: 'milo',
+      ANIMA_HOME: '/tmp/wrong-home',
+      PATH: '/usr/bin:/bin',
+      USER: 'ubuntu',
+    },
+    logPath: '/home/ubuntu/.anima/logs/services-restart.log',
+    nodePath: '/usr/bin/node',
+    nowMs: 1787237382000,
+    platform: 'linux',
+    projectRoot: '/opt/anima/current/node_modules/@meetquinn/animactl',
+    resultPath: '/home/ubuntu/.anima/run/services-restart-result.json',
+  });
+
+  assert.equal(plan.command, 'systemd-run');
+  assert.equal(plan.detached, true);
+  assert.equal(plan.stdio, 'ignore');
+  assert.equal(plan.waitForExit, true);
+  assert.ok(plan.args.includes('--user'));
+  assert.ok(plan.args.includes('--quiet'));
+  assert.ok(plan.args.includes('--collect'));
+  assert.ok(plan.args.some((arg) => /^--unit=anima-services-restart-\d+-1787237382000$/.test(arg)));
+  assert.ok(plan.args.includes('--property=WorkingDirectory=/opt/anima/current/node_modules/@meetquinn/animactl'));
+  assert.ok(plan.args.includes('--property=StandardOutput=append:/home/ubuntu/.anima/logs/services-restart.log'));
+  assert.ok(plan.args.includes('--setenv=ANIMA_HOME=/home/ubuntu/.anima'));
+  assert.ok(plan.args.includes('--setenv=ANIMA_RESTART_RESULT_FILE=/home/ubuntu/.anima/run/services-restart-result.json'));
+  assert.ok(plan.args.includes('--setenv=PATH=/usr/bin:/bin'));
+  assert.ok(!plan.args.some((arg) => arg.includes('ANIMA_AGENT_ID')));
+  assert.deepEqual(plan.args.slice(-6), [
+    '/usr/bin/node',
+    '/opt/anima/current/node_modules/@meetquinn/animactl/dist/server/cli/animactl.js',
+    'services',
+    'restart',
+    '--drain-active',
+    '--resume-running',
+  ]);
+});
+
+test('web-requested services restart keeps direct detached node spawn off Linux', () => {
+  const plan = servicesRestartDetachedSpawnPlan({
+    animaHome: '/Users/totoday/.anima',
+    animactlScript: '/Users/totoday/.anima/runtime/current/node_modules/@meetquinn/animactl/dist/server/cli/animactl.js',
+    env: {
+      ANIMA_INBOX_ITEM_ID: 'item_1',
+      PATH: '/opt/homebrew/bin:/usr/bin:/bin',
+    },
+    logPath: '/Users/totoday/.anima/logs/services-restart.log',
+    nodePath: '/opt/homebrew/bin/node',
+    platform: 'darwin',
+    projectRoot: '/Users/totoday/.anima/runtime/current/node_modules/@meetquinn/animactl',
+    resultPath: '/Users/totoday/.anima/run/services-restart-result.json',
+  });
+
+  assert.equal(plan.command, '/opt/homebrew/bin/node');
+  assert.equal(plan.detached, true);
+  assert.equal(plan.stdio, 'log');
+  assert.equal(plan.waitForExit, false);
+  assert.deepEqual(plan.args, [
+    '/Users/totoday/.anima/runtime/current/node_modules/@meetquinn/animactl/dist/server/cli/animactl.js',
+    'services',
+    'restart',
+    '--drain-active',
+    '--resume-running',
+  ]);
+  assert.equal(plan.env.ANIMA_HOME, '/Users/totoday/.anima');
+  assert.equal(plan.env.ANIMA_INBOX_ITEM_ID, undefined);
+  assert.equal(
+    plan.env.ANIMA_RESTART_RESULT_FILE,
+    '/Users/totoday/.anima/run/services-restart-result.json',
+  );
+});
+
+test('Linux systemd-run failure falls back to detached node spawn', () => {
+  const input = {
+    animaHome: '/home/ubuntu/.anima',
+    animactlScript: '/opt/anima/current/node_modules/@meetquinn/animactl/dist/server/cli/animactl.js',
+    env: { PATH: '/usr/bin:/bin' },
+    logPath: '/home/ubuntu/.anima/logs/services-restart.log',
+    nodePath: '/usr/bin/node',
+    nowMs: 1787237382000,
+    platform: 'linux' as const,
+    projectRoot: '/opt/anima/current/node_modules/@meetquinn/animactl',
+    resultPath: '/home/ubuntu/.anima/run/services-restart-result.json',
+  };
+  const primary = servicesRestartDetachedSpawnPlan(input);
+  assert.equal(primary.command, 'systemd-run');
+  const fallback = servicesRestartDetachedFallbackPlan(primary, input);
+  assert.ok(fallback);
+  assert.equal(fallback.command, '/usr/bin/node');
+  assert.equal(fallback.stdio, 'log');
+  assert.equal(fallback.waitForExit, false);
+  assert.deepEqual(fallback.args, [
+    input.animactlScript,
+    'services',
+    'restart',
+    '--drain-active',
+    '--resume-running',
+  ]);
+  // Non-systemd-run failures must not invent a second path.
+  assert.equal(servicesRestartDetachedFallbackPlan(fallback, input), undefined);
 });
 
 test('services status reports stopped agent and web with web URL', async () => {
