@@ -26,7 +26,10 @@ import {
   systemdUninstallActions,
 } from '../services/systemd.js';
 import { buildServiceEnvironment, buildServicePath, cleanServiceEnv } from '../services/env.js';
-import { servicesRestartDetachedSpawnPlan } from '../services/system.service.js';
+import {
+  servicesRestartDetachedFallbackPlan,
+  servicesRestartDetachedSpawnPlan,
+} from '../services/system.service.js';
 import { stopPidFallbackService } from '../services/supervisor.js';
 
 const animactl = resolve('dist/server/cli/animactl.js');
@@ -396,6 +399,36 @@ test('web-requested services restart keeps direct detached node spawn off Linux'
     plan.env.ANIMA_RESTART_RESULT_FILE,
     '/Users/totoday/.anima/run/services-restart-result.json',
   );
+});
+
+test('Linux systemd-run failure falls back to detached node spawn', () => {
+  const input = {
+    animaHome: '/home/ubuntu/.anima',
+    animactlScript: '/opt/anima/current/node_modules/@meetquinn/animactl/dist/server/cli/animactl.js',
+    env: { PATH: '/usr/bin:/bin' },
+    logPath: '/home/ubuntu/.anima/logs/services-restart.log',
+    nodePath: '/usr/bin/node',
+    nowMs: 1787237382000,
+    platform: 'linux' as const,
+    projectRoot: '/opt/anima/current/node_modules/@meetquinn/animactl',
+    resultPath: '/home/ubuntu/.anima/run/services-restart-result.json',
+  };
+  const primary = servicesRestartDetachedSpawnPlan(input);
+  assert.equal(primary.command, 'systemd-run');
+  const fallback = servicesRestartDetachedFallbackPlan(primary, input);
+  assert.ok(fallback);
+  assert.equal(fallback.command, '/usr/bin/node');
+  assert.equal(fallback.stdio, 'log');
+  assert.equal(fallback.waitForExit, false);
+  assert.deepEqual(fallback.args, [
+    input.animactlScript,
+    'services',
+    'restart',
+    '--drain-active',
+    '--resume-running',
+  ]);
+  // Non-systemd-run failures must not invent a second path.
+  assert.equal(servicesRestartDetachedFallbackPlan(fallback, input), undefined);
 });
 
 test('services status reports stopped agent and web with web URL', async () => {
