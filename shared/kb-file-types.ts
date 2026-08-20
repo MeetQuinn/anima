@@ -1,4 +1,4 @@
-export type KbFileKind = 'markdown' | 'html' | 'json' | 'code' | 'image' | 'text' | 'binary';
+export type KbFileKind = 'markdown' | 'html' | 'json' | 'code' | 'image' | 'pdf' | 'text' | 'binary';
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp', 'avif']);
 const TEXT_EXTENSIONS = new Set(['txt', 'text', 'log', '', 'env', 'gitignore']);
@@ -46,6 +46,7 @@ export function kbFileKind(path: string): KbFileKind {
   if (ext === 'md' || ext === 'markdown') return 'markdown';
   if (ext === 'html' || ext === 'htm') return 'html';
   if (ext === 'json') return 'json';
+  if (ext === 'pdf') return 'pdf';
   if (IMAGE_EXTENSIONS.has(ext)) return 'image';
   if (CODE_LANGUAGES[ext]) return 'code';
   if (TEXT_EXTENSIONS.has(ext)) return 'text';

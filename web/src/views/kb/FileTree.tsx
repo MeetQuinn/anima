@@ -67,6 +67,8 @@ function KindIcon({ kind, className }: { kind: KbFileKind; className: string }) 
       return <ImageIcon className={className} />;
     case 'html':
       return <Globe className={className} />;
+    case 'pdf':
+      return <FileIcon className={className} />;
     default:
       return <FileIcon className={className} />;
   }

@@ -242,6 +242,29 @@ test('agent home binary file is metadata-only and raw route returns exact bytes'
   }
 });
 
+test('agent home pdf is metadata-only and raw route serves application/pdf', async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), 'anima-home-files-pdf-'));
+  try {
+    const bytes = Buffer.from('%PDF-1.4 minimal');
+    await writeHomeFile(homeDir, 'notes/guide.pdf', bytes);
+    await withHomeServer(homeDir, async (base) => {
+      const file = await getJson<Record<string, unknown>>(
+        `${base}/api/agents/anima/home/files/notes/guide.pdf`,
+      );
+      assert.equal(file.status, 200);
+      assert.equal(file.body.kind, 'pdf');
+      assert.equal('content' in file.body, false);
+
+      const raw = await fetch(`${base}/api/agents/anima/home/raw/notes/guide.pdf`);
+      assert.equal(raw.status, 200);
+      assert.equal(raw.headers.get('content-type'), 'application/pdf');
+      assert.deepEqual(Buffer.from(await raw.arrayBuffer()), bytes);
+    });
+  } finally {
+    await rm(homeDir, { force: true, recursive: true });
+  }
+});
+
 // fetch() cannot exercise the server-side traversal guard: the WHATWG URL parser
 // normalizes dot segments (including the %2e-encoded forms) client-side, so the
 // request never reaches the route. A real attacker sends the raw request line
