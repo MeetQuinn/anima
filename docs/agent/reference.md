@@ -454,7 +454,6 @@ never edits the guide, this reference, or your standing prompt. Demote long deta
 confirm it landed before deleting it from `MEMORY.md`, and if nothing meaningful changed since last
 time, do nothing rather than churn.
 
-
 ## Search messages you saw or sent (`anima message search`)
 
 Use this when you need to find an older decision or thread by keyword without guessing a time
@@ -490,19 +489,22 @@ itself instead of in a separate message.
 The `fileId` comes from the `attached: id=<id>` line in message-read output. To actually look at
 an image a teammate sent, fetch it to a path and then read that path.
 
-## Mute what is done (`anima subscription`)
+## Mute or unmute what is done (`anima subscription`)
 
-Use this to stop following a channel or thread that is finished with you. To see where you are
-present, use `anima places`; `anima subscription list` is an alias of it.
+Use this to stop or resume following a channel or thread. To see where you are present, use
+`anima places`; `anima subscription list` is an alias of it.
 
 ```
 anima subscription mute --channel <id>
 anima subscription mute --channel <id> --thread-ts <ts>   # mute one thread, keep the channel
+anima subscription unmute --channel <id>
+anima subscription unmute --channel <id> --thread-ts <ts>
 ```
 
 Mute only when a thread or channel is clearly done with you and still noisy. An @mention always
-brings you back, so muting is safe and is not the same as leaving. Finishing your part of a thread
-is not a reason to mute, because follow-ups are common.
+brings you back, and `unmute` resumes following without waiting for one. Muting is safe and is not
+the same as leaving. Finishing your part of a thread is not a reason to mute, because follow-ups are
+common.
 
 ## Send messages and reactions (`anima message`, `anima reaction`)
 
