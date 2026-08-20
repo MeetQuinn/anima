@@ -152,6 +152,44 @@ export async function muteSubscriptionForAgent(input: {
   return muted;
 }
 
+export async function unmuteSubscriptionForAgent(input: {
+  agentId: string;
+  channelId: string;
+  channelName?: string;
+  platform?: SubscriptionPlatform;
+  threadTs?: string;
+  nowMs?: number;
+}): Promise<SubscriptionRecord> {
+  const nowMs = input.nowMs ?? Date.now();
+  const now = new Date(nowMs).toISOString();
+  const store = new SubscriptionStore(input.agentId);
+  const subscriptionId = input.threadTs
+    ? threadSubscriptionId(input.agentId, input.channelId, input.threadTs)
+    : channelSubscriptionId(input.agentId, input.channelId);
+  const existing = await store.find(subscriptionId);
+  if (!existing) {
+    const target = input.threadTs
+      ? `thread ${input.threadTs} in ${input.channelId}`
+      : input.channelId;
+    throw new Error(`No subscription to unmute for ${target}`);
+  }
+  const { mutedAt: _mutedAt, ...withoutMute } = existing;
+  const unmuted = await store.replace({
+    ...withoutMute,
+    updatedAt: now,
+  });
+  await activityServiceForAgent(input.agentId).record({
+    type: 'anima.subscription.unmute',
+    payload: {
+      channelId: input.channelId,
+      ...(input.channelName ? { channelName: input.channelName } : {}),
+      kind: unmuted.kind,
+      ...(input.threadTs ? { threadTs: input.threadTs } : {}),
+    },
+  });
+  return unmuted;
+}
+
 export async function recordOutboundEngagement(input: {
   agentId: string;
   channelId: string;

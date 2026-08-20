@@ -150,6 +150,18 @@ test('message send records an audited Slack output', async () => {
     assert.ok(Object.values(mutedState.subscriptions).some(
       (subscription) => subscription.kind === 'thread' && subscription.threadTs === '1770000200.000001' && subscription.mutedAt,
     ));
+
+    const unmute = await runNode([cliPath, 'subscription', 'unmute', '--channel', 'C-product', '--thread-ts', '1770000200.000001'], {
+      env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_INBOX_ITEM_ID: itemId, ANIMA_SLACK_API_URL: slackApi.url },
+    });
+    assert.equal(unmute.status, 0, unmute.stderr || unmute.stdout);
+    assert.equal(unmute.stdout.trim(), 'unmuted successfully. channel=C-product, thread_ts=1770000200.000001.');
+    const unmutedState = await loadState();
+    assert.ok(Object.values(unmutedState.subscriptions).some(
+      (subscription) => subscription.kind === 'thread'
+        && subscription.threadTs === '1770000200.000001'
+        && !subscription.mutedAt,
+    ));
     });
   } finally {
     await slackApi.close();
@@ -173,6 +185,18 @@ test('subscription mute accepts Feishu --chat-id without Slack resolution', asyn
         (subscription) => subscription.kind === 'channel'
           && subscription.channelId === 'oc_feishu_group'
           && subscription.mutedAt,
+      ));
+
+      const unmute = await runNode([cliPath, 'subscription', 'unmute', '--chat-id', 'oc_feishu_group'], {
+        env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir },
+      });
+      assert.equal(unmute.status, 0, unmute.stderr || unmute.stdout);
+      assert.equal(unmute.stdout.trim(), 'unmuted successfully. feishu chat_id=oc_feishu_group.');
+      const unmuted = await loadState();
+      assert.ok(Object.values(unmuted.subscriptions).some(
+        (subscription) => subscription.kind === 'channel'
+          && subscription.channelId === 'oc_feishu_group'
+          && !subscription.mutedAt,
       ));
     });
   } finally {

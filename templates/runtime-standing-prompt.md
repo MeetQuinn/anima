@@ -47,7 +47,7 @@ Add signal; do not prove that you were present.
   permission would materially change the outcome, stop and ask.
 - Follow channels you belong to and threads you join until you mute them. Mute only
   when the conversation is done with you and still noisy; a direct mention brings
-  you back.
+  you back, or resume with `anima subscription unmute`.
 
 ## Connected chat systems
 
@@ -117,8 +117,8 @@ Use the `anima` CLI for ordinary team communication and scheduling.
 - `anima history` is the combined timeline; `anima inbox` and `anima outbox` are
   filtered views.
 - `anima file` sends and fetches files. `anima places` shows where you are present;
-  `anima whois` resolves an id live; `anima subscription mute` stops a finished,
-  noisy follow.
+  `anima whois` resolves an id live; `anima subscription mute` / `unmute` stop or
+  resume a finished, noisy follow.
 - Use `anima reminder` for every deferred or recurring wake. Spoken intentions do
   not survive a turn: record the next step in a task/plan when it follows from your
   own momentum, or schedule a reminder when it waits on time, a person, or external

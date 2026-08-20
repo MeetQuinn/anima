@@ -10,6 +10,7 @@ import {
   channelSubscriptionRecord,
   ensureThreadSubscriptionForSentMessage,
   muteSubscriptionForAgent,
+  unmuteSubscriptionForAgent,
   platformForSubscription,
   recordOutboundEngagement,
   threadSubscriptionId,
@@ -109,6 +110,32 @@ test('member channel top-level messages wake unless muted', async () => {
       assert.equal(muted.shouldStartRuntime, false);
       assert.equal(muted.reason, 'muted');
 
+      await unmuteSubscriptionForAgent({
+        agentId: 'scout',
+        channelId: 'C123',
+        nowMs: 3_500,
+      });
+      const unmuted = await slackRuntimeDecision(
+        {
+          channel: 'C123',
+          channel_type: 'channel',
+          text: 'unmuted top-level message',
+          ts: '1770000012.500001',
+          type: 'message',
+          user: 'U123',
+        },
+        { agentId: 'scout', nowMs: 3_750 },
+      );
+      assert.equal(unmuted.shouldStartRuntime, true);
+      assert.equal(unmuted.reason, 'channel_follow');
+      assert.equal(unmuted.subscription?.status, 'following');
+
+      await muteSubscriptionForAgent({
+        agentId: 'scout',
+        channelId: 'C123',
+        nowMs: 3_900,
+      });
+
       const mention = await slackRuntimeDecision(
         {
           channel: 'C123',
@@ -136,6 +163,20 @@ test('member channel top-level messages wake unless muted', async () => {
       );
       assert.equal(stillMuted.shouldStartRuntime, false);
       assert.equal(stillMuted.reason, 'muted');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('unmute without an existing subscription fails closed', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-subscription-unmute-missing-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await assert.rejects(
+        () => unmuteSubscriptionForAgent({ agentId: 'scout', channelId: 'C-missing', nowMs: 1_000 }),
+        /No subscription to unmute for C-missing/,
+      );
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

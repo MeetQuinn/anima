@@ -162,6 +162,7 @@ export type ExternalEffectActivity =
   | ActivityBase<'anima.session.rotate', SessionRotatePayload>
   | ActivityBase<'anima.subscription.add', SubscriptionEffectPayload>
   | ActivityBase<'anima.subscription.mute', SubscriptionEffectPayload>
+  | ActivityBase<'anima.subscription.unmute', SubscriptionEffectPayload>
   | ActivityBase<'anima.subscription.remove', SubscriptionEffectPayload>
   | ActivityBase<'anima.attention.suggestion', AttentionSuggestionPayload>
   | ActivityBase<'anima.ask.answer', AskAnswerPayload>;
