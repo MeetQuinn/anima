@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 
+/**
+ * The one `aria-modal` dialog in web/src that does not use `useDialogFocus`.
+ *
+ * It hand-rolls the same three guarantees below (initial focus on Close, Tab
+ * containment, focus restored to the opener) and predates the shared hook. The
+ * duplication is deliberate and was reviewed: this lightbox is opened by its own
+ * trigger and owns its Escape handling, and it never nests: `FileViewer` is its
+ * only render site (a pane, not a dialog), so no `useDialogFocus` instance is
+ * ever mounted around it. Adopting the hook would churn a working surface to
+ * make a count come out even. Not a migration target.
+ */
 export function ImageLightbox({ src, alt }: { src: string; alt: string }) {
   const [open, setOpen] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);

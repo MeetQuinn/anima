@@ -3,11 +3,9 @@ import { useCallback, useEffect, useId, useRef } from 'react';
 /**
  * Focus lifecycle for modal dialogs.
  *
- * Several independent dialog implementations share this primitive — the two
- * destructive confirms (`ConfirmModal`, `BusyConfirmModal`), the Activity image
- * lightbox and the token usage sheet, with the remaining `aria-modal` dialogs
- * migrating in batches. They keep separate visual and copy APIs on purpose, but
- * the focus contract must not drift between them, so it lives here once:
+ * Several independent dialog implementations share this primitive. They keep
+ * separate visual and copy APIs on purpose, but the focus contract must not
+ * drift between them, so it lives here once:
  *
  *   - on open, focus moves into the dialog, landing on the safe control;
  *   - Tab and Shift+Tab stay inside the dialog;
@@ -17,9 +15,14 @@ import { useCallback, useEffect, useId, useRef } from 'react';
  * on a busy commit, one closes a nested picker first), so each call site owns its
  * own Esc handling and this hook owns focus only.
  *
- * The count of call sites is deliberately not written down — it changes with
- * every batch, and a number in a comment is a claim the next commit falsifies.
- * `git grep -l useDialogFocus -- web/src` is the answer that cannot go stale.
+ * Neither the count nor the list of call sites is written down here: both are
+ * claims the next commit falsifies. `git grep -l useDialogFocus -- web/src` is
+ * the answer that cannot go stale.
+ *
+ * One `aria-modal` dialog deliberately does NOT use this hook:
+ * `views/kb/ImageLightbox.tsx` hand-rolls the same contract and predates the
+ * primitive. It is a settled exception, not a migration target — see the note
+ * in that file before "finishing" it.
  *
  * Returns per-instance `titleId` / `descriptionId` from `useId()` rather than
  * fixed strings: a hardcoded id would make `aria-labelledby` ambiguous the
