@@ -23,7 +23,14 @@ import { MermaidBlock } from './MermaidBlock';
 import { ALERT_META, alertTypeFromClassName, rehypeGithubAlerts } from './lib/github-alerts';
 import { parseFrontmatter } from './lib/frontmatter';
 export { extractToc, lineFromHash } from './lib/markdown-toc';
-import { extractToc, lineFromHash, replaceLocationHash, slugify } from './lib/markdown-toc';
+import {
+  extractToc,
+  lineFromHash,
+  replaceLocationHash,
+  resolveHeadingId,
+  slugify,
+  stripExplicitHeadingIds,
+} from './lib/markdown-toc';
 import type { HeadingNode } from './lib/markdown-toc';
 import { resolveKbHref, resolveRawSrc, resolveSrcset, sourceMatchesLight } from './lib/kb-links';
 import type { HastElement } from './lib/kb-links';
@@ -83,6 +90,11 @@ function makeHeadingComponents(idsByLine: Map<number, string>) {
   };
 }
 
+/** Stable ref API so in-doc `#` links can scroll without remounting ReactMarkdown. */
+type AnchorScrollApi = {
+  scrollToHash: (hash: string) => boolean;
+};
+
 const ALIGN_TAGS = ['div', 'p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'td', 'th'] as const;
 
 const sanitizeSchema = {
@@ -139,7 +151,11 @@ export type RenderableFile = Pick<
   'name' | 'kind' | 'size' | 'language' | 'content' | 'truncated'
 >;
 
-function makeLinkComponent(links: FileLinks, currentFilePath: string) {
+function makeLinkComponent(
+  links: FileLinks,
+  currentFilePath: string,
+  anchorScrollRef: { current: AnchorScrollApi | null },
+) {
   return function FileLink({
     href,
     children,
@@ -151,10 +167,25 @@ function makeLinkComponent(links: FileLinks, currentFilePath: string) {
     // ReactMarkdown REMOUNT the whole rendered tree - detaching a deep-link
     // scroll target mid-flight and orphaning captured heading nodes (#493
     // gate). Inside the component it is just a hook read; identity stays put.
+    // Same reason the scroll API is a ref: clicking `#` must not remount.
     const navigate = useNavigate();
-    // In-page anchor (TOC, heading references)
+    // In-page anchor (TOC, heading references). Bare <a href="#…"> often fails
+    // inside the markdown overflow scroller, and hand-written short hashes
+    // (e.g. `#000439`) need resolveHeadingId against slugified heading ids.
     if (!href || href.startsWith('#')) {
-      return <a href={href} {...rest}>{children}</a>;
+      return (
+        <a
+          href={href}
+          {...rest}
+          onClick={(e) => {
+            if (!href || href === '#') return;
+            e.preventDefault();
+            anchorScrollRef.current?.scrollToHash(href.slice(1));
+          }}
+        >
+          {children}
+        </a>
+      );
     }
     // Absolute URL → open in new tab
     if (/^[a-z][a-z\d+\-.]*:/i.test(href)) {
@@ -217,20 +248,28 @@ export function FileContent({
   );
   const rawUrl = links.rawPath(filePath);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const anchorScrollRef = useRef<AnchorScrollApi | null>(null);
   const { entries: frontmatter, body: markdownBody } = useMemo(() => {
     if (file?.kind !== 'markdown' || !file.content) return { entries: null, body: '' };
     return parseFrontmatter(file.content);
   }, [file]);
   // TOC of the rendered body: keys heading ids by line for the heading
-  // components, and feeds the wide-screen "On this page" rail.
+  // components, and feeds the wide-screen "On this page" rail. Parsed from the
+  // raw body so `{#explicit-id}` markers still contribute anchors.
   const tocEntries = useMemo(() => {
     if (file?.kind !== 'markdown' || !markdownBody) return [];
     return extractToc(markdownBody);
   }, [file, markdownBody]);
+  // Render without `{#id}` markers — they are authoring syntax, not prose.
+  const renderMarkdownBody = useMemo(
+    () => (markdownBody ? stripExplicitHeadingIds(markdownBody) : ''),
+    [markdownBody],
+  );
   const headingIdsByLine = useMemo(
     () => new Map(tocEntries.map((entry) => [entry.line, entry.id])),
     [tocEntries],
   );
+  const headingIdList = useMemo(() => tocEntries.map((entry) => entry.id), [tocEntries]);
   // Which heading the reader is at, for the rail's active highlight. Driven by
   // the same scroll handler that keeps the URL hash aligned.
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null);
@@ -271,6 +310,21 @@ export function FileContent({
     pendingScrollRef.current = { id, until: Date.now() + 2000 };
   }, []);
 
+  const scrollToHash = useCallback(
+    (hash: string) => {
+      const resolved = resolveHeadingId(hash, headingIdList) ?? hash;
+      const el = document.getElementById(resolved);
+      if (!el?.id) return false;
+      beginProgrammaticScroll(el.id);
+      el.scrollIntoView({ behavior: 'smooth' });
+      replaceLocationHash(el.id);
+      setActiveHeadingId(el.id);
+      return true;
+    },
+    [beginProgrammaticScroll, headingIdList],
+  );
+  anchorScrollRef.current = { scrollToHash };
+
   // Scroll to hash target after markdown renders. This effect OWNS the
   // incoming deep link: it seeds the rail highlight and lands the scroll. The
   // scroll-driven sync below must never geometry-seed over it - a fresh load
@@ -280,19 +334,22 @@ export function FileContent({
     if (file?.kind !== 'markdown' || mode !== 'preview') return;
     const hash = window.location.hash.slice(1);
     if (!hash) return;
-    const el = document.getElementById(hash);
+    const resolved = resolveHeadingId(hash, headingIdList) ?? hash;
+    const el = document.getElementById(resolved);
     if (el) {
-      beginProgrammaticScroll(hash);
+      beginProgrammaticScroll(el.id);
       // Small delay to let ReactMarkdown finish rendering. The rail highlight
       // seeds here too (not synchronously) so the effect never cascades a
       // render; 100ms later the scroll starts anyway.
       const t = setTimeout(() => {
-        if (tocEntries.some((entry) => entry.id === hash)) setActiveHeadingId(hash);
+        if (tocEntries.some((entry) => entry.id === el.id)) setActiveHeadingId(el.id);
         el.scrollIntoView({ behavior: 'smooth' });
+        // Canonicalize short author hashes (`#000439`) to the real heading id.
+        replaceLocationHash(el.id);
       }, 100);
       return () => clearTimeout(t);
     }
-  }, [file, mode, tocEntries, beginProgrammaticScroll]);
+  }, [file, mode, tocEntries, headingIdList, beginProgrammaticScroll]);
 
   // Keep the hash aligned with the heading closest to the top of the markdown
   // scroller. This preserves shareable anchors while reading long KB docs.
@@ -343,8 +400,14 @@ export function FileContent({
     // effect above, and an unknown hash (stale slug, non-heading anchor) is
     // simply preserved instead of being rewritten to the first heading.
     // Scroll-driven passes DO write, keeping the anchor shareable mid-read.
+    // Short author hashes (`#000439`) resolve via resolveHeadingId — treat
+    // those as owned by the deep-link effect too, don't geometry-seed over them.
     const incoming = window.location.hash.slice(1);
-    if (!incoming || !headingsOf().some((heading) => heading.id === incoming)) {
+    const resolvedIncoming = incoming
+      ? resolveHeadingId(incoming, headingIdList) ??
+        (headingsOf().some((heading) => heading.id === incoming) ? incoming : null)
+      : null;
+    if (!resolvedIncoming) {
       frame = window.requestAnimationFrame(() => syncHash(false));
     }
     root.addEventListener('scroll', onScroll, { passive: true });
@@ -352,13 +415,14 @@ export function FileContent({
       root.removeEventListener('scroll', onScroll);
       if (frame) window.cancelAnimationFrame(frame);
     };
-  }, [file, mode]);
+  }, [file, mode, headingIdList]);
 
   // Memoised so ReactMarkdown sees stable component references (avoids remounting
   // all links on every parent re-render while the file content stays the same).
+  // anchorScrollRef is stable; in-doc `#` clicks read `.current` at click time.
   const markdownComponents = useMemo(
     () => ({
-      a: makeLinkComponent(links, filePath),
+      a: makeLinkComponent(links, filePath, anchorScrollRef),
       ...makeHeadingComponents(headingIdsByLine),
       img: ({ src, alt }: React.ComponentPropsWithoutRef<'img'>) => {
         let resolvedSrc = src ?? '';
@@ -658,7 +722,7 @@ export function FileContent({
                     ]}
                     components={markdownComponents}
                   >
-                    {markdownBody}
+                    {renderMarkdownBody}
                   </ReactMarkdown>
                 </div>
               </div>
