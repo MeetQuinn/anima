@@ -1,6 +1,6 @@
 import { createElement, type ReactNode } from 'react';
 import { BrowserRouter } from 'react-router-dom';
-import { render, waitFor } from '@testing-library/react';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FileContent, type RenderableFile } from './FileViewer';
@@ -34,6 +34,24 @@ const DOC = [
   'tail',
 ].join('\n');
 
+// Walden-style livestream TOC: short `#000439` anchors vs slugified heading ids.
+const TRANSCRIPT = [
+  '# Transcript',
+  '',
+  '## 目录',
+  '',
+  '- [00:04:39 · Intro](#000439)',
+  '- [00:14:52 · Next](#001452)',
+  '',
+  '## 00:04:39 · Intro / A 上 A 下',
+  '',
+  'body one',
+  '',
+  '## 00:14:52 · Next ≥8h',
+  '',
+  'body two',
+].join('\n');
+
 const FILE: RenderableFile = {
   name: 'roadmap.md',
   kind: 'markdown',
@@ -43,16 +61,25 @@ const FILE: RenderableFile = {
   truncated: false,
 };
 
+const TRANSCRIPT_FILE: RenderableFile = {
+  name: 'transcript.md',
+  kind: 'markdown',
+  size: TRANSCRIPT.length,
+  language: undefined,
+  content: TRANSCRIPT,
+  truncated: false,
+};
+
 function wrapper({ children }: { children: ReactNode }) {
   return createElement(BrowserRouter, null, children);
 }
 
-function renderViewer() {
+function renderViewer(file: RenderableFile = FILE, filePath = 'roadmap.md') {
   return render(
     createElement(FileContent, {
       id: 'kb',
-      filePath: 'roadmap.md',
-      file: FILE,
+      filePath,
+      file,
       loading: false,
       error: null,
       mode: 'preview',
@@ -122,5 +149,34 @@ describe('fresh-load heading deep link (#493)', () => {
     await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
 
     expect(window.location.hash).toBe('');
+  });
+
+  it('resolves a short author TOC hash to the slugified heading id', async () => {
+    window.history.replaceState(null, '', '/kb/kb/transcript.md#000439');
+
+    renderViewer(TRANSCRIPT_FILE, 'transcript.md');
+
+    await waitFor(() => expect(scrolledTo.length).toBeGreaterThan(0));
+    const target = document.getElementById('000439-intro-a-a');
+    expect(target).not.toBeNull();
+    expect(scrolledTo[0]).toBe(target);
+    expect(window.location.hash).toBe('#000439-intro-a-a');
+  });
+
+  it('scrolls when an in-document TOC link with a short hash is clicked', async () => {
+    window.history.replaceState(null, '', '/kb/kb/transcript.md');
+
+    const { getByRole } = renderViewer(TRANSCRIPT_FILE, 'transcript.md');
+
+    await waitFor(() =>
+      expect(document.getElementById('000439-intro-a-a')).not.toBeNull(),
+    );
+
+    scrolledTo = [];
+    const link = getByRole('link', { name: '00:04:39 · Intro' });
+    fireEvent.click(link);
+
+    expect(scrolledTo[0]).toBe(document.getElementById('000439-intro-a-a'));
+    expect(window.location.hash).toBe('#000439-intro-a-a');
   });
 });
