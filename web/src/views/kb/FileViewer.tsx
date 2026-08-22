@@ -323,7 +323,9 @@ export function FileContent({
     },
     [beginProgrammaticScroll, headingIdList],
   );
-  anchorScrollRef.current = { scrollToHash };
+  useEffect(() => {
+    anchorScrollRef.current = { scrollToHash };
+  }, [scrollToHash]);
 
   // Scroll to hash target after markdown renders. This effect OWNS the
   // incoming deep link: it seeds the rail highlight and lands the scroll. The

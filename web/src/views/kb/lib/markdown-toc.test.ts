@@ -71,6 +71,27 @@ describe('markdown TOC helpers', () => {
     );
   });
 
+  it('leaves non-marker # lines byte-identical, including inside fences', () => {
+    const src = [
+      '## Real {#keep}',
+      '```bash',
+      '# cleanup ##',
+      '# step {#v1.2}',
+      '```',
+      '## Plain trailing ##',
+    ].join('\n');
+    expect(stripExplicitHeadingIds(src)).toBe(
+      [
+        '## Real',
+        '```bash',
+        '# cleanup ##',
+        '# step {#v1.2}',
+        '```',
+        '## Plain trailing ##',
+      ].join('\n'),
+    );
+  });
+
   it('resolves short TOC hashes to a unique slug prefix', () => {
     const ids = [
       '000439-a-a',

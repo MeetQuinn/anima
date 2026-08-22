@@ -81,8 +81,9 @@ export function extractToc(markdown: string): TocEntry[] {
       const { text, explicitId } = parseHeadingLabel(match[2]);
       const id = explicitId ?? uniqueHeadingId(text, counts);
       if (explicitId) {
-        // Reserve the explicit id in the slug counter only when it collides
-        // with a slug we'd otherwise emit — keeps later auto-ids stable.
+        // Reserve the explicit id so a *later* auto-slug won't collide with it.
+        // Does not guard the reverse: `## Foo` (auto `foo`) then `## Bar {#foo}`
+        // still emits a duplicate — author error; getElementById picks the first.
         const used = counts.get(explicitId) ?? 0;
         counts.set(explicitId, used + 1);
       }
@@ -92,14 +93,26 @@ export function extractToc(markdown: string): TocEntry[] {
   return entries;
 }
 
-/** Strip `{#id}` markers from heading lines so they don't render as prose. */
+/**
+ * Strip `{#id}` markers from heading lines so they don't render as prose.
+ * Only real heading lines that carry the marker are rewritten. Non-marker
+ * lines stay byte-identical, and fenced code is skipped entirely so a shell
+ * snippet like `# step {#v1.2}` is not eaten as authoring syntax.
+ */
 export function stripExplicitHeadingIds(markdown: string): string {
-  return markdown
-    .split('\n')
+  const lines = markdown.split('\n');
+  let inFence = false;
+  return lines
     .map((line) => {
+      if (/^(`{3,}|~{3,})/.test(line)) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence) return line;
       const match = line.match(/^(#{1,6}\s+)(.+)$/);
       if (!match) return line;
-      const { text } = parseHeadingLabel(match[2]);
+      const { text, explicitId } = parseHeadingLabel(match[2]);
+      if (!explicitId) return line;
       return `${match[1]}${text}`;
     })
     .join('\n');
