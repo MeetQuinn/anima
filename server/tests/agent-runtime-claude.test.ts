@@ -701,73 +701,80 @@ test('claude-code runtime does not retry non-transient provider protocol errors'
   }
 });
 
-test('claude-code runtime resumes after a stalled mid-stream response when tool use already started', async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
-  try {
-    await withAnimaHome(stateDir, async () => {
-    const callsPath = join(stateDir, 'claude-provider-tool-error-calls.jsonl');
-    const fakeClaude = join(stateDir, 'claude');
-    await writeFile(
-      fakeClaude,
-      [
-        '#!/usr/bin/env node',
-        "import { appendFileSync } from 'node:fs';",
-        "import readline from 'node:readline';",
-        "const rl = readline.createInterface({ input: process.stdin });",
-        "let count = 0;",
-        "rl.on('line', (line) => {",
-        "  count += 1;",
-        "  appendFileSync(process.env.CALLS_PATH, line + '\\n');",
-        "  console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'claude-error-session', cwd: process.cwd(), claude_code_version: 'test' }));",
-        "  if (count === 1) {",
-        "  console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_side_effect', name: 'Bash', input: { command: 'touch /tmp/anima-side-effect' } }] }, session_id: 'claude-error-session' }));",
-        "  console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: 'API Error: Response stalled mid-stream. The response above may be incomplete.', session_id: 'claude-error-session', usage: { input_tokens: 0, output_tokens: 0 }, terminal_reason: 'api_error' }));",
-        "    return;",
-        "  }",
-        "  console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'continued safely after provider error' }] }, session_id: 'claude-error-session' }));",
-        "  console.log(JSON.stringify({ type: 'result', subtype: 'success', result: 'continued safely after provider error', session_id: 'claude-error-session' }));",
-        "});",
-        '',
-      ].join('\n'),
-      'utf8',
-    );
-    await chmod(fakeClaude, 0o755);
+const CLAUDE_STALLED_STREAM_ERRORS = [
+  'API Error: Response stalled mid-stream. The response above may be incomplete.',
+  'API Error: The response stopped arriving. The response above may be incomplete.',
+];
 
-    const config = { agentId: 'anima', stateDir };
-    const ctx = await ingestEvent(
-      makeSlackEvent({
-        channelId: 'D-anima',
-        teamId: 'T-demo',
-        text: 'trigger provider error',
-        userId: 'U1',
-      }),
-      config,
-    );
-    const runtime = createAgentRuntime({
-      env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
-      kind: 'claude-code',
-    });
+for (const providerErrorText of CLAUDE_STALLED_STREAM_ERRORS) {
+  test(`claude-code runtime resumes after "${providerErrorText}" when tool use already started`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+    try {
+      await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'claude-provider-tool-error-calls.jsonl');
+      const fakeClaude = join(stateDir, 'claude');
+      await writeFile(
+        fakeClaude,
+        [
+          '#!/usr/bin/env node',
+          "import { appendFileSync } from 'node:fs';",
+          "import readline from 'node:readline';",
+          "const rl = readline.createInterface({ input: process.stdin });",
+          "let count = 0;",
+          "rl.on('line', (line) => {",
+          "  count += 1;",
+          "  appendFileSync(process.env.CALLS_PATH, line + '\\n');",
+          "  console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'claude-error-session', cwd: process.cwd(), claude_code_version: 'test' }));",
+          "  if (count === 1) {",
+          "  console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_side_effect', name: 'Bash', input: { command: 'touch /tmp/anima-side-effect' } }] }, session_id: 'claude-error-session' }));",
+          "  console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: process.env.PROVIDER_ERROR_TEXT, session_id: 'claude-error-session', usage: { input_tokens: 0, output_tokens: 0 }, terminal_reason: 'api_error' }));",
+          "    return;",
+          "  }",
+          "  console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'continued safely after provider error' }] }, session_id: 'claude-error-session' }));",
+          "  console.log(JSON.stringify({ type: 'result', subtype: 'success', result: 'continued safely after provider error', session_id: 'claude-error-session' }));",
+          "});",
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      await chmod(fakeClaude, 0o755);
 
-    assert.equal(
-      (await runtime.run(await runtimeInput(runtime, ctx, await loadState()))).text,
-      'continued safely after provider error',
-    );
+      const config = { agentId: 'anima', stateDir };
+      const ctx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-anima',
+          teamId: 'T-demo',
+          text: 'trigger provider error',
+          userId: 'U1',
+        }),
+        config,
+      );
+      const runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath, PROVIDER_ERROR_TEXT: providerErrorText }),
+        kind: 'claude-code',
+      });
 
-    const activities = await activitiesForInboxItemWindow('anima', ctx.item.id);
-    assert.ok(activities.some((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'toolu_side_effect'));
-    assert.ok(activities.some((activity) => activity.type === 'runtime.event' && activity.payload?.['eventType'] === 'claude.provider.resume_retry'));
-    assert.ok(activities.some((activity) => activity.type === 'runtime.completed'));
-    assert.equal(activities.some((activity) => activity.type === 'runtime.failed'), false);
-    const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { message: { content: Array<{ text: string }> } });
-    assert.equal(calls.length, 2);
-    assert.match(calls[1]?.message.content[0]?.text ?? '', /transient API or transport error/);
-    assert.doesNotMatch(calls[1]?.message.content[0]?.text ?? '', /trigger provider error/);
-    await runtime.close?.();
-    });
-  } finally {
-    await rm(stateDir, { force: true, recursive: true });
-  }
-});
+      assert.equal(
+        (await runtime.run(await runtimeInput(runtime, ctx, await loadState()))).text,
+        'continued safely after provider error',
+      );
+
+      const activities = await activitiesForInboxItemWindow('anima', ctx.item.id);
+      assert.ok(activities.some((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'toolu_side_effect'));
+      assert.ok(activities.some((activity) => activity.type === 'runtime.event' && activity.payload?.['eventType'] === 'claude.provider.resume_retry'));
+      assert.ok(activities.some((activity) => activity.type === 'runtime.completed'));
+      assert.equal(activities.some((activity) => activity.type === 'runtime.failed'), false);
+      const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { message: { content: Array<{ text: string }> } });
+      assert.equal(calls.length, 2);
+      assert.match(calls[1]?.message.content[0]?.text ?? '', /transient API or transport error/);
+      assert.doesNotMatch(calls[1]?.message.content[0]?.text ?? '', /trigger provider error/);
+      await runtime.close?.();
+      });
+    } finally {
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
 
 test('claude-code stream-json input keeps stdin open for active-run follow-up', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
