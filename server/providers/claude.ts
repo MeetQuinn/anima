@@ -508,7 +508,11 @@ function claudeProviderErrorReason(input: { message: string; status: unknown; su
 function isRetryableClaudeProviderError(input: { message: string; status: unknown; subtype: string | undefined }): boolean {
   if (typeof input.status === 'number') return input.status === 408 || input.status >= 500;
   if (/\b(socket|connection|timeout|timed out|network|fetch)\b/i.test(input.message)) return true;
-  if (/\bresponse stalled mid-stream\b/i.test(input.message)) return true;
+  // Claude Code reports a mid-stream stall as "Response stalled mid-stream" (older builds)
+  // or "The response stopped arriving" (current builds); both end the turn without a
+  // provider-side retry, so the runtime must resume the session itself.
+  if (/\bresponse (?:stalled mid-stream|stopped arriving)\b/i.test(input.message)) return true;
+  if (/\bresponse above may be incomplete\b/i.test(input.message)) return true;
   return input.subtype === 'error_during_execution';
 }
 
