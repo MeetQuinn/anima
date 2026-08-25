@@ -508,6 +508,11 @@ function claudeProviderErrorReason(input: { message: string; status: unknown; su
 function isRetryableClaudeProviderError(input: { message: string; status: unknown; subtype: string | undefined }): boolean {
   if (typeof input.status === 'number') return input.status === 408 || input.status >= 500;
   if (/\b(socket|connection|timeout|timed out|network|fetch)\b/i.test(input.message)) return true;
+  // Local TLS/connectivity failures and provider overload clear on their own.
+  if (/\b(unable to connect|certificate|overloaded)\b/i.test(input.message)) return true;
+  // Anthropic safeguard refusals self-describe as frequent false positives on
+  // ordinary conversations; a re-send on the same session usually passes.
+  if (/safeguards flagged/i.test(input.message)) return true;
   // Claude Code reports a mid-stream stall as "Response stalled mid-stream" (older builds)
   // or "The response stopped arriving" (current builds); both end the turn without a
   // provider-side retry, so the runtime must resume the session itself.

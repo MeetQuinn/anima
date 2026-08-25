@@ -10,6 +10,9 @@ import {
   slackReactionClient,
 } from './processing-reactions.js';
 import type { AgentRuntime } from '../providers/contract.js';
+import { createFeishuMessageClient } from '../feishu/client.js';
+import { createSlackWebClient } from '../slack/client.js';
+import { postRuntimeFailureNotice } from './failure-notice.js';
 import type { FeishuConfig } from '../../shared/agent-config.js';
 import type { AgentRuntimeHandleSnapshot } from '../../shared/snapshot.js';
 import { AgentRuntimeWorker, type AgentRuntimeWorkerCloseOptions } from './runtime-worker.js';
@@ -48,7 +51,11 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
   await agentTokenUsageServiceForAgent(options.agentId).initialize();
   const queue = wakeQueueServiceForAgent(options.agentId);
   const reactionClient = options.botToken ? slackReactionClient(options.botToken) : undefined;
-  const feishuClient = options.feishu?.connected ? feishuProcessingReactionClient(options.feishu) : undefined;
+  const feishuMessageClient = options.feishu?.connected ? createFeishuMessageClient(options.feishu) : undefined;
+  const feishuClient = feishuMessageClient && options.feishu
+    ? feishuProcessingReactionClient(options.feishu, { client: feishuMessageClient })
+    : undefined;
+  const slackClient = options.botToken ? createSlackWebClient(options.botToken) : undefined;
   const worker = new AgentRuntimeWorker(
     {
       ...options,
@@ -57,6 +64,17 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
       onItemStarted: async (context) => {
         await addProcessingReaction({ context, logger: console, reactionClient });
         await addFeishuProcessingReaction({ context, feishuClient, logger: console });
+      },
+      onItemFailed: async (context, failure) => {
+        await postRuntimeFailureNotice({
+          agentId: context.agentId,
+          failure,
+          ...(feishuMessageClient ? { feishuClient: feishuMessageClient } : {}),
+          item: context.item,
+          logger: console,
+          runtimeKind: options.agentRuntime.kind,
+          ...(slackClient ? { slackClient } : {}),
+        });
       },
       onItemSettled: async (context) => {
         // Keep the legacy lifetime diagnostic populated while the exact daily

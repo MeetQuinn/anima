@@ -130,6 +130,95 @@ test('wake queue store can use an injected file persistence', async () => {
   assert.deepEqual((await queue.list()).map((item) => item.id), []);
 });
 
+test('wake queue keeps a deferred item unclaimable until notBefore elapses', async () => {
+  const queue = new WakeQueueService(
+    'scout',
+    new WakeQueueStore('scout', memoryWakeQueueStore()),
+    { recordInboxItem: async () => undefined },
+  );
+  const event = makeSlackEvent({
+    channelId: 'D-user',
+    eventId: 'evt-deferred',
+    teamId: 'T-demo',
+    text: 'rate limited once',
+    ts: '1770000010.000001',
+    userId: 'U1',
+  });
+  assert.equal((await queue.enqueue(event)).queued, true);
+  const claimed = await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-1' });
+  assert.equal(claimed?.id, event.id);
+
+  const resumeAt = new Date('2026-08-25T06:10:00.000Z');
+  await queue.requeueDeferred(event.id, { deferrals: 1, notBefore: resumeAt.toISOString() });
+  const deferred = await queue.find(event.id);
+  assert.equal(deferred?.handling.status, 'queued');
+  assert.equal(deferred?.handling.notBefore, resumeAt.toISOString());
+  assert.equal(deferred?.handling.deferrals, 1);
+  assert.equal(deferred?.handling.workerId, undefined);
+
+  const early = await queue.takeNextRunnable({
+    isWorkerAlive: () => true,
+    now: new Date(resumeAt.getTime() - 1_000),
+    workerId: 'worker-1',
+  });
+  assert.equal(early, undefined);
+
+  const due = await queue.takeNextRunnable({
+    isWorkerAlive: () => true,
+    now: resumeAt,
+    workerId: 'worker-1',
+  });
+  assert.equal(due?.id, event.id);
+  assert.equal(due?.handling.status, 'running');
+  assert.equal(due?.handling.deferrals, 1, 'deferral count survives the next claim');
+
+  // A plain requeue (e.g. restart drain) clears the deferral gate.
+  await queue.requeue(event.id, { resumeReason: 'runtime_restart' });
+  assert.equal((await queue.find(event.id))?.handling.notBefore, undefined);
+});
+
+test('wake queue does not hand a deferred item to an active run as a follow-up before notBefore', async () => {
+  const queue = new WakeQueueService(
+    'scout',
+    new WakeQueueStore('scout', memoryWakeQueueStore()),
+    { recordInboxItem: async () => undefined },
+  );
+  const active = makeSlackEvent({
+    channelId: 'D-user',
+    eventId: 'evt-active',
+    teamId: 'T-demo',
+    text: 'running now',
+    ts: '1770000010.000001',
+    userId: 'U1',
+  });
+  const parked = makeSlackEvent({
+    channelId: 'D-user',
+    eventId: 'evt-parked',
+    teamId: 'T-demo',
+    text: 'rate limited earlier',
+    ts: '1770000011.000001',
+    userId: 'U1',
+  });
+  await queue.enqueue(active);
+  await queue.enqueue(parked);
+  const claimed = await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-1' });
+  assert.equal(claimed?.id, active.id);
+  await queue.requeueDeferred(parked.id, {
+    deferrals: 1,
+    notBefore: new Date(Date.now() + 60 * 60_000).toISOString(),
+  });
+
+  const early = await queue.takeFollowupBatch({ activeItemId: active.id, limit: 5, workerId: 'worker-1' });
+  assert.deepEqual(early.map((item) => item.id), []);
+
+  await queue.requeueDeferred(parked.id, {
+    deferrals: 1,
+    notBefore: new Date(Date.now() - 1_000).toISOString(),
+  });
+  const due = await queue.takeFollowupBatch({ activeItemId: active.id, limit: 5, workerId: 'worker-1' });
+  assert.deepEqual(due.map((item) => item.id), [parked.id]);
+});
+
 test('wake queue retains completed memory coherence ids for per-day dedupe', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-memory-wake-dedupe-test-'));
   try {

@@ -308,7 +308,7 @@ export class WakeQueueStore {
       }
 
       const item = Object.values(next)
-        .filter((candidate) => isClaimableQueuedInboxItem(candidate))
+        .filter((candidate) => isClaimableQueuedInboxItem(candidate, nowMs))
         .sort((a, b) => itemSortAt(a).localeCompare(itemSortAt(b)))[0];
       if (!item) {
         result = { recovered };
@@ -396,7 +396,7 @@ export class WakeQueueStore {
     });
   }
 
-  async requeue(itemId: string, options: { resumeReason?: 'runtime_restart' } = {}): Promise<void> {
+  async requeue(itemId: string, options: RequeueOptions = {}): Promise<void> {
     await this.updateItem(itemId, (item, now) => requeuedItem(item, now, options));
   }
 
@@ -628,10 +628,18 @@ function itemSortAt(item: InboxItem): string {
   return item.handling.queuedAt ?? item.handling.startedAt ?? item.handling.updatedAt;
 }
 
+export interface RequeueOptions {
+  /** Bounded rate-limit deferral counter carried on the requeued item. */
+  deferrals?: number;
+  /** Keep the item queued but unclaimable until this ISO instant. */
+  notBefore?: string;
+  resumeReason?: 'runtime_restart';
+}
+
 function requeuedItem(
   item: InboxItem,
   now: string,
-  options: { resumeReason?: 'runtime_restart' } = {},
+  options: RequeueOptions = {},
 ): InboxItem {
   const handling = { ...item.handling };
   delete handling.startedAt;
@@ -642,11 +650,14 @@ function requeuedItem(
   delete handling.drainRequestedAt;
   delete handling.drainTimeoutMs;
   delete handling.resumeReason;
+  delete handling.notBefore;
   return {
     ...item,
     handling: {
       ...handling,
       ...(options.resumeReason ? { resumeReason: options.resumeReason } : {}),
+      ...(options.notBefore ? { notBefore: options.notBefore } : {}),
+      ...(options.deferrals !== undefined ? { deferrals: options.deferrals } : {}),
       status: 'queued',
       updatedAt: now,
     },
@@ -718,7 +729,7 @@ function hasPotentialRunnableWork(
   nowMs: number,
 ): boolean {
   return Object.values(file.items).some((item) => (
-    isClaimableQueuedInboxItem(item) ||
+    isClaimableQueuedInboxItem(item, nowMs) ||
     (item.handling.status === 'running' && shouldRecoverRunningItem(item, input, nowMs))
   ));
 }

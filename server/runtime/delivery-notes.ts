@@ -12,6 +12,14 @@ export function providerCrashRetryNote(): string {
   ].join('\n');
 }
 
+export function providerTransientRetryNote(): string {
+  return [
+    'Anima note: the previous attempt at this same item stopped on a transient provider error (network, overload, or a safeguard false positive), so Anima is re-sending it on the same session.',
+    'Continue the original task from the current files, conversation, and connected chat state.',
+    'Do not repeat completed external side effects such as chat messages, file sends, or file edits; check `anima outbox` for what already went out, and inspect files/state, before redoing anything.',
+  ].join('\n');
+}
+
 export function providerSessionRecoveryNote(): string {
   return [
     'Anima note: the previous provider session was corrupted, so Anima archived it and started a fresh session for this same item.',

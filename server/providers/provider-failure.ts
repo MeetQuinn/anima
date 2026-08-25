@@ -20,7 +20,7 @@ export function classifyProviderFailureReason(input: {
   if (status === 429) return 'provider_rate_limited';
   if (providerAuthFailed(input.status, text)) return 'provider_auth_failed';
   if (providerQuotaExhausted(text)) return 'provider_quota_exhausted';
-  if (/\b(rate limit|rate-limit|rate_limit|too many requests)\b/i.test(text)) {
+  if (/\b(rate limit|rate-limit|rate_limit|too many requests|session limit|api status 429)\b/i.test(text)) {
     return 'provider_rate_limited';
   }
   return 'provider_error';
@@ -49,7 +49,7 @@ export function providerFailureHealthReason(reason: ProviderFailureReason): Agen
 function providerAuthFailed(status: unknown, text: string): boolean {
   return status === 401
     || status === 403
-    || /\b(authentication|unauthorized|forbidden|api key|token expired|expired token|invalid key)\b/i.test(text);
+    || /\b(authenticat(?:e|ion|ed)|unauthorized|forbidden|api key|token expired|expired token|invalid key|api status 40[13])\b/i.test(text);
 }
 
 function providerQuotaExhausted(text: string): boolean {

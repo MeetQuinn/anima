@@ -10,9 +10,16 @@ export const InboxItemHandling = z.object({
   appendedToItemId: z.string().optional(),
   completedAt: z.string().optional(),
   createdAt: z.string(),
+  /** Count of provider rate-limit deferrals this item has taken (bounded by the worker). */
+  deferrals: z.number().int().nonnegative().optional(),
   drainRequestedAt: z.string().optional(),
   drainTimeoutMs: z.number().int().nonnegative().optional(),
   failedAt: z.string().optional(),
+  /**
+   * When set, the item stays queued but workers must not claim it before this
+   * instant. Used for provider rate-limit deferral.
+   */
+  notBefore: z.string().optional(),
   queuedAt: z.string().optional(),
   resumeReason: z.enum(['runtime_restart']).optional(),
   settledAt: z.string().optional(),
@@ -240,6 +247,14 @@ export function isPrimaryRunningInboxItem(item: InboxItem): boolean {
 }
 
 /** Queued and published — workers may claim. Staged rows are durable but not runnable. */
-export function isClaimableQueuedInboxItem(item: InboxItem): boolean {
-  return item.handling.status === 'queued' && !item.handling.stagedAt;
+/**
+ * Queued, published, and past any rate-limit deferral. `nowMs` defaults to the
+ * wall clock so every claim path (primary, follow-up batch, coalescing) honours
+ * `handling.notBefore` without having to thread a timestamp through.
+ */
+export function isClaimableQueuedInboxItem(item: InboxItem, nowMs: number = Date.now()): boolean {
+  if (item.handling.status !== 'queued' || item.handling.stagedAt) return false;
+  if (!item.handling.notBefore) return true;
+  const notBeforeMs = Date.parse(item.handling.notBefore);
+  return !Number.isFinite(notBeforeMs) || notBeforeMs <= nowMs;
 }
