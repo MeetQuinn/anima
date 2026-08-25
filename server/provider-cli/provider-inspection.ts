@@ -71,6 +71,9 @@ export async function inspectProvider(
   if (provider === 'opencode-cli') {
     return inspectOpenCode(executable, installedVersion, catalog.label);
   }
+  if (provider === 'pi') {
+    return inspectPi(executable, installedVersion, catalog.label);
+  }
   return inspectGrok(executable, installedVersion, catalog.label, env, runCommand);
 }
 
@@ -213,6 +216,26 @@ function inspectKimi(
   };
 }
 
+const PI_MANUAL_COMMAND = 'npm install -g @earendil-works/pi-coding-agent@latest';
+
+function inspectPi(
+  executable: ResolvedExecutable,
+  installedVersion: string,
+  label: string,
+): ProviderInspection {
+  return {
+    binaryPath: executable.path,
+    installSource: 'unknown',
+    installedVersion,
+    label,
+    manualCommand: PI_MANUAL_COMMAND,
+    provider: 'pi',
+    realPath: executable.realPath,
+    sourceDetail: 'pi is published on npm as @earendil-works/pi-coding-agent; Anima does not manage its upgrades yet',
+    updateMode: 'manual',
+  };
+}
+
 async function inspectOpenCode(
   executable: ResolvedExecutable,
   installedVersion: string,
@@ -341,6 +364,7 @@ function manualCommandFor(provider: ProviderKind): string {
   if (provider === 'codex-cli') return 'npm install -g @openai/codex@latest';
   if (provider === 'kimi-cli') return 'kimi upgrade';
   if (provider === 'opencode-cli') return 'brew upgrade anomalyco/tap/opencode';
+  if (provider === 'pi') return PI_MANUAL_COMMAND;
   return 'grok update';
 }
 

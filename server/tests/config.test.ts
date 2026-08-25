@@ -644,6 +644,7 @@ test('provider turn and child idle timeouts default for all providers', async ()
     { kind: 'grok-cli', model: 'grok-4.5' },
     { kind: 'kimi-cli', model: 'kimi-code/kimi-for-coding' },
     { kind: 'opencode-cli', model: 'deepseek/deepseek-v4-pro' },
+    { kind: 'pi', model: 'google/gemini-2.5-pro' },
   ]) {
     const configDir = await mkdtemp(join(tmpdir(), 'anima-config-timeout-test-'));
     try {

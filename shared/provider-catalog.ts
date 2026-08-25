@@ -5,7 +5,7 @@ export interface ProviderCatalogEntry {
   defaultModel: string;
   dynamicModels?: boolean;
   installHint: string;
-  kind: 'claude-code' | 'codex-cli' | 'kimi-cli' | 'grok-cli' | 'opencode-cli';
+  kind: 'claude-code' | 'codex-cli' | 'kimi-cli' | 'grok-cli' | 'opencode-cli' | 'pi';
   label: string;
   marketingModelAliases?: string[];
   modelReasoningEfforts?: Record<string, string[]>;
@@ -18,7 +18,7 @@ export type ProviderKind = ProviderCatalogEntry['kind'];
 export const ProviderAvailability = z.object({
   checkedAt: z.string().optional(),
   defaultModel: z.string().optional(),
-  kind: z.enum(['claude-code', 'codex-cli', 'kimi-cli', 'grok-cli', 'opencode-cli']),
+  kind: z.enum(['claude-code', 'codex-cli', 'kimi-cli', 'grok-cli', 'opencode-cli', 'pi']),
   modelCheckError: z.string().optional(),
   /**
    * Per-model reasoning effort menus. Missing or empty array means
@@ -44,6 +44,9 @@ const CODEX_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra
  * can be saved; unadvertised efforts are still not applied at session/set_model.
  */
 const GROK_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh'];
+// pi thinking levels (`--thinking`). Whether a model honors a level is decided by
+// pi's model catalog at runtime; unset means pi's own default for that model.
+const PI_REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
   {
@@ -134,6 +137,25 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
       'deepseek/deepseek-v4-flash': ['high', 'max'],
     },
     reasoningEfforts: [],
+  },
+  {
+    kind: 'pi',
+    label: 'pi',
+    command: 'pi',
+    installHint:
+      'Install pi so `pi --version` works (`npm install -g @earendil-works/pi-coding-agent`), then add a provider credential.',
+    // pi addresses models as `provider/id` across every provider it bundles.
+    // This list is a starting menu; any `provider/id` pi resolves is accepted.
+    models: [
+      'google/gemini-2.5-pro',
+      'google/gemini-2.5-flash',
+      'google/gemini-3.1-pro-preview',
+      'deepseek/deepseek-v4-pro',
+      'deepseek/deepseek-v4-flash',
+    ],
+    defaultModel: 'google/gemini-2.5-pro',
+    dynamicModels: true,
+    reasoningEfforts: PI_REASONING_EFFORTS,
   },
 ];
 

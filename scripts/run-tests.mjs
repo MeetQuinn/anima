@@ -116,6 +116,7 @@ const groups = {
     'agent-runtime-grok.test.js',
     'agent-runtime-kimi.test.js',
     'agent-runtime-opencode.test.js',
+    'agent-runtime-pi.test.js',
     'cli-env.test.js',
     'cli-errors.test.js',
     'cli-file.test.js',

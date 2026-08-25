@@ -1,6 +1,6 @@
 import { truncateForActivity } from '../activities/format.js';
 
-export type ReasoningProvider = 'claude' | 'codex' | 'grok' | 'kimi' | 'opencode';
+export type ReasoningProvider = 'claude' | 'codex' | 'grok' | 'kimi' | 'opencode' | 'pi';
 export type ReasoningTextKind = 'raw' | 'summary' | 'think';
 
 export function exposedReasoningEvent(input: {

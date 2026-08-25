@@ -503,7 +503,9 @@ test('provider checks reuse validators and keep failures isolated by provider', 
               ? '1.2.0'
               : url.includes('opencode-ai')
                 ? '1.18.4'
-                : '0.24.0';
+                : url.includes('%40earendil-works')
+                  ? '0.84.3'
+                  : '0.24.0';
           const body = url.includes('claude') ? version : JSON.stringify({ version });
           return new Response(body, {
             headers: { etag: `\"${version}\"` },
@@ -518,7 +520,7 @@ test('provider checks reuse validators and keep failures isolated by provider', 
       const first = await service.checkNow();
       assert.deepEqual(
         first.providers.map((row) => row.latestVersion),
-        ['2.1.0', '1.2.0', '0.24.0', undefined, '1.18.4'],
+        ['2.1.0', '1.2.0', '0.24.0', undefined, '1.18.4', '0.84.3'],
       );
       assert.match(first.providers[3]?.checkError?.message ?? '', /grok/i);
       round = 1;
@@ -529,10 +531,12 @@ test('provider checks reuse validators and keep failures isolated by provider', 
       assert.equal(second.providers[2]?.latestVersion, '0.24.0');
       assert.match(second.providers[3]?.checkError?.message ?? '', /grok/i);
       assert.match(second.providers[4]?.checkError?.message ?? '', /429.*retry after 60/);
+      assert.match(second.providers[5]?.checkError?.message ?? '', /429.*retry after 60/);
       assert.equal(conditionalHeaders.includes('"2.1.0"'), true);
       assert.equal(conditionalHeaders.includes('"1.2.0"'), true);
       assert.equal(conditionalHeaders.includes('"0.24.0"'), true);
       assert.equal(conditionalHeaders.includes('"1.18.4"'), true);
+      assert.equal(conditionalHeaders.includes('"0.84.3"'), true);
     });
   } finally {
     await rm(root, { force: true, recursive: true });

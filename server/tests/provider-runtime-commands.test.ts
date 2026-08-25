@@ -31,6 +31,7 @@ test('provider runtime launch settings expose catalog defaults without persistin
       { args: [], command: null, defaultCommand: 'kimi', provider: 'kimi-cli' },
       { args: [], command: null, defaultCommand: 'grok', provider: 'grok-cli' },
       { args: [], command: null, defaultCommand: 'opencode', provider: 'opencode-cli' },
+      { args: [], command: null, defaultCommand: 'pi', provider: 'pi' },
     ],
   );
   assert.equal(effectiveProviderRuntimeCommand('codex-cli', {}), 'codex');

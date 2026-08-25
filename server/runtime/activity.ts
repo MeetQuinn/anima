@@ -86,6 +86,7 @@ function shouldPersistRuntimeEvent(payload: Record<string, unknown> | undefined)
     eventType === 'grok.context.stats'
     || eventType === 'kimi.context.stats'
     || eventType === 'opencode.context.stats'
+    || eventType === 'pi.context.stats'
   ) return true;
   return !isRuntimeEventNoise(eventType);
 }
@@ -98,6 +99,8 @@ function shouldUpdateRuntimeStats(payload: Record<string, unknown> | undefined):
     eventType === 'grok.context.stats' ||
     eventType === 'kimi.context.stats' ||
     eventType === 'opencode.context.stats' ||
+    eventType === 'pi.session.stats' ||
+    eventType === 'pi.context.stats' ||
     eventType === 'claude.context.stats' ||
     eventType === 'codex.context.stats' ||
     eventType?.endsWith('.compact.completed') === true

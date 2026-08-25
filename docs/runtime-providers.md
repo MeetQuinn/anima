@@ -495,11 +495,50 @@ are not accepted for new agent configuration.
 
 OpenCode, Kimi, and Grok all use ACP, but most of their session and event contracts are
 provider-specific. Shared pieces:
+
 - `server/providers/acp-json-rpc.ts`: newline framing, JSON-RPC request correlation, and
   request/notification routing;
 - `server/providers/acp-midturn-followup.ts`: mid-turn follow-up interrupt via `session/cancel`
   and cancelled-prompt text isolation.
-Session methods, permission policy, model selection, and activity mapping remain in each adapter.
+  Session methods, permission policy, model selection, and activity mapping remain in each adapter.
+
+## pi Adapter
+
+Implementation: `server/providers/pi.ts`.
+
+pi ([`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent))
+is a multi-provider coding agent. Anima uses it as a bridge to model providers it has no
+first-party adapter for (Google Gemini, DeepSeek, OpenRouter, ...).
+
+Current process model:
+
+- Anima starts one persistent `pi --mode rpc --no-extensions` process per runtime and speaks
+  pi's JSONL RPC protocol over stdio. stdin stays open for the child's lifetime; closing it
+  would abort the active run.
+- The model is selected at launch with `--model <provider/id>` and the optional
+  `reasoningEffort` maps to `--thinking <level>`. Any `provider/id` that pi resolves is accepted;
+  the catalog list is only a starting menu.
+- The Anima runtime profile is passed with `--system-prompt <file>`, which replaces pi's own
+  coding prompt entirely. pi still appends project context files (`AGENTS.md`/`CLAUDE.md`), the
+  skills list, and one `Current working directory:` line. `--no-extensions` keeps extension UI
+  requests, which would block a headless run, out of the loop; pi's built-in tools remain.
+- Session continuity uses `--session-id <uuid>`: Anima generates the id for a fresh session and
+  persists it as the provider session. On resume pi reopens the session with that id under the
+  agent's working directory; when the file is gone pi recreates it with the same id and Anima
+  records `pi.session.resume_missing`.
+- Each item is one `prompt` command; `agent_settled` ends the turn. Compatible follow-ups are sent
+  as `steer`, which pi delivers at the next tool boundary of the active turn. Operator
+  cancellation sends `abort` before Anima tears down the child.
+- Assistant text, thinking deltas, `tool_execution_*` events, per-message usage and cost
+  (`pi.session.stats`, `pi.context.stats`), auto-retry, and compaction events are mapped into
+  the same Anima activity and health surfaces as the other providers. A message that ends with
+  `stopReason: "error"` fails the item; a leading HTTP status in pi's error text drives the
+  failure classification.
+
+Credential policy matches OpenCode: provider credentials are machine-level. Anima pins `HOME`
+and `PI_CODING_AGENT_DIR` to the service environment and replaces every `*_API_KEY` in the
+agent's Launch env with the machine value (or removes it). Operators configure pi once per host
+with `pi` → `/login`, `~/.pi/agent/auth.json`, or a provider API key in the service environment.
 
 ## Agent Activities
 
@@ -527,7 +566,7 @@ Chat tool activities are separate. When the spawned code agent calls `anima mess
 
 ## Current Boundaries and Tradeoffs
 
-- Codex, Claude, Kimi, and Grok all keep provider continuity through a persisted provider session id and a persistent child process for the lifetime of the worker.
+- Codex, Claude, Kimi, Grok, OpenCode, and pi all keep provider continuity through a persisted provider session id and a persistent child process for the lifetime of the worker.
 - Auto-compact is provider-owned. Anima observes compact events and records them; it does not perform compaction itself.
 - Active-run follow-up append is best-effort. If a provider rejects a follow-up, the item is requeued and processed after the active item.
 - An accepted follow-up item is considered absorbed by the active item. It will not have a separate provider result.
@@ -546,6 +585,6 @@ A new provider should:
 6. implement `appendToActiveRun` using the provider's real in-flight input protocol;
 7. implement `close` if it keeps a process or connection alive beyond a single item.
 
-Adapters that keep one long-lived child-process controller per runtime (the Claude stream-json, Codex, Kimi, and Grok shape) should extend `ControllerAgentRuntime` in `server/providers/provider-runtime.ts`. It owns the controller slot, active-run tracking, `close`/`health`/`requestDrain`, child spawning, and the `runtime.started`/`runtime.completed`/`runtime.failed` activity envelope; the adapter supplies only the provider protocol.
+Adapters that keep one long-lived child-process controller per runtime (the Claude stream-json, Codex, Kimi, Grok, OpenCode, and pi shape) should extend `ControllerAgentRuntime` in `server/providers/provider-runtime.ts`. It owns the controller slot, active-run tracking, `close`/`health`/`requestDrain`, child spawning, and the `runtime.started`/`runtime.completed`/`runtime.failed` activity envelope; the adapter supplies only the provider protocol.
 
 The worker should not need provider-specific changes for a new adapter.
