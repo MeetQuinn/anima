@@ -16,6 +16,8 @@ import {
   setCursorDeliveryEnabledForTests,
   surfacesForSlackWake,
   truncateUtf8,
+  CURSOR_DELIVERY_MAX_MESSAGE_BYTES,
+  clipObservedText,
 } from '../runtime/cursor-delivery.js';
 import { groupFollowupContexts } from '../runtime/followup-appender.js';
 import type { RuntimeItemContext } from '../runtime/types.js';
@@ -887,6 +889,38 @@ test('final provider envelope stays within 16 KiB incl. previews/files; no post-
       assert.equal(channel!.nextDeliveredOrdinal, channel!.entries.at(-1)!.ordinal);
     }
   });
+});
+
+test('a trigger at the per-message clip plus large previews still fits the envelope', async () => {
+  await withEnabledStore(async (store, agentId) => {
+    // Just over the clip: the trigger renders twice (row + Latest wake) at the
+    // clip size, and previews must shrink against the remainder, not the full cap.
+    const long = '界'.repeat(2_500); // 7,500 bytes > CURSOR_DELIVERY_MAX_MESSAGE_BYTES
+    await store.observe({ teamId: 'T1', channelId: 'C1', messageTs: '1.0', text: long, userId: 'U1' });
+    const item = slackItem({ channelId: 'C1', messageTs: '1.0', text: long, userId: 'U1' });
+    item.previews = [{ text: 'P'.repeat(9_000), fromUrl: 'https://example.test/x' }];
+
+    const prepared = await prepareCursorDelivery({ agentId, item, store });
+    assert.equal(prepared.kind, 'prepared', JSON.stringify(prepared));
+    if (prepared.kind !== 'prepared') return;
+    const body = prepared.plan.promptBody;
+    assert.ok(Buffer.byteLength(body, 'utf8') <= CURSOR_DELIVERY_MAX_BYTES, `envelope ${Buffer.byteLength(body, 'utf8')}`);
+    // The trigger row is present (cursor advance is derived from it) and clipped in bytes.
+    const channel = prepared.plan.surfaces.find((s) => s.surfaceId === 'slack:T1:C1');
+    assert.equal(channel?.entries.length, 1);
+    assert.ok(body.includes('… [truncated]'));
+    assert.ok(!body.includes(long));
+  });
+});
+
+test('clipObservedText clips by UTF-8 bytes without splitting code points', () => {
+  const short = 'x'.repeat(CURSOR_DELIVERY_MAX_MESSAGE_BYTES);
+  assert.equal(clipObservedText(short), short);
+  const cjk = '界'.repeat(3_000); // 9,000 bytes
+  const clipped = clipObservedText(cjk);
+  assert.ok(clipped.endsWith('… [truncated]'));
+  assert.ok(Buffer.byteLength(clipped, 'utf8') <= CURSOR_DELIVERY_MAX_MESSAGE_BYTES);
+  assert.equal(clipped.includes('\uFFFD'), false);
 });
 
 test('truncateUtf8 does not split surrogate pairs', () => {

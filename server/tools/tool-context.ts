@@ -151,3 +151,53 @@ export async function readStdin(): Promise<string> {
   }
   return Buffer.concat(chunks).toString('utf8').trimEnd();
 }
+
+export const OPTIONAL_STDIN_IDLE_MS = 1_000;
+
+/**
+ * Read stdin only when something is actually being piped in.
+ *
+ * Agent tool shells hand every child an open stdin pipe that nobody writes to
+ * or closes, so an unconditional read-to-EOF blocks until the tool timeout kills
+ * the process (the `anima file send` "sticky" hang). A heredoc or `cmd | anima`
+ * delivers its bytes immediately, so: TTY → nothing; first byte or EOF within
+ * `idleMs` → read to EOF as before; otherwise treat stdin as absent.
+ */
+export async function readOptionalStdin(idleMs = OPTIONAL_STDIN_IDLE_MS): Promise<string | undefined> {
+  if (process.stdin.isTTY) return undefined;
+  const stdin = process.stdin;
+  const chunks: Buffer[] = [];
+  const started = await new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      stdin.off('data', onData);
+      stdin.off('end', onEnd);
+      stdin.off('error', onEnd);
+      resolve(value);
+    };
+    const onData = (chunk: Buffer | string) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+      finish(true);
+    };
+    const onEnd = () => finish(true);
+    const timer = setTimeout(() => finish(false), idleMs);
+    stdin.once('data', onData);
+    stdin.once('end', onEnd);
+    stdin.once('error', onEnd);
+    stdin.resume();
+  });
+  if (!started) {
+    stdin.pause();
+    stdin.unref?.();
+    return undefined;
+  }
+  if (!stdin.readableEnded) {
+    for await (const chunk of stdin) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+    }
+  }
+  return Buffer.concat(chunks).toString('utf8').trimEnd();
+}

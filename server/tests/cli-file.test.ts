@@ -319,6 +319,72 @@ test('file send converts Markdown captions but sends entity captions verbatim', 
   }
 });
 
+// Agent tool shells hand children an stdin pipe that is never written or closed.
+// Without --caption the send must still complete (no caption) instead of blocking
+// on stdin until the tool timeout kills it.
+test('file send does not block on an idle stdin pipe when --caption is absent', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-file-idle-stdin-test-'));
+  const completeCalls: Array<Record<string, unknown>> = [];
+
+  const uploadServer = createServer((_request, response) => {
+    response.writeHead(200);
+    response.end();
+  });
+  uploadServer.listen(0, '127.0.0.1');
+  await once(uploadServer, 'listening');
+  const uploadAddr = uploadServer.address();
+  if (!uploadAddr || typeof uploadAddr === 'string') throw new Error('upload server not bound');
+
+  const slackApi = await startSlackApiMock((method, body) => {
+    if (method === 'conversations.info') {
+      return { channel: { id: 'C-product', is_channel: true, name: 'product', name_normalized: 'product' }, ok: true };
+    }
+    if (method === 'files.getUploadURLExternal') {
+      return { ok: true, file_id: 'F-idle-1', upload_url: `http://127.0.0.1:${uploadAddr.port}/upload/1` };
+    }
+    if (method === 'files.completeUploadExternal') {
+      completeCalls.push(slackRequestBody(body));
+      return { ok: true, files: [{ id: 'F-idle-1' }] };
+    }
+    if (method === 'files.info') {
+      return { ok: true, file: { id: 'F-idle-1', mimetype: 'image/png', size: 4, permalink: 'https://anima.slack.com/files/F-idle-1' } };
+    }
+    throw new Error(`unexpected method ${method}`);
+  });
+
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeSlackAgentConfig(stateDir);
+      const itemId = await ingestSlackThread(stateDir);
+      const localPath = join(stateDir, 'evidence.png');
+      await writeFile(localPath, Buffer.from('img!'));
+
+      const startedAt = Date.now();
+      const send = await runNode(
+        [cliPath, 'file', 'send', '--channel', 'C-product', localPath],
+        {
+          env: {
+            ...process.env,
+            ANIMA_AGENT_ID: 'scout',
+            ANIMA_HOME: stateDir,
+            ANIMA_INBOX_ITEM_ID: itemId,
+            ANIMA_SLACK_API_URL: slackApi.url,
+          },
+          keepStdinOpen: true,
+        },
+      );
+      assert.equal(send.status, 0, send.stderr || send.stdout);
+      assert.ok(Date.now() - startedAt < 30_000, 'send must not wait for stdin EOF');
+      assert.equal(completeCalls.length, 1);
+      assert.equal(completeCalls[0]!['initial_comment'], undefined);
+    });
+  } finally {
+    await slackApi.close();
+    uploadServer.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('file send accepts caption from stdin when --caption is not passed', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-file-stdin-caption-test-'));
   const completeCalls: Array<Record<string, unknown>> = [];
@@ -675,7 +741,7 @@ function exampleSlackThread() {
 
 async function runNode(
   args: string[],
-  options: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string } = {},
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string; keepStdinOpen?: boolean } = {},
 ): Promise<{ status: number | null; stderr: string; stdout: string }> {
   const child = spawn(process.execPath, args, {
     cwd: options.cwd,
@@ -688,7 +754,7 @@ async function runNode(
   child.stderr.setEncoding('utf8');
   child.stdout.on('data', (chunk) => { stdout += chunk; });
   child.stderr.on('data', (chunk) => { stderr += chunk; });
-  child.stdin.end(options.input);
+  if (!options.keepStdinOpen) child.stdin.end(options.input);
   const [status] = (await once(child, 'exit')) as [number | null];
   return { status, stderr, stdout };
 }

@@ -28,7 +28,7 @@ import {
   resolveToolAgentId,
   slackWebClientForOpts,
   withToolActivity,
-  readStdin,
+  readOptionalStdin,
 } from './tool-context.js';
 import { resolveChatTarget } from './chat-target-resolver.js';
 import {
@@ -399,8 +399,8 @@ async function captionFromOpts(opts: { caption?: string }): Promise<string | und
   if (opts.caption !== undefined) {
     return opts.caption.length > 0 ? opts.caption : undefined;
   }
-  const text = await readStdin();
-  return text.length > 0 ? text : undefined;
+  const text = await readOptionalStdin();
+  return text && text.length > 0 ? text : undefined;
 }
 
 // Best-effort mime guess from extension. Slack and Feishu infer more precisely
