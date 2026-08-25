@@ -410,7 +410,7 @@ Current process model:
   cancels and drops any not-yet-run follow-ups.
   Full stop also sends `session/cancel` before Anima tears down the child.
 - If the provider API fails transiently (5xx/529 overload, network or mid-stream stalls, local TLS
-  errors, or an Anthropic safeguard refusal — which the provider itself describes as a frequent
+  errors, or an Anthropic safeguard refusal, which the provider itself describes as a frequent
   false positive), the worker records `provider.transient.retry` and re-sends the same inbox item on
   the same provider session with backoff (5s, 30s, 2min; three attempts). The retry prompt carries
   the previous error and the standard "do not repeat completed side effects" note. Adapters may
@@ -422,7 +422,7 @@ Current process model:
   no reset is reported), marks health `provider_rate_limited`, and the regular poll reclaims it once
   due. A single item may be deferred up to six times before it is failed.
 - When an item fails for good (terminal error, retries exhausted, deferral budget spent), the worker
-  records `runtime.failed` with `retryClass`, and — for DMs and direct mentions only — replies in the
+  records `runtime.failed` with `retryClass`, and (for DMs and direct mentions only) replies in the
   originating conversation so the requester knows to resend (`runtime.failure_notice`). Passive
   channel/thread follows never get a notice.
 - If the child exits mid-turn, the worker records `provider.crash.retry` and retries the same inbox

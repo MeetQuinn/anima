@@ -247,9 +247,14 @@ export function isPrimaryRunningInboxItem(item: InboxItem): boolean {
 }
 
 /** Queued and published — workers may claim. Staged rows are durable but not runnable. */
-export function isClaimableQueuedInboxItem(item: InboxItem, nowMs?: number): boolean {
+/**
+ * Queued, published, and past any rate-limit deferral. `nowMs` defaults to the
+ * wall clock so every claim path (primary, follow-up batch, coalescing) honours
+ * `handling.notBefore` without having to thread a timestamp through.
+ */
+export function isClaimableQueuedInboxItem(item: InboxItem, nowMs: number = Date.now()): boolean {
   if (item.handling.status !== 'queued' || item.handling.stagedAt) return false;
-  if (nowMs === undefined || !item.handling.notBefore) return true;
+  if (!item.handling.notBefore) return true;
   const notBeforeMs = Date.parse(item.handling.notBefore);
   return !Number.isFinite(notBeforeMs) || notBeforeMs <= nowMs;
 }
