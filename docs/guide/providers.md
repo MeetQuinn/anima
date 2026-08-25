@@ -102,8 +102,9 @@ OpenCode's machine-level credential store; Anima does not copy it into the agent
 environment.
 
 pi agents address models as `provider/id` (for example `google/gemini-2.5-pro` or
-`deepseek/deepseek-v4-pro`). The dashboard offers a curated list of those ids; reading pi's
-live model catalog is not implemented yet. Provider credentials stay in pi's machine-level store
+`deepseek/deepseek-v4-pro`). The dashboard model menu is read live from pi
+(`get_available_models`), so it lists only the models the machine's pi credentials can reach;
+until a credential exists the menu is empty and the panel says so. Provider credentials stay in pi's machine-level store
 (`~/.pi/agent/auth.json`) or the Anima service environment; per-agent `*_API_KEY` values are not
 passed to pi.
 

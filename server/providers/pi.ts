@@ -390,7 +390,10 @@ class PiRpcController {
     const state = await this.request({ type: 'get_state' });
     const reportedSessionId = stringField(state, 'sessionId');
     if (reportedSessionId) this.sessionId = reportedSessionId;
-    const model = isRecord(state.model) ? state.model : undefined;
+    // Without any credential pi still answers get_state, but with an
+    // `unknown/unknown` placeholder model; treat that the same as no model.
+    const reportedModel = isRecord(state.model) ? state.model : undefined;
+    const model = reportedModel && piModelName(reportedModel) !== 'unknown/unknown' ? reportedModel : undefined;
     this.contextWindow = numberField(model, 'contextWindow');
     this.reportedModel = piModelName(model);
     await input.effects.recordEvent({
