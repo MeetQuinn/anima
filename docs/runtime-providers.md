@@ -516,8 +516,8 @@ Current process model:
   pi's JSONL RPC protocol over stdio. stdin stays open for the child's lifetime; closing it
   would abort the active run.
 - The model is selected at launch with `--model <provider/id>` and the optional
-  `reasoningEffort` maps to `--thinking <level>`. Any `provider/id` that pi resolves is accepted;
-  the catalog list is only a starting menu.
+  `reasoningEffort` maps to `--thinking <level>`. The catalog carries a curated static list of
+  `provider/id` values; reading pi's live model catalog (`get_available_models`) is a follow-up.
 - The Anima runtime profile is passed with `--system-prompt <file>`, which replaces pi's own
   coding prompt entirely. pi still appends project context files (`AGENTS.md`/`CLAUDE.md`), the
   skills list, and one `Current working directory:` line. `--no-extensions` keeps extension UI

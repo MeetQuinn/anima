@@ -145,16 +145,16 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     installHint:
       'Install pi so `pi --version` works (`npm install -g @earendil-works/pi-coding-agent`), then add a provider credential.',
     // pi addresses models as `provider/id` across every provider it bundles.
-    // This list is a starting menu; any `provider/id` pi resolves is accepted.
+    // Curated static menu for now; reading pi's live model catalog is a follow-up.
     models: [
       'google/gemini-2.5-pro',
       'google/gemini-2.5-flash',
       'google/gemini-3.1-pro-preview',
+      'google/gemini-3.7-flash',
       'deepseek/deepseek-v4-pro',
       'deepseek/deepseek-v4-flash',
     ],
     defaultModel: 'google/gemini-2.5-pro',
-    dynamicModels: true,
     reasoningEfforts: PI_REASONING_EFFORTS,
   },
 ];

@@ -83,28 +83,29 @@ there is no per-agent credential isolation in Anima.
 During agent creation, select the provider, model, and reasoning level. The effort menu follows the
 selected model exactly:
 
-| Provider    | Models                                     | Reasoning effort                                                                    |
-| ----------- | ------------------------------------------ | ----------------------------------------------------------------------------------- |
-| Claude Code | Opus, Sonnet, Fable; Opus 4.8              | `low`, `medium`, `high`, `xhigh`, `max`                                             |
-| Claude Code | Opus 4.6, Sonnet 4.6                       | `low`, `medium`, `high`, `max`                                                      |
-| Claude Code | Haiku                                      | Provider default; no adjustable effort                                              |
-| Codex CLI   | GPT-5.6 Sol, GPT-5.6 Terra                 | `low`, `medium`, `high`, `xhigh`, `max`, `ultra`                                    |
-| Codex CLI   | GPT-5.6 Luna                               | `low`, `medium`, `high`, `xhigh`, `max`                                             |
-| Codex CLI   | GPT-5.5                                    | `low`, `medium`, `high`, `xhigh`                                                    |
-| Kimi CLI    | K3                                         | `low`, `high`, `max`                                                                |
-| Kimi CLI    | Kimi for Coding, Kimi for Coding Highspeed | Always thinking; no adjustable level                                                |
-| OpenCode    | DeepSeek V4 Pro, DeepSeek V4 Flash         | `high`, `max`                                                                       |
-| pi          | Any `provider/id` pi resolves              | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (pi `--thinking`; model decides) |
-| Grok Build  | Live model catalog                         | Whatever the selected model advertises                                              |
+| Provider    | Models                                                                                | Reasoning effort                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Claude Code | Opus, Sonnet, Fable; Opus 4.8                                                         | `low`, `medium`, `high`, `xhigh`, `max`                                                                |
+| Claude Code | Opus 4.6, Sonnet 4.6                                                                  | `low`, `medium`, `high`, `max`                                                                         |
+| Claude Code | Haiku                                                                                 | Provider default; no adjustable effort                                                                 |
+| Codex CLI   | GPT-5.6 Sol, GPT-5.6 Terra                                                            | `low`, `medium`, `high`, `xhigh`, `max`, `ultra`                                                       |
+| Codex CLI   | GPT-5.6 Luna                                                                          | `low`, `medium`, `high`, `xhigh`, `max`                                                                |
+| Codex CLI   | GPT-5.5                                                                               | `low`, `medium`, `high`, `xhigh`                                                                       |
+| Kimi CLI    | K3                                                                                    | `low`, `high`, `max`                                                                                   |
+| Kimi CLI    | Kimi for Coding, Kimi for Coding Highspeed                                            | Always thinking; no adjustable level                                                                   |
+| OpenCode    | DeepSeek V4 Pro, DeepSeek V4 Flash                                                    | `high`, `max`                                                                                          |
+| pi          | Gemini 2.5 Pro/Flash, Gemini 3.1 Pro Preview, Gemini 3.7 Flash, DeepSeek V4 Pro/Flash | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (pi `--thinking`; the model decides what it honors) |
+| Grok Build  | Live model catalog                                                                    | Whatever the selected model advertises                                                                 |
 
 OpenCode agents can use DeepSeek V4 Pro or DeepSeek V4 Flash. Their DeepSeek API key stays in
 OpenCode's machine-level credential store; Anima does not copy it into the agent's Launch
 environment.
 
 pi agents address models as `provider/id` (for example `google/gemini-2.5-pro` or
-`deepseek/deepseek-v4-pro`). The menu lists a few starting points, and any model pi can resolve
-is accepted. Provider credentials stay in pi's machine-level store (`~/.pi/agent/auth.json`) or
-the Anima service environment; per-agent `*_API_KEY` values are not passed to pi.
+`deepseek/deepseek-v4-pro`). The dashboard offers a curated list of those ids; reading pi's
+live model catalog is not implemented yet. Provider credentials stay in pi's machine-level store
+(`~/.pi/agent/auth.json`) or the Anima service environment; per-agent `*_API_KEY` values are not
+passed to pi.
 
 For Grok Build, Anima reads the current model catalog from the installed CLI (for example `grok-4.5` and `grok-composer-2.5-fast`) and records the actual model ID returned by the runtime. Reasoning effort is **per model**: only models that advertise effort support show an effort control (Composer does not). The `grok-build` marketing alias is never stored as model authority.
 
