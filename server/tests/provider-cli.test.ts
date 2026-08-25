@@ -16,6 +16,7 @@ import {
   type ProviderCliCommandRunner,
 } from '../provider-cli/provider-cli.service.js';
 import { claudeKeychainService } from '../provider-usage/providers/claude-credentials.js';
+import { inspectProvider } from '../provider-cli/provider-inspection.js';
 import {
   providerCliUpgradeLocked,
   tryAcquireProviderCliUpgradeLease,
@@ -851,3 +852,67 @@ function gateContender(
 async function writeCodexPackage(packageDir: string, version: string): Promise<void> {
   await writeFile(join(packageDir, 'package.json'), JSON.stringify({ name: '@openai/codex', version }), 'utf8');
 }
+
+test('pi installed as a global npm package is managed through the npm paired with its prefix', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-provider-cli-pi-'));
+  const prefix = join(root, 'active-prefix');
+  const binDir = join(prefix, 'bin');
+  const packageDir = join(prefix, 'lib', 'node_modules', '@earendil-works', 'pi-coding-agent');
+  const piScript = join(packageDir, 'dist', 'bundle', 'cli.js');
+  const piCommand = join(binDir, 'pi');
+  const npmCommand = join(binDir, 'npm');
+  try {
+    await mkdir(join(packageDir, 'dist', 'bundle'), { recursive: true });
+    await mkdir(binDir, { recursive: true });
+    await writeFile(piScript, '// fake pi\n', 'utf8');
+    await chmod(piScript, 0o755);
+    await writeFile(npmCommand, '#!/bin/sh\nexit 0\n', 'utf8');
+    await chmod(npmCommand, 0o755);
+    await symlink(piScript, piCommand);
+    await writeFile(
+      join(packageDir, 'package.json'),
+      JSON.stringify({ name: '@earendil-works/pi-coding-agent', version: '0.84.3' }),
+      'utf8',
+    );
+    const resolvedPrefix = await realpath(prefix);
+    const resolvedNpmCommand = join(resolvedPrefix, 'bin', 'npm');
+    const runCommand: ProviderCliCommandRunner = async (command, args) => {
+      if (command === piCommand && args[0] === '--version') return { stderr: '', stdout: '0.84.3' };
+      if (command === resolvedNpmCommand && args.join(' ') === 'prefix -g') {
+        return { stderr: '', stdout: resolvedPrefix };
+      }
+      throw new Error(`Unexpected command: ${command} ${args.join(' ')}`);
+    };
+
+    const inspection = await inspectProvider('pi', { PATH: binDir }, runCommand);
+    assert.equal(inspection.installSource, 'pi-npm-global');
+    assert.equal(inspection.installedVersion, '0.84.3');
+    assert.equal(inspection.updateMode, 'managed');
+    assert.equal(inspection.npmPrefix, resolvedPrefix);
+    assert.deepEqual(inspection.updateCommand, {
+      args: ['install', '-g', '@earendil-works/pi-coding-agent@{targetVersion}'],
+      command: resolvedNpmCommand,
+    });
+    assert.equal(
+      inspection.restoreCommand,
+      `'${resolvedNpmCommand}' install -g @earendil-works/pi-coding-agent@0.84.3`,
+    );
+
+    // A pi that does not live in a global npm prefix stays manual.
+    const looseDir = join(root, 'loose');
+    await mkdir(looseDir, { recursive: true });
+    const loosePi = join(looseDir, 'pi');
+    await writeFile(loosePi, '#!/bin/sh\necho 0.84.3\n', 'utf8');
+    await chmod(loosePi, 0o755);
+    const loose = await inspectProvider('pi', { PATH: looseDir }, async (command, args) => {
+      if (command === loosePi && args[0] === '--version') return { stderr: '', stdout: '0.84.3' };
+      throw new Error(`Unexpected command: ${command} ${args.join(' ')}`);
+    });
+    assert.equal(loose.installSource, 'unknown');
+    assert.equal(loose.updateMode, 'manual');
+    assert.equal(loose.manualCommand, 'npm install -g @earendil-works/pi-coding-agent@latest');
+    assert.match(String(loose.sourceDetail), /not a recognized global npm install/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});

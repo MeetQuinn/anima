@@ -271,7 +271,6 @@ function mergeSessionStats(
     eventType === 'grok.context.stats'
     || eventType === 'kimi.context.stats'
     || eventType === 'opencode.context.stats'
-    || eventType === 'pi.context.stats'
       ? undefined
       : summary.usedTokens;
   const currentContextTokens =

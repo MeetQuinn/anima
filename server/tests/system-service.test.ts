@@ -8,6 +8,8 @@ import {
   docsUrl,
   parseGrokAcpModelState,
   parseGrokModelsOutput,
+  parsePiModelCatalog,
+  PI_NO_CREDENTIAL_MESSAGE,
   SystemService,
 } from '../services/system.service.js';
 
@@ -154,4 +156,54 @@ test('parseGrokAcpModelState extracts per-model effort menus from ACP metadata',
     },
     models: ['grok-4.5', 'grok-composer-2.5-fast'],
   });
+});
+
+test('parsePiModelCatalog lists provider/id pairs and prefers pi\'s current model as default', () => {
+  const available = {
+    models: [
+      { id: 'deepseek-v4-flash', provider: 'deepseek', reasoning: true },
+      { id: 'deepseek-v4-pro', provider: 'deepseek', reasoning: true },
+      { id: 'deepseek-v4-pro', provider: 'deepseek' },
+      { id: '', provider: 'google' },
+      'not-a-model',
+    ],
+  };
+  assert.deepEqual(
+    parsePiModelCatalog(available, { model: { id: 'deepseek-v4-pro', provider: 'deepseek' } }),
+    { defaultModel: 'deepseek/deepseek-v4-pro', models: ['deepseek/deepseek-v4-flash', 'deepseek/deepseek-v4-pro'] },
+  );
+  // pi's current model is not reachable (e.g. the `unknown/unknown` placeholder): first entry wins.
+  assert.equal(
+    parsePiModelCatalog(available, { model: { id: 'unknown', provider: 'unknown' } }).defaultModel,
+    'deepseek/deepseek-v4-flash',
+  );
+  assert.throws(() => parsePiModelCatalog({ models: [] }, undefined), (error: unknown) => {
+    assert.equal((error as Error).message, PI_NO_CREDENTIAL_MESSAGE);
+    return true;
+  });
+});
+
+test('provider availability asks the live catalog per provider kind', async () => {
+  const seen: Array<[string, string]> = [];
+  const service = new SystemService({
+    commandPresent: async (command) => command === 'pi' || command === 'grok',
+    now: () => new Date('2026-08-25T03:00:00.000Z'),
+    providerModels: async (command, kind) => {
+      seen.push([command, kind]);
+      if (kind === 'pi') return { defaultModel: 'deepseek/deepseek-v4-pro', models: ['deepseek/deepseek-v4-pro'] };
+      return { defaultModel: 'grok-4.5', models: ['grok-4.5'] };
+    },
+  });
+  const result = await service.providerAvailability();
+  assert.deepEqual(result.providers.find((provider) => provider.kind === 'pi'), {
+    checkedAt: '2026-08-25T03:00:00.000Z',
+    defaultModel: 'deepseek/deepseek-v4-pro',
+    kind: 'pi',
+    models: ['deepseek/deepseek-v4-pro'],
+    present: true,
+  });
+  assert.deepEqual(seen.sort(), [
+    ['grok', 'grok-cli'],
+    ['pi', 'pi'],
+  ]);
 });

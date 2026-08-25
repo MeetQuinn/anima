@@ -326,6 +326,47 @@ test('pi turns a provider auth error into machine-level credential guidance', as
   }
 });
 
+test('pi with no credential at all reports the placeholder model as an auth failure', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-pi-nocred-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      await installFakePi(stateDir, [
+        ...FAKE_PI_PRELUDE,
+        'function handle(msg) {',
+        "  if (msg.type === 'get_state') return respond(msg, { ...state(), model: { id: 'unknown', provider: 'unknown', contextWindow: 0 } });",
+        '  respond(msg);',
+        '}',
+      ]);
+      const ctx = await ingestPiEvent(stateDir, 'Use Gemini.', '1786000016.000001');
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'pi',
+        model: 'google/gemini-2.5-pro',
+      });
+
+      await assert.rejects(
+        runtime.run(await runtimeInput(runtime, ctx, await loadState())),
+        (error: unknown) => {
+          assert.match(String((error as Error).message), /pi could not use google\/gemini-2.5-pro/);
+          assert.equal((error as { reason?: string }).reason, 'provider_auth_failed');
+          return true;
+        },
+      );
+      assert.equal(runtime.health?.().child, undefined);
+      const calls = (await readFile(callsPath, 'utf8'))
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { type: string });
+      assert.deepEqual(calls.map((call) => call.type), ['get_state']);
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('pi sends abort before tearing down a cancelled turn', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-pi-cancel-'));
   let runtime: AgentRuntime | undefined;

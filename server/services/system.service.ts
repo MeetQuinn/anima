@@ -13,6 +13,7 @@ import type { ServerInfo, ServicesRestartResponse } from '../../shared/server-in
 import {
   PROVIDER_CATALOG,
   type ProviderAvailability,
+  type ProviderKind,
 } from '../../shared/provider-catalog.js';
 
 const execFileAsync = promisify(execFile);
@@ -29,7 +30,7 @@ export interface SystemServiceOptions {
   commandPresent?: (command: string, args: string[]) => Promise<boolean>;
   commit?: Promise<string | undefined> | string;
   now?: () => Date;
-  providerModels?: (command: string) => Promise<GrokModelCatalog>;
+  providerModels?: (command: string, kind: ProviderKind) => Promise<ProviderModelCatalog>;
   packageVersion?: () => Promise<string>;
   projectRoot?: string;
   restartDelayMs?: number;
@@ -37,7 +38,7 @@ export interface SystemServiceOptions {
   startedAt?: string;
 }
 
-export interface GrokModelCatalog {
+export interface ProviderModelCatalog {
   defaultModel: string;
   modelReasoningEfforts?: Record<string, string[]>;
   models: string[];
@@ -50,7 +51,7 @@ export class SystemService {
   private readonly commandPresent: (command: string, args: string[]) => Promise<boolean>;
   private readonly commit: Promise<string | undefined>;
   private readonly now: () => Date;
-  private readonly providerModels: (command: string) => Promise<GrokModelCatalog>;
+  private readonly providerModels: (command: string, kind: ProviderKind) => Promise<ProviderModelCatalog>;
   private readonly packageVersion: () => Promise<string>;
   private readonly projectRoot: string;
   private readonly restartDelayMs: number;
@@ -63,7 +64,7 @@ export class SystemService {
     this.commandPresent = options.commandPresent ?? commandPresent;
     this.commit = Promise.resolve(options.commit ?? gitShortCommit(this.projectRoot));
     this.now = options.now ?? (() => new Date());
-    this.providerModels = options.providerModels ?? grokProviderModels;
+    this.providerModels = options.providerModels ?? liveProviderModels;
     this.packageVersion = options.packageVersion ?? (() => packageVersion(this.projectRoot));
     this.restartDelayMs = options.restartDelayMs ?? RESTART_AFTER_RESPONSE_DELAY_MS;
     this.settings = options.settings ?? defaultServerSettingsService;
@@ -86,7 +87,7 @@ export class SystemService {
               checkedAt,
               kind: entry.kind,
               present,
-              ...(await this.providerModels(entry.command)),
+              ...(await this.providerModels(entry.command, entry.kind)),
             };
           } catch (error) {
             return {
@@ -158,7 +159,7 @@ export class SystemService {
 
 export const defaultSystemService = new SystemService();
 
-export function parseGrokModelsOutput(output: string): GrokModelCatalog {
+export function parseGrokModelsOutput(output: string): ProviderModelCatalog {
   const defaultModel = output.match(/^Default model:\s*(\S+)\s*$/m)?.[1];
   const models = [...output.matchAll(/^\s*[*-]\s+([A-Za-z0-9._/-]+)(?:\s+\(default\))?\s*$/gm)]
     .map((match) => match[1])
@@ -181,7 +182,7 @@ export function parseGrokModelsOutput(output: string): GrokModelCatalog {
  * Live Grok Build exposes `supportsReasoningEffort` and `reasoningEfforts` here;
  * models without that flag (e.g. composer) get an empty effort list.
  */
-export function parseGrokAcpModelState(modelState: unknown): GrokModelCatalog | undefined {
+export function parseGrokAcpModelState(modelState: unknown): ProviderModelCatalog | undefined {
   if (!modelState || typeof modelState !== 'object') return undefined;
   const record = modelState as Record<string, unknown>;
   const currentModelId =
@@ -225,7 +226,113 @@ export function parseGrokAcpModelState(modelState: unknown): GrokModelCatalog | 
   return { defaultModel, modelReasoningEfforts, models: uniqueModels };
 }
 
-async function grokProviderModels(command: string): Promise<GrokModelCatalog> {
+/** Live model catalog per provider kind; only `dynamicModels` catalog entries reach here. */
+async function liveProviderModels(command: string, kind: ProviderKind): Promise<ProviderModelCatalog> {
+  if (kind === 'pi') return piProviderModels(command);
+  return grokProviderModels(command);
+}
+
+const PI_MODEL_PROBE_ARGS = ['--mode', 'rpc', '--no-extensions', '--no-skills', '--no-context-files', '--no-session'];
+const PI_MODEL_PROBE_TIMEOUT_MS = 8_000;
+export const PI_NO_CREDENTIAL_MESSAGE =
+  'pi has no provider credential. Run `pi` and `/login`, add a key to `~/.pi/agent/auth.json`, or export the provider API key in the Anima service environment.';
+
+/**
+ * Short-lived pi RPC probe. `get_available_models` returns only the models the
+ * machine-level credentials can reach; `get_state` carries pi's own current model,
+ * which becomes the default when it is in that list.
+ */
+async function piProviderModels(command: string): Promise<ProviderModelCatalog> {
+  const responses = await piRpcProbe(command, ['get_available_models', 'get_state']);
+  return parsePiModelCatalog(responses['get_available_models'], responses['get_state']);
+}
+
+export function parsePiModelCatalog(available: unknown, state: unknown): ProviderModelCatalog {
+  const entries = isPlainRecord(available) && Array.isArray(available['models']) ? available['models'] : [];
+  const models: string[] = [];
+  for (const entry of entries) {
+    if (!isPlainRecord(entry)) continue;
+    const provider = typeof entry['provider'] === 'string' ? entry['provider'].trim() : '';
+    const id = typeof entry['id'] === 'string' ? entry['id'].trim() : '';
+    if (!provider || !id) continue;
+    const name = `${provider}/${id}`;
+    if (!models.includes(name)) models.push(name);
+  }
+  if (models.length === 0) throw new Error(PI_NO_CREDENTIAL_MESSAGE);
+  const current = isPlainRecord(state) && isPlainRecord(state['model']) ? state['model'] : undefined;
+  const currentName =
+    current && typeof current['provider'] === 'string' && typeof current['id'] === 'string'
+      ? `${current['provider']}/${current['id']}`
+      : undefined;
+  const defaultModel = currentName && models.includes(currentName) ? currentName : models[0]!;
+  return { defaultModel, models };
+}
+
+function piRpcProbe(command: string, commands: string[]): Promise<Record<string, unknown>> {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(command, PI_MODEL_PROBE_ARGS, {
+      env: { ...process.env, PI_SKIP_VERSION_CHECK: '1', PI_TELEMETRY: '0' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const results: Record<string, unknown> = {};
+    const pending = new Set(commands);
+    let buffer = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill('SIGTERM');
+      if (error) reject(error);
+      else resolvePromise(results);
+    };
+    const timer = setTimeout(() => finish(new Error('pi model catalog probe timed out')), PI_MODEL_PROBE_TIMEOUT_MS);
+    child.on('error', (error) => finish(error));
+    child.on('exit', (code) => {
+      if (pending.size === 0) return finish();
+      finish(new Error(`pi model catalog probe exited (${code ?? 'signal'}) ${stderr.trim()}`.trim()));
+    });
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => {
+      buffer += chunk;
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let message: unknown;
+        try {
+          message = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (!isPlainRecord(message) || message['type'] !== 'response') continue;
+        const name = typeof message['command'] === 'string' ? message['command'] : undefined;
+        if (!name || !pending.has(name)) continue;
+        if (message['success'] === false) {
+          finish(new Error(`pi ${name} failed: ${String(message['error'] ?? 'unknown error')}`));
+          return;
+        }
+        results[name] = message['data'];
+        pending.delete(name);
+        if (pending.size === 0) finish();
+      }
+    });
+    for (const [index, name] of commands.entries()) {
+      child.stdin?.write(`${JSON.stringify({ id: `probe-${index}`, type: name })}\n`);
+    }
+  });
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function grokProviderModels(command: string): Promise<ProviderModelCatalog> {
   try {
     const fromAcp = await grokAcpModelCatalog(command);
     if (fromAcp) return fromAcp;
@@ -240,7 +347,7 @@ async function grokProviderModels(command: string): Promise<GrokModelCatalog> {
 }
 
 /** Short-lived ACP initialize probe for per-model effort metadata. */
-async function grokAcpModelCatalog(command: string): Promise<GrokModelCatalog | undefined> {
+async function grokAcpModelCatalog(command: string): Promise<ProviderModelCatalog | undefined> {
   return new Promise((resolve, reject) => {
     const child = spawn(
       command,
@@ -249,7 +356,7 @@ async function grokAcpModelCatalog(command: string): Promise<GrokModelCatalog | 
     );
     let buffer = '';
     let settled = false;
-    const finish = (error?: Error, value?: GrokModelCatalog) => {
+    const finish = (error?: Error, value?: ProviderModelCatalog) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);

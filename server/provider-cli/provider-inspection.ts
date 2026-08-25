@@ -63,7 +63,7 @@ export async function inspectProvider(
     return inspectClaude(executable, installedVersion, catalog.label, env, runCommand);
   }
   if (provider === 'codex-cli') {
-    return inspectCodex(executable, installedVersion, catalog.label, env, runCommand);
+    return inspectNpmGlobal(CODEX_NPM_PACKAGE, executable, installedVersion, catalog.label, env, runCommand);
   }
   if (provider === 'kimi-cli') {
     return inspectKimi(executable, installedVersion, catalog.label, env);
@@ -72,7 +72,7 @@ export async function inspectProvider(
     return inspectOpenCode(executable, installedVersion, catalog.label);
   }
   if (provider === 'pi') {
-    return inspectPi(executable, installedVersion, catalog.label);
+    return inspectNpmGlobal(PI_NPM_PACKAGE, executable, installedVersion, catalog.label, env, runCommand);
   }
   return inspectGrok(executable, installedVersion, catalog.label, env, runCommand);
 }
@@ -122,34 +122,67 @@ async function inspectClaude(
   };
 }
 
-async function inspectCodex(
+interface NpmGlobalPackageSpec {
+  /** Name used in human-readable source details, e.g. "Codex". */
+  displayName: string;
+  installSource: ProviderInspection['installSource'];
+  packageName: string;
+  /** Path of the launched bin script relative to the installed package directory. */
+  packageBinPath: string;
+  provider: ProviderKind;
+}
+
+const CODEX_NPM_PACKAGE: NpmGlobalPackageSpec = {
+  displayName: 'Codex',
+  installSource: 'codex-npm-global',
+  packageName: '@openai/codex',
+  packageBinPath: join('bin', 'codex.js'),
+  provider: 'codex-cli',
+};
+
+const PI_NPM_PACKAGE: NpmGlobalPackageSpec = {
+  displayName: 'pi',
+  installSource: 'pi-npm-global',
+  packageName: '@earendil-works/pi-coding-agent',
+  packageBinPath: join('dist', 'bundle', 'cli.js'),
+  provider: 'pi',
+};
+
+/**
+ * Providers distributed as a global npm package. The install is "managed" when the
+ * active binary resolves into `<prefix>/lib/node_modules/<package>`, that prefix is
+ * what its own npm reports, and the tree is writable without elevation.
+ */
+async function inspectNpmGlobal(
+  spec: NpmGlobalPackageSpec,
   executable: ResolvedExecutable,
   installedVersion: string,
   label: string,
   env: NodeJS.ProcessEnv,
   runCommand: ProviderCliCommandRunner,
 ): Promise<ProviderInspection> {
-  const suffix = join('lib', 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+  const suffix = join('lib', 'node_modules', ...spec.packageName.split('/'), spec.packageBinPath);
+  const manualCommand = `npm install -g ${spec.packageName}@latest`;
   if (!executable.realPath.endsWith(suffix)) {
     return {
       binaryPath: executable.path,
       installSource: 'unknown',
       installedVersion,
       label,
-      manualCommand: 'npm install -g @openai/codex@latest',
-      provider: 'codex-cli',
+      manualCommand,
+      provider: spec.provider,
       realPath: executable.realPath,
-      sourceDetail: 'The active Codex binary is not a recognized global npm install',
+      sourceDetail: `The active ${spec.displayName} binary is not a recognized global npm install`,
       updateMode: 'manual',
     };
   }
   const prefix = executable.realPath.slice(0, -suffix.length).replace(/[/\\]$/, '');
-  const packageDir = join(prefix, 'lib', 'node_modules', '@openai', 'codex');
+  const packageDir = join(prefix, 'lib', 'node_modules', ...spec.packageName.split('/'));
   const npmPath = join(prefix, 'bin', 'npm');
   const packageJson = await readFile(join(packageDir, 'package.json'), 'utf8')
     .then((text) => JSON.parse(text) as { name?: unknown; version?: unknown })
     .catch(() => undefined);
-  const packageMatches = packageJson?.name === '@openai/codex' && packageJson.version === installedVersion;
+  const packageMatches = packageJson?.name === spec.packageName && packageJson.version === installedVersion;
   const npmPrefix = await runCommand(npmPath, ['prefix', '-g'], {
     env,
     timeout: CHECK_TIMEOUT_MS,
@@ -166,14 +199,14 @@ async function inspectCodex(
   const quotedNpm = shellQuote(npmPath);
   return {
     binaryPath: executable.path,
-    installSource: 'codex-npm-global',
+    installSource: spec.installSource,
     installedVersion,
     label,
-    manualCommand: `${quotedNpm} install -g @openai/codex@latest`,
+    manualCommand: `${quotedNpm} install -g ${spec.packageName}@latest`,
     ...(npmPrefix ? { npmPath, npmPrefix } : {}),
-    provider: 'codex-cli',
+    provider: spec.provider,
     realPath: executable.realPath,
-    restoreCommand: `${quotedNpm} install -g @openai/codex@${installedVersion}`,
+    restoreCommand: `${quotedNpm} install -g ${spec.packageName}@${installedVersion}`,
     sourceDetail: managed
       ? `Global npm install in ${prefix}`
       : npmPrefix && npmPrefix !== resolve(prefix)
@@ -184,7 +217,7 @@ async function inspectCodex(
     ...(managed
       ? {
           updateCommand: {
-            args: ['install', '-g', '@openai/codex@{targetVersion}'],
+            args: ['install', '-g', `${spec.packageName}@{targetVersion}`],
             command: npmPath,
           },
         }
@@ -212,26 +245,6 @@ function inspectKimi(
     sourceDetail: native
       ? 'Native ~/.kimi-code install; official updater is interactive'
       : 'The active Kimi binary is not a recognized native install',
-    updateMode: 'manual',
-  };
-}
-
-const PI_MANUAL_COMMAND = 'npm install -g @earendil-works/pi-coding-agent@latest';
-
-function inspectPi(
-  executable: ResolvedExecutable,
-  installedVersion: string,
-  label: string,
-): ProviderInspection {
-  return {
-    binaryPath: executable.path,
-    installSource: 'unknown',
-    installedVersion,
-    label,
-    manualCommand: PI_MANUAL_COMMAND,
-    provider: 'pi',
-    realPath: executable.realPath,
-    sourceDetail: 'pi is published on npm as @earendil-works/pi-coding-agent; Anima does not manage its upgrades yet',
     updateMode: 'manual',
   };
 }
@@ -364,7 +377,7 @@ function manualCommandFor(provider: ProviderKind): string {
   if (provider === 'codex-cli') return 'npm install -g @openai/codex@latest';
   if (provider === 'kimi-cli') return 'kimi upgrade';
   if (provider === 'opencode-cli') return 'brew upgrade anomalyco/tap/opencode';
-  if (provider === 'pi') return PI_MANUAL_COMMAND;
+  if (provider === 'pi') return `npm install -g ${PI_NPM_PACKAGE.packageName}@latest`;
   return 'grok update';
 }
 
