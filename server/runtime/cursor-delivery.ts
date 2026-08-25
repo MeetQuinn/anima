@@ -36,8 +36,14 @@ export const CURSOR_DELIVERY_MAX_MESSAGES = 20;
  * agent turn receives from the cursor view.
  */
 export const CURSOR_DELIVERY_MAX_BYTES = 16 * 1024;
-/** Soft per-message clip so one row cannot consume the whole budget alone. */
-export const CURSOR_DELIVERY_MAX_MESSAGE_CHARS = 2_000;
+/**
+ * Per-message clip in UTF-8 bytes, applied to snapshot rows and to the trigger
+ * text in Latest wake. The trigger appears in both places, so two clipped copies
+ * plus envelope overhead must still fit CURSOR_DELIVERY_MAX_BYTES; extras
+ * (previews/files) are shrunk against the remainder. Bytes, not characters,
+ * because the envelope budget is a prompt-size bound.
+ */
+export const CURSOR_DELIVERY_MAX_MESSAGE_BYTES = 6_000;
 
 export type CursorDeliveryFailureReason =
   | 'continuity_degraded'
@@ -944,13 +950,7 @@ export function formatObservedLine(entry: ObservedConversationEntry): string {
     text = entry.files.map((f) => f.name ?? f.id).join(', ');
     text = text ? `[file: ${text}]` : '[file]';
   }
-  if (Buffer.byteLength(text, 'utf8') > CURSOR_DELIVERY_MAX_MESSAGE_CHARS) {
-    // Iris: per-message clip ends with `… [truncated]`.
-    const suffix = truncatedMarkerSuffix();
-    const suffixBytes = Buffer.byteLength(suffix, 'utf8');
-    const bodyBudget = Math.max(1, CURSOR_DELIVERY_MAX_MESSAGE_CHARS - suffixBytes);
-    text = `${truncateUtf8(text, bodyBudget)}${suffix}`;
-  }
+  text = clipObservedText(text);
   // Keep synthetic storage bot ids out of the agent-facing envelope; sender
   // label already maps them (e.g. B_ANIMA_SHORTCUT → "shortcut").
   const envelopeBotId = entry.botId === ACTORLESS_SLACK_WAKE_BOT_ID ? undefined : entry.botId;
@@ -1017,6 +1017,14 @@ export function renderCursorDeliveryEnvelopeFromEntries(
  * Truncate to maxBytes UTF-8 without splitting code points / surrogate pairs.
  * Used for per-message clip and extras clipping — not for post-plan row mutation.
  */
+/** Iris: per-message clip ends with `… [truncated]` (ellipsis from truncateUtf8). */
+export function clipObservedText(text: string): string {
+  if (Buffer.byteLength(text, 'utf8') <= CURSOR_DELIVERY_MAX_MESSAGE_BYTES) return text;
+  const suffix = truncatedMarkerSuffix();
+  const bodyBudget = Math.max(1, CURSOR_DELIVERY_MAX_MESSAGE_BYTES - Buffer.byteLength(suffix, 'utf8'));
+  return `${truncateUtf8(text, bodyBudget)}${suffix}`;
+}
+
 export function truncateUtf8(text: string, maxBytes: number): string {
   if (maxBytes <= 0) return '';
   if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
@@ -1038,11 +1046,19 @@ export function truncateUtf8(text: string, maxBytes: number): string {
  * Clip previews/files so chrome + Latest wake + extras fit in the envelope
  * budget even with zero snapshot rows. Never leave an over-cap prepared plan.
  */
+/** Envelope line + sender label + row separators around a snapshot row. */
+const TRIGGER_ROW_ENVELOPE_OVERHEAD_BYTES = 256;
+
 export function clipTriggerExtrasForEnvelope(trigger: SlackInboxItem): SlackInboxItem {
   // Start from empty-row envelope; shrink extras until under cap.
   let previews = trigger.previews?.map((p) => ({ ...p }));
   let files = trigger.files?.map((f) => ({ ...f }));
   let attention = trigger.attentionSuggestion;
+  // The trigger is rendered twice (its snapshot row + Latest wake). Extras are
+  // shrunk against a budget that reserves the row copy, so a long trigger cannot
+  // push the mandatory row out of the envelope.
+  const triggerRowReserve = Buffer.byteLength(clipObservedText(trigger.text ?? ''), 'utf8') + TRIGGER_ROW_ENVELOPE_OVERHEAD_BYTES;
+  const extrasBudget = CURSOR_DELIVERY_MAX_BYTES - triggerRowReserve;
 
   const measure = (): number => {
     const item: SlackInboxItem = {
@@ -1066,13 +1082,13 @@ export function clipTriggerExtrasForEnvelope(trigger: SlackInboxItem): SlackInbo
   };
 
   // Drop attention first if needed.
-  if (measure() > CURSOR_DELIVERY_MAX_BYTES) {
+  if (measure() > extrasBudget) {
     attention = undefined;
   }
   // Progressively clip preview texts.
   if (previews?.length) {
     let guard = 0;
-    while (measure() > CURSOR_DELIVERY_MAX_BYTES && guard < 40) {
+    while (measure() > extrasBudget && guard < 40) {
       guard += 1;
       let clippedAny = false;
       previews = previews.map((p) => {
@@ -1088,15 +1104,15 @@ export function clipTriggerExtrasForEnvelope(trigger: SlackInboxItem): SlackInbo
       }
     }
   }
-  if (measure() > CURSOR_DELIVERY_MAX_BYTES && files?.length) {
+  if (measure() > extrasBudget && files?.length) {
     // Strip file display names, then drop files if still over.
     files = files.map((f) => ({ ...f, name: f.id }));
-    if (measure() > CURSOR_DELIVERY_MAX_BYTES) {
+    if (measure() > extrasBudget) {
       files = undefined;
     }
   }
   // Last resort: empty extras; Latest wake text already clipped per-message.
-  if (measure() > CURSOR_DELIVERY_MAX_BYTES) {
+  if (measure() > extrasBudget) {
     previews = undefined;
     files = undefined;
     attention = undefined;
@@ -1136,13 +1152,7 @@ function buildLatestWakeLine(event: SlackInboxItem): string {
     text = `[file: ${event.files.map((f) => f.name).join(', ')}]`;
   }
   // Same clip as snapshot rows — never re-expand a long trigger in Latest wake.
-  if (Buffer.byteLength(text, 'utf8') > CURSOR_DELIVERY_MAX_MESSAGE_CHARS) {
-    // Iris: per-message clip ends with `… [truncated]`.
-    const suffix = truncatedMarkerSuffix();
-    const suffixBytes = Buffer.byteLength(suffix, 'utf8');
-    const bodyBudget = Math.max(1, CURSOR_DELIVERY_MAX_MESSAGE_CHARS - suffixBytes);
-    text = `${truncateUtf8(text, bodyBudget)}${suffix}`;
-  }
+  text = clipObservedText(text);
   return `${env} ${actor}: ${text}`;
 }
 

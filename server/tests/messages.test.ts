@@ -8,7 +8,7 @@ import {
   withCanonicalSlackVisibleText,
 } from '../slack/message-text.js';
 import { slackTranscriptOutput } from '../tools/slack-transcript.js';
-import { slackMessageContentForText } from '../tools/slack-message-format.js';
+import { slackMarkdownBlockBreaks, slackMessageContentForText } from '../tools/slack-message-format.js';
 
 test('Slack markdown block content enforces body and fallback limits', () => {
   const content = slackMessageContentForText(`Report\n${'é'.repeat(2_000)}`);
@@ -360,4 +360,22 @@ test('Slack transcript output includes message preview annotations without readi
 
   assert.match(output, /preview: slack_preview private=true author="Iris" channel_id=D-private message_ts=1770000100\.000001/);
   assert.match(output, /> Preview delivered by Slack/);
+});
+
+test('Slack markdown block ends lists and quotes before a plain line', () => {
+  // Plain lines keep their single newlines (Slack renders them as lines).
+  assert.equal(slackMarkdownBlockBreaks('one\ntwo\nthree'), 'one\ntwo\nthree');
+  // A plain line right after a list would be swallowed into the last item.
+  assert.equal(slackMarkdownBlockBreaks('- a\n- b\nAfter list'), '- a\n- b\n\nAfter list');
+  assert.equal(slackMarkdownBlockBreaks('1. a\n2) b\nAfter'), '1. a\n2) b\n\nAfter');
+  assert.equal(slackMarkdownBlockBreaks('> quoted\nplain'), '> quoted\n\nplain');
+  // Already separated, indented continuations, nested items, and block starts are untouched.
+  assert.equal(slackMarkdownBlockBreaks('- a\n\nAfter'), '- a\n\nAfter');
+  assert.equal(slackMarkdownBlockBreaks('- a\n  wrapped\n  - nested\nAfter'), '- a\n  wrapped\n  - nested\n\nAfter');
+  assert.equal(slackMarkdownBlockBreaks('- a\n# Heading'), '- a\n# Heading');
+  assert.equal(slackMarkdownBlockBreaks('- a\n| t |\n|---|'), '- a\n| t |\n|---|');
+  // Fenced code is never touched, and a fence closes any open list.
+  assert.equal(slackMarkdownBlockBreaks('- a\n```\n- not a list\nplain\n```\nafter'), '- a\n```\n- not a list\nplain\n```\nafter');
+  // Applied on the send path.
+  assert.deepEqual(slackMessageContentForText('- a\nb').blocks, [{ type: 'markdown', text: '- a\n\nb' }]);
 });
