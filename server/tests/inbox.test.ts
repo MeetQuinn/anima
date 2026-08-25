@@ -130,6 +130,53 @@ test('wake queue store can use an injected file persistence', async () => {
   assert.deepEqual((await queue.list()).map((item) => item.id), []);
 });
 
+test('wake queue keeps a deferred item unclaimable until notBefore elapses', async () => {
+  const queue = new WakeQueueService(
+    'scout',
+    new WakeQueueStore('scout', memoryWakeQueueStore()),
+    { recordInboxItem: async () => undefined },
+  );
+  const event = makeSlackEvent({
+    channelId: 'D-user',
+    eventId: 'evt-deferred',
+    teamId: 'T-demo',
+    text: 'rate limited once',
+    ts: '1770000010.000001',
+    userId: 'U1',
+  });
+  assert.equal((await queue.enqueue(event)).queued, true);
+  const claimed = await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-1' });
+  assert.equal(claimed?.id, event.id);
+
+  const resumeAt = new Date('2026-08-25T06:10:00.000Z');
+  await queue.requeueDeferred(event.id, { deferrals: 1, notBefore: resumeAt.toISOString() });
+  const deferred = await queue.find(event.id);
+  assert.equal(deferred?.handling.status, 'queued');
+  assert.equal(deferred?.handling.notBefore, resumeAt.toISOString());
+  assert.equal(deferred?.handling.deferrals, 1);
+  assert.equal(deferred?.handling.workerId, undefined);
+
+  const early = await queue.takeNextRunnable({
+    isWorkerAlive: () => true,
+    now: new Date(resumeAt.getTime() - 1_000),
+    workerId: 'worker-1',
+  });
+  assert.equal(early, undefined);
+
+  const due = await queue.takeNextRunnable({
+    isWorkerAlive: () => true,
+    now: resumeAt,
+    workerId: 'worker-1',
+  });
+  assert.equal(due?.id, event.id);
+  assert.equal(due?.handling.status, 'running');
+  assert.equal(due?.handling.deferrals, 1, 'deferral count survives the next claim');
+
+  // A plain requeue (e.g. restart drain) clears the deferral gate.
+  await queue.requeue(event.id, { resumeReason: 'runtime_restart' });
+  assert.equal((await queue.find(event.id))?.handling.notBefore, undefined);
+});
+
 test('wake queue retains completed memory coherence ids for per-day dedupe', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-memory-wake-dedupe-test-'));
   try {

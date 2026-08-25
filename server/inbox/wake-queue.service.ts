@@ -214,6 +214,15 @@ export class WakeQueueService {
     await this.store.requeue(itemId, options);
   }
 
+  /**
+   * Requeue an item that hit a provider rate limit: it stays durable and
+   * ordered but is not claimable until `notBefore`. No wake signal — the
+   * regular poll timer picks it up once the deferral elapses.
+   */
+  async requeueDeferred(itemId: string, options: { deferrals: number; notBefore: string }): Promise<void> {
+    await this.store.requeue(itemId, options);
+  }
+
   async requeueBatch(itemIds: string[]): Promise<InboxItem[]> {
     const items = await this.store.requeueBatch(itemIds);
     if (items.length > 0) signalWake(this.agentId);

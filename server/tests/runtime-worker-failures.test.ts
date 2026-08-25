@@ -8,7 +8,8 @@ import { withAnimaHome } from './anima-home.js';
 import { makeSlackEvent } from './helpers/slack.js';
 import { waitFor } from './helpers/harness.js';
 import { allActivities, loadState } from './helpers/state.js';
-import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
+import { AgentRuntimeWorker, MAX_RATE_LIMIT_DEFERRALS } from '../runtime/runtime-worker.js';
+import type { RuntimeItemFailure } from '../runtime/failure-notice.js';
 import { AgentHealthService } from '../runtime/agent-health.service.js';
 import { AgentHealthStore } from '../runtime/agent-health.store.js';
 import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
@@ -26,6 +27,7 @@ import {
   ControlledRuntime,
   CrashThenSuccessRuntime,
   FatalProviderRuntime,
+  TransientThenSuccessRuntime,
   enqueueInbox,
   queueFor,
   silentLogger,
@@ -548,6 +550,241 @@ test('runtime worker retries provider process crashes and continues same item', 
     const session = await runtimeSessionServiceForAgent('scout').upsertPrimarySession();
     assert.equal(session.current?.id, 'codex-thread-healthy');
     assert.equal(session.archived, undefined);
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker retries transient provider errors on the same session with backoff', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-transient-retry-test-'));
+  const runtime = new TransientThenSuccessRuntime(2);
+  const coordinator = { agentId: 'scout', stateDir };
+  const failures: RuntimeItemFailure[] = [];
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+    worker = new AgentRuntimeWorker({
+      agentId: 'scout',
+      agentRuntime: runtime,
+      onItemFailed: async (_context, failure) => {
+        failures.push(failure);
+      },
+      pollIntervalMs: 10_000,
+      providerRetry: { transientBackoffMs: [1, 1, 1] },
+      queue: queueFor('scout'),
+      stateDir,
+      workerId: 'test-worker',
+    }, silentLogger);
+    const decision = await enqueueInbox(
+      makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-transient-retry',
+        teamId: 'T-demo',
+        text: 'ride out the overload',
+        ts: '1770000010.000001',
+        userId: 'U1',
+      }),
+      coordinator,
+    );
+    await runtimeSessionServiceForAgent('scout').persistProviderSession('claude-code', {
+      id: 'claude-session-healthy',
+      updatedAt: '2026-07-11T19:20:00.000Z',
+    });
+    assert.equal(await worker.drainOnce(), 1);
+
+    assert.equal(await queueFor('scout').find(decision.ctx.item.id), undefined);
+    assert.equal(runtime.calls.length, 3);
+    assert.equal(runtime.closeCalls, 2, 'provider closed before each retry');
+    for (const call of runtime.calls) assert.equal(call.providerSession?.id, 'claude-session-healthy');
+    assert.match(runtime.calls[1]?.prompt ?? '', /Provider error retry/);
+    assert.match(runtime.calls[1]?.prompt ?? '', /retry=1\/3/);
+    assert.match(runtime.calls[1]?.prompt ?? '', /529 Overloaded/);
+    assert.match(runtime.calls[2]?.prompt ?? '', /retry=2\/3/);
+    assert.match(runtime.calls[2]?.prompt ?? '', /Do not repeat completed external side effects/);
+    const activities = await activitiesForInboxItemWindow('scout', decision.ctx.item.id);
+    const retries = activities.filter((activity) => activity.type === 'runtime.event' && activity.payload?.['eventType'] === 'provider.transient.retry');
+    assert.equal(retries.length, 2);
+    assert.equal(retries[0]?.payload?.['attempt'], 1);
+    assert.equal(retries[0]?.payload?.['maxRetries'], 3);
+    assert.equal(activities.some((activity) => activity.type === 'runtime.failed'), false);
+    assert.equal(failures.length, 0);
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker fails an item after transient retries are exhausted and tells the requester', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-transient-exhausted-test-'));
+  const runtime = new TransientThenSuccessRuntime(
+    10,
+    "API Error: Fable 5's safeguards flagged this message (https://www.anthropic.com/legal/aup). This sometimes happens with safe, normal conversations.",
+  );
+  const coordinator = { agentId: 'scout', stateDir };
+  const failures: Array<{ itemId: string; failure: RuntimeItemFailure }> = [];
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+    worker = new AgentRuntimeWorker({
+      agentId: 'scout',
+      agentRuntime: runtime,
+      onItemFailed: async (context, failure) => {
+        failures.push({ failure, itemId: context.item.id });
+      },
+      pollIntervalMs: 10_000,
+      providerRetry: { transientBackoffMs: [1, 1, 1] },
+      queue: queueFor('scout'),
+      stateDir,
+      workerId: 'test-worker',
+    }, silentLogger);
+    const decision = await enqueueInbox(
+      makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-transient-exhausted',
+        teamId: 'T-demo',
+        text: 'keeps getting refused',
+        ts: '1770000010.000001',
+        userId: 'U1',
+      }),
+      coordinator,
+    );
+    assert.equal(await worker.drainOnce(), 1);
+
+    assert.equal(await queueFor('scout').find(decision.ctx.item.id), undefined);
+    assert.equal(runtime.calls.length, 4);
+    const activities = await activitiesForInboxItemWindow('scout', decision.ctx.item.id);
+    assert.equal(
+      activities.filter((activity) => activity.type === 'runtime.event' && activity.payload?.['eventType'] === 'provider.transient.retry').length,
+      3,
+    );
+    const failed = activities.find((activity) => activity.type === 'runtime.failed');
+    assert.equal(failed?.payload?.['failureSource'], 'provider');
+    assert.equal(failed?.payload?.['retryClass'], 'transient');
+    assert.equal(failed?.payload?.['retryAttempts'], 3);
+    assert.equal(failed?.payload?.['maxRetries'], 3);
+    assert.equal(failed?.payload?.['retryable'], false);
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0]?.itemId, decision.ctx.item.id);
+    assert.equal(failures[0]?.failure.retryClass, 'transient');
+    assert.equal(failures[0]?.failure.retryAttempts, 3);
+    assert.match(String((failures[0]?.failure.error as Error).message), /safeguards flagged/);
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker defers a rate-limited item until the provider reset instead of failing it', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-rate-limit-defer-test-'));
+  const runtime = new FatalProviderRuntime("You've hit your session limit · resets in 45 minutes (api status 429)");
+  const coordinator = { agentId: 'scout', stateDir };
+  const failures: RuntimeItemFailure[] = [];
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+    worker = new AgentRuntimeWorker({
+      agentId: 'scout',
+      agentRuntime: runtime,
+      onItemFailed: async (_context, failure) => {
+        failures.push(failure);
+      },
+      pollIntervalMs: 10_000,
+      queue: queueFor('scout'),
+      stateDir,
+      workerId: 'test-worker',
+    }, silentLogger);
+    const decision = await enqueueInbox(
+      makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-rate-limit-defer',
+        teamId: 'T-demo',
+        text: 'wait for quota',
+        ts: '1770000010.000001',
+        userId: 'U1',
+      }),
+      coordinator,
+    );
+    const before = Date.now();
+    // 'deferred' outcome stops the drain cycle: one claim, no hot reclaim.
+    assert.equal(await worker.drainOnce(), 0);
+    assert.equal(runtime.calls.length, 1);
+
+    const deferred = await queueFor('scout').find(decision.ctx.item.id);
+    assert.equal(deferred?.handling.status, 'queued');
+    assert.equal(deferred?.handling.deferrals, 1);
+    const notBefore = Date.parse(deferred?.handling.notBefore ?? '');
+    assert.ok(notBefore >= before + 44 * 60_000 && notBefore <= before + 46 * 60_000, `unexpected notBefore ${deferred?.handling.notBefore}`);
+
+    // Still parked on the next drain.
+    assert.equal(await worker.drainOnce(), 0);
+    assert.equal(runtime.calls.length, 1);
+
+    const activities = await activitiesForInboxItemWindow('scout', decision.ctx.item.id);
+    const defer = activities.find((activity) => activity.type === 'runtime.event' && activity.payload?.['eventType'] === 'provider.rate_limit.defer');
+    assert.equal(typeof defer?.payload?.['resumeAt'], 'string');
+    assert.equal(activities.some((activity) => activity.type === 'runtime.failed'), false);
+    assert.equal(failures.length, 0);
+    const health = await new AgentHealthStore({ animaHome: stateDir }).get('scout');
+    assert.equal(health?.reason, 'provider_rate_limited');
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime worker fails a rate-limited item once the deferral budget is spent', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-rate-limit-exhausted-test-'));
+  const runtime = new FatalProviderRuntime('Too many requests (api status 429)');
+  const coordinator = { agentId: 'scout', stateDir };
+  const failures: RuntimeItemFailure[] = [];
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+    worker = new AgentRuntimeWorker({
+      agentId: 'scout',
+      agentRuntime: runtime,
+      onItemFailed: async (_context, failure) => {
+        failures.push(failure);
+      },
+      pollIntervalMs: 10_000,
+      queue: queueFor('scout'),
+      stateDir,
+      workerId: 'test-worker',
+    }, silentLogger);
+    const decision = await enqueueInbox(
+      makeSlackEvent({
+        channelId: 'D-user',
+        eventId: 'evt-rate-limit-exhausted',
+        teamId: 'T-demo',
+        text: 'never gets quota',
+        ts: '1770000010.000001',
+        userId: 'U1',
+      }),
+      coordinator,
+    );
+    // Simulate the budget already spent on earlier deferrals.
+    await queueFor('scout').takeNextRunnable({ isWorkerAlive: () => true, workerId: 'test-worker' });
+    await queueFor('scout').requeueDeferred(decision.ctx.item.id, {
+      deferrals: MAX_RATE_LIMIT_DEFERRALS,
+      notBefore: new Date(Date.now() - 1_000).toISOString(),
+    });
+
+    assert.equal(await worker.drainOnce(), 1);
+    assert.equal(runtime.calls.length, 1);
+    assert.equal(await queueFor('scout').find(decision.ctx.item.id), undefined);
+    const activities = await activitiesForInboxItemWindow('scout', decision.ctx.item.id);
+    const failed = activities.find((activity) => activity.type === 'runtime.failed');
+    assert.equal(failed?.payload?.['providerReason'], 'provider_rate_limited');
+    assert.equal(failed?.payload?.['retryClass'], 'rate_limited');
+    assert.equal(failed?.payload?.['retryAttempts'], MAX_RATE_LIMIT_DEFERRALS);
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0]?.retryClass, 'rate_limit_deferrals_exhausted');
+    assert.equal(failures[0]?.retryAttempts, MAX_RATE_LIMIT_DEFERRALS);
     });
   } finally {
     await worker?.close();

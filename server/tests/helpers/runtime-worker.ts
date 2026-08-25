@@ -483,6 +483,32 @@ export class CrashThenSuccessRuntime implements AgentRuntime {
   }
 }
 
+/** Fails with a transient-looking provider error N times, then succeeds. */
+export class TransientThenSuccessRuntime implements AgentRuntime {
+  readonly kind = 'claude-code';
+  readonly calls: AgentRuntimeInput[] = [];
+  closeCalls = 0;
+
+  constructor(
+    private readonly failuresBeforeSuccess: number,
+    private readonly message = 'API Error: 529 Overloaded. This is a server-side issue, usually temporary (api status 529)',
+  ) {}
+
+  async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
+    this.calls.push(input);
+    if (this.calls.length <= this.failuresBeforeSuccess) throw new Error(this.message);
+    return { text: 'recovered after transient error' };
+  }
+
+  async appendToActiveRun(_input: AgentRuntimeFollowupInput): Promise<{ accepted: boolean }> {
+    return { accepted: false };
+  }
+
+  async close(): Promise<void> {
+    this.closeCalls += 1;
+  }
+}
+
 export class FatalProviderRuntime implements AgentRuntime {
   readonly kind = 'claude-code';
   readonly calls: AgentRuntimeInput[] = [];

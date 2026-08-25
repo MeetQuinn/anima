@@ -29,7 +29,14 @@ import {
 } from './activity.js';
 import { startActiveRunControl, type ActiveRunHandle } from './active-run-control.js';
 import { appendQueuedFollowupsUntilFinished } from './followup-appender.js';
-import { recordFinalRuntimeFailure, runProviderWithCrashRetries } from './provider-runner.js';
+import {
+  isProviderRateLimitedError,
+  recordFinalRuntimeFailure,
+  runProviderWithCrashRetries,
+  type ProviderRetryOptions,
+} from './provider-runner.js';
+import { classifyProviderRetry } from '../providers/provider-retry.js';
+import type { RuntimeItemFailure } from './failure-notice.js';
 import { defaultAgentHealthService, isProviderFailureReason } from './agent-health.service.js';
 import { runtimeSessionServiceForAgent } from './runtime-session.service.js';
 import type { AgentRuntimeHandleSnapshot } from '../../shared/snapshot.js';
@@ -47,6 +54,12 @@ import { observedConversationStoreForAgent } from '../storage/schema/observed-co
 // appends follow-up items into the active run, and settles item lifecycle state.
 const IDLE_TIMEOUT_MS_DEFAULT = PROVIDER_IDLE_TIMEOUT_MS_DEFAULT;
 const STALE_RUNNING_RECOVERY_MS = 30 * 60 * 1000;
+/**
+ * How many times one item may be deferred for provider rate limits before it
+ * is failed and the requester told. Each deferral waits until the provider's
+ * reported reset (bounded in provider-retry.ts), so this is hours, not minutes.
+ */
+export const MAX_RATE_LIMIT_DEFERRALS = 6;
 
 interface AgentRuntimeWorkerOptions extends RuntimeWorkerConfig {
   agentRuntime: AgentRuntime;
@@ -54,9 +67,12 @@ interface AgentRuntimeWorkerOptions extends RuntimeWorkerConfig {
   /** Test seam: inject a deferred restart-drain probe. */
   isRestartDrainActive?: () => Promise<boolean>;
   onItemStarted?: (context: RuntimeItemContext) => Promise<void>;
+  /** Terminal failure (retries exhausted or non-retryable): tell the requester. */
+  onItemFailed?: (context: RuntimeItemContext, failure: RuntimeItemFailure) => Promise<void>;
   onItemFollowupAppended?: (activeContext: RuntimeItemContext, context: RuntimeItemContext) => Promise<void>;
   onItemSettled?: (context: RuntimeItemContext) => Promise<void>;
   pollIntervalMs?: number;
+  providerRetry?: ProviderRetryOptions;
   queue: WakeQueueService;
   workerIsAlive?: (workerId: string) => boolean;
   workerId?: string;
@@ -289,6 +305,7 @@ export class AgentRuntimeWorker {
     let context: RuntimeItemContext | undefined;
     let memoryCoherenceBeforeDigest: string | undefined;
     let runtimeFailureRecorded = false;
+    let recordedFailure: RuntimeItemFailure | undefined;
     const itemAbort = new AbortController();
     const handle = this.registerActiveItem(item.id, itemAbort);
     let followupLoop: Promise<void> | undefined;
@@ -457,8 +474,9 @@ export class AgentRuntimeWorker {
           suppressFailureRecord: true,
         }),
         itemId: item.id,
-        onFinalFailureRecorded: () => {
+        onFinalFailureRecorded: (failure) => {
           runtimeFailureRecorded = true;
+          recordedFailure = failure;
         },
         recoverCorruptSession: (error) => this.recoverCorruptProviderSession(
           runContext,
@@ -466,6 +484,7 @@ export class AgentRuntimeWorker {
           item.id,
           error,
         ),
+        ...(this.options.providerRetry ? { retry: this.options.providerRetry } : {}),
         signal: itemAbort.signal,
       });
       itemAbort.abort('completed');
@@ -509,6 +528,35 @@ export class AgentRuntimeWorker {
       if (abortReason && context) {
         appendedFollowupsSettled = await this.settleAbortedItem(context, abortReason);
         itemSettled = true;
+      } else if (context && isProviderRateLimitedError(error)) {
+        const deferrals = (context.item.handling.deferrals ?? 0) + 1;
+        if (deferrals <= MAX_RATE_LIMIT_DEFERRALS) {
+          // Rate limit: keep the wake, park it until the provider's reset.
+          await this.queue.requeueDeferred(item.id, {
+            deferrals,
+            notBefore: error.resumeAt.toISOString(),
+          });
+          await this.queue.requeueAppendedTo(item.id);
+          this.logger.log(JSON.stringify({
+            agentRuntime: this.options.agentRuntime.kind,
+            deferrals,
+            event: 'runtime.rate_limit_deferred',
+            itemId: item.id,
+            resumeAt: error.resumeAt.toISOString(),
+            workerId: this.workerId,
+          }, null, 2));
+          return 'deferred';
+        }
+        await recordFinalRuntimeFailure({
+          agentId: this.options.agentId,
+          agentRuntime: this.options.agentRuntime,
+          error: error.cause,
+          itemId: item.id,
+          providerFailure: true,
+          retryAttempts: deferrals - 1,
+          retryClass: 'rate_limited',
+        });
+        runtimeFailureRecorded = true;
       } else if (context && !runtimeFailureRecorded) {
         await recordFinalRuntimeFailure({
           agentId: this.options.agentId,
@@ -521,6 +569,7 @@ export class AgentRuntimeWorker {
       if (!itemSettled) {
         await this.queue.fail(item.id);
         await this.queue.requeueAppendedTo(item.id);
+        if (context) await this.notifyItemFailed(context, error, recordedFailure);
       }
       if (abortReason === 'restart_drain') {
         this.logger.log(JSON.stringify({
@@ -671,6 +720,32 @@ export class AgentRuntimeWorker {
     } catch (error) {
       this.logger.error(
         `Runtime worker follow-up appended hook failed for item ${context.item.id}: ${errorMessage(error)}`,
+      );
+    }
+  }
+
+  private async notifyItemFailed(
+    context: RuntimeItemContext,
+    error: unknown,
+    recorded: RuntimeItemFailure | undefined,
+  ): Promise<void> {
+    if (!this.options.onItemFailed) return;
+    const failure: RuntimeItemFailure = isProviderRateLimitedError(error)
+      ? {
+          error: error.cause,
+          retryAttempts: context.item.handling.deferrals ?? 0,
+          retryClass: 'rate_limit_deferrals_exhausted',
+        }
+      : recorded ?? {
+          error,
+          retryAttempts: 0,
+          retryClass: classifyProviderRetry(error),
+        };
+    try {
+      await this.options.onItemFailed(context, failure);
+    } catch (hookError) {
+      this.logger.error(
+        `Runtime worker item-failed hook failed for item ${context.item.id}: ${errorMessage(hookError)}`,
       );
     }
   }

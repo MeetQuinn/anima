@@ -28,6 +28,7 @@ import type { Reminder } from '../../shared/reminder.js';
 import {
   providerCrashRetryNote,
   providerSessionRecoveryNote,
+  providerTransientRetryNote,
   RUNTIME_RESTART_CONTINUATION_NOTE,
 } from './delivery-notes.js';
 
@@ -355,6 +356,28 @@ export function buildProviderCrashRetryDeliveryPrompt(input: {
     `Previous error: ${input.previousError}`,
     '',
     providerCrashRetryNote(),
+  ].join('\n');
+}
+
+export function buildProviderTransientRetryDeliveryPrompt(input: {
+  attempt: number;
+  itemId?: string;
+  maxRetries: number;
+  previousError: string;
+  time: string;
+}): string {
+  return [
+    'Provider error retry:',
+    '',
+    renderEnvelope([
+      { key: 'item', value: input.itemId },
+      { key: 'retry', value: `${input.attempt}/${input.maxRetries}` },
+      { key: 'time', value: envelopeTime(input.time) },
+    ]),
+    '',
+    `Previous error: ${input.previousError}`,
+    '',
+    providerTransientRetryNote(),
   ].join('\n');
 }
 
