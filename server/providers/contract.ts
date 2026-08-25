@@ -5,6 +5,7 @@ import type {
   GrokCliAgentProviderConfig,
   KimiCliAgentProviderConfig,
   OpenCodeCliAgentProviderConfig,
+  PiAgentProviderConfig,
 } from '../../shared/agent-config.js';
 import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
 import type { ProviderUsageInput } from '../../shared/agent-token-usage.js';
@@ -16,6 +17,7 @@ export type {
   GrokCliAgentProviderConfig,
   KimiCliAgentProviderConfig,
   OpenCodeCliAgentProviderConfig,
+  PiAgentProviderConfig,
 };
 
 export interface ProviderSessionRecord {

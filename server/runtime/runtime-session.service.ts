@@ -190,7 +190,10 @@ export function runtimeSessionServiceForAgent(agentId: string): RuntimeSessionSe
 export function tokenDeltaForActivities(activities: Activity[]): number | undefined {
   const sessionStats = latestActivity(
     activities,
-    (eventType) => eventType === 'claude.session.stats' || eventType === 'codex.session.stats',
+    (eventType) =>
+      eventType === 'claude.session.stats'
+      || eventType === 'codex.session.stats'
+      || eventType === 'pi.session.stats',
   );
   if (sessionStats) return tokenDeltaFromPayload(sessionStats.payload);
 
@@ -199,7 +202,8 @@ export function tokenDeltaForActivities(activities: Activity[]): number | undefi
     (eventType) =>
       eventType === 'grok.context.stats'
       || eventType === 'kimi.context.stats'
-      || eventType === 'opencode.context.stats',
+      || eventType === 'opencode.context.stats'
+      || eventType === 'pi.context.stats',
   );
   return acpStats ? tokenDeltaFromPayload(acpStats.payload) : undefined;
 }
@@ -267,6 +271,7 @@ function mergeSessionStats(
     eventType === 'grok.context.stats'
     || eventType === 'kimi.context.stats'
     || eventType === 'opencode.context.stats'
+    || eventType === 'pi.context.stats'
       ? undefined
       : summary.usedTokens;
   const currentContextTokens =
@@ -364,7 +369,8 @@ function providerSessionStatsPayload(
     eventType === 'codex.session.stats' ||
     eventType === 'grok.context.stats' ||
     eventType === 'kimi.context.stats' ||
-    eventType === 'opencode.context.stats'
+    eventType === 'opencode.context.stats' ||
+    eventType === 'pi.session.stats'
     ? payload
     : undefined;
 }
@@ -377,7 +383,8 @@ function providerContextStatsPayload(
     eventType === 'codex.context.stats' ||
     eventType === 'grok.context.stats' ||
     eventType === 'kimi.context.stats' ||
-    eventType === 'opencode.context.stats'
+    eventType === 'opencode.context.stats' ||
+    eventType === 'pi.context.stats'
     ? payload
     : undefined;
 }

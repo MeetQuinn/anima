@@ -1,11 +1,11 @@
 ---
 title: Provider setup and identity
-description: Install and authenticate Claude Code, Codex CLI, Kimi CLI, Grok Build, or OpenCode for use by Anima agents.
+description: Install and authenticate Claude Code, Codex CLI, Kimi CLI, Grok Build, OpenCode, or pi for use by Anima agents.
 ---
 
 # Provider setup and identity
 
-Anima supplies the durable agent identity, chat routing, queue, memory, and activity trail. Claude Code, Codex CLI, Kimi CLI, Grok Build, or OpenCode supplies the model work and developer tools.
+Anima supplies the durable agent identity, chat routing, queue, memory, and activity trail. Claude Code, Codex CLI, Kimi CLI, Grok Build, OpenCode, or pi supplies the model work and developer tools.
 
 The provider CLI is a machine-level dependency. Anima launches the executable found on the host's `PATH` and uses that provider's existing local authentication. Provider login state is not copied into an agent home or stored by Anima.
 
@@ -20,12 +20,13 @@ Install and authenticate at least one before creating the first agent.
 | Kimi CLI    | [Install Kimi Code CLI](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started) and use `/login` on first launch       | `kimi --version`                  |
 | Grok Build  | [Install Grok Build](https://docs.x.ai/build/overview) and sign in with `grok login` or configure its supported API-key authentication | `grok --no-auto-update --version` |
 | OpenCode    | [Install OpenCode](https://opencode.ai/docs/) and add a DeepSeek API key with `opencode auth login --provider deepseek`                | `opencode --version`              |
+| pi          | `npm install -g @earendil-works/pi-coding-agent`, then run `pi` and `/login` (or add the provider API key to `~/.pi/agent/auth.json`)  | `pi --version`                    |
 
 Run the verification command from the same host user and service environment that runs Anima. A CLI installed only inside another shell profile or user account may work interactively while remaining invisible to the Anima services.
 
 ## How onboarding detects readiness
 
-The create-agent flow checks whether `claude`, `codex`, `kimi`, `grok`, and `opencode` resolve on `PATH`.
+The create-agent flow checks whether `claude`, `codex`, `kimi`, `grok`, `opencode`, and `pi` resolve on `PATH`.
 
 - Missing providers are disabled.
 - If one available provider exists, onboarding can select it automatically.
@@ -37,7 +38,7 @@ Detection proves that an executable exists. The first real turn proves that its 
 
 Each provider has machine-wide **Runtime command** and **Arguments** fields under
 **Providers → Settings**. Leave the command blank to use the default shown in the placeholder:
-`claude`, `codex`, `kimi`, `grok`, or `opencode`. Set it to another executable name or an absolute
+`claude`, `codex`, `kimi`, `grok`, `opencode`, or `pi`. Set it to another executable name or an absolute
 executable path when every Anima agent using that provider should launch through a compatible
 wrapper, for example `mcodex` for Codex.
 
@@ -82,22 +83,29 @@ there is no per-agent credential isolation in Anima.
 During agent creation, select the provider, model, and reasoning level. The effort menu follows the
 selected model exactly:
 
-| Provider    | Models                                     | Reasoning effort                                 |
-| ----------- | ------------------------------------------ | ------------------------------------------------ |
-| Claude Code | Opus, Sonnet, Fable; Opus 4.8              | `low`, `medium`, `high`, `xhigh`, `max`          |
-| Claude Code | Opus 4.6, Sonnet 4.6                       | `low`, `medium`, `high`, `max`                   |
-| Claude Code | Haiku                                      | Provider default; no adjustable effort           |
-| Codex CLI   | GPT-5.6 Sol, GPT-5.6 Terra                 | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
-| Codex CLI   | GPT-5.6 Luna                               | `low`, `medium`, `high`, `xhigh`, `max`          |
-| Codex CLI   | GPT-5.5                                    | `low`, `medium`, `high`, `xhigh`                 |
-| Kimi CLI    | K3                                         | `low`, `high`, `max`                             |
-| Kimi CLI    | Kimi for Coding, Kimi for Coding Highspeed | Always thinking; no adjustable level             |
-| OpenCode    | DeepSeek V4 Pro, DeepSeek V4 Flash         | `high`, `max`                                    |
-| Grok Build  | Live model catalog                         | Whatever the selected model advertises           |
+| Provider    | Models                                                                                | Reasoning effort                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Claude Code | Opus, Sonnet, Fable; Opus 4.8                                                         | `low`, `medium`, `high`, `xhigh`, `max`                                                                |
+| Claude Code | Opus 4.6, Sonnet 4.6                                                                  | `low`, `medium`, `high`, `max`                                                                         |
+| Claude Code | Haiku                                                                                 | Provider default; no adjustable effort                                                                 |
+| Codex CLI   | GPT-5.6 Sol, GPT-5.6 Terra                                                            | `low`, `medium`, `high`, `xhigh`, `max`, `ultra`                                                       |
+| Codex CLI   | GPT-5.6 Luna                                                                          | `low`, `medium`, `high`, `xhigh`, `max`                                                                |
+| Codex CLI   | GPT-5.5                                                                               | `low`, `medium`, `high`, `xhigh`                                                                       |
+| Kimi CLI    | K3                                                                                    | `low`, `high`, `max`                                                                                   |
+| Kimi CLI    | Kimi for Coding, Kimi for Coding Highspeed                                            | Always thinking; no adjustable level                                                                   |
+| OpenCode    | DeepSeek V4 Pro, DeepSeek V4 Flash                                                    | `high`, `max`                                                                                          |
+| pi          | Gemini 2.5 Pro/Flash, Gemini 3.1 Pro Preview, Gemini 3.7 Flash, DeepSeek V4 Pro/Flash | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (pi `--thinking`; the model decides what it honors) |
+| Grok Build  | Live model catalog                                                                    | Whatever the selected model advertises                                                                 |
 
 OpenCode agents can use DeepSeek V4 Pro or DeepSeek V4 Flash. Their DeepSeek API key stays in
 OpenCode's machine-level credential store; Anima does not copy it into the agent's Launch
 environment.
+
+pi agents address models as `provider/id` (for example `google/gemini-2.5-pro` or
+`deepseek/deepseek-v4-pro`). The dashboard offers a curated list of those ids; reading pi's
+live model catalog is not implemented yet. Provider credentials stay in pi's machine-level store
+(`~/.pi/agent/auth.json`) or the Anima service environment; per-agent `*_API_KEY` values are not
+passed to pi.
 
 For Grok Build, Anima reads the current model catalog from the installed CLI (for example `grok-4.5` and `grok-composer-2.5-fast`) and records the actual model ID returned by the runtime. Reasoning effort is **per model**: only models that advertise effort support show an effort control (Composer does not). The `grok-build` marketing alias is never stored as model authority.
 

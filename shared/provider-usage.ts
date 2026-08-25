@@ -6,6 +6,7 @@ export const ProviderUsageKind = z.enum([
   'kimi-cli',
   'grok-cli',
   'opencode-cli',
+  'pi',
 ]);
 export type ProviderUsageKind = z.infer<typeof ProviderUsageKind>;
 

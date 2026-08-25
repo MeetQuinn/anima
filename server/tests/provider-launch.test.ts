@@ -30,6 +30,7 @@ test('provider runtimes use catalog commands by default and accept one executabl
     [{ kind: 'kimi-cli' as const }, 'kimi'],
     [{ kind: 'grok-cli' as const }, 'grok'],
     [{ kind: 'opencode-cli' as const }, 'opencode'],
+    [{ kind: 'pi' as const }, 'pi'],
   ] as const;
 
   for (const [config, expected] of cases) {

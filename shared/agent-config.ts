@@ -365,6 +365,22 @@ export const OpenCodeCliAgentProviderConfig = z.object({
 
 export type OpenCodeCliAgentProviderConfig = z.infer<typeof OpenCodeCliAgentProviderConfig>;
 
+export const PiAgentProviderConfig = z.object({
+  env: z.record(z.string(), z.string()).optional(),
+  idleTimeoutMs: z.number().optional(),
+  kind: z.literal('pi'),
+  model: z.string().optional(),
+  providerChildIdleTimeoutMs: z.number().nonnegative().optional(),
+  // Agent-level launch overrides (aligned with the machine-wide
+  // providerCommands/providerArgs from shared/provider-runtime-commands.ts).
+  // When set they replace the machine-wide value for this agent; unset inherits.
+  runtimeArgs: ProviderRuntimeArgs.optional(),
+  runtimeCommand: ProviderRuntimeCommand.optional(),
+  reasoningEffort: z.string().optional(),
+});
+
+export type PiAgentProviderConfig = z.infer<typeof PiAgentProviderConfig>;
+
 export const AgentProviderConfig = z.preprocess(
   (value) => {
     const input = isRecord(value) ? value : {};
@@ -404,6 +420,7 @@ export const AgentProviderConfig = z.preprocess(
     GrokCliAgentProviderConfig,
     KimiCliAgentProviderConfig,
     OpenCodeCliAgentProviderConfig,
+    PiAgentProviderConfig,
   ]),
 );
 
