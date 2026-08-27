@@ -21,6 +21,8 @@ import { ProviderUsageKind } from '../../shared/provider-usage.js';
 import { SidebarOrder, WorkspacePlatform } from '../../shared/server-settings.js';
 import { ProviderContextLimitRequest } from '../../shared/provider-context-limits.js';
 import { ProviderRuntimeCommandRequest } from '../../shared/provider-runtime-commands.js';
+import { ProviderLoginStartRequest } from '../../shared/provider-login.js';
+import { defaultProviderLoginService, ProviderLoginError } from '../providers/login.service.js';
 import {
   defaultProviderContextLimitService,
   ProviderContextLimitError,
@@ -117,6 +119,35 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
     } catch (error) {
       if (error instanceof ProviderRuntimeCommandError)
         throw new HttpError(error.statusCode, error.message);
+      throw error;
+    }
+  });
+
+  fastify.get('/api/provider-login', async (request) => {
+    const refresh = (request.query as { refresh?: unknown }).refresh;
+    return defaultProviderLoginService.status({ force: refresh === '1' || refresh === 'true' });
+  });
+
+  fastify.post('/api/provider-login/:provider', async (request, reply) => {
+    const provider = ProviderUsageKind.safeParse((request.params as { provider?: unknown }).provider);
+    if (!provider.success) return reply.status(400).send({ error: 'Invalid provider login provider' });
+    const parsed = ProviderLoginStartRequest.safeParse(request.body);
+    if (!parsed.success) return reply.status(400).send({ error: 'Invalid provider login payload' });
+    try {
+      return await defaultProviderLoginService.start(provider.data, parsed.data.mode);
+    } catch (error) {
+      if (error instanceof ProviderLoginError) throw new HttpError(error.statusCode, error.message);
+      throw error;
+    }
+  });
+
+  fastify.delete('/api/provider-login/:provider', async (request, reply) => {
+    const provider = ProviderUsageKind.safeParse((request.params as { provider?: unknown }).provider);
+    if (!provider.success) return reply.status(400).send({ error: 'Invalid provider login provider' });
+    try {
+      return await defaultProviderLoginService.cancel(provider.data);
+    } catch (error) {
+      if (error instanceof ProviderLoginError) throw new HttpError(error.statusCode, error.message);
       throw error;
     }
   });

@@ -83,6 +83,20 @@ export const GOVERNED_ROUTES: readonly GovernedRoute[] = [
       "Changes which machine-user executable and argv every agent of a provider launches. The command can resolve through the machine user's PATH or name an absolute executable outside ANIMA_HOME, and arguments can enable machine-user integrations or redirect provider behavior, so an isolated runtime must not redirect live provider processes to host code or capabilities it does not own.",
   },
   {
+    id: 'POST /api/provider-login/:provider',
+    method: 'POST',
+    pattern: /^\/api\/provider-login\/[^/]+$/,
+    evidence:
+      "Runs the machine user's provider CLI login, which writes a new OAuth credential to the provider's own store outside ANIMA_HOME (for example ~/.codex/auth.json). That credential is shared by every provider process this machine user owns, across Anima homes.",
+  },
+  {
+    id: 'DELETE /api/provider-login/:provider',
+    method: 'DELETE',
+    pattern: /^\/api\/provider-login\/[^/]+$/,
+    evidence:
+      'Terminates a running machine-user provider login process started by the route above; the pair is governed together so an isolated runtime cannot interfere with a sign-in it could not have started.',
+  },
+  {
     id: 'PUT /api/provider-context-limits',
     method: 'PUT',
     pattern: /^\/api\/provider-context-limits$/,

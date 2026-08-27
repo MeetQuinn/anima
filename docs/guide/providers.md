@@ -69,6 +69,24 @@ remain operator-owned and must preserve the provider protocol that Anima expects
 
 Sign in through the provider's own CLI. Do not paste provider login tokens into an Anima agent, Slack, Feishu, or an agent env entry.
 
+The **Providers** panel can run that CLI sign-in for you. Each supported provider row has a
+**Sign-in** block that shows whether the CLI reports a signed-in account and offers two ways to sign
+in:
+
+- **Sign in in this browser** runs `<runtime command> login`. The CLI opens its sign-in page on the
+  machine that runs Anima and finishes through its local callback, so use it when you are at that
+  machine.
+- **Sign in with a code** runs `<runtime command> login --device-auth`. The panel shows the link and
+  the one-time code the CLI prints; open the link on any device, enter the code, and sign in there,
+  including any two-factor step. Anima notices when the CLI exits.
+
+The sign-in uses the runtime command configured for the provider (see
+[Customize the runtime launch](#customize-the-runtime-launch)). A wrapper such as a multi-account
+router therefore receives the login instead of the bare CLI, and the credential lands where that
+wrapper expects it. Anima never sees the credential: it only relays the link and code, reports how
+the CLI exited, and reruns `login status` afterwards. One sign-in runs at a time per machine; cancel
+it from the panel if you started the wrong mode. Currently supported: Codex CLI.
+
 All Anima agents launched under the same host user can reach the same provider credential store unless the provider itself is configured differently. Choosing a different provider for an agent does not create a separate machine account boundary.
 
 The **Providers** panel shows the account label or identifier when the provider exposes one safely. It never stores or displays access tokens. An unavailable usage check can still show the last account Anima identified from local credentials.

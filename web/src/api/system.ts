@@ -7,6 +7,7 @@ import type {
   ProviderContextLimitsResponse,
 } from '@shared/provider-context-limits';
 import type { ProviderRuntimeCommandsResponse } from '@shared/provider-runtime-commands';
+import type { ProviderLoginMode, ProviderLoginStatusResponse } from '@shared/provider-login';
 import type { ServerInfo } from '@shared/server-info';
 import type { SidebarOrder, WorkspacePlatform } from '@shared/server-settings';
 import type {
@@ -105,6 +106,25 @@ export async function saveProviderRuntimeCommand(
     '/api/provider-runtime-commands',
     jsonInit('PUT', { args, command, provider }),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Provider sign-in
+// ---------------------------------------------------------------------------
+
+export async function fetchProviderLogin(options: { refresh?: boolean } = {}): Promise<ProviderLoginStatusResponse> {
+  return apiRequest(options.refresh ? '/api/provider-login?refresh=1' : '/api/provider-login');
+}
+
+export async function startProviderLogin(
+  provider: ProviderUsageKind,
+  mode: ProviderLoginMode,
+): Promise<ProviderLoginStatusResponse> {
+  return apiRequest(`/api/provider-login/${encodeURIComponent(provider)}`, jsonInit('POST', { mode }));
+}
+
+export async function cancelProviderLogin(provider: ProviderUsageKind): Promise<ProviderLoginStatusResponse> {
+  return apiRequest(`/api/provider-login/${encodeURIComponent(provider)}`, { method: 'DELETE' });
 }
 
 export async function fetchServerInfo(): Promise<ServerInfo> {

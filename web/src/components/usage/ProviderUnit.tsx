@@ -3,9 +3,11 @@ import { ArrowUp, ChevronDown, Copy } from 'lucide-react';
 
 import type { ProviderCliRow } from '@shared/provider-cli';
 import type { ProviderContextLimitRow } from '@shared/provider-context-limits';
+import type { ProviderLoginMode, ProviderLoginRow } from '@shared/provider-login';
 import type { ProviderRuntimeCommandRow } from '@shared/provider-runtime-commands';
 import type { ProviderUsageRow } from '@shared/provider-usage';
 import { BrandIcon } from './BrandIcon';
+import { ProviderSignIn } from './ProviderSignIn';
 import { WindowRow } from './WindowRow';
 import { extraValue, formatContextTokens, providerCollapsedSummary, providerUsageErrorMessage, splitExtras } from './format';
 
@@ -33,6 +35,11 @@ export function ProviderUnit({
   runtimeCommandError,
   runtimeCommandSaving = false,
   onRuntimeCommandSave,
+  login,
+  loginBusy = false,
+  loginError,
+  onLoginStart,
+  onLoginCancel,
 }: {
   expanded: boolean;
   globallyLocked?: boolean;
@@ -50,6 +57,11 @@ export function ProviderUnit({
   runtimeCommandError?: string;
   runtimeCommandSaving?: boolean;
   onRuntimeCommandSave: (command: string | null, args: string[]) => void;
+  login?: ProviderLoginRow;
+  loginBusy?: boolean;
+  loginError?: string;
+  onLoginStart?: (mode: ProviderLoginMode) => void;
+  onLoginCancel?: () => void;
 }) {
   const storedRuntimeCommand = runtimeCommand.command ?? '';
   const storedRuntimeArgs = runtimeCommand.args.join('\n');
@@ -83,9 +95,11 @@ export function ProviderUnit({
   // Errors and in-flight operations force open so they are never trapped
   // behind a fold. A mere update offer does NOT auto-expand — it renders when
   // the user opens the provider, and the footer dot still signals it globally.
+  const signInActive = login?.operation.status === 'running' || login?.operation.status === 'failed';
   const needsAttention = installing
     || operation?.status === 'failed'
-    || staleSessions;
+    || staleSessions
+    || signInActive;
   const open = expanded || needsAttention;
   const collapsedSummary = providerCollapsedSummary(usage ? [usage] : []);
   const normalizedRuntimeCommand = runtimeCommandDraft.trim();
@@ -184,6 +198,17 @@ export function ProviderUnit({
             <div className="space-y-0.5 opacity-60">
               <span className="font-sans text-[12px] text-text-muted">Not configured</span>
             </div>
+          )}
+
+          {login && login.state !== 'unsupported' && onLoginStart && onLoginCancel && (
+            <ProviderSignIn
+              busy={loginBusy}
+              error={loginError}
+              label={management.label}
+              login={login}
+              onCancel={onLoginCancel}
+              onStart={onLoginStart}
+            />
           )}
 
           <details className="group">
