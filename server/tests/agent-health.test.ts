@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import {
   AgentHealthService,
   applyHealthWrite,
+  applyProviderErrorClear,
   applyProviderFailure,
   deriveApiHealth,
   isStaleRunningItem,
@@ -452,6 +453,85 @@ test('agent health service applies carry rules through the persisted store', asy
     assert.equal(cleared?.state, 'healthy');
     assert.equal(cleared?.reason, undefined);
     assert.equal(cleared?.runtime?.workerId, 'worker-cleared');
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('provider error clear only touches a provider_error snapshot', () => {
+  const cleared = applyProviderErrorClear(
+    {
+      reason: 'provider_error',
+      runtime: runtimeSnapshot({ workerId: 'worker-rotated' }),
+      state: 'degraded',
+      updatedAt: '2026-06-04T02:00:00.000Z',
+    },
+    '2026-06-04T02:00:30.000Z',
+  );
+  assert.equal(cleared?.state, 'healthy');
+  assert.equal(cleared?.reason, undefined);
+  assert.equal(cleared?.runtime?.workerId, 'worker-rotated');
+  assert.equal(cleared?.updatedAt, '2026-06-04T02:00:30.000Z');
+
+  const withoutRuntime = applyProviderErrorClear(
+    { reason: 'provider_error', state: 'degraded', updatedAt: '2026-06-04T02:00:00.000Z' },
+    '2026-06-04T02:00:30.000Z',
+  );
+  assert.equal(withoutRuntime?.state, 'unknown');
+  assert.equal(withoutRuntime?.reason, undefined);
+
+  for (const reason of ['provider_rate_limited', 'provider_auth_failed', 'provider_quota_exhausted'] as const) {
+    const kept = applyProviderErrorClear(
+      { reason, state: 'degraded', updatedAt: '2026-06-04T02:00:00.000Z' },
+      '2026-06-04T02:00:30.000Z',
+    );
+    assert.equal(kept, undefined, `${reason} must survive a provider_error clear`);
+  }
+  assert.equal(applyProviderErrorClear(undefined, '2026-06-04T02:00:30.000Z'), undefined);
+});
+
+test('agent health service clears provider_error inside the store lock and keeps other failures', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agent-health-clear-test-'));
+  try {
+    const store = new AgentHealthStore({ animaHome: stateDir });
+    const service = new AgentHealthService(store);
+
+    await service.clearProviderError({ agentId: 'alpha', updatedAt: '2026-06-04T03:00:00.000Z' });
+    assert.equal(await store.get('alpha'), undefined);
+
+    await service.writeProviderFailure({
+      agentId: 'alpha',
+      reason: 'provider_error',
+      runtime: runtimeSnapshot({ workerId: 'worker-poisoned' }),
+      updatedAt: '2026-06-04T03:00:10.000Z',
+    });
+    await service.clearProviderError({ agentId: 'alpha', updatedAt: '2026-06-04T03:00:20.000Z' });
+    const cleared = await store.get('alpha');
+    assert.equal(cleared?.state, 'healthy');
+    assert.equal(cleared?.reason, undefined);
+    assert.equal(cleared?.runtime?.workerId, 'worker-poisoned');
+
+    // A failure that lands between the rotate decision and the write must win:
+    // the reason check runs inside the locked update, so it sees this write.
+    await service.writeProviderFailure({
+      agentId: 'alpha',
+      reason: 'provider_rate_limited',
+      updatedAt: '2026-06-04T03:00:30.000Z',
+    });
+    await service.clearProviderError({ agentId: 'alpha', updatedAt: '2026-06-04T03:00:40.000Z' });
+    const rateLimited = await store.get('alpha');
+    assert.equal(rateLimited?.reason, 'provider_rate_limited');
+    assert.equal(rateLimited?.updatedAt, '2026-06-04T03:00:30.000Z');
+
+    await service.writeProviderFailure({
+      agentId: 'alpha',
+      reason: 'provider_auth_failed',
+      updatedAt: '2026-06-04T03:00:50.000Z',
+    });
+    await service.clearProviderError({ agentId: 'alpha', updatedAt: '2026-06-04T03:01:00.000Z' });
+    const authFailed = await store.get('alpha');
+    assert.equal(authFailed?.reason, 'provider_auth_failed');
+    assert.equal(authFailed?.updatedAt, '2026-06-04T03:00:50.000Z');
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }

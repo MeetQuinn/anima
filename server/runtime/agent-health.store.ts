@@ -130,16 +130,22 @@ export class AgentHealthStore {
     return (await this.store.read()).snapshots[agentId];
   }
 
+  // `apply` returning undefined leaves the snapshot untouched; the decision is
+  // made inside the lock, so it holds against concurrent writers.
   async update(
     agentId: string,
-    apply: (previous: AgentRuntimeHealthSummary | undefined) => AgentRuntimeHealthSummary,
+    apply: (previous: AgentRuntimeHealthSummary | undefined) => AgentRuntimeHealthSummary | undefined,
   ): Promise<void> {
-    await this.store.update((current) => ({
-      snapshots: {
-        ...current.snapshots,
-        [agentId]: apply(current.snapshots[agentId]),
-      },
-    }));
+    await this.store.update((current) => {
+      const next = apply(current.snapshots[agentId]);
+      if (!next) return current;
+      return {
+        snapshots: {
+          ...current.snapshots,
+          [agentId]: next,
+        },
+      };
+    });
   }
 
   async clear(agentId: string): Promise<void> {
