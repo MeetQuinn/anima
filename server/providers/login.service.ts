@@ -59,7 +59,7 @@ interface LoginStatusCheck {
 }
 
 interface ActiveLogin {
-  cancel(): void;
+  cancel: () => void;
   provider: ProviderUsageKind;
 }
 
@@ -151,11 +151,22 @@ export class ProviderLoginService {
         `A ${this.active.provider} sign-in is already running; cancel it or wait for it to finish`,
       );
     }
-    const commands = await this.settings.getProviderRuntimeCommands();
-    const command = effectiveProviderRuntimeCommand(provider, commands);
-    const executable = await resolveProviderExecutable(command, this.env);
-    if (!executable) {
-      throw new ProviderLoginError(409, `Runtime command was not found or is not executable: ${command}`);
+    // Reserve the singleton synchronously, before the first await: two
+    // concurrent starts would otherwise both pass the check above and both
+    // spawn. The reservation's cancel becomes real once the child exists.
+    const reservation: ActiveLogin = { cancel: () => {}, provider };
+    this.active = reservation;
+    let executable;
+    try {
+      const commands = await this.settings.getProviderRuntimeCommands();
+      const command = effectiveProviderRuntimeCommand(provider, commands);
+      executable = await resolveProviderExecutable(command, this.env);
+      if (!executable) {
+        throw new ProviderLoginError(409, `Runtime command was not found or is not executable: ${command}`);
+      }
+    } catch (error) {
+      this.active = undefined;
+      throw error;
     }
 
     const startedAt = new Date().toISOString();
@@ -185,12 +196,9 @@ export class ProviderLoginService {
       expired = true;
       child.kill('SIGTERM');
     }, spec.expiresAfterMinutes * 60_000 + EXPIRY_GRACE_MS);
-    this.active = {
-      cancel: () => {
-        cancelled = true;
-        child.kill('SIGTERM');
-      },
-      provider,
+    reservation.cancel = () => {
+      cancelled = true;
+      child.kill('SIGTERM');
     };
     const finish = (patch: Partial<ProviderLoginOperation> & Pick<ProviderLoginOperation, 'status'>): void => {
       clearTimeout(timer);

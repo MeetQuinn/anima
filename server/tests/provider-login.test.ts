@@ -129,6 +129,73 @@ test('provider login service runs the configured command and reports the code, t
   }
 });
 
+test('provider login service admits exactly one of two concurrent starts', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-provider-login-race-'));
+  try {
+    const spawnLog = join(dir, 'spawn-log');
+    const fake = await writeFakeCli(
+      dir,
+      [
+        "const fs = require('node:fs');",
+        'const args = process.argv.slice(2);',
+        "if (args.join(' ') === 'login status') { console.log('Not logged in'); process.exit(1); }",
+        "if (args.includes('--device-auth')) {",
+        `  fs.appendFileSync(${JSON.stringify(spawnLog)}, 'spawn\\n');`,
+        "  console.log('https://example.test/device');",
+        '  setTimeout(() => process.exit(0), 300);',
+        '  setInterval(() => {}, 1000);',
+        '}',
+      ].join('\n'),
+    );
+    const service = new ProviderLoginService({
+      env: process.env,
+      settings: {
+        // Resolves on a later tick, so both starts are in flight before either
+        // could reach the child spawn — the synchronous reservation must gate.
+        getProviderRuntimeCommands: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          return { 'codex-cli': fake };
+        },
+      },
+    });
+
+    const [first, second] = await Promise.allSettled([
+      service.start('codex-cli', 'device'),
+      service.start('codex-cli', 'device'),
+    ]);
+    const outcomes = [first, second].map((result) => result.status).sort();
+    assert.deepEqual(outcomes, ['fulfilled', 'rejected'], 'exactly one start wins');
+    const loser = [first, second].find((result) => result.status === 'rejected');
+    assert.ok(loser?.status === 'rejected' && loser.reason instanceof ProviderLoginError);
+    assert.equal(loser.reason.statusCode, 409);
+
+    await until(async () => {
+      const row = (await service.status()).providers.find((r) => r.provider === 'codex-cli');
+      return row?.operation.status === 'succeeded';
+    }, 'the winning sign-in to finish');
+    const { readFile } = await import('node:fs/promises');
+    assert.equal(await readFile(spawnLog, 'utf8'), 'spawn\n', 'only one child was spawned');
+
+    // A start that fails before the child exists releases the reservation.
+    const missing = new ProviderLoginService({
+      env: process.env,
+      settings: { getProviderRuntimeCommands: async () => ({ 'codex-cli': join(dir, 'not-there') }) },
+    });
+    await assert.rejects(missing.start('codex-cli', 'device'), (error: unknown) => {
+      assert.ok(error instanceof ProviderLoginError);
+      assert.equal(error.statusCode, 409);
+      return true;
+    });
+    await assert.rejects(missing.start('codex-cli', 'device'), (error: unknown) => {
+      assert.ok(error instanceof ProviderLoginError);
+      assert.ok(error.message.includes('not found'), 'the reservation was released, not leaked');
+      return true;
+    });
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
 test('provider login service cancels a running sign-in and reports a failed one', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'anima-provider-login-cancel-'));
   try {
