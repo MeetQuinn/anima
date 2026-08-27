@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { RefreshCw, X } from 'lucide-react';
 import {
   applyProviderCliUpdate,
+  cancelProviderLogin,
   checkProviderClis,
   fetchProviderContextLimits,
   fetchProviderRuntimeCommands,
@@ -11,12 +12,15 @@ import {
   refreshProviderUsage,
   saveProviderContextLimit,
   saveProviderRuntimeCommand,
+  startProviderLogin,
 } from '@/api/system';
 import { queryKeys } from '@/lib/query-keys';
 import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { useNow } from '@/hooks/useNow';
 import { useConfirm } from '@/hooks/useConfirm';
 import { useProviderCliStatus } from '@/hooks/useProviderCliStatus';
+import { useProviderLogin } from '@/hooks/useProviderLogin';
+import type { ProviderLoginMode } from '@shared/provider-login';
 import type { ProviderCliRow } from '@shared/provider-cli';
 import type { ProviderUsageKind, ProviderUsageRow } from '@shared/provider-usage';
 import type { ProviderContextLimitRow } from '@shared/provider-context-limits';
@@ -50,6 +54,9 @@ export default function UsagePanel({ onClose }: Props) {
     provider: ProviderUsageKind;
   }>();
   const { data: cliData, isLoading: cliLoading, isFetching: cliFetching } = useProviderCliStatus();
+  const { data: loginData, isFetching: loginFetching, refetch: refetchLogin } = useProviderLogin();
+  const [loginBusyProvider, setLoginBusyProvider] = useState<ProviderUsageKind>();
+  const [loginFailure, setLoginFailure] = useState<{ message: string; provider: ProviderUsageKind }>();
 
   const {
     data: usageData,
@@ -122,6 +129,7 @@ export default function UsagePanel({ onClose }: Props) {
       refetchContextLimits(),
       refetchRuntimeCommands(),
       checkProviderClis(),
+      refetchLogin(),
     ]);
     queryClient.setQueryData(queryKeys.providerUsage(), usage);
     queryClient.setQueryData(queryKeys.providerCliStatus(), status);
@@ -179,6 +187,28 @@ export default function UsagePanel({ onClose }: Props) {
     }
   }
 
+  async function runProviderLogin(
+    provider: ProviderUsageKind,
+    action: 'cancel' | ProviderLoginMode,
+  ): Promise<void> {
+    setLoginBusyProvider(provider);
+    setLoginFailure(undefined);
+    try {
+      const next =
+        action === 'cancel'
+          ? await cancelProviderLogin(provider)
+          : await startProviderLogin(provider, action);
+      queryClient.setQueryData(queryKeys.providerLogin(), next);
+    } catch (error) {
+      setLoginFailure({
+        message: error instanceof Error ? error.message : 'Could not run the provider sign-in',
+        provider,
+      });
+    } finally {
+      setLoginBusyProvider(undefined);
+    }
+  }
+
   function requestApply(row: ProviderCliRow): void {
     const enabledAgents = row.agents.filter((agent) => agent.enabled);
     confirm({
@@ -225,7 +255,8 @@ export default function UsagePanel({ onClose }: Props) {
     usageFetching ||
     cliFetching ||
     contextLimitsFetching ||
-    runtimeCommandsFetching;
+    runtimeCommandsFetching ||
+    loginFetching;
 
   return (
     <Fragment>
@@ -333,6 +364,19 @@ export default function UsagePanel({ onClose }: Props) {
                         }
                         onRuntimeCommandSave={(command, args) => {
                           void changeRuntimeCommand(row.provider, command, args);
+                        }}
+                        login={loginData?.providers.find(
+                          (candidate) => candidate.provider === row.provider,
+                        )}
+                        loginBusy={loginBusyProvider === row.provider}
+                        loginError={
+                          loginFailure?.provider === row.provider ? loginFailure.message : undefined
+                        }
+                        onLoginStart={(mode) => {
+                          void runProviderLogin(row.provider, mode);
+                        }}
+                        onLoginCancel={() => {
+                          void runProviderLogin(row.provider, 'cancel');
                         }}
                       />
                     </div>

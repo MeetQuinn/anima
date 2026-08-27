@@ -168,6 +168,13 @@ channels it can verify and update in place. Other rows show a manual command ins
 Only one provider update runs at a time. Use refresh to check one provider or all providers without
 installing anything.
 
+Supported provider rows also carry a **Sign-in** block. It reports what the provider CLI's own
+`login status` says and offers **Sign in on this machine** (finish on the Anima machine) or **Sign in
+with a code** (the panel shows the link and one-time code; finish on any device). The sign-in runs the
+provider's configured runtime command, so a wrapper configured under **Settings** is honored. Anima
+relays the link and code only; the provider CLI stores the credential. See
+[Authentication ownership](./providers.md#authentication-ownership).
+
 ## Inspect the Anima server
 
 **Server** shows the local service health, uptime, Anima version, and resolved Anima home. It also

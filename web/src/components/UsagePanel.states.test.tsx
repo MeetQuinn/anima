@@ -10,6 +10,23 @@ const contextApi = vi.hoisted(() => ({
 const runtimeCommandApi = vi.hoisted(() => ({
   save: vi.fn(),
 }));
+const loginApi = vi.hoisted(() => ({
+  cancel: vi.fn(),
+  fetch: vi.fn(async () => ({
+    providers: [
+      { command: 'claude', operation: { status: 'idle' as const }, provider: 'claude-code' as const, state: 'unsupported' as const },
+      {
+        checkedAt: '2026-07-13T04:00:00.000Z',
+        command: 'mkimi',
+        detail: 'Not logged in',
+        operation: { status: 'idle' as const },
+        provider: 'kimi-cli' as const,
+        state: 'signed_out' as const,
+      },
+    ],
+  })),
+  start: vi.fn(),
+}));
 
 // Version-slot honesty regression (#520 gate, Milo). The server has a
 // distinct reachable shape for "binary present but version unverified":
@@ -74,6 +91,8 @@ vi.mock('@/api/system', () => ({
     ],
     upgradeLocked: false,
   })),
+  cancelProviderLogin: loginApi.cancel,
+  fetchProviderLogin: loginApi.fetch,
   fetchProviderContextLimits: vi.fn(async () => ({
     providers: [
       {
@@ -119,6 +138,7 @@ vi.mock('@/api/system', () => ({
   refreshProviderUsage: vi.fn(async () => ({ providers: [] })),
   saveProviderContextLimit: contextApi.save,
   saveProviderRuntimeCommand: runtimeCommandApi.save,
+  startProviderLogin: loginApi.start,
 }));
 
 function renderPanel() {
@@ -165,6 +185,42 @@ describe('UsagePanel version slot', () => {
     // offer (#615 gate blocker: the offer block was guarded by needsAttention).
     fireEvent.click(kimiToggle);
     expect(await screen.findByText(/Update available/)).toBeTruthy();
+  });
+
+  it('offers the provider sign-in for a supported provider and starts the device flow', async () => {
+    renderPanel();
+    fireEvent.click(await screen.findByRole('button', { name: /Kimi CLI/i }));
+    expect(await screen.findByText('Not signed in')).toBeTruthy();
+    // Unsupported providers never render the block.
+    fireEvent.click(await screen.findByRole('button', { name: /Claude Code/i }));
+    expect(screen.queryByTestId('provider-sign-in-claude-code')).toBeNull();
+
+    loginApi.start.mockResolvedValueOnce({
+      providers: [
+        {
+          checkedAt: '2026-07-13T04:00:00.000Z',
+          command: 'mkimi',
+          operation: {
+            code: 'ABCD-EFGH1',
+            expiresAt: '2026-07-13T04:15:00.000Z',
+            mode: 'device' as const,
+            startedAt: '2026-07-13T04:00:00.000Z',
+            status: 'running' as const,
+            url: 'https://example.test/device',
+          },
+          provider: 'kimi-cli' as const,
+          state: 'signed_out' as const,
+        },
+      ],
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in with a code' }));
+    await waitFor(() => expect(loginApi.start).toHaveBeenCalledWith('kimi-cli', 'device'));
+    expect((await screen.findByLabelText('Kimi CLI one-time code')).textContent).toBe('ABCD-EFGH1');
+    expect(screen.getByRole('link', { name: /example\.test\/device/ }).getAttribute('href')).toBe(
+      'https://example.test/device',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel sign-in' }));
+    await waitFor(() => expect(loginApi.cancel).toHaveBeenCalledWith('kimi-cli'));
   });
 
   it('shows the global Kimi context limit and saves the recommended cap', async () => {

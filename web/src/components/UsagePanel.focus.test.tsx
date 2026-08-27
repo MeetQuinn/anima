@@ -55,12 +55,15 @@ vi.mock('@/api/system', () => ({
     ],
     upgradeLocked: false,
   })),
+  cancelProviderLogin: vi.fn(),
+  fetchProviderLogin: vi.fn(async () => ({ providers: [] })),
   fetchProviderContextLimits: vi.fn(async () => ({ providers: [] })),
   fetchProviderRuntimeCommands: vi.fn(async () => ({ providers: [] })),
   fetchProviderUsage: vi.fn(async () => ({ providers: usageRows.value })),
   refreshProviderUsage: api.refreshProviderUsage,
   saveProviderContextLimit: vi.fn(),
   saveProviderRuntimeCommand: vi.fn(),
+  startProviderLogin: vi.fn(),
 }));
 
 /** An outside opener plus the panel it opens, so restore has somewhere to go. */

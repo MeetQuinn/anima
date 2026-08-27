@@ -313,6 +313,8 @@ test('#524 the governed table matches on method and path, and ignores the query 
   assert.ok(governedRouteFor('POST', '/api/provider-cli-status/claude-code/apply'));
   assert.ok(governedRouteFor('PUT', '/api/provider-runtime-commands'));
   assert.ok(governedRouteFor('PUT', '/api/provider-context-limits'));
+  assert.ok(governedRouteFor('POST', '/api/provider-login/codex-cli'));
+  assert.ok(governedRouteFor('DELETE', '/api/provider-login/codex-cli'));
   // Host-path writers, proven in Milo's inventory and re-derived from the property.
   assert.ok(governedRouteFor('POST', '/api/filesystem/mkdir'));
   assert.ok(governedRouteFor('POST', '/api/agents'));
@@ -330,6 +332,8 @@ test('#524 the governed table matches on method and path, and ignores the query 
     governedRouteFor('GET', '/api/provider-runtime-commands'),
     undefined,
   );
+  // Reads the provider's own `login status`; the CLI reports, it does not sign in.
+  assert.equal(governedRouteFor('GET', '/api/provider-login'), undefined);
   // The `check` routes take no machine-wide lease and write nothing.
   assert.equal(governedRouteFor('POST', '/api/provider-cli-status/claude-code/check'), undefined);
   // Method matters: the governed set is not "every POST".
