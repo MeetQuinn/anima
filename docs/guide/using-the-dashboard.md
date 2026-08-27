@@ -169,7 +169,7 @@ Only one provider update runs at a time. Use refresh to check one provider or al
 installing anything.
 
 Supported provider rows also carry a **Sign-in** block. It reports what the provider CLI's own
-`login status` says and offers **Sign in in this browser** (finish on the Anima machine) or **Sign in
+`login status` says and offers **Sign in on this machine** (finish on the Anima machine) or **Sign in
 with a code** (the panel shows the link and one-time code; finish on any device). The sign-in runs the
 provider's configured runtime command, so a wrapper configured under **Settings** is honored. Anima
 relays the link and code only; the provider CLI stores the credential. See

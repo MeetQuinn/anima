@@ -50,7 +50,7 @@ export function ProviderSignIn({
           </p>
           {operation.url ? (
             <a
-              className="inline-flex min-h-[36px] items-center gap-1.5 font-mono text-[11px] text-accent underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              className="inline-flex min-h-[44px] md:min-h-[36px] items-center gap-1.5 font-mono text-[11px] text-accent underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               href={operation.url}
               rel="noreferrer"
               target="_blank"
@@ -71,7 +71,7 @@ export function ProviderSignIn({
               </code>
               <button
                 type="button"
-                className="flex min-h-[36px] items-center gap-1 rounded-sm border border-border-soft px-2.5 font-sans text-[11px] text-text-muted hover:border-border hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                className="flex min-h-[44px] md:min-h-[36px] items-center gap-1 rounded-sm border border-border-soft px-2.5 font-sans text-[11px] text-text-muted hover:border-border hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                 onClick={() => {
                   if (operation.code) void navigator.clipboard.writeText(operation.code);
                 }}
@@ -83,12 +83,16 @@ export function ProviderSignIn({
             </div>
           )}
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="font-sans text-[10px] text-text-subtle">
-              {expires ? `Link expires at ${expires.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
-            </span>
+            {expires ? (
+              <span className="font-sans text-[10px] text-text-subtle">
+                {`Link expires at ${expires.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+              </span>
+            ) : (
+              <span aria-hidden />
+            )}
             <button
               type="button"
-              className="min-h-[36px] rounded-sm border border-border-soft px-3 font-sans text-[11px] font-medium text-text-muted hover:border-border hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
+              className="min-h-[44px] md:min-h-[36px] rounded-sm border border-border-soft px-3 font-sans text-[11px] font-medium text-text-muted hover:border-border hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
               disabled={busy}
               onClick={onCancel}
             >
@@ -100,16 +104,16 @@ export function ProviderSignIn({
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            className="min-h-[36px] rounded-sm border border-border-soft px-3 font-sans text-[11px] font-medium text-text-muted hover:border-border hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
+            className="min-h-[44px] md:min-h-[36px] rounded-sm border border-border-soft px-3 font-sans text-[11px] font-medium text-text-muted hover:border-border hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
             disabled={busy}
             onClick={() => onStart('browser')}
             title={`Runs \`${login.command} login\` on this machine and opens the provider sign-in page here`}
           >
-            Sign in in this browser
+            Sign in on this machine
           </button>
           <button
             type="button"
-            className="min-h-[36px] rounded-sm border border-border-soft px-3 font-sans text-[11px] font-medium text-text-muted hover:border-border hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
+            className="min-h-[44px] md:min-h-[36px] rounded-sm border border-border-soft px-3 font-sans text-[11px] font-medium text-text-muted hover:border-border hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
             disabled={busy}
             onClick={() => onStart('device')}
             title={`Runs \`${login.command} login --device-auth\`; finish on any device with a one-time code`}

@@ -73,7 +73,7 @@ The **Providers** panel can run that CLI sign-in for you. Each supported provide
 **Sign-in** block that shows whether the CLI reports a signed-in account and offers two ways to sign
 in:
 
-- **Sign in in this browser** runs `<runtime command> login`. The CLI opens its sign-in page on the
+- **Sign in on this machine** runs `<runtime command> login`. The CLI opens its sign-in page on the
   machine that runs Anima and finishes through its local callback, so use it when you are at that
   machine.
 - **Sign in with a code** runs `<runtime command> login --device-auth`. The panel shows the link and
