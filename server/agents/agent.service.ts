@@ -150,15 +150,7 @@ export class AgentService {
   // next successful run. Auth, quota, and rate-limit flags are not session
   // bound and stay until the provider proves otherwise.
   private async clearSessionBoundProviderFailure(): Promise<void> {
-    const current = await this.health.get(this.agentId);
-    if (current?.reason !== 'provider_error') return;
-    await this.health.writeHealth({
-      agentId: this.agentId,
-      clearProviderFailure: true,
-      ...(current.runtime ? { runtime: current.runtime } : {}),
-      state: current.runtime ? 'healthy' : 'unknown',
-      updatedAt: nowIso(),
-    });
+    await this.health.clearProviderError({ agentId: this.agentId, updatedAt: nowIso() });
   }
 
   async removeAgent(): Promise<AgentConfig> {

@@ -59,6 +59,26 @@ export class AgentHealthService {
   async writeProviderFailure(input: ProviderFailureInput): Promise<void> {
     await this.store.update(input.agentId, (previous) => applyProviderFailure(previous, input));
   }
+
+  // Session rotation clears only a `provider_error` flag: it described the
+  // session that was just archived. The reason check runs inside the lock, so
+  // an auth, quota, or rate-limit failure written concurrently is kept.
+  async clearProviderError(input: { agentId: string; updatedAt: string }): Promise<void> {
+    await this.store.update(input.agentId, (previous) => applyProviderErrorClear(previous, input.updatedAt));
+  }
+}
+
+export function applyProviderErrorClear(
+  previous: AgentRuntimeHealthSummary | undefined,
+  updatedAt: string,
+): AgentRuntimeHealthSummary | undefined {
+  if (previous?.reason !== 'provider_error') return undefined;
+  return applyHealthWrite(previous, {
+    clearProviderFailure: true,
+    ...(previous.runtime ? { runtime: previous.runtime } : {}),
+    state: previous.runtime ? 'healthy' : 'unknown',
+    updatedAt,
+  });
 }
 
 export const defaultAgentHealthService = new AgentHealthService();
