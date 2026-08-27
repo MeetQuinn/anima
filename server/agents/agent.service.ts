@@ -28,6 +28,7 @@ import { mkdir } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { resolveProviderExecutable } from '../provider-cli/provider-inspection.js';
 import { nowIso } from '../ids.js';
+import { defaultAgentHealthService, type AgentHealthService } from '../runtime/agent-health.service.js';
 import { writeSeedMemory } from './seed-memory.js';
 import { defaultKbRegistryService, type KbRegistryService } from '../kb/kb.service.js';
 import {
@@ -72,6 +73,7 @@ export class AgentService {
     private readonly agentId: string,
     private readonly store: AgentStore = new AgentStore(agentId),
     private readonly sessionStore: SessionStore = new SessionStore(agentId),
+    private readonly health: AgentHealthService = defaultAgentHealthService,
   ) {}
 
   exists(): boolean {
@@ -138,7 +140,25 @@ export class AgentService {
   async rotateSession(note?: string): Promise<RotateSessionResult> {
     const archived = await this.archiveCurrentProviderSession(note?.trim() || undefined);
     if (!archived) throw new AgentConfigError(409, `No active provider sessions for agent ${this.agentId}`);
+    await this.clearSessionBoundProviderFailure();
     return { agentId: this.agentId, ...archived };
+  }
+
+  // A `provider_error` flag describes the session that was just archived (for
+  // example a refusal that makes every later turn fail), so it is stale the
+  // moment the session is gone; otherwise the host timer carries it until the
+  // next successful run. Auth, quota, and rate-limit flags are not session
+  // bound and stay until the provider proves otherwise.
+  private async clearSessionBoundProviderFailure(): Promise<void> {
+    const current = await this.health.get(this.agentId);
+    if (current?.reason !== 'provider_error') return;
+    await this.health.writeHealth({
+      agentId: this.agentId,
+      clearProviderFailure: true,
+      ...(current.runtime ? { runtime: current.runtime } : {}),
+      state: current.runtime ? 'healthy' : 'unknown',
+      updatedAt: nowIso(),
+    });
   }
 
   async removeAgent(): Promise<AgentConfig> {

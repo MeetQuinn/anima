@@ -136,7 +136,9 @@ The agent action menu controls the local runtime:
 - **Stop** interrupts the current work.
 - **Disable** prevents new work until you enable the agent again. Its config and files remain.
 - **Rotate session** lets current work finish, archives the current provider session, and starts
-  future work in a fresh session.
+  future work in a fresh session. A `provider_error` health flag from the old session (for example
+  a refusal that failed every later turn) clears immediately; authentication, quota, and rate-limit
+  flags stay because they are not tied to the session.
 - **Restart agent** force-stops a hung agent. Current work is dropped and is not retried; queued work,
   memory, notes, and config remain. Do not use Restart to solve provider authentication or quota
   failures.

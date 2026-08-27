@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { defaultAgentHealthService } from '../runtime/agent-health.service.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { createWebServer } from '../web/app.js';
 import { makeSlackEvent } from './helpers/slack.js';
@@ -194,6 +195,14 @@ test('web API rotates the current provider session and records activity', async 
       },
     }, null, 2)}\n`, 'utf8');
 
+    // A refusal-poisoned session leaves `provider_error` behind; the host timer
+    // would carry it until the next successful run.
+    await defaultAgentHealthService.writeProviderFailure({
+      agentId: 'anima',
+      reason: 'provider_error',
+      updatedAt: '2026-05-19T12:00:30.000Z',
+    });
+
     const server = await createWebServer();
     try {
       server.listen(0, '127.0.0.1');
@@ -203,6 +212,9 @@ test('web API rotates the current provider session and records activity', async 
 
       const response = await fetch(`http://127.0.0.1:${address.port}/api/agents/anima/session/rotate`, { method: 'POST' });
       assert.equal(response.status, 200);
+      const healthAfterRotate = await defaultAgentHealthService.get('anima');
+      assert.equal(healthAfterRotate?.state, 'unknown');
+      assert.equal(healthAfterRotate?.reason, undefined);
       const body = (await response.json()) as {
         archivedProviderSessions: Array<{ id: string; kind: string }>;
       };
@@ -244,6 +256,16 @@ test('web API rotates the current provider session and records activity', async 
 
       const animaSessionArchive = await agentService('anima').getSession();
       assert.equal(animaSessionArchive?.archived?.[0]?.id, 'provider-session-1');
+
+      // Rate limits are not session bound: rotating again must keep the flag.
+      await defaultAgentHealthService.writeProviderFailure({
+        agentId: 'anima',
+        reason: 'provider_rate_limited',
+        updatedAt: '2026-05-19T12:03:00.000Z',
+      });
+      const secondRotate = await fetch(`http://127.0.0.1:${address.port}/api/agents/anima/session/rotate`, { method: 'POST' });
+      assert.equal(secondRotate.status, 200);
+      assert.equal((await defaultAgentHealthService.get('anima'))?.reason, 'provider_rate_limited');
 
       const activityFeed = await activityServiceForAgent('anima').listActivityFeed();
       const rotateActivity = activityFeed.events
