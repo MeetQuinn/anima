@@ -80,16 +80,6 @@ export function endPreflight(reminderId: string): void {
   runningPreflights.delete(reminderId);
 }
 
-export function killAllRunningPreflights(): void {
-  for (const job of runningPreflights.values()) {
-    try {
-      job.kill();
-    } catch {
-      // best-effort
-    }
-  }
-}
-
 /** Test-only: clear concurrency map between cases. */
 export function resetPreflightConcurrencyForTests(): void {
   runningPreflights.clear();

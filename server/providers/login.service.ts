@@ -1,6 +1,4 @@
-import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
-import { promisify } from 'node:util';
 
 import { PROVIDER_CATALOG } from '../../shared/provider-catalog.js';
 import {
@@ -15,6 +13,7 @@ import {
   type ProviderRuntimeCommandsConfig,
 } from '../../shared/provider-runtime-commands.js';
 import type { ProviderUsageKind } from '../../shared/provider-usage.js';
+import { defaultProviderCliCommandRunner } from '../provider-cli/provider-cli.service.js';
 import { resolveProviderExecutable } from '../provider-cli/provider-inspection.js';
 import type { ProviderCliCommandRunner } from '../provider-cli/types.js';
 import { defaultServerSettingsService } from '../settings/settings.service.js';
@@ -26,21 +25,6 @@ const STATUS_CACHE_MS = 15_000;
 // Grace past the provider's own expiry so the CLI can report the expiry itself.
 const EXPIRY_GRACE_MS = 30_000;
 const IDLE: ProviderLoginOperation = { status: 'idle' };
-const execFileAsync = promisify(execFile);
-
-async function runStatusCommand(
-  command: string,
-  args: string[],
-  options?: { env?: NodeJS.ProcessEnv; timeout?: number },
-): Promise<{ stderr: string; stdout: string }> {
-  const { stdout, stderr } = await execFileAsync(command, args, {
-    env: options?.env,
-    maxBuffer: 1024 * 1024,
-    timeout: options?.timeout,
-  });
-  return { stderr: String(stderr), stdout: String(stdout) };
-}
-
 interface ProviderLoginSettings {
   getProviderRuntimeCommands(): Promise<ProviderRuntimeCommandsConfig>;
 }
@@ -127,7 +111,7 @@ export class ProviderLoginService {
 
   constructor(options: ProviderLoginServiceOptions = {}) {
     this.env = options.env ?? process.env;
-    this.runCommand = options.runCommand ?? runStatusCommand;
+    this.runCommand = options.runCommand ?? defaultProviderCliCommandRunner;
     this.settings = options.settings ?? defaultServerSettingsService;
     this.spawn = options.spawn ?? startChildProcess;
   }

@@ -52,10 +52,6 @@ export function agentPrimaryTransportKind(agent: AgentTransportSnapshot): AgentT
   return undefined;
 }
 
-export function agentHasMultipleConnectedTransports(agent: AgentTransportSnapshot): boolean {
-  return agentConnectedTransportKinds(agent).length > 1;
-}
-
 export function agentConfiguredPlatformKind(agent: AgentTransportSnapshot): AgentTransportKind | undefined {
   const connectedKind = agentPrimaryTransportKind(agent);
   if (connectedKind) return connectedKind;
@@ -76,26 +72,6 @@ export function agentConfiguredPlatformKind(agent: AgentTransportSnapshot): Agen
 
 export function agentTransportDisplayLabel(kind: AgentTransportKind): AgentPlatformLabel {
   return TRANSPORT_LABELS[kind];
-}
-
-export function agentPlatformLabel(agent: AgentTransportSnapshot): AgentPlatformLabel | null {
-  const kind = agentConfiguredPlatformKind(agent);
-  return kind ? agentTransportDisplayLabel(kind) : null;
-}
-
-export function agentTransportLabel(agent: AgentTransportSnapshot): string {
-  const kind = agentPrimaryTransportKind(agent);
-  return kind ? agentTransportDisplayLabel(kind) : 'Not connected';
-}
-
-export function agentsHaveMixedPlatforms(agents: readonly AgentTransportSnapshot[]): boolean {
-  const kinds = new Set<AgentTransportKind>();
-  for (const agent of agents) {
-    const kind = agentConfiguredPlatformKind(agent);
-    if (kind) kinds.add(kind);
-    if (kinds.size > 1) return true;
-  }
-  return false;
 }
 
 function hasString(value: string | undefined): boolean {

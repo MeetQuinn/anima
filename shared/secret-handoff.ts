@@ -363,21 +363,12 @@ export function formatSealedHandoffBoxForSlack(boxCode: string): string {
   return formatted;
 }
 
-export function formatHandoffRequestForSlack(requestCode: string): string {
-  const code = unwrapCode(requestCode, HANDOFF_REQUEST_PREFIX);
-  return `\`\`\`\n${code}\n\`\`\``;
-}
-
 export function validateRequestNotExpired(
   request: HandoffRequest,
   now: Date = new Date(),
 ): void {
   if (Date.parse(request.expiresAt) <= now.getTime())
     throw new Error('Handoff request has expired');
-}
-
-export function assertHandoffSecretValue(value: string): void {
-  assertSecretValue(value);
 }
 
 async function assertPayloadMatchesRequest(

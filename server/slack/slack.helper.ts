@@ -182,14 +182,6 @@ export function findSlackConversationByName<T extends SlackNamedConversation>(
   return channels.find((channel) => normalizeSlackConversationName(channel.name_normalized ?? channel.name ?? '') === name);
 }
 
-export function getUniqueSlackUserByHandle(users: SlackUserInfo[], handle: string): SlackUserInfo {
-  const matches = users.filter((user) => slackUserHandleCandidates(user).includes(handle));
-  const match = matches[0];
-  if (matches.length === 1 && match) return match;
-  if (matches.length > 1) throw new Error(`Slack handle @${handle} matched multiple users`);
-  throw new Error(`Slack user not found: @${handle}`);
-}
-
 export function isFreshSlackCacheEntry(iso: string | undefined, ttlMs: number): boolean {
   if (!iso) return false;
   const timestamp = Date.parse(iso);
@@ -241,28 +233,6 @@ export function slackUserHandleCandidates(user: SlackHandleCandidateUser): strin
   ]
     .filter((value): value is string => Boolean(value?.trim()))
     .map(normalizeSlackHandle);
-}
-
-export function upsertSlackConversation<T extends { channels: SlackConversationInfo[] }>(
-  cache: T,
-  channel: SlackConversationInfo,
-): T {
-  if (!channel.id) return cache;
-  return {
-    ...cache,
-    channels: upsertById(cache.channels, channel),
-  };
-}
-
-export function upsertSlackUser<T extends { users: SlackUserInfo[] }>(
-  cache: T,
-  user: SlackUserInfo,
-): T {
-  if (!user.id) return cache;
-  return {
-    ...cache,
-    users: upsertById(cache.users, user),
-  };
 }
 
 function extractReadableMentions(text: string, pattern: RegExp): string[] {
@@ -321,10 +291,4 @@ function endOfBacktickSpan(text: string, start: number): number {
   const fence = '`'.repeat(count);
   const end = text.indexOf(fence, start + count);
   return end === -1 ? -1 : end + count;
-}
-
-function upsertById<T extends { id?: string }>(items: T[], next: T): T[] {
-  const index = items.findIndex((item) => item.id === next.id);
-  if (index === -1) return [...items, next];
-  return items.map((item, itemIndex) => itemIndex === index ? next : item);
 }

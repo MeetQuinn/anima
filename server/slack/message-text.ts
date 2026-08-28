@@ -45,12 +45,6 @@ export function slackEventMentionsUserId(
   return slackMrkdwnMentionsUserIdOutsideCode(input.text, userId);
 }
 
-/** Mention tokens in mrkdwn outside inline/fenced code (`<@U…>` only). */
-export function slackTextMentionsUserId(text: string | undefined, userId: string | undefined): boolean {
-  if (!userId) return false;
-  return slackMrkdwnMentionsUserIdOutsideCode(text, userId);
-}
-
 function slackMrkdwnMentionsUserIdOutsideCode(
   text: string | undefined,
   userId: string,

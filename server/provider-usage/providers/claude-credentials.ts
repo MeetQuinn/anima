@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 
 /** Normalize a Claude config dir path; empty/whitespace becomes undefined. */
 export function normalizedConfigDir(value: string | undefined): string | undefined {
@@ -9,10 +9,6 @@ export function normalizedConfigDir(value: string | undefined): string | undefin
   if (trimmed === '~') return homedir();
   if (trimmed.startsWith('~/')) return resolve(homedir(), trimmed.slice(2));
   return resolve(trimmed);
-}
-
-export function defaultClaudeConfigDir(): string {
-  return join(homedir(), '.claude');
 }
 
 /**
