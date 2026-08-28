@@ -16,8 +16,22 @@ import { useCallback, useEffect, useId, useRef } from 'react';
  * own Esc handling and this hook owns focus only.
  *
  * Neither the count nor the list of call sites is written down here: both are
- * claims the next commit falsifies. `git grep -l useDialogFocus -- web/src` is
- * the answer that cannot go stale.
+ * claims the next commit falsifies. Ask git instead — but ask it for imports:
+ *
+ *   git grep -l "import.*useDialogFocus" -- web/src \
+ *     | grep -v '\.test\.' | grep -v 'hooks/useDialogFocus'
+ *
+ * NOT `git grep -l useDialogFocus`. That matches prose as well as code, so it
+ * returns this file (which names the hook in its own comment) and, worse, the
+ * one file below that deliberately does not use the hook — reporting the
+ * documented exception as a consumer. Filter tests on both sides too, or the
+ * `aria-modal` side doubles: most matches are suites asserting on the
+ * attribute, not dialogs declaring it.
+ *
+ * The second `grep -v` is not paranoia: the line above literally contains
+ * `import` next to the hook name, so without it this comment matches its own
+ * instrument and inflates the count by one. Any comment that quotes a grep
+ * becomes a hit for that grep.
  *
  * One `aria-modal` dialog deliberately does NOT use this hook:
  * `views/kb/ImageLightbox.tsx` hand-rolls the same contract and predates the

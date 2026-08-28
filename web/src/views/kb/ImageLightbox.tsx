@@ -11,6 +11,11 @@ import { X } from 'lucide-react';
  * only render site (a pane, not a dialog), so no `useDialogFocus` instance is
  * ever mounted around it. Adopting the hook would churn a working surface to
  * make a count come out even. Not a migration target.
+ *
+ * Note for anyone auditing adoption: this comment puts the string
+ * `useDialogFocus` in a file that does not import it, so a bare
+ * `git grep -l useDialogFocus` lists this file as a consumer and hides the very
+ * exception the comment exists to record. Match the import, not the name.
  */
 export function ImageLightbox({ src, alt }: { src: string; alt: string }) {
   const [open, setOpen] = useState(false);
