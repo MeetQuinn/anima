@@ -43,11 +43,3 @@ export async function memberChannelsResultForAgent(
     return { channels: [], degraded: true };
   }
 }
-
-// Convenience: just the channels, degrading silently to [] on any failure. Used
-// by callers (e.g. the subscriptions CLI) that don't surface a degraded signal.
-export async function memberChannelsForAgent(
-  agent: { id: string; slack?: { botToken?: string; botUserId?: string; teamId?: string } },
-): Promise<MemberChannel[]> {
-  return (await memberChannelsResultForAgent(agent)).channels;
-}

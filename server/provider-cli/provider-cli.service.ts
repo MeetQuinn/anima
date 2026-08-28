@@ -576,7 +576,7 @@ function checkIsStale(check: ProviderCheck | undefined, now: Date): boolean {
   return !Number.isFinite(checkedAt) || now.getTime() - checkedAt >= CHECK_TTL_MS;
 }
 
-async function defaultProviderCliCommandRunner(
+export async function defaultProviderCliCommandRunner(
   command: string,
   args: string[],
   options?: { env?: NodeJS.ProcessEnv; timeout?: number },

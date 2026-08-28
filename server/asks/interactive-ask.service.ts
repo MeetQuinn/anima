@@ -1,6 +1,5 @@
 import type { WebClient } from '@slack/web-api';
 
-import type { AgentOwner } from '../../shared/agent-config.js';
 import type { ChoiceResponseInboxItem } from '../../shared/inbox.js';
 import { activityServiceForAgent, type ActivityService } from '../activities/activity.service.js';
 import { errorMessage, nowIso } from '../ids.js';
@@ -225,17 +224,5 @@ export function slackAnswerUser(user: SlackUserInfo | undefined, fallback: strin
     ...(displayName ? { displayName } : {}),
     ...(handle ? { handle } : {}),
     slackUserId: user?.id ?? fallback,
-  };
-}
-
-export function ownerAllowedUser(owner: AgentOwner): {
-  displayName?: string;
-  handle?: string;
-  slackUserId: string;
-} {
-  return {
-    displayName: owner.displayName,
-    ...(owner.handle ? { handle: owner.handle } : {}),
-    slackUserId: owner.slackUserId,
   };
 }

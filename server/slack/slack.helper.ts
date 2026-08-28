@@ -243,28 +243,6 @@ export function slackUserHandleCandidates(user: SlackHandleCandidateUser): strin
     .map(normalizeSlackHandle);
 }
 
-export function upsertSlackConversation<T extends { channels: SlackConversationInfo[] }>(
-  cache: T,
-  channel: SlackConversationInfo,
-): T {
-  if (!channel.id) return cache;
-  return {
-    ...cache,
-    channels: upsertById(cache.channels, channel),
-  };
-}
-
-export function upsertSlackUser<T extends { users: SlackUserInfo[] }>(
-  cache: T,
-  user: SlackUserInfo,
-): T {
-  if (!user.id) return cache;
-  return {
-    ...cache,
-    users: upsertById(cache.users, user),
-  };
-}
-
 function extractReadableMentions(text: string, pattern: RegExp): string[] {
   const mentions = new Set<string>();
   forEachNonCodeSegment(text, (segment) => {
@@ -321,10 +299,4 @@ function endOfBacktickSpan(text: string, start: number): number {
   const fence = '`'.repeat(count);
   const end = text.indexOf(fence, start + count);
   return end === -1 ? -1 : end + count;
-}
-
-function upsertById<T extends { id?: string }>(items: T[], next: T): T[] {
-  const index = items.findIndex((item) => item.id === next.id);
-  if (index === -1) return [...items, next];
-  return items.map((item, itemIndex) => itemIndex === index ? next : item);
 }

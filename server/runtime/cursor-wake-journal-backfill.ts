@@ -12,7 +12,7 @@
 // Actorless wakes (e.g. Slack shortcut source messages that omit message.user)
 // use a stable synthetic botId for observation when no actor.userId is present.
 
-import type { InboxItem, SlackInboxItem, SlackFileMeta } from '../../shared/inbox.js';
+import type { SlackInboxItem, SlackFileMeta } from '../../shared/inbox.js';
 import { WakeQueueService, wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import { errorMessage, slackMessageEventId } from '../ids.js';
 import {
@@ -189,7 +189,3 @@ function observedFilesFromInbox(files: SlackFileMeta[] | undefined): ObservedFil
   return out;
 }
 
-/** Active queue rows only (queued/running); settled items are not listed. */
-export function isActiveSlackWake(item: InboxItem): item is SlackInboxItem {
-  return item.kind === 'slack';
-}

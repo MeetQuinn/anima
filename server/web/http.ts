@@ -48,21 +48,6 @@ export function sendJsonRaw(response: ServerResponse, statusCode: number, body: 
   response.end(`${JSON.stringify(body, null, 2)}\n`);
 }
 
-export function stringBodyField(body: Record<string, unknown>, key: string): string | undefined {
-  const value = body[key];
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
-export function requiredBodyString(body: Record<string, unknown>, key: string): string {
-  const value = body[key];
-  if (typeof value !== 'string' || !value.trim()) throw new HttpError(400, `${key} is required`);
-  return value.trim();
-}
-
-export function optionalString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
 export function stringValue(value: unknown, key: string): string {
   if (typeof value !== 'string') throw new HttpError(400, `${key} must be a string`);
   return value.trim();

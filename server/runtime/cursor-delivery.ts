@@ -137,13 +137,6 @@ export async function resolveCursorDeliveryEnabled(): Promise<
   }
 }
 
-/** Convenience: true unless explicitly disabled (throws on settings error). */
-export async function isCursorDeliveryEnabled(): Promise<boolean> {
-  const resolved = await resolveCursorDeliveryEnabled();
-  if (resolved.kind === 'error') throw resolved.error;
-  return resolved.kind === 'enabled';
-}
-
 /**
  * Surfaces to snapshot for a Slack wake.
  * - Top-level channel: channel surface + response-thread surface (thread:messageTs).
