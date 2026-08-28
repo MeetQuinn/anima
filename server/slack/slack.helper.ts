@@ -182,14 +182,6 @@ export function findSlackConversationByName<T extends SlackNamedConversation>(
   return channels.find((channel) => normalizeSlackConversationName(channel.name_normalized ?? channel.name ?? '') === name);
 }
 
-export function getUniqueSlackUserByHandle(users: SlackUserInfo[], handle: string): SlackUserInfo {
-  const matches = users.filter((user) => slackUserHandleCandidates(user).includes(handle));
-  const match = matches[0];
-  if (matches.length === 1 && match) return match;
-  if (matches.length > 1) throw new Error(`Slack handle @${handle} matched multiple users`);
-  throw new Error(`Slack user not found: @${handle}`);
-}
-
 export function isFreshSlackCacheEntry(iso: string | undefined, ttlMs: number): boolean {
   if (!iso) return false;
   const timestamp = Date.parse(iso);
