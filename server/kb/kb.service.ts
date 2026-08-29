@@ -2,7 +2,6 @@ import { lstat, mkdir, opendir, readFile, readdir, realpath, stat } from 'node:f
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 
-import ignore, { type Ignore } from 'ignore';
 
 import { DEFAULT_TEAM_KB_ROOT } from '../../shared/agent-home.js';
 import { DEFAULT_TEAM_ID } from '../../shared/server-settings.js';
@@ -242,10 +241,10 @@ export class KbRegistryService {
   }
 }
 
-// Read-only web view over one Knowledge Base directory. If the KB root has
-// a root `.gitignore`, those patterns are the exposure filter; otherwise every
-// file under the root is visible. `.git/` is VCS metadata, not content, and is
-// always skipped. Directory browsing is paged and file reads validate only the
+// Read-only web view over one Knowledge Base directory. Every file under the
+// root is visible, like a plain file browser; `.gitignore` is not consulted
+// (totoday 2026-08-29). `.git/` is VCS metadata, not content, and is always
+// skipped. Directory browsing is paged and file reads validate only the
 // requested path, so a large unrelated subtree cannot block an ordinary read.
 export class KbService {
   // Visible file paths → lstat mtime (epoch ms). Keys are the visibility set;
@@ -292,16 +291,15 @@ export class KbService {
 
   async listDirectory(rawPath: string, rawCursor: string | undefined): Promise<KbDirectoryPage> {
     const kb = await this.resolvedKb();
-    const filter = await this.rootGitignoreFilter(kb.path);
     const relPath = normalizeDirectoryPath(rawPath);
-    const dirPath = await this.resolveVisibleDirectory(kb, relPath, filter);
+    const dirPath = await this.resolveVisibleDirectory(kb, relPath);
     const offset = directoryCursorOffset(rawCursor);
     const visibleEntries: Array<{ name: string; path: string; type: 'dir' | 'file' }> = [];
     for (const entry of await readdir(dirPath, { withFileTypes: true })) {
       const type = entry.isDirectory() ? 'dir' : entry.isFile() || entry.isSymbolicLink() ? 'file' : undefined;
       if (!type) continue;
       const path = relPath ? `${relPath}/${entry.name}` : entry.name;
-      if (!this.isVisiblePath(path, type === 'dir', filter)) continue;
+      if (!this.isVisiblePath(path, type === 'dir')) continue;
       visibleEntries.push({ name: entry.name, path, type });
     }
     visibleEntries.sort(compareDirectoryEntries);
@@ -328,7 +326,6 @@ export class KbService {
     if (!query) {
       return { kb: kbView(kb), query, matches: [], scanned: 0, truncated: false };
     }
-    const filter = await this.rootGitignoreFilter(kb.path);
     const lowered = query.toLocaleLowerCase();
     const deadline = Date.now() + SEARCH_TIME_LIMIT_MS;
     const dirs = [''];
@@ -347,7 +344,7 @@ export class KbService {
         const relPath = dirRelPath ? `${dirRelPath}/${entry.name}` : entry.name;
         const isDirectory = entry.isDirectory();
         const isFile = entry.isFile() || entry.isSymbolicLink();
-        if ((!isDirectory && !isFile) || !this.isVisiblePath(relPath, isDirectory, filter)) continue;
+        if ((!isDirectory && !isFile) || !this.isVisiblePath(relPath, isDirectory)) continue;
         scanned += 1;
         if (scanned > SEARCH_SCAN_LIMIT || Date.now() > deadline || shouldStop()) {
           truncated = true;
@@ -413,16 +410,14 @@ export class KbService {
   private async resolveTrackedPath(rawPath: string): Promise<{ kb: ResolvedKbRoot; relPath: string; absPath: string }> {
     const kb = await this.resolvedKb();
     const relPath = normalizeRelPath(rawPath);
-    const filter = await this.rootGitignoreFilter(kb.path);
-    return this.resolveVisibleKbPath(kb, relPath, filter);
+    return this.resolveVisibleKbPath(kb, relPath);
   }
 
   private async resolveVisibleKbPath(
     kb: ResolvedKbRoot,
     relPath: string,
-    filter: Ignore | undefined,
   ): Promise<{ kb: ResolvedKbRoot; relPath: string; absPath: string }> {
-    if (!this.isVisiblePath(relPath, false, filter)) throw new KbError(404, 'not_found');
+    if (!this.isVisiblePath(relPath, false)) throw new KbError(404, 'not_found');
     let absPath = join(kb.path, relPath);
     // Defensive lexical containment assert (normalizeRelPath already strips `..`).
     const kbResolved = resolve(kb.path);
@@ -436,7 +431,7 @@ export class KbService {
     const resolvedTarget = await realpath(absPath).catch(() => undefined);
     if (!resolvedTarget || !isPathInside(resolvedTarget, kbRealpath)) throw new KbError(404, 'not_found');
     const targetRelPath = relative(kbRealpath, resolvedTarget).split(sep).join(posix.sep);
-    if (!this.isVisiblePath(targetRelPath, false, filter)) throw new KbError(404, 'not_found');
+    if (!this.isVisiblePath(targetRelPath, false)) throw new KbError(404, 'not_found');
     if (!fileStat.isSymbolicLink() && resolvedTarget !== resolve(kbRealpath, relPath)) {
       throw new KbError(404, 'not_found');
     }
@@ -450,12 +445,8 @@ export class KbService {
     return { kb, relPath, absPath };
   }
 
-  private async resolveVisibleDirectory(
-    kb: ResolvedKbRoot,
-    relPath: string,
-    filter: Ignore | undefined,
-  ): Promise<string> {
-    if (relPath && !this.isVisiblePath(relPath, true, filter)) throw new KbError(404, 'not_found');
+  private async resolveVisibleDirectory(kb: ResolvedKbRoot, relPath: string): Promise<string> {
+    if (relPath && !this.isVisiblePath(relPath, true)) throw new KbError(404, 'not_found');
     const absPath = relPath ? join(kb.path, relPath) : kb.path;
     // A configured KB root may itself be a symlink (the registry validates it
     // with stat). Nested directory symlinks remain non-traversable.
@@ -469,10 +460,9 @@ export class KbService {
     return absPath;
   }
 
-  private isVisiblePath(relPath: string, isDirectory: boolean, filter: Ignore | undefined): boolean {
+  private isVisiblePath(relPath: string, isDirectory: boolean): boolean {
     if (!relPath) return isDirectory;
-    if (relPath.split(posix.sep).includes('.git')) return false;
-    return !filter?.ignores(isDirectory ? `${relPath}/` : relPath);
+    return !relPath.split(posix.sep).includes('.git');
   }
 
   private async visibleKbFiles(kb: ResolvedKbRoot): Promise<Map<string, number>> {
@@ -484,9 +474,8 @@ export class KbService {
     const epoch = this.cacheEpoch;
     const load = (async () => {
       const files = new Map<string, number>();
-      const filter = await this.rootGitignoreFilter(kb.path);
       const budget = { entries: 0, deadline: Date.now() + LEGACY_TREE_TIME_LIMIT_MS };
-      await this.collectVisibleFiles(kb.path, '', filter, files, budget);
+      await this.collectVisibleFiles(kb.path, '', files, budget);
       if (epoch === this.cacheEpoch) this.visibleFilesCache = { files, loadedAt: Date.now() };
       return files;
     })();
@@ -498,18 +487,9 @@ export class KbService {
     }
   }
 
-  private async rootGitignoreFilter(rootPath: string): Promise<Ignore | undefined> {
-    // Product v1 uses the KB root `.gitignore` as the boundary. Nested
-    // `.gitignore` files are intentionally not loaded yet; add them here if a
-    // KB starts relying on subdir-specific ignore rules.
-    const content = await readFile(join(rootPath, '.gitignore'), 'utf8').catch(() => undefined);
-    return content === undefined ? undefined : ignore().add(content);
-  }
-
   private async collectVisibleFiles(
     rootPath: string,
     dirRelPath: string,
-    filter: Ignore | undefined,
     files: Map<string, number>,
     budget: { entries: number; deadline: number },
   ): Promise<void> {
@@ -521,9 +501,9 @@ export class KbService {
         throw new KbError(413, 'kb_tree_too_large: use the paged entries API');
       }
       const relPath = dirRelPath ? `${dirRelPath}/${entry.name}` : entry.name;
-      if (!this.isVisiblePath(relPath, entry.isDirectory(), filter)) continue;
+      if (!this.isVisiblePath(relPath, entry.isDirectory())) continue;
       if (entry.isDirectory()) {
-        await this.collectVisibleFiles(rootPath, relPath, filter, files, budget);
+        await this.collectVisibleFiles(rootPath, relPath, files, budget);
         continue;
       }
       if (entry.isFile() || entry.isSymbolicLink()) {
