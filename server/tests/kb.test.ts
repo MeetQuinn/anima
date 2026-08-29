@@ -14,10 +14,11 @@ interface KbFixture {
   repoDir: string;
 }
 
-// Builds a temp ANIMA_HOME with a single kb root. The root `.gitignore`,
-// when present, is the exposure boundary; otherwise visible files are read from
-// disk. We add ordinary files, ignored files, a `.git/` metadata directory, and
-// symlinks — covering every boundary branch.
+// Builds a temp ANIMA_HOME with a single kb root. The KB is a plain file
+// browser: `.gitignore` is content, not a filter, so gitignored files are as
+// visible as any other. Only `.git/` metadata is skipped. We add ordinary
+// files, gitignored files, a `.git/` metadata directory, and symlinks —
+// covering every boundary branch.
 async function setupKb(prefix: string): Promise<KbFixture> {
   const homeDir = await mkdtemp(join(tmpdir(), `${prefix}-home-`));
   const repoDir = await mkdtemp(join(tmpdir(), `${prefix}-repo-`));
@@ -32,14 +33,13 @@ async function setupKb(prefix: string): Promise<KbFixture> {
   );
   await writeFile(join(repoDir, 'docs', 'app.ts'), 'export const answer = 42;\n', 'utf8');
   await writeFile(join(repoDir, '.gitignore'), 'secret.txt\nignored/\n*.env\n!keep.env\n', 'utf8');
-  // Ignored paths — must never surface.
+  // Gitignored paths — visible like everything else (totoday 2026-08-29).
   await writeFile(join(repoDir, 'secret.txt'), 'TOPSECRET-TOKEN\n', 'utf8');
   await mkdir(join(repoDir, 'ignored'), { recursive: true });
   await writeFile(join(repoDir, 'ignored', 'hidden.txt'), 'hidden\n', 'utf8');
   await writeFile(join(repoDir, 'fake.env'), 'FAKE_ENV_SECRET\n', 'utf8');
   await writeFile(join(repoDir, 'keep.env'), 'allowed by negation\n', 'utf8');
-  // Untracked/uncommitted by git terms: present on disk and visible because it
-  // is not ignored.
+  // Untracked/uncommitted by git terms: present on disk and therefore visible.
   await writeFile(join(repoDir, 'untracked.txt'), 'not added to git\n', 'utf8');
   await writeFile(join(repoDir, 'docs', 'untracked-target.md'), 'untracked target\n', 'utf8');
   await mkdir(join(repoDir, '.git'), { recursive: true });
@@ -367,7 +367,7 @@ test('kb directory mkdir creates a subfolder and enforces the root boundary', as
   }
 });
 
-test('kb tree exposes non-ignored files in a nested shape', async () => {
+test('kb tree exposes every file, gitignored or not, in a nested shape', async () => {
   const { homeDir, repoDir } = await setupKb('anima-kb-tree');
   try {
     await withServer(homeDir, async (base) => {
@@ -383,10 +383,10 @@ test('kb tree exposes non-ignored files in a nested shape', async () => {
       assert.ok(topNames.includes('README.md'), 'README present');
       assert.ok(topNames.includes('.gitignore'), '.gitignore is itself content');
       assert.ok(topNames.includes('untracked.txt'), 'untracked/uncommitted file present');
-      assert.ok(topNames.includes('keep.env'), 'negated gitignore pattern is honored');
-      assert.ok(!topNames.includes('secret.txt'), 'ignored secret absent');
-      assert.ok(!topNames.includes('ignored'), 'ignored directory absent');
-      assert.ok(!topNames.includes('fake.env'), 'glob-ignored env file absent');
+      assert.ok(topNames.includes('keep.env'));
+      assert.ok(topNames.includes('secret.txt'), 'gitignored file is still content');
+      assert.ok(topNames.includes('ignored'), 'gitignored directory is still content');
+      assert.ok(topNames.includes('fake.env'), 'glob-gitignored env file is still content');
       assert.ok(!topNames.includes('.git'), '.git metadata absent');
 
       const docs = body.nodes.find((n) => n.name === 'docs');
@@ -478,7 +478,7 @@ test('kb directory pages and file reads stay bounded when an unrelated subtree i
   }
 });
 
-test('kb search is bounded and excludes ignored files and git metadata', async () => {
+test('kb search is bounded, includes gitignored files, and excludes git metadata', async () => {
   const { homeDir, repoDir } = await setupKb('anima-kb-search');
   try {
     await withServer(homeDir, async (base) => {
@@ -497,9 +497,13 @@ test('kb search is bounded and excludes ignored files and git metadata', async (
       assert.ok(body.scanned > 0);
       assert.equal(body.truncated, false);
 
-      const ignored = await fetch(`${base}/api/kbs/test/search?q=secret`);
-      assert.equal(ignored.status, 200);
-      assert.deepEqual(((await ignored.json()) as { matches: unknown[] }).matches, []);
+      const gitignored = await fetch(`${base}/api/kbs/test/search?q=secret`);
+      assert.equal(gitignored.status, 200);
+      assert.deepEqual(
+        ((await gitignored.json()) as { matches: Array<{ path: string }> }).matches.map((entry) => entry.path),
+        ['secret.txt'],
+        'gitignored files are searchable content',
+      );
 
       const metadata = await fetch(`${base}/api/kbs/test/entries?path=.git`);
       assert.equal(metadata.status, 404);
@@ -580,7 +584,7 @@ test('kb tree stamps file mtimes and bubbles the latest into ancestor dirs', asy
   }
 });
 
-test('kb without root gitignore exposes all files except git metadata', async () => {
+test('kb without root gitignore exposes all files except git metadata (unchanged)', async () => {
   const homeDir = await mkdtemp(join(tmpdir(), 'anima-kb-nogitignore-home-'));
   const rootDir = await mkdtemp(join(tmpdir(), 'anima-kb-nogitignore-root-'));
   try {
@@ -676,18 +680,21 @@ test('kb download endpoint serves file with attachment headers', async () => {
 });
 
 
-test('kb boundary refuses ignored, traversal, and unsafe symlink paths', async () => {
+test('kb boundary serves gitignored files but refuses traversal and unsafe symlink paths', async () => {
   const { homeDir, repoDir } = await setupKb('anima-kb-boundary');
   try {
     await withServer(homeDir, async (base) => {
       const untracked = await fetch(`${base}/api/kbs/test/file?path=untracked.txt`);
-      assert.equal(untracked.status, 200, 'untracked/uncommitted file is visible when not ignored');
+      assert.equal(untracked.status, 200, 'untracked/uncommitted file is visible');
 
-      const secret = await fetch(`${base}/api/kbs/test/file?path=secret.txt`);
-      assert.equal(secret.status, 404, 'ignored secret never serves');
+      const gitignored = await fetch(`${base}/api/kbs/test/file?path=secret.txt`);
+      assert.equal(gitignored.status, 200, 'gitignored file serves like any other');
 
-      const ignoredGlob = await fetch(`${base}/api/kbs/test/file?path=fake.env`);
-      assert.equal(ignoredGlob.status, 404, 'glob-ignored env file never serves');
+      const gitignoredGlob = await fetch(`${base}/api/kbs/test/file?path=fake.env`);
+      assert.equal(gitignoredGlob.status, 200, 'glob-gitignored env file serves like any other');
+
+      const gitignoredNested = await fetch(`${base}/api/kbs/test/file?path=ignored/hidden.txt`);
+      assert.equal(gitignoredNested.status, 200, 'file inside a gitignored directory serves');
 
       const traversal = await fetch(
         `${base}/api/kbs/test/file?path=${encodeURIComponent('../../etc/passwd')}`,

@@ -35,9 +35,6 @@ importers:
       fastify:
         specifier: ^5.8.5
         version: 5.8.5
-      ignore:
-        specifier: ^7.0.5
-        version: 7.0.5
       luxon:
         specifier: ^3.7.2
         version: 3.7.2
@@ -156,9 +153,6 @@ importers:
       fastify:
         specifier: ^5.8.5
         version: 5.8.5
-      ignore:
-        specifier: ^7.0.5
-        version: 7.0.5
       luxon:
         specifier: ^3.7.2
         version: 3.7.2
