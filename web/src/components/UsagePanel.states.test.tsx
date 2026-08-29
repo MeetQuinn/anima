@@ -2,6 +2,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { ProviderLoginRow } from '@shared/provider-login';
+
 import UsagePanel from './UsagePanel';
 
 const contextApi = vi.hoisted(() => ({
@@ -21,7 +23,7 @@ const loginApi = vi.hoisted(() => ({
         detail: 'Not logged in',
         operation: { status: 'idle' as const },
         provider: 'kimi-cli' as const,
-        state: 'signed_out' as const,
+        state: 'signed_out' as ProviderLoginRow['state'],
       },
     ],
   })),
@@ -221,6 +223,30 @@ describe('UsagePanel version slot', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Cancel sign-in' }));
     await waitFor(() => expect(loginApi.cancel).toHaveBeenCalledWith('kimi-cli'));
+  });
+
+  it('hides the sign-in controls entirely when the provider is already signed in', async () => {
+    loginApi.fetch.mockResolvedValueOnce({
+      providers: [
+        {
+          checkedAt: '2026-07-13T04:00:00.000Z',
+          command: 'mkimi',
+          detail: 'Logged in using ChatGPT',
+          operation: { status: 'idle' as const },
+          provider: 'kimi-cli' as const,
+          state: 'signed_in' as const,
+        },
+      ],
+    });
+    renderPanel();
+    fireEvent.click(await screen.findByRole('button', { name: /Kimi CLI/i }));
+    expect(await screen.findByText('Signed in')).toBeTruthy();
+    // No sign-in buttons and no command footer while signed in (totoday
+    // 08-29): the status line is the whole block. When the credential
+    // expires the CLI reports signed_out and the controls come back.
+    expect(screen.queryByRole('button', { name: 'Sign in with a code' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sign in on this machine' })).toBeNull();
+    expect(screen.queryByText(/as this machine user/)).toBeNull();
   });
 
   it('shows the global Kimi context limit and saves the recommended cap', async () => {

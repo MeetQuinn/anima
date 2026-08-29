@@ -23,6 +23,9 @@ export function ProviderSignIn({
 }) {
   const operation = login.operation;
   const running = operation.status === 'running';
+  // Signed-in providers show only the status line (totoday 08-29). When the
+  // credential expires the CLI reports signed_out and the controls return.
+  const controlsVisible = login.state !== 'signed_in';
   const stateLabel =
     login.state === 'signed_in' ? 'Signed in' : login.state === 'signed_out' ? 'Not signed in' : 'Sign-in state unknown';
   const stateTone =
@@ -100,7 +103,7 @@ export function ProviderSignIn({
             </button>
           </div>
         </div>
-      ) : (
+      ) : !controlsVisible ? null : (
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -130,10 +133,12 @@ export function ProviderSignIn({
         <p className="font-sans text-[10px] leading-relaxed text-text-subtle">Sign-in cancelled.</p>
       )}
       {error && <p className="font-sans text-[10px] leading-relaxed text-health-error">{error}</p>}
-      <p className="font-sans text-[10px] leading-relaxed text-text-subtle">
-        Runs <code className="font-mono">{login.command} login</code> as this machine user. The provider stores the
-        credential; every agent using {label} on this machine shares it.
-      </p>
+      {(running || controlsVisible) && (
+        <p className="font-sans text-[10px] leading-relaxed text-text-subtle">
+          Runs <code className="font-mono">{login.command} login</code> as this machine user. The provider stores the
+          credential; every agent using {label} on this machine shares it.
+        </p>
+      )}
     </div>
   );
 }
