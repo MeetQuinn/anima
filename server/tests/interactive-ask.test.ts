@@ -139,6 +139,10 @@ test('interactive ask answer enqueues one choice_response with envelope context'
     assert.equal(answered.queued, true);
     await askService.replaceAnsweredMessage({ ask: answered.ask!, client });
     assert.equal(updates.length, 1);
+    // The answered-message update must not re-trigger unfurls for question URLs.
+    const update = updates[0] as { unfurl_links?: boolean; unfurl_media?: boolean };
+    assert.equal(update.unfurl_links, false);
+    assert.equal(update.unfurl_media, false);
 
     const duplicate = await askService.answerAsk({
       askId: ask.askId,
@@ -186,6 +190,9 @@ test('interactive ask rejects non-addressee clicks without waking the agent', as
 
     assert.equal((await new WakeQueueService('scout').list()).length, 0);
     assert.equal(ephemerals.length, 1);
+    const ephemeral = ephemerals[0] as { unfurl_links?: boolean; unfurl_media?: boolean };
+    assert.equal(ephemeral.unfurl_links, false);
+    assert.equal(ephemeral.unfurl_media, false);
     const storedAsk = await askService.getAsk(ask.askId);
     assert.equal(storedAsk?.status, 'pending');
     assert.match(storedAsk?.lastInteractionAt ?? '', /^\d{4}-/);

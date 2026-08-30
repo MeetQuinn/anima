@@ -18,6 +18,7 @@ import { isBotSlackUser } from '../slack/slack.helper.js';
 import { SlackWorkspaceDirectoryService } from '../slack/workspace-directory.service.js';
 import type { InteractiveAskOption, InteractiveAskRecord } from '../storage/schema/interactive-ask.store.js';
 import { resolveSlackChannelArgument, type ResolvedSlackChannel } from './slack-channel-resolver.js';
+import { SLACK_NO_UNFURL } from './slack-message-format.js';
 import {
   slackOutputTarget,
   slackTargetPayload,
@@ -125,6 +126,7 @@ export async function runAsk(opts: z.infer<typeof AskCommandSchema>): Promise<vo
   });
   const payload = {
     blocks: content.blocks,
+    ...SLACK_NO_UNFURL,
     channel: target.channel.id,
     text: content.text,
     ...(target.threadTs ? { thread_ts: target.threadTs } : {}),

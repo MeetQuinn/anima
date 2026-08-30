@@ -5,6 +5,7 @@ import { activityServiceForAgent, type ActivityService } from '../activities/act
 import { errorMessage, nowIso } from '../ids.js';
 import { WakeQueueService, wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import { SlackWorkspaceDirectoryService, type SlackUserInfo } from '../slack/workspace-directory.service.js';
+import { SLACK_NO_UNFURL } from '../tools/slack-message-format.js';
 import {
   InteractiveAskStore,
   type InteractiveAskOption,
@@ -106,6 +107,7 @@ export class InteractiveAskService {
     const userId = input.ask.answeredBy?.slackUserId;
     if (!option || !userId) return;
     await input.client.chat.update({
+      ...SLACK_NO_UNFURL,
       blocks: [
         {
           type: 'section',
@@ -129,6 +131,7 @@ export class InteractiveAskService {
     const allowed = input.ask.allowedUserIds?.[0];
     if (!allowed) return;
     await input.client.chat.postEphemeral({
+      ...SLACK_NO_UNFURL,
       channel: input.ask.channelId,
       text: `Only <@${allowed}> can answer this ask.`,
       user: input.userId,

@@ -11,7 +11,7 @@ import {
 } from '../inbox/subscription.service.js';
 import { resolveChatTarget } from './chat-target-resolver.js';
 import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
-import { slackMessageContentForText } from './slack-message-format.js';
+import { SLACK_NO_UNFURL, slackMessageContentForText } from './slack-message-format.js';
 import {
   mentionWarningsForTarget,
   slackTextForPostMessage,
@@ -127,6 +127,7 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
   });
   const payload = {
     ...(content.blocks ? { blocks: content.blocks } : {}),
+    ...SLACK_NO_UNFURL,
     channel: channel.id,
     text: content.text,
     ...(threadTs ? { thread_ts: threadTs } : {}),
@@ -358,6 +359,7 @@ export async function runMessageUpdate(
       });
       const payload = {
         ...(content.blocks ? { blocks: content.blocks } : {}),
+        ...SLACK_NO_UNFURL,
         channel: channel.id,
         text: content.text,
         ts: targetTs,

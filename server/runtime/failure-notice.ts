@@ -6,6 +6,7 @@ import type { FeishuMessageClient } from '../feishu/client.js';
 import type { ProviderRetryClass } from '../providers/provider-retry.js';
 import { providerFailureReasonFromError } from '../providers/provider-failure.js';
 import { recordRuntimeEvent } from './activity.js';
+import { SLACK_NO_UNFURL } from '../tools/slack-message-format.js';
 
 /** Why the runtime gave up on an inbox item, as passed to the failure-notice hook. */
 export interface RuntimeItemFailure {
@@ -19,6 +20,8 @@ export interface SlackFailureNoticePost {
   channel: string;
   text: string;
   thread_ts?: string;
+  unfurl_links: false;
+  unfurl_media: false;
 }
 
 const MAX_REASON_CHARS = 160;
@@ -67,6 +70,7 @@ export function slackFailureNoticePost(item: InboxItem, failure: RuntimeItemFail
     channel: item.channelId,
     text: failureNoticeText(failure),
     ...(threadTs ? { thread_ts: threadTs } : {}),
+    ...SLACK_NO_UNFURL,
   };
 }
 

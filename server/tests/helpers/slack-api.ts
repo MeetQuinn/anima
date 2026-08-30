@@ -57,6 +57,18 @@ export function slackRequestBody(body: string): Record<string, unknown> {
   }
 }
 
+// Every runtime chat.postMessage/chat.update payload posts with unfurls off
+// (SLACK_NO_UNFURL): assert that invariant here and strip the two fields so
+// payload expectations stay about the behavior each test exercises.
+export function slackPostBody(body: string): Record<string, unknown> {
+  const parsed = slackRequestBody(body);
+  const { unfurl_links: links, unfurl_media: media, ...rest } = parsed;
+  if (String(links) !== 'false' || String(media) !== 'false') {
+    throw new Error('expected outbound Slack post to send unfurl_links/unfurl_media false');
+  }
+  return rest;
+}
+
 export function slackBlocks(body: { blocks?: unknown }): SlackTestBlock[] {
   if (Array.isArray(body.blocks)) {
     return body.blocks as SlackTestBlock[];
