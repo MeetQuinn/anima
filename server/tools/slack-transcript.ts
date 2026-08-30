@@ -15,6 +15,7 @@ import { cachedSlackFilePath } from '../slack/slack-file.service.js';
 import {
   atLabel,
   channelLabel,
+  decodeSlackEntities,
   extractSlackChannelMentionIds,
   extractSlackUserMentionIds,
   replaceSlackChannelMentions,
@@ -198,10 +199,10 @@ function slackTranscriptLine(
     { key: 'user_local_time', value: timezone ? formatUserLocalTime(isoTs, timezone) : undefined },
     { key: 'user_tz', value: timezone?.name },
   ]);
-  const text = replaceSlackChannelMentions(
+  const text = decodeSlackEntities(replaceSlackChannelMentions(
     replaceSlackUserMentions(message.text ?? '', userLabels.userMentions),
     userLabels.channelMentions,
-  );
+  ));
   const fileAnnotations = slackTranscriptFileAnnotations(message.files, cacheContext);
   const previewAnnotations = slackTranscriptPreviewAnnotations(message.attachments);
   const annotations = [fileAnnotations, previewAnnotations].filter(Boolean).join('\n');

@@ -6,6 +6,7 @@ import {
 } from './workspace-directory.service.js';
 import {
   channelLabel,
+  decodeSlackEntities,
   extractSlackChannelMentionIds,
   extractSlackUserMentionIds,
   isBotSlackUser,
@@ -93,6 +94,8 @@ export class SlackProfileResolver {
       const profile = await this.conversation({ channelId, client: input.client, teamId: input.teamId });
       channelLabels.set(channelId, channelLabel(profile?.name ?? channelId));
     }));
-    return replaceSlackChannelMentions(replaceSlackUserMentions(input.text, userLabels), channelLabels);
+    return decodeSlackEntities(
+      replaceSlackChannelMentions(replaceSlackUserMentions(input.text, userLabels), channelLabels),
+    );
   }
 }

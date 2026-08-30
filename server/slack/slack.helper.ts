@@ -56,6 +56,19 @@ export function isBotSlackUser(user: { isAppUser?: boolean; isBot?: boolean }): 
   return Boolean(user.isBot || user.isAppUser);
 }
 
+// Slack HTML-escapes `&`, `<`, `>` in message text (`&amp;`/`&lt;`/`&gt;`) so
+// its own `<...>` entities stay unambiguous. Once mentions and channels have
+// been resolved to readable labels, nothing downstream parses angle brackets —
+// but without decoding, agents read `A &amp; B` in their prompts and stored
+// records. Decode exactly Slack's three escapes, `&amp;` last so an author's
+// literal `&lt;` (sent by Slack as `&amp;lt;`) survives as typed.
+export function decodeSlackEntities(text: string): string {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
 export function extractSlackUserMentionIds(text: string): string[] {
   const ids = new Set<string>();
   for (const match of text.matchAll(SLACK_USER_MENTION_PATTERN)) {
