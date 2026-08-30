@@ -97,6 +97,9 @@ describe('renderMrkdwn GFM constructs', () => {
     );
     const table = container.querySelector('table');
     expect(table).toBeTruthy();
+    // Consumers sit in overflow-x-hidden ancestors: a wide table must be
+    // reachable by its own scroll wrapper (Nora, #715 render gate).
+    expect(table?.parentElement?.className).toContain('overflow-x-auto');
     expect(table?.querySelectorAll('th').length).toBe(2);
     expect(table?.querySelectorAll('td').length).toBe(4);
     expect(table?.querySelector('td strong')?.textContent).toBe('ok');

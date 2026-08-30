@@ -135,7 +135,11 @@ function renderBlocks(text: string): ReactNode[] {
       }
       const tableKey = key++;
       nodes.push(
-        <table key={`t${tableKey}`} className="my-1 border-collapse text-[12px]">
+        // Scroll wrapper: both consumers sit inside overflow-x-hidden
+        // ancestors, so a wide table would clip unreachably at 375px without
+        // it (Nora, #715 render gate) — same pattern as CODE_BLOCK_CLASS.
+        <div key={`t${tableKey}`} className="my-1 overflow-x-auto">
+          <table className="border-collapse text-[12px]">
           <thead>
             <tr>
               {header.map((cell, cellIndex) => (
@@ -156,7 +160,8 @@ function renderBlocks(text: string): ReactNode[] {
               </tr>
             ))}
           </tbody>
-        </table>,
+          </table>
+        </div>,
       );
       i = skipOneBlank(j);
       continue;
