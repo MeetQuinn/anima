@@ -5,7 +5,7 @@ import { activityServiceForAgent, type ActivityService } from '../activities/act
 import { errorMessage, nowIso } from '../ids.js';
 import { WakeQueueService, wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import { SlackWorkspaceDirectoryService, type SlackUserInfo } from '../slack/workspace-directory.service.js';
-import { SLACK_NO_UNFURL } from '../tools/slack-message-format.js';
+import { SLACK_NO_UNFURL, slackMarkdownBlockText } from '../tools/slack-message-format.js';
 import {
   InteractiveAskStore,
   type InteractiveAskOption,
@@ -109,12 +109,13 @@ export class InteractiveAskService {
     await input.client.chat.update({
       ...SLACK_NO_UNFURL,
       blocks: [
+        // Mirror the question post: `markdown` block, same transform (GFM
+        // bold is **, not mrkdwn's single *).
         {
-          type: 'section',
-          text: {
-            type: 'mrkdwn',
-            text: `${input.ask.question}\n\n✓ *${option.label}* — chosen by <@${userId}>`,
-          },
+          type: 'markdown',
+          text: slackMarkdownBlockText(
+            `${input.ask.question}\n\n✓ **${option.label}** — chosen by <@${userId}>`,
+          ),
         },
       ],
       channel: input.ask.channelId,

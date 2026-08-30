@@ -77,7 +77,9 @@ test('anima ask posts Block Kit buttons, stores the ask, and subscribes to typed
         'None fit? Just reply in this thread.',
       ].join('\n'));
       const blocks = slackBlocks(posts[0] ?? {});
-      assert.equal(blocks[0]?.type, 'section');
+      // Question renders in a `markdown` block, same as regular messages.
+      assert.equal(blocks[0]?.type, 'markdown');
+      assert.equal(blocks[0]?.text, 'Ship this change?');
       assert.equal(blocks[1]?.type, 'actions');
       const button = blocks[1]?.elements?.[0];
       assert.ok(button?.action_id?.startsWith('anima.ask.answer'));
@@ -123,6 +125,9 @@ test('interactive ask answer enqueues one choice_response with envelope context'
     const ask = await savePendingAsk({
       allowedUserIds: ['U-operator'],
       messageTs: '1770000500.000001',
+      // Formatting-sensitive question: CJK-flanked bold + glued bare URL
+      // must go through the shared markdown-block transform on replacement.
+      question: '**发布**：https://example.com/pr/7，可以吗',
       threadTs: undefined,
     });
     const updates: unknown[] = [];
@@ -140,9 +145,20 @@ test('interactive ask answer enqueues one choice_response with envelope context'
     await askService.replaceAnsweredMessage({ ask: answered.ask!, client });
     assert.equal(updates.length, 1);
     // The answered-message update must not re-trigger unfurls for question URLs.
-    const update = updates[0] as { unfurl_links?: boolean; unfurl_media?: boolean };
+    const update = updates[0] as {
+      blocks?: Array<{ text?: string; type?: string }>;
+      unfurl_links?: boolean;
+      unfurl_media?: boolean;
+    };
     assert.equal(update.unfurl_links, false);
     assert.equal(update.unfurl_media, false);
+    // Markdown block with the message transform applied: bare URL
+    // wrapped as an autolink so it stays clickable beside the CJK comma.
+    assert.equal(update.blocks?.[0]?.type, 'markdown');
+    assert.equal(
+      update.blocks?.[0]?.text,
+      '**发布**：<https://example.com/pr/7>，可以吗\n\n✓ **Hold** — chosen by <@U-operator>',
+    );
 
     const duplicate = await askService.answerAsk({
       askId: ask.askId,
