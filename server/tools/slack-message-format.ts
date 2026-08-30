@@ -22,8 +22,15 @@ export interface SlackMessageContent {
   text: string;
 }
 
+// The full transform applied to any text destined for a Slack `markdown`
+// block: bare-URL autolinking, lazy-continuation blank lines, CJK emphasis
+// flanking. Messages and ask questions share it so they render identically.
+export function slackMarkdownBlockText(input: string): string {
+  return slackEmphasisFlanking(slackMarkdownBlockBreaks(slackBareUrlAutolink(input)));
+}
+
 export function slackMessageContentForText(input: string): SlackMessageContent {
-  const text = slackEmphasisFlanking(slackMarkdownBlockBreaks(slackBareUrlAutolink(input)));
+  const text = slackMarkdownBlockText(input);
   const length = Array.from(text).length;
   if (length > MARKDOWN_TEXT_LIMIT) {
     throw new Error(

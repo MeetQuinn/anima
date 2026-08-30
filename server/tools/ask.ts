@@ -18,7 +18,7 @@ import { isBotSlackUser } from '../slack/slack.helper.js';
 import { SlackWorkspaceDirectoryService } from '../slack/workspace-directory.service.js';
 import type { InteractiveAskOption, InteractiveAskRecord } from '../storage/schema/interactive-ask.store.js';
 import { resolveSlackChannelArgument, type ResolvedSlackChannel } from './slack-channel-resolver.js';
-import { SLACK_NO_UNFURL } from './slack-message-format.js';
+import { SLACK_NO_UNFURL, slackMarkdownBlockText } from './slack-message-format.js';
 import {
   slackOutputTarget,
   slackTargetPayload,
@@ -378,9 +378,12 @@ function askMessageContent(input: {
   const hint = input.replyHint ? '\n\nNone fit? Just reply in this thread.' : '';
   return {
     blocks: [
+      // Same `markdown` block + transform as regular messages, so the
+      // question renders GFM (bold, lists, links) instead of literal
+      // asterisks in a legacy mrkdwn section.
       {
-        type: 'section',
-        text: { type: 'mrkdwn', text: questionText },
+        type: 'markdown',
+        text: slackMarkdownBlockText(questionText),
       },
       {
         type: 'actions',
