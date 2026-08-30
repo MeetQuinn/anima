@@ -9,6 +9,7 @@ import {
 } from "../slack/message-text.js";
 import { slackTranscriptOutput } from "../tools/slack-transcript.js";
 import {
+  slackBareUrlAutolink,
   slackEmphasisFlanking,
   slackMarkdownBlockBreaks,
   slackMessageContentForText,
@@ -570,5 +571,62 @@ test("Slack markdown block pads emphasis runs that Slack cannot pair next to CJK
   );
   assert.deepEqual(slackMessageContentForText("**支持 `x`**，后面").blocks, [
     { type: "markdown", text: `**支持 \`x\`**${hair}，后面` },
+  ]);
+});
+
+test("bare URLs are wrapped as autolinks so Slack links them next to CJK text", () => {
+  // The trigger case (nico 08-30): a URL glued to a full-width colon renders
+  // as dead text in Slack's markdown block; the <url> form links.
+  assert.equal(
+    slackBareUrlAutolink("PR：https://github.com/MeetQuinn/lunapark-infra/pull/158，请看"),
+    "PR：<https://github.com/MeetQuinn/lunapark-infra/pull/158>，请看",
+  );
+  // Full-width punctuation is not a URL character, so it ends the match.
+  assert.equal(
+    slackBareUrlAutolink("- https://example.com/pull/8814，checks 全绿"),
+    "- <https://example.com/pull/8814>，checks 全绿",
+  );
+  // Standalone URLs are wrapped too — a render no-op that keeps one code path.
+  assert.equal(
+    slackBareUrlAutolink("see https://example.com/a"),
+    "see <https://example.com/a>",
+  );
+  // Trailing ASCII sentence punctuation stays outside the link.
+  assert.equal(
+    slackBareUrlAutolink("Docs: https://example.com/a. Next"),
+    "Docs: <https://example.com/a>. Next",
+  );
+  // A `)` closing an unmatched `(` inside the URL is kept (wikipedia paths);
+  // a `)` closing prose parentheses is not.
+  assert.equal(
+    slackBareUrlAutolink("https://en.wikipedia.org/wiki/Foo_(bar)"),
+    "<https://en.wikipedia.org/wiki/Foo_(bar)>",
+  );
+  assert.equal(
+    slackBareUrlAutolink("(见 https://example.com/a)"),
+    "(见 <https://example.com/a>)",
+  );
+});
+
+test("URL autolinking leaves existing links and code untouched", () => {
+  for (const text of [
+    "<https://example.com/a>，后面",
+    "<https://example.com/a|label> 后面",
+    "[label](https://example.com/a) 后面",
+    "`https://example.com/a` 后面",
+    "```\nhttps://example.com/a\n```",
+    "xhttps://example.com not a scheme",
+    "说明 https:// 而已",
+  ]) {
+    assert.equal(slackBareUrlAutolink(text), text);
+  }
+  // Mixed line: code span skipped, plain URL wrapped.
+  assert.equal(
+    slackBareUrlAutolink("`curl https://a.example` 之后打开https://example.com/b。"),
+    "`curl https://a.example` 之后打开<https://example.com/b>。",
+  );
+  // End-to-end through the full pipeline.
+  assert.deepEqual(slackMessageContentForText("看：https://example.com/a，好").blocks, [
+    { type: "markdown", text: "看：<https://example.com/a>，好" },
   ]);
 });
