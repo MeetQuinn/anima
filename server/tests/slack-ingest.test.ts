@@ -142,6 +142,28 @@ test('buildSlackInboxItem enriches profile, channel, mentions, permalink, and fi
   });
 });
 
+test('buildSlackInboxItem decodes Slack HTML escapes into the agent-visible text', async () => {
+  await withIngestHome(async () => {
+    const calls = emptyCalls();
+    const item = await buildSlackInboxItem({
+      client: fakeIngestClient({ calls }),
+      envelope: { team_id: 'T-ingest' },
+      event: {
+        channel: 'C-team',
+        channel_type: 'channel',
+        // Slack escapes `&`, `<`, `>`; a literal `&lt;` typed by the author
+        // arrives double-escaped and must survive as typed.
+        text: 'A &amp; B &lt;- C &gt; D, literal &amp;lt; stays',
+        ts: '1770000010.000002',
+        type: 'message',
+        user: 'UALICE1',
+      },
+      warn: () => {},
+    });
+    assert.equal(item.text, 'A & B <- C > D, literal &lt; stays');
+  });
+});
+
 test('buildSlackInboxItem uses the complete visible block body instead of truncated fallback text', async () => {
   await withIngestHome(async () => {
     const calls = emptyCalls();

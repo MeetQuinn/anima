@@ -482,6 +482,27 @@ test("Slack transcript output includes message preview annotations without readi
   assert.match(output, /> Preview delivered by Slack/);
 });
 
+test("Slack transcript lines decode Slack HTML escapes", () => {
+  const output = slackTranscriptOutput(
+    [
+      {
+        text: "A &amp; B, x &lt; y, literal &amp;gt; stays",
+        ts: "1770000200.000002",
+        user: "U-today",
+      },
+    ],
+    { channel: "D-milo", limit: 1 },
+    {
+      actors: new Map([["U-today", "@totoday"]]),
+      channelMentions: new Map(),
+      timezones: new Map(),
+      userMentions: new Map(),
+    },
+    { hasMore: false, nextCursor: "" },
+  );
+  assert.match(output, /A & B, x < y, literal &gt; stays/);
+});
+
 test("Slack markdown block ends lists and quotes before a plain line", () => {
   // Plain lines keep their single newlines (Slack renders them as lines).
   assert.equal(slackMarkdownBlockBreaks("one\ntwo\nthree"), "one\ntwo\nthree");

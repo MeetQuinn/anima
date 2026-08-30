@@ -2,7 +2,7 @@ import type { WebClient } from '@slack/web-api';
 
 import { errorMessage } from '../ids.js';
 import type { SlackMessagePreview, SlackMessagePreviewFile } from '../../shared/inbox.js';
-import { slackFileFromRaw, type SlackRawFile } from './slack.helper.js';
+import { decodeSlackEntities, slackFileFromRaw, type SlackRawFile } from './slack.helper.js';
 
 // Slack message previews come exclusively from unfurl attachments Slack itself
 // delivers on the containing message. Nothing in this module reads the linked
@@ -29,11 +29,14 @@ export function slackMessagePreviewsFromAttachments(rawAttachments: unknown): Sl
     const channelId = stringField(attachment, 'channel_id');
     if (!fromUrl && !channelId) continue;
 
-    const text =
+    const rawText =
       stringField(attachment, 'text') ??
       stringField(attachment, 'fallback') ??
       textFromBlocks(attachment['blocks']);
-    if (!text) continue;
+    if (!rawText) continue;
+    // Preview text reaches agent prompts: decode Slack's HTML escapes like
+    // ingested message text (see decodeSlackEntities).
+    const text = decodeSlackEntities(rawText);
 
     const authorId = stringField(attachment, 'author_id');
     const authorName = stringField(attachment, 'author_name');
