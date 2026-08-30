@@ -29,11 +29,15 @@ test('failure notice only targets messages that addressed the agent', () => {
   assert.deepEqual(slackFailureNoticePost(dm, failure), {
     channel: 'D-user',
     text: failureNoticeText(failure),
+    unfurl_links: false,
+    unfurl_media: false,
   });
   assert.deepEqual(slackFailureNoticePost(mention, failure), {
     channel: 'C-room',
     text: failureNoticeText(failure),
     thread_ts: '1770000010.000001',
+    unfurl_links: false,
+    unfurl_media: false,
   });
   assert.equal(slackFailureNoticePost(follow, failure), undefined);
 });
@@ -88,5 +92,7 @@ test('postRuntimeFailureNotice posts to Slack for a mention and skips passive fo
     channel: 'C-room',
     text: failureNoticeText(failure),
     thread_ts: '1770000010.000001',
+    unfurl_links: false,
+    unfurl_media: false,
   }]);
 });

@@ -15,7 +15,7 @@ import { activityServiceForAgent } from '../activities/activity.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { makeSlackEvent } from './helpers/slack.js';
-import { slackBlocks, slackRequestBody, startSlackApiMock } from './helpers/slack-api.js';
+import { slackBlocks, slackPostBody, slackRequestBody, startSlackApiMock } from './helpers/slack-api.js';
 import { ingestEvent } from './helpers/inbox.js';
 import { withAnimaHome } from './anima-home.js';
 
@@ -66,7 +66,7 @@ test('message send records an audited Slack output', async () => {
       };
     }
     if (method !== 'chat.postMessage') throw new Error(`unexpected method ${method}`);
-    posts.push(slackRequestBody(body) as { channel: string; text: string; thread_ts?: string });
+    posts.push(slackPostBody(body) as { channel: string; text: string; thread_ts?: string });
     return {
       ok: true,
       channel: 'C-product',
@@ -215,7 +215,7 @@ test('message send resolves the active runtime item without ANIMA_INBOX_ITEM_ID 
       };
     }
     if (method !== 'chat.postMessage') throw new Error(`unexpected method ${method}`);
-    posts.push(slackRequestBody(body) as { channel: string; text: string; thread_ts?: string });
+    posts.push(slackPostBody(body) as { channel: string; text: string; thread_ts?: string });
     return {
       ok: true,
       channel: 'C-product',
@@ -276,7 +276,7 @@ test('message send follows a new channel thread using an active channel subscrip
       };
     }
     if (method !== 'chat.postMessage') throw new Error(`unexpected method ${method}`);
-    posts.push(slackRequestBody(body) as { channel: string; text: string; thread_ts?: string });
+    posts.push(slackPostBody(body) as { channel: string; text: string; thread_ts?: string });
     return {
       ok: true,
       channel: 'C-product',
@@ -336,7 +336,7 @@ test('message send records explicit env item after wake queue settlement for aud
       };
     }
     if (method !== 'chat.postMessage') throw new Error(`unexpected method ${method}`);
-    posts.push(slackRequestBody(body) as { channel: string; text: string; thread_ts?: string });
+    posts.push(slackPostBody(body) as { channel: string; text: string; thread_ts?: string });
     return {
       ok: true,
       channel: 'C-product',
@@ -437,7 +437,7 @@ test('message send output describes DM targets', async () => {
       };
     }
     if (method !== 'chat.postMessage') throw new Error(`unexpected method ${method}`);
-    posts.push(slackRequestBody(body) as { channel: string; text: string; thread_ts?: string });
+    posts.push(slackPostBody(body) as { channel: string; text: string; thread_ts?: string });
     return {
       ok: true,
       channel: 'D-alice',
@@ -651,7 +651,7 @@ test('message send normalizes raw Slack user ids outside code spans', async () =
       };
     }
     if (method !== 'chat.postMessage') throw new Error(`unexpected method ${method}`);
-    posts.push(slackRequestBody(body) as { blocks?: string; channel: string; text: string });
+    posts.push(slackPostBody(body) as { blocks?: string; channel: string; text: string });
     return {
       ok: true,
       channel: 'C-product',
@@ -708,7 +708,7 @@ test('message send warns for unresolved and out-of-channel mentions', async () =
       };
     }
     if (method !== 'chat.postMessage') throw new Error(`unexpected method ${method}`);
-    posts.push(slackRequestBody(body) as { channel: string; text: string });
+    posts.push(slackPostBody(body) as { channel: string; text: string });
     return {
       ok: true,
       channel: 'C-product',
@@ -785,7 +785,7 @@ test('message send prefers the target-channel member for duplicate readable hand
       };
     }
     if (method !== 'chat.postMessage') throw new Error(`unexpected method ${method}`);
-    posts.push(slackRequestBody(body) as { channel: string; text: string });
+    posts.push(slackPostBody(body) as { channel: string; text: string });
     return {
       ok: true,
       channel: 'C-product',
@@ -840,7 +840,7 @@ test('message send treats literal mention placeholders as text', async () => {
       };
     }
     if (method !== 'chat.postMessage') throw new Error(`unexpected method ${method}`);
-    posts.push(slackRequestBody(body) as { channel: string; text: string });
+    posts.push(slackPostBody(body) as { channel: string; text: string });
     return {
       ok: true,
       channel: 'C-product',
@@ -895,7 +895,7 @@ test('message send only targets a thread when explicitly requested', async () =>
       };
     }
     if (method !== 'chat.postMessage') throw new Error(`unexpected method ${method}`);
-    posts.push(slackRequestBody(body) as { channel: string; text: string; thread_ts?: string });
+    posts.push(slackPostBody(body) as { channel: string; text: string; thread_ts?: string });
     return {
       ok: true,
       channel: 'C-product',
@@ -944,7 +944,7 @@ test('message send uses a Slack markdown block while preserving one API call', a
       };
     }
     if (method !== 'chat.postMessage') throw new Error(`unexpected method ${method}`);
-    posts.push(slackRequestBody(body) as unknown as { blocks?: Array<{ text: string; type: string }>; channel: string; text: string });
+    posts.push(slackPostBody(body) as unknown as { blocks?: Array<{ text: string; type: string }>; channel: string; text: string });
     return {
       ok: true,
       channel: 'C-product',
@@ -1059,7 +1059,7 @@ test('message update records an audited Slack output update', async () => {
       };
     }
     if (method !== 'chat.update') throw new Error(`unexpected method ${method}`);
-    updates.push(slackRequestBody(body) as { channel: string; text: string; ts: string });
+    updates.push(slackPostBody(body) as { channel: string; text: string; ts: string });
     return {
       ok: true,
       channel: 'C-product',

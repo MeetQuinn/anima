@@ -1,3 +1,10 @@
+// Agents paste URLs in nearly every message, and Slack's default is to unfurl
+// each one into a preview card — a multi-link message becomes a wall of
+// previews (totoday 08-30). Post with unfurls off; links stay clickable and a
+// reader who wants the preview clicks through. Spread this into every
+// chat.postMessage / chat.update payload the runtime sends.
+export const SLACK_NO_UNFURL = { unfurl_links: false, unfurl_media: false } as const;
+
 const MARKDOWN_TEXT_LIMIT = 12_000;
 const FALLBACK_TEXT_BYTE_LIMIT = 3500;
 
