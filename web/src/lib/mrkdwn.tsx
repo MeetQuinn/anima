@@ -1,6 +1,8 @@
 // Renders Slack mrkdwn as React nodes.
 // Handles: ```block```, **bold**, *bold*, _italic_, `code`, Slack links,
-// channels/users/usergroups/date/special mentions, and Unicode emoji shortcodes.
+// channels/users/usergroups/date/special mentions, Unicode emoji shortcodes,
+// and bare http(s) URLs in plain text (outbound agent text never went through
+// Slack's linkifier, so it carries no <url> entities — totoday 08-30).
 // Patterns are matched in one pass; overlapping markup is not supported (same as Slack).
 
 import type { ReactNode } from 'react';
@@ -8,6 +10,8 @@ import { emojiGlyph } from './emoji';
 
 const TOKEN_RE =
   /```([\s\S]*?)```|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*|_([^_\n]+)_|`([^`\n]+)`|<!date\^[^|>]*(?:\|([^>]*))?>|<!subteam\^([A-Z0-9]+)(?:\|([^>]*))?>|<!(channel|here|everyone)>|<(https?:\/\/[^|>\s]+)\|([^>]+)>|<(https?:\/\/[^>\s]+)>|<#([A-Z0-9]+)\|([^>]+)>|<@([A-Z0-9]+)(?:\|([^>]*))?>|:([a-z0-9_+-]+):/g;
+
+const LINK_CLASS = 'text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent';
 
 export function renderMrkdwn(text: string): ReactNode {
   if (!text) return null;
@@ -80,7 +84,7 @@ export function renderMrkdwn(text: string): ReactNode {
           href={m[10]}
           target="_blank"
           rel="noreferrer"
-          className="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+          className={LINK_CLASS}
         >
           {m[11]}
         </a>,
@@ -93,7 +97,7 @@ export function renderMrkdwn(text: string): ReactNode {
           href={m[12]}
           target="_blank"
           rel="noreferrer"
-          className="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+          className={LINK_CLASS}
         >
           {m[12]}
         </a>,
@@ -131,11 +135,60 @@ function decodeSlackEntities(text: string): string {
   return text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
 }
 
+// URL characters are ASCII-only: agent text is often Chinese, and a URL glued
+// to CJK text („https://x，checks") must stop at the first non-ASCII char —
+// the same place Slack's own linkifier stops.
+const BARE_URL_RE = /https?:\/\/[a-zA-Z0-9\-._~:/?#@!$&'()*+,;=%[\]]+/g;
+
+// Punctuation that ends a sentence around a URL, not the URL itself
+// („see https://x/y." should link https://x/y). An ASCII `)` is kept only
+// while the URL has an unmatched `(` (wikipedia-style paths).
+function trimTrailingPunctuation(url: string): string {
+  for (;;) {
+    const ch = url.at(-1);
+    if (!ch) return url;
+    if (/[.,;:!?'"\]]/.test(ch)) {
+      url = url.slice(0, -1);
+      continue;
+    }
+    if (ch === ')') {
+      const open = url.split('(').length - 1;
+      const close = url.split(')').length - 1;
+      if (close > open) {
+        url = url.slice(0, -1);
+        continue;
+      }
+    }
+    return url;
+  }
+}
+
 function addText(nodes: ReactNode[], text: string, keyBase: number): void {
   if (!text) return;
   const lines = text.split('\n');
   lines.forEach((line, i) => {
     if (i > 0) nodes.push(<br key={`${keyBase}-${i}`} />);
-    if (line) nodes.push(line);
+    if (!line) return;
+    let last = 0;
+    let j = 0;
+    for (const m of line.matchAll(BARE_URL_RE)) {
+      const url = trimTrailingPunctuation(m[0]);
+      if (!url || url === 'http://' || url === 'https://') continue;
+      const start = m.index!;
+      if (start > last) nodes.push(line.slice(last, start));
+      nodes.push(
+        <a
+          key={`${keyBase}-${i}-${j++}`}
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className={LINK_CLASS}
+        >
+          {url}
+        </a>,
+      );
+      last = start + url.length;
+    }
+    if (last < line.length) nodes.push(line.slice(last));
   });
 }
