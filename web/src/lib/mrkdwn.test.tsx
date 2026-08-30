@@ -57,3 +57,67 @@ describe('renderMrkdwn bare URLs', () => {
     expect(link.getAttribute('rel')).toBe('noreferrer');
   });
 });
+
+// GFM block + inline constructs (totoday 08-30, "fix all"): outbound records
+// store the agent's original GFM, which Slack renders but the dashboard
+// previously showed as source text.
+describe('renderMrkdwn GFM constructs', () => {
+  it('renders headings with heavier weight', () => {
+    renderNodes('### Release plan\nbody line');
+    const heading = screen.getByText('Release plan');
+    expect(heading.className).toContain('font-semibold');
+    expect(screen.getByText('body line')).toBeTruthy();
+  });
+
+  it('renders md links with the shared link style and new-tab attrs', () => {
+    renderNodes('see [the PR](https://example.com/pr/7) for details');
+    const link = screen.getByRole('link');
+    expect(link.getAttribute('href')).toBe('https://example.com/pr/7');
+    expect(link.textContent).toBe('the PR');
+    expect(link.getAttribute('target')).toBe('_blank');
+  });
+
+  it('renders blockquote runs as one quote block', () => {
+    const { container } = renderNodes('intro\n> quoted one\n> quoted **two**\nafter');
+    const quote = container.querySelector('blockquote');
+    // <br> contributes nothing to textContent.
+    expect(quote?.textContent).toBe('quoted onequoted two');
+    expect(quote?.querySelector('strong')?.textContent).toBe('two');
+    expect(container.textContent).toContain('after');
+  });
+
+  it('renders strikethrough', () => {
+    const { container } = renderNodes('done ~~old plan~~ now');
+    expect(container.querySelector('del')?.textContent).toBe('old plan');
+  });
+
+  it('renders pipe tables with header and body cells', () => {
+    const { container } = renderNodes(
+      '| Host | State |\n| --- | --- |\n| mac | **ok** |\n| devbox | pending |',
+    );
+    const table = container.querySelector('table');
+    expect(table).toBeTruthy();
+    // Consumers sit in overflow-x-hidden ancestors: a wide table must be
+    // reachable by its own scroll wrapper (Nora, #715 render gate).
+    expect(table?.parentElement?.className).toContain('overflow-x-auto');
+    expect(table?.querySelectorAll('th').length).toBe(2);
+    expect(table?.querySelectorAll('td').length).toBe(4);
+    expect(table?.querySelector('td strong')?.textContent).toBe('ok');
+  });
+
+  it('keeps multi-line fenced code as one block, untouched by other rules', () => {
+    const { container } = renderNodes('```\n# not a heading\n| a | b |\nhttps://example.com/raw\n```');
+    const pre = container.querySelector('pre');
+    expect(pre?.textContent).toBe('# not a heading\n| a | b |\nhttps://example.com/raw');
+    expect(container.querySelector('table')).toBeNull();
+    expect(container.querySelector('a')).toBeNull();
+  });
+
+  it('renders block-free text exactly as before (lines and <br>)', () => {
+    const { container } = renderNodes('one\n\ntwo *bold* three');
+    expect(container.querySelectorAll('br').length).toBe(2);
+    expect(screen.getByText('bold').tagName).toBe('STRONG');
+    expect(container.querySelector('blockquote')).toBeNull();
+    expect(container.querySelector('table')).toBeNull();
+  });
+});
