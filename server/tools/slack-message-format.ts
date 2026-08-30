@@ -16,7 +16,7 @@ export interface SlackMessageContent {
 }
 
 export function slackMessageContentForText(input: string): SlackMessageContent {
-  const text = slackEmphasisFlanking(slackMarkdownBlockBreaks(input));
+  const text = slackEmphasisFlanking(slackMarkdownBlockBreaks(slackBareUrlAutolink(input)));
   const length = Array.from(text).length;
   if (length > MARKDOWN_TEXT_LIMIT) {
     throw new Error(
@@ -42,6 +42,92 @@ function fallbackText(text: string): string {
     end += char.length;
   }
   return `${text.slice(0, end)}…`;
+}
+
+// Slack's `markdown` block autolinks a bare URL only when GFM would: the URL
+// must sit after whitespace or line start. Agent text is often Chinese, where
+// a URL is glued to full-width punctuation (`：https://…，`) — GFM sees no
+// boundary and the URL renders as dead text (totoday 08-30, nico's PR links;
+// verified on real Slack in C0B9S11GMRT: the standalone form links, the glued
+// form does not, and the wrapped `<url>` autolink form links in both).
+// So every bare URL is wrapped as `<url>`; for already-linking URLs that is a
+// render no-op. Skipped: fenced code, inline code spans, existing `<url>`
+// entities/autolinks, and `[label](url)` destinations. URL characters are
+// ASCII-only (where Slack's own linkifier stops), and trailing sentence
+// punctuation stays outside the link, keeping `)` only while the URL has an
+// unmatched `(` (wikipedia-style paths).
+const BARE_URL = /https?:\/\/[a-zA-Z0-9\-._~:/?#@!$&'()*+,;=%[\]]+/g;
+
+export function slackBareUrlAutolink(text: string): string {
+  const lines = text.split("\n");
+  let inFence = false;
+  return lines
+    .map((line) => {
+      if (FENCE_LINE.test(line)) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence) return line;
+      return autolinkLine(line);
+    })
+    .join("\n");
+}
+
+function autolinkLine(line: string): string {
+  if (!line.includes("http")) return line;
+  const chars = Array.from(line);
+  const out: string[] = [];
+  let plain: string[] = [];
+  const flush = () => {
+    if (plain.length > 0) out.push(autolinkPlainSegment(plain.join("")));
+    plain = [];
+  };
+  let index = 0;
+  while (index < chars.length) {
+    if (chars[index] === "`") {
+      const end = codeSpanEnd(chars, index);
+      if (end !== -1) {
+        flush();
+        out.push(chars.slice(index, end).join(""));
+        index = end;
+        continue;
+      }
+    }
+    plain.push(chars[index] ?? "");
+    index += 1;
+  }
+  flush();
+  return out.join("");
+}
+
+function autolinkPlainSegment(segment: string): string {
+  return segment.replace(BARE_URL, (match, offset: number) => {
+    const before = segment.slice(0, offset);
+    // Already an autolink/entity, a markdown link destination, or mid-word.
+    if (before.endsWith("<") || before.endsWith("](") || /[A-Za-z0-9]$/.test(before)) return match;
+    const url = trimUrlEnd(match);
+    if (url.length <= "https://".length) return match;
+    return `<${url}>${match.slice(url.length)}`;
+  });
+}
+
+function trimUrlEnd(url: string): string {
+  for (;;) {
+    const ch = url.at(-1) ?? "";
+    if (/[.,;:!?'"]/.test(ch)) {
+      url = url.slice(0, -1);
+      continue;
+    }
+    if (ch === ")") {
+      const open = url.split("(").length - 1;
+      const close = url.split(")").length - 1;
+      if (close > open) {
+        url = url.slice(0, -1);
+        continue;
+      }
+    }
+    return url;
+  }
 }
 
 // Slack's `markdown` block keeps single newlines inside a paragraph (verified
