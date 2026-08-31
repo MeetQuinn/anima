@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Check, ChevronRight, Plus, Undo2, X } from 'lucide-react';
-import type { ProviderAvailability, ProviderCatalogEntry } from '@shared/provider-catalog';
+import {
+  providerSupportsFastMode,
+  type ProviderAvailability,
+  type ProviderCatalogEntry,
+} from '@shared/provider-catalog';
 import type { AgentConfig, AgentUpdateProviderRequest } from '@shared/agent-config';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -78,12 +82,11 @@ export function RuntimeRow({
                 </span>
               </>
             )}
-            {provider.kind === 'claude-code' && provider.fastMode && (
+            {'fastMode' in provider && provider.fastMode && (
               <>
                 <span className="font-sans mx-1.5 text-[12px] text-text-subtle">·</span>
-                {/* "requested", never "on": this surface shows CONFIG. On an
-                    org-blocked seat the session still runs standard, and the
-                    observed fast_mode_state must not be implied here. */}
+                {/* "requested", never "on": this surface shows config, not
+                    provider-side availability for the account and model. */}
                 <span className="font-serif text-[13px] md:text-[15px] text-text-muted">
                   Fast mode requested
                 </span>
@@ -161,7 +164,7 @@ function RuntimeModal({
   // Absent and false are the same launch (the server injects nothing for
   // either), so the checkbox draft folds them together; an untouched box
   // sends no key.
-  const currentFastMode = provider.kind === 'claude-code' && (provider.fastMode ?? false);
+  const currentFastMode = 'fastMode' in provider && (provider.fastMode ?? false);
   const hadOverrides = hadCommandOverride || currentFastMode;
 
   // Drafts (initialised on mount; the modal is conditionally rendered).
@@ -246,7 +249,7 @@ function RuntimeModal({
     setDraftEffort(defaultEffortForModel(nextEntry, nextEntry.defaultModel, providerAvailability));
     // A launch override written for the old provider's CLI does not transfer
     // (server drops it on kind change); the drafts mirror that. Fast mode is
-    // Claude-only and the server drops it with the other overrides.
+    // provider-specific and is also dropped rather than transferred.
     setDraftCommand('');
     setDraftArgs('');
     setDraftFastMode(false);
@@ -289,11 +292,11 @@ function RuntimeModal({
     let launchAffecting = providerChanged;
     if (kindChanged) {
       // The server drops old-kind overrides; only send values the operator
-      // typed for the NEW kind. fastMode must NEVER ride along to a
-      // non-Claude kind — the server 400s the whole atomic update.
+      // typed for the NEW kind. fastMode must NEVER ride along to a provider
+      // that does not support it — the server 400s the whole atomic update.
       if (commandDraft) update.runtimeCommand = commandDraft;
       if (nextArgs.length > 0) update.runtimeArgs = nextArgs;
-      if (draftKind === 'claude-code' && draftFastMode) update.fastMode = true;
+      if (providerSupportsFastMode(draftKind) && draftFastMode) update.fastMode = true;
     } else {
       const currentCommand = provider.runtimeCommand ?? '';
       const currentArgs = provider.runtimeArgs ?? [];
@@ -306,9 +309,9 @@ function RuntimeModal({
         update.runtimeArgs = nextArgs.length > 0 ? nextArgs : null;
         launchAffecting = true;
       }
-      if (draftKind === 'claude-code' && draftFastMode !== currentFastMode) {
-        // Toggling changes the launch argv (--settings injection), so it
-        // routes through the restart confirm like command/args.
+      if (providerSupportsFastMode(draftKind) && draftFastMode !== currentFastMode) {
+        // Toggling changes provider launch config, so it routes through the
+        // restart confirm like command/args.
         update.fastMode = draftFastMode;
         launchAffecting = true;
       }
@@ -481,8 +484,8 @@ function RuntimeModal({
                   {hadCommandOverride
                     ? ' The command override below was cleared; it was written for the old provider.'
                     : ''}
-                  {currentFastMode && draftKind !== 'claude-code'
-                    ? ' Fast mode was turned off; it is Claude-only.'
+                  {currentFastMode
+                    ? ' Fast mode was turned off; provider settings do not transfer.'
                     : ''}
                 </div>
               )}
@@ -585,7 +588,7 @@ function RuntimeModal({
             </button>
             {advancedOpen && (
               <div className="space-y-5 pb-5">
-                {draftKind === 'claude-code' && (
+                {providerSupportsFastMode(draftKind) && (
                   <div className="grid gap-2.5 md:grid-cols-[6.5rem_1fr] md:gap-6">
                     <div className={railLabel}>Fast mode</div>
                     <div className="space-y-1">
@@ -602,15 +605,18 @@ function RuntimeModal({
                         />
                         <span className="font-sans text-[13px] text-text">Request fast mode</span>
                       </label>
-                      {/* Honest copy (Milo's contract, PR #685): this is an
-                          opt-in REQUEST, never a guarantee — availability is
-                          decided org-side, and the observed fast_mode_state is
-                          runtime evidence only. */}
-                      <p className="font-sans pl-[26px] text-[11px] leading-snug text-text-muted">
-                        Asks Claude for faster responses each session. A request, not a guarantee:
-                        sessions run at standard speed unless the Anthropic organization has fast
-                        mode enabled with usage credits.
-                      </p>
+                      {draftKind === 'claude-code' ? (
+                        <p className="font-sans pl-[26px] text-[11px] leading-snug text-text-muted">
+                          Asks Claude for faster responses each session. A request, not a guarantee:
+                          sessions run at standard speed unless the Anthropic organization has fast
+                          mode enabled with usage credits.
+                        </p>
+                      ) : (
+                        <p className="font-sans pl-[26px] text-[11px] leading-snug text-text-muted">
+                          Runs supported Codex models up to 1.5× faster. GPT-5.6 and GPT-5.5 use
+                          2.5× ChatGPT credits; API-key sessions use Priority pricing.
+                        </p>
+                      )}
                     </div>
                   </div>
                 )}

@@ -588,8 +588,8 @@ test('agent provider runtime overrides: set, keep, clear, and drop on kind chang
   }
 });
 
-test('agent Claude fast mode opt-in persists, updates, and stays Claude-only', async () => {
-  const configDir = await mkdtemp(join(tmpdir(), 'anima-claude-fast-mode-'));
+test('agent fast mode opt-in persists for Claude and Codex and rejects other providers', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-provider-fast-mode-'));
   try {
     await writeConfig(configDir, {
       agents: [
@@ -628,14 +628,32 @@ test('agent Claude fast mode opt-in persists, updates, and stays Claude-only', a
       raw = await readRawAgentFile(configDir, 'milo');
       assert.equal('fastMode' in (raw.provider ?? {}), false);
 
+      const codexEnabled = await milo.updateProvider({ fastMode: true });
+      assert.equal(codexEnabled.provider.kind, 'codex-cli');
+      assert.equal(codexEnabled.provider.fastMode, true);
+      raw = await readRawAgentFile(configDir, 'milo');
+      if (raw.provider?.kind !== 'codex-cli') throw new Error('expected Codex provider');
+      assert.equal(raw.provider.fastMode, true);
+      const redactedCodex = redactAgentConfig(codexEnabled);
+      if (redactedCodex.provider.kind !== 'codex-cli') throw new Error('expected Codex provider');
+      assert.equal(redactedCodex.provider.fastMode, true);
+
+      const codexDisabled = await milo.updateProvider({ fastMode: false });
+      assert.equal(codexDisabled.provider.kind, 'codex-cli');
+      assert.equal(codexDisabled.provider.fastMode, false);
+
+      const unsupported = await milo.updateProvider({ kind: 'kimi-cli' });
+      assert.equal(unsupported.provider.kind, 'kimi-cli');
+      assert.equal('fastMode' in unsupported.provider, false);
+
       await assert.rejects(
         milo.updateProvider({ fastMode: true }),
-        /unsupported fastMode for codex-cli/,
+        /unsupported fastMode for kimi-cli/,
       );
-      assert.equal((await milo.getConfig()).provider.kind, 'codex-cli');
+      assert.equal((await milo.getConfig()).provider.kind, 'kimi-cli');
 
-      const switchedBack = await milo.updateProvider({ fastMode: true, kind: 'claude-code' });
-      assert.equal(switchedBack.provider.kind, 'claude-code');
+      const switchedBack = await milo.updateProvider({ fastMode: true, kind: 'codex-cli' });
+      assert.equal(switchedBack.provider.kind, 'codex-cli');
       assert.equal(switchedBack.provider.fastMode, true);
     });
   } finally {

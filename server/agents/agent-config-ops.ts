@@ -18,6 +18,7 @@ import {
   isSupportedProviderKind,
   isSupportedProviderModel,
   providerCatalogEntry,
+  providerSupportsFastMode,
   reasoningEffortsForModel,
   type ReasoningEffortAvailability,
 } from '../../shared/provider-catalog.js';
@@ -119,7 +120,7 @@ function mergeProviderSelection(
     if (update.transport !== undefined && current.kind !== 'claude-code') {
       throw new AgentConfigError(400, `unsupported transport for ${current.kind}: ${update.transport}`);
     }
-    if (update.fastMode !== undefined && current.kind !== 'claude-code') {
+    if (update.fastMode !== undefined && !providerSupportsFastMode(current.kind)) {
       throw new AgentConfigError(400, `unsupported fastMode for ${current.kind}`);
     }
     validateProviderShape(current.kind, model, reasoningEffort, '', availability);
@@ -141,7 +142,7 @@ function mergeProviderSelection(
   if (update.transport !== undefined && entry.kind !== 'claude-code') {
     throw new AgentConfigError(400, `unsupported transport for ${entry.kind}: ${update.transport}`);
   }
-  if (update.fastMode !== undefined && entry.kind !== 'claude-code') {
+  if (update.fastMode !== undefined && !providerSupportsFastMode(entry.kind)) {
     throw new AgentConfigError(400, `unsupported fastMode for ${entry.kind}`);
   }
   const model = update.model ?? entry.defaultModel;
@@ -155,7 +156,9 @@ function mergeProviderSelection(
   }
   if (reasoningEffort !== undefined) next.reasoningEffort = reasoningEffort;
   if (entry.kind === 'claude-code' && update.transport !== undefined) next.transport = update.transport;
-  if (entry.kind === 'claude-code' && update.fastMode !== undefined) next.fastMode = update.fastMode;
+  if (providerSupportsFastMode(entry.kind) && update.fastMode !== undefined) {
+    next.fastMode = update.fastMode;
+  }
   // A launch override written for the old provider's CLI does not transfer to a
   // different provider: kind change drops current overrides; only values the
   // update itself provides apply to the new kind.
