@@ -16,6 +16,7 @@ import {
 
 export const CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV = 'ANIMA_CODEX_AUTO_COMPACT_TOKEN_LIMIT';
 export const CODEX_AUTO_COMPACT_TOKEN_LIMIT_SCOPE = 'total';
+export const CODEX_FAST_MODE_CONFIG = ['service_tier="fast"', 'features.fast_mode=true'] as const;
 const CODEX_TOOL_ENV_BASE_INCLUDE = [
   'COLORTERM',
   'HOME',
@@ -125,7 +126,7 @@ export class CodexCliAgentRuntime extends ControllerAgentRuntime<CodexAppServerC
       input.signal,
       () => this.slot.get() ?? this.spawnController(
         {
-          args: codexAppServerArgs(this.env, this.providerArgs),
+          args: codexAppServerArgs(this.config, this.providerArgs),
           command: this.command,
           label: 'Codex app-server runtime',
         },
@@ -193,10 +194,13 @@ export function codexAutoCompactTokenLimitFor(
 }
 
 export function codexAppServerArgs(
-  env: Record<string, string> | undefined,
+  config: CodexCliAgentProviderConfig,
   providerArgs: readonly string[] = [],
 ): string[] {
   return [
+    // Raw Runtime Arguments remain the advanced override when they also set
+    // these keys: Codex uses the last CLI config override for a duplicate key.
+    ...codexFastModeArgs(config),
     ...providerArgs,
     'app-server',
     '-c',
@@ -204,10 +208,14 @@ export function codexAppServerArgs(
     '-c',
     'shell_environment_policy.ignore_default_excludes=true',
     '-c',
-    `shell_environment_policy.include_only=${JSON.stringify(codexToolEnvIncludeList(env))}`,
+    `shell_environment_policy.include_only=${JSON.stringify(codexToolEnvIncludeList(config.env))}`,
     '--listen',
     'stdio://',
   ];
+}
+
+export function codexFastModeArgs(config: CodexCliAgentProviderConfig): string[] {
+  return config.fastMode ? CODEX_FAST_MODE_CONFIG.flatMap((value) => ['-c', value]) : [];
 }
 
 export function codexToolEnvIncludeList(env: Record<string, string> | undefined): string[] {

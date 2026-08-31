@@ -455,6 +455,38 @@ test('an agent fast mode change reloads only that Claude runtime', async () => {
   await host.stop();
 });
 
+test('an agent fast mode change reloads only that Codex runtime', async () => {
+  const alpha = runtimeHostAgent('alpha', { connected: true });
+  let beta = runtimeHostAgent('beta', { connected: true });
+  beta.provider = { kind: 'codex-cli', model: 'gpt-5.6-sol' };
+  const started: string[] = [];
+  const stopped: string[] = [];
+  const host = new RuntimeHost({}, {
+    animaHome: testHome,
+    loadAgents: async () => [alpha, beta],
+    logger: silentLogger,
+    startAgent: async (agent) => {
+      started.push(
+        `${agent.id}:${agent.provider.kind === 'codex-cli' && agent.provider.fastMode === true}`,
+      );
+      return stopHandle(agent.id, stopped);
+    },
+    validateAgent: async () => {},
+  });
+
+  await host.reconcileOnce();
+  beta = {
+    ...beta,
+    provider: { ...beta.provider, fastMode: true, kind: 'codex-cli' },
+  };
+  await host.reconcileOnce();
+  await host.reconcileOnce();
+
+  assert.deepEqual(started, ['alpha:false', 'beta:false', 'beta:true']);
+  assert.deepEqual(stopped, ['beta']);
+  await host.stop();
+});
+
 test('runtime host refreshes Slack display info before starting an agent', async () => {
   const scout = runtimeHostAgent('scout', { connected: true });
   const started: string[] = [];

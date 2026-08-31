@@ -270,11 +270,10 @@ describe('Runtime modal — Advanced disclosure', () => {
   });
 });
 
-// Pins for the fast mode opt-in (server contract: PR #685). The server field
-// is `provider.fastMode?: boolean`, Claude-only — a non-Claude update carrying
-// the key 400s the WHOLE atomic save, so the payload rules here are load-
-// bearing, not cosmetic. Absent and false launch identically (nothing is
-// injected for either), so an untouched box must send no key at all.
+// Pins for the per-agent fast mode opt-in. Claude and Codex support the field;
+// other providers reject it, so the payload rules here are load-bearing, not
+// cosmetic. Absent and false launch identically (nothing is injected for
+// either), so an untouched box must send no key at all.
 describe('Runtime modal — fast mode', () => {
   it('is a launch-affecting opt-in: checking the box routes through the restart confirm and sends exactly { fastMode: true }', async () => {
     const onCommit = vi.fn(() => Promise.resolve());
@@ -295,8 +294,8 @@ describe('Runtime modal — fast mode', () => {
     ).toBeTruthy();
     fireEvent.click(box);
 
-    // Toggling changes the launch argv (--settings injection) → the restart
-    // confirm must mount; committing happens from ITS Save.
+    // Toggling changes provider launch config → the restart confirm must
+    // mount; committing happens from ITS Save.
     fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
     expect(onCommit).not.toHaveBeenCalled();
     fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
@@ -311,9 +310,8 @@ describe('Runtime modal — fast mode', () => {
     const dialog = openModal({ kind: 'claude-code', model: 'fable', fastMode: true }, onCommit);
 
     // The read-only row discloses the CONFIG, qualified: "Fast mode
-    // requested", never a bare "Fast mode" — on an org-blocked seat the
-    // session runs standard, and this surface must not read as activation
-    // (request ≠ availability; observed fast_mode_state lives elsewhere).
+    // requested", never a bare "Fast mode" — provider-side availability may
+    // still decline the request, so this surface must not read as activation.
     expect(screen.getByRole('button', { name: /Fast mode requested/ })).toBeTruthy();
     // fastMode counts as configured Advanced data: never hidden on arrival.
     expect(dialog.getByRole('button', { name: 'Advanced' }).getAttribute('aria-expanded')).toBe(
@@ -329,34 +327,54 @@ describe('Runtime modal — fast mode', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Runtime' })).toBeNull());
   });
 
-  it('is Claude-only in the editor, and switching kind to Claude Code lets the opt-in ride the kind change', async () => {
+  it('is available for Codex with Codex credit and API pricing copy', async () => {
     const onCommit = vi.fn(() => Promise.resolve());
     const dialog = openModal({ kind: 'codex-cli', model: 'gpt-5.6-sol' }, onCommit);
 
-    // No fast mode control for a non-Claude provider.
     fireEvent.click(dialog.getByRole('button', { name: 'Advanced' }));
-    expect(dialog.queryByRole('checkbox', { name: 'Request fast mode' })).toBeNull();
-
-    // Switching the draft kind to Claude Code reveals it; the server applies
-    // fastMode arriving together with a kind change to claude-code.
-    fireEvent.click(dialog.getByRole('button', { name: 'Claude Code' }));
+    expect(dialog.getByText(/up to 1.5× faster/)).toBeTruthy();
+    expect(dialog.getByText(/2.5× ChatGPT credits/)).toBeTruthy();
+    expect(dialog.getByText(/API-key sessions use Priority pricing/)).toBeTruthy();
     fireEvent.click(dialog.getByRole('checkbox', { name: 'Request fast mode' }));
     fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
     fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
 
-    expect(onCommit).toHaveBeenCalledTimes(1);
-    const [update] = onCommit.mock.calls[0] as unknown as [Record<string, unknown>];
-    expect(update).toMatchObject({ kind: 'claude-code', fastMode: true });
+    expect(onCommit).toHaveBeenCalledWith({ fastMode: true }, { envOnly: false });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Runtime' })).toBeNull());
   });
 
-  it('never sends fastMode with a kind change away from Claude (the server 400s the whole atomic update)', async () => {
+  it('lets the opt-in ride a kind change to Codex', async () => {
+    const onCommit = vi.fn(() => Promise.resolve());
+    const dialog = openModal(
+      { kind: 'kimi-cli', model: 'kimi-code/kimi-for-coding' },
+      onCommit,
+    );
+
+    fireEvent.click(dialog.getByRole('button', { name: 'Codex CLI' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Advanced' }));
+    fireEvent.click(dialog.getByRole('checkbox', { name: 'Request fast mode' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
+
+    const [update] = onCommit.mock.calls[0] as unknown as [Record<string, unknown>];
+    expect(update).toMatchObject({
+      fastMode: true,
+      kind: 'codex-cli',
+      model: 'gpt-5.6-sol',
+    });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Runtime' })).toBeNull());
+  });
+
+  it('clears fast mode on every kind change and never sends it to an unsupported provider', async () => {
     const onCommit = vi.fn(() => Promise.resolve());
     const dialog = openModal({ kind: 'claude-code', model: 'fable', fastMode: true }, onCommit);
 
     fireEvent.click(dialog.getByRole('button', { name: 'Codex CLI' }));
     // The kind-change hint owns the disclosure that the opt-in was dropped.
     expect(dialog.getByText(/Fast mode was turned off/)).toBeTruthy();
+    expect(
+      (dialog.getByRole('checkbox', { name: 'Request fast mode' }) as HTMLInputElement).checked,
+    ).toBe(false);
 
     // Like the command drafts, the opt-in draft is cleared by ANY kind
     // change: switching back to Claude Code shows the box unchecked, so a
@@ -365,14 +383,15 @@ describe('Runtime modal — fast mode', () => {
     expect(
       (dialog.getByRole('checkbox', { name: 'Request fast mode' }) as HTMLInputElement).checked,
     ).toBe(false);
-    fireEvent.click(dialog.getByRole('button', { name: 'Codex CLI' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Kimi CLI' }));
+    expect(dialog.queryByRole('checkbox', { name: 'Request fast mode' })).toBeNull();
 
     fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
     fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
 
     expect(onCommit).toHaveBeenCalledTimes(1);
     const [update] = onCommit.mock.calls[0] as unknown as [Record<string, unknown>];
-    expect(update).toMatchObject({ kind: 'codex-cli' });
+    expect(update).toMatchObject({ kind: 'kimi-cli' });
     expect(update).not.toHaveProperty('fastMode');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Runtime' })).toBeNull());
   });

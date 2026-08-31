@@ -181,6 +181,12 @@ export function providerCatalogEntry(kind: string): ProviderCatalogEntry | undef
   return PROVIDER_CATALOG.find((entry) => entry.kind === kind);
 }
 
+export function providerSupportsFastMode(
+  kind: string,
+): kind is 'claude-code' | 'codex-cli' {
+  return kind === 'claude-code' || kind === 'codex-cli';
+}
+
 export function defaultModelForProvider(kind: string): string | undefined {
   return providerCatalogEntry(kind)?.defaultModel || undefined;
 }

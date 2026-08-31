@@ -8,8 +8,10 @@ import { createAgentRuntime } from '../providers/factory.js';
 import {
   CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV,
   CODEX_AUTO_COMPACT_TOKEN_LIMIT_SCOPE,
+  CODEX_FAST_MODE_CONFIG,
   codexAppServerArgs,
   codexAutoCompactTokenLimitFor,
+  codexFastModeArgs,
   codexToolEnvIncludeList,
 } from '../providers/codex.js';
 import type { AgentRuntime } from '../providers/contract.js';
@@ -45,7 +47,7 @@ test('codex-cli app-server launch allows managed provider env into tool shells',
   assert.equal(include.includes('CODEX_THREAD_ID'), false);
 
   const args = codexAppServerArgs(
-    { SLACK_BOT_TOKEN: 'xoxb-agent' },
+    { env: { SLACK_BOT_TOKEN: 'xoxb-agent' }, kind: 'codex-cli' },
     ['--profile', 'team one'],
   );
   assert.deepEqual(args.slice(0, 8), [
@@ -63,6 +65,31 @@ test('codex-cli app-server launch allows managed provider env into tool shells',
   assert.match(includeArg, /SLACK_BOT_TOKEN/);
   assert.equal(args.at(-2), '--listen');
   assert.equal(args.at(-1), 'stdio://');
+});
+
+test('codex-cli fast mode is an explicit per-agent launch opt-in', () => {
+  assert.deepEqual(codexFastModeArgs({ kind: 'codex-cli' }), []);
+  assert.deepEqual(codexFastModeArgs({ fastMode: false, kind: 'codex-cli' }), []);
+  assert.deepEqual(codexFastModeArgs({ fastMode: true, kind: 'codex-cli' }), [
+    '-c',
+    CODEX_FAST_MODE_CONFIG[0],
+    '-c',
+    CODEX_FAST_MODE_CONFIG[1],
+  ]);
+
+  const args = codexAppServerArgs(
+    { fastMode: true, kind: 'codex-cli' },
+    ['-c', 'service_tier="default"'],
+  );
+  assert.deepEqual(args.slice(0, 7), [
+    '-c',
+    'service_tier="fast"',
+    '-c',
+    'features.fast_mode=true',
+    '-c',
+    'service_tier="default"',
+    'app-server',
+  ]);
 });
 
 test('codex-cli auto-compact limit is opt-in only; default leaves Codex native behavior', () => {

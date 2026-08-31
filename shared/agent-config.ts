@@ -284,6 +284,7 @@ export type SlackUserCandidate = z.infer<typeof SlackUserCandidate>;
 
 export const CodexCliAgentProviderConfig = z.object({
   env: z.record(z.string(), z.string()).optional(),
+  fastMode: z.boolean().optional(),
   idleTimeoutMs: z.number().optional(),
   kind: z.literal('codex-cli'),
   model: z.string().optional(),
