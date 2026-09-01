@@ -36,6 +36,13 @@ export function sidebarDotTitle(
   return workState;
 }
 
+export function sidebarUsesBackgroundRing(
+  health: AgentRuntimeHealthSummary | undefined,
+  workState: AgentDisplayState,
+): boolean {
+  return health?.state === 'healthy' && workState === 'background';
+}
+
 export function AgentRow({
   agent,
   index,
@@ -75,6 +82,7 @@ export function AgentRow({
   const work = agentWorkState(status);
   const dotBg = sidebarDotColor(status?.health, work.state);
   const dotTitle = sidebarDotTitle(status?.health, work.state, work.backgroundTaskCount);
+  const backgroundRing = sidebarUsesBackgroundRing(status?.health, work.state);
   // Active row: the avatar picks up a faint accent ring (in addition to the
   // rounded-cap accent bar) so selection reads without shouting.
   const avatarRing = active ? 'ring-accent/40' : 'ring-avatar-ring-spine';
@@ -156,16 +164,21 @@ export function AgentRow({
                     Off
                   </span>
                 ) : showRuntimeHealth ? (
-                  // Single colored dot — color encodes all health states.
-                  // Labels and reason text live in the activity strip; the dot
-                  // is the sidebar's only ambient signal. A working (running)
-                  // agent's dot breathes with a soft halo so live work reads at
-                  // a glance; every other state holds still.
+                  // Color encodes health; shape distinguishes background work
+                  // when motion is reduced. Working breathes, healthy background
+                  // work is an open ring, and every other state is a solid dot.
                   work.state === 'working' ? (
                     <span aria-hidden className="relative flex h-2 w-2 shrink-0 items-center justify-center" title={dotTitle}>
                       <span className="anima-dot-halo absolute h-2 w-2 rounded-full" style={{ background: dotBg }} />
                       <span className="anima-dot-core relative h-2 w-2 rounded-full" style={{ background: dotBg }} />
                     </span>
+                  ) : backgroundRing ? (
+                    <span
+                      aria-hidden
+                      className="h-2.5 w-2.5 shrink-0 rounded-full border-2 bg-transparent"
+                      title={dotTitle}
+                      style={{ borderColor: dotBg }}
+                    />
                   ) : (
                     <span
                       aria-hidden
@@ -175,6 +188,7 @@ export function AgentRow({
                     />
                   )
                 ) : null}
+                {showRuntimeHealth && <span className="sr-only">{dotTitle}</span>}
               </span>
             )}
           </div>

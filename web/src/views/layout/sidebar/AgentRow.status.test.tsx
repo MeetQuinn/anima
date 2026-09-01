@@ -2,8 +2,8 @@ import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { agentConfigSchema } from '@shared/agent-config';
-import type { AgentStatusSummary } from '@shared/snapshot';
-import { AgentRow } from './AgentRow';
+import type { AgentRuntimeHealthSummary, AgentStatusSummary } from '@shared/snapshot';
+import { AgentRow, sidebarDotColor, sidebarUsesBackgroundRing } from './AgentRow';
 
 const agent = agentConfigSchema('milo').parse({
   id: 'milo',
@@ -27,8 +27,13 @@ function healthyStatus(state: 'background' | 'working'): AgentStatusSummary {
   };
 }
 
+const healthy: AgentRuntimeHealthSummary = {
+  state: 'healthy',
+  updatedAt: '2026-09-01T08:00:00.000Z',
+};
+
 describe('AgentRow provider work status', () => {
-  it('keeps Background static and only animates active Working state', () => {
+  it('uses a static ring for Background and only animates active Working state', () => {
     const view = render(
       <AgentRow
         active={false}
@@ -40,7 +45,11 @@ describe('AgentRow provider work status', () => {
       />,
     );
 
-    expect(view.container.querySelector('[title="background · 2"]')).toBeTruthy();
+    const background = view.container.querySelector<HTMLElement>('[title="background · 2"]');
+    expect(background).toBeTruthy();
+    expect(background?.classList.contains('border-2')).toBe(true);
+    expect(background?.classList.contains('bg-transparent')).toBe(true);
+    expect(background?.style.borderColor).toBe('var(--color-health-warn)');
     expect(view.container.querySelector('.anima-dot-halo')).toBeNull();
 
     view.rerender(
@@ -56,5 +65,33 @@ describe('AgentRow provider work status', () => {
 
     expect(view.container.querySelector('[title="working"]')).toBeTruthy();
     expect(view.container.querySelector('.anima-dot-halo')).toBeTruthy();
+  });
+
+  it('pins Background to warn and Queued to idle colors', () => {
+    expect(sidebarDotColor(healthy, 'background')).toBe('var(--color-health-warn)');
+    expect(sidebarDotColor(healthy, 'queued')).toBe('var(--color-health-idle)');
+  });
+
+  it('uses the ring only for healthy Background work', () => {
+    expect(sidebarUsesBackgroundRing(healthy, 'background')).toBe(true);
+    expect(sidebarUsesBackgroundRing({ ...healthy, state: 'unhealthy' }, 'background')).toBe(false);
+    expect(sidebarUsesBackgroundRing(healthy, 'working')).toBe(false);
+
+    const unhealthyStatus = healthyStatus('background');
+    if (!unhealthyStatus.health) throw new Error('expected health fixture');
+    unhealthyStatus.health = { ...unhealthyStatus.health, state: 'unhealthy' };
+    const view = render(
+      <AgentRow
+        active={false}
+        agent={agent}
+        enabled
+        index={0}
+        onClick={() => {}}
+        status={unhealthyStatus}
+      />,
+    );
+    const unhealthy = view.container.querySelector<HTMLElement>('[title="needs attention"]');
+    expect(unhealthy?.classList.contains('border-2')).toBe(false);
+    expect(unhealthy?.style.background).toBe('var(--color-health-error)');
   });
 });
