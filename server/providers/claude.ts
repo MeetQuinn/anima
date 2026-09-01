@@ -12,6 +12,7 @@ import { LineBuffer } from './line-buffer.js';
 import { ControllerAgentRuntime } from './provider-runtime.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
 import { withProviderCliLaunchPermit } from '../provider-cli/launch-gate.js';
+import type { ProviderWorkSnapshot } from '../../shared/snapshot.js';
 import {
   providerSessionPayload,
   type ProviderSessionRecord,
@@ -24,6 +25,7 @@ import {
 
 const CLAUDE_TRANSIENT_CONTINUE_PROMPT =
   'The previous provider turn ended with a transient API or transport error after partial progress. Continue from the current conversation state. Do not repeat completed tool calls, chat messages, file sends, or file edits; inspect state first if needed, then finish the requested task.';
+const CLAUDE_AUTO_REWAKE_GRACE_MS = 30_000;
 
 export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJsonController> {
   readonly command: string;
@@ -125,7 +127,7 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
           await this.slot.reset();
           result = await this.runTurn({ ...input, providerSession: undefined }, jsonlMapper);
         }
-        await jsonlMapper.flush();
+        if (!this.slot.get()?.observes(jsonlMapper)) await jsonlMapper.flush();
         return result ? { text: result } : {};
       },
     });
@@ -230,9 +232,19 @@ function claudeSessionNotFound(stderr: string): boolean {
 
 class ClaudeStreamJsonController {
   private readonly activeToolUseIds = new Set<string>();
-  private backgroundTasksActive = false;
+  private readonly activeHookIds = new Set<string>();
+  private autoRewakePending = false;
+  private autoRewakePendingReset?: NodeJS.Timeout;
+  private backgroundObserver?: {
+    input: AgentRuntimeInput;
+    jsonlMapper: ReturnType<typeof createClaudeJsonlActivityMapper>;
+  };
+  private backgroundTaskCount = 0;
+  private visibleBackgroundTaskCount = 0;
   private readonly stdoutLines = new LineBuffer();
   private compacting = false;
+  private providerTurnOwner?: 'background' | 'current';
+  private providerTurnActive = false;
   private stderrText = '';
   private currentTurn?: {
     hadProviderToolCall: boolean;
@@ -252,10 +264,12 @@ class ClaudeStreamJsonController {
 
   constructor(private readonly child: RunningChildProcess) {
     child.completion
-      .then(({ stderr, stdout }) => {
+      .then(async ({ stderr, stdout }) => {
+        this.clearAutoRewakePending();
         const exitError = new Error('Claude Code runtime exited before queued input reached stdin');
         this.rejectQuiescentWaiters(new Error('Claude Code runtime exited before drain reached a quiescent point'));
         this.rejectQueuedMessages(exitError);
+        await this.clearBackgroundObserver();
         const stderrOutput = stderr || this.stderrText;
         if (claudeSessionNotFound(stderrOutput)) {
           this.rejectCurrentTurn(new ClaudeSessionNotFoundError(stderrOutput));
@@ -263,9 +277,11 @@ class ClaudeStreamJsonController {
         }
         this.resolveCurrentTurn(parseClaudeRuntimeOutput(stdout).text ?? '');
       })
-      .catch((error) => {
+      .catch(async (error) => {
+        this.clearAutoRewakePending();
         this.rejectQuiescentWaiters(error);
         this.rejectQueuedMessages(error);
+        await this.clearBackgroundObserver();
         this.rejectCurrentTurn(error);
       });
   }
@@ -280,6 +296,24 @@ class ClaudeStreamJsonController {
 
   snapshot() {
     return this.child.snapshot();
+  }
+
+  workSnapshot(): ProviderWorkSnapshot | undefined {
+    const backgroundTaskCount = this.visibleBackgroundTaskCount + this.activeHookIds.size;
+    if (this.providerTurnActive || this.autoRewakePending) {
+      return {
+        ...(backgroundTaskCount > 0 ? { backgroundTaskCount } : {}),
+        state: 'working',
+      };
+    }
+    if (backgroundTaskCount > 0) {
+      return { backgroundTaskCount, state: 'background' };
+    }
+    return undefined;
+  }
+
+  observes(jsonlMapper: ReturnType<typeof createClaudeJsonlActivityMapper>): boolean {
+    return this.backgroundObserver?.jsonlMapper === jsonlMapper;
   }
 
   startTurn(
@@ -331,21 +365,24 @@ class ClaudeStreamJsonController {
   }
 
   isQuiescent(): boolean {
-    return !this.inputGateClosed() && !this.backgroundTasksActive;
+    return !this.inputGateClosed()
+      && this.backgroundTaskCount === 0
+      && this.activeHookIds.size === 0
+      && !this.providerTurnActive
+      && !this.autoRewakePending;
   }
 
   async acceptStdoutChunk(chunk: string): Promise<void> {
-    const turn = this.currentTurn;
-    turn?.input.onActivity?.();
-    const values = this.stdoutLines.accept(chunk)
-      .map((line) => this.parseStdoutLine(line))
-      .filter((value): value is Record<string, unknown> => Boolean(value));
-
-    // Close or open the stdin gate from provider output before activity
-    // persistence can expose that output to a concurrent follow-up.
-    for (const value of values) this.updateInputGate(value);
-    await turn?.jsonlMapper.accept(chunk);
-    for (const value of values) this.acceptStdoutValue(value);
+    for (const line of this.stdoutLines.accept(chunk)) {
+      const value = this.parseStdoutLine(line);
+      // Close or open the stdin gate and select the native turn owner before
+      // activity persistence can expose output to a concurrent Anima wake.
+      if (value) this.updateInputGate(value);
+      const sink = this.outputSink(value);
+      sink?.input.onActivity?.();
+      await sink?.jsonlMapper.accept(`${line}\n`);
+      if (value) await this.acceptStdoutValue(value, this.providerTurnOwner);
+    }
   }
 
   async acceptStderrChunk(chunk: string): Promise<void> {
@@ -368,7 +405,10 @@ class ClaudeStreamJsonController {
     return parsed;
   }
 
-  private acceptStdoutValue(parsed: Record<string, unknown>): void {
+  private async acceptStdoutValue(
+    parsed: Record<string, unknown>,
+    owner: 'background' | 'current' | undefined,
+  ): Promise<void> {
     const type = stringField(parsed, 'type');
     if (type === 'system' && stringField(parsed, 'subtype') === 'init') {
       this.startedSession = true;
@@ -376,31 +416,42 @@ class ClaudeStreamJsonController {
       if (version) this.child.setVersion(version);
     }
     const text = textFromClaudeAssistantEvent(parsed);
-    if (text && this.currentTurn) this.currentTurn.lastText = text;
+    if (text && owner !== 'background' && this.currentTurn) this.currentTurn.lastText = text;
     const result = parsed['result'];
     if (type === 'result') {
+      this.providerTurnActive = false;
+      this.providerTurnOwner = undefined;
+      this.clearAutoRewakePending();
       this.compacting = false;
       this.activeToolUseIds.clear();
       this.resolveQuiescentWaitersIfReady();
       const providerError = claudeProviderErrorFromResult(parsed, {
-        sideEffectFree: this.currentTurn?.hadProviderToolCall !== true,
+        sideEffectFree: owner !== 'background' && this.currentTurn?.hadProviderToolCall !== true,
       });
       if (providerError) {
-        this.rejectCurrentTurn(providerError);
+        if (owner !== 'background') this.rejectCurrentTurn(providerError);
+        if (!this.currentTurn && this.isQuiescent()) await this.clearBackgroundObserver();
         return;
       }
       if (this.flushQueuedMessages() > 0) return;
-      this.resolveCurrentTurn(typeof result === 'string' ? result : this.currentTurn?.lastText ?? '');
+      if (owner !== 'background') {
+        this.resolveCurrentTurn(typeof result === 'string' ? result : this.currentTurn?.lastText ?? '');
+      }
+      if (!this.currentTurn && this.isQuiescent()) await this.clearBackgroundObserver();
       return;
     }
     this.flushQueuedMessages();
     this.resolveQuiescentWaitersIfReady();
+    if (!this.currentTurn && this.isQuiescent()) await this.clearBackgroundObserver();
   }
 
   private resolveCurrentTurn(value: string): void {
     const turn = this.currentTurn;
     if (!turn) return;
     this.currentTurn = undefined;
+    if (!this.backgroundObserver && (this.backgroundTaskCount > 0 || this.activeHookIds.size > 0)) {
+      this.backgroundObserver = { input: turn.input, jsonlMapper: turn.jsonlMapper };
+    }
     turn.resolve(value || turn.lastText || '');
   }
 
@@ -432,12 +483,57 @@ class ClaudeStreamJsonController {
     return this.compacting || this.activeToolUseIds.size > 0;
   }
 
+  private outputSink(value: Record<string, unknown> | undefined) {
+    if (this.providerTurnOwner === 'background') return this.backgroundObserver ?? this.currentTurn;
+    if (this.providerTurnOwner === 'current') return this.currentTurn ?? this.backgroundObserver;
+    const subtype = value && stringField(value, 'type') === 'system'
+      ? stringField(value, 'subtype')
+      : undefined;
+    if (
+      this.backgroundObserver
+      && (subtype === 'background_tasks_changed'
+        || subtype === 'hook_response'
+        || subtype === 'task_notification')
+    ) {
+      return this.backgroundObserver;
+    }
+    return this.currentTurn ?? this.backgroundObserver;
+  }
+
   private updateInputGate(value: Record<string, unknown>): void {
     const type = stringField(value, 'type');
     const subtype = stringField(value, 'subtype');
     if (type === 'system' && subtype === 'background_tasks_changed' && Array.isArray(value['tasks'])) {
       // Claude defines this as a replace-all level signal, so missed task edge events cannot leave stale state.
-      this.backgroundTasksActive = value['tasks'].length > 0;
+      const previousCount = this.backgroundTaskCount;
+      this.backgroundTaskCount = value['tasks'].length;
+      this.visibleBackgroundTaskCount = value['tasks'].filter((task) => (
+        !isRecord(task) || task['ambient'] !== true
+      )).length;
+      if (previousCount > 0 && this.backgroundTaskCount === 0 && !this.currentTurn) {
+        this.markAutoRewakePending();
+      }
+    }
+    if (type === 'system' && subtype === 'hook_started') {
+      const hookId = stringField(value, 'hook_id');
+      if (hookId) this.activeHookIds.add(hookId);
+    }
+    if (type === 'system' && subtype === 'hook_response') {
+      const hookId = stringField(value, 'hook_id');
+      if (hookId) this.activeHookIds.delete(hookId);
+      if (value['exit_code'] === 2 && !this.currentTurn) this.markAutoRewakePending();
+    }
+    if (type === 'system' && subtype === 'turn_starting') {
+      this.clearAutoRewakePending();
+      this.providerTurnActive = true;
+      this.providerTurnOwner = stringField(value, 'mode') === 'task-notification'
+        ? 'background'
+        : this.currentTurn
+          ? 'current'
+          : 'background';
+    }
+    if (type === 'system' && subtype === 'task_notification' && stringField(value, 'status') === 'stopped') {
+      this.clearAutoRewakePending();
     }
     if (type === 'system' && subtype === 'status') {
       if (stringField(value, 'status') === 'compacting') this.compacting = true;
@@ -451,7 +547,9 @@ class ClaudeStreamJsonController {
       if (!isRecord(item)) continue;
       if (type === 'assistant' && stringField(item, 'type') === 'tool_use') {
         const id = stringField(item, 'id');
-        if (this.currentTurn) this.currentTurn.hadProviderToolCall = true;
+        if (this.providerTurnOwner !== 'background' && this.currentTurn) {
+          this.currentTurn.hadProviderToolCall = true;
+        }
         if (id) this.activeToolUseIds.add(id);
       }
       if (stringField(item, 'type') === 'tool_result') {
@@ -463,6 +561,32 @@ class ClaudeStreamJsonController {
 
   private resolveQuiescentWaitersIfReady(): void {
     this.quiescentWaiters.resolveIfReady(() => this.isQuiescent());
+  }
+
+  private markAutoRewakePending(): void {
+    this.clearAutoRewakePending();
+    this.autoRewakePending = true;
+    this.autoRewakePendingReset = setTimeout(() => {
+      this.autoRewakePendingReset = undefined;
+      this.autoRewakePending = false;
+      this.resolveQuiescentWaitersIfReady();
+      if (!this.currentTurn && this.isQuiescent()) {
+        void this.clearBackgroundObserver().catch(() => {});
+      }
+    }, CLAUDE_AUTO_REWAKE_GRACE_MS);
+    this.autoRewakePendingReset.unref?.();
+  }
+
+  private clearAutoRewakePending(): void {
+    if (this.autoRewakePendingReset) clearTimeout(this.autoRewakePendingReset);
+    this.autoRewakePendingReset = undefined;
+    this.autoRewakePending = false;
+  }
+
+  private async clearBackgroundObserver(): Promise<void> {
+    const observer = this.backgroundObserver;
+    this.backgroundObserver = undefined;
+    await observer?.jsonlMapper.flush();
   }
 
   private rejectQuiescentWaiters(error: unknown): void {

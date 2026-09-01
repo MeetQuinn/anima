@@ -30,7 +30,13 @@ import { useProviderCliStatus } from '@/hooks/useProviderCliStatus';
 import { agentColor, initialOf } from '@/lib/avatars';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
-import { AgentRow, sidebarDotColor, sidebarDotTitle } from './sidebar/AgentRow';
+import {
+  AgentRow,
+  sidebarDotColor,
+  sidebarDotTitle,
+  sidebarUsesBackgroundRing,
+} from './sidebar/AgentRow';
+import { agentWorkState } from '@/lib/agent-work-state';
 import { KbRow, isKbActive } from './sidebar/KbRow';
 import { agentOptionId, useSidebarAgentKeyboardNav } from './sidebar/useSidebarAgentKeyboardNav';
 import { AgentCreateModal } from './AgentCreateModalLazy';
@@ -109,9 +115,6 @@ export default function Sidebar({
   const { agentId } = parseLocation(pathname);
   const setAgentId = (id: string | null) => navigate(id ? `/agents/${id}` : '/');
   const statusByAgentId = new Map(statuses.map((status) => [status.agentId, status]));
-  const runningIds = new Set(
-    statuses.filter((s) => s.currentItemId || s.queueDepth > 0).map((s) => s.agentId),
-  );
 
   const teams = useTeams();
   const { currentTeamId, setCurrentTeamId } = useCurrentTeam(teams);
@@ -214,7 +217,6 @@ export default function Sidebar({
   // renderings so the avatar + status dot stay identical in both.
   const renderCollapsedAgent = (agent: AgentConfig) => {
     const active = agentId === agent.id;
-    const isRunning = runningIds.has(agent.id);
     const enabled = agent.enabled !== false;
     const notConnected = enabled && !agentHasConnectedTransport(agent);
     const color = agentColor(agentIndexMap.get(agent.id) ?? 0);
@@ -222,6 +224,9 @@ export default function Sidebar({
     const avatarUrl = agentAvatarUrl(agent);
     const initial = initialOf(displayName);
     const collapsedStatus = statusByAgentId.get(agent.id);
+    const work = agentWorkState(collapsedStatus);
+    const dotTitle = sidebarDotTitle(collapsedStatus?.health, work.state, work.backgroundTaskCount);
+    const backgroundRing = sidebarUsesBackgroundRing(collapsedStatus?.health, work.state);
     const showCollapsedDot = enabled && !notConnected;
     return (
       <div key={agent.id} className="relative w-full flex justify-center">
@@ -231,6 +236,7 @@ export default function Sidebar({
         <button
           onClick={() => setAgentId(agent.id)}
           title={displayName}
+          {...(showCollapsedDot ? { 'aria-label': `${displayName}, ${dotTitle}` } : {})}
           className={[
             'flex h-11 w-11 items-center justify-center rounded-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
             active ? 'bg-spine-elevated' : 'hover:bg-spine-elevated/30',
@@ -262,9 +268,16 @@ export default function Sidebar({
           {showCollapsedDot && (
             <span
               aria-hidden
-              className="absolute right-0.5 bottom-0.5 h-2 w-2 shrink-0 rounded-full border border-page"
-              title={sidebarDotTitle(collapsedStatus?.health, isRunning)}
-              style={{ background: sidebarDotColor(collapsedStatus?.health, isRunning) }}
+              className={[
+                'absolute right-0.5 bottom-0.5 shrink-0 rounded-full',
+                backgroundRing
+                  ? 'h-2.5 w-2.5 border-2 bg-transparent'
+                  : 'h-2 w-2 border border-page',
+              ].join(' ')}
+              title={dotTitle}
+              style={backgroundRing
+                ? { borderColor: sidebarDotColor(collapsedStatus?.health, work.state) }
+                : { background: sidebarDotColor(collapsedStatus?.health, work.state) }}
             />
           )}
         </button>
@@ -282,7 +295,6 @@ export default function Sidebar({
           agent={agent}
           index={agentIndexMap.get(agent.id) ?? 0}
           active={agentId === agent.id}
-          isRunning={runningIds.has(agent.id)}
           enabled={agent.enabled !== false}
           {...(status ? { status } : {})}
           onClick={() => setAgentId(agent.id)}

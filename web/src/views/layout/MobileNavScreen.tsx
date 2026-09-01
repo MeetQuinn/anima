@@ -111,9 +111,6 @@ export default function MobileNavScreen({
   };
 
   const { data: statuses = [] } = useAgentStatuses({ poll: true });
-  const runningIds = new Set(
-    statuses.filter((s) => s.currentItemId || s.queueDepth > 0).map((s) => s.agentId),
-  );
   const statusByAgentId = new Map(statuses.map((status) => [status.agentId, status]));
 
   return (
@@ -318,7 +315,6 @@ export default function MobileNavScreen({
                         agent={agent}
                         index={agentIndexMap.get(agent.id) ?? 0}
                         active={agent.id === lastSelectedId}
-                        isRunning={runningIds.has(agent.id)}
                         enabled={agent.enabled !== false}
                         {...(status ? { status } : {})}
                         onClick={() => handleSelectAgent(agent.id)}

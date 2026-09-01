@@ -54,12 +54,18 @@ export interface ProviderChildHealthSnapshot {
   version?: string;
 }
 
+export interface ProviderWorkSnapshot {
+  backgroundTaskCount?: number;
+  state: 'background' | 'working';
+}
+
 export interface AgentRuntimeHandleSnapshot {
   activeItemId?: string;
   activeItemStartedAt?: string;
   processId?: number;
   providerChild?: ProviderChildHealthSnapshot;
   providerChildExpected: boolean;
+  providerWork?: ProviderWorkSnapshot;
   workerId?: string;
 }
 

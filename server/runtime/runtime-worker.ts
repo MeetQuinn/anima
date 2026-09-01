@@ -213,6 +213,7 @@ export class AgentRuntimeWorker {
       processId: process.pid,
       ...(provider?.child ? { providerChild: provider.child } : {}),
       providerChildExpected: provider?.childExpected ?? false,
+      ...(provider?.providerWork ? { providerWork: provider.providerWork } : {}),
       workerId: this.workerId,
     };
   }
