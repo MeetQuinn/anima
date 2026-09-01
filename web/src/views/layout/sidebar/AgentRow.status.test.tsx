@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { agentConfigSchema } from '@shared/agent-config';
@@ -51,6 +51,7 @@ describe('AgentRow provider work status', () => {
     expect(background?.classList.contains('bg-transparent')).toBe(true);
     expect(background?.style.borderColor).toBe('var(--color-health-warn)');
     expect(view.container.querySelector('.anima-dot-halo')).toBeNull();
+    expect(screen.getByRole('button', { name: /Milo.*background · 2/ })).toBeTruthy();
 
     view.rerender(
       <AgentRow
