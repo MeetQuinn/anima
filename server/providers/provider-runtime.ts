@@ -1,4 +1,4 @@
-import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
+import type { ProviderChildHealthSnapshot, ProviderWorkSnapshot } from '../../shared/snapshot.js';
 import { runtimeErrorPayload } from '../activities/format.js';
 import { ActiveRuntimeRun } from './active-runtime.js';
 import { startChildProcess, type RunningChildProcess } from './child-process.js';
@@ -27,6 +27,7 @@ export interface ProviderTurnController {
   kill(signal?: NodeJS.Signals): void;
   snapshot(): ProviderChildHealthSnapshot;
   waitForQuiescent(signal?: AbortSignal): Promise<void>;
+  workSnapshot?(): ProviderWorkSnapshot | undefined;
 }
 
 // Shared lifecycle for provider adapters that keep one long-lived child-process
@@ -53,9 +54,11 @@ export abstract class ControllerAgentRuntime<C extends ProviderTurnController> i
 
   health(): AgentRuntimeHealth {
     const controller = this.slot.get();
+    const providerWork = controller?.workSnapshot?.();
     return {
       ...(controller ? { child: controller.snapshot() } : {}),
       childExpected: this.activeRun.isActive(),
+      ...(providerWork ? { providerWork } : {}),
     };
   }
 

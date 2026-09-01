@@ -3,6 +3,7 @@ import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
 import type { AgentConfig } from '@shared/agent-config';
 import type { AgentRuntimeHealthSummary, AgentStatusSummary } from '@shared/snapshot';
+import { agentWorkState, type AgentDisplayState } from '@/lib/agent-work-state';
 
 // ---------------------------------------------------------------------------
 // Agent row — name + status only; actions live on the Profile detail pane.
@@ -11,27 +12,34 @@ import type { AgentRuntimeHealthSummary, AgentStatusSummary } from '@shared/snap
 // Maps health state → a single sidebar dot color. The dot is the only health
 // signal in the sidebar; full labels and reason text live in the activity strip.
 // Exported so the collapsed avatar rail in Sidebar.tsx can use the same mapping.
-export function sidebarDotColor(health: AgentRuntimeHealthSummary | undefined, isRunning: boolean): string {
+export function sidebarDotColor(health: AgentRuntimeHealthSummary | undefined, workState: AgentDisplayState): string {
   if (!health || health.state === 'unknown' || health.state === 'starting' || health.state === 'degraded') {
     return 'var(--color-health-idle)';
   }
   if (health.state === 'unhealthy') return 'var(--color-health-error)';
-  return isRunning ? 'var(--color-health-warn)' : 'var(--color-health-ok)';
+  if (workState === 'working' || workState === 'background') return 'var(--color-health-warn)';
+  return workState === 'queued' ? 'var(--color-health-idle)' : 'var(--color-health-ok)';
 }
 
-export function sidebarDotTitle(health: AgentRuntimeHealthSummary | undefined, isRunning: boolean): string {
+export function sidebarDotTitle(
+  health: AgentRuntimeHealthSummary | undefined,
+  workState: AgentDisplayState,
+  backgroundTaskCount?: number,
+): string {
   if (!health || health.state === 'unknown') return 'health unavailable';
   if (health.state === 'starting') return 'starting';
   if (health.state === 'degraded') return 'retrying';
   if (health.state === 'unhealthy') return 'needs attention';
-  return isRunning ? 'working' : 'idle';
+  if (workState === 'background') {
+    return backgroundTaskCount ? `background · ${backgroundTaskCount}` : 'background';
+  }
+  return workState;
 }
 
 export function AgentRow({
   agent,
   index,
   active,
-  isRunning,
   enabled,
   status,
   onClick,
@@ -42,7 +50,6 @@ export function AgentRow({
   agent: AgentConfig;
   index: number;
   active: boolean;
-  isRunning: boolean;
   enabled: boolean;
   status?: AgentStatusSummary;
   onClick: () => void;
@@ -65,8 +72,9 @@ export function AgentRow({
   const notConnected = enabled && !agentHasConnectedTransport(agent);
   const showRuntimeHealth = enabled && !notConnected;
   const hasRightMeta = !enabled || showRuntimeHealth;
-  const dotBg = sidebarDotColor(status?.health, isRunning);
-  const dotTitle = sidebarDotTitle(status?.health, isRunning);
+  const work = agentWorkState(status);
+  const dotBg = sidebarDotColor(status?.health, work.state);
+  const dotTitle = sidebarDotTitle(status?.health, work.state, work.backgroundTaskCount);
   // Active row: the avatar picks up a faint accent ring (in addition to the
   // rounded-cap accent bar) so selection reads without shouting.
   const avatarRing = active ? 'ring-accent/40' : 'ring-avatar-ring-spine';
@@ -153,7 +161,7 @@ export function AgentRow({
                   // is the sidebar's only ambient signal. A working (running)
                   // agent's dot breathes with a soft halo so live work reads at
                   // a glance; every other state holds still.
-                  isRunning ? (
+                  work.state === 'working' ? (
                     <span aria-hidden className="relative flex h-2 w-2 shrink-0 items-center justify-center" title={dotTitle}>
                       <span className="anima-dot-halo absolute h-2 w-2 rounded-full" style={{ background: dotBg }} />
                       <span className="anima-dot-core relative h-2 w-2 rounded-full" style={{ background: dotBg }} />

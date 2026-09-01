@@ -435,6 +435,7 @@ test('claude-code keeps the provider child until background work finishes plus t
         "    if (!existsSync(process.env.RELEASE_PATH)) return;",
         "    clearInterval(release);",
         "    send({ type: 'system', subtype: 'background_tasks_changed', tasks: [], session_id: 'claude-background-session' });",
+        "    send({ type: 'system', subtype: 'task_notification', task_id: 'background-agent-1', status: 'stopped', output_file: '', summary: 'Stopped', session_id: 'claude-background-session' });",
         "  }, 5);",
         "});",
         '',
@@ -462,6 +463,10 @@ test('claude-code keeps the provider child until background work finishes plus t
       (await runtime.run(await runtimeInput(runtime, ctx, await loadState()))).text,
       'main turn done',
     );
+    assert.deepEqual(runtime.health?.().providerWork, {
+      backgroundTaskCount: 1,
+      state: 'background',
+    });
     const backgroundStartedAt = runtime.health?.().child?.lastStdoutAt;
     await sleep(100);
     assert.ok(runtime.health?.().child?.alive);
@@ -471,11 +476,224 @@ test('claude-code keeps the provider child until background work finishes plus t
       () => runtime?.health?.().child?.lastStdoutAt !== backgroundStartedAt,
       { description: 'Claude background completion event', timeoutMs: 1_000 },
     );
+    await waitFor(
+      () => runtime?.health?.().providerWork === undefined,
+      { description: 'Claude background status clear', timeoutMs: 1_000 },
+    );
     await sleep(20);
     assert.ok(runtime.health?.().child?.alive);
     await waitFor(
       () => runtime?.health?.().child === undefined,
       { description: 'Claude provider child idle reset after background completion', timeoutMs: 1_000 },
+    );
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('claude-code bridges an async hook native rewake into the original turn lifecycle', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+    const hookReleasePath = join(stateDir, 'claude-hook-release');
+    const resultReleasePath = join(stateDir, 'claude-rewake-result-release');
+    const fakeClaude = join(stateDir, 'claude');
+    await writeFile(
+      fakeClaude,
+      [
+        '#!/usr/bin/env node',
+        "import { existsSync } from 'node:fs';",
+        "import readline from 'node:readline';",
+        "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
+        "send({ type: 'system', subtype: 'init', session_id: 'claude-rewake-session', cwd: process.cwd(), claude_code_version: 'test' });",
+        "readline.createInterface({ input: process.stdin }).once('line', () => {",
+        "  send({ type: 'system', subtype: 'hook_started', hook_id: 'hook-async-rewake', hook_name: 'background-check', hook_event: 'Stop', session_id: 'claude-rewake-session' });",
+        "  send({ type: 'result', subtype: 'success', result: 'main turn done', session_id: 'claude-rewake-session' });",
+        "  const hookRelease = setInterval(() => {",
+        "    if (!existsSync(process.env.HOOK_RELEASE_PATH)) return;",
+        "    clearInterval(hookRelease);",
+        "    send({ type: 'system', subtype: 'hook_response', hook_id: 'hook-async-rewake', hook_name: 'background-check', hook_event: 'Stop', output: 'retry with feedback', stdout: '', stderr: 'retry with feedback', exit_code: 2, outcome: 'error', session_id: 'claude-rewake-session' });",
+        "    send({ type: 'system', subtype: 'turn_starting', mode: 'task-notification', task_id: null, session_id: 'claude-rewake-session' });",
+        "    send({ type: 'assistant', message: { content: [{ type: 'text', text: 'native rewake follow-up' }] }, session_id: 'claude-rewake-session' });",
+        "    const resultRelease = setInterval(() => {",
+        "      if (!existsSync(process.env.RESULT_RELEASE_PATH)) return;",
+        "      clearInterval(resultRelease);",
+        "      send({ type: 'result', subtype: 'success', result: 'native rewake follow-up', session_id: 'claude-rewake-session' });",
+        "    }, 5);",
+        "  }, 5);",
+        "});",
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await chmod(fakeClaude, 0o755);
+
+    const ctx = await ingestEvent(
+      makeSlackEvent({
+        channelId: 'D-anima',
+        teamId: 'T-demo',
+        text: 'Run a background hook and react to its result.',
+        userId: 'U1',
+      }),
+      { agentId: 'anima', stateDir },
+    );
+    runtime = createAgentRuntime({
+      env: runtimeTestEnv(stateDir, {
+        HOOK_RELEASE_PATH: hookReleasePath,
+        RESULT_RELEASE_PATH: resultReleasePath,
+      }),
+      kind: 'claude-code',
+      providerChildIdleTimeoutMs: 50,
+    });
+
+    assert.equal(
+      (await runtime.run(await runtimeInput(runtime, ctx, await loadState()))).text,
+      'main turn done',
+    );
+    assert.deepEqual(runtime.health?.().providerWork, {
+      backgroundTaskCount: 1,
+      state: 'background',
+    });
+
+    await writeFile(hookReleasePath, '1', 'utf8');
+    await waitFor(
+      () => runtime?.health?.().providerWork?.state === 'working',
+      { description: 'Claude native rewake working state', timeoutMs: 1_000 },
+    );
+    await waitFor(async () => {
+      const activities = await activitiesForInboxItemWindow('anima', ctx.item.id);
+      return activities.some((activity) => (
+        activity.type === 'agent.text'
+        && activity.payload?.['text'] === 'native rewake follow-up'
+      ));
+    }, { description: 'Claude native rewake activity on original item', timeoutMs: 1_000 });
+
+    await writeFile(resultReleasePath, '1', 'utf8');
+    await waitFor(
+      () => runtime?.health?.().providerWork === undefined,
+      { description: 'Claude native rewake completion', timeoutMs: 1_000 },
+    );
+    const activities = await activitiesForInboxItemWindow('anima', ctx.item.id);
+    assert.equal(
+      activities.filter((activity) => activity.type === 'runtime.started').length,
+      1,
+    );
+    assert.equal(
+      activities.filter((activity) => activity.type === 'runtime.completed').length,
+      1,
+    );
+    await waitFor(
+      () => runtime?.health?.().child === undefined,
+      { description: 'Claude provider child idle reset after native rewake', timeoutMs: 1_000 },
+    );
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('claude-code keeps native rewake output on its original item while a new wake is queued', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+    const nativeReleasePath = join(stateDir, 'claude-native-release');
+    const fakeClaude = join(stateDir, 'claude');
+    await writeFile(
+      fakeClaude,
+      [
+        '#!/usr/bin/env node',
+        "import { existsSync } from 'node:fs';",
+        "import readline from 'node:readline';",
+        "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
+        "send({ type: 'system', subtype: 'init', session_id: 'claude-concurrent-rewake-session', cwd: process.cwd(), claude_code_version: 'test' });",
+        "const rl = readline.createInterface({ input: process.stdin });",
+        "let promptCount = 0;",
+        "rl.on('line', () => {",
+        "  promptCount += 1;",
+        "  if (promptCount === 1) {",
+        "    send({ type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'background-agent-1', task_type: 'local_agent', description: 'Background agent' }], session_id: 'claude-concurrent-rewake-session' });",
+        "    send({ type: 'result', subtype: 'success', result: 'first main turn done', session_id: 'claude-concurrent-rewake-session' });",
+        "    return;",
+        "  }",
+        "  const nativeRelease = setInterval(() => {",
+        "    if (!existsSync(process.env.NATIVE_RELEASE_PATH)) return;",
+        "    clearInterval(nativeRelease);",
+        "    send({ type: 'system', subtype: 'background_tasks_changed', tasks: [], session_id: 'claude-concurrent-rewake-session' });",
+        "    send({ type: 'system', subtype: 'task_notification', task_id: 'background-agent-1', status: 'completed', output_file: '', summary: 'Done', session_id: 'claude-concurrent-rewake-session' });",
+        "    send({ type: 'system', subtype: 'turn_starting', mode: 'task-notification', task_id: 'background-agent-1', session_id: 'claude-concurrent-rewake-session' });",
+        "    send({ type: 'assistant', message: { content: [{ type: 'text', text: 'first item native follow-up' }] }, session_id: 'claude-concurrent-rewake-session' });",
+        "    send({ type: 'result', subtype: 'success', result: 'first item native follow-up', session_id: 'claude-concurrent-rewake-session' });",
+        "    send({ type: 'system', subtype: 'turn_starting', mode: 'prompt', session_id: 'claude-concurrent-rewake-session' });",
+        "    send({ type: 'assistant', message: { content: [{ type: 'text', text: 'second item response' }] }, session_id: 'claude-concurrent-rewake-session' });",
+        "    send({ type: 'result', subtype: 'success', session_id: 'claude-concurrent-rewake-session' });",
+        "  }, 5);",
+        "});",
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await chmod(fakeClaude, 0o755);
+
+    const firstCtx = await ingestEvent(
+      makeSlackEvent({
+        channelId: 'D-anima',
+        teamId: 'T-demo',
+        text: 'Start the background work.',
+        ts: '1770000000.000021',
+        userId: 'U1',
+      }),
+      { agentId: 'anima', stateDir },
+    );
+    const secondCtx = await ingestEvent(
+      makeSlackEvent({
+        channelId: 'D-anima',
+        teamId: 'T-demo',
+        text: 'Handle this next message too.',
+        ts: '1770000000.000022',
+        userId: 'U1',
+      }),
+      { agentId: 'anima', stateDir },
+    );
+    runtime = createAgentRuntime({
+      env: runtimeTestEnv(stateDir, { NATIVE_RELEASE_PATH: nativeReleasePath }),
+      kind: 'claude-code',
+    });
+
+    assert.equal(
+      (await runtime.run(await runtimeInput(runtime, firstCtx, await loadState()))).text,
+      'first main turn done',
+    );
+    const secondRun = runtime.run(await runtimeInput(runtime, secondCtx, await loadState()));
+    await writeFile(nativeReleasePath, '1', 'utf8');
+    assert.equal((await secondRun).text, 'second item response');
+
+    const firstActivities = await activitiesForInboxItemWindow('anima', firstCtx.item.id);
+    const secondActivities = await activitiesForInboxItemWindow('anima', secondCtx.item.id);
+    assert.equal(
+      firstActivities.some((activity) => (
+        activity.type === 'agent.text'
+        && activity.payload?.['text'] === 'first item native follow-up'
+      )),
+      true,
+    );
+    assert.equal(
+      secondActivities.some((activity) => (
+        activity.type === 'agent.text'
+        && activity.payload?.['text'] === 'first item native follow-up'
+      )),
+      false,
+    );
+    assert.equal(
+      secondActivities.some((activity) => (
+        activity.type === 'agent.text'
+        && activity.payload?.['text'] === 'second item response'
+      )),
+      true,
     );
     });
   } finally {

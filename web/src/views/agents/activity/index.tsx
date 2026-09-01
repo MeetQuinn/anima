@@ -50,6 +50,7 @@ import { useStickToBottom } from './useStickToBottom';
 import type { Activity as ActivityRecord } from '@shared/activity';
 import type { AgentFeishuScopeAuthUrl } from '@shared/agent-config';
 import type { AgentStatusSummary } from '@shared/snapshot';
+import { agentWorkState, agentWorkStateLabel } from '@/lib/agent-work-state';
 
 // ---------------------------------------------------------------------------
 // Step lane — the subordinate register. A run of consecutive tool steps sits
@@ -237,7 +238,7 @@ function LifecycleLineRow({ step }: { step: Step }) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function ActivityStatusSummary({
+export function ActivityStatusSummary({
   status,
   latestActivity,
   now,
@@ -247,7 +248,9 @@ function ActivityStatusSummary({
   now: Date;
 }) {
   if (!status) return null;
-  const running = Boolean(status.currentItemId);
+  const work = agentWorkState(status);
+  const running = work.state === 'working';
+  const background = work.state === 'background';
   const queued = status.queueDepth > 0;
   const health = status.health;
   const restartFailed = health?.state !== 'healthy' && health?.restart?.outcome === 'failed';
@@ -270,9 +273,11 @@ function ActivityStatusSummary({
             ? 'Health unavailable'
             : running
               ? 'Working'
-              : queued
-                ? 'Queued'
-                : 'Idle';
+              : background
+                ? agentWorkStateLabel(work)
+                : queued
+                  ? 'Queued'
+                  : 'Idle';
   const dot = unhealthy
     ? 'var(--color-health-error)'
     : recovered
@@ -281,9 +286,11 @@ function ActivityStatusSummary({
         ? 'var(--color-health-idle)'
         : running
           ? 'var(--color-health-warn)'
-          : queued
-            ? 'var(--color-health-idle)'
-            : 'var(--color-health-ok)';
+          : background
+            ? 'var(--color-health-warn)'
+            : queued
+              ? 'var(--color-health-idle)'
+              : 'var(--color-health-ok)';
   const reason = unhealthy
     ? agentHealthReasonText(health?.restart?.reason ?? health?.reason)
     : degraded

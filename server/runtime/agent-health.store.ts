@@ -13,6 +13,7 @@ import type {
   AgentRuntimeHandleSnapshot,
   AgentRuntimeHealthSummary,
   ProviderChildHealthSnapshot,
+  ProviderWorkSnapshot,
 } from '../../shared/snapshot.js';
 
 const AGENT_HEALTH_FILE = 'agent-health-snapshots.json';
@@ -59,12 +60,18 @@ const ProviderChildHealthSnapshotSchema: z.ZodType<ProviderChildHealthSnapshot> 
   stdinWritable: z.boolean(),
 });
 
+const ProviderWorkSnapshotSchema: z.ZodType<ProviderWorkSnapshot> = z.object({
+  backgroundTaskCount: z.number().int().nonnegative().optional(),
+  state: z.enum(['background', 'working']),
+});
+
 const AgentRuntimeHandleSnapshotSchema: z.ZodType<AgentRuntimeHandleSnapshot> = z.object({
   activeItemId: z.string().min(1).optional(),
   activeItemStartedAt: z.string().min(1).optional(),
   processId: z.number().int().positive().optional(),
   providerChild: ProviderChildHealthSnapshotSchema.optional(),
   providerChildExpected: z.boolean(),
+  providerWork: ProviderWorkSnapshotSchema.optional(),
   workerId: z.string().min(1).optional(),
 });
 

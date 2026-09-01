@@ -7,7 +7,7 @@ import type {
   OpenCodeCliAgentProviderConfig,
   PiAgentProviderConfig,
 } from '../../shared/agent-config.js';
-import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
+import type { ProviderChildHealthSnapshot, ProviderWorkSnapshot } from '../../shared/snapshot.js';
 import type { ProviderUsageInput } from '../../shared/agent-token-usage.js';
 
 export type {
@@ -89,6 +89,7 @@ export interface AgentRuntimeCloseOptions {
 export interface AgentRuntimeHealth {
   child?: ProviderChildHealthSnapshot;
   childExpected: boolean;
+  providerWork?: ProviderWorkSnapshot;
 }
 
 export interface AgentRuntime {

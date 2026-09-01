@@ -208,6 +208,7 @@ function safeHealth(health: AgentRuntimeHealthSummary): AgentRuntimeHealthSummar
                 }
               : {}),
             providerChildExpected: runtime.providerChildExpected,
+            ...(runtime.providerWork ? { providerWork: runtime.providerWork } : {}),
             ...(runtime.workerId ? { workerId: runtime.workerId } : {}),
           },
         }

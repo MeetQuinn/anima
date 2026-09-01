@@ -31,6 +31,7 @@ import { agentColor, initialOf } from '@/lib/avatars';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
 import { AgentRow, sidebarDotColor, sidebarDotTitle } from './sidebar/AgentRow';
+import { agentWorkState } from '@/lib/agent-work-state';
 import { KbRow, isKbActive } from './sidebar/KbRow';
 import { agentOptionId, useSidebarAgentKeyboardNav } from './sidebar/useSidebarAgentKeyboardNav';
 import { AgentCreateModal } from './AgentCreateModalLazy';
@@ -109,9 +110,6 @@ export default function Sidebar({
   const { agentId } = parseLocation(pathname);
   const setAgentId = (id: string | null) => navigate(id ? `/agents/${id}` : '/');
   const statusByAgentId = new Map(statuses.map((status) => [status.agentId, status]));
-  const runningIds = new Set(
-    statuses.filter((s) => s.currentItemId || s.queueDepth > 0).map((s) => s.agentId),
-  );
 
   const teams = useTeams();
   const { currentTeamId, setCurrentTeamId } = useCurrentTeam(teams);
@@ -214,7 +212,6 @@ export default function Sidebar({
   // renderings so the avatar + status dot stay identical in both.
   const renderCollapsedAgent = (agent: AgentConfig) => {
     const active = agentId === agent.id;
-    const isRunning = runningIds.has(agent.id);
     const enabled = agent.enabled !== false;
     const notConnected = enabled && !agentHasConnectedTransport(agent);
     const color = agentColor(agentIndexMap.get(agent.id) ?? 0);
@@ -222,6 +219,7 @@ export default function Sidebar({
     const avatarUrl = agentAvatarUrl(agent);
     const initial = initialOf(displayName);
     const collapsedStatus = statusByAgentId.get(agent.id);
+    const work = agentWorkState(collapsedStatus);
     const showCollapsedDot = enabled && !notConnected;
     return (
       <div key={agent.id} className="relative w-full flex justify-center">
@@ -263,8 +261,8 @@ export default function Sidebar({
             <span
               aria-hidden
               className="absolute right-0.5 bottom-0.5 h-2 w-2 shrink-0 rounded-full border border-page"
-              title={sidebarDotTitle(collapsedStatus?.health, isRunning)}
-              style={{ background: sidebarDotColor(collapsedStatus?.health, isRunning) }}
+              title={sidebarDotTitle(collapsedStatus?.health, work.state, work.backgroundTaskCount)}
+              style={{ background: sidebarDotColor(collapsedStatus?.health, work.state) }}
             />
           )}
         </button>
@@ -282,7 +280,6 @@ export default function Sidebar({
           agent={agent}
           index={agentIndexMap.get(agent.id) ?? 0}
           active={agentId === agent.id}
-          isRunning={runningIds.has(agent.id)}
           enabled={agent.enabled !== false}
           {...(status ? { status } : {})}
           onClick={() => setAgentId(agent.id)}
