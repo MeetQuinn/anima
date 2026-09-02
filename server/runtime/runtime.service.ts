@@ -4,9 +4,11 @@ import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import type {
   AgentConfig,
 } from '../../shared/agent-config.js';
+import { isDeferredQueuedInboxItem, type InboxItem } from '../../shared/inbox.js';
 import type {
   AgentRuntimeHealthSummary,
   AgentStatusSummary,
+  DeferredWakeSummary,
 } from '../../shared/snapshot.js';
 import { agentHasConnectedTransport } from '../../shared/agent-transports.js';
 import { nowIso } from '../ids.js';
@@ -69,10 +71,12 @@ export class RuntimeService {
       ...(active ? { active } : {}),
       ...(running ? { runningItemId: running.id } : {}),
     });
+    const deferredWakes = deferredWakeSummaries(items);
     return {
       agentId: agent.id,
       ...(running ? { currentItemId: running.id } : {}),
       ...(currentItemStartedAt ? { currentItemStartedAt } : {}),
+      ...(deferredWakes.length > 0 ? { deferredWakes } : {}),
       ...(health ? { health } : {}),
       queueDepth: items.filter((item) => item.handling.status === 'queued').length,
       itemCount: items.length,
@@ -97,4 +101,15 @@ function expectsRuntimeHealth(agent: AgentConfig): boolean {
   if (agent.enabled === false) return false;
   if (!agentHasConnectedTransport(agent)) return false;
   return isAgentRunnable(agent);
+}
+
+function deferredWakeSummaries(items: InboxItem[]): DeferredWakeSummary[] {
+  return items
+    .filter((item) => isDeferredQueuedInboxItem(item))
+    .map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      notBefore: item.handling.notBefore!,
+      ...(item.handling.deferrals !== undefined ? { deferrals: item.handling.deferrals } : {}),
+    }));
 }

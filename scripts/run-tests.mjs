@@ -48,7 +48,8 @@ const groups = {
     'feishu-files.test.js',
     'file-cache-eviction.test.js',
     'inbox.test.js',
-    'ingest-golden.test.js',
+    'deferred-wake-retry.test.js',
+    'ingest-golden.test.js';
     'interactive-ask.test.js',
     'kb-file-types.test.js',
     'memory-coherence.test.js',

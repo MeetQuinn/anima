@@ -99,6 +99,12 @@ export type PrepareCursorDeliveryResult =
   | { kind: 'prepared'; plan: CursorDeliveryPlan }
   | { kind: 'failed'; error: CursorDeliveryError };
 
+function bypassesCursorAlreadyDelivered(
+  resumeReason: InboxItem['handling']['resumeReason'],
+): boolean {
+  return resumeReason === 'runtime_restart' || resumeReason === 'deferred_retry';
+}
+
 /** Test override: undefined = read server config (default off). */
 let enabledOverride: boolean | undefined;
 
@@ -235,7 +241,9 @@ export async function prepareCursorDelivery(input: {
 
     // Recovery: trigger already covered by cursor → settle without provider.
     // Never skip a runtime_restart primary — that is interrupted work, not a
-    // coalesced duplicate wake. Cursor coverage may skip later queued wakes only.
+    // coalesced duplicate wake. Same for deferred_retry (operator Retry-now
+    // replacement wake after rate-limit deferral). Cursor coverage may skip
+    // later queued wakes only.
     // Fail-closed first: cursor past the reconciled journal tail is corruption /
     // partial restore — must not silently swallow reused ordinals as delivered.
     const primaryCursor = await store.getCursor(triggerSurfaceId);
@@ -252,7 +260,7 @@ export async function prepareCursorDelivery(input: {
         };
       }
       if (
-        item.handling.resumeReason !== 'runtime_restart'
+        !bypassesCursorAlreadyDelivered(item.handling.resumeReason)
         && primaryCursor.deliveredOrdinal >= triggerEntry.ordinal
       ) {
         return { kind: 'already_delivered', settledItemIds: [item.id] };

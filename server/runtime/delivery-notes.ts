@@ -4,6 +4,13 @@ export const RUNTIME_RESTART_CONTINUATION_NOTE = [
   'Check `anima outbox` for what you already sent and `anima inbox` for what arrived before re-sending anything.',
 ].join('\n');
 
+export const DEFERRED_WAKE_RETRY_NOTE = [
+  'Anima note: an operator clicked Retry now on a wake that was parked for a provider rate-limit reset.',
+  'The original deferred item was invalidated so it will not run again when the reset time arrives.',
+  'Handle the missed request now and reply on the original Slack surface below.',
+  'Do not repeat completed external side effects; check `anima outbox` / conversation state before redoing anything.',
+].join('\n');
+
 export function providerCrashRetryNote(): string {
   return [
     'Anima note: the previous provider process crashed before completing this same item.',

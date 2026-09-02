@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import {
   fetchAgentFeishuScopeStatus,
+  refreshDashboardData,
+  retryDeferredWakeNow,
 } from '@/api/agents';
 import { type ActivityFeedItem } from '@/lib/activity-feed';
 import { buildActivityAuthorResolvers } from '@/lib/activity-authors';
@@ -242,16 +244,21 @@ export function ActivityStatusSummary({
   status,
   latestActivity,
   now,
+  onRetryDeferred,
+  retryingDeferredId,
 }: {
   status: AgentStatusSummary | undefined;
   latestActivity: ActivityRecord | undefined;
   now: Date;
+  onRetryDeferred?: (itemId: string) => void;
+  retryingDeferredId?: string | null;
 }) {
   if (!status) return null;
   const work = agentWorkState(status);
   const running = work.state === 'working';
   const background = work.state === 'background';
   const queued = status.queueDepth > 0;
+  const deferredWakes = status.deferredWakes ?? [];
   const health = status.health;
   const restartFailed = health?.state !== 'healthy' && health?.restart?.outcome === 'failed';
   const unhealthy = health?.state === 'unhealthy' || restartFailed;
@@ -324,6 +331,22 @@ export function ActivityStatusSummary({
         {queued && (
           <span className="font-sans text-[11px] text-text-subtle">{status.queueDepth} queued</span>
         )}
+        {deferredWakes.length > 0 && (
+          <span className="font-sans text-[11px] text-text-subtle">
+            {deferredWakes.length} deferred
+          </span>
+        )}
+        {deferredWakes.map((wake) => (
+          <button
+            key={wake.id}
+            type="button"
+            className="font-sans text-[11px] font-medium text-text-muted underline-offset-2 hover:text-text hover:underline disabled:opacity-50"
+            disabled={!onRetryDeferred || retryingDeferredId === wake.id}
+            onClick={() => onRetryDeferred?.(wake.id)}
+          >
+            {retryingDeferredId === wake.id ? 'Retrying…' : 'Retry now'}
+          </button>
+        ))}
         {latest && (
           <span className="min-w-0 flex-1 basis-64 truncate font-sans text-[11px] text-text-muted">
             latest: {latest.title}
@@ -483,9 +506,23 @@ export default function Activity() {
   // static wrapper — it does not become a scroll/containing block, so the sticky
   // day headers still resolve to the scroll container.
   const contentRef = useRef<HTMLDivElement>(null);
+  const [retryingDeferredId, setRetryingDeferredId] = useState<string | null>(null);
 
   const { activityQuery, messageQuery, activitiesData, conversationItems, stepItems } =
     useActivityFeeds(agentId);
+
+  async function handleRetryDeferred(itemId: string) {
+    if (!agentId || retryingDeferredId) return;
+    setRetryingDeferredId(itemId);
+    try {
+      await retryDeferredWakeNow(agentId, itemId);
+      refreshDashboardData();
+    } catch {
+      // Status poll + button label are enough; avoid toast spam on 409 races.
+    } finally {
+      setRetryingDeferredId(null);
+    }
+  }
 
   const feedError = messageQuery.error;
   const loadingActivities = messageQuery.isLoading;
@@ -769,7 +806,13 @@ export default function Activity() {
         </div>
       )}
 
-      <ActivityStatusSummary status={currentStatus} latestActivity={latestCurrentItemActivity} now={now} />
+      <ActivityStatusSummary
+        status={currentStatus}
+        latestActivity={latestCurrentItemActivity}
+        now={now}
+        onRetryDeferred={handleRetryDeferred}
+        retryingDeferredId={retryingDeferredId}
+      />
 
       <div
         ref={scrollContainerRef}

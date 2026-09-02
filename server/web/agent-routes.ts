@@ -5,6 +5,7 @@ import { activityServiceForAgent } from '../activities/activity.service.js';
 import { redactAgentConfig } from '../agents/agent-config-ops.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { buildAgentDiagnostics } from '../diagnostics/agent-diagnostics.service.js';
+import { retryDeferredWakeNow } from '../inbox/deferred-wake-retry.service.js';
 import { defaultRuntimeService } from '../runtime/runtime.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import { buildAgentChannelList } from './agent-channels.js';
@@ -98,6 +99,32 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
   fastify.get<{ Params: { agentId: string } }>(
     '/api/agents/:agentId/diagnostics',
     async (request) => buildAgentDiagnostics(request.params.agentId),
+  );
+
+  fastify.post<{ Params: { agentId: string; itemId: string } }>(
+    '/api/agents/:agentId/queue/:itemId/retry-now',
+    async (request) => {
+      const agent = await defaultAgentRegistryService
+        .serviceFor(request.params.agentId)
+        .getConfig()
+        .catch(() => null);
+      if (!agent) throw new HttpError(404, 'Agent not found');
+      const result = await retryDeferredWakeNow(request.params.agentId, request.params.itemId);
+      if (result.kind === 'retried') {
+        return {
+          previousItemId: result.previousItemId,
+          retryItemId: result.retryItemId,
+        };
+      }
+      if (result.reason === 'not_found') throw new HttpError(404, 'Wake item not found');
+      if (result.reason === 'unsupported_kind') {
+        throw new HttpError(409, 'Retry now is only supported for deferred Slack wakes.');
+      }
+      if (result.reason === 'not_deferred') {
+        throw new HttpError(409, 'Wake item is not a deferred queued wake.');
+      }
+      throw new HttpError(409, 'Wake item changed; refresh and try again.');
+    },
   );
   fastify.post<{ Params: { agentId: string } }>(
     '/api/agents/:agentId/stop',

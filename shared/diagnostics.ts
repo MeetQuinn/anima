@@ -89,6 +89,7 @@ export interface AgentDiagnosticsRecoveryAction {
     | 'disable'
     | 'enable'
     | 'restart_agent'
+    | 'retry_deferred'
     | 'stop';
   label: string;
 }
