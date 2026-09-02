@@ -7,6 +7,7 @@ import { agentsDir } from './agent.store.js';
 import { JsonStore } from '../json-store.js';
 import {
   isClaimableQueuedInboxItem,
+  isDeferredQueuedInboxItem,
   isPrimaryRunningInboxItem,
   InboxItemSchema,
   type InboxItem,
@@ -337,6 +338,48 @@ export class WakeQueueStore {
     await this.settleItem(itemId);
   }
 
+  /**
+   * Atomically settle a still-deferred queued item to `seen` and insert a new
+   * claimable retry wake. One file update so the old notBefore cannot fire
+   * after the retry is created (and a concurrent retry races cleanly).
+   */
+  async swapDeferredForRetry(
+    itemId: string,
+    buildRetry: (previous: InboxItem, now: string) => InboxItem,
+  ): Promise<SwapDeferredForRetryResult> {
+    let result: SwapDeferredForRetryResult | undefined;
+    await this.update((current) => {
+      const previous = current.items[itemId];
+      if (!previous) {
+        result = { kind: 'not_found' };
+        return current;
+      }
+      if (previous.handling.workerId) {
+        result = { kind: 'race' };
+        return current;
+      }
+      if (!isDeferredQueuedInboxItem(previous)) {
+        result = { kind: 'not_deferred' };
+        return current;
+      }
+      const now = nowIso();
+      const retry = activeInboxItem(buildRetry(previous, now));
+      if (retry.id === previous.id || current.items[retry.id] || current.seen[retry.id]) {
+        result = { kind: 'race' };
+        return current;
+      }
+      const items = { ...current.items };
+      delete items[itemId];
+      items[retry.id] = retry;
+      result = { kind: 'ok', previous, retry };
+      return {
+        items,
+        seen: withSeenMarker(current.seen, previous, now),
+      };
+    });
+    return result ?? { kind: 'race' };
+  }
+
   async completeAppendedTo(parentItemId: string): Promise<InboxItem[]> {
     return this.settleAppendedTo(parentItemId, 'completed');
   }
@@ -633,8 +676,14 @@ export interface RequeueOptions {
   deferrals?: number;
   /** Keep the item queued but unclaimable until this ISO instant. */
   notBefore?: string;
-  resumeReason?: 'runtime_restart';
+  resumeReason?: 'deferred_retry' | 'runtime_restart';
 }
+
+export type SwapDeferredForRetryResult =
+  | { kind: 'ok'; previous: InboxItem; retry: InboxItem }
+  | { kind: 'not_deferred' }
+  | { kind: 'not_found' }
+  | { kind: 'race' };
 
 function requeuedItem(
   item: InboxItem,

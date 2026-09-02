@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import {
   fetchAgentFeishuScopeStatus,
+  refreshDashboardData,
+  retryDeferredWakeNow,
 } from '@/api/agents';
 import { type ActivityFeedItem } from '@/lib/activity-feed';
 import { buildActivityAuthorResolvers } from '@/lib/activity-authors';
@@ -49,7 +51,7 @@ import { useFeishuOnboardingBanners } from './useFeishuOnboardingBanners';
 import { useStickToBottom } from './useStickToBottom';
 import type { Activity as ActivityRecord } from '@shared/activity';
 import type { AgentFeishuScopeAuthUrl } from '@shared/agent-config';
-import type { AgentStatusSummary } from '@shared/snapshot';
+import type { AgentStatusSummary, DeferredWakeSummary } from '@shared/snapshot';
 import { agentWorkState, agentWorkStateLabel } from '@/lib/agent-work-state';
 
 // ---------------------------------------------------------------------------
@@ -238,20 +240,34 @@ function LifecycleLineRow({ step }: { step: Step }) {
 // Helpers
 // ---------------------------------------------------------------------------
 
+export function deferredRetryAccessibleName(wake: DeferredWakeSummary): string {
+  const until = clockHM(wake.notBefore);
+  const deferrals = wake.deferrals ?? 0;
+  const kindLabel = wake.kind === 'slack' ? 'Slack' : wake.kind;
+  const deferralPart = deferrals === 1 ? '1 deferral' : `${deferrals} deferrals`;
+  return `Retry ${kindLabel} wake now (deferred until ${until}, ${deferralPart})`;
+}
+
 export function ActivityStatusSummary({
   status,
   latestActivity,
   now,
+  onRetryDeferred,
+  retryingDeferredId,
 }: {
   status: AgentStatusSummary | undefined;
   latestActivity: ActivityRecord | undefined;
   now: Date;
+  onRetryDeferred?: (itemId: string) => void;
+  retryingDeferredId?: string | null;
 }) {
   if (!status) return null;
   const work = agentWorkState(status);
   const running = work.state === 'working';
   const background = work.state === 'background';
   const queued = status.queueDepth > 0;
+  const deferredWakes = status.deferredWakes ?? [];
+  const retryableDeferredWakes = deferredWakes.filter((wake) => wake.retryable);
   const health = status.health;
   const restartFailed = health?.state !== 'healthy' && health?.restart?.outcome === 'failed';
   const unhealthy = health?.state === 'unhealthy' || restartFailed;
@@ -324,6 +340,30 @@ export function ActivityStatusSummary({
         {queued && (
           <span className="font-sans text-[11px] text-text-subtle">{status.queueDepth} queued</span>
         )}
+        {deferredWakes.length > 0 && (
+          <span className="font-sans text-[11px] text-text-subtle">
+            {deferredWakes.length} deferred
+          </span>
+        )}
+        {onRetryDeferred
+          && retryableDeferredWakes.map((wake) => {
+            const busy = Boolean(retryingDeferredId);
+            const thisBusy = retryingDeferredId === wake.id;
+            const label = deferredRetryAccessibleName(wake);
+            return (
+              <button
+                key={wake.id}
+                type="button"
+                aria-label={label}
+                title={label}
+                className="py-3 -my-3 font-sans text-[11px] font-medium text-text-muted underline-offset-2 hover:text-text hover:underline disabled:opacity-50 md:my-0 md:py-0"
+                disabled={busy}
+                onClick={() => onRetryDeferred(wake.id)}
+              >
+                {thisBusy ? 'Retrying…' : 'Retry now'}
+              </button>
+            );
+          })}
         {latest && (
           <span className="min-w-0 flex-1 basis-64 truncate font-sans text-[11px] text-text-muted">
             latest: {latest.title}
@@ -483,9 +523,23 @@ export default function Activity() {
   // static wrapper — it does not become a scroll/containing block, so the sticky
   // day headers still resolve to the scroll container.
   const contentRef = useRef<HTMLDivElement>(null);
+  const [retryingDeferredId, setRetryingDeferredId] = useState<string | null>(null);
 
   const { activityQuery, messageQuery, activitiesData, conversationItems, stepItems } =
     useActivityFeeds(agentId);
+
+  async function handleRetryDeferred(itemId: string) {
+    if (!agentId || retryingDeferredId) return;
+    setRetryingDeferredId(itemId);
+    try {
+      await retryDeferredWakeNow(agentId, itemId);
+      refreshDashboardData();
+    } catch {
+      // Status poll + button label are enough; avoid toast spam on 409 races.
+    } finally {
+      setRetryingDeferredId(null);
+    }
+  }
 
   const feedError = messageQuery.error;
   const loadingActivities = messageQuery.isLoading;
@@ -769,7 +823,13 @@ export default function Activity() {
         </div>
       )}
 
-      <ActivityStatusSummary status={currentStatus} latestActivity={latestCurrentItemActivity} now={now} />
+      <ActivityStatusSummary
+        status={currentStatus}
+        latestActivity={latestCurrentItemActivity}
+        now={now}
+        onRetryDeferred={handleRetryDeferred}
+        retryingDeferredId={retryingDeferredId}
+      />
 
       <div
         ref={scrollContainerRef}

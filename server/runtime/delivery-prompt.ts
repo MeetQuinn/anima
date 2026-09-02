@@ -26,6 +26,7 @@ import {
 } from '../messages/envelope.js';
 import type { Reminder } from '../../shared/reminder.js';
 import {
+  DEFERRED_WAKE_RETRY_NOTE,
   providerCrashRetryNote,
   providerSessionRecoveryNote,
   providerTransientRetryNote,
@@ -80,6 +81,19 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
       return `${continuation}\n\n${context.cursorDeliveryPromptBody}`;
     }
     return continuation;
+  }
+  if (event.handling.resumeReason === 'deferred_retry') {
+    const retry = buildDeferredWakeRetryDeliveryPrompt({
+      itemId: event.id,
+      time: event.handling.startedAt ?? event.receivedAt,
+    });
+    if (context.cursorDeliveryPromptBody && event.kind === 'slack') {
+      return `${retry}\n\n${context.cursorDeliveryPromptBody}`;
+    }
+    if (event.kind === 'slack') {
+      return `${retry}\n\n${buildSlackMessageDeliveryPrompt(event)}`;
+    }
+    return retry;
   }
   if (event.kind === 'reminder') return buildReminderDeliveryPrompt(event, context);
   if (event.kind === 'memory_coherence') return buildMemoryCoherenceDeliveryPrompt(event, context.memoryCoherence);
@@ -334,6 +348,22 @@ export function buildRuntimeRestartContinuationDeliveryPrompt(input: {
     ]),
     '',
     RUNTIME_RESTART_CONTINUATION_NOTE,
+  ].join('\n');
+}
+
+export function buildDeferredWakeRetryDeliveryPrompt(input: {
+  itemId: string;
+  time: string;
+}): string {
+  return [
+    'Deferred wake retry:',
+    '',
+    renderEnvelope([
+      { key: 'item', value: input.itemId },
+      { key: 'time', value: envelopeTime(input.time) },
+    ]),
+    '',
+    DEFERRED_WAKE_RETRY_NOTE,
   ].join('\n');
 }
 

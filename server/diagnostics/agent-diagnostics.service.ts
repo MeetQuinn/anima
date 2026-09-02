@@ -221,6 +221,7 @@ function safeHealth(health: AgentRuntimeHealthSummary): AgentRuntimeHealthSummar
 function recoveryActions(agent: AgentConfig, status: AgentStatusSummary): AgentDiagnosticsBundle['recovery']['actions'] {
   const enabled = agent.enabled !== false;
   const running = Boolean(status.currentItemId);
+  const retryableDeferredCount = (status.deferredWakes ?? []).filter((wake) => wake.retryable).length;
   const providerReason = status.health?.reason;
   const providerFailure = providerReason === 'provider_auth_failed'
     || providerReason === 'provider_quota_exhausted'
@@ -230,6 +231,16 @@ function recoveryActions(agent: AgentConfig, status: AgentStatusSummary): AgentD
       available: running,
       id: 'stop',
       label: 'Stop',
+    },
+    {
+      available: retryableDeferredCount > 0,
+      ...(retryableDeferredCount === 0
+        ? { blockedReason: 'No deferred rate-limit wakes to retry.' }
+        : {}),
+      id: 'retry_deferred',
+      label: retryableDeferredCount > 1
+        ? `Retry deferred (${retryableDeferredCount})`
+        : 'Retry now',
     },
     enabled
       ? {

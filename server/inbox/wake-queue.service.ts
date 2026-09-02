@@ -2,7 +2,11 @@ import type { InboxItem } from '../../shared/inbox.js';
 import { isClaimableQueuedInboxItem } from '../../shared/inbox.js';
 import { errorMessage } from '../ids.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
-import { WakeQueueStore, type TakeNextRunnableInput } from '../storage/schema/wake-queue.store.js';
+import {
+  WakeQueueStore,
+  type SwapDeferredForRetryResult,
+  type TakeNextRunnableInput,
+} from '../storage/schema/wake-queue.store.js';
 import { signalWake } from './wake-signal.js';
 
 export type { InboxItem };
@@ -221,6 +225,19 @@ export class WakeQueueService {
    */
   async requeueDeferred(itemId: string, options: { deferrals: number; notBefore: string }): Promise<void> {
     await this.store.requeue(itemId, options);
+  }
+
+  /**
+   * Atomically settle a deferred queued item and insert its Retry-now
+   * replacement. Signals wake when the swap succeeds.
+   */
+  async swapDeferredForRetry(
+    itemId: string,
+    buildRetry: (previous: InboxItem, now: string) => InboxItem,
+  ): Promise<SwapDeferredForRetryResult> {
+    const result = await this.store.swapDeferredForRetry(itemId, buildRetry);
+    if (result.kind === 'ok') signalWake(this.agentId);
+    return result;
   }
 
   async requeueBatch(itemIds: string[]): Promise<InboxItem[]> {

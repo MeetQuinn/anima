@@ -615,3 +615,61 @@ test('web API stamps and exposes createdAt through create response and snapshot'
   await rm(homeDir, { force: true, recursive: true });
   await rm(stateDir, { force: true, recursive: true });
 });
+
+test('web API retry-now returns 409 for lost CAS and 404 for unknown ids', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-retry-now-'));
+  await writeAgentConfigs(stateDir);
+  await withAnimaHome(stateDir, async () => {
+    const server = await createWebServer();
+    try {
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected TCP address');
+
+      const unknown = await fetch(
+        `http://127.0.0.1:${address.port}/api/agents/anima/queue/does-not-exist/retry-now`,
+        { method: 'POST' },
+      );
+      assert.equal(unknown.status, 404);
+
+      const event = makeSlackEvent({
+        channelId: 'D-retry',
+        eventId: 'slack:T-demo:D-retry:1770000050.000001',
+        teamId: 'T-demo',
+        text: 'retry via HTTP',
+        ts: '1770000050.000001',
+        userId: 'U1',
+      });
+      const queue = new WakeQueueService('anima');
+      assert.equal((await queue.enqueue(event)).queued, true);
+      await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'test-worker' });
+      await queue.requeueDeferred(event.id, {
+        deferrals: 1,
+        notBefore: new Date(Date.now() + 3_600_000).toISOString(),
+      });
+
+      const url = `http://127.0.0.1:${address.port}/api/agents/anima/queue/${encodeURIComponent(event.id)}/retry-now`;
+      const [first, second] = await Promise.all([
+        fetch(url, { method: 'POST' }),
+        fetch(url, { method: 'POST' }),
+      ]);
+      const statuses = [first.status, second.status].sort((a, b) => a - b);
+      assert.deepEqual(statuses, [200, 409]);
+      const winner = first.status === 200 ? first : second;
+      const loser = first.status === 409 ? first : second;
+      const body = await winner.json() as { previousItemId: string; retryItemId: string };
+      assert.equal(body.previousItemId, event.id);
+      assert.match(body.retryItemId, /^slack-deferred-retry_/);
+      assert.equal(loser.status, 409);
+
+      // Sequential double-click after the first response completes: settled id → 409.
+      const repeat = await fetch(url, { method: 'POST' });
+      assert.equal(repeat.status, 409, 'a repeat after the first response is still a conflict');
+    } finally {
+      server.close();
+      await once(server, 'close');
+    }
+  });
+  await rm(stateDir, { force: true, recursive: true });
+});

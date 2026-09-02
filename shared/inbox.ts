@@ -21,7 +21,12 @@ export const InboxItemHandling = z.object({
    */
   notBefore: z.string().optional(),
   queuedAt: z.string().optional(),
-  resumeReason: z.enum(['runtime_restart']).optional(),
+  /**
+   * `runtime_restart` — interrupted primary continues after a runtime restart.
+   * `deferred_retry` — operator Retry-now replacement wake after a rate-limit
+   * deferral; unique id, same Slack anchors, bypasses cursor already_delivered.
+   */
+  resumeReason: z.enum(['deferred_retry', 'runtime_restart']).optional(),
   settledAt: z.string().optional(),
   /**
    * When set, the item is durable in the queue but not claimable by workers.
@@ -257,4 +262,17 @@ export function isClaimableQueuedInboxItem(item: InboxItem, nowMs: number = Date
   if (!item.handling.notBefore) return true;
   const notBeforeMs = Date.parse(item.handling.notBefore);
   return !Number.isFinite(notBeforeMs) || notBeforeMs <= nowMs;
+}
+
+/**
+ * Queued, published, unclaimed, and still waiting on a rate-limit `notBefore`
+ * gate. Dashboard Retry-now is only offered for these rows.
+ */
+export function isDeferredQueuedInboxItem(item: InboxItem, nowMs: number = Date.now()): boolean {
+  if (item.handling.status !== 'queued' || item.handling.stagedAt || item.handling.workerId) {
+    return false;
+  }
+  if (!item.handling.notBefore) return false;
+  const notBeforeMs = Date.parse(item.handling.notBefore);
+  return Number.isFinite(notBeforeMs) && notBeforeMs > nowMs;
 }

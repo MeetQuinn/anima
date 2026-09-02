@@ -328,6 +328,16 @@ export async function stopItem(agentId: string): Promise<void> {
   await apiRequest(`/api/agents/${encodeURIComponent(agentId)}/stop`, { method: 'POST' });
 }
 
+export async function retryDeferredWakeNow(
+  agentId: string,
+  itemId: string,
+): Promise<{ previousItemId: string; retryItemId: string }> {
+  return apiRequest(
+    `/api/agents/${encodeURIComponent(agentId)}/queue/${encodeURIComponent(itemId)}/retry-now`,
+    { method: 'POST' },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Skills
 // ---------------------------------------------------------------------------
