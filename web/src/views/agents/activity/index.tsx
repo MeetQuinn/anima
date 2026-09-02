@@ -259,6 +259,7 @@ export function ActivityStatusSummary({
   const background = work.state === 'background';
   const queued = status.queueDepth > 0;
   const deferredWakes = status.deferredWakes ?? [];
+  const retryableDeferredWakes = deferredWakes.filter((wake) => wake.retryable);
   const health = status.health;
   const restartFailed = health?.state !== 'healthy' && health?.restart?.outcome === 'failed';
   const unhealthy = health?.state === 'unhealthy' || restartFailed;
@@ -336,7 +337,7 @@ export function ActivityStatusSummary({
             {deferredWakes.length} deferred
           </span>
         )}
-        {deferredWakes.map((wake) => (
+        {retryableDeferredWakes.map((wake) => (
           <button
             key={wake.id}
             type="button"

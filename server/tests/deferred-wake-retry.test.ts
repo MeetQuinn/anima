@@ -135,9 +135,98 @@ test('Retry now rejects non-deferred and concurrent claim races', async () => {
   );
 
   await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'w1' });
-  // Running (claimed) is a race even if we stamped notBefore somehow.
   const claimed = await queue.find(event.id);
   assert.equal(claimed?.handling.status, 'running');
+  // Post-claim swap must report race (workerId present), not silently no-op.
+  assert.equal(
+    (await queue.swapDeferredForRetry(event.id, (p) => p)).kind,
+    'race',
+  );
+});
+
+test('Retry now CAS: only one of two parallel swaps wins', async () => {
+  const queue = queueFor('scout');
+  const event = makeSlackEvent({
+    channelId: 'C-team',
+    eventId: 'slack:T-demo:C-team:1770000021.000001',
+    teamId: 'T-demo',
+    text: 'double click',
+    ts: '1770000021.000001',
+    userId: 'U1',
+  });
+  await queue.enqueue(event);
+  await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'w1' });
+  await queue.requeueDeferred(event.id, {
+    deferrals: 1,
+    notBefore: new Date(Date.now() + 3_600_000).toISOString(),
+  });
+
+  let buildCount = 0;
+  const build = (previous: InboxItem, now: string): InboxItem => {
+    buildCount += 1;
+    assert.equal(previous.kind, 'slack');
+    return {
+      ...previous,
+      handling: {
+        createdAt: now,
+        queuedAt: now,
+        resumeReason: 'deferred_retry',
+        status: 'queued',
+        updatedAt: now,
+      },
+      id: `slack-deferred-retry_parallel_${buildCount}`,
+      receivedAt: now,
+    };
+  };
+
+  const [first, second] = await Promise.all([
+    queue.swapDeferredForRetry(event.id, build),
+    queue.swapDeferredForRetry(event.id, build),
+  ]);
+  const kinds = [first.kind, second.kind].sort();
+  assert.deepEqual(kinds, ['not_found', 'ok']);
+  const winner = first.kind === 'ok' ? first : second.kind === 'ok' ? second : undefined;
+  assert.ok(winner && winner.kind === 'ok');
+  if (!winner || winner.kind !== 'ok') return;
+  assert.equal(await queue.find(event.id), undefined);
+  assert.ok(await queue.find(winner.retry.id));
+});
+
+test('retryDeferredWakeNow rejects deferred reminder (unsupported kind)', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-deferred-retry-reminder-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const agentId = 'anima';
+      const queue = new WakeQueueService(agentId);
+      const now = new Date().toISOString();
+      const notBefore = new Date(Date.now() + 3_600_000).toISOString();
+      const reminder: InboxItem = {
+        id: 'reminder:penny:fire:1',
+        kind: 'reminder',
+        receivedAt: now,
+        reminderId: 'penny',
+        title: 'Penny deferred',
+        handling: {
+          createdAt: now,
+          queuedAt: now,
+          status: 'queued',
+          updatedAt: now,
+          deferrals: 1,
+          notBefore,
+        },
+      };
+      assert.equal((await queue.enqueue(reminder)).queued, true);
+      assert.equal(isDeferredQueuedInboxItem((await queue.find(reminder.id))!), true);
+
+      const result = await retryDeferredWakeNow(agentId, reminder.id);
+      assert.equal(result.kind, 'conflict');
+      if (result.kind === 'conflict') assert.equal(result.reason, 'unsupported_kind');
+      // Reminder stays deferred and actionable UI must not surface it.
+      assert.equal(isDeferredQueuedInboxItem((await queue.find(reminder.id))!), true);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 test('deferred_retry bypasses cursor already_delivered and frames the missed request', async () => {
@@ -224,9 +313,47 @@ test('retryDeferredWakeNow end-to-end against a real agent home queue', async ()
       assert.equal(retry?.handling.resumeReason, 'deferred_retry');
       assert.equal(isDeferredQueuedInboxItem(retry!), false);
 
+      // True unknown after settle → not_found (HTTP 404). Lost-CAS uses `gone`.
       const conflict = await retryDeferredWakeNow(agentId, event.id);
       assert.equal(conflict.kind, 'conflict');
       if (conflict.kind === 'conflict') assert.equal(conflict.reason, 'not_found');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('parallel retryDeferredWakeNow: loser is gone, not not_found', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-deferred-retry-cas-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const agentId = 'anima';
+      const queue = new WakeQueueService(agentId);
+      const event = makeSlackEvent({
+        channelId: 'C-cas',
+        eventId: 'slack:T-demo:C-cas:1770000040.000001',
+        teamId: 'T-demo',
+        text: 'double click http',
+        ts: '1770000040.000001',
+        userId: 'U1',
+      });
+      assert.equal((await queue.enqueue(event)).queued, true);
+      await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'w1' });
+      await queue.requeueDeferred(event.id, {
+        deferrals: 1,
+        notBefore: new Date(Date.now() + 3_600_000).toISOString(),
+      });
+
+      const [a, b] = await Promise.all([
+        retryDeferredWakeNow(agentId, event.id),
+        retryDeferredWakeNow(agentId, event.id),
+      ]);
+      const kinds = [a.kind, b.kind].sort();
+      assert.deepEqual(kinds, ['conflict', 'retried']);
+      const loser = a.kind === 'conflict' ? a : b.kind === 'conflict' ? b : undefined;
+      assert.ok(loser && loser.kind === 'conflict');
+      if (!loser || loser.kind !== 'conflict') return;
+      assert.equal(loser.reason, 'gone');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

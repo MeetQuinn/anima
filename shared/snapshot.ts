@@ -13,12 +13,14 @@ export interface ArchivedProviderSessionRecord extends ProviderSessionRecord {
   note?: string;
 }
 
-/** Queued wake still gated by provider rate-limit `notBefore` (Retry-now target). */
+/** Queued wake still gated by provider rate-limit `notBefore`. */
 export interface DeferredWakeSummary {
   deferrals?: number;
   id: string;
   kind: string;
   notBefore: string;
+  /** True when dashboard Retry now can succeed for this wake (Slack only today). */
+  retryable: boolean;
 }
 
 export interface AgentStatusSummary {

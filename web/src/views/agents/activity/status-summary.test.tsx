@@ -32,7 +32,7 @@ describe('ActivityStatusSummary', () => {
     expect(screen.queryByText('Idle')).toBeNull();
   });
 
-  it('offers Retry now for deferred rate-limit wakes', async () => {
+  it('offers Retry now only for retryable deferred wakes', async () => {
     const status: AgentStatusSummary = {
       agentId: 'milo',
       deferredWakes: [
@@ -41,10 +41,18 @@ describe('ActivityStatusSummary', () => {
           id: 'slack:T:C:1.0',
           kind: 'slack',
           notBefore: '2099-01-01T00:00:00.000Z',
+          retryable: true,
+        },
+        {
+          deferrals: 1,
+          id: 'reminder:penny:fire:1',
+          kind: 'reminder',
+          notBefore: '2099-01-01T00:00:00.000Z',
+          retryable: false,
         },
       ],
-      itemCount: 1,
-      queueDepth: 1,
+      itemCount: 2,
+      queueDepth: 2,
     };
     const onRetryDeferred = vi.fn();
 
@@ -57,9 +65,38 @@ describe('ActivityStatusSummary', () => {
       />,
     );
 
-    expect(screen.getByText('1 deferred')).toBeTruthy();
-    const button = screen.getByRole('button', { name: 'Retry now' });
-    button.click();
+    expect(screen.getByText('2 deferred')).toBeTruthy();
+    const buttons = screen.getAllByRole('button', { name: 'Retry now' });
+    expect(buttons).toHaveLength(1);
+    buttons[0]!.click();
     expect(onRetryDeferred).toHaveBeenCalledWith('slack:T:C:1.0');
+  });
+
+  it('shows deferred count without a Retry now button when nothing is retryable', () => {
+    const status: AgentStatusSummary = {
+      agentId: 'milo',
+      deferredWakes: [
+        {
+          id: 'reminder:penny:fire:1',
+          kind: 'reminder',
+          notBefore: '2099-01-01T00:00:00.000Z',
+          retryable: false,
+        },
+      ],
+      itemCount: 1,
+      queueDepth: 1,
+    };
+
+    render(
+      <ActivityStatusSummary
+        latestActivity={undefined}
+        now={new Date('2026-09-01T08:00:01.000Z')}
+        onRetryDeferred={vi.fn()}
+        status={status}
+      />,
+    );
+
+    expect(screen.getByText('1 deferred')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Retry now' })).toBeNull();
   });
 });

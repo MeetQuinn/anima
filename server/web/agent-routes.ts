@@ -116,12 +116,17 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
           retryItemId: result.retryItemId,
         };
       }
+      // True unknown id only. Lost CAS / race / wrong state → 409 (idempotent
+      // retry contract: repeat or concurrent Retry now must not look like 404).
       if (result.reason === 'not_found') throw new HttpError(404, 'Wake item not found');
       if (result.reason === 'unsupported_kind') {
         throw new HttpError(409, 'Retry now is only supported for deferred Slack wakes.');
       }
       if (result.reason === 'not_deferred') {
         throw new HttpError(409, 'Wake item is not a deferred queued wake.');
+      }
+      if (result.reason === 'gone' || result.reason === 'race') {
+        throw new HttpError(409, 'Wake item changed; refresh and try again.');
       }
       throw new HttpError(409, 'Wake item changed; refresh and try again.');
     },

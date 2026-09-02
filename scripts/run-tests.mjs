@@ -49,7 +49,7 @@ const groups = {
     'file-cache-eviction.test.js',
     'inbox.test.js',
     'deferred-wake-retry.test.js',
-    'ingest-golden.test.js';
+    'ingest-golden.test.js',
     'interactive-ask.test.js',
     'kb-file-types.test.js',
     'memory-coherence.test.js',

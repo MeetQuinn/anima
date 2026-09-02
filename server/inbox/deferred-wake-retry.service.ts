@@ -5,6 +5,7 @@ import { observeSlackWakeInJournal } from '../runtime/cursor-wake-journal-backfi
 import { wakeQueueServiceForAgent } from './wake-queue.service.js';
 
 export type DeferredWakeRetryConflictReason =
+  | 'gone'
   | 'not_deferred'
   | 'not_found'
   | 'race'
@@ -42,6 +43,11 @@ export async function retryDeferredWakeNow(
   });
 
   if (outcome.kind !== 'ok') {
+    // We already observed the deferred Slack row; a store `not_found` here is a
+    // lost CAS (parallel Retry now / external settle), not a true unknown id.
+    if (outcome.kind === 'not_found') {
+      return { kind: 'conflict', reason: 'gone' };
+    }
     return { kind: 'conflict', reason: outcome.kind };
   }
 

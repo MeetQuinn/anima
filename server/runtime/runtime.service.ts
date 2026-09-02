@@ -104,12 +104,15 @@ function expectsRuntimeHealth(agent: AgentConfig): boolean {
 }
 
 function deferredWakeSummaries(items: InboxItem[]): DeferredWakeSummary[] {
+  // Surface every deferred wake for the count; Retry now only for Slack
+  // (`retryable`). Non-retryable kinds (e.g. reminder) must not get a button.
   return items
     .filter((item) => isDeferredQueuedInboxItem(item))
     .map((item) => ({
       id: item.id,
       kind: item.kind,
       notBefore: item.handling.notBefore!,
+      retryable: item.kind === 'slack',
       ...(item.handling.deferrals !== undefined ? { deferrals: item.handling.deferrals } : {}),
     }));
 }
