@@ -662,6 +662,10 @@ test('web API retry-now returns 409 for lost CAS and 404 for unknown ids', async
       assert.equal(body.previousItemId, event.id);
       assert.match(body.retryItemId, /^slack-deferred-retry_/);
       assert.equal(loser.status, 409);
+
+      // Sequential double-click after the first response completes: settled id → 409.
+      const repeat = await fetch(url, { method: 'POST' });
+      assert.equal(repeat.status, 409, 'a repeat after the first response is still a conflict');
     } finally {
       server.close();
       await once(server, 'close');

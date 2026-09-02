@@ -313,10 +313,10 @@ test('retryDeferredWakeNow end-to-end against a real agent home queue', async ()
       assert.equal(retry?.handling.resumeReason, 'deferred_retry');
       assert.equal(isDeferredQueuedInboxItem(retry!), false);
 
-      // True unknown after settle → not_found (HTTP 404). Lost-CAS uses `gone`.
+      // Sequential repeat after settle → gone (HTTP 409), not not_found.
       const conflict = await retryDeferredWakeNow(agentId, event.id);
       assert.equal(conflict.kind, 'conflict');
-      if (conflict.kind === 'conflict') assert.equal(conflict.reason, 'not_found');
+      if (conflict.kind === 'conflict') assert.equal(conflict.reason, 'gone');
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

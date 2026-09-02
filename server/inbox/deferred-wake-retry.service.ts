@@ -29,7 +29,14 @@ export async function retryDeferredWakeNow(
 ): Promise<DeferredWakeRetryResult> {
   const queue = wakeQueueServiceForAgent(agentId);
   const current = await queue.find(itemId);
-  if (!current) return { kind: 'conflict', reason: 'not_found' };
+  if (!current) {
+    // Settled/known id (seen marker or message ledger) → gone (HTTP 409).
+    // Never-known id → not_found (HTTP 404). Sequential double-clicks land here.
+    if (await queue.hasSeen(itemId)) {
+      return { kind: 'conflict', reason: 'gone' };
+    }
+    return { kind: 'conflict', reason: 'not_found' };
+  }
   if (current.kind !== 'slack') return { kind: 'conflict', reason: 'unsupported_kind' };
   if (current.handling.workerId) return { kind: 'conflict', reason: 'race' };
   if (!isDeferredQueuedInboxItem(current)) return { kind: 'conflict', reason: 'not_deferred' };

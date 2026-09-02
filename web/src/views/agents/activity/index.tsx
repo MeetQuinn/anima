@@ -51,7 +51,7 @@ import { useFeishuOnboardingBanners } from './useFeishuOnboardingBanners';
 import { useStickToBottom } from './useStickToBottom';
 import type { Activity as ActivityRecord } from '@shared/activity';
 import type { AgentFeishuScopeAuthUrl } from '@shared/agent-config';
-import type { AgentStatusSummary } from '@shared/snapshot';
+import type { AgentStatusSummary, DeferredWakeSummary } from '@shared/snapshot';
 import { agentWorkState, agentWorkStateLabel } from '@/lib/agent-work-state';
 
 // ---------------------------------------------------------------------------
@@ -240,6 +240,14 @@ function LifecycleLineRow({ step }: { step: Step }) {
 // Helpers
 // ---------------------------------------------------------------------------
 
+export function deferredRetryAccessibleName(wake: DeferredWakeSummary): string {
+  const until = clockHM(wake.notBefore);
+  const deferrals = wake.deferrals ?? 0;
+  const kindLabel = wake.kind === 'slack' ? 'Slack' : wake.kind;
+  const deferralPart = deferrals === 1 ? '1 deferral' : `${deferrals} deferrals`;
+  return `Retry ${kindLabel} wake now (deferred until ${until}, ${deferralPart})`;
+}
+
 export function ActivityStatusSummary({
   status,
   latestActivity,
@@ -337,17 +345,25 @@ export function ActivityStatusSummary({
             {deferredWakes.length} deferred
           </span>
         )}
-        {retryableDeferredWakes.map((wake) => (
-          <button
-            key={wake.id}
-            type="button"
-            className="font-sans text-[11px] font-medium text-text-muted underline-offset-2 hover:text-text hover:underline disabled:opacity-50"
-            disabled={!onRetryDeferred || retryingDeferredId === wake.id}
-            onClick={() => onRetryDeferred?.(wake.id)}
-          >
-            {retryingDeferredId === wake.id ? 'Retrying…' : 'Retry now'}
-          </button>
-        ))}
+        {onRetryDeferred
+          && retryableDeferredWakes.map((wake) => {
+            const busy = Boolean(retryingDeferredId);
+            const thisBusy = retryingDeferredId === wake.id;
+            const label = deferredRetryAccessibleName(wake);
+            return (
+              <button
+                key={wake.id}
+                type="button"
+                aria-label={label}
+                title={label}
+                className="py-3 -my-3 font-sans text-[11px] font-medium text-text-muted underline-offset-2 hover:text-text hover:underline disabled:opacity-50 md:my-0 md:py-0"
+                disabled={busy}
+                onClick={() => onRetryDeferred(wake.id)}
+              >
+                {thisBusy ? 'Retrying…' : 'Retry now'}
+              </button>
+            );
+          })}
         {latest && (
           <span className="min-w-0 flex-1 basis-64 truncate font-sans text-[11px] text-text-muted">
             latest: {latest.title}
