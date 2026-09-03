@@ -509,6 +509,155 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
   }
 });
 
+test('codex-cli exposes running thread terminals as background work until they exit', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const backgroundReleasePath = join(stateDir, 'release-codex-background');
+      const turnReleasePath = join(stateDir, 'release-codex-turn');
+      const callsPath = join(stateDir, 'codex-background-calls.jsonl');
+      const fakeCodex = join(stateDir, 'codex');
+      await writeFile(
+        fakeCodex,
+        [
+          '#!/usr/bin/env node',
+          "import { appendFileSync, existsSync } from 'node:fs';",
+          "import readline from 'node:readline';",
+          "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
+          'let turnCompleted = false;',
+          "const turnRelease = setInterval(() => {",
+          '  if (turnCompleted || !existsSync(process.env.TURN_RELEASE_PATH)) return;',
+          '  turnCompleted = true;',
+          "  send({ method: 'item/agentMessage/delta', params: { threadId: 'codex-background-thread', turnId: 'codex-background-turn', itemId: 'message-1', delta: 'background launched' } });",
+          "  send({ method: 'turn/completed', params: { threadId: 'codex-background-thread', turn: { id: 'codex-background-turn', status: 'completed', items: [], itemsView: 'full', error: null, startedAt: 1, completedAt: 2, durationMs: 1000 } } });",
+          '  clearInterval(turnRelease);',
+          '}, 5);',
+          "readline.createInterface({ input: process.stdin }).on('line', (line) => {",
+          '  const msg = JSON.parse(line);',
+          "  appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + '\\n');",
+          "  if (msg.method === 'initialize') {",
+          "    send({ id: msg.id, result: { userAgent: 'fake-codex/0.153.0' } });",
+          '    return;',
+          '  }',
+          "  if (msg.method === 'initialized') return;",
+          "  if (msg.method === 'thread/start') {",
+          "    send({ id: msg.id, result: { thread: { id: 'codex-background-thread', cwd: process.cwd(), cliVersion: 'test' } } });",
+          '    return;',
+          '  }',
+          "  if (msg.method === 'turn/start') {",
+          "    send({ id: msg.id, result: { turn: { id: 'codex-background-turn', status: 'inProgress', items: [], itemsView: 'full', error: null, startedAt: 1, completedAt: null, durationMs: null } } });",
+          "    send({ method: 'item/started', params: { threadId: 'codex-background-thread', turnId: 'codex-background-turn', item: { id: 'command-1', type: 'commandExecution', command: 'long-running-test' } } });",
+          "    send({ method: 'item/completed', params: { threadId: 'codex-background-thread', turnId: 'codex-background-turn', item: { id: 'command-1', type: 'commandExecution', command: 'long-running-test', exitCode: null, aggregatedOutput: 'Script running with process ID 42' } } });",
+          '    return;',
+          '  }',
+          "  if (msg.method === 'thread/backgroundTerminals/list') {",
+          '    const released = existsSync(process.env.BACKGROUND_RELEASE_PATH);',
+          "    const processId = msg.params.cursor === 'page-2' ? '43' : '42';",
+          '    const data = released',
+          '      ? []',
+          "      : [{ itemId: 'command-1', processId, command: 'long-running-test', cwd: process.cwd(), osPid: null, cpuPercent: null, rssKb: null }];",
+          "    const nextCursor = !released && !msg.params.cursor ? 'page-2' : null;",
+          '    setTimeout(() => send({ id: msg.id, result: { data, nextCursor } }), 100);',
+          '  }',
+          '});',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      await chmod(fakeCodex, 0o755);
+
+      const ctx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-codex-background',
+          teamId: 'T-demo',
+          text: 'Launch a long-running background command.',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+      runtime = createAgentRuntime(
+        {
+          env: runtimeTestEnv(stateDir, {
+            BACKGROUND_RELEASE_PATH: backgroundReleasePath,
+            CALLS_PATH: callsPath,
+            TURN_RELEASE_PATH: turnReleasePath,
+          }),
+          kind: 'codex-cli',
+          providerChildIdleTimeoutMs: 50,
+        },
+        { command: fakeCodex },
+      );
+      const backgroundTerminalCallCount = async () => (
+        (await readFile(callsPath, 'utf8')).trim().split('\n')
+          .map((line) => JSON.parse(line) as { method?: string })
+          .filter((call) => call.method === 'thread/backgroundTerminals/list')
+          .length
+      );
+
+      const input = await runtimeInput(runtime, ctx, await loadState());
+      let activitySignals = 0;
+      input.onActivity = () => {
+        activitySignals += 1;
+      };
+      const runPromise = runtime.run(input);
+      await waitFor(
+        async () => (await readFile(callsPath, 'utf8')).includes('thread/backgroundTerminals/list'),
+        { description: 'Codex background-terminal query' },
+      );
+      assert.equal(runtime.health?.().providerWork, undefined);
+      assert.equal(runtime.isProviderQuiescent?.(), false);
+      await waitFor(
+        () => runtime?.health?.().providerWork?.backgroundTaskCount === 2,
+        { description: 'Codex foreground background-terminal count' },
+      );
+      assert.deepEqual(runtime.health?.().providerWork, {
+        backgroundTaskCount: 2,
+        state: 'working',
+      });
+      assert.equal(runtime.isProviderQuiescent?.(), false);
+      const activitySignalsBeforePoll = activitySignals;
+      await waitFor(
+        async () => (await backgroundTerminalCallCount()) >= 4,
+        { description: 'Codex background-terminal status poll', timeoutMs: 4_000 },
+      );
+      assert.equal(activitySignals, activitySignalsBeforePoll);
+
+      await waitFor(
+        async () => (await backgroundTerminalCallCount()) >= 5,
+        { description: 'overlapping Codex background-terminal status poll', timeoutMs: 4_000 },
+      );
+      await writeFile(turnReleasePath, '1', 'utf8');
+      assert.equal((await withTimeout(runPromise, 1_000)).text, 'background launched');
+      await waitFor(
+        async () => (await backgroundTerminalCallCount()) >= 7,
+        { description: 'coalesced Codex background-terminal refresh' },
+      );
+      assert.deepEqual(runtime.health?.().providerWork, {
+        backgroundTaskCount: 2,
+        state: 'background',
+      });
+      assert.equal(runtime.isProviderQuiescent?.(), false);
+      assert.ok(runtime.health?.().child?.alive);
+
+      await writeFile(backgroundReleasePath, '1', 'utf8');
+      await waitFor(
+        () => runtime?.health?.().providerWork === undefined,
+        { description: 'Codex background-terminal status clear', timeoutMs: 4_000 },
+      );
+      assert.equal(runtime.isProviderQuiescent?.(), true);
+      await waitFor(
+        () => runtime?.health?.().child === undefined,
+        { description: 'Codex provider child idle reset after background completion', timeoutMs: 1_000 },
+      );
+      assert.ok((await backgroundTerminalCallCount()) >= 8);
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('codex-cli resets app-server when follow-up steer sees a different active turn', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
   let runtime: AgentRuntime | undefined;

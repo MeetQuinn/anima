@@ -32,7 +32,9 @@ export function agentWorkState(status: AgentStatusSummary | undefined): AgentWor
 export function agentWorkStateLabel(work: AgentWorkState): string {
   if (work.state !== 'background') {
     return work.state === 'working'
-      ? 'Working'
+      ? work.backgroundTaskCount
+        ? `Working · Background ${work.backgroundTaskCount}`
+        : 'Working'
       : work.state === 'queued'
         ? 'Queued'
         : 'Idle';

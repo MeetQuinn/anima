@@ -43,7 +43,7 @@ describe('agentWorkState', () => {
   });
 
   it('keeps current work ahead of background, then falls back to queued and idle', () => {
-    expect(agentWorkState(status({
+    const workingWithBackground = agentWorkState(status({
       currentItemId: 'item-1',
       health: {
         runtime: {
@@ -53,7 +53,9 @@ describe('agentWorkState', () => {
         state: 'healthy',
         updatedAt: '2026-09-01T08:00:00.000Z',
       },
-    }))).toEqual({ backgroundTaskCount: 1, state: 'working' });
+    }));
+    expect(workingWithBackground).toEqual({ backgroundTaskCount: 1, state: 'working' });
+    expect(agentWorkStateLabel(workingWithBackground)).toBe('Working · Background 1');
     expect(agentWorkState(status({ queueDepth: 1 }))).toEqual({ state: 'queued' });
     expect(agentWorkState(status())).toEqual({ state: 'idle' });
   });

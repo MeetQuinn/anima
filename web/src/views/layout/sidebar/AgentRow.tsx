@@ -30,6 +30,9 @@ export function sidebarDotTitle(
   if (health.state === 'starting') return 'starting';
   if (health.state === 'degraded') return 'retrying';
   if (health.state === 'unhealthy') return 'needs attention';
+  if (workState === 'working' && backgroundTaskCount) {
+    return `working · background ${backgroundTaskCount}`;
+  }
   if (workState === 'background') {
     return backgroundTaskCount ? `background · ${backgroundTaskCount}` : 'background';
   }

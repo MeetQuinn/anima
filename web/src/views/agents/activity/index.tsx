@@ -288,7 +288,7 @@ export function ActivityStatusSummary({
           : unknown
             ? 'Health unavailable'
             : running
-              ? 'Working'
+              ? agentWorkStateLabel(work)
               : background
                 ? agentWorkStateLabel(work)
                 : queued

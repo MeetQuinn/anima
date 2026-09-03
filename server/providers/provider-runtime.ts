@@ -70,9 +70,9 @@ export abstract class ControllerAgentRuntime<C extends ProviderTurnController> i
   }
 
   /**
-   * Only controllers that implement `isQuiescent` (Claude background tasks)
-   * participate in config-reload quiescence. Others return `undefined` so the
-   * host keeps active-item-only reload deferral.
+   * Only controllers that expose provider-native background work participate
+   * in config-reload quiescence. Others return `undefined` so the host keeps
+   * active-item-only reload deferral.
    */
   isProviderQuiescent(): boolean | undefined {
     const controller = this.slot.get();
