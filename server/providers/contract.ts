@@ -98,7 +98,7 @@ export interface AgentRuntime {
   close?(options?: AgentRuntimeCloseOptions): Promise<void>;
   health?(): AgentRuntimeHealth;
   /**
-   * Provider-owned background work (e.g. Claude background Bash tasks).
+   * Provider-owned background work (e.g. Claude tasks or Codex terminals).
    * `undefined` means this runtime does not expose quiescence beyond the active
    * Anima item — config reload keeps the previous active-item-only behavior.
    */

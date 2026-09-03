@@ -23,7 +23,7 @@ import {
 } from './codex-events.js';
 import type { AgentRuntimeInput } from './contract.js';
 import { truncateForActivity } from '../activities/format.js';
-import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
+import type { ProviderChildHealthSnapshot, ProviderWorkSnapshot } from '../../shared/snapshot.js';
 import { LineBuffer } from './line-buffer.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
 import type { ProviderSessionCorruptionReason } from './session-corruption.js';
@@ -46,6 +46,12 @@ interface Deferred<T> {
   resolve(value: T): void;
 }
 
+interface PendingCodexRequest {
+  method: string;
+  reject(error: unknown): void;
+  resolve(value: unknown): void;
+}
+
 interface LinkedAgentText {
   payload: Record<string, unknown>;
   text: string;
@@ -58,10 +64,16 @@ interface PendingCodexSubagentSpawn {
 
 export class CodexAppServerController {
   private activeInput?: AgentRuntimeInput;
+  private backgroundTerminalCount = 0;
+  private backgroundTerminalListSupported = true;
+  private backgroundTerminalPoll?: NodeJS.Timeout;
+  private backgroundTerminalRefresh?: Promise<void>;
+  private backgroundTerminalRefreshQueued = false;
+  private closed = false;
   private readonly stdoutLines = new LineBuffer();
   private initialized = false;
   private nextId = 1;
-  private readonly pending = new Map<number, { reject(error: unknown): void; resolve(value: unknown): void }>();
+  private readonly pending = new Map<number, PendingCodexRequest>();
   private readonly completedTurns = new Set<string>();
   private readonly linkedTextByItem = new Map<string, LinkedAgentText>();
   private readonly textByTurn = new Map<string, string>();
@@ -88,11 +100,13 @@ export class CodexAppServerController {
   ) {
     this.completion = child.completion.then(
       (result) => {
+        this.closeBackgroundTerminalTracking();
         this.rejectQuiescentWaiters(new Error('Codex app-server runtime exited before drain reached a quiescent point'));
         this.rejectOpenWaiters(new Error('Codex app-server runtime exited before completing active requests'));
         return result;
       },
       (error) => {
+        this.closeBackgroundTerminalTracking();
         this.rejectQuiescentWaiters(error);
         this.rejectOpenWaiters(error);
         throw error;
@@ -205,7 +219,22 @@ export class CodexAppServerController {
   }
 
   waitForQuiescent(signal?: AbortSignal): Promise<void> {
-    return this.quiescentWaiters.waitUntilReady(() => this.activeProviderToolIds.size === 0, signal);
+    return this.quiescentWaiters.waitUntilReady(() => this.isQuiescent(), signal);
+  }
+
+  isQuiescent(): boolean {
+    return this.activeProviderToolIds.size === 0
+      && this.backgroundTerminalCount === 0
+      && !this.backgroundTerminalRefresh
+      && !this.backgroundTerminalRefreshQueued;
+  }
+
+  workSnapshot(): ProviderWorkSnapshot | undefined {
+    if (this.backgroundTerminalCount === 0) return undefined;
+    return {
+      backgroundTaskCount: this.backgroundTerminalCount,
+      state: this.currentTurn ? 'working' : 'background',
+    };
   }
 
   request(method: string, params: Record<string, unknown> | undefined): Promise<unknown> {
@@ -213,7 +242,7 @@ export class CodexAppServerController {
     const message = params === undefined ? { id, method } : { id, method, params };
     this.child.writeStdin(`${JSON.stringify(message)}\n`);
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { reject, resolve });
+      this.pending.set(id, { method, reject, resolve });
     });
   }
 
@@ -237,7 +266,6 @@ export class CodexAppServerController {
   }
 
   async acceptStdoutChunk(chunk: string): Promise<void> {
-    this.activeInput?.onActivity?.();
     for (const line of this.stdoutLines.accept(chunk)) await this.acceptLine(line);
   }
 
@@ -263,6 +291,7 @@ export class CodexAppServerController {
       message = JSON.parse(line) as JsonRpcMessage;
     } catch (error) {
       const input = this.currentTurn?.input ?? this.activeInput;
+      input?.onActivity?.();
       await input?.effects.recordEvent({
         error: error instanceof Error ? error.message : String(error),
         eventType: 'codex.protocol.invalid_json',
@@ -275,10 +304,14 @@ export class CodexAppServerController {
       const waiter = this.pending.get(message.id);
       if (!waiter) return;
       this.pending.delete(message.id);
+      if (waiter.method !== 'thread/backgroundTerminals/list') {
+        this.activeInput?.onActivity?.();
+      }
       if (message.error) waiter.reject(new Error(JSON.stringify(message.error)));
       else waiter.resolve(message.result);
       return;
     }
+    (this.currentTurn?.input ?? this.activeInput)?.onActivity?.();
     await this.acceptNotification(message);
   }
 
@@ -322,6 +355,12 @@ export class CodexAppServerController {
       const turn = this.currentTurn;
       if (!turn) return;
       const item = recordParam(message.params, 'item');
+      if (
+        stringParam(message.params, 'threadId') === this.threadId
+        && stringField(item ?? {}, 'type') === 'commandExecution'
+      ) {
+        this.refreshBackgroundTerminals();
+      }
       const runtimeEvent = runtimeEventFromAppServerItem(message.method, item, this.runtimeKind);
       if (runtimeEvent) {
         await turn.input.effects.recordEvent(runtimeEvent);
@@ -377,17 +416,92 @@ export class CodexAppServerController {
         ));
       }
       this.usageByTurn.delete(turnId);
+      this.refreshBackgroundTerminals();
       this.completedTurns.add(turnId);
       if (this.currentTurn?.turnId === turnId) this.currentTurn.completed.resolve();
     }
   }
 
   private resolveQuiescentWaitersIfReady(): void {
-    this.quiescentWaiters.resolveIfReady(() => this.activeProviderToolIds.size === 0);
+    this.quiescentWaiters.resolveIfReady(() => this.isQuiescent());
   }
 
   private rejectQuiescentWaiters(error: unknown): void {
     this.quiescentWaiters.reject(error);
+  }
+
+  private refreshBackgroundTerminals(): void {
+    if (
+      this.closed
+      || !this.backgroundTerminalListSupported
+      || !this.threadId
+    ) return;
+    if (this.backgroundTerminalRefresh) {
+      this.backgroundTerminalRefreshQueued = true;
+      return;
+    }
+    const refresh = this.listBackgroundTerminals()
+      .then((count) => {
+        this.backgroundTerminalCount = count;
+      })
+      .catch((error: unknown) => {
+        if (!codexBackgroundTerminalListUnsupported(error)) return;
+        this.backgroundTerminalListSupported = false;
+        this.backgroundTerminalCount = 0;
+      })
+      .finally(() => {
+        if (this.backgroundTerminalRefresh === refresh) {
+          this.backgroundTerminalRefresh = undefined;
+        }
+        if (this.closed || !this.backgroundTerminalListSupported) {
+          this.backgroundTerminalRefreshQueued = false;
+        } else if (this.backgroundTerminalRefreshQueued) {
+          this.backgroundTerminalRefreshQueued = false;
+          this.refreshBackgroundTerminals();
+          return;
+        }
+        this.resolveQuiescentWaitersIfReady();
+        if (!this.closed && this.backgroundTerminalCount > 0) {
+          this.scheduleBackgroundTerminalPoll();
+        }
+      });
+    this.backgroundTerminalRefresh = refresh;
+  }
+
+  private async listBackgroundTerminals(): Promise<number> {
+    let count = 0;
+    let cursor: string | undefined;
+    do {
+      const result = asRecord(await this.request('thread/backgroundTerminals/list', {
+        ...(cursor ? { cursor } : {}),
+        limit: 100,
+        threadId: this.threadId,
+      }));
+      const data = result?.['data'];
+      if (!Array.isArray(data)) {
+        throw new Error('Codex background terminal list response is missing data');
+      }
+      count += data.length;
+      cursor = stringField(result, 'nextCursor');
+    } while (cursor);
+    return count;
+  }
+
+  private scheduleBackgroundTerminalPoll(): void {
+    if (this.backgroundTerminalPoll) return;
+    this.backgroundTerminalPoll = setTimeout(() => {
+      this.backgroundTerminalPoll = undefined;
+      this.refreshBackgroundTerminals();
+    }, 2_000);
+    this.backgroundTerminalPoll.unref?.();
+  }
+
+  private closeBackgroundTerminalTracking(): void {
+    this.closed = true;
+    if (this.backgroundTerminalPoll) clearTimeout(this.backgroundTerminalPoll);
+    this.backgroundTerminalPoll = undefined;
+    this.backgroundTerminalCount = 0;
+    this.backgroundTerminalRefreshQueued = false;
   }
 
   private acceptAgentMessageDelta(params: Record<string, unknown> | undefined): void {
@@ -598,4 +712,9 @@ function hasWebSearchDetails(payload: Record<string, unknown>): boolean {
     stringField(payload, 'url') ||
     stringField(payload, 'pattern'),
   );
+}
+
+function codexBackgroundTerminalListUnsupported(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /-32601|method not found|experimental method/i.test(message);
 }

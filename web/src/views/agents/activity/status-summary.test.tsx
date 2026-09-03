@@ -32,6 +32,33 @@ describe('ActivityStatusSummary', () => {
     expect(screen.queryByText('Idle')).toBeNull();
   });
 
+  it('renders Codex foreground work with its background terminal count', () => {
+    const status: AgentStatusSummary = {
+      agentId: 'felix',
+      currentItemId: 'reminder:shadow-regrade',
+      health: {
+        runtime: {
+          providerChildExpected: true,
+          providerWork: { backgroundTaskCount: 2, state: 'working' },
+        },
+        state: 'healthy',
+        updatedAt: '2026-09-03T12:00:00.000Z',
+      },
+      itemCount: 1,
+      queueDepth: 0,
+    };
+
+    render(
+      <ActivityStatusSummary
+        latestActivity={undefined}
+        now={new Date('2026-09-03T12:00:01.000Z')}
+        status={status}
+      />,
+    );
+
+    expect(screen.getByText('Working · Background 2')).toBeTruthy();
+  });
+
   it('offers Retry now only for retryable deferred wakes', async () => {
     const status: AgentStatusSummary = {
       agentId: 'milo',

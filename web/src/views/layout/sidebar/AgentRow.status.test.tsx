@@ -64,8 +64,9 @@ describe('AgentRow provider work status', () => {
       />,
     );
 
-    expect(view.container.querySelector('[title="working"]')).toBeTruthy();
+    expect(view.container.querySelector('[title="working · background 2"]')).toBeTruthy();
     expect(view.container.querySelector('.anima-dot-halo')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Milo.*working · background 2/ })).toBeTruthy();
   });
 
   it('pins Background to warn and Queued to idle colors', () => {
