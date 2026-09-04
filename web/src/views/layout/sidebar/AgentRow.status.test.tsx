@@ -52,6 +52,8 @@ describe('AgentRow provider work status', () => {
     expect(background?.style.borderColor).toBe('var(--color-health-warn)');
     expect(view.container.querySelector('.anima-dot-halo')).toBeNull();
     expect(screen.getByRole('button', { name: /Milo.*background · 2/ })).toBeTruthy();
+    // Exact: the avatar initial is decorative and must not lead the name.
+    expect(screen.getByRole('button', { name: 'Milo background · 2' })).toBeTruthy();
 
     view.rerender(
       <AgentRow
@@ -67,6 +69,7 @@ describe('AgentRow provider work status', () => {
     expect(view.container.querySelector('[title="working · background 2"]')).toBeTruthy();
     expect(view.container.querySelector('.anima-dot-halo')).toBeTruthy();
     expect(screen.getByRole('button', { name: /Milo.*working · background 2/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Milo working · background 2' })).toBeTruthy();
   });
 
   it('pins Background to warn and Queued to idle colors', () => {
