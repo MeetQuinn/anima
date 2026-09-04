@@ -100,6 +100,8 @@ describe('AgentRow provider work status', () => {
     expect(sidebarAnimatesWorking(healthy, 'working')).toBe(true);
     expect(sidebarAnimatesWorking({ ...healthy, state: 'unhealthy' }, 'working')).toBe(false);
     expect(sidebarAnimatesWorking({ ...healthy, state: 'degraded' }, 'working')).toBe(false);
+    expect(sidebarAnimatesWorking({ ...healthy, state: 'starting' }, 'working')).toBe(false);
+    expect(sidebarAnimatesWorking({ ...healthy, state: 'unknown' }, 'working')).toBe(false);
     expect(sidebarAnimatesWorking(undefined, 'working')).toBe(false);
     expect(sidebarAnimatesWorking(healthy, 'background')).toBe(false);
 
