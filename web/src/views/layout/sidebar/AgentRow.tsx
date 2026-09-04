@@ -132,6 +132,9 @@ export function AgentRow({
           />
         ) : (
           <span
+            // Decorative, like the <img alt=""> branch: the row's accessible
+            // name is the display name plus the sr-only status, never the initial.
+            aria-hidden
             className={[
               'font-sans flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold text-white ring-1',
               avatarRing,
@@ -156,6 +159,10 @@ export function AgentRow({
             >
               {displayName}
             </span>
+            {/* Whitespace text node, invisible in a flex container. Without it the
+                accessible name concatenates inline nodes as "Milobackground · 2"
+                (jsdom has no layout, so it never inserts the flex-item space). */}
+            {hasRightMeta && ' '}
             {hasRightMeta && (
               <span className="ml-auto flex shrink-0 items-center gap-1.5">
                 {!enabled ? (
