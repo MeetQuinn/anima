@@ -46,15 +46,17 @@ export interface AgentRuntime {
 
 `kind` identifies the provider and is also the key used for provider-session storage.
 
-`run` is required. It starts or resumes provider work for one Anima inbox item and resolves when the provider work is done.
+`run` is required. It starts or resumes provider work for one Anima inbox item and resolves when the
+provider's main turn is done. A controller may still own provider-native background work after that
+point; live background work is exposed through health and keeps the controller non-quiescent.
 
 `appendToActiveRun` is required. It lets the worker send a newly queued same-session item into the active provider context instead of waiting for the active item to finish.
 
 `close` is optional. It is for provider adapters that keep resources alive across items, such as a persistent child process. `AgentRuntimeCloseOptions` lets the caller choose the kill signal and a force-kill deadline.
 
-Controller-style adapters (Codex app-server, Claude stream-json, Kimi ACP, Grok ACP, and OpenCode ACP) may keep a provider child warm after a turn so the next item can reuse the session. Once no item is active, `providerChildIdleTimeoutMs` bounds that warm child before Anima terminates it. Claude's full idle window starts only after its live background-task set is empty, so a main-turn result cannot terminate background work.
+Controller-style adapters (Codex app-server, Claude stream-json, Kimi ACP, Grok ACP, and OpenCode ACP) may keep a provider child warm after a turn so the next item can reuse the session. Once no item is active, `providerChildIdleTimeoutMs` bounds that warm child before Anima terminates it. Claude and Codex become fully idle only after their provider-native background work is empty, so a main-turn result cannot terminate live background tasks or terminals.
 
-`health` is optional. It returns a snapshot of the adapter's child-process state (whether a child is expected, and how the live one looks) for the runtime health service.
+`health` is optional. It returns a snapshot of the adapter's child-process state (whether a child is expected, how the live one looks, and any provider-native background work) for the runtime health service. `providerWork` distinguishes a main turn that also has background work (`working` plus a count) from a completed main turn whose background work remains (`background` plus a count).
 
 `requestDrain` is optional. It asks the adapter to bring the active item to a clean stop; the graceful service restart path uses it so in-flight work finishes or saves its place instead of being dropped.
 
@@ -222,6 +224,15 @@ Protocol:
 6. map provider tool notifications to Anima activities;
 7. resolve when `turn/completed` arrives.
 
+After a command execution item or turn completes, Anima calls Codex's
+`thread/backgroundTerminals/list` for the current thread. The list is paginated; while it remains
+non-empty, Anima polls it every two seconds. A live main turn with terminals reports
+`working` plus the terminal count; terminals left after the main turn report `background` plus the
+count. Listing does not count as meaningful provider activity, and pending list refreshes or live
+terminals keep the controller non-quiescent so idle cleanup and configuration reload cannot tear
+them down. Older Codex versions that do not implement the method continue without background-
+terminal reporting instead of failing the turn.
+
 Active-run follow-up:
 
 - Once `turn/start` returns a turn id, the adapter exposes that id as ready.
@@ -259,6 +270,15 @@ Current process model:
   `fast_mode_state`.
 - The adapter sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW=272000` by default to match Codex's current `gpt-5.5` context-window budget; agent config `provider.env` can override it.
 - The process stays alive across Anima items until abort or worker shutdown.
+
+Claude Code remains responsible for its native background tasks and async-hook auto-rewake. Anima
+consumes the replace-all `background_tasks_changed` signal and hook lifecycle events to publish
+`providerWork`: an active or auto-rewoken provider turn reports `working`, while tasks or hooks that
+outlive the main turn report `background`. A background observer keeps later task notifications and
+auto-rewake output attached to the originating Anima item, including when a newer inbox item is in
+flight. Anima does not create a second scheduler or synthetic `currentItemId` for that work. Live
+tasks, hooks, provider turns, and a pending native auto-rewake all keep the controller
+non-quiescent, so graceful close waits for the provider lifecycle to settle.
 
 ### Claude credentials
 
