@@ -1,4 +1,4 @@
-import type { InboxItem, SlackInboxItem } from '../../shared/inbox.js';
+import type { SlackInboxItem } from '../../shared/inbox.js';
 import { isDeferredQueuedInboxItem } from '../../shared/inbox.js';
 import { makeId } from '../ids.js';
 import { observeSlackWakeInJournal } from '../runtime/cursor-wake-journal-backfill.js';
@@ -84,12 +84,4 @@ function buildSlackDeferredRetryItem(previous: SlackInboxItem, now: string): Sla
     id: makeId('slack-deferred-retry'),
     receivedAt: now,
   };
-}
-
-/** Test helper: build the retry item shape without touching the queue. */
-export function buildSlackDeferredRetryItemForTests(
-  previous: SlackInboxItem,
-  now: string,
-): InboxItem {
-  return buildSlackDeferredRetryItem(previous, now);
 }

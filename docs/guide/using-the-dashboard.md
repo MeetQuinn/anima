@@ -35,14 +35,17 @@ does not move existing agent homes.
 
 The agent list is a fast summary, not the complete diagnosis:
 
-- A green dot means the agent is healthy and idle.
-- An amber dot with a breathing halo means the agent is working.
-- A red dot means the agent needs attention.
-- A neutral dot can mean starting, retrying, degraded, or unknown. Hover it for the current reason.
+- A green solid dot means the agent is healthy and idle.
+- An amber dot with a breathing halo means a healthy agent is working in its main turn.
+- An amber hollow ring means the main turn ended while provider-native background work remains.
+- A red solid dot means the agent needs attention, even if a turn or background work still exists.
+- A neutral solid dot can mean queued, starting, retrying, degraded, or unknown. Hover it for the current reason.
 - **Off** means the agent is disabled.
 - **Not connected** means the agent is enabled but has no Slack or Feishu connection.
 
-Open **Activity** for the authoritative status line, queue depth, health reason, and current run.
+Open **Activity** for the authoritative status line, background-work count, queue depth, health
+reason, and current run. A main turn with provider-native background work reads
+**Working · Background N**; background work that outlives the main turn reads **Background · N**.
 
 ## Inspect work in Activity
 
@@ -60,6 +63,11 @@ Use this page to answer:
 Activity is a post-hoc Anima record. It is not a complete host audit log and it cannot prove every
 effect in a provider, shell, Git remote, or external API. Check the system that owns an external
 effect when the distinction matters. See [Security and data](/security-and-data#audit-boundary).
+
+A rate-limited wake remains queued until the provider's reset time and appears as deferred. For a
+deferred Slack wake, **Retry now** retires the parked attempt and creates one new attempt anchored
+to the original Slack message, so an operator can resume after switching to an available provider
+account. Other deferred kinds show their count without a retry control.
 
 ## Review conversations in Channels
 

@@ -36,13 +36,6 @@ export function agentHasConnectedTransport(agent: AgentTransportSnapshot): boole
   return agentSlackConnected(agent) || agentFeishuConnected(agent);
 }
 
-export function agentConnectedTransportKinds(agent: AgentTransportSnapshot): AgentTransportKind[] {
-  return [
-    agentSlackConnected(agent) ? 'slack' : undefined,
-    agentFeishuConnected(agent) ? 'feishu' : undefined,
-  ].filter((kind): kind is AgentTransportKind => Boolean(kind));
-}
-
 export function agentPrimaryTransportKind(agent: AgentTransportSnapshot): AgentTransportKind | undefined {
   // V1 product model is one team/workspace platform. Feishu-connected dev agents
   // may still carry Slack credentials as a runtime bootstrap bridge; keep that
