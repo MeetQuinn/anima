@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { agentConfigSchema } from '@shared/agent-config';
 import type { AgentRuntimeHealthSummary, AgentStatusSummary } from '@shared/snapshot';
-import { AgentRow, sidebarDotColor, sidebarUsesBackgroundRing } from './AgentRow';
+import { AgentRow, sidebarAnimatesWorking, sidebarDotColor, sidebarUsesBackgroundRing } from './AgentRow';
 
 const agent = agentConfigSchema('milo').parse({
   id: 'milo',
@@ -95,5 +95,35 @@ describe('AgentRow provider work status', () => {
     const unhealthy = view.container.querySelector<HTMLElement>('[title="needs attention"]');
     expect(unhealthy?.classList.contains('border-2')).toBe(false);
     expect(unhealthy?.style.background).toBe('var(--color-health-error)');
+  });
+  it('never animates an unhealthy agent, whatever the work state', () => {
+    expect(sidebarAnimatesWorking(healthy, 'working')).toBe(true);
+    expect(sidebarAnimatesWorking({ ...healthy, state: 'unhealthy' }, 'working')).toBe(false);
+    expect(sidebarAnimatesWorking({ ...healthy, state: 'degraded' }, 'working')).toBe(false);
+    expect(sidebarAnimatesWorking(undefined, 'working')).toBe(false);
+    expect(sidebarAnimatesWorking(healthy, 'background')).toBe(false);
+
+    for (const state of ['working', 'background'] as const) {
+      const status = healthyStatus(state);
+      if (!status.health) throw new Error('expected health fixture');
+      status.health = { ...status.health, state: 'unhealthy' };
+      const view = render(
+        <AgentRow
+          active={false}
+          agent={agent}
+          enabled
+          index={0}
+          onClick={() => {}}
+          status={status}
+        />,
+      );
+      // Health owns the shape: a solid error dot, no halo and no ring.
+      expect(view.container.querySelector('.anima-dot-halo')).toBeNull();
+      const dot = view.container.querySelector<HTMLElement>('[title="needs attention"]');
+      expect(dot?.classList.contains('border-2')).toBe(false);
+      expect(dot?.style.background).toBe('var(--color-health-error)');
+      expect(screen.getByRole('button', { name: /Milo.*needs attention/ })).toBeTruthy();
+      view.unmount();
+    }
   });
 });

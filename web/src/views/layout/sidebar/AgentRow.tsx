@@ -46,6 +46,16 @@ export function sidebarUsesBackgroundRing(
   return health?.state === 'healthy' && workState === 'background';
 }
 
+// Health owns the dot shape. Only a healthy agent breathes while Working;
+// unhealthy (and starting/degraded/unknown) stays a solid dot so motion never
+// reads as "alive" on an agent that needs attention. Mirrors the ring rule.
+export function sidebarAnimatesWorking(
+  health: AgentRuntimeHealthSummary | undefined,
+  workState: AgentDisplayState,
+): boolean {
+  return health?.state === 'healthy' && workState === 'working';
+}
+
 export function AgentRow({
   agent,
   index,
@@ -86,6 +96,7 @@ export function AgentRow({
   const dotBg = sidebarDotColor(status?.health, work.state);
   const dotTitle = sidebarDotTitle(status?.health, work.state, work.backgroundTaskCount);
   const backgroundRing = sidebarUsesBackgroundRing(status?.health, work.state);
+  const workingHalo = sidebarAnimatesWorking(status?.health, work.state);
   // Active row: the avatar picks up a faint accent ring (in addition to the
   // rounded-cap accent bar) so selection reads without shouting.
   const avatarRing = active ? 'ring-accent/40' : 'ring-avatar-ring-spine';
@@ -168,9 +179,10 @@ export function AgentRow({
                   </span>
                 ) : showRuntimeHealth ? (
                   // Color encodes health; shape distinguishes background work
-                  // when motion is reduced. Working breathes, healthy background
-                  // work is an open ring, and every other state is a solid dot.
-                  work.state === 'working' ? (
+                  // when motion is reduced. Healthy Working breathes, healthy
+                  // Background is an open ring, and every other state (including
+                  // any unhealthy agent) is a solid dot.
+                  workingHalo ? (
                     <span aria-hidden className="relative flex h-2 w-2 shrink-0 items-center justify-center" title={dotTitle}>
                       <span className="anima-dot-halo absolute h-2 w-2 rounded-full" style={{ background: dotBg }} />
                       <span className="anima-dot-core relative h-2 w-2 rounded-full" style={{ background: dotBg }} />
