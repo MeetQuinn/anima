@@ -478,10 +478,20 @@ test('claude-code catalog keeps family aliases and adds version-pinned models', 
   }
 });
 
-test('codex-cli catalog includes current GPT-5.6 and GPT-5.5 models only', () => {
+test('codex-cli catalog includes GPT-6 Astra and current GPT-5 models', () => {
   const entry = providerCatalogEntry('codex-cli');
-  assert.deepEqual(entry?.models, ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']);
-  assert.equal(entry?.defaultModel, 'gpt-5.6-sol');
+  assert.deepEqual(entry?.models, [
+    'gpt-6-astra',
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+    'gpt-5.5',
+  ]);
+  assert.equal(entry?.defaultModel, 'gpt-6-astra');
+  assert.deepEqual(
+    reasoningEffortsForModel('codex-cli', 'gpt-6-astra'),
+    ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+  );
   assert.deepEqual(
     reasoningEffortsForModel('codex-cli', 'gpt-5.6-sol'),
     ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
@@ -509,12 +519,12 @@ test('codex-cli catalog includes current GPT-5.6 and GPT-5.5 models only', () =>
   );
   assert.equal(
     AgentCreateRequest.parse({
-      name: 'Codex Ultra',
-      homePath: 'agents/codex-ultra',
+      name: 'Codex Astra Ultra',
+      homePath: 'agents/codex-astra-ultra',
       role: 'general purpose',
       provider: {
         kind: 'codex-cli',
-        model: 'gpt-5.6-terra',
+        model: 'gpt-6-astra',
         reasoningEffort: 'ultra',
       },
     }).provider.reasoningEffort,
