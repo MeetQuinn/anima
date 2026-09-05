@@ -199,7 +199,7 @@ describe('Runtime modal — save/dismissal contract', () => {
       Record<string, unknown>,
       { envOnly: boolean },
     ];
-    expect(update).toMatchObject({ kind: 'codex-cli', model: 'gpt-5.6-sol' });
+    expect(update).toMatchObject({ kind: 'codex-cli', model: 'gpt-6-astra' });
     // The pin: no override keys ride along on a kind change the operator
     // typed nothing for — the server would otherwise persist the old kind's
     // command against the new kind's binary.
@@ -360,7 +360,7 @@ describe('Runtime modal — fast mode', () => {
     expect(update).toMatchObject({
       fastMode: true,
       kind: 'codex-cli',
-      model: 'gpt-5.6-sol',
+      model: 'gpt-6-astra',
     });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Runtime' })).toBeNull());
   });
