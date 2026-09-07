@@ -3,8 +3,7 @@ import type { WebClient } from '@slack/web-api';
 import { errorMessage } from '../ids.js';
 import {
   attachmentsHaveSlackMessagePreviews,
-  slackMessagePreviewsFromAttachments,
-  slackMessageAttachments,
+  slackPermalinkMentioned,
   waitForSlackMessagePreviewAttachments,
 } from '../slack/message-previews.js';
 import { SlackProfileResolver } from '../slack/profiles.js';
@@ -23,25 +22,20 @@ export interface SlackIngestInput {
   envelope?: SlackMessageEnvelope;
   event: RoutableSlackMessage;
   profiles?: SlackProfileResolver;
+  previewClient?: (signal: AbortSignal) => Pick<WebClient, 'conversations'>;
+  previewTimeoutMs?: number;
+  previewRetryDelaysMs?: readonly number[];
   warn?: (message: string) => void;
-}
-
-export interface SlackInboxBuildResult {
-  item: SlackInboxItem;
-  latePreview?: (item: SlackInboxItem) => Promise<SlackInboxItem | undefined>;
 }
 
 // Turns one routable Slack event into a fully enriched inbox item: sender and
 // channel profiles, readable mention text, permalink, unfurl previews, and file
-// metadata. Every Slack lookup is best-effort — a failure degrades that field
-// and never blocks the wake. Privacy boundary: the only message-content read is
+// metadata. Every Slack lookup is best-effort; a failure degrades that field
+// without dropping the wake. Slack-link preview reads finish (or exhaust a
+// bounded budget) BEFORE enqueue. Privacy boundary: the only message-content read is
 // the containing message itself (for late unfurls); linked channels and DMs are
 // never fetched, previews come only from what Slack attached to this event.
 export async function buildSlackInboxItem(input: SlackIngestInput): Promise<SlackInboxItem> {
-  return (await buildSlackInboxItemWithLatePreview(input)).item;
-}
-
-export async function buildSlackInboxItemWithLatePreview(input: SlackIngestInput): Promise<SlackInboxBuildResult> {
   const warn = input.warn ?? ((message: string) => console.warn(message));
   const profiles = input.profiles ?? new SlackProfileResolver();
   const client = input.client;
@@ -56,7 +50,18 @@ export async function buildSlackInboxItemWithLatePreview(input: SlackIngestInput
     profiles.conversation({ channelId: event.channel, client, teamId }),
     profiles.displayText({ client, teamId, text: event.text }),
     slackPermalink(event, client, warn),
-    slackFastUnfurlAttachments(event, client, warn),
+    attachmentsHaveSlackMessagePreviews(event.attachments)
+      ? Promise.resolve(event.attachments)
+      : waitForSlackMessagePreviewAttachments({
+        channelId: event.channel,
+        client,
+        createClient: input.previewClient,
+        messageTs: event.ts,
+        retryDelaysMs: input.previewRetryDelaysMs,
+        timeoutMs: input.previewTimeoutMs,
+        text: event.text,
+        warn,
+      }),
   ]);
 
   const item = normalizeSlackMessage({
@@ -70,23 +75,8 @@ export async function buildSlackInboxItemWithLatePreview(input: SlackIngestInput
     ...(userProfile ? { userProfile } : {}),
   });
 
-  if (attachmentsHaveSlackMessagePreviews(attachments)) return { item };
-
-  return {
-    item,
-    latePreview: async (queuedItem) => {
-      const delayedAttachments = await waitForSlackMessagePreviewAttachments({
-        channelId: event.channel,
-        client,
-        messageTs: event.ts,
-        text: event.text,
-        warn,
-      });
-      const previews = slackMessagePreviewsFromAttachments(delayedAttachments);
-      if (!previews.length) return undefined;
-      return { ...queuedItem, previews };
-    },
-  };
+  if (slackPermalinkMentioned(event.text) && !item.previews?.length) item.previewStatus = 'unavailable';
+  return item;
 }
 
 async function slackPermalink(
@@ -104,23 +94,4 @@ async function slackPermalink(
     warn(`Slack permalink lookup failed for ${event.channel}/${event.ts}: ${errorMessage(error)}`);
     return undefined;
   }
-}
-
-// Unfurl attachments for the containing message: prefer what the realtime event
-// carried; otherwise do one immediate re-read of the containing message. The
-// delayed retry ladder runs after enqueue.
-async function slackFastUnfurlAttachments(
-  event: RoutableSlackMessage,
-  client: WebClient,
-  warn: (message: string) => void,
-): Promise<unknown[] | undefined> {
-  return event.attachments?.length
-    ? event.attachments
-    : slackMessageAttachments({
-      channelId: event.channel,
-      client,
-      messageTs: event.ts,
-      text: event.text,
-      warn,
-    });
 }

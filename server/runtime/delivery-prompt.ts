@@ -112,7 +112,7 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
 
 /** Render Slack unfurl previews + attached_files for inclusion in the cursor envelope. */
 export function renderSlackCursorExtras(event: SlackInboxItem): string {
-  return [formatSlackMessagePreviews(event.previews), formatAttachedFiles(event.files)]
+  return [formatSlackPreviewContent(event), formatAttachedFiles(event.files)]
     .filter(Boolean)
     .join('\n\n');
 }
@@ -121,11 +121,17 @@ function buildSlackMessageDeliveryPrompt(event: SlackInboxItem): string {
   const envelope = `${messageEnvelope(event)} ${actorLabel(event)}: ${event.text}`;
   return buildDeliveryEventPrompt({
     attentionSuggestion: event.attentionSuggestion,
-    body: formatSlackMessagePreviews(event.previews),
+    body: formatSlackPreviewContent(event),
     envelope,
     files: event.files,
     title: 'New Slack message',
   });
+}
+
+function formatSlackPreviewContent(event: SlackInboxItem): string {
+  return event.previewStatus === 'unavailable' && !event.previews?.length
+    ? '<slack_message_previews status="unavailable">\nPreview not yet obtained within the bounded lookup. This does not establish that the shared message has no preview or that the linked channel is accessible. If needed, re-read the containing message using this envelope\'s channel and message timestamp; do not infer permission to read the linked target.\n</slack_message_previews>'
+    : formatSlackMessagePreviews(event.previews);
 }
 
 function buildFeishuMessageDeliveryPrompt(event: FeishuInboxItem): string {

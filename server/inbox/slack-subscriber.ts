@@ -6,7 +6,7 @@ import { activityServiceForAgent } from '../activities/activity.service.js';
 import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import { interactiveAskServiceForAgent } from '../asks/interactive-ask.service.js';
 import { errorMessage, slackMessageEventId } from '../ids.js';
-import { createSlackWebClient } from '../slack/client.js';
+import { createSlackWebClient, createSlackPreviewWebClient } from '../slack/client.js';
 import { ResilientSocketModeReceiver } from '../slack/resilient-socket-mode-receiver.js';
 import {
   SlackShortcutService,
@@ -34,7 +34,7 @@ import {
 } from './attention-suggestion-activity.js';
 import { runIngestPipeline } from './ingest-pipeline.js';
 import { observeSlackEventAtIngress } from './observed-conversation.js';
-import { buildSlackInboxItemWithLatePreview } from './slack-ingest.js';
+import { buildSlackInboxItem } from './slack-ingest.js';
 import { slackShortcutHandoffServiceForAgent } from './slack-shortcut-handoff.service.js';
 import { slackRuntimeDecision, type SlackRuntimeDecision } from './slack-subscription.service.js';
 import { WakeQueueService, type WakeQueueEnqueueResult } from './wake-queue.service.js';
@@ -244,7 +244,6 @@ export class SlackInboxSubscriber {
     if (!isRoutableSlackMessage(rawEvent)) return;
 
     const teamId = slackEventTeamId(envelope, rawEvent);
-    let latePreview: ((item: SlackInboxItem) => Promise<SlackInboxItem | undefined>) | undefined;
     await runIngestPipeline<SlackInboxItem, SlackRuntimeDecision>({
       agentId: this.options.queue.agentId,
       attentionSuggestionPayload: slackAttentionSuggestionPayload,
@@ -257,25 +256,15 @@ export class SlackInboxSubscriber {
       enrich: async () => {
         const webClient = client ?? createSlackWebClient(this.options.botToken);
         this.maybeSyncBotDisplayInfo(webClient);
-        const buildResult = await buildSlackInboxItemWithLatePreview({
+        return buildSlackInboxItem({
           client: webClient,
+          previewClient: (signal) => createSlackPreviewWebClient(this.options.botToken, signal),
           envelope,
           event: rawEvent,
           profiles: this.slackProfiles,
         });
-        latePreview = buildResult.latePreview;
-        return buildResult.item;
       },
       itemId: slackMessageEventId(teamId, rawEvent.channel, rawEvent.ts),
-      onAfterEnqueue: ({ item, result }) => {
-        if (result.queued && latePreview) {
-          applyLateSlackPreviewToQueuedItem({
-            item,
-            latePreview,
-            queue: this.options.queue,
-          });
-        }
-      },
       onAfterAttentionSuggestion: ({ decision, item, result }) => {
         if (decision.reason === 'mention' && decision.subscription && !result.duplicate) {
           activityServiceForAgent(this.options.queue.agentId).record({
@@ -311,19 +300,6 @@ export class SlackInboxSubscriber {
         this.botDisplayInfoSyncInFlight = false;
       });
   }
-}
-
-export function applyLateSlackPreviewToQueuedItem(input: {
-  item: SlackInboxItem;
-  latePreview: (item: SlackInboxItem) => Promise<SlackInboxItem | undefined>;
-  queue: Pick<WakeQueueService, 'replaceQueuedItem'>;
-}): Promise<void> {
-  return input.latePreview(input.item).then(async (updatedItem) => {
-    if (!updatedItem) return;
-    await input.queue.replaceQueuedItem(updatedItem);
-  }).catch((error: unknown) => {
-    console.warn(`Slack late preview update failed for ${input.item.id}: ${errorMessage(error)}`);
-  });
 }
 
 // Refresh the bot's own Slack display info at most once every 6h while handling

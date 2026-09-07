@@ -4,12 +4,19 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { WebClient } from '@slack/web-api';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 
-import { buildSlackInboxItem, buildSlackInboxItemWithLatePreview } from '../inbox/slack-ingest.js';
-import { applyLateSlackPreviewToQueuedItem } from '../inbox/slack-subscriber.js';
+import { buildSlackInboxItem } from '../inbox/slack-ingest.js';
+import { runIngestPipeline } from '../inbox/ingest-pipeline.js';
+import { SlackInboxItem } from '../../shared/inbox.js';
+import { buildCodeAgentDeliveryPrompt, renderSlackCursorExtras } from '../runtime/delivery-prompt.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { slackMessageContentForText } from '../tools/slack-message-format.js';
 import { withAnimaHome } from './anima-home.js';
+import { withTempAnimaHome, writeAgentConfigs, withTimeout } from './helpers/harness.js';
+import { SlackInboxSubscriber } from '../inbox/slack-subscriber.js';
+import { SlackProfileResolver } from '../slack/profiles.js';
 
 interface FakeSlackCalls {
   api: string[];
@@ -421,116 +428,181 @@ test('buildSlackInboxItem re-reads only the containing message for late unfurls,
   });
 });
 
-test('Slack ingest enqueue does not wait for the delayed unfurl retry ladder', async () => {
+const sharedLink = 'https://demo.slack.com/archives/C0PRIVATE1/p1770000100000001';
+const linkEvent = {
+  attachments: [{ fallback: 'ordinary attachment must not suppress lookup' }],
+  channel: 'D-owner',
+  channel_type: 'im',
+  text: `<${sharedLink}> can you see this?`,
+  ts: '1770000300.000001',
+  type: 'message' as const,
+  user: 'UALICE1',
+};
+const previewAttachment = {
+  channel_id: 'C0PRIVATE1', from_url: sharedLink, is_msg_unfurl: true,
+  text: 'Late shared preview', ts: '1770000100.000001',
+};
+
+test('ingest holds enqueue until preview completes, then an immediate claim contains it; duplicates stay deduped', { timeout: 3_000 }, async () => {
   await withIngestHome(async () => {
-    const link = 'https://demo.slack.com/archives/C0PRIVATE1/p1770000100000001';
     const calls = emptyCalls();
     const client = fakeIngestClient({ calls });
-    client.conversations.history = async () => new Promise(() => {});
-
-    const result = await buildSlackInboxItemWithLatePreview({
-      client,
-      envelope: { team_id: 'T-ingest' },
-      event: {
-        attachments: [{ fallback: 'ordinary attachment' }],
-        channel: 'D-owner',
-        channel_type: 'im',
-        text: `<${link}> can you see this?`,
-        ts: '1770000300.000001',
-        type: 'message',
-        user: 'UALICE1',
-      },
-      warn: () => {},
-    });
-    assert.ok(result.latePreview);
-
+    let finishLookup!: () => void;
+    const held = new Promise<void>((resolve) => { finishLookup = resolve; });
+    let lookupStarted!: () => void;
+    const started = new Promise<void>((resolve) => { lookupStarted = resolve; });
+    client.conversations.history = async (args) => {
+      calls.history.push(args);
+      if (calls.history.length === 1) return { ok: true, messages: [] };
+      lookupStarted();
+      await held;
+      return { ok: true, messages: [{ ts: linkEvent.ts, attachments: [previewAttachment] }] };
+    };
     const queue = new WakeQueueService('anima');
-    const decision = await queue.enqueue(result.item);
-
-    assert.equal(decision.queued, true);
-    assert.equal((await queue.find(result.item.id))?.id, result.item.id);
+    let enrichCount = 0;
+    const ingest = () => runIngestPipeline({
+      agentId: 'anima',
+      itemId: 'slack:T-ingest:D-owner:' + linkEvent.ts,
+      decide: async ({ duplicate }) => ({ shouldStartRuntime: !duplicate, reason: 'dm' }),
+      enrich: async () => {
+        enrichCount++;
+        return buildSlackInboxItem({
+          client, envelope: { team_id: 'T-ingest' }, event: linkEvent,
+          previewRetryDelaysMs: [0, 0], warn: () => {},
+        });
+      },
+      queue,
+      surfaceLog: () => ({}),
+    });
+    const pending = ingest();
+    await Promise.race([
+      started,
+      pending.then(() => { throw new Error('wake was published before preview retry'); }),
+    ]);
+    assert.equal(await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-1' }), undefined);
+    finishLookup();
+    await pending;
+    const claimed = await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-1' });
+    assert.equal(claimed?.kind, 'slack');
+    if (claimed?.kind !== 'slack') throw new Error('missing Slack item');
+    assert.equal(claimed.previews?.[0]?.text, 'Late shared preview');
+    assert.equal(claimed.previewStatus, undefined);
+    assert.match(buildCodeAgentDeliveryPrompt(claimed), /Late shared preview/);
+    await ingest();
+    assert.equal(enrichCount, 1);
+    assert.equal(await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-2' }), undefined);
+    assert.equal(calls.history.length, 2);
+    for (const call of calls.history) {
+      assert.equal(call.channel, 'D-owner');
+      assert.equal(call.latest, linkEvent.ts);
+      assert.equal(call.oldest, linkEvent.ts);
+    }
   });
 });
 
-test('late Slack previews replace queued items and leave claimed items untouched', async () => {
+test('subscriber waits for the production preview client before publishing a claimable wake', async () => {
+  await withTempAnimaHome(async (home) => {
+    await writeAgentConfigs(home);
+    let finish!: () => void;
+    let started!: () => void;
+    const lookupStarted = new Promise<void>((resolve) => { started = resolve; });
+    const requests: Array<{ url?: string; body: string }> = [];
+    const server = createServer((request, response) => {
+      let body = '';
+      request.on('data', (chunk) => { body += String(chunk); });
+      request.on('end', () => {
+        requests.push({ url: request.url, body });
+        finish = () => {
+          if (!response.writableEnded) response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
+            ok: true, messages: [{ ts: linkEvent.ts, attachments: [previewAttachment] }],
+          }));
+        };
+        started();
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const previousUrl = process.env.ANIMA_SLACK_API_URL;
+    process.env.ANIMA_SLACK_API_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/`;
+    const queue = new WakeQueueService('anima');
+    const subscriber = Object.create(SlackInboxSubscriber.prototype) as Record<string, unknown>;
+    subscriber['options'] = { agentRuntimeKind: 'codex-cli', botToken: 'test-only-token', botUserId: 'U-bot', queue };
+    subscriber['slackProfiles'] = new SlackProfileResolver();
+    subscriber['botDisplayInfoSyncInFlight'] = true;
+    const handle = () => (subscriber as unknown as {
+      handleSlackEvent(body: unknown, event: unknown, client: WebClient): Promise<void>;
+    }).handleSlackEvent({ team_id: 'T-ingest' }, linkEvent, fakeIngestClient({ calls: emptyCalls() }));
+    let pending: Promise<void> | undefined;
+    try {
+      pending = handle();
+      await withTimeout(lookupStarted, 1_000);
+      assert.equal(await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'fast-worker' }), undefined);
+      finish();
+      await pending;
+      const claimed = await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'fast-worker' });
+      assert.equal(claimed?.kind, 'slack');
+      if (claimed?.kind === 'slack') assert.equal(claimed.previews?.[0]?.text, 'Late shared preview');
+      assert.equal(requests.length, 1);
+      assert.equal(requests[0]?.url, '/api/conversations.history');
+      const body = new URLSearchParams(requests[0]?.body);
+      assert.equal(body.get('channel'), 'D-owner');
+      assert.equal(body.get('oldest'), linkEvent.ts);
+      assert.equal(body.get('latest'), linkEvent.ts);
+    } finally {
+      finish?.();
+      // Join ingress before deleting its scoped home, including on assertion failure.
+      await pending;
+      if (previousUrl === undefined) delete process.env.ANIMA_SLACK_API_URL;
+      else process.env.ANIMA_SLACK_API_URL = previousUrl;
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
+test('hanging preview request times out before enqueue; late results cannot mutate the delivered item', async () => {
   await withIngestHome(async () => {
-    const queuedQueue = new WakeQueueService('anima');
-    const queuedItem = await buildSlackInboxItem({
-      client: fakeIngestClient({ calls: emptyCalls() }),
-      envelope: { team_id: 'T-ingest' },
-      event: {
-        channel: 'D-owner',
-        channel_type: 'im',
-        text: 'queued preview',
-        ts: '1770000400.000001',
-        type: 'message',
-        user: 'UALICE1',
-      },
-      warn: () => {},
+    const client = fakeIngestClient({ calls: emptyCalls() });
+    let resolveLookup!: (value: Awaited<ReturnType<typeof client.conversations.history>>) => void;
+    client.conversations.history = (() => new Promise((resolve) => { resolveLookup = resolve; })) as typeof client.conversations.history;
+    const startedAt = performance.now();
+    const item = await buildSlackInboxItem({
+      client, envelope: { team_id: 'T-ingest' }, event: linkEvent,
+      previewTimeoutMs: 30, previewRetryDelaysMs: [0, 0], warn: () => {},
     });
-    await queuedQueue.enqueue(queuedItem);
-    await applyLateSlackPreviewToQueuedItem({
-      item: queuedItem,
-      latePreview: async (item) => ({
-        ...item,
-        previews: [{ text: 'late preview while queued' }],
-      }),
-      queue: queuedQueue,
-    });
-    const updatedQueuedItem = await queuedQueue.find(queuedItem.id);
-    assert.equal(updatedQueuedItem?.kind, 'slack');
-    assert.deepEqual(updatedQueuedItem.previews, [{ text: 'late preview while queued' }]);
-    await queuedQueue.complete(queuedItem.id);
+    assert.ok(performance.now() - startedAt < 1_000);
+    assert.equal(item.previewStatus, 'unavailable');
+    assert.equal(item.text, linkEvent.text);
+    const parsed = SlackInboxItem.parse(item);
+    assert.equal(parsed.previewStatus, 'unavailable');
+    assert.match(buildCodeAgentDeliveryPrompt(parsed), /Preview not yet obtained/);
+    assert.match(renderSlackCursorExtras(parsed), /status="unavailable"/);
+    const queue = new WakeQueueService('anima');
+    assert.equal((await queue.enqueue(item)).queued, true);
+    resolveLookup({ ok: true, messages: [{ ts: linkEvent.ts, attachments: [previewAttachment] }] });
+    await new Promise((resolve) => setImmediate(resolve));
+    const claimed = await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-1' });
+    assert.equal(claimed?.kind, 'slack');
+    if (claimed?.kind === 'slack') {
+      assert.equal(claimed.previewStatus, 'unavailable');
+      assert.equal(claimed.previews, undefined);
+    }
+  });
+});
 
-    const claimedQueue = new WakeQueueService('anima');
-    let runningItemId: string | undefined;
-    const claimedItem = await buildSlackInboxItem({
-      client: fakeIngestClient({ calls: emptyCalls() }),
-      envelope: { team_id: 'T-ingest' },
-      event: {
-        channel: 'D-owner',
-        channel_type: 'im',
-        text: 'claimed preview',
-        ts: '1770000500.000001',
-        type: 'message',
-        user: 'UALICE1',
-      },
-      warn: () => {},
-    });
-    await claimedQueue.enqueue(claimedItem);
-
-    await applyLateSlackPreviewToQueuedItem({
-      item: claimedItem,
-      latePreview: async (item) => ({
-        ...item,
-        previews: [{ text: 'late preview after claim' }],
-      }),
-      queue: {
-        replaceQueuedItem: async (item) => {
-          const running = await claimedQueue.takeNextRunnable({
-            isWorkerAlive: () => true,
-            workerId: 'worker-1',
-          });
-          runningItemId = running?.id;
-          return claimedQueue.replaceQueuedItem(item);
-        },
-      },
-    });
-    assert.equal(runningItemId, claimedItem.id);
-    const updatedClaimedItem = await claimedQueue.find(claimedItem.id);
-    assert.equal(updatedClaimedItem?.kind, 'slack');
-    assert.equal(updatedClaimedItem.handling.status, 'running');
-    assert.equal(updatedClaimedItem.previews, undefined);
-
-    await claimedQueue.complete(claimedItem.id);
-    await applyLateSlackPreviewToQueuedItem({
-      item: claimedItem,
-      latePreview: async (item) => ({
-        ...item,
-        previews: [{ text: 'late preview after settle' }],
-      }),
-      queue: claimedQueue,
-    });
-    assert.equal(await claimedQueue.find(claimedItem.id), undefined);
+test('ordinary messages and already attached previews do not create a preview client or wait', async () => {
+  await withIngestHome(async () => {
+    for (const event of [
+      { ...linkEvent, text: 'plain message', attachments: undefined },
+      { ...linkEvent, attachments: [previewAttachment] },
+    ]) {
+      const calls = emptyCalls();
+      const item = await buildSlackInboxItem({
+        client: fakeIngestClient({ calls }), event,
+        previewClient: () => { throw new Error('unexpected preview client'); },
+        warn: () => {},
+      });
+      assert.deepEqual(calls.history, []);
+      assert.equal(item.previewStatus, undefined);
+    }
   });
 });
