@@ -39,7 +39,7 @@ Slack event filtering and normalization live in `server/inbox/slack-events.ts`.
 
 `server/inbox/slack-subscriber.ts` calls `isRoutableSlackMessage` before doing any queue work. For routable events, it derives a stable item id with `slackMessageEventId` from `server/ids.ts`.
 
-`server/inbox/slack-ingest.ts` turns the Slack event into a `SlackInboxItem` from `shared/inbox.ts`. `buildSlackInboxItemWithLatePreview` adds sender profile data, channel profile data, readable mention text, permalink, file metadata, and Slack unfurl previews. If Slack has not attached message previews yet, the returned `latePreview` callback updates the queued item after enqueue with `WakeQueueService.replaceQueuedItem`.
+`server/inbox/slack-ingest.ts` turns the Slack event into a `SlackInboxItem` from `shared/inbox.ts`. `buildSlackInboxItem` adds sender profile data, channel profile data, readable mention text, permalink, file metadata, and Slack unfurl previews. Messages containing Slack permalinks wait for preview enrichment before enqueue: an immediate read and retries around 2 and 7 seconds share an 8-second total preview budget. Existing previews and ordinary messages skip that wait. Reads target only the containing message, never the linked channel or DM. The preview client disables SDK retries and rate-limit backoff, bounds each request, and aborts at the budget boundary. If no preview is obtained, the original wake proceeds with `previewStatus=unavailable`; both delivery paths explain that this is not evidence of an absent preview or permission to read the linked target. No post-enqueue callback mutates a claimed item or starts a second wake.
 
 ### 3. Ingest decision pipeline
 
@@ -52,7 +52,7 @@ The shared decision skeleton is `server/inbox/ingest-pipeline.ts`.
 3. `enrich`, which builds the final inbox item;
 4. tag the item with `attentionSuggestion` and parsed `wakeReason`;
 5. `enqueue` through `WakeQueueService`;
-6. optional post-enqueue effects such as late previews and subscription activity;
+6. optional post-enqueue effects such as subscription activity;
 7. optional attention-suggestion activity;
 8. structured ingest log output.
 

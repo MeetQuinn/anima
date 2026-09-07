@@ -123,6 +123,8 @@ export const SlackInboxItem = InboxItemBase.extend({
   messageTs: z.string(),
   permalink: z.string().optional(),
   previews: z.array(SlackMessagePreview).optional(),
+  /** Bounded lookup did not obtain a preview; not proof that none exists. */
+  previewStatus: z.literal('unavailable').optional(),
   teamId: z.string(),
   text: z.string(),
   threadTs: z.string().optional(),

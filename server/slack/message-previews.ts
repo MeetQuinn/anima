@@ -87,15 +87,19 @@ function slackMessagePreviewFiles(rawFiles: unknown): SlackMessagePreviewFile[] 
   return files;
 }
 
-const SLACK_MESSAGE_PREVIEW_RETRY_DELAYS_MS = [2_000, 5_000] as const;
+// Immediate read, then retries at ~2s and ~7s; network time shares the 8s budget.
+const SLACK_MESSAGE_PREVIEW_RETRY_DELAYS_MS = [0, 2_000, 5_000] as const;
+const SLACK_MESSAGE_PREVIEW_TIMEOUT_MS = 8_000;
 
 type SlackPreviewWebClient = Pick<WebClient, 'conversations'>;
 
 export interface SlackMessagePreviewRetryInput {
   channelId: string;
   client: SlackPreviewWebClient;
+  createClient?: (signal: AbortSignal) => SlackPreviewWebClient;
   messageTs: string;
   retryDelaysMs?: readonly number[];
+  timeoutMs?: number;
   text?: string;
   sleep?: (ms: number) => Promise<void>;
   warn?: (message: string) => void;
@@ -109,20 +113,44 @@ export async function waitForSlackMessagePreviewAttachments(
 ): Promise<unknown[] | undefined> {
   if (!slackPermalinkMentioned(input.text)) return undefined;
   const retryDelaysMs = input.retryDelaysMs ?? SLACK_MESSAGE_PREVIEW_RETRY_DELAYS_MS;
-  const sleep = input.sleep ?? sleepMs;
-  for (const delayMs of retryDelaysMs) {
-    if (delayMs > 0) await sleep(delayMs);
-    const attachments = await slackMessageAttachments({
-      channelId: input.channelId,
-      client: input.client,
-      messageTs: input.messageTs,
-      text: input.text,
-      warn: input.warn,
-    });
-    if (!attachmentsHaveSlackMessagePreviews(attachments)) continue;
-    return attachments;
+  const controller = new AbortController();
+  const startedAt = performance.now();
+  const timeoutMs = input.timeoutMs ?? SLACK_MESSAGE_PREVIEW_TIMEOUT_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let sleepTimer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve(undefined);
+    }, timeoutMs);
+  });
+  const client = input.createClient?.(controller.signal) ?? input.client;
+  const lookup = async (): Promise<unknown[] | undefined> => {
+    let nextAttemptAt = startedAt;
+    for (const delayMs of retryDelaysMs) {
+      nextAttemptAt += delayMs;
+      const waitMs = Math.max(0, nextAttemptAt - performance.now());
+      if (waitMs > 0) {
+        await (input.sleep?.(waitMs) ?? new Promise<void>((resolve) => {
+          sleepTimer = setTimeout(resolve, waitMs);
+        }));
+      }
+      if (controller.signal.aborted || performance.now() - startedAt >= timeoutMs) return undefined;
+      const attachments = await slackMessageAttachments({ ...input, client });
+      if (controller.signal.aborted) return undefined;
+      if (attachmentsHaveSlackMessagePreviews(attachments)) return attachments;
+    }
+    return undefined;
+  };
+  try {
+    // Also bounds injected/non-cooperative clients. No late result mutates a
+    // queued item; the production transport is aborted at this same boundary.
+    return await Promise.race([lookup(), expired]);
+  } finally {
+    clearTimeout(timer);
+    clearTimeout(sleepTimer);
+    controller.abort();
   }
-  return undefined;
 }
 
 // Re-reads ONLY the containing message (the message that just arrived) to pick
@@ -159,10 +187,6 @@ export function attachmentsHaveSlackMessagePreviews(attachments: unknown): boole
 
 export function slackPermalinkMentioned(text: string | undefined): boolean {
   return Boolean(text && /https:\/\/[^\s|>]+\.slack\.com\/archives\/[A-Z0-9]+\/p\d{10,}/.test(text));
-}
-
-function sleepMs(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function stringField(record: Record<string, unknown>, key: string): string | undefined {
