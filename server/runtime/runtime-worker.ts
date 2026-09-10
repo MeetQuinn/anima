@@ -190,6 +190,11 @@ export class AgentRuntimeWorker {
     return Boolean(this.activeItem);
   }
 
+  async hasPendingItems(): Promise<boolean> {
+    const items = await this.queue.list();
+    return items.some((item) => item.handling.status === 'queued' || item.handling.status === 'running');
+  }
+
   isProviderQuiescent(): boolean | undefined {
     return this.options.agentRuntime.isProviderQuiescent?.();
   }
