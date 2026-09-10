@@ -29,7 +29,9 @@ import type { AgentConfig } from '../../shared/agent-config.js';
 import { withAnimaHome } from './anima-home.js';
 import type { Activity } from '../../shared/activity.js';
 import type { InboxItem } from '../../shared/inbox.js';
-import { sleep } from './helpers/harness.js';
+import { sleep, waitFor } from './helpers/harness.js';
+import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
+import { enqueueInbox, FollowupRuntime, queueFor, waitForInboxItemAppendedTo } from './helpers/runtime-worker.js';
 import { SecretHandoffPendingStore } from '../env/secret-handoff-store.js';
 import { SealedSecretHandoffPendingStore } from '../env/sealed-secret-handoff-store.js';
 import { createHandoffKeyPair, createHandoffRequest } from '../../shared/secret-handoff.js';
@@ -716,7 +718,7 @@ test('runtime host defers config reload until provider background work is quiesc
   await host.reconcileOnce();
   assert.deepEqual(stopped, []);
   assert.deepEqual(started, ['scout:opus']);
-  assert.ok(intakePaused.includes(true));
+  assert.equal(intakePaused.includes(true), false, 'config changes must keep follow-up intake open');
 
   // Main turn finishes but background tasks remain — still one runtime.
   active = false;
@@ -820,6 +822,187 @@ test('runtime host without provider quiescence still reloads when only the activ
   await host.reconcileOnce();
   assert.deepEqual(started, ['scout:opus', 'scout:sonnet']);
   await host.stop();
+});
+
+test('config reload keeps real worker follow-ups flowing and waits for background tasks', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-config-followups-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const runtime = new FollowupRuntime();
+      const coordinator = { agentId: 'scout', stateDir };
+      const first = await enqueueInbox(makeSlackEvent({
+        channelId: 'D-user', eventId: 'config-first', teamId: 'T-demo',
+        text: 'first', ts: '1770000010.000001', userId: 'U1',
+      }), coordinator);
+      let scout = runtimeHostAgent('scout', { connected: true, model: 'opus' });
+      let quiescent = false;
+      const started: string[] = [];
+      const stopped: string[] = [];
+      const worker = new AgentRuntimeWorker({
+        ...coordinator, agentRuntime: runtime, queue: queueFor('scout'),
+      }, silentLogger);
+      assert.equal(await worker.hasPendingItems(), true, 'queued items block reload before a turn starts');
+      const host = new RuntimeHost({}, {
+        animaHome: stateDir,
+        loadAgents: async () => [scout],
+        memoryCoherenceScheduler: { reconcile: async () => {} },
+        logger: silentLogger,
+        validateAgent: async () => {},
+        startAgent: async (agent) => {
+          started.push(agent.provider.model!);
+          if (started.length > 1) return stopHandle(agent.id, stopped);
+          return {
+            hasPendingItems: () => worker.hasPendingItems(),
+            isActive: () => worker.isActive(),
+            isProviderQuiescent: () => quiescent,
+            setIntakePaused: (paused) => worker.setIntakePaused(paused),
+            async waitForProviderQuiescent(signal) {
+              while (!quiescent && !signal?.aborted) await sleep(5);
+            },
+            async stop(options) {
+              stopped.push(agent.id);
+              await worker.close(options);
+            },
+          };
+        },
+      });
+      try {
+        await host.reconcileOnce();
+        const drain = worker.drainOnce();
+        await waitFor(() => runtime.calls.length === 1);
+        for (const [index, model] of ['sonnet', 'haiku'].entries()) {
+          scout = runtimeHostAgent('scout', { connected: true, model });
+          await host.reconcileOnce();
+          const followup = await enqueueInbox(makeSlackEvent({
+            channelId: 'D-user', eventId: `config-followup-${index}`, teamId: 'T-demo',
+            text: `followup ${index}`, ts: `177000001${index + 1}.000001`, userId: 'U1',
+          }), coordinator);
+          await waitForInboxItemAppendedTo('scout', followup.item.id, first.item.id);
+        }
+        assert.equal(runtime.followups.length, 2);
+        assert.equal(await worker.hasPendingItems(), true, 'appended running items are unfinished work');
+        assert.deepEqual(stopped, []);
+        runtime.finishNext();
+        await drain;
+        assert.equal(await worker.hasPendingItems(), false);
+        await host.reconcileOnce();
+        assert.deepEqual(started, ['opus'], 'background work still blocks reload');
+        quiescent = true;
+        await waitFor(() => started.length === 2);
+        assert.deepEqual(started, ['opus', 'haiku']);
+        assert.deepEqual(stopped, ['scout']);
+        assert.deepEqual(await queueFor('scout').list(), []);
+      } finally {
+        await worker.close();
+        await host.stop();
+      }
+    });
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('config reload waits through queued work between turns and uses the latest config', async () => {
+  let scout = runtimeHostAgent('scout', { connected: true, model: 'opus' });
+  let pending = true;
+  let active = false;
+  let paused = false;
+  const started: string[] = [];
+  const stopped: string[] = [];
+  const host = new RuntimeHost({}, {
+    animaHome: testHome,
+    loadAgents: async () => [scout],
+    logger: silentLogger,
+    validateAgent: async () => {},
+    startAgent: async (agent) => {
+      started.push(agent.provider.model!);
+      return {
+        ...stopHandle(agent.id, stopped, () => active),
+        hasPendingItems: async () => pending,
+        setIntakePaused: (value) => { paused = value; },
+      };
+    },
+  });
+  try {
+    await host.reconcileOnce();
+    scout = runtimeHostAgent('scout', { connected: true, model: 'sonnet' });
+    await host.reconcileOnce();
+    assert.equal(paused, false);
+    await sleep(100);
+    assert.deepEqual(stopped, [], 'an empty active slot is not an empty queue');
+    active = true;
+    pending = false;
+    scout = runtimeHostAgent('scout', { connected: true, model: 'haiku' });
+    await host.reconcileOnce();
+    assert.equal(paused, false);
+    assert.deepEqual(stopped, []);
+    active = false;
+    await waitFor(() => started.length === 2);
+    assert.deepEqual(started, ['opus', 'haiku']);
+    assert.deepEqual(stopped, ['scout']);
+  } finally {
+    await host.stop();
+  }
+});
+
+test('config reload rechecks active work after the asynchronous queue read', async () => {
+  let scout = runtimeHostAgent('scout', { connected: true, model: 'opus' });
+  let active = false;
+  let paused = false;
+  const stopped: string[] = [];
+  const host = new RuntimeHost({}, {
+    animaHome: testHome,
+    loadAgents: async () => [scout],
+    logger: silentLogger,
+    validateAgent: async () => {},
+    startAgent: async (agent) => ({
+      ...stopHandle(agent.id, stopped, () => active),
+      async hasPendingItems() { active = true; return false; },
+      setIntakePaused: (value) => { paused = value; },
+    }),
+  });
+  try {
+    await host.reconcileOnce();
+    scout = runtimeHostAgent('scout', { connected: true, model: 'sonnet' });
+    await host.reconcileOnce();
+    assert.deepEqual(stopped, []);
+    assert.equal(paused, false);
+    scout = runtimeHostAgent('scout', { connected: true, model: 'opus' });
+    await host.reconcileOnce();
+    assert.equal(paused, false, 'reverting config cancels the pending reload');
+  } finally {
+    await host.stop();
+  }
+});
+
+test('credential changes retain the old intake boundary instead of draining queued work', async () => {
+  let scout = runtimeHostAgent('scout', { connected: true, model: 'opus' });
+  let active = true;
+  let paused = false;
+  const stopped: string[] = [];
+  const host = new RuntimeHost({}, {
+    animaHome: testHome,
+    loadAgents: async () => [scout],
+    logger: silentLogger,
+    validateAgent: async () => {},
+    startAgent: async (agent) => ({
+      ...stopHandle(agent.id, stopped, () => active),
+      hasPendingItems: async () => true,
+      setIntakePaused: (value) => { paused = value; },
+    }),
+  });
+  try {
+    await host.reconcileOnce();
+    scout = { ...scout, slack: { ...scout.slack, botToken: 'xoxb-replaced-test' } };
+    await host.reconcileOnce();
+    assert.equal(paused, true);
+    assert.deepEqual(stopped, []);
+    active = false;
+    await host.reconcileOnce();
+    assert.deepEqual(stopped, ['scout']);
+  } finally {
+    await host.stop();
+  }
 });
 
 test('runtime host bounds idle config reload shutdown with a force timeout', async () => {
@@ -1718,6 +1901,7 @@ function stopHandle(
   onStop?: (options: Parameters<RunningAgentHandle['stop']>[0]) => void,
 ): RunningAgentHandle {
   return {
+    hasPendingItems: async () => false,
     health() {
       return {
         processId: process.pid,
@@ -1735,6 +1919,7 @@ function stopHandle(
 
 function healthHandle(agentId: string, generation: number, stopped: string[] = []): RunningAgentHandle {
   return {
+    hasPendingItems: async () => false,
     health() {
       return {
         processId: process.pid,
@@ -1750,6 +1935,7 @@ function healthHandle(agentId: string, generation: number, stopped: string[] = [
 
 function providerChildMissingHandle(agentId: string, stopped: string[] = []): RunningAgentHandle {
   return {
+    hasPendingItems: async () => false,
     health() {
       return {
         processId: process.pid,

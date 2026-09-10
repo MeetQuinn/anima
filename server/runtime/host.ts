@@ -68,6 +68,7 @@ export interface RuntimeHostOptions {
 export type { RunningAgentHandle } from './agent-runner.js';
 
 interface RunningAgentRecord {
+  authorityFingerprint: string;
   fingerprint: string;
   handle: RunningAgentHandle;
 }
@@ -76,6 +77,7 @@ interface ConfigReloadWait {
   abort: AbortController;
   generation: number;
   handle: RunningAgentHandle;
+  includeQueue: boolean;
 }
 
 interface ManagedAgent {
@@ -478,20 +480,26 @@ export class RuntimeHost {
       return;
     }
 
-    // Provider-affecting config change: pause intake on the old runtime so new
-    // work stays queued until the latest config is live. Wait for active turn
-    // and (when exposed) provider background-task quiescence before reload.
-    running.handle.setIntakePaused?.(true);
-    if (isConfigReloadBlocked(running.handle)) {
+    // Ordinary tuning must not starve a long-running session of new messages.
+    // Identity/credential/launch-boundary changes retain the existing intake gate.
+    const keepIntake = running.authorityFingerprint === runtimeAuthorityFingerprint(
+      agent, record.providerCommand, record.providerArgs,
+    );
+    running.handle.setIntakePaused?.(!keepIntake);
+    const pendingItems = keepIntake && await running.handle.hasPendingItems();
+    // Re-check synchronous work after reading the queue: a claim or background
+    // task can start during that read. No await between this check and the gate.
+    if (isConfigReloadBlocked(running.handle) || pendingItems) {
       this.logAgentStatus(record, 'pending-restart', () => {
         this.logger.log(
           `Agent ${agent.id}: config changed; will reload after the runtime is quiescent.`,
         );
       });
-      this.armConfigReloadWait(record, running);
+      this.armConfigReloadWait(record, running, keepIntake);
       return;
     }
 
+    running.handle.setIntakePaused?.(true);
     this.clearConfigReloadWait(record);
     this.logger.log(`Agent ${agent.id}: config changed; reloading runtime.`);
     await running.handle.stop({
@@ -504,30 +512,32 @@ export class RuntimeHost {
 
   /**
    * When a config/account reload is blocked on active work or Claude background
-   * tasks, wait for provider quiescence (and poll for active-item clearance),
+   * tasks, wait for provider quiescence (and poll for active-item clearance).
+   * Ordinary config reloads also wait for the queue to drain with intake open,
    * then re-reconcile. Stale waiters re-check handle identity + generation so
    * they cannot stop a newer runtime.
    */
-  private armConfigReloadWait(record: ManagedAgent, running: RunningAgentRecord): void {
+  private armConfigReloadWait(record: ManagedAgent, running: RunningAgentRecord, includeQueue = false): void {
     const handle = running.handle;
     const existing = record.configReloadWait;
-    if (existing && existing.handle === handle && !existing.abort.signal.aborted) {
+    if (existing && existing.handle === handle && existing.includeQueue === includeQueue && !existing.abort.signal.aborted) {
       return;
     }
     this.clearConfigReloadWait(record);
     const abort = new AbortController();
     const generation = (existing?.generation ?? 0) + 1;
-    record.configReloadWait = { abort, generation, handle };
+    record.configReloadWait = { abort, generation, handle, includeQueue };
 
     void (async () => {
       try {
         while (!abort.signal.aborted) {
-          if (!isConfigReloadBlocked(handle)) break;
+          const pendingItems = includeQueue && await handle.hasPendingItems();
+          if (!isConfigReloadBlocked(handle) && !pendingItems) break;
           if (handle.isProviderQuiescent?.() === false) {
             await handle.waitForProviderQuiescent?.(abort.signal);
             continue;
           }
-          // Active Anima item only: short poll until idle or aborted.
+          // Active item or pending queue: keep intake open until both clear.
           await abortableSleep(50, abort.signal);
         }
         if (abort.signal.aborted) return;
@@ -578,6 +588,7 @@ export class RuntimeHost {
     );
     this.clearConfigReloadWait(startedRecord);
     startedRecord.running = {
+      authorityFingerprint: runtimeAuthorityFingerprint(started.agent, providerCommand, providerArgs),
       fingerprint: runtimeFingerprint(
         started.agent,
         providerCommand,
@@ -998,6 +1009,33 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
       reject(signal.reason instanceof Error ? signal.reason : new Error('aborted'));
     };
     signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function runtimeAuthorityFingerprint(
+  agent: AgentConfig,
+  providerCommand: string,
+  providerArgs: readonly string[],
+): string {
+  return stableJson({
+    homePath: resolveAgentHomePath(agent),
+    providerKind: agent.provider.kind,
+    providerEnv: agent.provider.env,
+    providerCommand,
+    providerArgs,
+    slack: {
+      appToken: agent.slack.appToken,
+      botToken: agent.slack.botToken,
+      connected: agent.slack.connected,
+    },
+    feishu: {
+      appId: agent.feishu.appId,
+      appSecret: agent.feishu.appSecret,
+      botOpenId: agent.feishu.botOpenId,
+      connected: agent.feishu.connected,
+      encryptKey: agent.feishu.encryptKey,
+      verificationToken: agent.feishu.verificationToken,
+    },
   });
 }
 

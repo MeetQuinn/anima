@@ -37,6 +37,7 @@ interface RunningAgentOptions extends RuntimeWorkerConfig {
 }
 
 export interface RunningAgentHandle {
+  hasPendingItems(): Promise<boolean>;
   health?(): AgentRuntimeHandleSnapshot;
   isActive?(): boolean;
   /** `undefined` = provider does not expose background-task quiescence. */
@@ -118,6 +119,9 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
     throw error;
   }
   return {
+    hasPendingItems() {
+      return worker.hasPendingItems();
+    },
     health() {
       return worker.health();
     },
