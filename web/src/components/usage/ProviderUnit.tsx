@@ -272,7 +272,7 @@ export function ProviderUnit({
                   </p>
                   <button
                     type="submit"
-                    className="min-h-[36px] shrink-0 rounded-sm border border-border-soft px-3 font-sans text-[11px] font-medium text-text-muted hover:border-border hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
+                    className="min-h-[44px] md:min-h-[36px] shrink-0 rounded-sm border border-border-soft px-3 font-sans text-[11px] font-medium text-text-muted hover:border-border hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
                     disabled={!runtimeCommandChanged || runtimeCommandSaving}
                   >
                     {runtimeCommandSaving ? 'Saving…' : 'Save'}

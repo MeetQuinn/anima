@@ -272,7 +272,7 @@ export function TocButton({ entries }: { entries: TocEntry[] }) {
                   window.history.replaceState(null, '', `#${entry.id}`);
                   document.getElementById(entry.id)?.scrollIntoView({ behavior: 'smooth' });
                 }}
-                className="flex min-h-[40px] items-center font-sans text-[13px] text-text-muted transition-colors hover:bg-surface-elevated/60 hover:text-text"
+                className="flex min-h-[44px] md:min-h-[40px] items-center font-sans text-[13px] text-text-muted transition-colors hover:bg-surface-elevated/60 hover:text-text"
                 style={{ paddingLeft: `${0.75 + (entry.depth - 1) * 0.75}rem`, paddingRight: '0.75rem' }}
               >
                 {entry.text}
@@ -308,7 +308,7 @@ export function ViewModeToggle({ mode, onChange }: { mode: ViewMode; onChange: (
             title={label}
             onClick={() => onChange(value)}
             className={[
-              'flex min-h-[28px] items-center gap-1.5 rounded-[5px] px-2 text-[11px] font-medium transition-colors',
+              'flex min-h-[44px] md:min-h-[28px] items-center gap-1.5 rounded-[5px] px-2 text-[11px] font-medium transition-colors',
               active ? 'bg-surface text-text shadow-sm' : 'text-text-subtle hover:text-text-muted',
             ].join(' ')}
           >
