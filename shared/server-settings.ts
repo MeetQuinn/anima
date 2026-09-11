@@ -16,7 +16,7 @@ export type SidebarOrder = z.infer<typeof SidebarOrder>;
 // Team = a first-class organizational grouping: a set of member agents + a KB (`home`).
 // Soft grouping with default mutual visibility, NOT an isolation/permission boundary.
 // Agents carry only `teamId`; the mutable name/home live here in the registry so they can
-// change without rewriting every agent config. See docs/design/team-first-class-cut1.md.
+// change without rewriting every agent config. Contract: anima-team `system/dashboard/teams.md`.
 export const DEFAULT_TEAM_ID = 'default';
 export const DEFAULT_TEAM_NAME = 'Default';
 

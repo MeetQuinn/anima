@@ -9,9 +9,11 @@ import type { TeamConfig } from '@/api/teams';
 // N=1 (single team): visually identical to today. Renders the Anima wordmark
 //   with no resting caret and no team chrome. It is quietly clickable so the
 //   "+ New team" entry stays discoverable, but at rest looks exactly the same.
-// N>=2 (grouped): shows the current working-team name + a caret. The menu
-//   lists every team (click = set working context, never a visibility filter)
-//   and the "+ New team" action.
+// N>=2: shows the current team name + a caret. The menu lists every team and
+//   the "+ New team" action. Click = switch scope (#352): the sidebar shows only
+//   that team's agents and KBs, and the main panel moves to the team's first
+//   agent (blank when empty). Every agent stays visible under some team.
+//   Contract: anima-team `system/dashboard/teams.md`.
 //
 // The menu is a floating card: soft-rounded, lifted on a real drop shadow. The
 // current team reads from a faint elevated row (not the checkmark alone); a
