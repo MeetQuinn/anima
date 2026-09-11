@@ -32,6 +32,7 @@ const ServerConfigFields = z
     dashboardAuth: DashboardAuth.optional(),
     dashboardHost: z.string().min(1).optional(),
     dashboardPort: z.number().int().positive().max(65535).optional(),
+    doNotContact: z.record(z.string().regex(/^T[A-Z0-9]+$/), z.array(z.string().regex(/^U[A-Z0-9]+$/))).optional(),
     memoryCoherence: MemoryCoherenceConfig.optional(),
     providerContextLimits: ProviderContextLimitsConfig.optional(),
     providerArgs: ProviderRuntimeArgsConfig.optional(),

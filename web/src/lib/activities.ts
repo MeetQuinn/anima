@@ -163,6 +163,14 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
 
   if (activity.type !== 'runtime.event' && activityIsFailure(activity)) {
     const err = pickString(payload, ['summary', 'text', 'error']);
+    if (payload['failureKind'] === 'do-not-contact') {
+      return {
+        title: 'Send refused: do-not-contact list',
+        target: err,
+        color: COLOR_FAILURE,
+        kind: 'failure',
+      };
+    }
     if (activity.type === 'runtime.failed') {
       return {
         title: payload['failureSource'] === 'provider' ? 'Provider failure' : 'Run failed',

@@ -16,6 +16,13 @@ function activity(
 }
 
 describe('activityRow', () => {
+  it('renders the exact do-not-contact refusal title and full agent-facing body', () => {
+    const error = "Not sent. Jialin (U0AAAA) is on this workspace's do-not-contact list: they asked never to receive messages from agents. Do not DM or @mention them, do not try another agent or channel to reach them. If something needs to reach them, hand it to your human owner.";
+    const row = activityRow(activity({ tool: 'anima.message.send', failureKind: 'do-not-contact', error }, 'tool.call.failed'));
+    expect(row.title).toBe('Send refused: do-not-contact list');
+    expect(row.target).toBe(error);
+    expect(row.kind).toBe('failure');
+  });
   it.each([
     [
       'Slack message send',

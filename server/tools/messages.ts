@@ -5,6 +5,7 @@ import type { FeishuReceiveIdType } from '../feishu/client.js';
 import { markdownToFeishuPost } from '../feishu/markdown-to-feishu-post.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { nowIso } from '../ids.js';
+import { assertSlackContactAllowed } from '../messages/contact-policy.service.js';
 import {
   ensureThreadSubscriptionForSentMessage,
   recordOutboundEngagement,
@@ -142,6 +143,10 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
   };
 
   // Pre-commit hold: after target/mention prep, before postMessage.
+  await assertSlackContactAllowed({
+    agentId, teamId, channelId: channel.id, dmUserId: target.dmUserId,
+    client, content, tool: 'anima.message.send',
+  });
   const hold = await evaluateSendHold({
     agentId,
     teamId,
@@ -343,27 +348,26 @@ export async function runMessageUpdate(
     tool: 'anima.message.update',
   };
 
+  const slackText = await slackTextForPostMessage({ channelId: channel.id, client, teamId, text });
+  const content = slackMessageContentForText(slackText.text);
+  const warnings = await mentionWarningsForTarget({ channelId: channel.id, client, slackText, target, teamId });
+  const payload = {
+    ...(content.blocks ? { blocks: content.blocks } : {}),
+    ...SLACK_NO_UNFURL,
+    channel: channel.id,
+    text: content.text,
+    ts: targetTs,
+  } as SlackUpdateMessagePayload;
+  await assertSlackContactAllowed({
+    agentId, teamId, channelId: channel.id, dmUserId: target.dmUserId,
+    client, content, tool: 'anima.message.update',
+  });
+
   await withToolActivity({
     audit: { agentId },
     basePayload,
     effectType: 'slack.message.update',
     op: async () => {
-      const slackText = await slackTextForPostMessage({ channelId: channel.id, client, teamId, text });
-      const content = slackMessageContentForText(slackText.text);
-      const warnings = await mentionWarningsForTarget({
-        channelId: channel.id,
-        client,
-        slackText,
-        target,
-        teamId,
-      });
-      const payload = {
-        ...(content.blocks ? { blocks: content.blocks } : {}),
-        ...SLACK_NO_UNFURL,
-        channel: channel.id,
-        text: content.text,
-        ts: targetTs,
-      } as SlackUpdateMessagePayload;
       const response = await client.chat.update(payload);
       const responseTs = response.ts ?? targetTs;
       const permalink = slackMessageRedirectLink({ channelId: channel.id, messageTs: responseTs });

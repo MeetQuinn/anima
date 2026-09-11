@@ -1,4 +1,5 @@
 import { ZodError } from 'zod';
+import { ContactPolicyRefusal } from '../messages/contact-policy.service.js';
 
 type CliErrorLayer = 'input' | 'anima' | 'slack' | 'feishu' | 'network';
 type CliErrorCode = `${CliErrorLayer}.${string}`;
@@ -34,6 +35,9 @@ export function cliError(classification: CliErrorClassification): CliError {
 
 function classifyCliError(error: unknown): CliErrorClassification {
   if (error instanceof CliError) return error.cli;
+  if (error instanceof ContactPolicyRefusal) {
+    return { code: 'anima.do_not_contact', hint: error.message, retryable: false };
+  }
 
   const commander = classifyCommanderError(error);
   if (commander) return commander;

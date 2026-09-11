@@ -10,6 +10,7 @@ import {
 } from '../asks/interactive-ask.service.js';
 import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import { makeId, nowIso } from '../ids.js';
+import { assertSlackContactAllowed } from '../messages/contact-policy.service.js';
 import {
   ensureThreadSubscriptionForSentMessage,
   recordOutboundEngagement,
@@ -132,6 +133,10 @@ export async function runAsk(opts: z.infer<typeof AskCommandSchema>): Promise<vo
     ...(target.threadTs ? { thread_ts: target.threadTs } : {}),
   } as SlackPostMessagePayload;
 
+  await assertSlackContactAllowed({
+    agentId, teamId, channelId: target.channel.id, dmUserId: targetSummary.dmUserId,
+    client, content, tool: 'anima.ask',
+  });
   const hold = await evaluateSendHold({
     agentId,
     teamId,
