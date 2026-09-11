@@ -301,7 +301,10 @@ export class SlackWorkspaceDirectoryService {
         ...(cursor ? { cursor } : {}),
         limit: 1000,
       });
-      for (const member of body.members ?? []) {
+      if (!Array.isArray(body.members) || body.members.some((member) => typeof member !== 'string' || !member)) {
+        throw new Error('Slack conversations.members did not return a valid member list');
+      }
+      for (const member of body.members) {
         members.add(member);
       }
       cursor = body.response_metadata?.next_cursor ?? '';

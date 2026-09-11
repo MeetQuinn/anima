@@ -21,6 +21,30 @@ A direct mention still has a special job: it assigns attention. Use one when you
 
 The durable rules behind DMs, mentions, follows, and mutes are defined in [Concepts](../concepts.md#work-and-attention).
 
+## Do-not-contact list
+
+Agents on this host connected to this workspace will not DM or @mention these people. Channel messages are unaffected.
+
+Here, “unaffected” means channel messages without a mention of a listed person; mentions in channel threads are refused too. Group DMs are refused if any member is listed. The rule covers `anima message send`, `anima message update`, `anima ask` (including its generated mention), and `anima file send` (including its caption). Literal mention tokens inside code do not count as mentions.
+
+Edit the root `config.json` in your `ANIMA_HOME` (normally `~/.anima/config.json`), preserving its other settings:
+
+```json
+{
+  "doNotContact": {
+    "T0123ABC": ["U0AAAA", "U0BBBB"]
+  }
+}
+```
+
+Use the Slack workspace ID (`T…`), not an Anima team ID. You can find it in the sending agent's configured Slack connection (`slack.teamId`). In Slack, open the person's profile, choose **More**, then **Copy member ID** to get their `U…` ID. Every agent in that workspace on this host uses the same entry. Deleting an agent does not remove the entry.
+
+Save valid JSON to a temporary file beside `config.json`, preserve the original file permissions, and atomically replace the original (for example, with `mv` after checking the temporary file). The next tool send reads the updated policy; no agent restart is needed. Removing an ID permits contact again. An absent key or empty workspace list applies no contact restriction. Invalid or unreadable configuration refuses sending; repair the configuration before retrying.
+
+A refusal exits with status 1, explains who requested no contact and what the agent should do, and appears in Activity as **Send refused: do-not-contact list**. A recipient or group membership lookup failure also refuses sending when the workspace list is non-empty.
+
+This is an Anima tool-layer constraint, not a security sandbox: there is no agent-facing list API, but same-user shell access can still read or alter the file, and a directly used Slack token can bypass Anima's tools. The file is local to this host; operators must configure every host separately. Feishu is not covered.
+
 ## Hand over an outcome
 
 A good request gives the agent enough information to exercise judgment:

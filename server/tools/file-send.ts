@@ -9,6 +9,7 @@ import type {
   FeishuReceiveIdType,
 } from '../feishu/client.js';
 import { safeFilename } from '../storage/safe-filename.js';
+import { assertSlackContactAllowed } from '../messages/contact-policy.service.js';
 import { slackCaptionText } from './slack-mrkdwn.js';
 import {
   completeSlackFileUpload,
@@ -147,6 +148,10 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
   const captionText = caption ? slackCaptionText(caption) : undefined;
 
   // Pre-commit hold: after target/caption prep, before first irreversible upload.
+  await assertSlackContactAllowed({
+    agentId, teamId, channelId: channel.id, dmUserId: target.dmUserId,
+    client, content: { text: captionText }, tool: 'anima.file.send',
+  });
   const hold = await evaluateSendHold({
     agentId,
     teamId,
