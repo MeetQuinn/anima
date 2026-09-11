@@ -1,6 +1,6 @@
 // TeamService — the runtime authority for the team registry.
 //
-// Design (locked with Milo, 2026-07-01; see docs/design/team-first-class-cut1.md):
+// Design (locked with Milo, 2026-07-01; current contract: anima-team `system/dashboard/teams.md`):
 //   - Teams live in root/server config as stable ids `{ id, name, home }`.
 //   - Agents store only `teamId`; name/home stay here so they can change without rewriting
 //     every agent config.
