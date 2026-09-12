@@ -78,11 +78,32 @@ describe('Do-not-contact section', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove USAVED' })).toBeNull());
   });
 
+  it('a matched member whose name falls back to the ID keeps its handle and is not reported missing', async () => {
+    vi.mocked(fetchContactDirectory).mockResolvedValue({ users: [user, { slackUserId: 'USAVED', displayName: 'USAVED', handle: 'real.person' }] });
+    mount();
+    const list = await screen.findByRole('list', { name: 'Do-not-contact members' });
+    await within(list).findByText('@real.person');
+    expect(within(list).queryByText(/Not found in the Slack directory/)).toBeNull();
+    expect(within(list).queryByText(/Saved ID/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Remove USAVED' })).toBeTruthy();
+  });
+
+  it('a member missing from a loaded directory is kept and reported as not found', async () => {
+    mount();
+    const list = await screen.findByRole('list', { name: 'Do-not-contact members' });
+    await within(list).findByText(/Not found in the Slack directory · still restricted/);
+    expect(within(list).getAllByText('USAVED').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Remove USAVED' })).toBeTruthy();
+  });
+
   it('directory failure retains IDs, disables adding, and offers retry', async () => {
     vi.mocked(fetchContactDirectory).mockRejectedValue(new Error('missing_scope'));
     mount();
     await screen.findByText(/Slack directory unavailable. Saved IDs remain restricted/);
     expect(screen.getByRole('button', { name: 'Remove USAVED' })).toBeTruthy();
+    const list = screen.getByRole('list', { name: 'Do-not-contact members' });
+    expect(within(list).getByText(/Saved ID · still restricted/)).toBeTruthy();
+    expect(within(list).queryByText(/Not found in the Slack directory/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Add member' }));
     expect(screen.queryByRole('list', { name: 'Slack search results' })).toBeNull();
     vi.mocked(fetchContactDirectory).mockResolvedValue({ users: [user] });
