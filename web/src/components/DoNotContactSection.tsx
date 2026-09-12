@@ -100,8 +100,13 @@ function WorkspaceMembers({ workspace }: { workspace: ContactWorkspace }) {
     },
   });
   const users = directory.data?.users ?? [];
-  // Unresolved IDs stay on the list: they are shown as the bare ID, never dropped.
-  const members = workspace.memberIds.map((id) => users.find((user) => user.slackUserId === id) ?? { slackUserId: id, displayName: id });
+  // Unresolved IDs stay on the list, never dropped. "Resolved" means the directory returned this
+  // ID, decided from the lookup itself, not from the shape of the name (a directory may legitimately
+  // fall back to displayName === slackUserId for a matched user).
+  const members = workspace.memberIds.map((id) => {
+    const found = users.find((user) => user.slackUserId === id);
+    return found ? { user: found, resolved: true } : { user: { slackUserId: id, displayName: id }, resolved: false };
+  });
   const available = users.filter((user) => !workspace.memberIds.includes(user.slackUserId));
   const term = search.trim().toLocaleLowerCase().replace(/^@/, '');
   const matches = available.filter((user) => `${user.displayName} ${user.handle ?? ''} ${user.slackUserId}`.toLocaleLowerCase().includes(term));
@@ -173,9 +178,9 @@ function WorkspaceMembers({ workspace }: { workspace: ContactWorkspace }) {
       )}
 
       <ul aria-label="Do-not-contact members" className="divide-y divide-border-soft">
-        {members.map((user) => (
+        {members.map(({ user, resolved }) => (
           <li key={user.slackUserId} className="flex items-center gap-3 py-2 md:py-1.5">
-            <MemberIdentity user={user} unresolvedNote={unresolvedNote} />
+            <MemberIdentity user={user} unresolvedNote={resolved ? undefined : unresolvedNote} />
             <button type="button" aria-label={`Remove ${user.displayName}`} className={`${quietActionClass} ml-auto -mr-2 shrink-0`} onClick={() => ask('remove', user)}>Remove</button>
           </li>
         ))}
@@ -210,10 +215,9 @@ function WorkspaceMembers({ workspace }: { workspace: ContactWorkspace }) {
   );
 }
 
-function MemberIdentity({ user, unresolvedNote = 'Saved ID · still restricted' }: { user: SlackUserCandidate; unresolvedNote?: string }) {
-  // Identity not found in the directory: displayName === ID. Present the ID as the name
-  // in mono and say so, instead of a fake initial + duplicated ID line.
-  const unresolved = user.displayName === user.slackUserId;
+/** `unresolvedNote` set = the directory did not return this ID; the caller decides that, never this component. */
+function MemberIdentity({ user, unresolvedNote }: { user: SlackUserCandidate; unresolvedNote?: string }) {
+  const unresolved = unresolvedNote !== undefined;
   return <>
     {user.avatarUrl ? (
       <img src={user.avatarUrl} alt="" className="h-8 w-8 shrink-0 rounded-sm object-cover ring-1 ring-border-soft" />
