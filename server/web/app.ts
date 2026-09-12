@@ -13,6 +13,7 @@ import { registerSystemRoutes } from './system-routes.js';
 import { registerKbRoutes } from './kb-routes.js';
 import { registerAgentTokenUsageRoutes } from './agent-token-usage-routes.js';
 import { registerWebListenerAccess, type WebListenerAccess } from './listener-access.js';
+import { registerDoNotContactRoutes } from './do-not-contact-routes.js';
 
 export function buildWebApp(access?: WebListenerAccess): FastifyInstance {
   const fastify: FastifyInstance = Fastify({ logger: false });
@@ -35,6 +36,7 @@ export function buildWebApp(access?: WebListenerAccess): FastifyInstance {
   // be a UI state: `curl` reaches the route regardless of what the dashboard draws.
   registerReadOnlyGuard(fastify);
   registerSystemRoutes(fastify);
+  registerDoNotContactRoutes(fastify);
   registerClientErrorRoutes(fastify);
   registerKbRoutes(fastify);
   registerAgentTokenUsageRoutes(fastify);

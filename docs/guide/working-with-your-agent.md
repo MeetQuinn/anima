@@ -27,7 +27,23 @@ Agents on this host connected to this workspace will not DM or @mention these pe
 
 Here, “unaffected” means channel messages without a mention of a listed person; mentions in channel threads are refused too. Group DMs are refused if any member is listed. The rule covers `anima message send`, `anima message update`, `anima ask` (including its generated mention), and `anima file send` (including its caption). Literal mention tokens inside code do not count as mentions.
 
-Edit the root `config.json` in your `ANIMA_HOME` (normally `~/.anima/config.json`), preserving its other settings:
+Open **Server → Do not contact** in the dashboard. Select a Slack workspace if
+more than one is connected, then choose **Add member** and search by name or
+`@username`. Check the member ID before confirming, especially for duplicate
+names. Removal also asks for confirmation because it lifts the restriction.
+
+Anima selects a configured connection in that workspace and verifies its token's
+workspace before reading the Slack directory. Tokens stay on the server. This
+lookup does not send messages or wake an agent. If the directory is unavailable,
+saved IDs remain visible and restricted; use **Retry lookup** after repairing the
+connection. A disconnected workspace's saved list remains available for removal.
+
+Changes take effect on the next Anima tool operation without a restart. The list
+applies to every agent in this Anima instance connected to that Slack workspace,
+not just the agent currently selected in the sidebar. It does not block incoming
+messages. **What this blocks** in the panel describes the enforced operations.
+
+Alternatively, edit the root `config.json` in your `ANIMA_HOME` (normally `~/.anima/config.json`), preserving its other settings:
 
 ```json
 {
@@ -43,7 +59,13 @@ Save valid JSON to a temporary file beside `config.json`, preserve the original 
 
 A refusal exits with status 1, explains who requested no contact and what the agent should do, and appears in Activity as **Send refused: do-not-contact list**. A recipient or group membership lookup failure also refuses sending when the workspace list is non-empty.
 
-This is an Anima tool-layer constraint, not a security sandbox: there is no agent-facing list API, but same-user shell access can still read or alter the file, and a directly used Slack token can bypass Anima's tools. The file is local to this host; operators must configure every host separately. Feishu is not covered.
+This is an Anima tool-layer constraint, not a security sandbox. List management
+is an operator dashboard feature, not an agent tool. Its endpoints use the
+dashboard's existing authentication setting; adding this UI does not introduce
+operator-only process isolation. Same-user shell access can still read or alter
+the file, and a directly used Slack token can bypass Anima's tools. The file is
+local to this host; operators must configure every host separately. Feishu is not
+covered.
 
 ## Hand over an outcome
 

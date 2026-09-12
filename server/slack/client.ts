@@ -1,7 +1,7 @@
 import { WebClient, type WebClientOptions } from '@slack/web-api';
 
-export function createSlackWebClient(token: string): WebClient {
-  return new WebClient(token, slackWebClientOptions());
+export function createSlackWebClient(token: string, options: WebClientOptions = {}): WebClient {
+  return new WebClient(token, { ...slackWebClientOptions(), ...options });
 }
 
 // Preview enrichment has its own deadline. Never leave SDK retries or a 429

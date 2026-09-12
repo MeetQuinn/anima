@@ -46,6 +46,8 @@ vi.mock('@/api/system', () => ({
   restartServices: vi.fn(),
 }));
 
+vi.mock('@/api/do-not-contact', () => ({ fetchContactWorkspaces: vi.fn().mockResolvedValue([]) }));
+
 // The real runtime-upgrade row's contents change with upgrade state, which would
 // make "the last control in the panel" a moving target. Stubbed to one button so
 // the boundary case measures the panel's own wrap, not the row's state machine.

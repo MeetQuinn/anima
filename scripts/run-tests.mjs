@@ -38,6 +38,7 @@ const groups = {
     'chat-target-resolver.test.js',
     'config.test.js',
     'contact-policy.test.js',
+    'do-not-contact-ui.test.js',
     'default-skills.test.js',
     'docs-retired-terms.test.js',
     'envelope.test.js',

@@ -9,6 +9,7 @@ import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { useNow } from '@/hooks/useNow';
 import RestartButton from './RestartButton';
 import RuntimeUpgradeRow from './RuntimeUpgrade';
+import DoNotContactSection from './DoNotContactSection';
 
 interface Props {
   onClose: () => void;
@@ -178,6 +179,7 @@ export default function ServerPanel({ onClose }: Props) {
             <RestartButton compact />
           </div>
 
+          <DoNotContactSection />
           {/* Meta — Version + Home as a key-value list. Extend with more rows. */}
           <div className="px-4 py-5 md:px-6">
             <dl className="grid grid-cols-[72px_1fr] gap-x-4 gap-y-5">
