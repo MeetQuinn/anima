@@ -12,10 +12,12 @@ import { registerStaticRoutes } from './static.js';
 import { registerSystemRoutes } from './system-routes.js';
 import { registerKbRoutes } from './kb-routes.js';
 import { registerAgentTokenUsageRoutes } from './agent-token-usage-routes.js';
+import { registerWebListenerAccess, type WebListenerAccess } from './listener-access.js';
 
-export function buildWebApp(): FastifyInstance {
+export function buildWebApp(access?: WebListenerAccess): FastifyInstance {
   const fastify: FastifyInstance = Fastify({ logger: false });
 
+  if (access) registerWebListenerAccess(fastify, access);
   registerErrorHandler(fastify);
   registerDashboardAuthRoutes(fastify);
   registerDashboardAuthGuard(fastify);
@@ -42,8 +44,8 @@ export function buildWebApp(): FastifyInstance {
   return fastify;
 }
 
-export async function createWebServer(): Promise<Server> {
-  const fastify = buildWebApp();
+export async function createWebServer(access?: WebListenerAccess): Promise<Server> {
+  const fastify = buildWebApp(access);
   await fastify.ready();
   return fastify.server;
 }

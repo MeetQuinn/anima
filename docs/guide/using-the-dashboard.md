@@ -15,6 +15,57 @@ dashboard may also be reachable from the local network. Configure `dashboardHost
 network controls when you need to narrow that exposure. If you configured another port, use that
 port instead.
 
+### Keep local access and restrict a private-network listener
+
+To keep a loopback entry for local browsers or a reverse proxy while adding a
+restricted private-network entry, create `web-network.json` in your Anima home
+(normally `~/.anima`). For example, substitute your host and laptop's actual
+Tailscale IPv4 addresses:
+
+```json
+{
+  "listeners": [
+    { "host": "127.0.0.1" },
+    {
+      "host": "100.101.102.103",
+      "allowedPeers": ["100.104.105.106"],
+      "allowedHosts": ["mini", "100.101.102.103"]
+    }
+  ]
+}
+```
+
+This list replaces the web command's `--host` binding. All listeners use the
+same `--port` or configured `dashboardPort`. Keep `dashboardHost` in `config.json`
+set to `127.0.0.1` as well. For an already installed OS-managed service, regenerate
+its command with `animactl services install --only web`: its old command may still
+contain `--host 0.0.0.0`. Installation also reloads that web service. This keeps the fallback loopback-only if
+the optional network file is later removed. Without a listener list, existing
+single-host behavior is unchanged.
+
+The first listener keeps localhost and existing loopback reverse-proxy targets
+working. The second binds only the specified local IPv4 address, accepts only
+the listed socket peer IPs, and requires one of the exact Host names plus the
+port. `mini` must already resolve to the host's private address on the laptop;
+this file does not configure DNS. Direct private-network access uses HTTP inside
+the encrypted private network. Forwarded-IP and forwarded-Host headers cannot
+grant access. Cross-origin browser requests are refused on restricted listeners.
+
+Non-loopback listeners require both allowlists. Addresses must be literal IPv4;
+wildcard binds, duplicate listeners, empty lists and unknown fields are errors.
+An invalid file or failed bind stops startup and closes any listeners already
+opened; it never falls back to a wider bind. This configuration is read at web
+startup, not hot-reloaded. Replace it atomically, then restart only the web service
+with `animactl services restart --only web`. The agent service need not restart.
+
+This is device-level filtering for each restricted listener, not a replacement
+for dashboard authentication. Localhost and a retained reverse proxy remain
+separate access paths with their existing protection. A proxy that forwards to
+loopback is not subject to the private-listener peer allowlist. Keep its own
+authentication and access controls in place. Device addresses changing require
+an explicit allowlist update, not an automatic fallback. No listener setting
+changes accounts, provider routing, or agent permissions.
+
 ## Read the navigation
 
 The desktop sidebar holds three levels of navigation:

@@ -17,6 +17,7 @@ import {
   type ServerConfig,
   type ServerConfigStore,
 } from '../storage/schema/server.store.js';
+import { WebNetworkStore, type WebNetworkConfig } from '../storage/schema/web-network.store.js';
 
 export interface DashboardSettings {
   host: string;
@@ -24,7 +25,14 @@ export interface DashboardSettings {
 }
 
 export class ServerSettingsService {
-  constructor(private readonly store: ServerConfigStore = serverConfigStore) {}
+  constructor(
+    private readonly store: ServerConfigStore = serverConfigStore,
+    private readonly webNetworkStore: WebNetworkStore = new WebNetworkStore(),
+  ) {}
+
+  getWebNetwork(): Promise<WebNetworkConfig> {
+    return this.webNetworkStore.read();
+  }
 
   readConfig(): Promise<ServerConfig> {
     return this.store.read();

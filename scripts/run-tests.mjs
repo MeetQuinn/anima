@@ -106,6 +106,7 @@ const groups = {
     'write-root.test.js',
   ],
   api: [
+    'web-network.test.js',
     'client-error-routes.test.js',
     'kb.test.js',
     'read-only-runtime.test.js',
