@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   applyRuntimeUpgrade,
   fetchRuntimeUpgrade,
@@ -8,8 +9,7 @@ import { useAgents } from '@/hooks/useAgentDirectory';
 import { useRuntimeUpgrade } from '@/hooks/useRuntimeUpgrade';
 import { agentDisplayName } from '@/lib/agent-avatar';
 import { queryKeys } from '@/lib/query-keys';
-import { queryClient } from '@/query-client';
-import type { RuntimeUpgradeGateBlocker } from '@shared/runtime-upgrade';
+import type { RuntimeUpgradeGateBlocker, RuntimeUpgradeOperation } from '@shared/runtime-upgrade';
 
 // Apply lifecycle: the worker installs the target (dashboard stays up), then
 // uses the drain-to-quiescent restart path (dashboard goes down, then recovers).
@@ -34,15 +34,34 @@ export type RuntimeUpgradePhase = 'idle' | 'confirming' | 'applying';
  * trigger that did NOT start the upgrade still sees it as in progress.
  */
 export function useRuntimeUpgradeAction() {
+  const queryClient = useQueryClient();
   const { data: status, isLoading } = useRuntimeUpgrade();
   const { data: agents = [] } = useAgents();
   const [phase, setPhase] = useState<RuntimeUpgradePhase>('idle');
   const [applyError, setApplyError] = useState<string | null>(null);
+  // The failed server-side operation the poll below caught for an upgrade THIS
+  // trigger started. The Server page's Version row reads the same failure off
+  // the shared query, but a trigger on any other page has no such row, so it
+  // must carry its own copy until the user retries.
+  const [installFailure, setInstallFailure] = useState<RuntimeUpgradeOperation | null>(null);
+  // Target captured when the apply was accepted: the status can flip away from
+  // "available" mid-install (check error, failure), and the in-progress /
+  // failure copy must keep naming what we actually started installing.
+  const [startedTarget, setStartedTarget] = useState<string | null>(null);
+
+  const op = status?.operation.status;
+  // What a *forward* update would move you to: always the latest on the track.
+  // NOT status.operation.targetVersion — that is the last *completed* operation's
+  // target, which is historical and can be older than the current version. Reusing
+  // it here surfaced a phantom "downgrade" (e.g. 135 → 132) on the available card.
+  const availableTarget = status?.latestOnTrack ?? status?.operation.targetVersion;
 
   async function performUpgrade() {
     setApplyError(null);
+    setInstallFailure(null);
     try {
       await applyRuntimeUpgrade();
+      setStartedTarget(availableTarget ?? null);
       setPhase('applying');
     } catch (err) {
       setPhase('idle');
@@ -82,7 +101,9 @@ export function useRuntimeUpgradeAction() {
           return;
         }
         if (next.operation.status === 'failed') {
-          // Fast-fail before the restart ever happened — surface it now.
+          // Fast-fail before the restart ever happened — surface it now, on
+          // the page that started it.
+          setInstallFailure(next.operation);
           setPhase('idle');
           void queryClient.invalidateQueries({ queryKey: queryKeys.runtimeUpgrade() });
           return;
@@ -99,7 +120,7 @@ export function useRuntimeUpgradeAction() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [phase]);
+  }, [phase, queryClient]);
 
   // Running agents we'd drain — names the upgrade confirm. Queued items are NOT
   // blockers in drain mode (the new worker picks them up), so filter to running.
@@ -115,20 +136,14 @@ export function useRuntimeUpgradeAction() {
     }
   }
 
-  const op = status?.operation.status;
-  // What a *forward* update would move you to: always the latest on the track.
-  // NOT status.operation.targetVersion — that is the last *completed* operation's
-  // target, which is historical and can be older than the current version. Reusing
-  // it here surfaced a phantom "downgrade" (e.g. 135 → 132) on the available card.
-  const availableTarget = status?.latestOnTrack ?? status?.operation.targetVersion;
   // What a live server-side operation is installing — authoritative only while that
   // operation is actually running/scheduled. For a client-initiated apply the server
   // op has not yet flipped to running, so fall back to availableTarget; the
   // "Updating to…" label then never echoes the stale completed-op target.
   const serverInProgress = op === 'scheduled' || op === 'running';
   const inProgressTarget = serverInProgress
-    ? status?.operation.targetVersion ?? availableTarget
-    : availableTarget;
+    ? status?.operation.targetVersion ?? startedTarget ?? availableTarget
+    : startedTarget ?? availableTarget;
   const inProgress = phase === 'applying' || serverInProgress;
 
   return {
@@ -136,6 +151,7 @@ export function useRuntimeUpgradeAction() {
     isLoading,
     phase,
     applyError,
+    installFailure,
     runningNames,
     availableTarget,
     inProgressTarget,

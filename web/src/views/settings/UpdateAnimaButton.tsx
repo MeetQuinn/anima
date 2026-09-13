@@ -1,4 +1,4 @@
-import { Download, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Download, RefreshCw } from 'lucide-react';
 import { BusyConfirmModal, ProgressOverlay } from '@/components/restart-shared';
 import { useRuntimeUpgradeAction } from '@/hooks/useRuntimeUpgradeAction';
 
@@ -11,12 +11,21 @@ import { useRuntimeUpgradeAction } from '@/hooks/useRuntimeUpgradeAction';
  * apply at once; agents mid-item → one continuity confirm naming them) and
  * stays on the current page throughout. The install/restart progress overlay
  * and the reload on recovery come from the shared hook.
+ *
+ * Two exceptions to "absence is the signal", both scoped to an update THIS
+ * button started: while it is installing, and after the worker reports the
+ * install failed. The Server page has its own FailedCard for that, but the
+ * user may have pressed this button from Providers or Token usage, where
+ * nothing else would say so — so the failure is spelled out here, with a
+ * retry, until the next attempt. Neither depends on the status still reading
+ * "available": a check error mid-install must not swallow the operation.
  */
 export default function UpdateAnimaButton() {
   const {
     status,
     phase,
     applyError,
+    installFailure,
     runningNames,
     availableTarget,
     inProgressTarget,
@@ -26,10 +35,14 @@ export default function UpdateAnimaButton() {
     cancelConfirm,
   } = useRuntimeUpgradeAction();
 
-  if (!status || status.state !== 'available' || !availableTarget) return null;
+  if (!status) return null;
+  const offered = status.state === 'available' && !!availableTarget;
+  const ownOperation = phase === 'applying' || installFailure !== null;
+  if (!offered && !ownOperation) return null;
 
   return (
     <div className="border-t border-border-soft p-2">
+      {(offered || phase === 'applying') && (
       <button
         type="button"
         onClick={requestUpgrade}
@@ -58,13 +71,22 @@ export default function UpdateAnimaButton() {
         </span>
         <span className="flex min-w-0 flex-1 flex-col leading-tight">
           <span className="truncate">{inProgress ? 'Updating Anima…' : 'Update Anima'}</span>
-          {!inProgress && (
+          {!inProgress && availableTarget && (
             <span aria-hidden className="truncate font-mono text-[10px] text-text-subtle">
               {shortVersion(status.currentVersion)} → {shortVersion(availableTarget)}
             </span>
           )}
         </span>
       </button>
+      )}
+      {installFailure && phase !== 'applying' && (
+        <InstallFailedNote
+          currentVersion={status.currentVersion}
+          error={installFailure.error}
+          rollback={installFailure.rollback}
+          onRetry={offered ? undefined : requestUpgrade}
+        />
+      )}
       {applyError && (
         <p role="alert" className="mt-1.5 px-1 font-sans text-[11px] text-health-error">
           {applyError}
@@ -75,7 +97,7 @@ export default function UpdateAnimaButton() {
         <BusyConfirmModal
           kind="upgrade"
           runningNames={runningNames}
-          target={availableTarget}
+          target={availableTarget ?? inProgressTarget ?? ''}
           onCancel={cancelConfirm}
           onConfirm={() => void performUpgrade()}
         />
@@ -83,9 +105,59 @@ export default function UpdateAnimaButton() {
       {phase === 'applying' && (
         <ProgressOverlay
           above
-          title={`Installing ${availableTarget}…`}
+          title={`Installing ${inProgressTarget ?? availableTarget}…`}
           body="Your current version keeps running while Anima installs and verifies the new one, then asks any working agents to pause before restart. The dashboard reloads automatically when it's back."
         />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The install failed before the restart (the dashboard never went down, so the
+ * user is still on `currentVersion`). Compact sibling of the Server page's
+ * FailedCard, same wording. `onRetry` renders a "Try again" only when the
+ * update button itself is not on screen to serve as the retry.
+ */
+function InstallFailedNote({
+  currentVersion,
+  error,
+  rollback,
+  onRetry,
+}: {
+  currentVersion: string;
+  error?: string;
+  rollback?: 'not_needed' | 'succeeded' | 'failed';
+  onRetry?: () => void;
+}) {
+  const rollbackFailed = rollback === 'failed';
+  return (
+    <div
+      role="alert"
+      className="mt-1.5 rounded-sm border border-health-error/40 bg-health-error/[0.06] px-2 py-1.5 font-sans text-[11px] leading-snug text-text"
+    >
+      <div className="flex items-start gap-1.5">
+        <AlertTriangle aria-hidden className="mt-px h-3 w-3 shrink-0 text-health-error" />
+        {rollbackFailed ? (
+          <span>Update failed and rollback didn&apos;t complete. The runtime may need attention.</span>
+        ) : (
+          <span>
+            Update failed: still on <span className="font-mono text-[10px]">{currentVersion}</span>
+          </span>
+        )}
+      </div>
+      {error && (
+        <p className="mt-1 break-words font-mono text-[10px] leading-relaxed text-text-muted">{error}</p>
+      )}
+      {onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-1.5 flex min-h-[28px] items-center gap-1.5 rounded-sm border border-border-soft px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          <RefreshCw aria-hidden className="h-3 w-3" />
+          Try again
+        </button>
       )}
     </div>
   );

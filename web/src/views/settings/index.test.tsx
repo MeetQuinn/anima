@@ -257,6 +257,73 @@ describe('Update Anima button', () => {
   });
 });
 
+describe('Update Anima button: install failure', () => {
+  // The worker can fail the install BEFORE the restart (dashboard never goes
+  // down). The poll sees operation.status=failed; the page whose footer started
+  // the update must say so — the Server page's FailedCard is on another page.
+  const failedOp = {
+    status: 'failed' as const,
+    error: 'Target verification failed',
+    completedAt: '2026-09-13T00:00:05.000Z',
+  };
+
+  it('surfaces the polled failure on the page that started it, and the button retries', async () => {
+    api.fetchRuntimeUpgrade.mockResolvedValue(upgradeStatus('available'));
+    renderAt('/settings/providers');
+    const button = await screen.findByRole('button', { name: /^Update Anima,/ });
+    api.fetchRuntimeUpgrade.mockResolvedValue(upgradeStatus('available', { operation: failedOp }));
+
+    fireEvent.click(button);
+    expect(await screen.findByText(/^Installing .*…$/)).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText(/^Installing .*…$/)).toBeNull(), { timeout: 3500 });
+
+    expect(api.applyRuntimeUpgrade).toHaveBeenCalledTimes(1);
+    expect(api.fetchRuntimeUpgrade.mock.calls.length).toBeGreaterThanOrEqual(2);
+    // Still on the page that started it, with the failure spelled out.
+    expect(screen.getByText('providers-page-body')).toBeTruthy();
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toMatch(/Update failed/);
+    expect(alert.textContent).toMatch(/still on 0\.1\.1-canary\.75\.1\.80810fb/);
+    expect(alert.textContent).toMatch(/Target verification failed/);
+
+    // Retry: the button is back and enabled; pressing it applies again and
+    // clears the failure while the new attempt is in progress.
+    api.fetchRuntimeUpgrade.mockResolvedValue(upgradeStatus('available'));
+    const retry = screen.getByRole('button', { name: /^Update Anima,/ });
+    expect(retry.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(retry);
+    await waitFor(() => expect(api.applyRuntimeUpgrade).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/^Installing .*…$/)).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('keeps the current operation visible even when the status flips away from "available"', async () => {
+    api.fetchRuntimeUpgrade.mockResolvedValue(upgradeStatus('available'));
+    renderAt('/settings/token-usage');
+    fireEvent.click(await screen.findByRole('button', { name: /^Update Anima,/ }));
+    expect(await screen.findByText(/^Installing .*…$/)).toBeTruthy();
+
+    // The check itself errors mid-install (state=error): the overlay for the
+    // operation we started must not vanish with the button.
+    api.fetchRuntimeUpgrade.mockResolvedValue(upgradeStatus('error'));
+    await waitFor(() => expect(api.fetchRuntimeUpgrade.mock.calls.length).toBeGreaterThanOrEqual(2), {
+      timeout: 3500,
+    });
+    expect(screen.getByText(/^Installing .*…$/)).toBeTruthy();
+
+    // ...and when the failure arrives while the button is hidden, the failure
+    // still lands on this page with a way to try again.
+    api.fetchRuntimeUpgrade.mockResolvedValue(upgradeStatus('error', { operation: failedOp }));
+    await waitFor(() => expect(screen.queryByText(/^Installing .*…$/)).toBeNull(), { timeout: 3500 });
+    expect(screen.getByRole('alert').textContent).toMatch(/Update failed/);
+    // The shared status query refetches after the failure; once it reads
+    // "error" the offer is gone and the note carries its own retry.
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Update Anima,/ })).toBeNull());
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+    expect(screen.getByText('token-usage-page-body')).toBeTruthy();
+  });
+});
+
 describe('settings shell (mobile)', () => {
   beforeEach(() => {
     setViewportWidth(375);
