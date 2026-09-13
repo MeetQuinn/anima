@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContactWorkspace } from '@shared/do-not-contact';
 import { changeContactMember, fetchContactDirectory, fetchContactWorkspaces } from '@/api/do-not-contact';
-import DoNotContactSection from './DoNotContactSection';
+import OutreachLimitsPage from './OutreachLimitsPage';
 
 vi.mock('@/api/do-not-contact', () => ({
   fetchContactWorkspaces: vi.fn(), fetchContactDirectory: vi.fn(), changeContactMember: vi.fn(),
@@ -25,36 +25,60 @@ beforeEach(() => {
 
 function mount() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(<QueryClientProvider client={client}><DoNotContactSection /></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}><OutreachLimitsPage /></QueryClientProvider>);
 }
-async function openSearch() {
-  fireEvent.click(await screen.findByRole('button', { name: 'Add member' }));
-  return screen.findByRole('list', { name: 'Slack search results' });
+const addIn = (name: string) => screen.findByRole('button', { name: `Add a person to ${name}` });
+const membersOf = (name: string) => screen.getByRole('list', { name: `Do-not-contact members · ${name}` });
+async function openSearch(name = 'Example') {
+  fireEvent.click(await addIn(name));
+  return screen.findByRole('list', { name: `Slack search results · ${name}` });
 }
 
-describe('Do-not-contact section', () => {
-  it('shows one workspace without a selector or token/source/Fleet concepts', async () => {
+describe('Outreach limits page', () => {
+  it('states the policy in one sentence, instance-wide, without IDs or token/source/Fleet concepts', async () => {
     mount();
-    await screen.findByText('Example');
+    await screen.findByRole('heading', { name: 'Example' });
+    expect(screen.getByText(/Agents will not DM or @mention the people listed here/)).toBeTruthy();
+    expect(screen.getByText(/Applies to every agent in this Anima instance, per Slack workspace/)).toBeTruthy();
     expect(screen.queryByRole('combobox')).toBeNull();
-    expect(screen.getByText(/Applies to all agents in this Anima instance/)).toBeTruthy();
-    expect(screen.queryByText(/Fleet|token|via Milo|through Milo|connection source/i)).toBeNull();
-    expect(within(screen.getByRole('list', { name: 'Do-not-contact members' })).getAllByText('USAVED').length).toBeGreaterThan(0);
+    expect(screen.queryByText('T123')).toBeNull();
+    expect(screen.queryByText(/Fleet|token|via Milo|through Milo|connection source|per-agent|each agent's own/i)).toBeNull();
+    expect(within(membersOf('Example')).getAllByText('USAVED').length).toBeGreaterThan(0);
     expect(changeContactMember).not.toHaveBeenCalled();
+  });
+
+  it('stacks every workspace as its own block with a people count and its own add control', async () => {
+    workspaces.push({ id: 'T456', name: 'Second', memberIds: [], canLookup: true });
+    vi.mocked(fetchContactDirectory).mockImplementation(async (id) => ({ users: id === 'T123' ? [user] : [] }));
+    mount();
+    await screen.findByRole('heading', { name: 'Second' });
+    expect(screen.getByText('1 person')).toBeTruthy();
+    expect(screen.getByText('0 people')).toBeTruthy();
+    expect(screen.queryByText('T456')).toBeNull();
+    expect(screen.getByText('No one listed. Agents may contact anyone in this workspace.')).toBeTruthy();
+    expect(screen.queryByRole('list', { name: 'Do-not-contact members · Second' })).toBeNull();
+
+    // Search opens only inside the block whose + was pressed.
+    await openSearch('Second');
+    expect(screen.getAllByRole('textbox')).toHaveLength(1);
+    expect(screen.getByRole('textbox', { name: 'Search Slack members in Second' })).toBeTruthy();
+    expect(screen.queryByRole('list', { name: 'Slack search results · Example' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Close search in Second' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add a person to Example' })).toBeTruthy();
   });
 
   it('searches handles, disambiguates same names by IDs, and requires add confirmation', async () => {
     mount();
     const results = await openSearch();
     expect(within(results).getAllByText('Alex')).toHaveLength(2);
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search Slack members' }), { target: { value: '@alex2' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search Slack members in Example' }), { target: { value: '@alex2' } });
     expect(within(results).queryByText('U123')).toBeNull();
     fireEvent.click(within(results).getByRole('button', { name: /Alex.*U456/ }));
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText(/All agents in this Anima instance connected to Example/)).toBeTruthy();
     expect(changeContactMember).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add member' }));
-    await screen.findByText('Member added. Restriction is active.');
+    await screen.findByText('Added. Restriction is active.');
     expect(changeContactMember).toHaveBeenCalledExactlyOnceWith('T123', 'U456', 'add');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
@@ -73,7 +97,7 @@ describe('Do-not-contact section', () => {
     mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Remove USAVED' }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove member' }));
-    await screen.findByText('Member removed. Restriction lifted.');
+    await screen.findByText('Removed. Restriction lifted.');
     expect(changeContactMember).toHaveBeenCalledExactlyOnceWith('T123', 'USAVED', 'remove');
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove USAVED' })).toBeNull());
   });
@@ -81,7 +105,7 @@ describe('Do-not-contact section', () => {
   it('a matched member whose name falls back to the ID keeps its handle and is not reported missing', async () => {
     vi.mocked(fetchContactDirectory).mockResolvedValue({ users: [user, { slackUserId: 'USAVED', displayName: 'USAVED', handle: 'real.person' }] });
     mount();
-    const list = await screen.findByRole('list', { name: 'Do-not-contact members' });
+    const list = await screen.findByRole('list', { name: 'Do-not-contact members · Example' });
     await within(list).findByText('@real.person');
     expect(within(list).queryByText(/Not found in the Slack directory/)).toBeNull();
     expect(within(list).queryByText(/Saved ID/)).toBeNull();
@@ -90,7 +114,7 @@ describe('Do-not-contact section', () => {
 
   it('a member missing from a loaded directory is kept and reported as not found', async () => {
     mount();
-    const list = await screen.findByRole('list', { name: 'Do-not-contact members' });
+    const list = await screen.findByRole('list', { name: 'Do-not-contact members · Example' });
     await within(list).findByText(/Not found in the Slack directory · still restricted/);
     expect(within(list).getAllByText('USAVED').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'Remove USAVED' })).toBeTruthy();
@@ -101,21 +125,21 @@ describe('Do-not-contact section', () => {
     mount();
     await screen.findByText(/Slack directory unavailable. Saved IDs remain restricted/);
     expect(screen.getByRole('button', { name: 'Remove USAVED' })).toBeTruthy();
-    const list = screen.getByRole('list', { name: 'Do-not-contact members' });
+    const list = membersOf('Example');
     expect(within(list).getByText(/Saved ID · still restricted/)).toBeTruthy();
     expect(within(list).queryByText(/Not found in the Slack directory/)).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Add member' }));
-    expect(screen.queryByRole('list', { name: 'Slack search results' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Add a person to Example' }));
+    expect(screen.queryByRole('list', { name: 'Slack search results · Example' })).toBeNull();
     vi.mocked(fetchContactDirectory).mockResolvedValue({ users: [user] });
     fireEvent.click(screen.getByRole('button', { name: 'Retry lookup' }));
-    await screen.findByRole('list', { name: 'Slack search results' });
+    await screen.findByRole('list', { name: 'Slack search results · Example' });
     expect(changeContactMember).not.toHaveBeenCalled();
   });
 
   it('disconnected workspaces keep their saved IDs without looking up or enabling add', async () => {
     workspaces[0]!.canLookup = false;
     mount();
-    const add = await screen.findByRole('button', { name: 'Add member' });
+    const add = await addIn('Example');
     expect((add as HTMLButtonElement).disabled).toBe(true);
     expect(fetchContactDirectory).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Remove USAVED' })).toBeTruthy();
@@ -125,21 +149,27 @@ describe('Do-not-contact section', () => {
     vi.mocked(fetchContactWorkspaces).mockRejectedValue(new Error('invalid config'));
     mount();
     await screen.findByRole('alert');
-    expect(screen.queryByText('No members on this list.')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Add member' })).toBeNull();
+    expect(screen.queryByText(/No one listed/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /Add a person to/ })).toBeNull();
   });
 
-  it('switching workspace clears search and never carries users across workspaces', async () => {
+  it('each block searches its own directory and never carries users across workspaces', async () => {
     workspaces.push({ id: 'T456', name: 'Second', memberIds: ['UOTHER'], canLookup: true });
     vi.mocked(fetchContactDirectory).mockImplementation(async (id) => ({ users: id === 'T123' ? [user] : [] }));
     mount();
-    await openSearch();
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search Slack members' }), { target: { value: 'Alex' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Slack workspace' }), { target: { value: 'T456' } });
-    expect(screen.queryByRole('textbox')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Remove UOTHER' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Remove USAVED' })).toBeNull();
+    const first = await openSearch('Example');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search Slack members in Example' }), { target: { value: 'Alex' } });
+    expect(within(first).getByText('Alex')).toBeTruthy();
+    const second = await openSearch('Second');
+    expect(within(second).getByText('No matching members.')).toBeTruthy();
+    expect(within(second).queryByText('Alex')).toBeNull();
+    expect(within(membersOf('Second')).getByText('UOTHER')).toBeTruthy();
+    expect(within(membersOf('Example')).getByText('USAVED')).toBeTruthy();
     await waitFor(() => expect(fetchContactDirectory).toHaveBeenCalledWith('T456'));
+    // Closing one block's search leaves the other's open.
+    fireEvent.click(screen.getByRole('button', { name: 'Close search in Example' }));
+    expect(screen.queryByRole('textbox', { name: 'Search Slack members in Example' })).toBeNull();
+    expect(screen.getByRole('textbox', { name: 'Search Slack members in Second' })).toBeTruthy();
   });
 
   it('write failure stays in confirmation with no optimistic restriction claim', async () => {
@@ -150,7 +180,7 @@ describe('Do-not-contact section', () => {
     await screen.findByText('Could not save configuration');
     expect(screen.getByRole('dialog')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Remove USAVED' })).toBeTruthy();
-    expect(screen.queryByText('Member removed. Restriction lifted.')).toBeNull();
+    expect(screen.queryByText('Removed. Restriction lifted.')).toBeNull();
   });
 
   it('an in-flight write cannot be submitted twice or dismissed by Escape', async () => {
