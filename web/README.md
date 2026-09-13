@@ -38,6 +38,8 @@ web/src/
   agents/:agentId                → views/agents/layout (agent header + tab bar)
     activity / profile / reminders
   kb/:id/*                       → views/kb
+  settings/:page?                → views/settings (standalone: no sidebar, no reconciler)
+    server / providers / token-usage / outreach-limits
 ```
 
 URL reconciliation (auto-select first agent, fill default tab, redirect not-connected agents to profile) runs in `Layout` via `reconcileLocation` from `shared/url-routes.ts`.
