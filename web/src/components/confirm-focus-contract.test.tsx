@@ -14,7 +14,8 @@ import { BusyConfirmModal } from './restart-shared';
 // Scope note: this pins `ConfirmModal` and `BusyConfirmModal` ONLY. The other
 // `aria-modal` dialogs in web/src are explicitly NOT cleared by this contract,
 // including the two independent inline dialogs inside AgentFields.tsx and
-// UsagePanel.tsx — files that also render ConfirmModal, and so must not be read
+// views/settings/ProvidersPage.tsx (formerly UsagePanel.tsx) — files that also
+// render ConfirmModal, and so must not be read
 // as "fully accessible" on the strength of these tests.
 //
 // Runs in CI (`pnpm --dir web test`) and locally the same way.

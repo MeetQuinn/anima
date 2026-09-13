@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChartColumn, ChevronLeft, Gauge, Plus, Server } from 'lucide-react';
+import { ChevronLeft, Plus, Settings } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -13,9 +13,6 @@ import { CSS } from '@dnd-kit/utilities';
 import { parseLocation } from '@/lib/url-state';
 import { useLocation, useNavigate } from 'react-router-dom';
 import AnimaIcon from '@/components/AnimaIcon';
-import ServerPanel from '@/components/ServerPanel';
-import UsagePanel from '@/components/UsagePanel';
-import TokenUsagePanel from '@/components/token-usage/TokenUsagePanel';
 import { removeKb, renameKb } from '@/api/kb';
 import { queryClient } from '@/query-client';
 import { queryKeys } from '@/lib/query-keys';
@@ -25,8 +22,7 @@ import { useCurrentTeam, useTeams, TEAM_PARAM } from '@/hooks/useTeams';
 import type { TeamConfig } from '@/api/teams';
 import { TeamSwitcher } from './sidebar/TeamSwitcher';
 import { CreateTeamModal, EditTeamModal } from './sidebar/TeamModals';
-import { useUpdateAvailable } from '@/hooks/useRuntimeUpgrade';
-import { useProviderCliStatus } from '@/hooks/useProviderCliStatus';
+import { buildSettingsPath, rememberReturnTo } from '@/views/settings/pages';
 import { agentColor, initialOf } from '@/lib/avatars';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
@@ -110,7 +106,7 @@ export default function Sidebar({
   onToggle: () => void;
 }) {
   const { data: statuses = [] } = useAgentStatuses({ poll: true });
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const navigate = useNavigate();
   const { agentId } = parseLocation(pathname);
   const setAgentId = (id: string | null) => navigate(id ? `/agents/${id}` : '/');
@@ -160,16 +156,14 @@ export default function Sidebar({
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
 
-  // Server + Usage panels
-  const [serverPanelOpen, setServerPanelOpen] = useState(false);
-  const [usagePanelOpen, setUsagePanelOpen] = useState(false);
-  const [tokenUsagePanelOpen, setTokenUsagePanelOpen] = useState(false);
-  // Resting indicator — a subtle accent dot on the Server trigger when a system
-  // update is available. Reuses the panel's query (deduped by key), so no extra
-  // request; the dot disappears once the user opens the panel and upgrades.
-  const updateAvailable = useUpdateAvailable();
-  const { data: providerCliStatus } = useProviderCliStatus();
-  const providerUpdateAvailable = providerCliStatus?.providers.some((row) => row.updateAvailable) ?? false;
+  // Settings is a full-screen surface at /settings/:page; Back there returns
+  // to where the user is now (path + query, so `?team=` survives the trip).
+  // No resting dots here: an available update is announced on the settings
+  // list itself, not on the way in.
+  const openSettings = () => {
+    const from = `${pathname}${search}`;
+    navigate(buildSettingsPath(), { state: rememberReturnTo(from) });
+  };
 
   function openKebab(e: React.MouseEvent<HTMLButtonElement>, id: string) {
     e.stopPropagation();
@@ -372,38 +366,15 @@ export default function Sidebar({
             {orderedAgents.map(renderCollapsedAgent)}
           </div>
 
-          {/* Footer — Providers above Server. */}
+          {/* Footer — Settings. */}
           <div className="shrink-0 border-t border-spine-border py-1.5 flex flex-col items-center gap-1">
             <button
-              onClick={() => setTokenUsagePanelOpen((v) => !v)}
-              title="Token usage"
-              className="relative flex h-8 w-8 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              onClick={openSettings}
+              title="Settings"
+              aria-label="Settings"
+              className="flex h-8 w-8 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             >
-              <ChartColumn className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={() => setUsagePanelOpen((v) => !v)}
-              title={providerUpdateAvailable ? 'Providers: update available' : 'Providers'}
-              className="relative flex h-8 w-8 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-            >
-              <Gauge className="h-3.5 w-3.5" />
-              {providerUpdateAvailable && (
-                <span aria-hidden className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-accent ring-1 ring-spine-border" />
-              )}
-            </button>
-            <button
-              data-server-panel-trigger
-              onClick={() => setServerPanelOpen((v) => !v)}
-              title={updateAvailable ? 'Server: update available' : 'Server status & restart'}
-              className="relative flex h-8 w-8 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-            >
-              <Server className="h-3.5 w-3.5" />
-              {updateAvailable && (
-                <span
-                  aria-hidden
-                  className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-accent ring-1 ring-spine-border"
-                />
-              )}
+              <Settings className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
@@ -552,42 +523,15 @@ export default function Sidebar({
             </div>
           </div>
 
-          {/* Footer: token usage, providers, then server operations. */}
-          <div className="border-t border-spine-border p-2 space-y-0.5">
+          {/* Footer: Settings (server, providers, token usage, policies). */}
+          <div className="border-t border-spine-border p-2">
             <button
-              onClick={() => setTokenUsagePanelOpen((v) => !v)}
+              onClick={openSettings}
               className="chrome flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-2.5 text-left text-[11px] uppercase tracking-[0.1em] text-text-on-spine-muted transition-colors hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              title="Token usage"
+              title="Settings"
             >
-              <ChartColumn className="h-3.5 w-3.5" />
-              <span>Usage</span>
-            </button>
-            <button
-              onClick={() => setUsagePanelOpen((v) => !v)}
-              className="chrome flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-2.5 text-left text-[11px] uppercase tracking-[0.1em] text-text-on-spine-muted transition-colors hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              title={providerUpdateAvailable ? 'Providers: update available' : 'Providers'}
-            >
-              <Gauge className="h-3.5 w-3.5" />
-              <span>Providers</span>
-              {providerUpdateAvailable && (
-                <span aria-hidden className="ml-auto h-1.5 w-1.5 rounded-full bg-accent" />
-              )}
-            </button>
-            <button
-              data-server-panel-trigger
-              onClick={() => setServerPanelOpen((v) => !v)}
-              className="chrome flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-2.5 text-left text-[11px] uppercase tracking-[0.1em] text-text-on-spine-muted transition-colors hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              title="Server status &amp; restart"
-            >
-              <Server className="h-3.5 w-3.5" />
-              <span>Server</span>
-              {updateAvailable && (
-                <span
-                  aria-hidden
-                  className="ml-auto h-1.5 w-1.5 rounded-full bg-accent"
-                  title="Update available"
-                />
-              )}
+              <Settings className="h-3.5 w-3.5" />
+              <span>Settings</span>
             </button>
           </div>
         </div>
@@ -670,10 +614,6 @@ export default function Sidebar({
           onSaved={() => setEditTeam(null)}
         />
       )}
-
-      {serverPanelOpen && <ServerPanel onClose={() => setServerPanelOpen(false)} />}
-      {usagePanelOpen && <UsagePanel onClose={() => setUsagePanelOpen(false)} />}
-      {tokenUsagePanelOpen && <TokenUsagePanel onClose={() => setTokenUsagePanelOpen(false)} />}
     </>
   );
 }

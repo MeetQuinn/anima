@@ -83,8 +83,8 @@ export default function RestartButton({ compact = false }: { compact?: boolean }
     <>
       {compact ? (
         /* Compact variant — icon + label, right-aligned in a row.
-           Used by ServerPanel to keep the trigger away from the sidebar
-           footer Server button. All modal/overlay/polling logic unchanged.
+           Used by the Server settings page hero row. All modal/overlay/polling
+           logic unchanged.
            The pill keeps its compact visual; the button itself extends to the
            44px touch target on mobile, where this is the only restart path. */
         <button

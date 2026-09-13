@@ -1,37 +1,23 @@
-import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { AlertTriangle, Download, ExternalLink, RefreshCw } from 'lucide-react';
-import {
-  applyRuntimeUpgrade,
-  checkRuntimeUpgrade,
-  fetchRuntimeUpgrade,
-  RuntimeUpgradeApplyError,
-} from '@/api/system';
-import { useAgents } from '@/hooks/useAgentDirectory';
-import { useRuntimeUpgrade } from '@/hooks/useRuntimeUpgrade';
-import { agentDisplayName } from '@/lib/agent-avatar';
+import { checkRuntimeUpgrade } from '@/api/system';
+import { useRuntimeUpgradeAction } from '@/hooks/useRuntimeUpgradeAction';
 import { queryKeys } from '@/lib/query-keys';
 import { queryClient } from '@/query-client';
 import { BusyConfirmModal, ProgressOverlay, restartEcho, resumedText } from './restart-shared';
-import type { RuntimeUpgradeGateBlocker, RuntimeUpgradeOperation } from '@shared/runtime-upgrade';
+import type { RuntimeUpgradeOperation } from '@shared/runtime-upgrade';
 
-// Apply lifecycle: the worker installs the target (dashboard stays up), then
-// uses the drain-to-quiescent restart path (dashboard goes down, then recovers).
-// A broken target fails BEFORE the restart, so the dashboard never goes down —
-// we poll the status endpoint to catch that fast-fail without waiting out the
-// whole timeout, and treat a fetch failure as "restart in progress".
-const UPGRADE_TIMEOUT_MS = 300_000; // install + restart can take a couple of minutes
-const UPGRADE_POLL_MS = 1_500;
+// Apply lifecycle (install → drain → restart → reload) lives in
+// `useRuntimeUpgradeAction`, shared with the settings-list "Update Anima"
+// button so both triggers make the same idle-vs-confirm decision.
 // `operation` never resets to `idle` server-side — it persists succeeded/failed
 // until the next apply. Age the failure card out so the panel doesn't get stuck
 // on a stale banner; past the window we lean on `state` + version for resting
 // (an available update still offers a normal Upgrade, i.e. another retry path).
 const RECENT_FAILURE_MS = 60 * 60_000;
 
-type Phase = 'idle' | 'confirming' | 'applying';
-
 /**
- * System-update row in the ServerPanel System section. Renders the honest
+ * System-update row in the Server settings page Version slot. Renders the honest
  * display state derived from the server discriminant — the UI never infers
  * available-vs-current, and never shows the release track:
  *
@@ -47,78 +33,25 @@ type Phase = 'idle' | 'confirming' | 'applying';
  * is a mid-operation (scheduled/running) upgrade, which shows the spinner.
  */
 export default function RuntimeUpgradeRow() {
-  const { data: status, isLoading } = useRuntimeUpgrade();
-  const { data: agents = [] } = useAgents();
-  const [phase, setPhase] = useState<Phase>('idle');
-  const [applyError, setApplyError] = useState<string | null>(null);
+  const {
+    status,
+    isLoading,
+    phase,
+    applyError,
+    runningNames,
+    availableTarget,
+    inProgressTarget,
+    inProgress,
+    requestUpgrade,
+    performUpgrade,
+    cancelConfirm,
+  } = useRuntimeUpgradeAction();
   const checkMutation = useMutation({
     mutationFn: checkRuntimeUpgrade,
     onSuccess: (next) => {
       queryClient.setQueryData(queryKeys.runtimeUpgrade(), next);
     },
   });
-
-  async function performUpgrade() {
-    setApplyError(null);
-    try {
-      await applyRuntimeUpgrade();
-      setPhase('applying');
-    } catch (err) {
-      setPhase('idle');
-      if (err instanceof RuntimeUpgradeApplyError && err.status === 409) {
-        setApplyError('An agent started working. Try again once idle.');
-      } else if (err instanceof RuntimeUpgradeApplyError && err.status === 503) {
-        setApplyError('Update is unavailable right now.');
-      } else {
-        setApplyError(err instanceof Error ? err.message : 'Upgrade failed to start.');
-      }
-    }
-  }
-
-  // Drive the in-progress UI off the live status endpoint. See the note above
-  // for why this polls status rather than only /api/health.
-  useEffect(() => {
-    if (phase !== 'applying') return;
-    let sawDown = false;
-    let cancelled = false;
-    const startedAt = Date.now();
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    async function tick() {
-      if (cancelled) return;
-      if (Date.now() - startedAt > UPGRADE_TIMEOUT_MS) {
-        window.location.reload();
-        return;
-      }
-      try {
-        const next = await fetchRuntimeUpgrade();
-        if (cancelled) return;
-        if (sawDown) {
-          // Services went down then answered again → restart completed. Reload
-          // so the fresh status (succeeded → current, or failed → failed card)
-          // becomes the source of truth.
-          window.location.reload();
-          return;
-        }
-        if (next.operation.status === 'failed') {
-          // Fast-fail before the restart ever happened — surface it now.
-          setPhase('idle');
-          void queryClient.invalidateQueries({ queryKey: queryKeys.runtimeUpgrade() });
-          return;
-        }
-        // Still installing / scheduled / running pre-restart — keep waiting.
-      } catch {
-        sawDown = true;
-      }
-      timer = setTimeout(tick, UPGRADE_POLL_MS);
-    }
-
-    timer = setTimeout(tick, UPGRADE_POLL_MS);
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [phase]);
 
   // checking — client loading, nothing cached yet
   if (isLoading && !status) {
@@ -134,20 +67,6 @@ export default function RuntimeUpgradeRow() {
   if (!status) return null;
 
   const op = status.operation.status;
-  // What a *forward* update would move you to: always the latest on the track.
-  // NOT status.operation.targetVersion — that is the last *completed* operation's
-  // target, which is historical and can be older than the current version. Reusing
-  // it here surfaced a phantom "downgrade" (e.g. 135 → 132) on the available card.
-  const availableTarget = status.latestOnTrack ?? status.operation.targetVersion;
-  // What a live server-side operation is installing — authoritative only while that
-  // operation is actually running/scheduled. For a client-initiated apply the server
-  // op has not yet flipped to running, so fall back to availableTarget; the
-  // "Updating to…" label then never echoes the stale completed-op target.
-  const serverInProgress = op === 'scheduled' || op === 'running';
-  const inProgressTarget = serverInProgress
-    ? status.operation.targetVersion ?? availableTarget
-    : availableTarget;
-  const inProgress = phase === 'applying' || op === 'scheduled' || op === 'running';
   const completedAt = status.operation.completedAt;
   const failureFresh = op === 'failed' && isFailureFresh(completedAt);
   const checkFailed = checkMutation.isError;
@@ -158,25 +77,11 @@ export default function RuntimeUpgradeRow() {
     />
   ) : undefined;
 
-  // Running agents we'd drain — names the upgrade confirm. Queued items are NOT
-  // blockers in drain mode (the new worker picks them up), so filter to running.
-  const runningNames = runningBlockerNames(status.gate.blockers, agents);
-
   // Honest resume echo for the upgrade path: "N agents resumed" rides the
   // version-flip surface (the "Up to date" row), gated on the same drain-vs-
   // fallback + resumedCount + freshness rule as the restart toast.
   const upgradeEcho = restartEcho(echoSignal(status.operation));
   const upgradeResumed = upgradeEcho?.kind === 'resumed' ? upgradeEcho.count : null;
-
-  // All idle → execute immediately (no modal). Agents working → confirm with
-  // continuity copy naming them. Shared by the Upgrade button and Retry.
-  function requestUpgrade() {
-    if (runningNames.length > 0) {
-      setPhase('confirming');
-    } else {
-      void performUpgrade();
-    }
-  }
 
   let content: React.ReactNode;
   if (inProgress) {
@@ -257,7 +162,7 @@ export default function RuntimeUpgradeRow() {
           kind="upgrade"
           runningNames={runningNames}
           target={availableTarget}
-          onCancel={() => setPhase('idle')}
+          onCancel={cancelConfirm}
           onConfirm={() => void performUpgrade()}
         />
       )}
@@ -484,21 +389,6 @@ function CheckFailedLabel() {
 /** Stacked layout kicks in once a version pair won't sit comfortably on one row. */
 function isLongPair(a: string, b: string): boolean {
   return a.length > 12 || b.length > 12 || a.length + b.length > 22;
-}
-
-/**
- * Names the agents we'd drain (running only). Queued items are not blockers in
- * drain mode, so they're filtered out — naming a queued agent in the confirm
- * would be wrong (it's never interrupted).
- */
-function runningBlockerNames(
-  blockers: RuntimeUpgradeGateBlocker[],
-  agents: { id: string; profile?: { displayName?: string } }[],
-): string[] {
-  const nameById = new Map(agents.map((a) => [a.id, agentDisplayName(a)]));
-  return blockers
-    .filter((b) => b.status === 'running')
-    .map((b) => nameById.get(b.agentId) ?? b.agentId);
 }
 
 /** Map the upgrade operation's restart result into the shared echo signal. */

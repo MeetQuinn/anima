@@ -1,7 +1,6 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { createPortal } from 'react-dom';
-import { RefreshCw, X } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import {
   applyProviderCliUpdate,
   cancelProviderLogin,
@@ -15,7 +14,6 @@ import {
   startProviderLogin,
 } from '@/api/system';
 import { queryKeys } from '@/lib/query-keys';
-import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { useNow } from '@/hooks/useNow';
 import { useConfirm } from '@/hooks/useConfirm';
 import { useProviderCliStatus } from '@/hooks/useProviderCliStatus';
@@ -25,20 +23,18 @@ import type { ProviderCliRow } from '@shared/provider-cli';
 import type { ProviderUsageKind, ProviderUsageRow } from '@shared/provider-usage';
 import type { ProviderContextLimitRow } from '@shared/provider-context-limits';
 import { providerCatalogEntry } from '@shared/provider-catalog';
-import { ProviderUnit } from './usage/ProviderUnit';
-import { UsageSkeleton } from './usage/UsageSkeleton';
-import { loadExpandedProviders, persistExpandedProviders } from './usage/expanded-providers';
-import { formatAgo } from './usage/format';
-
-interface Props {
-  onClose: () => void;
-}
+import { ProviderUnit } from '@/components/usage/ProviderUnit';
+import { UsageSkeleton } from '@/components/usage/UsageSkeleton';
+import { loadExpandedProviders, persistExpandedProviders } from '@/components/usage/expanded-providers';
+import { formatAgo } from '@/components/usage/format';
 
 // ---------------------------------------------------------------------------
-// UsagePanel
+// ProvidersPage — the Providers settings page. Formerly the `UsagePanel`
+// portal dialog; the settings shell now owns the chrome (title, back, URL) and
+// this component is only the content. Provider logic is unchanged.
 // ---------------------------------------------------------------------------
 
-export default function UsagePanel({ onClose }: Props) {
+export default function ProvidersPage() {
   const queryClient = useQueryClient();
   const { confirm, modal } = useConfirm();
   const [expandedProviders, setExpandedProviders] = useState<Record<string, true>>(loadExpandedProviders);
@@ -88,35 +84,6 @@ export default function UsagePanel({ onClose }: Props) {
 
   // Ticks every minute — keeps reset countdowns and "updated X ago" current.
   const now = useNow();
-
-  // Focus lifecycle. Both call sites render this as `{open && <UsagePanel/>}`
-  // and there is no early return past the dialog, so "mounted" already IS the
-  // open state and the hook can be handed the constant.
-  //
-  // No `initialFocusRef`. Neither header control is a safe landing spot: Close
-  // undoes the action that opened the panel, and Refresh re-checks every
-  // provider CLI and re-reads provider usage — so a keyboard user who opens the
-  // panel and presses Enter would fire a machine-wide provider sweep they never
-  // asked for. A confirm lands on Cancel because a confirm ASKS something and
-  // Cancel is the safe answer; a panel asks nothing. Focus lands on the
-  // container, which the hook keeps as a real resting place and Tab leaves at
-  // once. Same reading as the Server panel, which is the same chrome.
-  //
-  // No `descriptionId`: the body is provider rows, not prose.
-  //
-  // `titleId` replaces the hardcoded `aria-label="Providers"` so the announced
-  // name and the visible header cannot drift apart.
-  const { dialogRef, titleId, isTopmostDialog } = useDialogFocus(true);
-
-  // Esc to close — but only while nothing is layered over the panel.
-  // `isTopmostDialog()` covers ConfirmModal opened from CLI update.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isTopmostDialog()) onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, isTopmostDialog]);
 
   const usageCheckedAt = usageData?.providers.reduce<string | undefined>((latest, row) => {
     if (!latest) return row.checkedAt;
@@ -260,54 +227,25 @@ export default function UsagePanel({ onClose }: Props) {
 
   return (
     <Fragment>
-      {createPortal(
-        <div className="fixed inset-0 z-50">
-          {/* Desktop backdrop — click to close */}
-          <div className="hidden md:block fixed inset-0 bg-page/70 backdrop-blur-sm" onClick={onClose} />
+      {/* Toolbar — the dialog header's right-hand controls, now a row above the
+          list: "checked N ago" + Refresh. Close is gone; the shell has Back. */}
+      <div className="flex min-h-[44px] items-center justify-end gap-2 border-b border-border-soft">
+        {checkedAt && (
+          <span className="font-sans text-[10px] text-text-subtle">checked {formatAgo(checkedAt, now)}</span>
+        )}
+        <button
+          onClick={() => void refreshAll()}
+          disabled={fetching}
+          className="flex h-[44px] w-[44px] items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40 md:h-7 md:w-7"
+          aria-label="Refresh providers"
+          title="Refresh"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${fetching ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
 
-          <div
-            ref={dialogRef}
-            tabIndex={-1}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby={titleId}
-            className={[
-              'relative flex h-full w-full flex-col bg-surface',
-              'md:absolute md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2',
-              'md:h-auto md:max-h-[calc(100dvh-4rem)] md:w-[min(640px,calc(100vw-2rem))] md:max-w-none md:rounded-sm md:border md:border-border-soft md:shadow-deep',
-            ].join(' ')}
-            style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
-          >
-            {/* ── Panel header ── */}
-            <div className="flex h-14 shrink-0 items-center justify-between border-b border-border-soft px-3 md:h-10">
-              <span id={titleId} className="caps text-text">
-                Providers
-              </span>
-              <div className="flex items-center gap-2">
-                {checkedAt && (
-                  <span className="font-sans text-[10px] text-text-subtle">checked {formatAgo(checkedAt, now)}</span>
-                )}
-                <button
-                  onClick={() => void refreshAll()}
-                  disabled={fetching}
-                  className="flex h-[44px] w-[44px] items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40 md:h-7 md:w-7"
-                  aria-label="Refresh providers"
-                  title="Refresh"
-                >
-                  <RefreshCw className={`h-3.5 w-3.5 ${fetching ? 'animate-spin' : ''}`} />
-                </button>
-                <button
-                  onClick={onClose}
-                  className="flex h-[44px] w-[44px] items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent md:h-7 md:w-7"
-                  aria-label="Close providers panel"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
-
-            {/* ── Body ── */}
-            <div className="flex-1 overflow-y-auto px-4 py-5 md:px-6">
+      {/* ── Body ── */}
+      <div className="py-5">
               {usageLoading || cliLoading ? (
                 <div className="space-y-6">
                   <UsageSkeleton />
@@ -385,11 +323,7 @@ export default function UsagePanel({ onClose }: Props) {
               ) : (
                 <p className="font-serif italic text-[13px] text-text-subtle">No provider CLIs found.</p>
               )}
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+      </div>
       {modal}
     </Fragment>
   );

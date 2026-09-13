@@ -70,6 +70,14 @@ export const router = createBrowserRouter([
         path: 'kb/:id/*',
         lazy: () => import('./views/kb').then((m) => ({ Component: m.default })),
       },
+      // Settings — /settings/:page. Standalone full-screen surface; Layout
+      // renders it without the agents sidebar and skips the agent reconciler.
+      // The bare `/settings` is the list level on mobile and redirects to the
+      // first page on desktop (the view decides, via useIsMobile).
+      {
+        path: 'settings/:page?',
+        lazy: () => import('./views/settings').then((m) => ({ Component: m.default })),
+      },
     ],
   },
 ]);
