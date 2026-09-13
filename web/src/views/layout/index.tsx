@@ -21,6 +21,7 @@ import MobileTopBar from './MobileTopBar';
 import MobileBottomNav from './MobileBottomNav';
 import MobileNavScreen from './MobileNavScreen';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { isSettingsPath } from '@/views/settings/pages';
 
 function readSidebarCollapsed(): boolean {
   try {
@@ -109,6 +110,10 @@ export default function Layout() {
 
   // Top-level Kb surface lives outside the agent/tab grammar.
   const kbLocation = parseKbPath(location.pathname);
+  // Settings is its own full-screen surface: no agents sidebar, no mobile
+  // screens, no reconciler (which would otherwise bounce `/settings` to an
+  // agent because the path has no agentId).
+  const settingsLocation = isSettingsPath(location.pathname);
 
   // Derive agentId from URL.
   const { agentId } = parseLocation(location.pathname);
@@ -149,10 +154,19 @@ export default function Layout() {
   // Mobile Screen 1: full-screen nav list — completely replaces the normal layout.
   const showMobileNav = isMobile && !agentId && !kbLocation;
 
+  if (settingsLocation) {
+    return (
+      <>
+        <RestartEchoToast />
+        <Outlet />
+      </>
+    );
+  }
+
   return (
     <>
       {/* App-level: honest post-restart echo, survives the restart's page reload
-          (which closes the Server panel). Portals to body. */}
+          (which leaves the Settings surface). Portals to body. */}
       <RestartEchoToast />
 
       {!kbLocation && <AgentReconciler disabled={reconcilerDisabled} />}
