@@ -21,26 +21,40 @@ export function ContextOccupancy({ stats }: { stats?: ProviderSessionStatsSummar
   const used = stats.currentContextTokens;
   const compactWindow = stats.autoCompactWindow;
   const modelWindow = stats.contextWindow;
-  const gauge =
-    compactWindow && compactWindow > 0
+  // Prefer "% to compact" when the compact threshold is within the model window.
+  // If auto-compact is set above the model window (e.g. Claude default 272k vs a
+  // 200k model), the model window is the binding constraint — use it as denom.
+  const compactIsBinding =
+    !!compactWindow &&
+    compactWindow > 0 &&
+    (modelWindow === undefined || modelWindow <= 0 || compactWindow <= modelWindow);
+  const gauge = compactIsBinding
+    ? {
+        denom: compactWindow!,
+        label: 'to compact',
+        detail: [
+          `${formatTokens(used)} / ${formatTokens(compactWindow!)}`,
+          modelWindow ? `model window ${formatTokens(modelWindow)}` : null,
+          'as of latest activity',
+        ]
+          .filter(Boolean)
+          .join(' · '),
+      }
+    : modelWindow && modelWindow > 0
       ? {
-          denom: compactWindow,
-          label: 'to compact',
+          denom: modelWindow,
+          label: 'full',
           detail: [
-            `${formatTokens(used)} / ${formatTokens(compactWindow)}`,
-            modelWindow ? `model window ${formatTokens(modelWindow)}` : null,
+            `${formatTokens(used)} / ${formatTokens(modelWindow)} model window`,
+            compactWindow && compactWindow > 0
+              ? `auto-compact ${formatTokens(compactWindow)}`
+              : null,
             'as of latest activity',
           ]
             .filter(Boolean)
             .join(' · '),
         }
-      : modelWindow && modelWindow > 0
-        ? {
-            denom: modelWindow,
-            label: 'full',
-            detail: `${formatTokens(used)} / ${formatTokens(modelWindow)} model window · as of latest activity`,
-          }
-        : null;
+      : null;
   if (gauge) {
     const pct = Math.min(100, Math.round((used / gauge.denom) * 100));
     const fill = pct >= 90 ? 'bg-health-error' : pct >= 75 ? 'bg-health-warn' : 'bg-accent';
