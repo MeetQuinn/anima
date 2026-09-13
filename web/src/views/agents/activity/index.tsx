@@ -525,7 +525,7 @@ export default function Activity() {
   const contentRef = useRef<HTMLDivElement>(null);
   const [retryingDeferredId, setRetryingDeferredId] = useState<string | null>(null);
 
-  const { activityQuery, messageQuery, activitiesData, conversationItems, stepItems } =
+  const { activityQuery, messageQuery, liveError, activitiesData, conversationItems, stepItems } =
     useActivityFeeds(agentId);
 
   async function handleRetryDeferred(itemId: string) {
@@ -541,7 +541,8 @@ export default function Activity() {
     }
   }
 
-  const feedError = messageQuery.error;
+  // The live-tail probe fails independently of the page loads; surface either.
+  const feedError = messageQuery.error ?? liveError;
   const loadingActivities = messageQuery.isLoading;
 
   const currentStatus = agentStatuses.find((s) => s.agentId === agentId);

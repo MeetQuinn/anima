@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { activityRow, activityIsFailure } from '@/lib/activities';
 import { emojiGlyph, replaceEmojiShortcodes } from '@/lib/emoji';
 import { clockHM } from '@/lib/format';
@@ -86,13 +86,49 @@ function outputLinePreview(text: string): string {
   return line.replace(/\*{1,3}|_{1,3}|`+|~~|^#+\s*/g, '').trim();
 }
 
-export function StepRow({
-  item,
-  time,
-}: {
-  item: Extract<ActivityFeedItem, { kind: 'step' }>;
-  time: string;
-}) {
+type StepItem = Extract<ActivityFeedItem, { kind: 'step' }>;
+
+// Step items are rebuilt (new wrapper objects) every time the activity feed
+// changes, but the activity RECORDS inside them keep identity across polls
+// (structural sharing in the query cache). Compare on what the row actually
+// renders from — the record, the time label, and the subagent stream shape —
+// so a poll that appends one event re-renders one row, not two thousand.
+function sameSubagentStreams(
+  a: SubagentStream[] | undefined,
+  b: SubagentStream[] | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const sa = a[i]!;
+    const sb = b[i]!;
+    if (sa.subRunId !== sb.subRunId || sa.items.length !== sb.items.length) return false;
+    for (let j = 0; j < sa.items.length; j += 1) {
+      const ia = sa.items[j]!;
+      const ib = sb.items[j]!;
+      if (ia.kind !== ib.kind) return false;
+      if (ia.kind === 'step' && ib.kind === 'step') {
+        if (ia.activity !== ib.activity) return false;
+      } else if (ia.timestamp !== ib.timestamp) return false;
+    }
+  }
+  return true;
+}
+
+export function stepRowPropsEqual(
+  prev: { item: StepItem; time: string },
+  next: { item: StepItem; time: string },
+): boolean {
+  return (
+    prev.time === next.time &&
+    prev.item.activity === next.item.activity &&
+    sameSubagentStreams(prev.item.subagentStreams, next.item.subagentStreams)
+  );
+}
+
+export const StepRow = memo(StepRowImpl, stepRowPropsEqual);
+
+function StepRowImpl({ item, time }: { item: StepItem; time: string }) {
   const [streamsOpen, setStreamsOpen] = useState(false);
   const row = activityRow(item.activity);
   // Unknown activity types have no useful mapping — suppress entirely rather
@@ -178,6 +214,7 @@ export function StepRow({
         title={row.title}
         secondary={secondary}
         expandableBody={expandableBody}
+        measureKey={secondaryText ?? ''}
       />
       {hasSubagents && streamsOpen && (
         <SubagentStreams
@@ -270,6 +307,7 @@ function SubagentStreamSection({
               title={row.title}
               secondary={secondary}
               expandableBody={expandableBody}
+              measureKey={row.target ?? ''}
             />
           );
         }

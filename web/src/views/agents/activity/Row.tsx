@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AlertCircle, Bell, ChevronDown } from 'lucide-react';
 import type { SurfaceChip } from '@/lib/activity-feed';
 
@@ -49,6 +49,7 @@ export function Row({
   voice,
   failed,
   expandableBody,
+  measureKey,
 }: {
   time: string;
   dotColor: string;
@@ -66,6 +67,10 @@ export function Row({
     full: ReactNode;
     upstreamTruncated?: boolean;
   };
+  // Stable string describing the secondary's content (e.g. its text). The
+  // overflow measurement re-runs when it changes; without it the measurement
+  // runs once per mount + on expand toggles + on real element resizes.
+  measureKey?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
@@ -75,7 +80,15 @@ export function Row({
   // ResizeObserver setup entirely for rows that don't opt in.
   const optedIn = !!expandableBody && !!secondary;
 
-  useEffect(() => {
+  // Layout effect, not a passive effect: the first measurement runs before the
+  // browser paints, so a row that turns out clickable takes its min-h-[44px]
+  // on its first frame instead of painting at ~40px and growing a frame later
+  // (measured as a layout shift per newly mounted row on a busy feed).
+  // `measureKey` (a string the caller derives from the secondary's content)
+  // replaces `secondary` in the deps: callers rebuild the secondary JSX every
+  // render, and keying on that identity tore the ResizeObserver down and back
+  // up on every poll (~120k constructions per 15s on a 2k-row feed).
+  useLayoutEffect(() => {
     if (!optedIn) return;
     const el = secondaryRef.current;
     if (!el) return;
@@ -84,7 +97,7 @@ export function Row({
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [optedIn, secondary, expanded]);
+  }, [optedIn, measureKey, expanded]);
 
   const upstreamTruncated = !!expandableBody?.upstreamTruncated;
   const expandable = optedIn && (overflowing || upstreamTruncated);
