@@ -45,27 +45,50 @@ export function mergeMessagePages(
   return { entries: Array.from(messageMap.values()) };
 }
 
+// The conversation spine is built in two halves that change at different
+// rates: message rows follow the message ledger; send-hold rows follow the
+// activity feed. Keeping them separate lets the view memoise each half on its
+// own input, so an activity-only poll (the common case while an agent works)
+// keeps every message item's identity and the memoised message rows skip.
+export function buildMessageConversationItems(
+  messagesData: Pick<AgentMessageHistoryPage, 'entries'> | undefined,
+): ActivityFeedItem[] {
+  if (!messagesData) return [];
+  return buildMessageFeed(messagesData).filter(
+    (item) => isMessageItem(item) || item.kind === 'system-event',
+  );
+}
+
+// Send-hold rows live only on the activity stream (never the message ledger).
+// They merge into the conversation spine so held never silently vanishes and
+// never renders as an empty message-out.
+export function buildHeldConversationItems(
+  activitiesData: Pick<AgentActivityFeedPage, 'events'> | undefined,
+): ActivityFeedItem[] {
+  if (!activitiesData) return [];
+  return buildActivityFeed(activitiesData, false).filter(
+    (item): item is Extract<ActivityFeedItem, { kind: 'system-event' }> =>
+      item.kind === 'system-event' && item.eventKind === 'held',
+  );
+}
+
+export function combineConversationItems(
+  fromMessages: ActivityFeedItem[],
+  fromHeld: ActivityFeedItem[],
+): ActivityFeedItem[] {
+  if (fromHeld.length === 0) return fromMessages;
+  return [...fromMessages, ...fromHeld].sort((a, b) =>
+    a.timestamp.localeCompare(b.timestamp),
+  );
+}
+
 export function buildConversationItems(
   messagesData: Pick<AgentMessageHistoryPage, 'entries'> | undefined,
   activitiesData?: Pick<AgentActivityFeedPage, 'events'> | undefined,
 ): ActivityFeedItem[] {
-  const fromMessages = messagesData
-    ? buildMessageFeed(messagesData).filter(
-        (item) => isMessageItem(item) || item.kind === 'system-event',
-      )
-    : [];
-  // Send-hold rows live only on the activity stream (never the message ledger).
-  // Merge them into the conversation spine so held never silently vanishes and
-  // never renders as an empty message-out.
-  const fromHeld = activitiesData
-    ? buildActivityFeed(activitiesData, false).filter(
-        (item): item is Extract<ActivityFeedItem, { kind: 'system-event' }> =>
-          item.kind === 'system-event' && item.eventKind === 'held',
-      )
-    : [];
-  if (fromHeld.length === 0) return fromMessages;
-  return [...fromMessages, ...fromHeld].sort((a, b) =>
-    a.timestamp.localeCompare(b.timestamp),
+  return combineConversationItems(
+    buildMessageConversationItems(messagesData),
+    buildHeldConversationItems(activitiesData),
   );
 }
 

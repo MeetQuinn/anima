@@ -14,6 +14,10 @@ export const queryKeys = {
   // key so it never collides with the infinite agentActivities feed.
   agentIndicatorActivity: (agentId: string) => ['agent-activities', agentId, 'indicator'] as const,
   agentMessages: (agentId: string) => ['agent-messages', agentId] as const,
+  // Live tail for the Activity tab: one newest-page probe per feed (activities
+  // + messages) whose result is merged into the two infinite caches above. Own
+  // root key so invalidating either feed never re-runs the probe, and vice versa.
+  agentFeedLive: (agentId: string) => ['agent-feed-live', agentId] as const,
   // Channels detail pane: one channel's history, fetched server-side scoped to
   // the channel (not the global stream filtered client-side).
   agentChannelMessages: (agentId: string, channelId: string) =>

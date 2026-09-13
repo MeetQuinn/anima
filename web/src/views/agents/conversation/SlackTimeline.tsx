@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import {
   CornerDownRight,
   MessageSquareQuote,
@@ -264,7 +265,38 @@ function ReplyCountBadge({ count, exact }: { count: number; exact: boolean }) {
   );
 }
 
-export function MessageGroupRow({
+// Groups are rebuilt (new wrapper objects) on every render of the parent, but
+// the feed items inside them keep identity while the underlying data is
+// unchanged. Compare on the rendered inputs so a poll that touches nothing in
+// this group skips its mrkdwn re-render.
+export function messageGroupRowPropsEqual(
+  prev: { group: MessageGroup; agentId: string; threadContext?: ThreadContext },
+  next: { group: MessageGroup; agentId: string; threadContext?: ThreadContext },
+): boolean {
+  if (prev.agentId !== next.agentId || prev.threadContext !== next.threadContext) return false;
+  const a = prev.group;
+  const b = next.group;
+  if (a === b) return true;
+  if (
+    a.author.key !== b.author.key ||
+    a.author.name !== b.author.name ||
+    a.author.avatarUrl !== b.author.avatarUrl ||
+    a.surfaceKey !== b.surfaceKey ||
+    a.surface?.label !== b.surface?.label ||
+    a.surface?.channelId !== b.surface?.channelId ||
+    a.startTs !== b.startTs ||
+    a.items.length !== b.items.length
+  )
+    return false;
+  for (let i = 0; i < a.items.length; i += 1) {
+    if (a.items[i]!.item !== b.items[i]!.item || a.items[i]!.key !== b.items[i]!.key) return false;
+  }
+  return true;
+}
+
+export const MessageGroupRow = memo(MessageGroupRowImpl, messageGroupRowPropsEqual);
+
+function MessageGroupRowImpl({
   group,
   agentId,
   threadContext,
