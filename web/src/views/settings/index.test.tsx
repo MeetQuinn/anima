@@ -322,6 +322,33 @@ describe('Update Anima button: install failure', () => {
     expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
     expect(screen.getByText('token-usage-page-body')).toBeTruthy();
   });
+
+  it('keeps the error and a retry when the retry request itself is rejected while the offer is gone', async () => {
+    api.fetchRuntimeUpgrade.mockResolvedValue(upgradeStatus('available'));
+    renderAt('/settings/outreach-limits');
+    fireEvent.click(await screen.findByRole('button', { name: /^Update Anima,/ }));
+    expect(await screen.findByText(/^Installing .*…$/)).toBeTruthy();
+    api.fetchRuntimeUpgrade.mockResolvedValue(upgradeStatus('error', { operation: failedOp }));
+    const retry = await screen.findByRole('button', { name: 'Try again' }, { timeout: 3500 });
+
+    // The registry is still down: the apply request is refused outright.
+    api.applyRuntimeUpgrade.mockRejectedValueOnce(new Error('Retry rejected: package registry offline'));
+    fireEvent.click(retry);
+    await waitFor(() => expect(api.applyRuntimeUpgrade).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toMatch(/Retry rejected: package registry offline/),
+    );
+    expect(screen.queryByText(/^Installing .*…$/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Update Anima,/ })).toBeNull();
+
+    // ...and the footer still offers a way to try once more, which applies again.
+    api.applyRuntimeUpgrade.mockResolvedValueOnce({ ok: true, scheduled: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(api.applyRuntimeUpgrade).toHaveBeenCalledTimes(3));
+    expect(await screen.findByText(/^Installing .*…$/)).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('outreach-limits-page-body')).toBeTruthy();
+  });
 });
 
 describe('settings shell (mobile)', () => {

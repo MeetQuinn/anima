@@ -37,12 +37,17 @@ export default function UpdateAnimaButton() {
 
   if (!status) return null;
   const offered = status.state === 'available' && !!availableTarget;
-  const ownOperation = phase === 'applying' || installFailure !== null;
+  // Feedback for an operation THIS button owns outlives the offer: while the
+  // user is confirming, while the apply request is in flight or installing,
+  // after the worker failed the install, and after the apply request itself
+  // was rejected. Every one of those keeps the footer on screen with a retry.
+  const ownOperation = phase !== 'idle' || installFailure !== null || applyError !== null;
   if (!offered && !ownOperation) return null;
+  const showButton = offered || phase !== 'idle';
 
   return (
     <div className="border-t border-border-soft p-2">
-      {(offered || phase === 'applying') && (
+      {showButton && (
       <button
         type="button"
         onClick={requestUpgrade}
@@ -84,13 +89,14 @@ export default function UpdateAnimaButton() {
           currentVersion={status.currentVersion}
           error={installFailure.error}
           rollback={installFailure.rollback}
-          onRetry={offered ? undefined : requestUpgrade}
+          onRetry={showButton ? undefined : requestUpgrade}
         />
       )}
-      {applyError && (
-        <p role="alert" className="mt-1.5 px-1 font-sans text-[11px] text-health-error">
-          {applyError}
-        </p>
+      {applyError && phase !== 'applying' && (
+        <div role="alert" className="mt-1.5 px-1 font-sans text-[11px] leading-snug text-health-error">
+          <p>{applyError}</p>
+          {!showButton && <RetryButton onRetry={requestUpgrade} />}
+        </div>
       )}
 
       {phase === 'confirming' && (
@@ -149,17 +155,22 @@ function InstallFailedNote({
       {error && (
         <p className="mt-1 break-words font-mono text-[10px] leading-relaxed text-text-muted">{error}</p>
       )}
-      {onRetry && (
-        <button
-          type="button"
-          onClick={onRetry}
-          className="mt-1.5 flex min-h-[28px] items-center gap-1.5 rounded-sm border border-border-soft px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-        >
-          <RefreshCw aria-hidden className="h-3 w-3" />
-          Try again
-        </button>
-      )}
+      {onRetry && <RetryButton onRetry={onRetry} />}
     </div>
+  );
+}
+
+/** The retry that stands in for the update button while the offer is gone. */
+function RetryButton({ onRetry }: { onRetry: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onRetry}
+      className="mt-1.5 flex min-h-[28px] items-center gap-1.5 rounded-sm border border-border-soft px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+    >
+      <RefreshCw aria-hidden className="h-3 w-3" />
+      Try again
+    </button>
   );
 }
 
