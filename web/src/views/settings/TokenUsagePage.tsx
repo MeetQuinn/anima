@@ -1,7 +1,5 @@
-import { useEffect } from 'react';
-import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, X } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import type { AgentTokenUsageSummary } from '@shared/agent-token-usage';
@@ -9,14 +7,13 @@ import { currentTokenUsageRange, fetchAgentTokenUsage } from '@/api/token-usage'
 import { agentColor, initialOf } from '@/lib/avatars';
 import { formatTokens } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
-import { useDialogFocus } from '@/hooks/useDialogFocus';
 import {
   USAGE_RAMP,
   UsageHeatmap,
   formatUsageDate,
   mergeUsageDays,
   peakUsageDay,
-} from './UsageHeatmap';
+} from '@/components/token-usage/UsageHeatmap';
 
 /**
  * How many agents the leaderboard draws. The list is cut and the heading says
@@ -42,7 +39,12 @@ const VISIBLE_AGENTS = 10;
  */
 const RANGE_LABEL = 'Past 52 weeks';
 
-export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
+/**
+ * Token usage settings page. Formerly the `TokenUsagePanel` right-hand drawer;
+ * the settings shell now owns the chrome (title, back, URL) and this component
+ * is only the content. Numbers, ranking and heatmap are unchanged.
+ */
+export default function TokenUsagePage() {
   const navigate = useNavigate();
   const range = currentTokenUsageRange();
   const { data, isLoading, isError } = useQuery({
@@ -51,55 +53,14 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
     refetchInterval: 30_000,
   });
 
-  // Focus lifecycle for the sheet: focus lands on Close, Tab stays inside, and
-  // the sidebar/mobile button that opened it gets focus back on close. Both
-  // call sites mount this component only while open, so `open` is constant true
-  // for the life of the instance.
-  //
-  // Esc stays here rather than moving into the hook: dismissal rules differ
-  // across these dialogs (some gate it on a busy commit), so the hook owns
-  // focus only.
-  const { dialogRef, initialFocusRef } = useDialogFocus(true);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
-
   const aggregateDays = mergeUsageDays(data?.agents.map((agent) => agent.days) ?? []);
   const aggregateCoverage = commonCoverageStart(data?.agents.map((agent) => agent.coverageStartedAt) ?? []);
   const busiest = peakUsageDay(aggregateDays);
   const ranked = rankAgents(data?.agents ?? []).slice(0, VISIBLE_AGENTS);
   const total = data?.totalTokens ?? 0;
 
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex items-stretch justify-end bg-page/55 backdrop-blur-[2px]" onMouseDown={onClose}>
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Token usage"
-        tabIndex={-1}
-        className="flex h-full w-full max-w-[960px] flex-col border-l border-border-soft bg-surface shadow-deep"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <header className="flex shrink-0 items-center justify-between border-b border-border-soft px-5 py-4 md:px-8 md:py-5">
-          <h2 className="display text-[24px] font-semibold text-text md:text-[26px]">Token usage</h2>
-          <button
-            type="button"
-            ref={initialFocusRef}
-            onClick={onClose}
-            aria-label="Close token usage"
-            className="flex h-[44px] w-[44px] items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent md:h-9 md:w-9"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </header>
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:px-8 md:py-8">
+  return (
+        <div className="pt-2">
           {isLoading && <div className="h-64 animate-pulse rounded-sm bg-surface-elevated" />}
           {isError && <p className="font-serif text-[14px] text-text-muted">Token usage is unavailable right now.</p>}
           {data && (
@@ -153,7 +114,6 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
                         key={agent.agentId}
                         type="button"
                         onClick={() => {
-                          onClose();
                           navigate(`/agents/${encodeURIComponent(agent.agentId)}/profile`);
                         }}
                         className="group grid w-full items-center gap-x-4 gap-y-2 py-3.5 text-left hover:bg-surface-elevated/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent md:grid-cols-[minmax(150px,0.5fr)_1fr_112px_16px] md:px-1"
@@ -221,9 +181,6 @@ export default function TokenUsagePanel({ onClose }: { onClose: () => void }) {
             </div>
           )}
         </div>
-      </section>
-    </div>,
-    document.body,
   );
 }
 

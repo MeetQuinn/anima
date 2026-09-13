@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ProviderLoginRow } from '@shared/provider-login';
 
-import UsagePanel from './UsagePanel';
+import ProvidersPage from './ProvidersPage';
 
 const contextApi = vi.hoisted(() => ({
   save: vi.fn(),
@@ -147,12 +147,12 @@ function renderPanel() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <UsagePanel onClose={() => {}} />
+      <ProvidersPage />
     </QueryClientProvider>,
   );
 }
 
-describe('UsagePanel version slot', () => {
+describe('ProvidersPage version slot', () => {
   beforeEach(() => {
     window.localStorage.clear();
   });

@@ -16,13 +16,17 @@ import { BusyConfirmModal } from './restart-shared';
 // It cancelled keypresses that were nobody's boundary and moved focus through a
 // control in the dialog underneath on its way.
 //
-// The real shapes this unblocks, both of which have since adopted the hook and
-// are covered against the real components in `ServerPanel.focus.test.tsx` and
-// `TeamModals.focus.test.tsx`. The doubles here stay because they can be posed
-// in orderings the real ones cannot reach — closing a lower dialog first, three
-// layers deep, both unmounting in one commit:
-//   - ServerPanel hosts RestartButton / RuntimeUpgradeRow, both of which mount
-//     BusyConfirmModal — itself a useDialogFocus instance, portaled to body.
+// The real shapes this unblocks, both of which have since adopted the hook.
+// TeamModals is covered against the real components in
+// `TeamModals.focus.test.tsx`; the ServerPanel drawer has since become the
+// routed Server settings page (no dialog of its own), so its focus file is
+// gone and the outer-dialog double below is the only place its old shape is
+// still posed. The doubles stay because they can be posed in orderings the
+// real ones cannot reach — closing a lower dialog first, three layers deep,
+// both unmounting in one commit:
+//   - The former ServerPanel hosted RestartButton / RuntimeUpgradeRow, both of
+//     which mount BusyConfirmModal — itself a useDialogFocus instance, portaled
+//     to body.
 //   - TeamModals renders its own dialog plus a second aria-modal picker portal,
 //     both mounted at once.
 //
@@ -527,8 +531,9 @@ describe('useDialogFocus — initial focus is not button-only', () => {
 //
 // Added so a call site that owns a DISMISSAL rule can ask whether anything sits
 // above it. Escape stays out of the hook, so the hook answers the question and
-// the call site decides what to do with the answer; ServerPanel is the first
-// caller (`ServerPanel.focus.test.tsx` pins what it does with it).
+// the call site decides what to do with the answer; the ServerPanel drawer was
+// the first caller (its Escape cases below refer to that since-retired shape;
+// the measurements were taken while the file still existed).
 //
 // Zero-argument and bound to the instance on purpose: a caller can ask only
 // about ITSELF, never name or reach another dialog, so the stack and the tokens

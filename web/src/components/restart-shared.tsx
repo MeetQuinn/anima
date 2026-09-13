@@ -34,10 +34,11 @@ export function runningSubject(names: string[]): string {
 
 /**
  * Full-screen wait overlay shown while services restart (RestartButton) or an
- * update installs (RuntimeUpgrade). Portal to body — same drawer-trapping
- * reason as BusyConfirmModal: both triggers can live inside the ServerPanel,
- * whose positioned/scroll container would otherwise confine `fixed inset-0`
- * to the ~330px drawer. The upgrade variant stacks at z-[60]; pass `above`.
+ * update installs (RuntimeUpgrade). Portal to body — same containment reason
+ * as BusyConfirmModal: the triggers live inside scrolling settings columns
+ * (and used to live inside the Server drawer), whose positioned/scroll
+ * container would otherwise confine `fixed inset-0` to that column. The
+ * upgrade variant stacks at z-[60]; pass `above`.
  */
 export function ProgressOverlay({
   title,
@@ -110,9 +111,9 @@ export function BusyConfirmModal({
   const confirmLabel = kind === 'upgrade' ? 'Update & restart' : 'Restart now';
   const ConfirmIcon = kind === 'upgrade' ? Download : RefreshCw;
 
-  // Portal to body: the trigger lives inside the ServerPanel drawer (an
-  // absolutely-positioned, overflow-scrolling container), which traps a plain
-  // `fixed inset-0` child to the ~330px drawer instead of the viewport. Rendering
+  // Portal to body: the trigger lives inside a scrolling settings column (and
+  // used to live inside the Server drawer), an overflow container that traps a
+  // plain `fixed inset-0` child to itself instead of the viewport. Rendering
   // into <body> guarantees the backdrop covers the whole app and the dialog
   // centers on the real viewport. (Caught in busy-path canary pass-2.)
   return createPortal(

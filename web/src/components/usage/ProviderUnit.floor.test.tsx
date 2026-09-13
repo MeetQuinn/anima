@@ -5,7 +5,7 @@ import type { ProviderCliRow } from '@shared/provider-cli';
 import type { ProviderRuntimeCommandRow } from '@shared/provider-runtime-commands';
 import { ProviderUnit } from './ProviderUnit';
 
-// ProviderUnit is mounted alone: its parent (UsagePanel) fetches on mount and
+// ProviderUnit is mounted alone: its parent (ProvidersPage) fetches on mount and
 // must never be rendered in a test that only needs a class string.
 const management: ProviderCliRow = {
   agents: [],
