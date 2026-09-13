@@ -15,9 +15,17 @@ import type { AgentMessageHistoryPage } from '@shared/messages';
 //     the server rewrote is replaced while identical records keep identity;
 //   - when nothing changed the SAME `InfiniteData` reference comes back, so the
 //     observers do not notify and React does not re-render.
-// `gap` flags the one case a single page cannot cover: the newest page shares
-// no item with a non-empty cache, i.e. more than a page of items arrived since
-// the last poll. The caller falls back to a full refetch for that poll.
+// Two cases a plain merge cannot cover:
+//   - the cache holds no items at all (the feed was empty when first loaded):
+//     its page 0 carries `nextCursor: null`, so appending the newest page would
+//     keep "no older pages" even when more than a page arrived. The newest page
+//     REPLACES page 0 wholesale, cursor included, so paging keeps working;
+//   - `gap`: the newest page shares no item with a non-empty cache, i.e. more
+//     than a page of items arrived since the last poll. Nothing is written in
+//     that case (writing the tail would make the next poll overlap and hide
+//     the hole for good); the caller re-fetches the feed, and as long as that
+//     re-fetch has not succeeded every following poll sees the same gap and
+//     asks again.
 
 export interface LiveMergeResult<TData> {
   data: TData;
@@ -67,6 +75,7 @@ function mergeLatestItems<T>(
   }
 
   const gap = cached > 0 && latest.length > 0 && overlap === 0;
+  if (gap) return { pages: null, added: 0, replaced: 0, gap };
   let replaced = 0;
   for (const byIndex of replacements.values()) replaced += byIndex.size;
   if (fresh.length === 0 && replaced === 0) return { pages: null, added: 0, replaced: 0, gap };
@@ -87,6 +96,22 @@ function unchanged<TData>(data: TData, gap = false): LiveMergeResult<TData> {
   return { data, changed: false, added: 0, replaced: 0, gap };
 }
 
+/** Empty cache: the newest page becomes page 0 as served, cursor included. */
+function adoptFirstPage<TPage>(
+  prev: InfiniteData<TPage, string | undefined>,
+  latest: TPage,
+  count: number,
+): LiveMergeResult<InfiniteData<TPage, string | undefined>> {
+  if (count === 0) return unchanged(prev);
+  return {
+    data: { pages: [latest], pageParams: [prev.pageParams[0]] },
+    changed: true,
+    added: count,
+    replaced: 0,
+    gap: false,
+  };
+}
+
 /** Activity pages are oldest→newest within a page; fresh events go to the END of page 0. */
 export function mergeLatestActivityPage(
   prev: ActivityData | undefined,
@@ -94,6 +119,7 @@ export function mergeLatestActivityPage(
 ): LiveMergeResult<ActivityData | undefined> {
   if (!prev || prev.pages.length === 0) return unchanged(prev);
   const inputs = prev.pages.map((page) => page.events ?? []);
+  if (inputs.every((page) => page.length === 0)) return adoptFirstPage(prev, latest, latest.events?.length ?? 0);
   const merged = mergeLatestItems(inputs, latest.events ?? [], (event) => event.activityId, 'end');
   if (!merged.pages) return unchanged(prev, merged.gap);
   const pages = prev.pages.map((page, pi) =>
@@ -115,6 +141,7 @@ export function mergeLatestMessagePage(
 ): LiveMergeResult<MessageData | undefined> {
   if (!prev || prev.pages.length === 0) return unchanged(prev);
   const inputs = prev.pages.map((page) => page.entries ?? []);
+  if (inputs.every((page) => page.length === 0)) return adoptFirstPage(prev, latest, latest.entries?.length ?? 0);
   const merged = mergeLatestItems(inputs, latest.entries ?? [], (entry) => entry.messageId, 'start');
   if (!merged.pages) return unchanged(prev, merged.gap);
   const pages = prev.pages.map((page, pi) =>

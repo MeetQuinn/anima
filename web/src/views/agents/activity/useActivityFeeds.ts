@@ -15,6 +15,13 @@ import type { AgentActivityFeedPage } from '@shared/activity';
 import type { AgentMessageHistoryPage } from '@shared/messages';
 
 const PAGE_LIMIT = 100;
+// Older activity pages (the coverage auto-fetch walking back until the step
+// layer spans the loaded conversation) are fetched in larger chunks: the
+// server caps a page at 500 (`normalizeHistoryLimit`). A 2300-row feed used to
+// arrive as ~23 renders of a growing list, each one blocking input while the
+// tab opened; five chunks do the same work with far fewer full re-renders.
+// The first page and the live probe stay at 100 so the first paint is quick.
+const OLDER_PAGE_LIMIT = 500;
 
 type ActivityData = InfiniteData<AgentActivityFeedPage, string | undefined>;
 type MessageData = InfiniteData<AgentMessageHistoryPage, string | undefined>;
@@ -40,7 +47,8 @@ export function useActivityFeeds(agentId: string | undefined) {
 
   const activityQuery = useInfiniteQuery({
     queryKey: activitiesKey,
-    queryFn: ({ pageParam }) => fetchAgentActivities(agentId!, PAGE_LIMIT, pageParam),
+    queryFn: ({ pageParam }) =>
+      fetchAgentActivities(agentId!, pageParam ? OLDER_PAGE_LIMIT : PAGE_LIMIT, pageParam),
     enabled: !!agentId,
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
@@ -55,6 +63,8 @@ export function useActivityFeeds(agentId: string | undefined) {
   // waits for both first pages to settle (success or error) so it never races
   // the initial load; an errored feed is re-kicked from the probe instead,
   // which is the retry the old per-query refetchInterval used to provide.
+  // The two feeds are independent: one endpoint failing never stops the other
+  // from merging; the failure is re-thrown afterwards so it still surfaces.
   const initialSettled = !messageQuery.isPending && !activityQuery.isPending;
   const liveQuery = useQuery({
     queryKey: queryKeys.agentFeedLive(agentId ?? ''),
@@ -62,7 +72,7 @@ export function useActivityFeeds(agentId: string | undefined) {
     refetchInterval: refetchIntervals.agentActivities,
     queryFn: async () => {
       const id = agentId!;
-      const [latestActivities, latestMessages] = await Promise.all([
+      const [activitiesResult, messagesResult] = await Promise.allSettled([
         fetchAgentActivities(id, PAGE_LIMIT),
         fetchAgentMessages(id, { limit: PAGE_LIMIT }),
       ]);
@@ -74,34 +84,43 @@ export function useActivityFeeds(agentId: string | undefined) {
       // While an infinite query is mid-fetch (older page / full refetch), its
       // result is built from the pages captured at fetch start, so anything we
       // merged in the meantime would vanish until the next poll. Skip this
-      // poll's merge for that feed instead of producing a flicker.
-      const activityState = queryClient.getQueryState(activitiesKey);
-      if (activityState?.fetchStatus !== 'fetching') {
-        const prev = queryClient.getQueryData<ActivityData>(activitiesKey);
-        if (!prev && activityState?.status === 'error') {
-          bridge(activitiesKey, 'activities');
-        } else {
-          const merged = mergeLatestActivityPage(prev, latestActivities);
-          if (merged.changed) queryClient.setQueryData<ActivityData>(activitiesKey, merged.data);
-          summary.activities = merged.added + merged.replaced;
-          // More than a page arrived since the last poll: the newest page no
-          // longer overlaps the cache, so a single page cannot bridge it. Fall
-          // back to the full refetch for this one poll.
-          if (merged.gap) bridge(activitiesKey, 'activities');
+      // poll's merge for that feed instead of producing a flicker; the next
+      // poll picks the items up.
+      if (activitiesResult.status === 'fulfilled') {
+        const activityState = queryClient.getQueryState(activitiesKey);
+        if (activityState?.fetchStatus !== 'fetching') {
+          const prev = queryClient.getQueryData<ActivityData>(activitiesKey);
+          if (!prev && activityState?.status === 'error') {
+            bridge(activitiesKey, 'activities');
+          } else {
+            const merged = mergeLatestActivityPage(prev, activitiesResult.value);
+            if (merged.changed) queryClient.setQueryData<ActivityData>(activitiesKey, merged.data);
+            summary.activities = merged.added + merged.replaced;
+            // More than a page arrived since the last poll: the newest page no
+            // longer overlaps the cache, so a single page cannot bridge it.
+            // Nothing was written; re-fetch the feed. If that re-fetch fails
+            // the cache is unchanged, so the next poll sees the same gap and
+            // asks again until it lands.
+            if (merged.gap) bridge(activitiesKey, 'activities');
+          }
         }
       }
-      const messageState = queryClient.getQueryState(messagesKey);
-      if (messageState?.fetchStatus !== 'fetching') {
-        const prev = queryClient.getQueryData<MessageData>(messagesKey);
-        if (!prev && messageState?.status === 'error') {
-          bridge(messagesKey, 'messages');
-        } else {
-          const merged = mergeLatestMessagePage(prev, latestMessages);
-          if (merged.changed) queryClient.setQueryData<MessageData>(messagesKey, merged.data);
-          summary.messages = merged.added + merged.replaced;
-          if (merged.gap) bridge(messagesKey, 'messages');
+      if (messagesResult.status === 'fulfilled') {
+        const messageState = queryClient.getQueryState(messagesKey);
+        if (messageState?.fetchStatus !== 'fetching') {
+          const prev = queryClient.getQueryData<MessageData>(messagesKey);
+          if (!prev && messageState?.status === 'error') {
+            bridge(messagesKey, 'messages');
+          } else {
+            const merged = mergeLatestMessagePage(prev, messagesResult.value);
+            if (merged.changed) queryClient.setQueryData<MessageData>(messagesKey, merged.data);
+            summary.messages = merged.added + merged.replaced;
+            if (merged.gap) bridge(messagesKey, 'messages');
+          }
         }
       }
+      if (activitiesResult.status === 'rejected') throw activitiesResult.reason;
+      if (messagesResult.status === 'rejected') throw messagesResult.reason;
       return summary;
     },
   });

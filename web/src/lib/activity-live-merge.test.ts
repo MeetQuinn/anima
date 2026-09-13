@@ -108,9 +108,11 @@ describe('mergeLatestActivityPage', () => {
     };
     const result = mergeLatestActivityPage(prev, latest);
     expect(result.gap).toBe(true);
-    // The events are still appended (better than dropping them); the caller
-    // decides whether to bridge the gap with a full refetch.
-    expect(result.added).toBe(2);
+    // Nothing is written on a gap: appending the tail would make the next
+    // poll overlap and hide the hole if the caller's re-fetch fails.
+    expect(result.changed).toBe(false);
+    expect(result.added).toBe(0);
+    expect(result.data).toBe(prev);
     // Control: an overlapping page is not a gap.
     expect(
       mergeLatestActivityPage(prev, {
@@ -125,6 +127,26 @@ describe('mergeLatestActivityPage', () => {
     expect(mergeLatestActivityPage(undefined, latest)).toMatchObject({ changed: false, data: undefined });
     const empty: ActivityData = { pages: [], pageParams: [] };
     expect(mergeLatestActivityPage(empty, latest).data).toBe(empty);
+  });
+
+  it('adopts the newest page wholesale, cursor included, when the loaded feed was empty', () => {
+    // An empty first page carries nextCursor null; appending would keep "no
+    // older pages" even when more than a page arrived since (Milo, #732 HOLD 1).
+    const emptyFeed: ActivityData = { pages: [{ events: [], nextCursor: null }], pageParams: [undefined] };
+    const events = Array.from({ length: 100 }, (_, i) =>
+      activity(`n${i}`, `2026-09-13T12:${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}.000Z`),
+    );
+    const latest: AgentActivityFeedPage = { events, nextCursor: events[0]!.createdAt };
+    const result = mergeLatestActivityPage(emptyFeed, latest);
+    expect(result.changed).toBe(true);
+    expect(result.added).toBe(100);
+    expect(result.gap).toBe(false);
+    expect(result.data!.pages).toHaveLength(1);
+    expect(result.data!.pages[0]).toBe(latest);
+    expect(result.data!.pages[0]!.nextCursor).toBe(events[0]!.createdAt);
+    expect(result.data!.pageParams).toEqual([undefined]);
+    // Control: an empty newest page on an empty cache is still a no-op.
+    expect(mergeLatestActivityPage(emptyFeed, { events: [], nextCursor: null }).data).toBe(emptyFeed);
   });
 });
 
@@ -159,5 +181,33 @@ describe('mergeLatestMessagePage', () => {
     ]);
     expect(grown.data!.pages[0]!.entries[2]).toBe(prev.pages[0]!.entries[1]);
     expect(grown.data!.pages[1]).toBe(prev.pages[1]);
+  });
+
+  it('adopts the newest page wholesale when the loaded conversation was empty', () => {
+    const emptyFeed: MessageData = { pages: [{ entries: [], nextCursor: null }], pageParams: [undefined] };
+    const entries = Array.from({ length: 100 }, (_, i) =>
+      message(`n${i}`, `2026-09-13T12:${String(Math.floor((99 - i) / 60)).padStart(2, '0')}:${String((99 - i) % 60).padStart(2, '0')}.000Z`),
+    );
+    const latest: AgentMessageHistoryPage = { entries, nextCursor: entries[99]!.timestamp };
+    const result = mergeLatestMessagePage(emptyFeed, latest);
+    expect(result.changed).toBe(true);
+    expect(result.added).toBe(100);
+    expect(result.data!.pages[0]).toBe(latest);
+    expect(result.data!.pages[0]!.nextCursor).toBe(entries[99]!.timestamp);
+    expect(mergeLatestMessagePage(emptyFeed, { entries: [], nextCursor: null }).data).toBe(emptyFeed);
+  });
+
+  it('flags a gap without writing when the newest page shares nothing with the cache', () => {
+    const prev: MessageData = {
+      pages: [{ entries: [message('m1', '2026-09-13T10:01:00.000Z')], nextCursor: null }],
+      pageParams: [undefined],
+    };
+    const result = mergeLatestMessagePage(prev, {
+      entries: [message('z2', '2026-09-13T11:02:00.000Z'), message('z1', '2026-09-13T11:01:00.000Z')],
+      nextCursor: '2026-09-13T11:01:00.000Z',
+    });
+    expect(result.gap).toBe(true);
+    expect(result.changed).toBe(false);
+    expect(result.data).toBe(prev);
   });
 });
