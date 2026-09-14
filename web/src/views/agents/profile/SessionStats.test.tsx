@@ -15,7 +15,7 @@ function stats(
 }
 
 describe('ContextOccupancy', () => {
-  it('uses model window when auto-compact exceeds it', () => {
+  it('uses model window when auto-compact exceeds it, without printing the higher compact threshold', () => {
     render(
       <ContextOccupancy
         stats={stats({
@@ -27,9 +27,9 @@ describe('ContextOccupancy', () => {
     );
     expect(screen.getByText('45%')).toBeTruthy();
     expect(screen.getByText('full')).toBeTruthy();
-    expect(
-      screen.getByText(/90K \/ 200K model window · auto-compact 272K · as of latest activity/),
-    ).toBeTruthy();
+    expect(screen.getByText(/90K \/ 200K model window/)).toBeTruthy();
+    expect(screen.queryByText(/auto-compact/)).toBeNull();
+    expect(screen.queryByText(/as of latest activity/)).toBeNull();
   });
 
   it('keeps to-compact when compact threshold is within the model window', () => {
@@ -44,9 +44,8 @@ describe('ContextOccupancy', () => {
     );
     expect(screen.getByText('50%')).toBeTruthy();
     expect(screen.getByText('to compact')).toBeTruthy();
-    expect(
-      screen.getByText(/90K \/ 180K · model window 200K · as of latest activity/),
-    ).toBeTruthy();
+    expect(screen.getByText(/90K \/ 180K · model window 200K/)).toBeTruthy();
+    expect(screen.queryByText(/as of latest activity/)).toBeNull();
   });
 
   it('keeps to-compact when compact threshold equals the model window', () => {
@@ -61,8 +60,7 @@ describe('ContextOccupancy', () => {
     );
     expect(screen.getByText('50%')).toBeTruthy();
     expect(screen.getByText('to compact')).toBeTruthy();
-    expect(
-      screen.getByText(/100K \/ 200K · model window 200K · as of latest activity/),
-    ).toBeTruthy();
+    expect(screen.getByText(/100K \/ 200K · model window 200K/)).toBeTruthy();
+    expect(screen.queryByText(/as of latest activity/)).toBeNull();
   });
 });
