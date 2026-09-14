@@ -35,7 +35,6 @@ export function ContextOccupancy({ stats }: { stats?: ProviderSessionStatsSummar
         detail: [
           `${formatTokens(used)} / ${formatTokens(compactWindow!)}`,
           modelWindow ? `model window ${formatTokens(modelWindow)}` : null,
-          'as of latest activity',
         ]
           .filter(Boolean)
           .join(' · '),
@@ -44,15 +43,9 @@ export function ContextOccupancy({ stats }: { stats?: ProviderSessionStatsSummar
       ? {
           denom: modelWindow,
           label: 'full',
-          detail: [
-            `${formatTokens(used)} / ${formatTokens(modelWindow)} model window`,
-            compactWindow && compactWindow > 0
-              ? `auto-compact ${formatTokens(compactWindow)}`
-              : null,
-            'as of latest activity',
-          ]
-            .filter(Boolean)
-            .join(' · '),
+          // Model window is the binding constraint — don't also print a
+          // higher auto-compact threshold (e.g. Claude default 272k).
+          detail: `${formatTokens(used)} / ${formatTokens(modelWindow)} model window`,
         }
       : null;
   if (gauge) {
@@ -76,9 +69,6 @@ export function ContextOccupancy({ stats }: { stats?: ProviderSessionStatsSummar
   return (
     <div className="min-w-0">
       <div className="font-mono text-[13px] text-text">{formatTokens(used)} tokens</div>
-      <div className="font-sans mt-1 text-[11px] tracking-wide text-text-subtle">
-        as of latest activity
-      </div>
     </div>
   );
 }
