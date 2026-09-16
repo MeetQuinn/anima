@@ -4,7 +4,7 @@ import { errorMessage } from '../ids.js';
 import type { InboxItem } from '../inbox/wake-queue.service.js';
 import type { FeishuMessageClient } from '../feishu/client.js';
 import type { ProviderRetryClass } from '../providers/provider-retry.js';
-import { providerFailureReasonFromError } from '../providers/provider-failure.js';
+import { ProviderTurnFailedError, providerFailureReasonFromError } from '../providers/provider-failure.js';
 import { recordRuntimeEvent } from './activity.js';
 import { SLACK_NO_UNFURL } from '../tools/slack-message-format.js';
 
@@ -28,10 +28,12 @@ const MAX_REASON_CHARS = 160;
 
 /**
  * Short, requester-facing explanation. Deliberately plain: the person who
- * asked needs to know their message was dropped and that re-sending works —
- * not the provider's full diagnostic.
+ * asked needs the failure and a safe next step, not the provider's full diagnostic.
  */
 export function failureNoticeText(failure: RuntimeItemFailure): string {
+  if (failure.error instanceof ProviderTurnFailedError) {
+    return `⚠️ This turn failed (${failureReasonSummary(failure)}). Some actions may already have run. I haven't automatically retried; please check progress before asking me to continue.`;
+  }
   return `⚠️ I couldn't process this message (${failureReasonSummary(failure)}). Please send it again.`;
 }
 

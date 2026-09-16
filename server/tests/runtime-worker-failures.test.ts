@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,6 +10,10 @@ import { waitFor } from './helpers/harness.js';
 import { allActivities, loadState } from './helpers/state.js';
 import { AgentRuntimeWorker, MAX_RATE_LIMIT_DEFERRALS } from '../runtime/runtime-worker.js';
 import type { RuntimeItemFailure } from '../runtime/failure-notice.js';
+import { postRuntimeFailureNotice } from '../runtime/failure-notice.js';
+import { createAgentRuntime } from '../providers/factory.js';
+import { runtimeTestEnv } from './helpers/agent-runtime.js';
+import { writeTerminalCodex } from './helpers/codex-terminal.js';
 import { AgentHealthService } from '../runtime/agent-health.service.js';
 import { AgentHealthStore } from '../runtime/agent-health.store.js';
 import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
@@ -34,6 +38,64 @@ import {
   waitForInboxItemAppendedTo,
   waitForInboxItemRemoved,
 } from './helpers/runtime-worker.js';
+
+test('runtime worker exposes a failed Codex turn to the requester without replaying it', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-codex-failed-'));
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls');
+      const runtime = createAgentRuntime({
+        kind: 'codex-cli',
+        env: runtimeTestEnv(stateDir, {
+          CODEX_HOME: join(stateDir, 'codex-home'), CALLS_PATH: callsPath,
+          TERMINAL_STATUS: 'failed', TURN_ERROR: 'stream closed before response.completed',
+        }),
+      }, { command: await writeTerminalCodex(stateDir) });
+      const posts: Array<{ channel: string; text: string }> = [];
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout', agentRuntime: runtime, homePath: stateDir, stateDir,
+        queue: queueFor('scout'), workerId: 'test-worker',
+        providerRetry: { transientBackoffMs: [1, 1, 1] },
+        onItemFailed: async (context, failure) => {
+          await postRuntimeFailureNotice({
+            agentId: 'scout', item: context.item, failure, runtimeKind: runtime.kind,
+            slackClient: { chat: { postMessage: async (post: { channel: string; text: string }) => {
+              posts.push(post);
+              return { ok: true };
+            } } } as never,
+          });
+        },
+      }, silentLogger);
+      const decision = await enqueueInbox(makeSlackEvent({
+        channelId: 'D-user', eventId: 'evt-codex-failed', teamId: 'T-demo',
+        text: 'perform a task', ts: '1770000010.000001', userId: 'U1',
+      }), { agentId: 'scout', stateDir });
+      assert.equal(await worker.drainOnce(), 1);
+      assert.match(posts[0]?.text ?? '', /stream closed before response.completed/, JSON.stringify(posts));
+      assert.equal(await readFile(callsPath, 'utf8'), 'turn/start\n', 'one turn, no automatic retry');
+      assert.equal(await queueFor('scout').find(decision.ctx.item.id), undefined);
+      const rows = allActivities(await loadState());
+      const failures = rows.filter((row) => row.type === 'runtime.failed');
+      assert.equal(failures.length, 1);
+      assert.equal(failures[0]?.payload?.['retryAttempts'], 0);
+      assert.equal(failures[0]?.payload?.['retryClass'], 'terminal');
+      assert.equal(rows.some((row) => row.type === 'runtime.completed'), false);
+      assert.equal(rows.some((row) => row.payload?.['eventType'] === 'provider.transient.retry'), false);
+      const health = await new AgentHealthStore({ animaHome: stateDir }).get('scout');
+      assert.equal(health?.state, 'unhealthy');
+      assert.equal(health?.reason, 'provider_error');
+      assert.equal(posts.length, 1);
+      assert.equal(posts[0]?.channel, 'D-user');
+      assert.match(posts[0]?.text ?? '', /stream closed before response.completed/);
+      assert.match(posts[0]?.text ?? '', /may already have run/);
+      assert.doesNotMatch(posts[0]?.text ?? '', /Please send it again/);
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
 
 class ProgressThenWaitRuntime implements AgentRuntime {
   readonly kind = 'progress-then-wait';

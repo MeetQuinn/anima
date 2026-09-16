@@ -28,6 +28,7 @@ import { LineBuffer } from './line-buffer.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
 import type { ProviderSessionCorruptionReason } from './session-corruption.js';
 import { providerUsageFromStats } from './provider-usage.js';
+import { ProviderTurnFailedError } from './provider-failure.js';
 
 interface CodexThread {
   id: string;
@@ -74,7 +75,7 @@ export class CodexAppServerController {
   private initialized = false;
   private nextId = 1;
   private readonly pending = new Map<number, PendingCodexRequest>();
-  private readonly completedTurns = new Set<string>();
+  private readonly completedTurns = new Map<string, ProviderTurnFailedError | undefined>();
   private readonly linkedTextByItem = new Map<string, LinkedAgentText>();
   private readonly textByTurn = new Map<string, string>();
   private readonly usageByTurn = new Map<string, Record<string, unknown>>();
@@ -185,6 +186,8 @@ export class CodexAppServerController {
       if (!this.completedTurns.has(turnId)) {
         await turn.completed.promise;
       }
+      const failure = this.completedTurns.get(turnId);
+      if (failure) throw failure;
       const text = this.textByTurn.get(turnId) ?? '';
       if (text.trim()) await onText(text.trim());
       return text;
@@ -417,7 +420,13 @@ export class CodexAppServerController {
       }
       this.usageByTurn.delete(turnId);
       this.refreshBackgroundTerminals();
-      this.completedTurns.add(turnId);
+      // Store the outcome before waking the waiter. Completion can arrive before
+      // turn/start responds; rejecting a not-yet-awaited promise loses that race.
+      const failure = stringParam(turn, 'status') === 'failed'
+        ? new ProviderTurnFailedError(stringParam(recordParam(turn, 'error'), 'message')?.trim()
+          || 'Codex turn failed without an error message')
+        : undefined;
+      this.completedTurns.set(turnId, failure);
       if (this.currentTurn?.turnId === turnId) this.currentTurn.completed.resolve();
     }
   }
