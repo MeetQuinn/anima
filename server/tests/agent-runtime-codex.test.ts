@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentRuntime } from '../providers/factory.js';
+import { writeTerminalCodex } from './helpers/codex-terminal.js';
+import { classifyProviderRetry } from '../providers/provider-retry.js';
 import {
   CODEX_AUTO_COMPACT_TOKEN_LIMIT_ENV,
   CODEX_AUTO_COMPACT_TOKEN_LIMIT_SCOPE,
@@ -27,6 +29,57 @@ import { runtimeSessionServiceForAgent } from '../runtime/runtime-session.servic
 import {
   isProviderSessionCorruptionError,
 } from '../providers/session-corruption.js';
+
+for (const scenario of [
+  { status: 'failed', early: false, message: 'stream closed before response.completed' },
+  { status: 'failed', early: true, message: 'server_is_overloaded / 502' },
+  { status: 'failed', early: false, message: '' },
+  { status: 'completed', early: true, message: '' },
+  { status: 'interrupted', early: false, message: '' },
+]) {
+  test(`codex-cli terminal status ${scenario.status}, early=${scenario.early}, error=${Boolean(scenario.message)}`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-codex-terminal-'));
+    let runtime: AgentRuntime | undefined;
+    try {
+      await withAnimaHome(stateDir, async () => {
+        const command = await writeTerminalCodex(stateDir);
+        runtime = createAgentRuntime({
+          kind: 'codex-cli',
+          env: runtimeTestEnv(stateDir, {
+            CODEX_HOME: join(stateDir, 'codex-home'),
+            TERMINAL_STATUS: scenario.status,
+            EARLY_COMPLETION: String(scenario.early),
+            TURN_ERROR: scenario.message,
+          }),
+        }, { command });
+        const ctx = await ingestEvent(makeSlackEvent({
+          channelId: 'D-test', teamId: 'T-test', text: 'test terminal status', userId: 'U-test',
+        }), { agentId: 'anima', stateDir });
+        const input = await runtimeInput(runtime, ctx);
+        const run = runtime.run(input);
+        if (scenario.status === 'failed') {
+          await assert.rejects(run, (error: unknown) => {
+            assert.ok(error instanceof Error);
+            assert.equal(error.message, scenario.message || 'Codex turn failed without an error message');
+            assert.equal(classifyProviderRetry(error), 'terminal', 'do not replay a failed turn');
+            return true;
+          });
+          const activities = allActivities(await loadState());
+          assert.ok(activities.some((row) => row.type === 'runtime.failed'));
+          assert.equal(activities.some((row) => row.type === 'runtime.completed'), false);
+          assert.ok(activities.some((row) => row.payload?.['terminalReason'] === 'failed'));
+          // A failed terminal must not poison a subsequent turn on this controller.
+          assert.equal((await runtime.run(await runtimeInput(runtime, ctx))).text, 'partial or complete text');
+        } else {
+          assert.equal((await run).text, 'partial or complete text');
+        }
+      });
+    } finally {
+      await runtime?.close?.();
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+}
 
 test('codex-cli app-server launch allows managed provider env into tool shells', () => {
   const include = codexToolEnvIncludeList({

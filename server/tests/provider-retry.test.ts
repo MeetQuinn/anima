@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { ProviderTurnFailedError } from '../providers/provider-failure.js';
 
 import {
   classifyProviderRetry,
@@ -13,6 +14,17 @@ class TaggedError extends Error {
     Object.assign(this, extra);
   }
 }
+
+test('started-turn failures are never replayed by crash, transient, or quota rules', () => {
+  for (const message of [
+    'stream closed before response.completed', 'server_is_overloaded / 502',
+    'runtime exited before completing', 'too many requests', 'usage limit reached',
+  ]) {
+    const error = new ProviderTurnFailedError(message);
+    assert.equal(classifyProviderRetry(error), 'terminal');
+    assert.equal(isProviderCrashError(error), false, 'a failed turn does not mean its process exited');
+  }
+});
 
 test('provider retry classifier separates crash, transient, rate-limited, and terminal failures', () => {
   assert.equal(classifyProviderRetry(new Error('Codex app-server runtime exited before completing active requests')), 'crash');

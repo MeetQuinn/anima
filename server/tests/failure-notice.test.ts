@@ -9,8 +9,20 @@ import {
   slackFailureNoticePost,
 } from '../runtime/failure-notice.js';
 import type { InboxItem } from '../inbox/wake-queue.service.js';
+import { ProviderTurnFailedError } from '../providers/provider-failure.js';
 
 const base = { teamId: 'T-demo', text: 'hello', userId: 'U1' };
+
+test('failed-turn notice preserves the error and warns about previously executed actions', () => {
+  const notice = failureNoticeText({
+    error: new ProviderTurnFailedError('stream closed before response.completed'),
+    retryAttempts: 0, retryClass: 'terminal',
+  });
+  assert.match(notice, /stream closed before response.completed/);
+  assert.match(notice, /Some actions may already have run/);
+  assert.match(notice, /haven't automatically retried/);
+  assert.doesNotMatch(notice, /Please send it again/);
+});
 
 test('failure notice only targets messages that addressed the agent', () => {
   const dm = makeSlackEvent({ ...base, channelId: 'D-user', wakeReason: 'dm' });

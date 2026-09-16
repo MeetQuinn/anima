@@ -1,6 +1,14 @@
 import type { AgentHealthReason } from '../../shared/snapshot.js';
 import { errorMessage } from '../ids.js';
 
+/** A started turn failed; actions may have run, so replay needs a human decision. */
+export class ProviderTurnFailedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProviderTurnFailedError';
+  }
+}
+
 export type ProviderFailureReason =
   | 'provider_auth_failed'
   | 'provider_error'

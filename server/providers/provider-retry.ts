@@ -1,5 +1,5 @@
 import { errorMessage } from '../ids.js';
-import { providerFailureReasonFromError } from './provider-failure.js';
+import { ProviderTurnFailedError, providerFailureReasonFromError } from './provider-failure.js';
 
 /**
  * How the runtime should react to a failed provider turn.
@@ -41,10 +41,11 @@ const TRANSIENT_PATTERN = new RegExp([
 ].join('|'), 'i');
 
 export function isProviderCrashError(error: unknown): boolean {
-  return CRASH_PATTERN.test(errorMessage(error));
+  return !(error instanceof ProviderTurnFailedError) && CRASH_PATTERN.test(errorMessage(error));
 }
 
 export function classifyProviderRetry(error: unknown): ProviderRetryClass {
+  if (error instanceof ProviderTurnFailedError) return 'terminal';
   if (isProviderCrashError(error)) return 'crash';
   const reason = providerFailureReasonFromError(error);
   if (reason === 'provider_rate_limited' || reason === 'provider_quota_exhausted') return 'rate_limited';
