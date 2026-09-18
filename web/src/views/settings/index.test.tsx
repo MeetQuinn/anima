@@ -319,7 +319,10 @@ describe('Update Anima button: install failure', () => {
     // The shared status query refetches after the failure; once it reads
     // "error" the offer is gone and the note carries its own retry.
     await waitFor(() => expect(screen.queryByRole('button', { name: /^Update Anima,/ })).toBeNull());
-    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+    const tryAgain = screen.getByRole('button', { name: 'Try again' });
+    // Pair, not a bare bump: 44px mobile floor, natural 28px from md up (#680/#683 house rule).
+    expect(tryAgain.classList.contains('min-h-[44px]')).toBe(true);
+    expect(tryAgain.classList.contains('md:min-h-[28px]')).toBe(true);
     expect(screen.getByText('token-usage-page-body')).toBeTruthy();
   });
 

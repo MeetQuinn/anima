@@ -166,7 +166,7 @@ function RetryButton({ onRetry }: { onRetry: () => void }) {
     <button
       type="button"
       onClick={onRetry}
-      className="mt-1.5 flex min-h-[28px] items-center gap-1.5 rounded-sm border border-border-soft px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      className="mt-1.5 flex min-h-[44px] items-center gap-1.5 rounded-sm border border-border-soft px-2 py-0.5 text-[11px] md:min-h-[28px] text-text-muted transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
     >
       <RefreshCw aria-hidden className="h-3 w-3" />
       Try again
