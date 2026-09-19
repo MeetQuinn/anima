@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { createAgentRuntime } from '../providers/factory.js';
 import type { AgentRuntime } from '../providers/contract.js';
-import { piLaunchArgs, piLaunchEnvironment } from '../providers/pi.js';
+import { piBashToolTimeoutMs, piLaunchArgs, piLaunchEnvironment } from '../providers/pi.js';
 import { runtimeSessionServiceForAgent } from '../runtime/runtime-session.service.js';
 import { withAnimaHome } from './anima-home.js';
 import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
@@ -362,6 +362,300 @@ test('pi with no credential at all reports the placeholder model as an auth fail
       assert.deepEqual(calls.map((call) => call.type), ['get_state']);
     });
   } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('piBashToolTimeoutMs defaults to 120s and honors ANIMA_PI_BASH_TOOL_TIMEOUT_MS', () => {
+  const previous = process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS;
+  try {
+    delete process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS;
+    assert.equal(piBashToolTimeoutMs(), 120_000);
+    process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS = '1500';
+    assert.equal(piBashToolTimeoutMs(), 1_500);
+    process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS = 'nope';
+    assert.equal(piBashToolTimeoutMs(), 120_000);
+  } finally {
+    if (previous === undefined) delete process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS;
+    else process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS = previous;
+  }
+});
+
+test('pi aborts a hung bash tool after the Anima default timeout', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-pi-bash-timeout-'));
+  let runtime: AgentRuntime | undefined;
+  const previous = process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS;
+  process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS = '200';
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      await installFakePi(stateDir, [
+        ...FAKE_PI_PRELUDE,
+        'function handle(msg) {',
+        "  if (msg.type === 'get_state') return respond(msg, state());",
+        "  if (msg.type === 'prompt') {",
+        '    respond(msg);',
+        "    send({ type: 'tool_execution_start', toolCallId: 'pi-bash-hang', toolName: 'bash', args: { command: 'sleep 999' } });",
+        '    // Intentionally omit tool_execution_end — reproduces DeepSeek/Pi hangs.',
+        '    return;',
+        '  }',
+        "  if (msg.type === 'abort') {",
+        '    respond(msg);',
+        '    // Late error end (after Anima already recorded timeout failure) must stay idempotent.',
+        '    setTimeout(() => {',
+        "      send({ type: 'tool_execution_end', toolCallId: 'pi-bash-hang', toolName: 'bash', result: { content: [{ type: 'text', text: 'Command aborted' }] }, isError: true });",
+        "      send({ type: 'message_end', message: assistant('', { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 1, cost: { total: 0 } }, 'aborted', 'This operation was aborted') });",
+        "      send({ type: 'agent_settled' });",
+        '    }, 30);',
+        '    return;',
+        '  }',
+        '  respond(msg);',
+        '}',
+      ]);
+      const ctx = await ingestPiEvent(stateDir, 'Hang on bash.', '1786000030.000001');
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'pi',
+        model: 'deepseek/deepseek-v4-flash',
+      });
+      const runPromise = runtime.run(await runtimeInput(runtime, ctx, await loadState()));
+      await waitFor(() => readFile(callsPath, 'utf8').then((text) => text.includes('"type":"abort"')).catch(() => false));
+      await assert.rejects(withTimeout(runPromise, 5_000));
+      const calls = await readJsonLines(callsPath);
+      assert.deepEqual(calls.map((call) => call.type), ['get_state', 'prompt', 'abort']);
+      const activities = allActivities(await loadState());
+      const failedForHang = activities.filter((activity) =>
+        activity.type === 'tool.call.failed'
+          && activity.payload?.['providerToolId'] === 'pi-bash-hang');
+      assert.equal(failedForHang.length, 1, 'timeout + abort end must not duplicate tool.call.failed');
+      assert.ok(String(failedForHang[0]?.payload?.['error'] ?? '').includes('timed out'));
+      assert.ok(activities.some((activity) =>
+        activity.type === 'runtime.event'
+          && activity.payload?.['eventType'] === 'pi.tool.timeout'
+          && activity.payload?.['providerToolId'] === 'pi-bash-hang'));
+    });
+  } finally {
+    if (previous === undefined) delete process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS;
+    else process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS = previous;
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('pi bash timeout does not abort when tool_execution_end wins the same-turn race', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-pi-bash-timeout-same-turn-'));
+  let runtime: AgentRuntime | undefined;
+  const previousTimeout = process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS;
+  const previousYield = process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_YIELD_MS;
+  process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS = '200';
+  // Widen the timeout callback gap so the fake's late end is processed before abort is considered.
+  process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_YIELD_MS = '80';
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      await installFakePi(stateDir, [
+        ...FAKE_PI_PRELUDE,
+        'function handle(msg) {',
+        "  if (msg.type === 'get_state') return respond(msg, state());",
+        "  if (msg.type === 'prompt') {",
+        '    respond(msg);',
+        "    send({ type: 'tool_execution_start', toolCallId: 'pi-bash-race', toolName: 'bash', args: { command: 'sleep 999' } });",
+        '    // Complete during the timeout callback await — must cancel the pending abort.',
+        '    setTimeout(() => {',
+        "      send({ type: 'tool_execution_end', toolCallId: 'pi-bash-race', toolName: 'bash', result: { content: [{ type: 'text', text: 'finished just in time' }] }, isError: false });",
+        "      send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'recovered' } });",
+        "      send({ type: 'message_end', message: assistant('recovered', { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { total: 0 } }, 'stop') });",
+        "      send({ type: 'agent_settled' });",
+        '    }, 220);',
+        '    return;',
+        '  }',
+        "  if (msg.type === 'abort') {",
+        '    respond(msg);',
+        "    send({ type: 'message_end', message: assistant('', { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 1, cost: { total: 0 } }, 'aborted', 'stale abort') });",
+        "    send({ type: 'agent_settled' });",
+        '    return;',
+        '  }',
+        '  respond(msg);',
+        '}',
+      ]);
+      const ctx = await ingestPiEvent(stateDir, 'Race the timeout.', '1786000032.000001');
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'pi',
+        model: 'deepseek/deepseek-v4-flash',
+      });
+      const result = await withTimeout(
+        runtime.run(await runtimeInput(runtime, ctx, await loadState())),
+        5_000,
+      );
+      assert.equal(result.text, 'recovered');
+      const calls = await readJsonLines(callsPath);
+      assert.deepEqual(
+        calls.map((call) => call.type),
+        ['get_state', 'prompt'],
+        'late tool_execution_end on the same turn must cancel the timeout abort',
+      );
+      const activities = allActivities(await loadState());
+      assert.equal(
+        activities.filter((activity) =>
+          activity.type === 'tool.call.failed'
+            && activity.payload?.['providerToolId'] === 'pi-bash-race').length,
+        0,
+      );
+      assert.ok(!activities.some((activity) =>
+        activity.type === 'runtime.event'
+          && activity.payload?.['eventType'] === 'pi.tool.timeout'
+          && activity.payload?.['providerToolId'] === 'pi-bash-race'));
+    });
+  } finally {
+    if (previousTimeout === undefined) delete process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS;
+    else process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS = previousTimeout;
+    if (previousYield === undefined) delete process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_YIELD_MS;
+    else process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_YIELD_MS = previousYield;
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('pi bash timeout claims failure before writes so late error end cannot duplicate', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-pi-bash-timeout-error-race-'));
+  let runtime: AgentRuntime | undefined;
+  const previousTimeout = process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS;
+  const previousYield = process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_YIELD_MS;
+  const previousRecordYield = process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_RECORD_YIELD_MS;
+  process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS = '200';
+  process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_YIELD_MS = '0';
+  // After the failure slot is claimed, delay writes so an error end can arrive first.
+  process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_RECORD_YIELD_MS = '80';
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      await installFakePi(stateDir, [
+        ...FAKE_PI_PRELUDE,
+        'function handle(msg) {',
+        "  if (msg.type === 'get_state') return respond(msg, state());",
+        "  if (msg.type === 'prompt') {",
+        '    respond(msg);',
+        "    send({ type: 'tool_execution_start', toolCallId: 'pi-bash-err-race', toolName: 'bash', args: { command: 'sleep 999' } });",
+        '    setTimeout(() => {',
+        "      send({ type: 'tool_execution_end', toolCallId: 'pi-bash-err-race', toolName: 'bash', result: { content: [{ type: 'text', text: 'Command aborted' }] }, isError: true });",
+        "      send({ type: 'message_end', message: assistant('', { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 1, cost: { total: 0 } }, 'aborted', 'tool ended during timeout write') });",
+        "      send({ type: 'agent_settled' });",
+        '    }, 220);',
+        '    return;',
+        '  }',
+        "  if (msg.type === 'abort') {",
+        '    respond(msg);',
+        "    send({ type: 'message_end', message: assistant('', { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 1, cost: { total: 0 } }, 'aborted', 'stale abort') });",
+        "    send({ type: 'agent_settled' });",
+        '    return;',
+        '  }',
+        '  respond(msg);',
+        '}',
+      ]);
+      const ctx = await ingestPiEvent(stateDir, 'Error end during timeout write.', '1786000033.000001');
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'pi',
+        model: 'deepseek/deepseek-v4-flash',
+      });
+      await assert.rejects(
+        withTimeout(runtime.run(await runtimeInput(runtime, ctx, await loadState())), 5_000),
+      );
+      // Timeout still finishes its claimed activity write after the turn settles.
+      await waitFor(async () => {
+        const failed = allActivities(await loadState()).filter((activity) =>
+          activity.type === 'tool.call.failed'
+            && activity.payload?.['providerToolId'] === 'pi-bash-err-race');
+        return failed.length >= 1;
+      });
+      const calls = await readJsonLines(callsPath);
+      assert.ok(!calls.some((call) => call.type === 'abort'), 'late error end must cancel the timeout abort');
+      const failed = allActivities(await loadState()).filter((activity) =>
+        activity.type === 'tool.call.failed'
+          && activity.payload?.['providerToolId'] === 'pi-bash-err-race');
+      assert.equal(failed.length, 1, 'timeout claim + late error end must not duplicate tool.call.failed');
+      assert.ok(String(failed[0]?.payload?.['error'] ?? '').includes('timed out'));
+    });
+  } finally {
+    if (previousTimeout === undefined) delete process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS;
+    else process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS = previousTimeout;
+    if (previousYield === undefined) delete process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_YIELD_MS;
+    else process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_YIELD_MS = previousYield;
+    if (previousRecordYield === undefined) delete process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_RECORD_YIELD_MS;
+    else process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_RECORD_YIELD_MS = previousRecordYield;
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('pi bash timeout does not abort a later turn after the timed-out turn settles', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-pi-bash-timeout-next-turn-'));
+  let runtime: AgentRuntime | undefined;
+  const previous = process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS;
+  process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS = '200';
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      await installFakePi(stateDir, [
+        ...FAKE_PI_PRELUDE,
+        'let prompts = 0;',
+        'function handle(msg) {',
+        "  if (msg.type === 'get_state') return respond(msg, state());",
+        "  if (msg.type === 'prompt') {",
+        '    prompts += 1;',
+        '    respond(msg);',
+        '    if (prompts === 1) {',
+        "      send({ type: 'tool_execution_start', toolCallId: 'pi-bash-hang', toolName: 'bash', args: { command: 'sleep 999' } });",
+        '      return;',
+        '    }',
+        "    send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'second turn ok' } });",
+        "    send({ type: 'message_end', message: assistant('second turn ok', { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { total: 0 } }, 'stop') });",
+        "    send({ type: 'agent_settled' });",
+        '    return;',
+        '  }',
+        "  if (msg.type === 'abort') {",
+        '    respond(msg);',
+        "    send({ type: 'tool_execution_end', toolCallId: 'pi-bash-hang', toolName: 'bash', result: { content: [{ type: 'text', text: 'Command aborted' }] }, isError: true });",
+        "    send({ type: 'message_end', message: assistant('', { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 1, cost: { total: 0 } }, 'aborted', 'This operation was aborted') });",
+        "    send({ type: 'agent_settled' });",
+        '    return;',
+        '  }',
+        '  respond(msg);',
+        '}',
+      ]);
+      const hangCtx = await ingestPiEvent(stateDir, 'Hang on bash.', '1786000031.000001');
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'pi',
+        model: 'deepseek/deepseek-v4-flash',
+      });
+      const hangPromise = runtime.run(await runtimeInput(runtime, hangCtx, await loadState()));
+      await waitFor(() => readFile(callsPath, 'utf8').then((text) => text.includes('"type":"abort"')).catch(() => false));
+      await assert.rejects(withTimeout(hangPromise, 5_000));
+
+      const nextCtx = await ingestPiEvent(stateDir, 'Next turn.', '1786000031.000002');
+      const nextResult = await withTimeout(
+        runtime.run(await runtimeInput(runtime, nextCtx, await loadState())),
+        5_000,
+      );
+      assert.equal(nextResult.text, 'second turn ok');
+
+      const calls = await readJsonLines(callsPath);
+      assert.deepEqual(
+        calls.map((call) => call.type),
+        ['get_state', 'prompt', 'abort', 'prompt'],
+        'timed-out turn may abort once; the next turn must not receive a stale abort',
+      );
+      const failedForHang = allActivities(await loadState()).filter((activity) =>
+        activity.type === 'tool.call.failed'
+          && activity.payload?.['providerToolId'] === 'pi-bash-hang');
+      assert.equal(failedForHang.length, 1);
+    });
+  } finally {
+    if (previous === undefined) delete process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS;
+    else process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS = previous;
     await runtime?.close?.();
     await rm(stateDir, { force: true, recursive: true });
   }

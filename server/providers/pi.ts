@@ -25,9 +25,47 @@ const PI_RUNTIME_KIND = 'pi';
 const PI_TRANSPORT = 'rpc';
 const PI_RPC_REQUEST_TIMEOUT_MS = 30_000;
 const PI_STEER_TIMEOUT_MS = 5_000;
+/** Pi's bash tool has no default timeout; models often omit `timeout` and hang forever. */
+const PI_BASH_TOOL_DEFAULT_TIMEOUT_MS = 120_000;
 const PI_CREDENTIAL_HINT =
   'Configure a machine-level pi credential: run `pi` and `/login`, add the key to `~/.pi/agent/auth.json`, '
   + 'or export the provider API key in the Anima service environment.';
+
+/** Test/ops override for the bash tool watchdog (milliseconds). */
+export function piBashToolTimeoutMs(): number {
+  const raw = process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS?.trim();
+  if (!raw) return PI_BASH_TOOL_DEFAULT_TIMEOUT_MS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : PI_BASH_TOOL_DEFAULT_TIMEOUT_MS;
+}
+
+/** Test-only: widen the timeout callback's async gap so late tool_execution_end can win. */
+function piBashToolTimeoutYieldMs(): number {
+  const raw = process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_YIELD_MS?.trim();
+  if (!raw) return 0;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+/** Test-only: gap after claiming the failure slot, before activity writes. */
+function piBashToolTimeoutRecordYieldMs(): number {
+  const raw = process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_RECORD_YIELD_MS?.trim();
+  if (!raw) return 0;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+async function sleepUnref(ms: number): Promise<void> {
+  if (ms <= 0) return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
+
+function isShellToolName(name: string): boolean {
+  return name === 'bash' || name === 'powershell';
+}
 
 export function piLaunchArgs(
   providerArgs: readonly string[],
@@ -213,6 +251,14 @@ class PiRpcController {
   private readonly lines = new LineBuffer();
   private readonly pending = new Map<string, PendingRequest>();
   private readonly quiescentWaiters = new QuiescentWaiterSet();
+  /** Timers that abort hung shell tools (pi bash has no default timeout). */
+  private readonly toolTimeouts = new Map<string, NodeJS.Timeout>();
+  /** Shell tools claimed by the timeout path; suppress duplicate tool.call.failed on a later end. */
+  private readonly timedOutToolIds = new Set<string>();
+  /** Timeout still owes an abort until tool_execution_end arrives (same-turn late end clears this). */
+  private readonly pendingShellTimeoutAborts = new Set<string>();
+  /** tool.call.failed already written for a timed-out tool id. */
+  private readonly recordedShellTimeoutFailures = new Set<string>();
   private readonly usageCaptureId = randomUUID();
   private usageSequence = 0;
   private contextWindow?: number;
@@ -618,6 +664,8 @@ class PiRpcController {
     const name = stringField(event, 'toolName') ?? 'tool';
     const args = isRecord(event.args) ? event.args : {};
     this.activeToolIds.add(id);
+    const turn = this.currentTurn;
+    if (turn && isShellToolName(name)) this.armShellToolTimeout(turn, id, name);
     const summary = summarizePiToolArgs(name, args);
     await input.effects.recordToolStarted({
       eventType: 'pi.tool.call',
@@ -635,6 +683,11 @@ class PiRpcController {
   private async handleToolEnd(input: AgentRuntimeInput, event: Record<string, unknown>): Promise<void> {
     const id = stringField(event, 'toolCallId');
     if (!id) return;
+    this.clearShellToolTimeout(id);
+    // A real tool end always cancels a pending timeout abort (same-turn late end race).
+    this.pendingShellTimeoutAborts.delete(id);
+    this.timedOutToolIds.delete(id);
+    const alreadyRecordedTimeoutFailure = this.recordedShellTimeoutFailures.delete(id);
     const name = stringField(event, 'toolName') ?? 'tool';
     const isError = event.isError === true;
     const output = piToolOutput(event.result);
@@ -646,7 +699,9 @@ class PiRpcController {
       runtimeKind: PI_RUNTIME_KIND,
       transport: PI_TRANSPORT,
     });
-    if (isError) {
+    // Timeout path owns the single tool.call.failed once it has written one; otherwise record here
+    // (including when a same-turn late end wins before the timeout callback finishes recording).
+    if (isError && !alreadyRecordedTimeoutFailure) {
       await input.effects.recordToolFailed({
         error: output ? truncateForActivity(output) : 'pi tool failed',
         provider: PI_RUNTIME_KIND,
@@ -659,6 +714,85 @@ class PiRpcController {
     this.resolveQuiescentWaitersIfReady();
   }
 
+  private armShellToolTimeout(turn: PiTurn, toolCallId: string, toolName: string): void {
+    this.clearShellToolTimeout(toolCallId);
+    const timeoutMs = piBashToolTimeoutMs();
+    const timer = setTimeout(() => {
+      void this.onShellToolTimeout(turn, toolCallId, toolName, timeoutMs);
+    }, timeoutMs);
+    // Do not keep the process alive solely for the watchdog.
+    timer.unref?.();
+    this.toolTimeouts.set(toolCallId, timer);
+  }
+
+  private clearShellToolTimeout(toolCallId: string): void {
+    const timer = this.toolTimeouts.get(toolCallId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.toolTimeouts.delete(toolCallId);
+  }
+
+  private clearAllShellToolTimeouts(): void {
+    for (const timer of this.toolTimeouts.values()) clearTimeout(timer);
+    this.toolTimeouts.clear();
+  }
+
+  private stillPendingShellTimeoutAbort(turn: PiTurn, toolCallId: string): boolean {
+    return this.currentTurn === turn && this.pendingShellTimeoutAborts.has(toolCallId);
+  }
+
+  private async onShellToolTimeout(
+    turn: PiTurn,
+    toolCallId: string,
+    toolName: string,
+    timeoutMs: number,
+  ): Promise<void> {
+    // Timer already cancelled, or a newer arm replaced this firing.
+    if (!this.toolTimeouts.has(toolCallId)) return;
+    this.toolTimeouts.delete(toolCallId);
+    // Turn finished/replaced, or the tool already ended cleanly.
+    if (this.currentTurn !== turn) return;
+    if (!this.activeToolIds.has(toolCallId)) return;
+
+    const message = `pi ${toolName} timed out after ${timeoutMs}ms (Anima default; pi bash has no built-in timeout)`;
+    this.timedOutToolIds.add(toolCallId);
+    this.pendingShellTimeoutAborts.add(toolCallId);
+    this.activeToolIds.delete(toolCallId);
+    this.resolveQuiescentWaitersIfReady();
+
+    await sleepUnref(piBashToolTimeoutYieldMs());
+    // Same-turn race: tool_execution_end clears pendingShellTimeoutAborts — do not claim/record/abort.
+    if (!this.stillPendingShellTimeoutAbort(turn, toolCallId)) return;
+
+    // Claim the single failure row before any activity await so a late error end cannot also write one.
+    this.recordedShellTimeoutFailures.add(toolCallId);
+    await sleepUnref(piBashToolTimeoutRecordYieldMs());
+
+    try {
+      await turn.input.effects.recordEvent({
+        error: truncateForActivity(message),
+        eventType: 'pi.tool.timeout',
+        providerToolId: toolCallId,
+        runtimeKind: PI_RUNTIME_KIND,
+        timeoutMs,
+        tool: `pi.${toolName}`,
+        transport: PI_TRANSPORT,
+      });
+      await turn.input.effects.recordToolFailed({
+        error: truncateForActivity(message),
+        provider: PI_RUNTIME_KIND,
+        providerToolId: toolCallId,
+        runtimeKind: PI_RUNTIME_KIND,
+        tool: `pi.${toolName}`,
+      });
+    } catch {
+      // Best-effort activity; still abort the hung turn below when it is still pending.
+    }
+    // Async gap above: skip stale abort into a new turn, or into this turn after the tool already ended.
+    if (!this.stillPendingShellTimeoutAbort(turn, toolCallId)) return;
+    void this.request({ type: 'abort' }).catch(() => undefined);
+  }
+
   private abortCurrentTurn(error: unknown): void {
     const turn = this.currentTurn;
     if (!turn) return;
@@ -669,6 +803,10 @@ class PiRpcController {
   private clearCurrentTurn(): void {
     this.currentTurn = undefined;
     this.activeToolIds.clear();
+    this.timedOutToolIds.clear();
+    this.pendingShellTimeoutAborts.clear();
+    this.recordedShellTimeoutFailures.clear();
+    this.clearAllShellToolTimeouts();
     this.resolveQuiescentWaitersIfReady();
   }
 
