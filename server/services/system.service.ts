@@ -247,6 +247,23 @@ async function piProviderModels(command: string): Promise<ProviderModelCatalog> 
   return parsePiModelCatalog(responses['get_available_models'], responses['get_state']);
 }
 
+/**
+ * DeepSeek retired V4 Flash / Flash-Vision ids; the API still lists them but serves
+ * DeepSeek-V4.1-Flash. Collapse those aliases so the Anima menu shows one Flash entry.
+ * Other providers are passed through unchanged.
+ */
+const RETIRED_DEEPSEEK_FLASH_IDS = new Set([
+  'deepseek-v4-flash',
+  'deepseek-v4-flash-vision-exp',
+]);
+
+export function canonicalizePiModelRef(provider: string, id: string): { id: string; provider: string } {
+  if (provider === 'deepseek' && RETIRED_DEEPSEEK_FLASH_IDS.has(id)) {
+    return { provider, id: 'deepseek-flash' };
+  }
+  return { provider, id };
+}
+
 export function parsePiModelCatalog(available: unknown, state: unknown): ProviderModelCatalog {
   const entries = isPlainRecord(available) && Array.isArray(available['models']) ? available['models'] : [];
   const models: string[] = [];
@@ -255,15 +272,17 @@ export function parsePiModelCatalog(available: unknown, state: unknown): Provide
     const provider = typeof entry['provider'] === 'string' ? entry['provider'].trim() : '';
     const id = typeof entry['id'] === 'string' ? entry['id'].trim() : '';
     if (!provider || !id) continue;
-    const name = `${provider}/${id}`;
+    const canonical = canonicalizePiModelRef(provider, id);
+    const name = `${canonical.provider}/${canonical.id}`;
     if (!models.includes(name)) models.push(name);
   }
   if (models.length === 0) throw new Error(PI_NO_CREDENTIAL_MESSAGE);
   const current = isPlainRecord(state) && isPlainRecord(state['model']) ? state['model'] : undefined;
-  const currentName =
-    current && typeof current['provider'] === 'string' && typeof current['id'] === 'string'
-      ? `${current['provider']}/${current['id']}`
-      : undefined;
+  let currentName: string | undefined;
+  if (current && typeof current['provider'] === 'string' && typeof current['id'] === 'string') {
+    const canonical = canonicalizePiModelRef(current['provider'].trim(), current['id'].trim());
+    currentName = `${canonical.provider}/${canonical.id}`;
+  }
   const defaultModel = currentName && models.includes(currentName) ? currentName : models[0]!;
   return { defaultModel, models };
 }
