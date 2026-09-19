@@ -47,6 +47,22 @@ function piBashToolTimeoutYieldMs(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
+/** Test-only: gap after claiming the failure slot, before activity writes. */
+function piBashToolTimeoutRecordYieldMs(): number {
+  const raw = process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_RECORD_YIELD_MS?.trim();
+  if (!raw) return 0;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+async function sleepUnref(ms: number): Promise<void> {
+  if (ms <= 0) return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
+
 function isShellToolName(name: string): boolean {
   return name === 'bash' || name === 'powershell';
 }
@@ -744,15 +760,13 @@ class PiRpcController {
     this.activeToolIds.delete(toolCallId);
     this.resolveQuiescentWaitersIfReady();
 
-    const yieldMs = piBashToolTimeoutYieldMs();
-    if (yieldMs > 0) {
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, yieldMs);
-        timer.unref?.();
-      });
-    }
-    // Same-turn race: tool_execution_end clears pendingShellTimeoutAborts — do not abort/record timeout.
+    await sleepUnref(piBashToolTimeoutYieldMs());
+    // Same-turn race: tool_execution_end clears pendingShellTimeoutAborts — do not claim/record/abort.
     if (!this.stillPendingShellTimeoutAbort(turn, toolCallId)) return;
+
+    // Claim the single failure row before any activity await so a late error end cannot also write one.
+    this.recordedShellTimeoutFailures.add(toolCallId);
+    await sleepUnref(piBashToolTimeoutRecordYieldMs());
 
     try {
       await turn.input.effects.recordEvent({
@@ -771,7 +785,6 @@ class PiRpcController {
         runtimeKind: PI_RUNTIME_KIND,
         tool: `pi.${toolName}`,
       });
-      this.recordedShellTimeoutFailures.add(toolCallId);
     } catch {
       // Best-effort activity; still abort the hung turn below when it is still pending.
     }
