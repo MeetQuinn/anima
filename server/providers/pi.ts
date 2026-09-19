@@ -39,6 +39,14 @@ export function piBashToolTimeoutMs(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : PI_BASH_TOOL_DEFAULT_TIMEOUT_MS;
 }
 
+/** Test-only: widen the timeout callback's async gap so late tool_execution_end can win. */
+function piBashToolTimeoutYieldMs(): number {
+  const raw = process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_YIELD_MS?.trim();
+  if (!raw) return 0;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
 function isShellToolName(name: string): boolean {
   return name === 'bash' || name === 'powershell';
 }
@@ -229,8 +237,12 @@ class PiRpcController {
   private readonly quiescentWaiters = new QuiescentWaiterSet();
   /** Timers that abort hung shell tools (pi bash has no default timeout). */
   private readonly toolTimeouts = new Map<string, NodeJS.Timeout>();
-  /** Shell tools already failed via Anima timeout; suppress duplicate tool.call.failed on abort end. */
+  /** Shell tools claimed by the timeout path; suppress duplicate tool.call.failed on a later end. */
   private readonly timedOutToolIds = new Set<string>();
+  /** Timeout still owes an abort until tool_execution_end arrives (same-turn late end clears this). */
+  private readonly pendingShellTimeoutAborts = new Set<string>();
+  /** tool.call.failed already written for a timed-out tool id. */
+  private readonly recordedShellTimeoutFailures = new Set<string>();
   private readonly usageCaptureId = randomUUID();
   private usageSequence = 0;
   private contextWindow?: number;
@@ -656,7 +668,10 @@ class PiRpcController {
     const id = stringField(event, 'toolCallId');
     if (!id) return;
     this.clearShellToolTimeout(id);
-    const timedOut = this.timedOutToolIds.delete(id);
+    // A real tool end always cancels a pending timeout abort (same-turn late end race).
+    this.pendingShellTimeoutAborts.delete(id);
+    this.timedOutToolIds.delete(id);
+    const alreadyRecordedTimeoutFailure = this.recordedShellTimeoutFailures.delete(id);
     const name = stringField(event, 'toolName') ?? 'tool';
     const isError = event.isError === true;
     const output = piToolOutput(event.result);
@@ -668,8 +683,9 @@ class PiRpcController {
       runtimeKind: PI_RUNTIME_KIND,
       transport: PI_TRANSPORT,
     });
-    // Timeout path already recorded tool.call.failed; abort's error end must not duplicate it.
-    if (isError && !timedOut) {
+    // Timeout path owns the single tool.call.failed once it has written one; otherwise record here
+    // (including when a same-turn late end wins before the timeout callback finishes recording).
+    if (isError && !alreadyRecordedTimeoutFailure) {
       await input.effects.recordToolFailed({
         error: output ? truncateForActivity(output) : 'pi tool failed',
         provider: PI_RUNTIME_KIND,
@@ -705,6 +721,10 @@ class PiRpcController {
     this.toolTimeouts.clear();
   }
 
+  private stillPendingShellTimeoutAbort(turn: PiTurn, toolCallId: string): boolean {
+    return this.currentTurn === turn && this.pendingShellTimeoutAborts.has(toolCallId);
+  }
+
   private async onShellToolTimeout(
     turn: PiTurn,
     toolCallId: string,
@@ -720,8 +740,20 @@ class PiRpcController {
 
     const message = `pi ${toolName} timed out after ${timeoutMs}ms (Anima default; pi bash has no built-in timeout)`;
     this.timedOutToolIds.add(toolCallId);
+    this.pendingShellTimeoutAborts.add(toolCallId);
     this.activeToolIds.delete(toolCallId);
     this.resolveQuiescentWaitersIfReady();
+
+    const yieldMs = piBashToolTimeoutYieldMs();
+    if (yieldMs > 0) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, yieldMs);
+        timer.unref?.();
+      });
+    }
+    // Same-turn race: tool_execution_end clears pendingShellTimeoutAborts — do not abort/record timeout.
+    if (!this.stillPendingShellTimeoutAbort(turn, toolCallId)) return;
+
     try {
       await turn.input.effects.recordEvent({
         error: truncateForActivity(message),
@@ -739,11 +771,12 @@ class PiRpcController {
         runtimeKind: PI_RUNTIME_KIND,
         tool: `pi.${toolName}`,
       });
+      this.recordedShellTimeoutFailures.add(toolCallId);
     } catch {
-      // Best-effort activity; still abort the hung turn below when it is still current.
+      // Best-effort activity; still abort the hung turn below when it is still pending.
     }
-    // Async gap above: only abort if this same turn is still active (no stale abort into a new turn).
-    if (this.currentTurn !== turn) return;
+    // Async gap above: skip stale abort into a new turn, or into this turn after the tool already ended.
+    if (!this.stillPendingShellTimeoutAbort(turn, toolCallId)) return;
     void this.request({ type: 'abort' }).catch(() => undefined);
   }
 
@@ -758,6 +791,8 @@ class PiRpcController {
     this.currentTurn = undefined;
     this.activeToolIds.clear();
     this.timedOutToolIds.clear();
+    this.pendingShellTimeoutAborts.clear();
+    this.recordedShellTimeoutFailures.clear();
     this.clearAllShellToolTimeouts();
     this.resolveQuiescentWaitersIfReady();
   }

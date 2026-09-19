@@ -443,6 +443,81 @@ test('pi aborts a hung bash tool after the Anima default timeout', async () => {
   }
 });
 
+test('pi bash timeout does not abort when tool_execution_end wins the same-turn race', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-pi-bash-timeout-same-turn-'));
+  let runtime: AgentRuntime | undefined;
+  const previousTimeout = process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS;
+  const previousYield = process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_YIELD_MS;
+  process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS = '200';
+  // Widen the timeout callback gap so the fake's late end is processed before abort is considered.
+  process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_YIELD_MS = '80';
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      await installFakePi(stateDir, [
+        ...FAKE_PI_PRELUDE,
+        'function handle(msg) {',
+        "  if (msg.type === 'get_state') return respond(msg, state());",
+        "  if (msg.type === 'prompt') {",
+        '    respond(msg);',
+        "    send({ type: 'tool_execution_start', toolCallId: 'pi-bash-race', toolName: 'bash', args: { command: 'sleep 999' } });",
+        '    // Complete during the timeout callback await — must cancel the pending abort.',
+        '    setTimeout(() => {',
+        "      send({ type: 'tool_execution_end', toolCallId: 'pi-bash-race', toolName: 'bash', result: { content: [{ type: 'text', text: 'finished just in time' }] }, isError: false });",
+        "      send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'recovered' } });",
+        "      send({ type: 'message_end', message: assistant('recovered', { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { total: 0 } }, 'stop') });",
+        "      send({ type: 'agent_settled' });",
+        '    }, 220);',
+        '    return;',
+        '  }',
+        "  if (msg.type === 'abort') {",
+        '    respond(msg);',
+        "    send({ type: 'message_end', message: assistant('', { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 1, cost: { total: 0 } }, 'aborted', 'stale abort') });",
+        "    send({ type: 'agent_settled' });",
+        '    return;',
+        '  }',
+        '  respond(msg);',
+        '}',
+      ]);
+      const ctx = await ingestPiEvent(stateDir, 'Race the timeout.', '1786000032.000001');
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'pi',
+        model: 'deepseek/deepseek-v4-flash',
+      });
+      const result = await withTimeout(
+        runtime.run(await runtimeInput(runtime, ctx, await loadState())),
+        5_000,
+      );
+      assert.equal(result.text, 'recovered');
+      const calls = await readJsonLines(callsPath);
+      assert.deepEqual(
+        calls.map((call) => call.type),
+        ['get_state', 'prompt'],
+        'late tool_execution_end on the same turn must cancel the timeout abort',
+      );
+      const activities = allActivities(await loadState());
+      assert.equal(
+        activities.filter((activity) =>
+          activity.type === 'tool.call.failed'
+            && activity.payload?.['providerToolId'] === 'pi-bash-race').length,
+        0,
+      );
+      assert.ok(!activities.some((activity) =>
+        activity.type === 'runtime.event'
+          && activity.payload?.['eventType'] === 'pi.tool.timeout'
+          && activity.payload?.['providerToolId'] === 'pi-bash-race'));
+    });
+  } finally {
+    if (previousTimeout === undefined) delete process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS;
+    else process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS = previousTimeout;
+    if (previousYield === undefined) delete process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_YIELD_MS;
+    else process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_YIELD_MS = previousYield;
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('pi bash timeout does not abort a later turn after the timed-out turn settles', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-pi-bash-timeout-next-turn-'));
   let runtime: AgentRuntime | undefined;
