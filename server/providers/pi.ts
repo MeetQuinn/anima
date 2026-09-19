@@ -25,9 +25,23 @@ const PI_RUNTIME_KIND = 'pi';
 const PI_TRANSPORT = 'rpc';
 const PI_RPC_REQUEST_TIMEOUT_MS = 30_000;
 const PI_STEER_TIMEOUT_MS = 5_000;
+/** Pi's bash tool has no default timeout; models often omit `timeout` and hang forever. */
+const PI_BASH_TOOL_DEFAULT_TIMEOUT_MS = 120_000;
 const PI_CREDENTIAL_HINT =
   'Configure a machine-level pi credential: run `pi` and `/login`, add the key to `~/.pi/agent/auth.json`, '
   + 'or export the provider API key in the Anima service environment.';
+
+/** Test/ops override for the bash tool watchdog (milliseconds). */
+export function piBashToolTimeoutMs(): number {
+  const raw = process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS?.trim();
+  if (!raw) return PI_BASH_TOOL_DEFAULT_TIMEOUT_MS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : PI_BASH_TOOL_DEFAULT_TIMEOUT_MS;
+}
+
+function isShellToolName(name: string): boolean {
+  return name === 'bash' || name === 'powershell';
+}
 
 export function piLaunchArgs(
   providerArgs: readonly string[],
@@ -213,6 +227,8 @@ class PiRpcController {
   private readonly lines = new LineBuffer();
   private readonly pending = new Map<string, PendingRequest>();
   private readonly quiescentWaiters = new QuiescentWaiterSet();
+  /** Timers that abort hung shell tools (pi bash has no default timeout). */
+  private readonly toolTimeouts = new Map<string, NodeJS.Timeout>();
   private readonly usageCaptureId = randomUUID();
   private usageSequence = 0;
   private contextWindow?: number;
@@ -618,6 +634,7 @@ class PiRpcController {
     const name = stringField(event, 'toolName') ?? 'tool';
     const args = isRecord(event.args) ? event.args : {};
     this.activeToolIds.add(id);
+    if (isShellToolName(name)) this.armShellToolTimeout(input, id, name);
     const summary = summarizePiToolArgs(name, args);
     await input.effects.recordToolStarted({
       eventType: 'pi.tool.call',
@@ -635,6 +652,7 @@ class PiRpcController {
   private async handleToolEnd(input: AgentRuntimeInput, event: Record<string, unknown>): Promise<void> {
     const id = stringField(event, 'toolCallId');
     if (!id) return;
+    this.clearShellToolTimeout(id);
     const name = stringField(event, 'toolName') ?? 'tool';
     const isError = event.isError === true;
     const output = piToolOutput(event.result);
@@ -659,6 +677,65 @@ class PiRpcController {
     this.resolveQuiescentWaitersIfReady();
   }
 
+  private armShellToolTimeout(input: AgentRuntimeInput, toolCallId: string, toolName: string): void {
+    this.clearShellToolTimeout(toolCallId);
+    const timeoutMs = piBashToolTimeoutMs();
+    const timer = setTimeout(() => {
+      void this.onShellToolTimeout(input, toolCallId, toolName, timeoutMs);
+    }, timeoutMs);
+    // Do not keep the process alive solely for the watchdog.
+    timer.unref?.();
+    this.toolTimeouts.set(toolCallId, timer);
+  }
+
+  private clearShellToolTimeout(toolCallId: string): void {
+    const timer = this.toolTimeouts.get(toolCallId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.toolTimeouts.delete(toolCallId);
+  }
+
+  private clearAllShellToolTimeouts(): void {
+    for (const timer of this.toolTimeouts.values()) clearTimeout(timer);
+    this.toolTimeouts.clear();
+  }
+
+  private async onShellToolTimeout(
+    input: AgentRuntimeInput,
+    toolCallId: string,
+    toolName: string,
+    timeoutMs: number,
+  ): Promise<void> {
+    if (!this.toolTimeouts.has(toolCallId) && !this.activeToolIds.has(toolCallId)) return;
+    this.toolTimeouts.delete(toolCallId);
+    if (!this.activeToolIds.has(toolCallId)) return;
+    const message = `pi ${toolName} timed out after ${timeoutMs}ms (Anima default; pi bash has no built-in timeout)`;
+    this.activeToolIds.delete(toolCallId);
+    this.resolveQuiescentWaitersIfReady();
+    try {
+      await input.effects.recordEvent({
+        error: truncateForActivity(message),
+        eventType: 'pi.tool.timeout',
+        providerToolId: toolCallId,
+        runtimeKind: PI_RUNTIME_KIND,
+        timeoutMs,
+        tool: `pi.${toolName}`,
+        transport: PI_TRANSPORT,
+      });
+      await input.effects.recordToolFailed({
+        error: truncateForActivity(message),
+        provider: PI_RUNTIME_KIND,
+        providerToolId: toolCallId,
+        runtimeKind: PI_RUNTIME_KIND,
+        tool: `pi.${toolName}`,
+      });
+    } catch {
+      // Best-effort activity; still abort the hung turn below.
+    }
+    // Abort the active pi turn so Anima is not left waiting forever for agent_settled.
+    void this.request({ type: 'abort' }).catch(() => undefined);
+  }
+
   private abortCurrentTurn(error: unknown): void {
     const turn = this.currentTurn;
     if (!turn) return;
@@ -669,6 +746,7 @@ class PiRpcController {
   private clearCurrentTurn(): void {
     this.currentTurn = undefined;
     this.activeToolIds.clear();
+    this.clearAllShellToolTimeouts();
     this.resolveQuiescentWaitersIfReady();
   }
 
