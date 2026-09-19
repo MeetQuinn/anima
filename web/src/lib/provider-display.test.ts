@@ -9,8 +9,10 @@ describe('providerValueLabel', () => {
     expect(providerValueLabel('claude-sonnet-4-6')).toBe('Claude Sonnet 4.6');
   });
 
-  it('renders OpenCode DeepSeek model ids as readable model names', () => {
+  it('renders DeepSeek model ids as readable model names', () => {
     expect(providerValueLabel('deepseek/deepseek-v4-pro')).toBe('DeepSeek V4 Pro');
-    expect(providerValueLabel('deepseek/deepseek-v4-flash')).toBe('DeepSeek V4 Flash');
+    expect(providerValueLabel('deepseek/deepseek-flash')).toBe('DeepSeek V4.1 Flash');
+    expect(providerValueLabel('deepseek/deepseek-v4-flash')).toBe('DeepSeek V4.1 Flash');
+    expect(providerValueLabel('deepseek/deepseek-v4-flash-vision-exp')).toBe('DeepSeek V4.1 Flash');
   });
 });

@@ -170,17 +170,44 @@ test('parsePiModelCatalog lists provider/id pairs and prefers pi\'s current mode
   };
   assert.deepEqual(
     parsePiModelCatalog(available, { model: { id: 'deepseek-v4-pro', provider: 'deepseek' } }),
-    { defaultModel: 'deepseek/deepseek-v4-pro', models: ['deepseek/deepseek-v4-flash', 'deepseek/deepseek-v4-pro'] },
+    {
+      defaultModel: 'deepseek/deepseek-v4-pro',
+      // Retired deepseek-v4-flash collapses to deepseek-flash.
+      models: ['deepseek/deepseek-flash', 'deepseek/deepseek-v4-pro'],
+    },
   );
   // pi's current model is not reachable (e.g. the `unknown/unknown` placeholder): first entry wins.
   assert.equal(
     parsePiModelCatalog(available, { model: { id: 'unknown', provider: 'unknown' } }).defaultModel,
-    'deepseek/deepseek-v4-flash',
+    'deepseek/deepseek-flash',
   );
   assert.throws(() => parsePiModelCatalog({ models: [] }, undefined), (error: unknown) => {
     assert.equal((error as Error).message, PI_NO_CREDENTIAL_MESSAGE);
     return true;
   });
+});
+
+test('parsePiModelCatalog collapses retired DeepSeek Flash aliases and keeps other providers', () => {
+  const available = {
+    models: [
+      { id: 'deepseek-v4-flash', provider: 'deepseek', name: 'DeepSeek V4 Flash' },
+      { id: 'deepseek-v4-flash-vision-exp', provider: 'deepseek', name: 'DeepSeek V4 Flash Vision Exp' },
+      { id: 'deepseek-flash', provider: 'deepseek', name: 'DeepSeek V4.1 Flash' },
+      { id: 'deepseek-v4-pro', provider: 'deepseek', name: 'DeepSeek V4 Pro' },
+      { id: 'gemini-2.5-pro', provider: 'google', name: 'Gemini 2.5 Pro' },
+    ],
+  };
+  assert.deepEqual(
+    parsePiModelCatalog(available, { model: { id: 'deepseek-v4-flash', provider: 'deepseek' } }),
+    {
+      defaultModel: 'deepseek/deepseek-flash',
+      models: [
+        'deepseek/deepseek-flash',
+        'deepseek/deepseek-v4-pro',
+        'google/gemini-2.5-pro',
+      ],
+    },
+  );
 });
 
 test('provider availability asks the live catalog per provider kind', async () => {
