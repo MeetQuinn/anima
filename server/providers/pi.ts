@@ -229,6 +229,8 @@ class PiRpcController {
   private readonly quiescentWaiters = new QuiescentWaiterSet();
   /** Timers that abort hung shell tools (pi bash has no default timeout). */
   private readonly toolTimeouts = new Map<string, NodeJS.Timeout>();
+  /** Shell tools already failed via Anima timeout; suppress duplicate tool.call.failed on abort end. */
+  private readonly timedOutToolIds = new Set<string>();
   private readonly usageCaptureId = randomUUID();
   private usageSequence = 0;
   private contextWindow?: number;
@@ -634,7 +636,8 @@ class PiRpcController {
     const name = stringField(event, 'toolName') ?? 'tool';
     const args = isRecord(event.args) ? event.args : {};
     this.activeToolIds.add(id);
-    if (isShellToolName(name)) this.armShellToolTimeout(input, id, name);
+    const turn = this.currentTurn;
+    if (turn && isShellToolName(name)) this.armShellToolTimeout(turn, id, name);
     const summary = summarizePiToolArgs(name, args);
     await input.effects.recordToolStarted({
       eventType: 'pi.tool.call',
@@ -653,6 +656,7 @@ class PiRpcController {
     const id = stringField(event, 'toolCallId');
     if (!id) return;
     this.clearShellToolTimeout(id);
+    const timedOut = this.timedOutToolIds.delete(id);
     const name = stringField(event, 'toolName') ?? 'tool';
     const isError = event.isError === true;
     const output = piToolOutput(event.result);
@@ -664,7 +668,8 @@ class PiRpcController {
       runtimeKind: PI_RUNTIME_KIND,
       transport: PI_TRANSPORT,
     });
-    if (isError) {
+    // Timeout path already recorded tool.call.failed; abort's error end must not duplicate it.
+    if (isError && !timedOut) {
       await input.effects.recordToolFailed({
         error: output ? truncateForActivity(output) : 'pi tool failed',
         provider: PI_RUNTIME_KIND,
@@ -677,11 +682,11 @@ class PiRpcController {
     this.resolveQuiescentWaitersIfReady();
   }
 
-  private armShellToolTimeout(input: AgentRuntimeInput, toolCallId: string, toolName: string): void {
+  private armShellToolTimeout(turn: PiTurn, toolCallId: string, toolName: string): void {
     this.clearShellToolTimeout(toolCallId);
     const timeoutMs = piBashToolTimeoutMs();
     const timer = setTimeout(() => {
-      void this.onShellToolTimeout(input, toolCallId, toolName, timeoutMs);
+      void this.onShellToolTimeout(turn, toolCallId, toolName, timeoutMs);
     }, timeoutMs);
     // Do not keep the process alive solely for the watchdog.
     timer.unref?.();
@@ -701,19 +706,24 @@ class PiRpcController {
   }
 
   private async onShellToolTimeout(
-    input: AgentRuntimeInput,
+    turn: PiTurn,
     toolCallId: string,
     toolName: string,
     timeoutMs: number,
   ): Promise<void> {
-    if (!this.toolTimeouts.has(toolCallId) && !this.activeToolIds.has(toolCallId)) return;
+    // Timer already cancelled, or a newer arm replaced this firing.
+    if (!this.toolTimeouts.has(toolCallId)) return;
     this.toolTimeouts.delete(toolCallId);
+    // Turn finished/replaced, or the tool already ended cleanly.
+    if (this.currentTurn !== turn) return;
     if (!this.activeToolIds.has(toolCallId)) return;
+
     const message = `pi ${toolName} timed out after ${timeoutMs}ms (Anima default; pi bash has no built-in timeout)`;
+    this.timedOutToolIds.add(toolCallId);
     this.activeToolIds.delete(toolCallId);
     this.resolveQuiescentWaitersIfReady();
     try {
-      await input.effects.recordEvent({
+      await turn.input.effects.recordEvent({
         error: truncateForActivity(message),
         eventType: 'pi.tool.timeout',
         providerToolId: toolCallId,
@@ -722,7 +732,7 @@ class PiRpcController {
         tool: `pi.${toolName}`,
         transport: PI_TRANSPORT,
       });
-      await input.effects.recordToolFailed({
+      await turn.input.effects.recordToolFailed({
         error: truncateForActivity(message),
         provider: PI_RUNTIME_KIND,
         providerToolId: toolCallId,
@@ -730,9 +740,10 @@ class PiRpcController {
         tool: `pi.${toolName}`,
       });
     } catch {
-      // Best-effort activity; still abort the hung turn below.
+      // Best-effort activity; still abort the hung turn below when it is still current.
     }
-    // Abort the active pi turn so Anima is not left waiting forever for agent_settled.
+    // Async gap above: only abort if this same turn is still active (no stale abort into a new turn).
+    if (this.currentTurn !== turn) return;
     void this.request({ type: 'abort' }).catch(() => undefined);
   }
 
@@ -746,6 +757,7 @@ class PiRpcController {
   private clearCurrentTurn(): void {
     this.currentTurn = undefined;
     this.activeToolIds.clear();
+    this.timedOutToolIds.clear();
     this.clearAllShellToolTimeouts();
     this.resolveQuiescentWaitersIfReady();
   }
