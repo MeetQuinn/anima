@@ -36,6 +36,8 @@ export function cliError(classification: CliErrorClassification): CliError {
 function classifyCliError(error: unknown): CliErrorClassification {
   if (error instanceof CliError) return error.cli;
   if (error instanceof ContactPolicyRefusal) {
+    if (error.kind === 'unverified') return { code: 'anima.contact_unverified', hint: error.message, retryable: true };
+    if (error.kind === 'config') return { code: 'anima.contact_policy_config', hint: error.message, retryable: false };
     return { code: 'anima.do_not_contact', hint: error.message, retryable: false };
   }
 

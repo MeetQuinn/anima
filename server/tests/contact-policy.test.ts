@@ -162,19 +162,21 @@ test('MPIM walks all membership pages; unknown/private channel classification fa
   override.set('conversations.info', (data) => ({ ok: true, channel: { id: data.channel, is_mpim: false } }));
   await check({ channelId: 'GPRIVATE' });
   override.set('conversations.info', (data) => ({ ok: true, channel: { id: data.channel } }));
-  await assert.rejects(check({ channelId: 'GUNKNOWN' }), /could not verify/);
+  await assert.rejects(check({ channelId: 'GUNKNOWN' }), /could not verify/i);
 }));
 
 for (const response of [{ ok: false, error: 'missing_scope' }, { ok: true }, { ok: true, members: [] }, { ok: true, members: [null] }]) {
   test(`membership failure refuses: ${JSON.stringify(response)}`, async () => fixture(async ({ check, override }) => {
     override.set('conversations.members', () => response);
-    await assert.rejects(check({ channelId: 'G123' }), /could not verify/);
+    await assert.rejects(check({ channelId: 'G123' }), response.error
+      ? /Could not verify the DM recipient or group DM membership for G123 \(Slack: missing_scope\)/
+      : /could not verify/i);
   }));
 }
 
 test('raw DM lookup failure refuses; absent name uses ID alone', async () => fixture(async ({ home, check, override }) => {
   override.set('conversations.info', () => ({ ok: false, error: 'channel_not_found' }));
-  await assert.rejects(check({ channelId: 'DUNKNOWN' }), /could not verify/);
+  await assert.rejects(check({ channelId: 'DUNKNOWN' }), /could not verify/i);
   override.set('users.info', () => ({ ok: false, error: 'user_not_found' }));
   await writeFile(join(home, 'config.json'), JSON.stringify({ doNotContact: { TNONAME: [USER] } }));
   await assert.rejects(check({ teamId: 'TNONAME', dmUserId: USER }), { message: refusal.replace('Jialin (U0AAAA)', 'U0AAAA') });
@@ -192,6 +194,30 @@ test('corrupt and unreadable config refuse with a safe actionable failure', asyn
   const rows = await activityServiceForAgent('scout').readAll();
   assert.equal(rows.length, 3);
   assert.equal(JSON.stringify(rows).includes('SECRET'), false);
+}));
+
+test('lookup failure is reported as unverified, names the channel, and is not a list match', async () => fixture(async ({ run, calls, override, outputs }) => {
+  override.set('conversations.info', () => ({ ok: false, error: 'channel_not_found' }));
+  const expected = 'Not sent. Could not verify the conversation (Slack did not return it; the ID may be wrong or not visible to this bot) for D0TRUNCATED, and sends are held while a do-not-contact list is active. This is a lookup failure, not a do-not-contact match: it does not mean the recipient is on the list. Check that the channel ID is complete and correct, then retry. If the ID is correct and this keeps failing, tell your human owner.';
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(run('send', 'D0TRUNCATED', 'hello'), (error: unknown) => {
+      assert.equal((error as Error).message, expected);
+      assert.equal((error as { kind?: string }).kind, 'unverified');
+      return true;
+    });
+  }
+  assert.equal(calls.includes('chat.postMessage'), false);
+  assert.deepEqual(outputs, []);
+  const rows = await activityServiceForAgent('scout').readAll();
+  assert.deepEqual(rows.map((row) => row.payload?.failureKind), ['contact-unverified', 'contact-unverified']);
+  assert.equal(JSON.stringify(rows).includes('is on this workspace'), false);
+}));
+
+test('corrupt config records its own failure kind', async () => fixture(async ({ home, run }) => {
+  await writeFile(join(home, 'config.json'), '{"SECRET":');
+  await assert.rejects(run('send', 'C123', 'hello'), (error: unknown) => (error as { kind?: string }).kind === 'config');
+  const rows = await activityServiceForAgent('scout').readAll();
+  assert.equal(rows[0]?.payload?.failureKind, 'contact-policy-config');
 }));
 
 test('policy refusal precedes hold and never advances its cursor', async () => fixture(async ({ run }) => {
@@ -225,6 +251,23 @@ test(`${kind} CLI exits 1, stderr carries exact refusal, stdout has no success`,
 }));
 }
 
+test('unverified lookup CLI exits 1 with a distinct retryable code', async () => fixture(async ({ home, url, override }) => {
+  override.set('conversations.info', () => ({ ok: false, error: 'channel_not_found' }));
+  const child = spawn(process.execPath, [resolve('dist/server/cli/anima.js'), 'message', 'send', '--channel', 'D0TRUNCATED'], {
+    env: { PATH: process.env.PATH, ANIMA_HOME: home, ANIMA_AGENT_ID: 'scout', ANIMA_SLACK_API_URL: url },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  child.stdin.end('hello');
+  let stdout = ''; let stderr = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  const code = await new Promise((resolveExit, reject) => { child.on('error', reject); child.on('exit', resolveExit); });
+  assert.equal(code, 1);
+  assert.equal(stdout, '');
+  assert.match(stderr, /^error anima\.contact_unverified \(retryable\): Not sent\. Could not verify .* for D0TRUNCATED, .*not a do-not-contact match/);
+  assert.doesNotMatch(stderr, /anima\.do_not_contact/);
+}));
+
 test('group membership is rechecked at send time and a failed later page refuses', async () => fixture(async ({ check, override }) => {
   override.set('conversations.members', () => ({ ok: true, members: ['UBOT', 'UOTHER'] }));
   await check({ channelId: 'G123' });
@@ -232,7 +275,7 @@ test('group membership is rechecked at send time and a failed later page refuses
   await assert.rejects(check({ channelId: 'G123' }), { message: refusal });
   override.set('conversations.members', (data) => data.cursor ? { ok: false, error: 'missing_scope' }
     : { ok: true, members: ['UBOT'], response_metadata: { next_cursor: 'page2' } });
-  await assert.rejects(check({ channelId: 'G123' }), /could not verify/);
+  await assert.rejects(check({ channelId: 'G123' }), /could not verify/i);
 }));
 
 test('operator guide retains the shipped heading and rule', async () => {

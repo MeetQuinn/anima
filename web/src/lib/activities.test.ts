@@ -24,6 +24,16 @@ describe('activityRow', () => {
     expect(row.kind).toBe('failure');
   });
   it.each([
+    ['contact-unverified', 'Send held: recipient could not be verified'],
+    ['contact-policy-config', 'Send refused: do-not-contact config invalid'],
+  ])('does not label %s failures as a do-not-contact list match', (failureKind, title) => {
+    const error = 'Not sent. Could not verify the DM recipient for D0TRUNCATED.';
+    const row = activityRow(activity({ tool: 'anima.message.send', failureKind, error }, 'tool.call.failed'));
+    expect(row.title).toBe(title);
+    expect(row.target).toBe(error);
+    expect(row.kind).toBe('failure');
+  });
+  it.each([
     [
       'Slack message send',
       'external.effect.completed',
