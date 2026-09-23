@@ -57,7 +57,7 @@ Use the Slack workspace ID (`T…`), not an Anima team ID. You can find it in th
 
 Save valid JSON to a temporary file beside `config.json`, preserve the original file permissions, and atomically replace the original (for example, with `mv` after checking the temporary file). The next tool send reads the updated policy; no agent restart is needed. Removing an ID permits contact again. An absent key or empty workspace list applies no contact restriction. Invalid or unreadable configuration refuses sending; repair the configuration before retrying.
 
-A refusal exits with status 1, explains who requested no contact and what the agent should do, and appears in Activity as **Send refused: do-not-contact list**. A recipient or group membership lookup failure also refuses sending when the workspace list is non-empty.
+A refusal exits with status 1, explains who requested no contact and what the agent should do, and appears in Activity as **Send refused: do-not-contact list** (`anima.do_not_contact`, not retryable). A recipient or group membership lookup failure also holds the send when the workspace list is non-empty, but reports it separately: `anima.contact_unverified` (retryable) names the channel ID and Slack error, says it is not a do-not-contact match, and appears in Activity as **Send held: recipient could not be verified**. A mistyped or truncated channel ID is the usual cause. An invalid policy file reports `anima.contact_policy_config`.
 
 This is an Anima tool-layer constraint, not a security sandbox. List management
 is an operator dashboard feature, not an agent tool. Its endpoints use the

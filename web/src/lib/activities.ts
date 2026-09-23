@@ -171,6 +171,22 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
         kind: 'failure',
       };
     }
+    if (payload['failureKind'] === 'contact-unverified') {
+      return {
+        title: 'Send held: recipient could not be verified',
+        target: err,
+        color: COLOR_FAILURE,
+        kind: 'failure',
+      };
+    }
+    if (payload['failureKind'] === 'contact-policy-config') {
+      return {
+        title: 'Send refused: do-not-contact config invalid',
+        target: err,
+        color: COLOR_FAILURE,
+        kind: 'failure',
+      };
+    }
     if (activity.type === 'runtime.failed') {
       return {
         title: payload['failureSource'] === 'provider' ? 'Provider failure' : 'Run failed',
