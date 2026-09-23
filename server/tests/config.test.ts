@@ -478,10 +478,12 @@ test('claude-code catalog keeps family aliases and adds version-pinned models', 
   }
 });
 
-test('codex-cli catalog includes GPT-6 Astra and current GPT-5 models', () => {
+test('codex-cli catalog includes GPT-6 Astra/Sol/Luna and current GPT-5 models', () => {
   const entry = providerCatalogEntry('codex-cli');
   assert.deepEqual(entry?.models, [
     'gpt-6-astra',
+    'gpt-6-sol',
+    'gpt-6-luna',
     'gpt-5.6-sol',
     'gpt-5.6-terra',
     'gpt-5.6-luna',
@@ -491,6 +493,14 @@ test('codex-cli catalog includes GPT-6 Astra and current GPT-5 models', () => {
   assert.deepEqual(
     reasoningEffortsForModel('codex-cli', 'gpt-6-astra'),
     ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+  );
+  assert.deepEqual(
+    reasoningEffortsForModel('codex-cli', 'gpt-6-sol'),
+    ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+  );
+  assert.deepEqual(
+    reasoningEffortsForModel('codex-cli', 'gpt-6-luna'),
+    ['low', 'medium', 'high', 'xhigh', 'max'],
   );
   assert.deepEqual(
     reasoningEffortsForModel('codex-cli', 'gpt-5.6-sol'),

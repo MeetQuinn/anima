@@ -15,4 +15,10 @@ describe('providerValueLabel', () => {
     expect(providerValueLabel('deepseek/deepseek-v4-flash')).toBe('DeepSeek V4.1 Flash');
     expect(providerValueLabel('deepseek/deepseek-v4-flash-vision-exp')).toBe('DeepSeek V4.1 Flash');
   });
+
+  it('renders GPT-6 Codex model ids as readable model names', () => {
+    expect(providerValueLabel('gpt-6-astra')).toBe('GPT-6 Astra');
+    expect(providerValueLabel('gpt-6-sol')).toBe('GPT-6 Sol');
+    expect(providerValueLabel('gpt-6-luna')).toBe('GPT-6 Luna');
+  });
 });
