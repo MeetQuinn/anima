@@ -154,6 +154,59 @@ test('memory coherence scheduler scopes agents and respects active memory cap', 
   assert.equal(queues.itemsForAgent('tess').length, 0);
 });
 
+test('memory coherence scheduler never catches up a slot that predates the agent', async () => {
+  const queues = new TestMemoryQueues();
+  let now = new Date('2026-06-22T16:01:00.000Z');
+  const scheduler = new MemoryCoherenceScheduler({
+    hasMeaningfulActivitySinceLastPass: async () => true,
+    now: () => now,
+    queueForAgent: (agentId) => queues.queueForAgent(agentId),
+    readServerConfig: async () => ({
+      memoryCoherence: { enabled: true, maxConcurrent: 10, timezone: 'UTC', windowDurationMinutes: 60, windowStart: '05:00' },
+    }),
+    timezoneForAgent: () => 'UTC',
+  });
+  // Created at 15:28Z, after today's 05:xx slot (and yesterday's): nothing is due.
+  const fresh = agent('fresh', { createdAt: '2026-06-22T15:28:00.000Z' });
+
+  await scheduler.reconcile([fresh]);
+  assert.deepEqual(queues.enqueuedIds(), []);
+
+  // The next slot after creation runs normally.
+  now = new Date('2026-06-23T08:00:00.000Z');
+  await scheduler.reconcile([fresh]);
+  const enqueued = queues.enqueuedIds();
+  assert.equal(enqueued.length, 1);
+  assert.equal(enqueued[0]?.item.id, 'memory-coherence:fresh:2026-06-23');
+  assert.ok(enqueued[0]!.item.scheduledSlotAt >= fresh.createdAt);
+});
+
+test('memory coherence scheduler still catches up a missed slot after creation', async () => {
+  const queues = new TestMemoryQueues();
+  const scheduler = new MemoryCoherenceScheduler({
+    hasMeaningfulActivitySinceLastPass: async () => true,
+    now: () => new Date('2026-06-22T16:01:00.000Z'),
+    queueForAgent: (agentId) => queues.queueForAgent(agentId),
+    readServerConfig: async () => ({
+      memoryCoherence: { enabled: true, maxConcurrent: 10, timezone: 'UTC', windowDurationMinutes: 60, windowStart: '05:00' },
+    }),
+    timezoneForAgent: () => 'UTC',
+  });
+
+  await scheduler.reconcile([
+    // Created before today's slot: today's missed slot is a real catch-up.
+    agent('early', { createdAt: '2026-06-22T04:00:00.000Z' }),
+    // createdAt within a minute of now is indistinguishable from the schema's
+    // read-time backfill for legacy configs, so it does not suppress the slot.
+    agent('legacy', { createdAt: '2026-06-22T16:00:30.000Z' }),
+  ]);
+
+  assert.deepEqual(
+    queues.enqueuedIds().map((entry) => entry.item.id).sort(),
+    ['memory-coherence:early:2026-06-22', 'memory-coherence:legacy:2026-06-22'],
+  );
+});
+
 test('memory coherence scheduler uses a stable per-agent offset', () => {
   const first = stableAgentOffsetMinutes('iris', 120);
   const second = stableAgentOffsetMinutes('iris', 120);
@@ -657,10 +710,10 @@ function messageRecord(messageId: string, timestamp: string): AgentMessageRecord
   };
 }
 
-function agent(id: string, options: { connected?: boolean; enabled?: boolean } = {}): AgentConfig {
+function agent(id: string, options: { connected?: boolean; createdAt?: string; enabled?: boolean } = {}): AgentConfig {
   const connected = options.connected ?? true;
   return {
-    createdAt: '2026-01-01T00:00:00.000Z',
+    createdAt: options.createdAt ?? '2026-01-01T00:00:00.000Z',
     enabled: options.enabled ?? true,
     teamId: 'default',
     feishu: {

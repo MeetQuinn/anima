@@ -740,3 +740,45 @@ async function waitForUser(
     return user !== undefined && match(user);
   }, { description: `cache user ${userId} to match`, timeoutMs });
 }
+
+test('openDm caches the known counterpart and keeps richer cached fields', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-wd-open-dm-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const teamId = 'T-open-dm';
+      await seedCache(teamId, {
+        channels: [{ id: 'D-known', name: 'kept-name', memberCount: 2, syncedAt: STALE_ISO }],
+      });
+      const openArgs: Record<string, unknown>[] = [];
+      const client = {
+        conversations: {
+          open: async (args: Record<string, unknown>) => {
+            openArgs.push(args);
+            // Slack's default conversations.open body: only the channel id.
+            return { channel: { id: args.users === 'U-owner' ? 'D-new' : 'D-known' }, ok: true };
+          },
+        },
+      } as unknown as WebClient;
+      const service = new SlackWorkspaceDirectoryService({ client, teamId });
+
+      const opened = await service.openDm('U-owner');
+      await service.openDm('U-other');
+
+      assert.equal(openArgs[0]?.return_im, true);
+      assert.deepEqual({ isIm: opened.isIm, userId: opened.userId }, { isIm: true, userId: 'U-owner' });
+      const channels = (await getSlackWorkspaceDirectoryStore(teamId).read()).channels;
+      const fresh = channels.find((entry) => entry.id === 'D-new');
+      assert.equal(fresh?.userId, 'U-owner');
+      assert.equal(fresh?.isIm, true);
+      const known = channels.find((entry) => entry.id === 'D-known');
+      assert.equal(known?.userId, 'U-other');
+      assert.equal(known?.name, 'kept-name', 'sparse open response must not drop cached fields');
+      assert.equal(known?.memberCount, 2);
+      assert.notEqual(known?.syncedAt, STALE_ISO);
+      // The cached entry now answers getConversation without a conversations.info call.
+      assert.equal((await service.getConversation('D-new'))?.userId, 'U-owner');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});

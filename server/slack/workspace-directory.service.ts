@@ -197,11 +197,18 @@ export class SlackWorkspaceDirectoryService {
   }
 
   async openDm(userId: string): Promise<SlackConversationInfo> {
-    const body = await this.input.client.conversations.open({ users: userId });
+    const body = await this.input.client.conversations.open({ users: userId, return_im: true });
     if (!body.channel?.id) throw new Error(`Slack conversations.open did not return a DM channel for ${userId}`);
-    const conversation = normalizeSlackConversationInfo(body.channel as SlackApiConversationInfo);
-    if (conversation) await this.upsertConversation(conversation);
-    return conversation ?? { id: body.channel.id, syncedAt: nowIso() };
+    const opened = normalizeSlackConversationInfo(body.channel as SlackApiConversationInfo)
+      ?? { id: body.channel.id, syncedAt: nowIso() };
+    // We opened a 1:1 DM with `userId`, so the counterpart is known even when
+    // Slack returns only `{ id }`. Caching an entry without it would make the
+    // do-not-contact check fail closed on this DM until the cache expires.
+    const conversation: SlackConversationInfo = opened.isMpim || userId.includes(',')
+      ? opened
+      : { ...opened, isIm: true, userId: opened.userId ?? userId };
+    await this.mergeConversation(conversation);
+    return conversation;
   }
 
   async getConversation(channel: string): Promise<SlackConversationInfo | undefined> {
@@ -669,6 +676,17 @@ export class SlackWorkspaceDirectoryService {
       ...cache,
       channels: upsertById(cache.channels, conversation),
     }), teamId);
+  }
+
+  /** Upsert that keeps fields a sparser response (e.g. conversations.open) lacks. */
+  private async mergeConversation(conversation: SlackConversationInfo, teamId = this.input.teamId): Promise<void> {
+    await this.updateCache((cache) => {
+      const existing = cache.channels.find((entry) => entry.id === conversation.id);
+      return {
+        ...cache,
+        channels: upsertById(cache.channels, { ...existing, ...conversation }),
+      };
+    }, teamId);
   }
 
   private async readCache<T>(

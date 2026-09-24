@@ -10,6 +10,9 @@ import { AgentService } from '../agents/agent.service.js';
 import { assertSlackContactAllowed } from '../messages/contact-policy.service.js';
 import { setCursorDeliveryEnabledForTests } from '../runtime/cursor-delivery.js';
 import { createSlackWebClient } from '../slack/client.js';
+import { SlackWorkspaceDirectoryService } from '../slack/workspace-directory.service.js';
+import { getSlackWorkspaceDirectoryStore } from '../storage/schema/cache.js';
+import { nowIso } from '../ids.js';
 import { ServerConfig } from '../storage/schema/server.store.js';
 import { ObservedConversationStore } from '../storage/schema/observed-conversation.store.js';
 import { runAsk } from '../tools/ask.js';
@@ -180,6 +183,47 @@ test('raw DM lookup failure refuses; absent name uses ID alone', async () => fix
   override.set('users.info', () => ({ ok: false, error: 'user_not_found' }));
   await writeFile(join(home, 'config.json'), JSON.stringify({ doNotContact: { TNONAME: [USER] } }));
   await assert.rejects(check({ teamId: 'TNONAME', dmUserId: USER }), { message: refusal.replace('Jialin (U0AAAA)', 'U0AAAA') });
+}));
+
+test('fresh cached DM without a recipient triggers one live lookup before failing closed', async () => fixture(async ({ check, override, calls }) => {
+  const seed = (id: string) => getSlackWorkspaceDirectoryStore(TEAM).update((cache) => ({
+    ...cache, teamId: TEAM, channels: [...cache.channels.filter((c) => c.id !== id), { id, syncedAt: nowIso() }],
+  }));
+  // Live lookup finds a listed recipient: still refused as a list match.
+  await seed('D123');
+  await assert.rejects(check({ channelId: 'D123' }), { message: refusal });
+  assert.equal(calls.filter((m) => m === 'conversations.info').length, 1);
+  // Live lookup finds someone else: allowed.
+  override.set('conversations.info', (data) => ({ ok: true, channel: { id: data.channel, is_im: true, user: 'UOTHER' } }));
+  await seed('DOTHER');
+  await check({ channelId: 'DOTHER' });
+  // Live lookup still has no recipient: fails closed as unverified.
+  override.set('conversations.info', (data) => ({ ok: true, channel: { id: data.channel, is_im: true } }));
+  await seed('DBLANK');
+  await assert.rejects(check({ channelId: 'DBLANK' }), (error: unknown) => {
+    assert.match((error as Error).message, /Could not verify the DM recipient for DBLANK/);
+    assert.equal((error as { kind?: string }).kind, 'unverified');
+    return true;
+  });
+  // Live lookup errors: fails closed as unverified.
+  override.set('conversations.info', () => ({ ok: false, error: 'channel_not_found' }));
+  await seed('DERR');
+  await assert.rejects(check({ channelId: 'DERR' }), /Could not verify .* for DERR \(Slack: channel_not_found\)/);
+}));
+
+test('a DM opened via a sparse conversations.open is verifiable from cache without a live lookup', async () => fixture(async ({ check, override, calls }) => {
+  override.set('conversations.open', (data) => {
+    if (String(data.return_im) !== 'true') return { ok: false, error: 'expected_return_im' };
+    return { ok: true, channel: { id: data.users === USER ? 'DLISTED' : 'DNEW' } };
+  });
+  override.set('conversations.info', () => ({ ok: false, error: 'should_not_be_called' }));
+  const directory = new SlackWorkspaceDirectoryService({ client: createSlackWebClient('xoxb-test'), teamId: TEAM });
+  const dm = await directory.openDm('UOWNER');
+  assert.equal(dm.userId, 'UOWNER');
+  await check({ channelId: 'DNEW', content: { text: 'hello, I am new here' } });
+  await directory.openDm(USER);
+  await assert.rejects(check({ channelId: 'DLISTED' }), { message: refusal });
+  assert.equal(calls.includes('conversations.info'), false);
 }));
 
 test('corrupt and unreadable config refuse with a safe actionable failure', async () => fixture(async ({ home, run, calls }) => {
