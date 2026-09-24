@@ -65,10 +65,11 @@ export class MemoryCoherenceScheduler {
 
     const now = this.now();
     // Due-slot computation is pure time math, so it runs before any file I/O.
-    // Note: with the 2-day catchup window ([0, -1]) every candidate always has
-    // a most-recent slot, so `due` is only empty when there are no candidates;
-    // it is the enqueue-side settled-id dedupe (wake-queue `seen` markers) and
-    // the activity gate that make this loop a no-op on most ticks.
+    // Note: with the 2-day catchup window ([0, -1]) every candidate created
+    // before its most recent slot has one, so `due` is mostly non-empty; it is
+    // the enqueue-side settled-id dedupe (wake-queue `seen` markers) and the
+    // activity gate that make this loop a no-op on most ticks. Slots that
+    // predate the agent's creation are never due (see dueMemoryCoherenceSlot).
     const due = candidates
       .map((agent) => dueMemoryCoherenceSlot(agent, config, now, this.timezoneForAgent(agent, config.timezone)))
       .filter((slot): slot is MemoryCoherenceDueSlot => Boolean(slot))
@@ -156,9 +157,13 @@ function dueMemoryCoherenceSlot(
 ): MemoryCoherenceDueSlot | undefined {
   const current = zonedDateTime(now, timezone);
   const offsetMinutes = stableAgentOffsetMinutes(agent.id, config.windowDurationMinutes);
+  const createdAtMs = agentCreatedAtMs(agent, now);
   const candidates = [0, -1]
     .map((dayOffset) => slotForLocalDay(current.plus({ days: dayOffset }), config.windowStart, offsetMinutes, timezone))
     .filter((slot) => slot <= current)
+    // A slot before the agent existed was never missed: no catch-up run, and no
+    // "delayed" outcome. The first pass is the first slot after creation.
+    .filter((slot) => createdAtMs === undefined || slot.toMillis() >= createdAtMs)
     .sort((a, b) => b.toMillis() - a.toMillis());
   const slot = candidates[0];
   if (!slot) return undefined;
@@ -169,6 +174,20 @@ function dueMemoryCoherenceSlot(
     scheduledSlotAt: slot.toUTC().toISO() ?? slot.toJSDate().toISOString(),
     scheduledSlotLabel: `${labelTime} agent-local`,
   };
+}
+
+// The agent schema backfills a missing `createdAt` with the parse time, so a
+// legacy config that never persisted one reads as "created just now" on every
+// tick. A createdAt this close to `now` is indistinguishable from that backfill
+// and is ignored; a genuinely new agent is not a candidate this soon anyway
+// (it needs a connected transport and a ledger message first).
+const CREATED_AT_BACKFILL_MARGIN_MS = 60 * 1000;
+
+function agentCreatedAtMs(agent: AgentConfig, now: Date): number | undefined {
+  const createdAtMs = Date.parse(agent.createdAt ?? '');
+  if (!Number.isFinite(createdAtMs)) return undefined;
+  if (now.getTime() - createdAtMs < CREATED_AT_BACKFILL_MARGIN_MS) return undefined;
+  return createdAtMs;
 }
 
 function slotForLocalDay(day: DateTime, windowStart: string, offsetMinutes: number, timezone: string): DateTime {

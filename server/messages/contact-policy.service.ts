@@ -79,7 +79,12 @@ async function refusalReason(input: ContactPolicyInput): Promise<Refusal | undef
     } else if (input.channelId.startsWith('D') || input.channelId.startsWith('G')) {
       // Raw D ids lack a counterpart; G ids can be private channels OR group DMs.
       // A display-label lookup's best-effort fallback is not an authorization fact.
-      const conversation = await directory.getConversation(input.channelId);
+      let conversation = await directory.getConversation(input.channelId);
+      if (conversation && !conversation.userId && input.channelId.startsWith('D')) {
+        // A cached D entry can be fresh yet lack its counterpart (e.g. written
+        // from a sparse conversations.open). Ask Slack once before failing closed.
+        conversation = (await directory.getConversationForCurrentBot(input.channelId)) ?? conversation;
+      }
       if (!conversation) return unresolved(input.channelId, 'the conversation (Slack did not return it; the ID may be wrong or not visible to this bot)');
       if (conversation.isMpim) {
         recipientIds = await directory.getConversationMemberIds(input.channelId);
