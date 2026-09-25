@@ -136,7 +136,8 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
       'kimi-code/kimi-for-coding-highspeed',
     ],
     // Kimi CLI's own display names (the `display_name` it records for its managed
-    // kimi-code models).
+    // kimi-code models). `kimi-for-coding*` are rolling aliases; recheck
+    // display_name when Kimi CLI updates.
     modelLabels: {
       'kimi-code/k3': 'K3',
       'kimi-code/kimi-for-coding': 'K2.7 Coding',
