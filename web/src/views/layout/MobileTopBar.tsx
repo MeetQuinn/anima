@@ -15,8 +15,8 @@ import { agentHasConnectedTransport } from '@shared/agent-transports';
  * Returns null when there is no selected agent (Screen 1 has its own header).
  *
  * Restart is intentionally omitted here — it is a global service action, not
- * per-agent. On desktop it lives in the sidebar footer (Server button). Mobile
- * users can reach it via the Server panel on the home screen (Screen 1).
+ * per-agent. It lives on Settings > Server (/settings), which the sidebar footer
+ * opens on desktop and the Screen 1 footer opens on mobile.
  */
 export default function MobileTopBar() {
   const { data: agents = [] } = useAgents();

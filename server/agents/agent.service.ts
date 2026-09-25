@@ -260,7 +260,7 @@ export class AgentRegistryService {
   }
 
   // Label-only team reassignment: validates the target team exists, then rewrites the agent's
-  // teamId. The existing home is never moved (team = a label; see cut-1 contract).
+  // teamId. The existing home is never moved (a team is a label, not a location).
   async assignTeam(agentId: string, teamId: string): Promise<AgentConfig> {
     const team = await this.teamService.requireTeam(teamId);
     const service = this.serviceFor(agentId);

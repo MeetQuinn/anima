@@ -39,7 +39,7 @@ export interface AgentTeamWarning {
   agentId: string;
   // The dangling team id exactly as configured.
   teamId: string;
-  // Where the agent was folded (the default team, in cut-1).
+  // Where the agent was folded (the default team).
   effectiveTeamId: string;
   // Operator-facing repair message.
   message: string;
