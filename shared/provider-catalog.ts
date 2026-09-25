@@ -8,6 +8,12 @@ export interface ProviderCatalogEntry {
   kind: 'claude-code' | 'codex-cli' | 'kimi-cli' | 'grok-cli' | 'opencode-cli' | 'pi';
   label: string;
   marketingModelAliases?: string[];
+  /**
+   * Display name for each model id. Every id in `models` needs one (a test fails
+   * otherwise). Dynamic providers may list ids here that only their live catalog
+   * offers, so a known id still reads cleanly.
+   */
+  modelLabels?: Record<string, string>;
   modelReasoningEfforts?: Record<string, string[]>;
   models: string[];
   reasoningEfforts: string[];
@@ -63,6 +69,15 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
       'claude-opus-4-6',
       'claude-sonnet-4-6',
     ],
+    modelLabels: {
+      opus: 'Opus',
+      sonnet: 'Sonnet',
+      haiku: 'Haiku',
+      fable: 'Fable',
+      'claude-opus-4-8': 'Claude Opus 4.8',
+      'claude-opus-4-6': 'Claude Opus 4.6',
+      'claude-sonnet-4-6': 'Claude Sonnet 4.6',
+    },
     defaultModel: 'opus',
     modelReasoningEfforts: {
       opus: CLAUDE_REASONING_EFFORTS,
@@ -89,6 +104,15 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
       'gpt-5.6-luna',
       'gpt-5.5',
     ],
+    modelLabels: {
+      'gpt-6-astra': 'GPT-6 Astra',
+      'gpt-6-sol': 'GPT-6 Sol',
+      'gpt-6-luna': 'GPT-6 Luna',
+      'gpt-5.6-sol': 'GPT-5.6 Sol',
+      'gpt-5.6-terra': 'GPT-5.6 Terra',
+      'gpt-5.6-luna': 'GPT-5.6 Luna',
+      'gpt-5.5': 'GPT-5.5',
+    },
     defaultModel: 'gpt-6-astra',
     modelReasoningEfforts: {
       'gpt-6-astra': CODEX_REASONING_EFFORTS,
@@ -111,6 +135,14 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
       'kimi-code/kimi-for-coding',
       'kimi-code/kimi-for-coding-highspeed',
     ],
+    // Kimi CLI's own display names (the `display_name` it records for its managed
+    // kimi-code models). `kimi-for-coding*` are rolling aliases; recheck
+    // display_name when Kimi CLI updates.
+    modelLabels: {
+      'kimi-code/k3': 'K3',
+      'kimi-code/kimi-for-coding': 'K2.7 Coding',
+      'kimi-code/kimi-for-coding-highspeed': 'K2.7 Coding Highspeed',
+    },
     defaultModel: 'kimi-code/kimi-for-coding',
     modelReasoningEfforts: {
       'kimi-code/k3': ['low', 'high', 'max'],
@@ -142,6 +174,10 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
       'deepseek/deepseek-v4-pro',
       'deepseek/deepseek-v4-flash',
     ],
+    modelLabels: {
+      'deepseek/deepseek-v4-pro': 'DeepSeek V4 Pro',
+      'deepseek/deepseek-v4-flash': 'DeepSeek V4.1 Flash',
+    },
     defaultModel: 'deepseek/deepseek-v4-pro',
     modelReasoningEfforts: {
       'deepseek/deepseek-v4-pro': ['high', 'max'],
@@ -159,6 +195,11 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     // menu is live: the server asks pi (`get_available_models`) which models the
     // machine-level credentials can reach, so nothing is offered that cannot run.
     models: [],
+    // Ids pi's live catalog is known to offer; anything else shows its raw id.
+    modelLabels: {
+      'deepseek/deepseek-flash': 'DeepSeek V4.1 Flash',
+      'deepseek/deepseek-v4-flash-vision-exp': 'DeepSeek V4.1 Flash',
+    },
     defaultModel: '',
     dynamicModels: true,
     // pi's thinking levels are provider-wide; models without reasoning ignore them.
@@ -176,6 +217,9 @@ export function providerCatalog(): ProviderCatalogEntry[] {
     if (entry.marketingModelAliases) {
       copy.marketingModelAliases = [...entry.marketingModelAliases];
     }
+    if (entry.modelLabels) {
+      copy.modelLabels = { ...entry.modelLabels };
+    }
     if (entry.modelReasoningEfforts) {
       copy.modelReasoningEfforts = Object.fromEntries(
         Object.entries(entry.modelReasoningEfforts).map(([model, efforts]) => [
@@ -186,6 +230,15 @@ export function providerCatalog(): ProviderCatalogEntry[] {
     }
     return copy;
   });
+}
+
+/** Catalog display name for a model id, or undefined when no provider names it. */
+export function catalogModelLabel(model: string): string | undefined {
+  for (const entry of PROVIDER_CATALOG) {
+    const label = entry.modelLabels?.[model];
+    if (label) return label;
+  }
+  return undefined;
 }
 
 export function providerCatalogEntry(kind: string): ProviderCatalogEntry | undefined {
