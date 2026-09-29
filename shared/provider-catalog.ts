@@ -96,6 +96,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     command: 'codex',
     installHint: 'Install Codex CLI so `codex --version` works.',
     models: [
+      'gpt-6.1-sol',
       'gpt-6-astra',
       'gpt-6-sol',
       'gpt-6-luna',
@@ -105,6 +106,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
       'gpt-5.5',
     ],
     modelLabels: {
+      'gpt-6.1-sol': 'GPT-6.1 Sol',
       'gpt-6-astra': 'GPT-6 Astra',
       'gpt-6-sol': 'GPT-6 Sol',
       'gpt-6-luna': 'GPT-6 Luna',
@@ -115,6 +117,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     },
     defaultModel: 'gpt-6-astra',
     modelReasoningEfforts: {
+      'gpt-6.1-sol': CODEX_REASONING_EFFORTS,
       'gpt-6-astra': CODEX_REASONING_EFFORTS,
       'gpt-6-sol': CODEX_REASONING_EFFORTS,
       'gpt-6-luna': ['low', 'medium', 'high', 'xhigh', 'max'],
