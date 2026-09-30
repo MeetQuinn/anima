@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { isRecord, stringField } from '../json.js';
-import { classifyProviderFailureReason } from './provider-failure.js';
+import { classifyProviderFailureReason, ProviderTurnFailedError } from './provider-failure.js';
 import { type RunningChildProcess } from './child-process.js';
 import {
   claudeCommonArgs,
@@ -26,6 +27,7 @@ import {
 const CLAUDE_TRANSIENT_CONTINUE_PROMPT =
   'The previous provider turn ended with a transient API or transport error after partial progress. Continue from the current conversation state. Do not repeat completed tool calls, chat messages, file sends, or file edits; inspect state first if needed, then finish the requested task.';
 const CLAUDE_AUTO_REWAKE_GRACE_MS = 30_000;
+const CLAUDE_INPUT_COMPLETION_GRACE_MS = 30_000;
 
 export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJsonController> {
   readonly command: string;
@@ -136,7 +138,7 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
   async appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<AgentRuntimeFollowupResult> {
     const controller = this.slot.get();
     if (!this.activeRun.accepts(input)) return { accepted: false };
-    if (!controller) return { accepted: false };
+    if (!controller?.hasCurrentTurn()) return { accepted: false };
     await controller.writeUserMessage(input.prompt);
     return { accepted: true, text: 'appended to Claude stream-json stdin' };
   }
@@ -243,14 +245,19 @@ class ClaudeStreamJsonController {
   private visibleBackgroundTaskCount = 0;
   private readonly stdoutLines = new LineBuffer();
   private compacting = false;
+  private commandLifecycleAvailable = false;
+  private inputCompletionTimeout?: NodeJS.Timeout;
+  private nativeResultCount = 0;
   private providerTurnOwner?: 'background' | 'current';
   private providerTurnActive = false;
   private stderrText = '';
   private currentTurn?: {
+    commands: Map<string, { startedAfterResult?: number; completed: boolean }>;
     hadProviderToolCall: boolean;
     input: AgentRuntimeInput;
     jsonlMapper: ReturnType<typeof createClaudeJsonlActivityMapper>;
     lastText?: string;
+    lastResult?: string;
     reject(error: unknown): void;
     resolve(value: string): void;
   };
@@ -275,7 +282,11 @@ class ClaudeStreamJsonController {
           this.rejectCurrentTurn(new ClaudeSessionNotFoundError(stderrOutput));
           return;
         }
-        this.resolveCurrentTurn(parseClaudeRuntimeOutput(stdout).text ?? '');
+        if (this.commandLifecycleAvailable && this.currentTurn) {
+          this.rejectCurrentTurn(new Error('Claude Code runtime exited before sent input completion was confirmed'));
+        } else {
+          this.resolveCurrentTurn(parseClaudeRuntimeOutput(stdout).text ?? '');
+        }
       })
       .catch(async (error) => {
         this.clearAutoRewakePending();
@@ -294,13 +305,17 @@ class ClaudeStreamJsonController {
     return this.startedSession;
   }
 
+  hasCurrentTurn(): boolean {
+    return this.currentTurn !== undefined;
+  }
+
   snapshot() {
     return this.child.snapshot();
   }
 
   workSnapshot(): ProviderWorkSnapshot | undefined {
     const backgroundTaskCount = this.visibleBackgroundTaskCount + this.activeHookIds.size;
-    if (this.providerTurnActive || this.autoRewakePending) {
+    if (this.providerTurnActive || this.autoRewakePending || (this.currentTurn?.commands.size ?? 0) > 0) {
       return {
         ...(backgroundTaskCount > 0 ? { backgroundTaskCount } : {}),
         state: 'working',
@@ -323,6 +338,7 @@ class ClaudeStreamJsonController {
     if (this.currentTurn) throw new Error('Claude Code runtime already has an active turn');
     return new Promise((resolve, reject) => {
       this.currentTurn = {
+        commands: new Map(),
         hadProviderToolCall: false,
         input,
         jsonlMapper,
@@ -347,13 +363,22 @@ class ClaudeStreamJsonController {
   }
 
   private sendUserMessage(text: string): void {
-    this.child.writeStdin(`${JSON.stringify({
-      message: {
-        content: [{ text, type: 'text' }],
-        role: 'user',
-      },
-      type: 'user',
-    })}\n`);
+    const uuid = randomUUID();
+    const turn = this.currentTurn;
+    turn?.commands.set(uuid, { completed: false });
+    try {
+      this.child.writeStdin(`${JSON.stringify({
+        message: {
+          content: [{ text, type: 'text' }],
+          role: 'user',
+        },
+        type: 'user',
+        uuid,
+      })}\n`);
+    } catch (error) {
+      turn?.commands.delete(uuid);
+      throw error;
+    }
   }
 
   kill(signal?: NodeJS.Signals): void {
@@ -365,7 +390,10 @@ class ClaudeStreamJsonController {
   }
 
   isQuiescent(): boolean {
-    return !this.inputGateClosed()
+    return !this.compacting
+      && this.activeToolUseIds.size === 0
+      && this.queuedMessages.length === 0
+      && (this.currentTurn?.commands.size ?? 0) === 0
       && this.backgroundTaskCount === 0
       && this.activeHookIds.size === 0
       && !this.providerTurnActive
@@ -410,6 +438,23 @@ class ClaudeStreamJsonController {
     owner: 'background' | 'current' | undefined,
   ): Promise<void> {
     const type = stringField(parsed, 'type');
+    if (type === 'command_lifecycle') {
+      const uuid = stringField(parsed, 'command_uuid');
+      const state = stringField(parsed, 'state');
+      if (uuid && this.currentTurn?.commands.has(uuid)
+        && (state === 'cancelled' || state === 'discarded' || state === 'refused')) {
+        const error = new Error(`Claude Code input ${state}; sent input must not be automatically replayed`);
+        this.rejectQueuedMessages(error);
+        this.rejectCurrentTurn(error);
+        this.child.kill();
+        return;
+      }
+      this.flushQueuedMessages();
+      this.resolveCompletedInputTurn();
+      this.refreshInputCompletionTimeout();
+      this.resolveQuiescentWaitersIfReady();
+      return;
+    }
     if (type === 'system' && stringField(parsed, 'subtype') === 'init') {
       this.startedSession = true;
       const version = stringField(parsed, 'claude_code_version');
@@ -429,18 +474,31 @@ class ClaudeStreamJsonController {
         sideEffectFree: owner !== 'background' && this.currentTurn?.hadProviderToolCall !== true,
       });
       if (providerError) {
-        if (owner !== 'background') this.rejectCurrentTurn(providerError);
+        if (owner !== 'background') {
+          this.rejectQueuedMessages(providerError);
+          this.rejectCurrentTurn(providerError);
+        }
         if (!this.currentTurn && this.isQuiescent()) await this.clearBackgroundObserver();
         return;
       }
-      if (this.flushQueuedMessages() > 0) return;
+      const flushed = this.flushQueuedMessages();
       if (owner !== 'background') {
-        this.resolveCurrentTurn(typeof result === 'string' ? result : this.currentTurn?.lastText ?? '');
+        this.nativeResultCount += 1;
+        if (this.currentTurn) {
+          this.currentTurn.lastResult = typeof result === 'string' ? result : this.currentTurn.lastText ?? '';
+        }
+        if (this.commandLifecycleAvailable) {
+          this.resolveCompletedInputTurn();
+          this.refreshInputCompletionTimeout();
+        } else if (flushed === 0) {
+          this.resolveCurrentTurn(typeof result === 'string' ? result : this.currentTurn?.lastText ?? '');
+        }
       }
       if (!this.currentTurn && this.isQuiescent()) await this.clearBackgroundObserver();
       return;
     }
     this.flushQueuedMessages();
+    this.refreshInputCompletionTimeout();
     this.resolveQuiescentWaitersIfReady();
     if (!this.currentTurn && this.isQuiescent()) await this.clearBackgroundObserver();
   }
@@ -448,18 +506,30 @@ class ClaudeStreamJsonController {
   private resolveCurrentTurn(value: string): void {
     const turn = this.currentTurn;
     if (!turn) return;
+    this.clearInputCompletionTimeout();
     this.currentTurn = undefined;
     if (!this.backgroundObserver && (this.backgroundTaskCount > 0 || this.activeHookIds.size > 0)) {
       this.backgroundObserver = { input: turn.input, jsonlMapper: turn.jsonlMapper };
     }
     turn.resolve(value || turn.lastText || '');
+    this.resolveQuiescentWaitersIfReady();
   }
 
   private rejectCurrentTurn(error: unknown): void {
     const turn = this.currentTurn;
     if (!turn) return;
+    if (this.commandLifecycleAvailable && turn.commands.size > 1) {
+      // A failed native turn may leave already-written followups unconsumed.
+      // Stop this process and require a decision instead of replaying the wake
+      // or continuing on a session that still owns those inputs.
+      const message = error instanceof Error ? error.message : String(error);
+      error = new ProviderTurnFailedError(`Claude Code failed after followup input was sent: ${message}`);
+      this.child.kill();
+    }
+    this.clearInputCompletionTimeout();
     this.currentTurn = undefined;
     turn.reject(error);
+    this.resolveQuiescentWaitersIfReady();
   }
 
   private flushQueuedMessages(): number {
@@ -480,7 +550,58 @@ class ClaudeStreamJsonController {
   }
 
   private inputGateClosed(): boolean {
-    return this.compacting || this.activeToolUseIds.size > 0;
+    // The UUID lifecycle is an internal CLI capability: only bypass the tool
+    // gate after this process has demonstrated it for one of our own inputs.
+    return this.compacting || (!this.commandLifecycleAvailable && this.activeToolUseIds.size > 0);
+  }
+
+  private updateCommandLifecycle(value: Record<string, unknown>): void {
+    const uuid = stringField(value, 'command_uuid');
+    const command = uuid && this.currentTurn?.commands.get(uuid);
+    const state = stringField(value, 'state');
+    if (!command || !state) return;
+    if (!['queued', 'started', 'completed', 'cancelled', 'discarded', 'refused'].includes(state)) return;
+    this.commandLifecycleAvailable = true;
+    if (state === 'started' && command.startedAfterResult === undefined) {
+      command.startedAfterResult = this.nativeResultCount;
+      this.providerTurnActive = true;
+      this.providerTurnOwner ??= 'current';
+    }
+    if (state === 'completed') command.completed = true;
+  }
+
+  private resolveCompletedInputTurn(): void {
+    const turn = this.currentTurn;
+    if (!turn || turn.lastResult === undefined || this.queuedMessages.length > 0) return;
+    // A merged input completes before its result; a new native turn completes
+    // after its result. Both signals are required, including a result newer
+    // than the input's started frame, so an old result cannot settle a followup.
+    for (const command of turn.commands.values()) {
+      if (!command.completed || command.startedAfterResult === undefined
+        || this.nativeResultCount <= command.startedAfterResult) return;
+    }
+    this.resolveCurrentTurn(turn.lastResult);
+  }
+
+  private refreshInputCompletionTimeout(): void {
+    if (!this.commandLifecycleAvailable || !this.currentTurn || this.currentTurn.lastResult === undefined
+      || this.providerTurnActive || this.compacting || this.activeToolUseIds.size > 0
+      || this.activeHookIds.size > 0 || this.queuedMessages.length > 0) {
+      this.clearInputCompletionTimeout();
+      return;
+    }
+    if (this.inputCompletionTimeout) return;
+    this.inputCompletionTimeout = setTimeout(() => {
+      this.inputCompletionTimeout = undefined;
+      this.rejectCurrentTurn(new Error('Claude Code did not confirm sent input completion after its result'));
+      this.child.kill();
+    }, CLAUDE_INPUT_COMPLETION_GRACE_MS);
+    this.inputCompletionTimeout.unref?.();
+  }
+
+  private clearInputCompletionTimeout(): void {
+    if (this.inputCompletionTimeout) clearTimeout(this.inputCompletionTimeout);
+    this.inputCompletionTimeout = undefined;
   }
 
   private outputSink(value: Record<string, unknown> | undefined) {
@@ -503,6 +624,7 @@ class ClaudeStreamJsonController {
   private updateInputGate(value: Record<string, unknown>): void {
     const type = stringField(value, 'type');
     const subtype = stringField(value, 'subtype');
+    if (type === 'command_lifecycle') this.updateCommandLifecycle(value);
     if (type === 'system' && subtype === 'background_tasks_changed' && Array.isArray(value['tasks'])) {
       // Claude defines this as a replace-all level signal, so missed task edge events cannot leave stale state.
       const previousCount = this.backgroundTaskCount;
