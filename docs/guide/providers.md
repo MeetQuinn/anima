@@ -1,11 +1,11 @@
 ---
 title: Provider setup and identity
-description: Install and authenticate Claude Code, Codex CLI, Kimi CLI, Grok Build, OpenCode, or pi for use by Anima agents.
+description: Install and authenticate Claude Code, Codex, Kimi Code, Grok Build, OpenCode, or pi for use by Anima agents.
 ---
 
 # Provider setup and identity
 
-Anima supplies the durable agent identity, chat routing, queue, memory, and activity trail. Claude Code, Codex CLI, Kimi CLI, Grok Build, OpenCode, or pi supplies the model work and developer tools.
+Anima supplies the durable agent identity, chat routing, queue, memory, and activity trail. Claude Code, Codex, Kimi Code, Grok Build, OpenCode, or pi supplies the model work and developer tools.
 
 The provider CLI is a machine-level dependency. Anima launches the executable found on the host's `PATH` and uses that provider's existing local authentication. Provider login state is not copied into an agent home or stored by Anima.
 
@@ -16,8 +16,8 @@ Install and authenticate at least one before creating the first agent.
 | Provider    | Official setup                                                                                                                         | Verify on the Anima host          |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
 | Claude Code | [Install and authenticate Claude Code](https://docs.anthropic.com/en/docs/claude-code/getting-started)                                 | `claude --version`                |
-| Codex CLI   | [Install Codex CLI](https://developers.openai.com/codex/cli/) and sign in with your ChatGPT account or configured API access           | `codex --version`                 |
-| Kimi CLI    | [Install Kimi Code CLI](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started) and use `/login` on first launch       | `kimi --version`                  |
+| Codex       | [Install Codex CLI](https://developers.openai.com/codex/cli/) and sign in with your ChatGPT account or configured API access           | `codex --version`                 |
+| Kimi Code   | [Install Kimi Code CLI](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started) and use `/login` on first launch       | `kimi --version`                  |
 | Grok Build  | [Install Grok Build](https://docs.x.ai/build/overview) and sign in with `grok login` or configure its supported API-key authentication | `grok --no-auto-update --version` |
 | OpenCode    | [Install OpenCode](https://opencode.ai/docs/) and add a DeepSeek API key with `opencode auth login --provider deepseek`                | `opencode --version`              |
 | pi          | `npm install -g @earendil-works/pi-coding-agent`, then run `pi` and `/login` (or add the provider API key to `~/.pi/agent/auth.json`)  | `pi --version`                    |
@@ -85,7 +85,7 @@ The sign-in uses the runtime command configured for the provider (see
 router therefore receives the login instead of the bare CLI, and the credential lands where that
 wrapper expects it. Anima never sees the credential: it only relays the link and code, reports how
 the CLI exited, and reruns `login status` afterwards. One sign-in runs at a time per machine; cancel
-it from the panel if you started the wrong mode. Currently supported: Codex CLI.
+it from the panel if you started the wrong mode. Currently supported: Codex.
 
 All Anima agents launched under the same host user can reach the same provider credential store unless the provider itself is configured differently. Choosing a different provider for an agent does not create a separate machine account boundary.
 
@@ -106,12 +106,12 @@ selected model exactly:
 | Claude Code | Opus, Sonnet, Fable; Opus 4.8                                                         | `low`, `medium`, `high`, `xhigh`, `max`                                                                |
 | Claude Code | Opus 4.6, Sonnet 4.6                                                                  | `low`, `medium`, `high`, `max`                                                                         |
 | Claude Code | Haiku                                                                                 | Provider default; no adjustable effort                                                                 |
-| Codex CLI   | GPT-6 Astra                                                                           | `low`, `medium`, `high`, `xhigh`, `max`, `ultra`                                                       |
-| Codex CLI   | GPT-5.6 Sol, GPT-5.6 Terra                                                            | `low`, `medium`, `high`, `xhigh`, `max`, `ultra`                                                       |
-| Codex CLI   | GPT-5.6 Luna                                                                          | `low`, `medium`, `high`, `xhigh`, `max`                                                                |
-| Codex CLI   | GPT-5.5                                                                               | `low`, `medium`, `high`, `xhigh`                                                                       |
-| Kimi CLI    | K3                                                                                    | `low`, `high`, `max`                                                                                   |
-| Kimi CLI    | Kimi for Coding, Kimi for Coding Highspeed                                            | Always thinking; no adjustable level                                                                   |
+| Codex       | GPT-6 Astra                                                                           | `low`, `medium`, `high`, `xhigh`, `max`, `ultra`                                                       |
+| Codex       | GPT-5.6 Sol, GPT-5.6 Terra                                                            | `low`, `medium`, `high`, `xhigh`, `max`, `ultra`                                                       |
+| Codex       | GPT-5.6 Luna                                                                          | `low`, `medium`, `high`, `xhigh`, `max`                                                                |
+| Codex       | GPT-5.5                                                                               | `low`, `medium`, `high`, `xhigh`                                                                       |
+| Kimi Code   | K3                                                                                    | `low`, `high`, `max`                                                                                   |
+| Kimi Code   | Kimi for Coding, Kimi for Coding Highspeed                                            | Always thinking; no adjustable level                                                                   |
 | OpenCode    | DeepSeek V4 Pro, DeepSeek V4 Flash                                                    | `high`, `max`                                                                                          |
 | pi          | Gemini 2.5 Pro/Flash, Gemini 3.1 Pro Preview, Gemini 3.7 Flash, DeepSeek V4 Pro/Flash | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (pi `--thinking`; the model decides what it honors) |
 | Grok Build  | Live model catalog                                                                    | Whatever the selected model advertises                                                                 |
@@ -155,7 +155,7 @@ binary from a child that is still using the previous version.
 
 ## Limit Kimi and Grok context cost
 
-The **Providers** panel includes one machine-wide **Context limit** control for Kimi CLI and Grok
+The **Providers** panel includes one machine-wide **Context limit** control for Kimi Code and Grok
 Build. It is global for every Anima agent using that provider; it is not copied into each agent's
 Launch environment.
 

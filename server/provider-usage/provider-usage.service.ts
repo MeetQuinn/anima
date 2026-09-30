@@ -273,13 +273,13 @@ export function defaultProviderUsageAdapters(): ProviderUsageAdapter[] {
     },
     {
       fetch: async () => [await fetchCodexUsage()],
-      label: 'Codex CLI',
+      label: 'Codex',
       provider: 'codex-cli',
       source: 'private-api',
     },
     {
       fetch: async () => [await fetchKimiUsage()],
-      label: 'Kimi CLI',
+      label: 'Kimi Code',
       provider: 'kimi-cli',
       source: 'native',
     },

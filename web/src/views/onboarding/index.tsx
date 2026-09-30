@@ -661,7 +661,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
               </label>
               {providerAvailability && unavailableProviders.length === providerOptions.length ? (
                 <p className="font-sans text-[12px] text-health-warn">
-                  No providers detected. Install Claude Code, Codex CLI, Kimi CLI, Grok Build, or OpenCode first.
+                  No providers detected. Install Claude Code, Codex, Kimi Code, Grok Build, or OpenCode first.
                 </p>
               ) : (
                 /* Stack on phones: three columns inside the card leave ~100px
