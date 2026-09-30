@@ -8,7 +8,6 @@ import type { WebClient } from '@slack/web-api';
 import { slackShortcutHandoffServiceForAgent } from '../inbox/slack-shortcut-handoff.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { SlackShortcutService, type ShortcutModalView } from '../slack-interactions/shortcut.service.js';
-import { SLACK_STOP_CONFIRM_VIEW_CALLBACK_ID } from '../slack-interactions/shortcut-ids.js';
 import {
   SLACK_SHORTCUTS,
   ensureSlackShortcutManifest,
@@ -160,26 +159,23 @@ test('shortcut manifest update YAML describes the manual migration block', () =>
   assert.doesNotMatch(yaml, /callback_id: anima.toggle_enabled/);
 });
 
-test('home shortcut opens the agent home modal without queueing agent work', async () => {
+test('home shortcut opens a read-only agent home without queueing agent work', async () => {
   const client = fakeWebClient();
-  const activities: Array<{ agentId: string; input: { payload?: Record<string, unknown>; type: string } }> = [];
-  const stopped: string[] = [];
+  const activities: unknown[] = [];
   const service = new SlackShortcutService({
     activityRecorder: {
-      record: async (agentId: string, input: { payload?: Record<string, unknown>; type: string }) => {
-        activities.push({ agentId, input });
+      record: async (_agentId: string, input: { payload?: Record<string, unknown>; type: string }) => {
+        activities.push(input);
         return { activityId: 'actv_test', createdAt: '2026-05-26T12:00:00.000Z', ...input };
       },
     } as never,
-    agentService: fakeAgentService({ id: 'scout', displayName: 'Scout' }),
+    agentService: fakeAgentService({
+      displayName: 'Scout',
+      id: 'scout',
+      owner: { displayName: 'Dana', handle: 'dana', slackUserId: 'U_OWNER' },
+      role: 'Full-stack engineer',
+    }),
     now: () => new Date('2026-05-26T12:10:00.000Z'),
-    reminderServiceForAgent: fakeReminderService([
-      {
-        nextDueAt: '2026-05-26T13:00:00.000Z',
-        reminderId: 'reminder-1',
-        title: 'Check build',
-      },
-    ]),
     runtimeService: {
       getStatus: async () => ({
         agentId: 'scout',
@@ -188,9 +184,6 @@ test('home shortcut opens the agent home modal without queueing agent work', asy
         itemCount: 3,
         queueDepth: 2,
       }),
-      stopCurrentItem: async (agentId: string) => {
-        stopped.push(agentId);
-      },
     },
   });
 
@@ -201,45 +194,25 @@ test('home shortcut opens the agent home modal without queueing agent work', asy
   });
 
   assert.equal(client.opened.length, 1);
-  const modal = (client.opened[0] as { view: ShortcutModalView } | undefined)?.view;
-  assert.ok(modal);
-  assert.equal(modal.title.text, 'Home');
-  assert.equal(modal.callback_id, SLACK_STOP_CONFIRM_VIEW_CALLBACK_ID);
-  assert.equal(modal.submit?.text, 'Stop');
-  const modalText = modal.blocks.map((block) => 'text' in block ? block.text.text : '').join('\n');
-  assert.match(modalText, /\*Scout\*/);
-  assert.match(modalText, /\*Working\*/);
-  assert.match(modalText, /10m/);
-  assert.match(modalText, /Reminders/);
-  assert.match(modalText, /Check build/);
-
-  const resultView = await service.confirmStop({
-    agentId: 'scout',
-    userId: 'U1',
-    view: { private_metadata: modal.private_metadata },
-  });
-  assert.deepEqual(stopped, ['scout']);
-  assert.equal(resultView.title.text, 'Stop requested');
-  assert.deepEqual(activities.map((activity) => activity.input), [
-    {
-      payload: { itemId: 'item-123', outcome: 'stop_requested', userId: 'U1' },
-      type: 'anima.shortcut.stop',
-    },
-  ]);
+  const modal = openedModal(client);
+  assert.equal(modal.title.text, 'Scout');
+  // Anyone in the workspace can open Home, so it must not offer Stop.
+  assert.equal(modal.callback_id, undefined);
+  assert.equal(modal.submit, undefined);
+  assert.equal(modal.close?.text, 'Close');
+  const text = modalText(modal);
+  assert.match(text, /Full-stack engineer {2}· {2}Owner: <@U_OWNER>/);
+  assert.match(text, /\*Working\* {2}· {2}10m {2}· {2}2 more waiting/);
+  assert.doesNotMatch(text, /Reminders|Stop/);
+  assert.deepEqual(activities, []);
 });
 
-test('home shortcut omits Stop when the agent is idle', async () => {
+test('home shortcut shows a bare Idle line for an idle agent without role or owner', async () => {
   const client = fakeWebClient();
   const service = new SlackShortcutService({
     agentService: fakeAgentService({ id: 'scout', displayName: 'Scout' }),
-    reminderServiceForAgent: fakeReminderService([]),
     runtimeService: {
-      getStatus: async () => ({
-        agentId: 'scout',
-        itemCount: 3,
-        queueDepth: 0,
-      }),
-      stopCurrentItem: async () => undefined,
+      getStatus: async () => ({ agentId: 'scout', itemCount: 3, queueDepth: 0 }),
     },
   });
 
@@ -249,15 +222,118 @@ test('home shortcut omits Stop when the agent is idle', async () => {
     client: client.client,
   });
 
-  const modal = (client.opened[0] as { view: ShortcutModalView } | undefined)?.view;
-  assert.ok(modal);
-  assert.equal(modal.title.text, 'Home');
-  assert.equal(modal.callback_id, undefined);
+  const modal = openedModal(client);
   assert.equal(modal.submit, undefined);
-  const modalText = modal.blocks.map((block) => 'text' in block ? block.text.text : '').join('\n');
-  assert.match(modalText, /\*Scout\*/);
-  assert.match(modalText, /\*Idle\*/);
-  assert.match(modalText, /None scheduled/);
+  assert.deepEqual(modal.blocks, [
+    { type: 'section', text: { type: 'mrkdwn', text: ':white_check_mark:  *Idle*' } },
+  ]);
+});
+
+test('home shortcut leads with a health problem instead of reading as Idle', async () => {
+  const client = fakeWebClient();
+  const service = new SlackShortcutService({
+    agentService: fakeAgentService({ id: 'scout', displayName: 'Scout' }),
+    now: () => new Date('2026-05-26T12:10:00.000Z'),
+    runtimeService: {
+      getStatus: async () => ({
+        agentId: 'scout',
+        // A leftover rate-limit deferral must not turn into a resume promise
+        // while the sign-in itself is broken.
+        deferredWakes: [{ id: 'w1', kind: 'slack', notBefore: '2026-05-26T12:40:00.000Z', retryable: true }],
+        health: { reason: 'provider_auth_failed', state: 'unhealthy', updatedAt: '2026-05-26T12:09:00.000Z' },
+        itemCount: 1,
+        queueDepth: 1,
+      }),
+    },
+  });
+
+  await service.handleShortcut({
+    agentId: 'scout',
+    body: { callback_id: 'anima.home', trigger_id: 'trigger-1', user: { id: 'U1' } },
+    client: client.client,
+  });
+
+  const text = modalText(openedModal(client));
+  assert.match(text, /^:warning: {2}\*Needs attention\* {2}· {2}1 waiting\nIt can't reach its model\. Its owner needs to check the model sign-in\.$/);
+  assert.doesNotMatch(text, /Idle|Picks back up/);
+});
+
+test('home shortcut does not show green Idle when health is explicitly unknown', async () => {
+  const client = fakeWebClient();
+  const service = new SlackShortcutService({
+    agentService: fakeAgentService({ id: 'scout', displayName: 'Scout' }),
+    runtimeService: {
+      getStatus: async () => ({
+        agentId: 'scout',
+        health: { state: 'unknown', updatedAt: '2026-05-26T12:09:00.000Z' },
+        itemCount: 0,
+        queueDepth: 0,
+      }),
+    },
+  });
+
+  await service.handleShortcut({
+    agentId: 'scout',
+    body: { callback_id: 'anima.home', trigger_id: 'trigger-1', user: { id: 'U1' } },
+    client: client.client,
+  });
+
+  const text = modalText(openedModal(client));
+  assert.equal(text, ":grey_question:  *Status unknown*\nAnima can't confirm right now whether it's able to work.");
+  assert.doesNotMatch(text, /Idle|white_check_mark/);
+});
+
+test('home shortcut says when rate-limited work picks back up, in the viewer time zone', async () => {
+  const client = fakeWebClient();
+  const service = new SlackShortcutService({
+    agentService: fakeAgentService({ id: 'scout', displayName: 'Scout' }),
+    now: () => new Date('2026-05-26T12:10:00.000Z'),
+    runtimeService: {
+      getStatus: async () => ({
+        agentId: 'scout',
+        deferredWakes: [
+          { id: 'w-past', kind: 'slack', notBefore: '2026-05-26T12:05:00.000Z', retryable: true },
+          { id: 'w-late', kind: 'slack', notBefore: '2026-05-26T13:00:00.000Z', retryable: true },
+          { id: 'w-next', kind: 'reminder', notBefore: '2026-05-26T12:40:00.000Z', retryable: false },
+        ],
+        itemCount: 3,
+        queueDepth: 3,
+      }),
+    },
+  });
+
+  await service.handleShortcut({
+    agentId: 'scout',
+    body: { callback_id: 'anima.home', trigger_id: 'trigger-1', user: { id: 'U1' } },
+    client: client.client,
+  });
+
+  const nextSeconds = Date.parse('2026-05-26T12:40:00.000Z') / 1000;
+  assert.equal(
+    modalText(openedModal(client)),
+    `:double_vertical_bar:  *Rate-limited*  ·  3 waiting\n`
+      + `Picks back up <!date^${nextSeconds}^{date_short_pretty} at {time}|2026-05-26 12:40 UTC>.`,
+  );
+});
+
+test('home shortcut keeps a long agent name inside the Slack title limit', async () => {
+  const client = fakeWebClient();
+  const service = new SlackShortcutService({
+    agentService: fakeAgentService({ id: 'scout', displayName: 'Scout the Extremely Thorough Reviewer' }),
+    runtimeService: {
+      getStatus: async () => ({ agentId: 'scout', itemCount: 0, queueDepth: 0 }),
+    },
+  });
+
+  await service.handleShortcut({
+    agentId: 'scout',
+    body: { callback_id: 'anima.home', trigger_id: 'trigger-1', user: { id: 'U1' } },
+    client: client.client,
+  });
+
+  const title = openedModal(client).title.text;
+  assert.equal(Array.from(title).length, 24);
+  assert.equal(title, 'Scout the Extremely Tho…');
 });
 
 test('message shortcut hands the source message to the agent thread and responds ephemerally', async () => {
@@ -388,35 +464,42 @@ function fakeWebClient(): { client: WebClient; opened: unknown[] } {
   };
 }
 
-function fakeAgentService(input: { displayName: string; id: string }) {
+function openedModal(client: { opened: unknown[] }): ShortcutModalView {
+  const modal = (client.opened[0] as { view: ShortcutModalView } | undefined)?.view;
+  assert.ok(modal);
+  return modal;
+}
+
+function modalText(modal: ShortcutModalView): string {
+  return modal.blocks
+    .map((block) => {
+      if (block.type === 'section') return block.text.text;
+      if (block.type === 'context') return block.elements.map((element) => element.text).join(' ');
+      return '';
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+function fakeAgentService(input: {
+  displayName: string;
+  id: string;
+  owner?: { displayName: string; handle?: string; slackUserId: string };
+  role?: string;
+}) {
   return {
     serviceFor: () => ({
       getConfig: async () => ({
         enabled: true,
         id: input.id,
-        profile: { displayName: input.displayName, role: '' },
+        ...(input.owner ? { owner: input.owner } : {}),
+        profile: { displayName: input.displayName, role: input.role ?? '' },
         provider: { kind: 'claude-code', model: 'sonnet' },
         slack: { appToken: 'xapp-test', botToken: 'xoxb-test', connected: true, teamId: 'T1' },
         homePath: `/tmp/${input.id}`,
       }),
     }),
   } as never;
-}
-
-function fakeReminderService(
-  reminders: Array<{ nextDueAt?: string; reminderId: string; title: string }>,
-) {
-  return () => ({
-    listReminders: async () => reminders.map((reminder) => ({
-      createdAt: '2026-05-26T12:00:00.000Z',
-      firedCount: 0,
-      instructions: '',
-      schedule: { kind: 'once' },
-      status: 'scheduled',
-      updatedAt: '2026-05-26T12:00:00.000Z',
-      ...reminder,
-    })),
-  }) as never;
 }
 
 async function writeMinimalAgentConfig(stateDir: string, agentId: string): Promise<void> {

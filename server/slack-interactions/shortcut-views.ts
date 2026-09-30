@@ -1,30 +1,17 @@
 import type { AgentConfig } from '../../shared/agent-config.js';
-import type { Reminder, ReminderSchedule } from '../../shared/reminder.js';
-import type { AgentStatusSummary } from '../../shared/snapshot.js';
-import {
-  SLACK_STOP_CONFIRM_VIEW_CALLBACK_ID,
-  SLACK_VIEW_REMINDER_DETAIL_ACTION_ID,
-  SLACK_VIEW_REMINDERS_ACTION_ID,
-} from './shortcut-ids.js';
+import type {
+  AgentHealthReason,
+  AgentRuntimeHealthSummary,
+  AgentStatusSummary,
+} from '../../shared/snapshot.js';
 
 type MrkdwnText = { type: 'mrkdwn'; text: string };
 type PlainText = { type: 'plain_text'; text: string; emoji?: boolean };
-type ImageElement = { type: 'image'; image_url: string; alt_text: string };
-type ButtonElement = {
-  type: 'button';
-  text: PlainText;
-  action_id: string;
-  value?: string;
-};
-
-type SectionAccessory = ImageElement | ButtonElement;
 
 type ShortcutModalBlock =
-  | { type: 'section'; text: MrkdwnText; accessory?: SectionAccessory }
+  | { type: 'section'; text: MrkdwnText }
   | { type: 'context'; elements: Array<MrkdwnText> }
-  | { type: 'header'; text: PlainText }
-  | { type: 'divider' }
-  | { type: 'actions'; elements: ButtonElement[] };
+  | { type: 'divider' };
 
 export type ShortcutModalView = {
   blocks: ShortcutModalBlock[];
@@ -46,169 +33,183 @@ export interface ShortcutModalInput {
   title: string;
 }
 
-interface StopConfirmMetadata {
-  itemId?: string;
-}
+/** Slack caps a modal title at 24 characters. */
+const MODAL_TITLE_LIMIT = 24;
 
+/**
+ * The Home shortcut: a read-only glance that anyone in the workspace can open.
+ * It deliberately carries no controls (stopping an agent is the operator's
+ * call, made from the dashboard) and no conversation detail (naming the
+ * channel or DM the agent is working on would leak it to whoever opens this).
+ */
 export function homeView(
   agent: AgentConfig,
   status: AgentStatusSummary,
-  reminders: Reminder[],
   now: Date,
 ): ShortcutModalView {
-  const displayName = agent.profile.displayName;
-  const role = agent.profile.role;
-  const state: 'idle' | 'busy' | 'queued' = status.currentItemId
-    ? 'busy'
-    : status.queueDepth > 0
-      ? 'queued'
-      : 'idle';
-
   const blocks: ShortcutModalBlock[] = [];
 
-  const identityText = role.trim()
-    ? `*${escapeMrkdwn(displayName)}*\n${escapeMrkdwn(role)}`
-    : `*${escapeMrkdwn(displayName)}*`;
-  blocks.push({ type: 'section', text: { type: 'mrkdwn', text: identityText } });
-
-  if (agent.owner) {
-    const ownerLabel = agent.owner.handle
-      ? `@${escapeMrkdwn(agent.owner.handle)}`
-      : escapeMrkdwn(agent.owner.displayName);
-    blocks.push({
-      type: 'context',
-      elements: [{ type: 'mrkdwn', text: `Owner: ${ownerLabel}` }],
-    });
-  }
-
-  blocks.push({ type: 'divider' });
-
-  const statusEmoji = state === 'busy' ? ':gear:' : state === 'queued' ? ':hourglass_flowing_sand:' : ':white_check_mark:';
-  const statusLabel = state === 'busy' ? 'Working' : state === 'queued' ? 'Queued' : 'Idle';
-  const elapsed = state === 'busy' && status.currentItemStartedAt
-    ? `  ·  ${elapsedLabel(status.currentItemStartedAt, now)}`
-    : '';
-  blocks.push({
-    type: 'section',
-    text: { type: 'mrkdwn', text: `${statusEmoji}  *${statusLabel}*${elapsed}` },
-  });
-
-  blocks.push({ type: 'divider' });
-
-  if (reminders.length === 0) {
-    blocks.push({
-      type: 'section',
-      text: { type: 'mrkdwn', text: ':alarm_clock:  *Reminders*\n_None scheduled_' },
-    });
-  } else {
-    const next = reminders[0]!;
-    const nextDue = next.nextDueAt ? humanDueLabel(next.nextDueAt, now) : '';
-    const preview = nextDue
-      ? `_Next: "${escapeMrkdwn(next.title)}"  ·  ${nextDue}_`
-      : `_${escapeMrkdwn(next.title)}_`;
-    const count = reminders.length;
-    blocks.push({
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: `:alarm_clock:  *Reminders*  ·  ${count} scheduled\n${preview}`,
-      },
-    });
-    blocks.push({
-      type: 'actions',
-      elements: [{
-        action_id: SLACK_VIEW_REMINDERS_ACTION_ID,
-        text: { emoji: true, text: `View all (${count})  →`, type: 'plain_text' },
-        type: 'button',
-      }],
-    });
-  }
-
-  return {
-    blocks,
-    close: { text: 'Close', type: 'plain_text' },
-    ...(state === 'busy' ? {
-      callback_id: SLACK_STOP_CONFIRM_VIEW_CALLBACK_ID,
-      private_metadata: JSON.stringify({ itemId: status.currentItemId } satisfies StopConfirmMetadata),
-      submit: { text: 'Stop', type: 'plain_text' },
-    } : {}),
-    title: { text: 'Home', type: 'plain_text' },
-    type: 'modal',
-  };
-}
-
-export function remindersView(reminders: Reminder[], now: Date): ShortcutModalView {
-  const blocks: ShortcutModalBlock[] = [];
-
-  if (reminders.length === 0) {
-    blocks.push({
-      type: 'section',
-      text: { type: 'mrkdwn', text: '_No reminders scheduled._' },
-    });
-  } else {
-    for (const reminder of reminders) {
-      const due = reminder.nextDueAt ? humanDueLabel(reminder.nextDueAt, now) : '';
-      const recurrence = scheduleLabel(reminder.schedule);
-      const meta = [due, recurrence].filter(Boolean).join('  ·  ');
-      blocks.push({
-        accessory: {
-          action_id: SLACK_VIEW_REMINDER_DETAIL_ACTION_ID,
-          text: { emoji: false, text: 'View →', type: 'plain_text' },
-          type: 'button',
-          value: reminder.reminderId,
-        },
-        text: {
-          text: `*${escapeMrkdwn(reminder.title)}*${meta ? `\n_${escapeMrkdwn(meta)}_` : ''}`,
-          type: 'mrkdwn',
-        },
-        type: 'section',
-      });
-    }
-  }
-
-  return {
-    blocks,
-    close: { text: 'Close', type: 'plain_text' },
-    title: { text: 'Reminders', type: 'plain_text' },
-    type: 'modal',
-  };
-}
-
-export function reminderDetailView(reminder: Reminder, now: Date): ShortcutModalView {
-  const blocks: ShortcutModalBlock[] = [];
-
-  const due = reminder.nextDueAt ? humanDueLabel(reminder.nextDueAt, now) : '';
-  const recurrence = scheduleLabel(reminder.schedule);
-  const gate = preflightLabel(reminder);
-  const meta = [due, recurrence, gate].filter(Boolean).join('  ·  ');
-
-  blocks.push({
-    type: 'section',
-    text: {
-      type: 'mrkdwn',
-      text: `*${escapeMrkdwn(reminder.title)}*${meta ? `\n_${escapeMrkdwn(meta)}_` : ''}`,
-    },
-  });
-
-  const SECTION_LIMIT = 2900;
-  if (reminder.instructions.trim()) {
-    const escaped = escapeMrkdwn(reminder.instructions);
-    const text = escaped.length > SECTION_LIMIT
-      ? `${escaped.slice(0, SECTION_LIMIT)}…`
-      : escaped;
+  const role = agent.profile.role.trim();
+  const about = [
+    ...(role ? [escapeMrkdwn(role)] : []),
+    ...(agent.owner ? [`Owner: <@${agent.owner.slackUserId}>`] : []),
+  ];
+  if (about.length > 0) {
+    blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: about.join('  ·  ') }] });
     blocks.push({ type: 'divider' });
-    blocks.push({
-      type: 'section',
-      text: { type: 'mrkdwn', text },
-    });
   }
+
+  blocks.push({ type: 'section', text: { type: 'mrkdwn', text: homeStatusText(status, now) } });
 
   return {
     blocks,
     close: { text: 'Close', type: 'plain_text' },
-    title: { text: 'Reminder', type: 'plain_text' },
+    title: { text: modalTitle(agent.profile.displayName), type: 'plain_text' },
     type: 'modal',
   };
+}
+
+interface HealthIssue {
+  detail?: string;
+  emoji: string;
+  label: string;
+  rateLimited: boolean;
+}
+
+/**
+ * One status line, plus a plain sentence when something needs explaining.
+ * Health problems take the headline: without them an agent that cannot reach
+ * its model reads as "Idle", as if it were simply ignoring people.
+ */
+function homeStatusText(status: AgentStatusSummary, now: Date): string {
+  const busy = Boolean(status.currentItemId);
+  const waiting = status.queueDepth;
+  const issue = healthIssue(status.health);
+  const retryAt = nextRetryAt(status, now);
+
+  const headline: string[] = [];
+  const details: string[] = [];
+  if (issue) {
+    headline.push(`${issue.emoji}  *${issue.label}*`);
+    if (issue.detail) details.push(issue.detail);
+  } else if (busy) {
+    headline.push(':gear:  *Working*');
+    if (status.currentItemStartedAt) headline.push(elapsedLabel(status.currentItemStartedAt, now));
+  } else if (retryAt) {
+    headline.push(':double_vertical_bar:  *Rate-limited*');
+  } else if (waiting > 0) {
+    headline.push(':hourglass_flowing_sand:  *Queued*');
+  } else {
+    headline.push(':white_check_mark:  *Idle*');
+  }
+  if (waiting > 0) headline.push(busy ? `${waiting} more waiting` : `${waiting} waiting`);
+
+  // Deferred wakes are gated by a provider rate limit; say when they resume,
+  // unless a different problem (a failed sign-in, say) would make that a promise.
+  if (retryAt && (!issue || issue.rateLimited)) {
+    details.push(`Picks back up ${slackLocalTime(retryAt)}.`);
+  }
+
+  return [headline.join('  ·  '), ...details].join('\n');
+}
+
+/** Mirrors the dashboard's health precedence (AgentHealthIndicator), worded for teammates. */
+function healthIssue(health: AgentRuntimeHealthSummary | undefined): HealthIssue | undefined {
+  if (!health) return undefined;
+  if (health.state === 'starting') {
+    return {
+      emoji: ':arrows_counterclockwise:',
+      label: health.reason === 'restart_pending' ? 'Restarting' : 'Starting',
+      rateLimited: false,
+    };
+  }
+  const restartFailed = health.state !== 'healthy' && health.restart?.outcome === 'failed';
+  if (health.state === 'unhealthy' || restartFailed) {
+    const reason = restartFailed ? health.restart?.reason ?? health.reason : health.reason;
+    return {
+      detail: needsAttentionText(reason),
+      emoji: ':warning:',
+      label: 'Needs attention',
+      rateLimited: reason === 'provider_rate_limited',
+    };
+  }
+  // No current health reading (never reported, or an old rate-limit report
+  // aged out). Saying Idle here would vouch for an agent nobody has checked.
+  if (health.state === 'unknown') {
+    return {
+      detail: "Anima can't confirm right now whether it's able to work.",
+      emoji: ':grey_question:',
+      label: 'Status unknown',
+      rateLimited: false,
+    };
+  }
+  if (health.state === 'degraded') {
+    return {
+      detail: retryingText(health.reason),
+      emoji: ':arrows_counterclockwise:',
+      label: 'Retrying',
+      rateLimited: health.reason === 'provider_rate_limited',
+    };
+  }
+  return undefined;
+}
+
+function needsAttentionText(reason: AgentHealthReason | undefined): string {
+  switch (reason) {
+    case 'provider_auth_failed':
+      return "It can't reach its model. Its owner needs to check the model sign-in.";
+    case 'provider_quota_exhausted':
+      return "Its model plan is out of capacity, so it can't work until the plan has room again.";
+    case 'provider_rate_limited':
+      return 'Its model provider is rate-limiting it. It should recover on its own.';
+    case 'provider_error':
+      return "It ran into a problem with its model and couldn't finish its last turn.";
+    case 'provider_child_missing':
+      return 'It lost its connection to its model. Its owner needs to restart it.';
+    case 'provider_child_exited':
+      return 'Its model stopped unexpectedly. Its owner needs to restart it.';
+    case 'stale_running_item':
+      return 'Its current work has stalled. Its owner needs to restart it.';
+    case 'start_failed':
+      return "It couldn't start. Its owner needs to check its settings.";
+    case 'restart_failed':
+      return 'Its restart failed. Its owner needs to try again or check the logs.';
+    default:
+      return 'Its owner needs to check it in the Anima dashboard.';
+  }
+}
+
+function retryingText(reason: AgentHealthReason | undefined): string {
+  switch (reason) {
+    case 'provider_rate_limited':
+      return "Its model provider is rate-limiting it. It's retrying automatically.";
+    case 'provider_child_missing':
+    case 'provider_child_exited':
+      return 'It lost its connection to its model and is reconnecting.';
+    default:
+      return "It's retrying automatically.";
+  }
+}
+
+function nextRetryAt(status: AgentStatusSummary, now: Date): number | undefined {
+  const future = (status.deferredWakes ?? [])
+    .map((wake) => Date.parse(wake.notBefore))
+    .filter((ms) => Number.isFinite(ms) && ms > now.getTime());
+  return future.length > 0 ? Math.min(...future) : undefined;
+}
+
+/** Slack renders `<!date>` in each viewer's own time zone; the fallback is UTC. */
+function slackLocalTime(ms: number): string {
+  const fallback = `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+  return `<!date^${Math.floor(ms / 1000)}^{date_short_pretty} at {time}|${fallback}>`;
+}
+
+function modalTitle(displayName: string): string {
+  const name = displayName.trim() || 'Home';
+  const chars = Array.from(name);
+  return chars.length <= MODAL_TITLE_LIMIT
+    ? name
+    : `${chars.slice(0, MODAL_TITLE_LIMIT - 1).join('')}…`;
 }
 
 export function shortcutModal(input: ShortcutModalInput): ShortcutModalView {
@@ -234,51 +235,6 @@ export function shortcutModal(input: ShortcutModalInput): ShortcutModalView {
     title: { text: input.title.slice(0, 24), type: 'plain_text' },
     type: 'modal',
   };
-}
-
-function humanDueLabel(dueAt: string, now: Date): string {
-  const ms = Date.parse(dueAt) - now.getTime();
-  if (ms < 0) return 'overdue';
-  const totalMin = Math.round(ms / 60_000);
-  if (totalMin < 1) return 'in <1m';
-  if (totalMin < 60) return `in ${totalMin}m`;
-  const h = Math.floor(totalMin / 60);
-  const m = totalMin % 60;
-  if (h < 24) return m > 0 ? `in ${h}h ${m}m` : `in ${h}h`;
-  const d = Math.floor(h / 24);
-  const rh = h % 24;
-  return rh > 0 ? `in ${d}d ${rh}h` : `in ${d}d`;
-}
-
-function scheduleLabel(schedule: ReminderSchedule): string {
-  switch (schedule.kind) {
-    case 'once': return 'once';
-    case 'daily': return 'repeating daily';
-    case 'weekly': return `weekly ${schedule.weekdays.slice(0, 3).join('/')}`;
-    case 'interval': {
-      const ms = schedule.intervalMs;
-      if (ms < 3_600_000) return `every ${Math.round(ms / 60_000)}m`;
-      if (ms < 86_400_000) return `every ${Math.round(ms / 3_600_000)}h`;
-      return `every ${Math.round(ms / 86_400_000)}d`;
-    }
-    case 'windowed_interval': {
-      const ms = schedule.intervalMs;
-      const every = ms < 3_600_000
-        ? `every ${Math.round(ms / 60_000)}m`
-        : ms < 86_400_000
-          ? `every ${Math.round(ms / 3_600_000)}h`
-          : `every ${Math.round(ms / 86_400_000)}d`;
-      return `${every} ${schedule.windowRule}`;
-    }
-  }
-}
-
-export function preflightLabel(reminder: { preflight?: { command: string }; preflightError?: unknown; preflightLastResult?: { status: string } }): string | undefined {
-  if (!reminder.preflight) return undefined;
-  const parts = [`Run only when: \`${reminder.preflight.command}\``];
-  if (reminder.preflightLastResult) parts.push(`last=${reminder.preflightLastResult.status}`);
-  if (reminder.preflightError) parts.push('Needs attention · preflight-error');
-  return parts.join(' · ');
 }
 
 function elapsedLabel(startedAt: string, now: Date): string {

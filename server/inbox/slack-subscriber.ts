@@ -10,14 +10,8 @@ import { createSlackWebClient, createSlackPreviewWebClient } from '../slack/clie
 import { ResilientSocketModeReceiver } from '../slack/resilient-socket-mode-receiver.js';
 import {
   SlackShortcutService,
-  userIdFromShortcutBody,
   type SlackShortcutBody,
 } from '../slack-interactions/shortcut.service.js';
-import {
-  SLACK_STOP_CONFIRM_VIEW_CALLBACK_ID,
-  SLACK_VIEW_REMINDER_DETAIL_ACTION_ID,
-  SLACK_VIEW_REMINDERS_ACTION_ID,
-} from '../slack-interactions/shortcut-ids.js';
 import { SlackWorkspaceDirectoryService, type SlackWorkspaceDirectoryEvent } from '../slack/workspace-directory.service.js';
 import { SlackProfileResolver } from '../slack/profiles.js';
 import { withCanonicalSlackVisibleText } from '../slack/message-text.js';
@@ -95,28 +89,6 @@ export class SlackInboxSubscriber {
       await ack();
       await this.handleInteractiveAskAction(body, action, client);
     });
-    app.action(SLACK_VIEW_REMINDERS_ACTION_ID, async ({ ack, body, client }) => {
-      await ack();
-      const triggerId = (body as { trigger_id?: string }).trigger_id;
-      if (!triggerId) return;
-      await this.shortcutService.showRemindersView({
-        agentId: this.options.queue.agentId,
-        client,
-        triggerId,
-      });
-    });
-    app.action(SLACK_VIEW_REMINDER_DETAIL_ACTION_ID, async ({ ack, action, body, client }) => {
-      await ack();
-      const triggerId = (body as { trigger_id?: string }).trigger_id;
-      const reminderId = (action as { value?: string }).value;
-      if (!triggerId || !reminderId) return;
-      await this.shortcutService.showReminderDetailView({
-        agentId: this.options.queue.agentId,
-        client,
-        reminderId,
-        triggerId,
-      });
-    });
     app.shortcut({
       callback_id: 'anima.home',
       type: 'shortcut',
@@ -130,20 +102,6 @@ export class SlackInboxSubscriber {
     }, async ({ ack, body }) => {
       await ack();
       await this.handleMessageShortcut(body);
-    });
-    app.view({
-      callback_id: SLACK_STOP_CONFIRM_VIEW_CALLBACK_ID,
-      type: 'view_submission',
-    }, async ({ ack, body, view }) => {
-      const resultView = await this.shortcutService.confirmStop({
-        agentId: this.options.queue.agentId,
-        userId: userIdFromShortcutBody(body),
-        view,
-      });
-      await ack({
-        response_action: 'update',
-        view: resultView,
-      });
     });
     for (const eventName of SLACK_DIRECTORY_EVENTS) {
       app.event(eventName, async ({ body, client, event }) => {
