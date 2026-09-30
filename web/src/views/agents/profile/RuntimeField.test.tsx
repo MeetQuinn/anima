@@ -330,12 +330,13 @@ describe('Runtime modal — fast mode', () => {
 
   it('is available for Codex with Codex credit and API pricing copy', async () => {
     const onCommit = vi.fn(() => Promise.resolve());
-    const dialog = openModal({ kind: 'codex-cli', model: 'gpt-5.6-sol' }, onCommit);
+    const dialog = openModal({ kind: 'codex-cli', model: 'gpt-6.1-sol' }, onCommit);
 
     fireEvent.click(dialog.getByRole('button', { name: 'Advanced' }));
-    expect(dialog.getByText(/up to 1.5× faster/)).toBeTruthy();
-    expect(dialog.getByText(/2.5× ChatGPT credits/)).toBeTruthy();
+    expect(dialog.getByText(/Requests faster responses for supported Codex models/)).toBeTruthy();
+    expect(dialog.getByText(/2.5× subscription usage or 2× purchased credits/)).toBeTruthy();
     expect(dialog.getByText(/API-key sessions use Priority pricing/)).toBeTruthy();
+    expect(dialog.getByText(/Availability depends on the account and model/)).toBeTruthy();
     fireEvent.click(dialog.getByRole('checkbox', { name: 'Request fast mode' }));
     fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
     fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));

@@ -623,8 +623,9 @@ function RuntimeModal({
                         </p>
                       ) : (
                         <p className="font-sans pl-[26px] text-[11px] leading-snug text-text-muted">
-                          Runs supported Codex models up to 1.5× faster. GPT-5.6 and GPT-5.5 use
-                          2.5× ChatGPT credits; API-key sessions use Priority pricing.
+                          Requests faster responses for supported Codex models. Uses 2.5×
+                          subscription usage or 2× purchased credits; API-key sessions use Priority
+                          pricing. Availability depends on the account and model.
                         </p>
                       )}
                     </div>
