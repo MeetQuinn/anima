@@ -187,7 +187,7 @@ describe('Runtime modal — save/dismissal contract', () => {
 
     // Switch kind via the (mocked) select. The command draft written for the
     // old provider's CLI must not survive into the new kind.
-    fireEvent.click(dialog.getByRole('button', { name: 'Codex CLI' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Codex' }));
     expect(dialog.queryByDisplayValue('/opt/homebrew/bin/claude-canary')).toBeNull();
     expect(dialog.getByText(/command override below was cleared/)).toBeTruthy();
 
@@ -351,7 +351,7 @@ describe('Runtime modal — fast mode', () => {
       onCommit,
     );
 
-    fireEvent.click(dialog.getByRole('button', { name: 'Codex CLI' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Codex' }));
     fireEvent.click(dialog.getByRole('button', { name: 'Advanced' }));
     fireEvent.click(dialog.getByRole('checkbox', { name: 'Request fast mode' }));
     fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
@@ -370,7 +370,7 @@ describe('Runtime modal — fast mode', () => {
     const onCommit = vi.fn(() => Promise.resolve());
     const dialog = openModal({ kind: 'claude-code', model: 'fable', fastMode: true }, onCommit);
 
-    fireEvent.click(dialog.getByRole('button', { name: 'Codex CLI' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Codex' }));
     // The kind-change hint owns the disclosure that the opt-in was dropped.
     expect(dialog.getByText(/Fast mode was turned off/)).toBeTruthy();
     expect(
@@ -384,7 +384,7 @@ describe('Runtime modal — fast mode', () => {
     expect(
       (dialog.getByRole('checkbox', { name: 'Request fast mode' }) as HTMLInputElement).checked,
     ).toBe(false);
-    fireEvent.click(dialog.getByRole('button', { name: 'Kimi CLI' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Kimi Code' }));
     expect(dialog.queryByRole('checkbox', { name: 'Request fast mode' })).toBeNull();
 
     fireEvent.click(dialog.getByRole('button', { name: 'Save' }));

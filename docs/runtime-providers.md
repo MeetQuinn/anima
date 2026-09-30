@@ -1,6 +1,6 @@
 # Provider Layer
 
-This document explains the layer where Anima talks to an underlying provider such as Codex CLI, Claude Code, Kimi CLI, Grok Build, or OpenCode.
+This document explains the layer where Anima talks to an underlying provider such as Codex, Claude Code, Kimi Code, Grok Build, or OpenCode.
 
 It intentionally does not re-explain chat routing, reminder scheduling, inbox ingestion, or the web app. For the system map, start with [Architecture overview](architecture/overview.md).
 
@@ -315,9 +315,9 @@ Anima uses provider tools for observability only; chat side effects, reminders, 
 | `PushNotification`                                         | Claude Code built-in      | Not needed by Anima runtime.                                                                                                            | Sends provider-native notifications outside Anima-visible messaging.                            | Deny          |
 | `SlashCommand`                                             | Claude Code built-in      | Observe. Some commands are internal and may be valid in stream-json.                                                                    | Can affect Claude session state, but not proven broken in Anima.                                | Allow/observe |
 | File, shell, search, task, todo, notebook, and skill tools | Claude Code built-ins     | Required for normal agent work.                                                                                                         | Provider work, surfaced through Anima activity mapping.                                         | Allow         |
-| Codex CLI tools                                            | Codex app-server protocol | No equivalent user-question/scheduler controls found in the current adapter surface.                                                    | Tool activity is mapped by Anima.                                                               | Allow/observe |
+| Codex tools                                                | Codex app-server protocol | No equivalent user-question/scheduler controls found in the current adapter surface.                                                    | Tool activity is mapped by Anima.                                                               | Allow/observe |
 | Grok Build tools                                           | Grok ACP                  | Launched with `--always-approve`; ACP permission requests are approved for the session and unsupported client methods are rejected.     | Tool activity is mapped by Anima.                                                               | Allow/observe |
-| Kimi CLI tools                                             | Kimi ACP                  | Anima initializes with empty client capabilities; interactive prompts are not exposed through the adapter.                              | Tool activity is mapped by Anima.                                                               | Allow/observe |
+| Kimi Code tools                                            | Kimi ACP                  | Anima initializes with empty client capabilities; interactive prompts are not exposed through the adapter.                              | Tool activity is mapped by Anima.                                                               | Allow/observe |
 | OpenCode tools                                             | OpenCode ACP              | Launched with `--pure`; ACP permission requests prefer the provider's allow-always option, and unsupported client methods are rejected. | Tool activity is mapped by Anima.                                                               | Allow/observe |
 
 The denylist is global for now. Per-agent tool policy should be added only when there is a concrete operator need; the default policy should keep provider-native scheduling and notifications out of the runtime.

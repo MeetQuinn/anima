@@ -71,7 +71,7 @@ vi.mock('@/api/system', () => ({
         agents: [],
         installedVersion: '1.0.0',
         installSource: 'kimi-native' as const,
-        label: 'Kimi CLI',
+        label: 'Kimi Code',
         latestVersion: '1.1.0',
         operation: { status: 'idle' as const },
         provider: 'kimi-cli' as const,
@@ -167,7 +167,7 @@ describe('ProvidersPage version slot', () => {
     expect(screen.queryByText('Grok CLI')).toBeNull();
     expect(screen.queryByText('not installed')).toBeNull();
     // An available update alone must not auto-expand a provider (totoday 08-02).
-    const kimiToggle = screen.getByRole('button', { name: /Kimi CLI/i });
+    const kimiToggle = screen.getByRole('button', { name: /Kimi Code/i });
     expect(kimiToggle.getAttribute('aria-expanded')).toBe('false');
 
     // Expand Claude to confirm meters still sit next to the unverified binary.
@@ -191,7 +191,7 @@ describe('ProvidersPage version slot', () => {
 
   it('offers the provider sign-in for a supported provider and starts the device flow', async () => {
     renderPanel();
-    fireEvent.click(await screen.findByRole('button', { name: /Kimi CLI/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /Kimi Code/i }));
     expect(await screen.findByText('Not signed in')).toBeTruthy();
     // Unsupported providers never render the block.
     fireEvent.click(await screen.findByRole('button', { name: /Claude Code/i }));
@@ -217,7 +217,7 @@ describe('ProvidersPage version slot', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in with a code' }));
     await waitFor(() => expect(loginApi.start).toHaveBeenCalledWith('kimi-cli', 'device'));
-    expect((await screen.findByLabelText('Kimi CLI one-time code')).textContent).toBe('ABCD-EFGH1');
+    expect((await screen.findByLabelText('Kimi Code one-time code')).textContent).toBe('ABCD-EFGH1');
     expect(screen.getByRole('link', { name: /example\.test\/device/ }).getAttribute('href')).toBe(
       'https://example.test/device',
     );
@@ -239,7 +239,7 @@ describe('ProvidersPage version slot', () => {
       ],
     });
     renderPanel();
-    fireEvent.click(await screen.findByRole('button', { name: /Kimi CLI/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /Kimi Code/i }));
     expect(await screen.findByText('Signed in')).toBeTruthy();
     // No sign-in buttons and no command footer while signed in (totoday
     // 08-29): the status line is the whole block. When the credential
@@ -269,13 +269,13 @@ describe('ProvidersPage version slot', () => {
 
     // Runtime command is global for all providers; context limit remains beside
     // it only for providers that support the managed cap.
-    fireEvent.click(await screen.findByRole('button', { name: /Kimi CLI/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /Kimi Code/i }));
     fireEvent.click(screen.getByText(/Settings/i));
 
-    const command = screen.getByRole('textbox', { name: 'Kimi CLI runtime command' });
+    const command = screen.getByRole('textbox', { name: 'Kimi Code runtime command' });
     expect(command.getAttribute('placeholder')).toBe('kimi');
     fireEvent.change(command, { target: { value: 'kimi-wrapper' } });
-    const args = screen.getByRole('textbox', { name: 'Kimi CLI runtime arguments' });
+    const args = screen.getByRole('textbox', { name: 'Kimi Code runtime arguments' });
     fireEvent.change(args, { target: { value: '--profile\nteam one\n' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
@@ -286,7 +286,7 @@ describe('ProvidersPage version slot', () => {
       ),
     );
 
-    const select = await screen.findByRole('combobox', { name: 'Kimi CLI context limit' });
+    const select = await screen.findByRole('combobox', { name: 'Kimi Code context limit' });
     expect((select as HTMLSelectElement).value).toBe('no-anima-limit');
     expect(screen.getByRole('option', { name: 'No Anima limit' })).toBeTruthy();
     expect(

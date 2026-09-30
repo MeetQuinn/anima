@@ -92,7 +92,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
   },
   {
     kind: 'codex-cli',
-    label: 'Codex CLI',
+    label: 'Codex',
     command: 'codex',
     installHint: 'Install Codex CLI so `codex --version` works.',
     models: [
@@ -130,17 +130,17 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
   },
   {
     kind: 'kimi-cli',
-    label: 'Kimi CLI',
+    label: 'Kimi Code',
     command: 'kimi',
-    installHint: 'Install Kimi CLI so `kimi --version` works.',
+    installHint: 'Install Kimi Code CLI so `kimi --version` works.',
     models: [
       'kimi-code/k3',
       'kimi-code/kimi-for-coding',
       'kimi-code/kimi-for-coding-highspeed',
     ],
-    // Kimi CLI's own display names (the `display_name` it records for its managed
+    // Kimi Code CLI's own display names (the `display_name` it records for its managed
     // kimi-code models). `kimi-for-coding*` are rolling aliases; recheck
-    // display_name when Kimi CLI updates.
+    // display_name when Kimi Code CLI updates.
     modelLabels: {
       'kimi-code/k3': 'K3',
       'kimi-code/kimi-for-coding': 'K2.7 Coding',
