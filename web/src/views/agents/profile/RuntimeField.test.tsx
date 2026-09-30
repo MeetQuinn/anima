@@ -309,9 +309,10 @@ describe('Runtime modal — fast mode', () => {
     const onCommit = vi.fn(() => Promise.resolve());
     const dialog = openModal({ kind: 'claude-code', model: 'fable', fastMode: true }, onCommit);
 
-    // The read-only row discloses the CONFIG, qualified: "Fast mode
-    // requested", never a bare "Fast mode" — provider-side availability may
-    // still decline the request, so this surface must not read as activation.
+    // The read-only row discloses the CONFIG, qualified: a compact FAST tag
+    // whose accessible name and hover both say "Fast mode requested", because
+    // provider-side availability may still decline the request, so this
+    // surface must not read as activation.
     expect(screen.getByRole('button', { name: /Fast mode requested/ })).toBeTruthy();
     // fastMode counts as configured Advanced data: never hidden on arrival.
     expect(dialog.getByRole('button', { name: 'Advanced' }).getAttribute('aria-expanded')).toBe(

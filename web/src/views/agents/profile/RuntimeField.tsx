@@ -56,6 +56,8 @@ export function RuntimeRow({
   const currentEntry = providerOptions.find((option) => option.kind === provider.kind);
   const hasEffort =
     effortOptionsForSelectedModel(currentEntry, provider.model, providerAvailability).length > 0;
+  const showEffort = hasEffort && Boolean(effort);
+  const fastMode = 'fastMode' in provider && provider.fastMode === true;
   const commandSet = Boolean(provider.runtimeCommand) || (provider.runtimeArgs?.length ?? 0) > 0;
   const envKeys = Object.keys(provider.env ?? {}).sort();
   const commandLine = [provider.runtimeCommand ?? currentEntry?.command ?? provider.kind]
@@ -74,23 +76,31 @@ export function RuntimeRow({
             <span className="font-serif text-[13px] md:text-[15px] text-text">
               {providerValueLabel(provider.model) || '—'}
             </span>
-            {hasEffort && effort && (
-              <>
-                <span className="font-sans mx-1.5 text-[12px] text-text-subtle">·</span>
-                <span className="font-serif text-[13px] md:text-[15px] text-text-muted">
-                  {providerValueLabel(effort)}
+            {(showEffort || fastMode) && (
+              // The per-model settings travel as one group. On phones it takes
+              // its own line, so a separator never dangles at a line end; from
+              // md up it runs inline after a dot.
+              <span className="flex basis-full items-baseline md:basis-auto">
+                <span className="font-sans mx-1.5 hidden text-[12px] text-text-subtle md:inline">
+                  ·
                 </span>
-              </>
-            )}
-            {'fastMode' in provider && provider.fastMode && (
-              <>
-                <span className="font-sans mx-1.5 text-[12px] text-text-subtle">·</span>
-                {/* "requested", never "on": this surface shows config, not
-                    provider-side availability for the account and model. */}
-                <span className="font-serif text-[13px] md:text-[15px] text-text-muted">
-                  Fast mode requested
-                </span>
-              </>
+                {showEffort && (
+                  <span className="font-serif text-[13px] md:text-[15px] text-text-muted">
+                    {providerValueLabel(effort)}
+                  </span>
+                )}
+                {fastMode && (
+                  // A setting tag, like the effort before it: this surface shows
+                  // config, not provider-side availability for the account and
+                  // model, so the full name and the hover both say "requested".
+                  <span
+                    className={`chrome ${showEffort ? 'ml-2' : ''} self-center rounded-sm border border-border-soft px-1.5 py-px text-[10px] font-medium uppercase tracking-[0.1em] text-text-muted`}
+                    title="Fast mode requested. Whether it applies depends on the account and model."
+                  >
+                    Fast <span className="sr-only">mode requested</span>
+                  </span>
+                )}
+              </span>
             )}
           </span>
           {/* Unset lines stay hidden (totoday 08-15: 如果command和env没设置就不要出). */}
