@@ -252,8 +252,8 @@ async function runSlackReadTool(input: {
     op: async () => {
       const response = await input.execute();
       const messages = slackMessagesWithTimestamps(response.messages);
-      const auth = await input.request.client.auth.test().catch(() => undefined);
-      const cacheTeamId = auth?.team_id ?? input.request.teamId;
+      const cacheTeamId = input.request.teamId
+        ?? (await input.request.client.auth.test().catch(() => undefined))?.team_id;
       const cacheContext = { ...(cacheTeamId ? { teamId: cacheTeamId } : {}) };
       const userLabels = await slackTranscriptUserLabels(messages, input.request.client, cacheTeamId);
       console.log(
