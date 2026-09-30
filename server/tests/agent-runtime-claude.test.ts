@@ -1781,6 +1781,90 @@ test('claude-code bounds missing input confirmation after a result', async (t) =
   });
 });
 
+function holdClaudeFramePersistence(runtime: AgentRuntime, matches: (frame: Record<string, unknown>) => boolean) {
+  // Some control frames currently produce no persisted activity. Pause the
+  // mapper itself to exercise the control-state/persistence boundary equally.
+  const controller = (runtime as unknown as {
+    slot: { get(): { currentTurn: { jsonlMapper: { accept(chunk: string): Promise<void> } } } };
+  }).slot.get();
+  const mapper = controller.currentTurn.jsonlMapper;
+  const originalAccept = mapper.accept;
+  const entered = deferredSignal();
+  const release = deferredSignal();
+  mapper.accept = async (chunk) => {
+    if (matches(JSON.parse(chunk) as Record<string, unknown>)) {
+      entered.resolve();
+      await release.promise;
+    }
+    await originalAccept.call(mapper, chunk);
+  };
+  return { entered: entered.promise, release: release.resolve };
+}
+
+for (const [label, frame, finish] of [
+  ['new turn', { type: 'system', subtype: 'turn_starting', mode: 'prompt' }, []],
+  ['new tool', { type: 'assistant', message: { content: [{
+    type: 'tool_use', id: 'slow-new-tool', name: 'Read', input: { file_path: '/tmp/probe' },
+  }] } }, [{ type: 'user', message: { content: [{
+    type: 'tool_result', tool_use_id: 'slow-new-tool', content: 'done',
+  }] } }]],
+  ['compression', { type: 'system', subtype: 'status', status: 'compacting' }, [{ type: 'system', subtype: 'compact_boundary' }]],
+] as const) {
+  test(`claude-code cancels confirmation grace before slow ${label} persistence`, async (t) => {
+    await withClaudeLifecycleFixture(async (fixture) => {
+      await fixture.append('followup after old result');
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      let hold: ReturnType<typeof holdClaudeFramePersistence> | undefined;
+      try {
+        await fixture.emit([nativeToolReturns(), { type: 'result', subtype: 'success', result: 'old result' }, nativeCommand(0, 'completed')]);
+        hold = holdClaudeFramePersistence(fixture.runtime, (value) => value['type'] === frame.type);
+        let settled = false;
+        void fixture.runPromise.then(() => { settled = true; }, () => { settled = true; });
+        await fixture.emit([frame], true);
+        await withTimeout(hold.entered, 1_000);
+        assert.equal(fixture.runtime.isProviderQuiescent?.(), false);
+        t.mock.timers.tick(30_000);
+        await nextImmediate();
+        assert.equal(settled, false, 'new native work cancels the old idle deadline before persistence');
+        assert.equal(fixture.runtime.health?.().child?.alive, true);
+        hold.release();
+        await fixture.emit([...finish, nativeCommand(1, 'started'), nativeCommand(1, 'completed'),
+          { type: 'result', subtype: 'success', result: 'followup done' }], true);
+        assert.equal((await withTimeout(fixture.runPromise, 2_000)).text, 'followup done');
+      } finally {
+        hold?.release();
+        t.mock.timers.reset();
+      }
+    });
+  });
+}
+
+test('claude-code cancels confirmation grace when completion arrives before slow persistence', async (t) => {
+  await withClaudeLifecycleFixture(async (fixture) => {
+    await fixture.append('followup awaiting confirmation');
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let hold: ReturnType<typeof holdClaudeFramePersistence> | undefined;
+    try {
+      await fixture.emit([nativeToolReturns(), nativeCommand(1, 'started'), nativeCommand(1, 'completed'),
+        { type: 'result', subtype: 'success', result: 'followup result' }]);
+      hold = holdClaudeFramePersistence(fixture.runtime, (value) => value['type'] === 'command_lifecycle');
+      let settled = false;
+      void fixture.runPromise.then(() => { settled = true; }, () => { settled = true; });
+      await fixture.emit([nativeCommand(0, 'completed')], true);
+      await withTimeout(hold.entered, 1_000);
+      t.mock.timers.tick(30_000);
+      await nextImmediate();
+      assert.equal(settled, false, 'confirmed input must not fail while its persistence is pending');
+      assert.equal(fixture.runtime.health?.().child?.alive, true);
+      hold.release();
+      assert.equal((await withTimeout(fixture.runPromise, 2_000)).text, 'followup result');
+    } finally {
+      hold?.release();
+      t.mock.timers.reset();
+    }
+  });
+});
+
 test('claude-code background results cannot satisfy pending native user input', async () => {
   await withClaudeLifecycleFixture(async (fixture) => {
     await fixture.append('human followup');

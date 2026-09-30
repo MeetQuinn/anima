@@ -405,7 +405,10 @@ class ClaudeStreamJsonController {
       const value = this.parseStdoutLine(line);
       // Close or open the stdin gate and select the native turn owner before
       // activity persistence can expose output to a concurrent Anima wake.
-      if (value) this.updateInputGate(value);
+      if (value) {
+        this.updateInputGate(value);
+        this.refreshInputCompletionTimeout();
+      }
       const sink = this.outputSink(value);
       sink?.input.onActivity?.();
       await sink?.jsonlMapper.accept(`${line}\n`);
@@ -576,23 +579,34 @@ class ClaudeStreamJsonController {
     // A merged input completes before its result; a new native turn completes
     // after its result. Both signals are required, including a result newer
     // than the input's started frame, so an old result cannot settle a followup.
-    for (const command of turn.commands.values()) {
-      if (!command.completed || command.startedAfterResult === undefined
-        || this.nativeResultCount <= command.startedAfterResult) return;
-    }
+    if (this.hasUnconfirmedInput()) return;
     this.resolveCurrentTurn(turn.lastResult);
   }
 
+  private hasUnconfirmedInput(): boolean {
+    for (const command of this.currentTurn?.commands.values() ?? []) {
+      if (!command.completed || command.startedAfterResult === undefined
+        || this.nativeResultCount <= command.startedAfterResult) return true;
+    }
+    return false;
+  }
+
+  private inputCompletionDeadlineApplies(): boolean {
+    return this.commandLifecycleAvailable && this.currentTurn?.lastResult !== undefined
+      && !this.providerTurnActive && !this.compacting && this.activeToolUseIds.size === 0
+      && this.activeHookIds.size === 0 && this.queuedMessages.length === 0
+      && this.hasUnconfirmedInput();
+  }
+
   private refreshInputCompletionTimeout(): void {
-    if (!this.commandLifecycleAvailable || !this.currentTurn || this.currentTurn.lastResult === undefined
-      || this.providerTurnActive || this.compacting || this.activeToolUseIds.size > 0
-      || this.activeHookIds.size > 0 || this.queuedMessages.length > 0) {
+    if (!this.inputCompletionDeadlineApplies()) {
       this.clearInputCompletionTimeout();
       return;
     }
     if (this.inputCompletionTimeout) return;
     this.inputCompletionTimeout = setTimeout(() => {
       this.inputCompletionTimeout = undefined;
+      if (!this.inputCompletionDeadlineApplies()) return;
       this.rejectCurrentTurn(new Error('Claude Code did not confirm sent input completion after its result'));
       this.child.kill();
     }, CLAUDE_INPUT_COMPLETION_GRACE_MS);
