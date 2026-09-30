@@ -2,6 +2,7 @@ export const RUNTIME_RESTART_CONTINUATION_NOTE = [
   'Anima note: the runtime restarted while this task was in progress.',
   'Continue the same task from the current session; do not repeat completed external side effects.',
   'Check `anima outbox` for what you already sent and `anima inbox` for what arrived before re-sending anything.',
+  'Before continuing, reconcile subagents from the interrupted task: inspect their results, files, native session history, and any surviving processes. Collect completed work; resume an interrupted subagent in the same provider session when supported, otherwise reassign only the unfinished work that is still authorized. Respect cancellations and current task ownership. A restored main session does not prove its subagents are still running. Check external-action receipts before repeating any side effect.',
 ].join('\n');
 
 export const DEFERRED_WAKE_RETRY_NOTE = [

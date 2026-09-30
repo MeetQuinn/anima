@@ -282,6 +282,8 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
     assert.equal(skillToolActivity?.payload?.['skill'], 'deep-research');
     assert.equal(skillToolActivity?.payload?.['args'], 'research usage telemetry and summarize with citations');
     assert.equal(skillToolActivity?.payload?.['target'], 'deep-research');
+    assert.equal(firstActivities.find((activity) => activity.payload?.['providerToolId'] === 'toolu_parent_task')?.payload?.['target'], 'Research child');
+    assert.equal(firstActivities.find((activity) => activity.payload?.['providerToolId'] === 'toolu_result_task')?.payload?.['target'], 'Result child');
     const childToolActivity = firstActivities.find((activity) => activity.payload?.['providerToolId'] === 'toolu_child_read');
     assert.equal(childToolActivity?.type, 'tool.call.started');
     assert.equal(childToolActivity?.payload?.['parentToolCallId'], 'toolu_parent_task');

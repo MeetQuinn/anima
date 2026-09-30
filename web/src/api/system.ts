@@ -140,7 +140,7 @@ interface RestartServicesResult {
 }
 
 export async function restartServices(): Promise<RestartServicesResult> {
-  return apiRequest('/api/services/restart', jsonInit('POST'));
+  return apiRequest('/api/services/restart', jsonInit('POST', {}));
 }
 
 export async function pingHealth(): Promise<boolean> {
@@ -163,7 +163,7 @@ export async function fetchRuntimeUpgrade(): Promise<RuntimeUpgradeStatusRespons
 }
 
 export async function checkRuntimeUpgrade(): Promise<RuntimeUpgradeStatusResponse> {
-  return apiRequest('/api/system-update/check', jsonInit('POST'));
+  return apiRequest('/api/system-update/check', jsonInit('POST', {}));
 }
 
 /**
@@ -181,7 +181,9 @@ export class RuntimeUpgradeApplyError extends Error {
 }
 
 export async function applyRuntimeUpgrade(): Promise<RuntimeUpgradeApplyResponse> {
-  const res = await fetch('/api/system-update/apply', { cache: 'no-store', ...jsonInit('POST') });
+  // An empty body can become an untyped chunked request through a proxy,
+  // which Fastify rejects before the route runs.
+  const res = await fetch('/api/system-update/apply', { cache: 'no-store', ...jsonInit('POST', {}) });
   if (!res.ok) {
     const body: unknown = await res.json().catch(() => ({}));
     const message =

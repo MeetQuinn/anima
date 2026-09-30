@@ -60,11 +60,12 @@ export function useRuntimeUpgradeAction() {
     setApplyError(null);
     setInstallFailure(null);
     try {
-      await applyRuntimeUpgrade();
-      setStartedTarget(availableTarget ?? null);
+      const accepted = await applyRuntimeUpgrade();
+      setStartedTarget(accepted.latestOnTrack);
       setPhase('applying');
     } catch (err) {
       setPhase('idle');
+      void queryClient.invalidateQueries({ queryKey: queryKeys.runtimeUpgrade() });
       if (err instanceof RuntimeUpgradeApplyError && err.status === 409) {
         setApplyError('An agent started working. Try again once idle.');
       } else if (err instanceof RuntimeUpgradeApplyError && err.status === 503) {
@@ -93,6 +94,12 @@ export function useRuntimeUpgradeAction() {
       try {
         const next = await fetchRuntimeUpgrade();
         if (cancelled) return;
+        queryClient.setQueryData(queryKeys.runtimeUpgrade(), next);
+        if (next.operation.status === 'succeeded' && next.currentVersion === startedTarget) {
+          // A fast restart can finish between polls without any failed fetch.
+          window.location.reload();
+          return;
+        }
         if (sawDown) {
           // Services went down then answered again → restart completed. Reload
           // so the fresh status (succeeded → current, or failed → failed card)
@@ -120,7 +127,7 @@ export function useRuntimeUpgradeAction() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [phase, queryClient]);
+  }, [phase, queryClient, startedTarget]);
 
   // Running agents we'd drain — names the upgrade confirm. Queued items are NOT
   // blockers in drain mode (the new worker picks them up), so filter to running.
