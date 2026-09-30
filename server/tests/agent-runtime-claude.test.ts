@@ -1,16 +1,17 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { sleep, waitFor, withTimeout } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentRuntime } from '../providers/factory.js';
+import { classifyProviderRetry } from '../providers/provider-retry.js';
 import {
   CLAUDE_DISABLE_AUTO_MEMORY,
   CLAUDE_DISALLOWED_TOOLS,
   CLAUDE_FAST_MODE_SETTINGS,
 } from '../providers/claude-launch.js';
-import type { AgentRuntime } from '../providers/contract.js';
+import type { AgentRuntime, AgentRuntimeFollowupInput, AgentRuntimeFollowupResult, AgentRuntimeResult } from '../providers/contract.js';
 import { makeSlackEvent } from './helpers/slack.js';
 import { ingestEvent } from './helpers/inbox.js';
 import { allActivities, loadState } from './helpers/state.js';
@@ -1250,6 +1251,7 @@ test('claude-code closes the tool gate before tool.call.started persists', async
         "  count += 1;",
         "  if (count === 1) {",
         "    if (!text.includes('first message')) process.exit(52);",
+        "    send({ type: 'command_lifecycle', command_uuid: crypto.randomUUID(), state: 'queued' });",
         "    send({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_only_1', name: 'Read', input: { file_path: '/tmp/gated.md' } }] }, session_id: 'claude-toolgate-session' });",
         "    const release = setInterval(() => {",
         "      if (!existsSync(process.env.RELEASE_PATH)) return;",
@@ -1467,4 +1469,447 @@ test('claude-code runtime records failed Bash command details', async () => {
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }
+});
+
+interface ClaudeLifecycleFixture {
+  activeItemId: string;
+  append(text: string): Promise<AgentRuntimeFollowupResult>;
+  prepareAppend(text: string): Promise<AgentRuntimeFollowupInput>;
+  calls(): Promise<Array<{ uuid: string; message: { content: Array<{ text: string }> } }>>;
+  completionPersistenceReached: Promise<void>;
+  emit(frames: Array<Record<string, unknown>>, final?: boolean): Promise<void>;
+  releaseToolPersistence(): void;
+  releaseCompletionPersistence(): void;
+  runPromise: Promise<AgentRuntimeResult>;
+  runtime: AgentRuntime;
+}
+
+async function withClaudeLifecycleFixture(
+  body: (fixture: ClaudeLifecycleFixture) => Promise<void>,
+  options: { slowToolPersistence?: boolean; slowCompletionPersistence?: boolean } = {},
+): Promise<void> {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-claude-lifecycle-'));
+  let runtime: AgentRuntime | undefined;
+  const releaseTool = deferredSignal();
+  const completionPersistence = deferredSignal();
+  const releaseCompletion = deferredSignal();
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'inputs.jsonl');
+      const controlPath = join(stateDir, 'frames.jsonl');
+      const fakeClaude = join(stateDir, 'claude');
+      await writeFile(controlPath, '', 'utf8');
+      await writeFile(fakeClaude, [
+        '#!/usr/bin/env node',
+        "import { appendFileSync, readFileSync } from 'node:fs';",
+        "import readline from 'node:readline';",
+        "const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n');",
+        'const commands = [];',
+        "send({ type: 'system', subtype: 'init', session_id: 'lifecycle-session', claude_code_version: 'test' });",
+        "readline.createInterface({ input: process.stdin }).on('line', (line) => {",
+        '  const value = JSON.parse(line);',
+        '  commands.push(value);',
+        "  appendFileSync(process.env.CALLS_PATH, line + '\\n');",
+        "  send({ type: 'command_lifecycle', command_uuid: value.uuid, state: 'queued' });",
+        '  if (commands.length !== 1) return;',
+        "  send({ type: 'command_lifecycle', command_uuid: value.uuid, state: 'started' });",
+        "  for (const id of ['native-tool-a', 'native-tool-b']) {",
+        "    send({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: '/tmp/probe' } }] } });",
+        '  }',
+        '});',
+        'let handled = 0;',
+        'setInterval(() => {',
+        "  const batches = readFileSync(process.env.CONTROL_PATH, 'utf8').trim().split('\\n').filter(Boolean);",
+        '  while (handled < batches.length) {',
+        '    for (const raw of JSON.parse(batches[handled++])) {',
+        '      if (raw.exit !== undefined) process.exit(raw.exit);',
+        '      const frame = { ...raw };',
+        '      if (frame.commandIndex !== undefined) {',
+        '        frame.command_uuid = commands[frame.commandIndex].uuid;',
+        '        delete frame.commandIndex;',
+        '      }',
+        '      send(frame);',
+        '    }',
+        '  }',
+        '}, 5);',
+        '',
+      ].join('\n'), 'utf8');
+      await chmod(fakeClaude, 0o755);
+      const ctx = await ingestEvent(makeSlackEvent({
+        channelId: 'D-anima', teamId: 'T-demo', text: 'initial native work', userId: 'U1',
+      }), { agentId: 'anima', stateDir });
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath, CONTROL_PATH: controlPath }),
+        kind: 'claude-code',
+      });
+      const input = await runtimeInput(runtime, ctx, await loadState());
+      const firstTool = deferredSignal();
+      const bothTools = deferredSignal();
+      const markers = new Map<string, ReturnType<typeof deferredSignal>>();
+      const effects = input.effects;
+      input.effects = {
+        ...effects,
+        async recordRuntime(type, payload) {
+          if (type === 'runtime.completed' && options.slowCompletionPersistence) {
+            completionPersistence.resolve();
+            await releaseCompletion.promise;
+          }
+          await effects.recordRuntime(type, payload);
+        },
+        async recordToolStarted(payload) {
+          await effects.recordToolStarted(payload);
+          if (payload['providerToolId'] === 'native-tool-a') {
+            firstTool.resolve();
+            if (options.slowToolPersistence) await releaseTool.promise;
+          }
+          if (payload['providerToolId'] === 'native-tool-b') bothTools.resolve();
+        },
+        async recordAgentText(text, payload) {
+          await effects.recordAgentText(text, payload);
+          if (text) markers.get(text)?.resolve();
+        },
+      };
+      const runPromise = runtime.run(input);
+      void runPromise.catch(() => {});
+      await withTimeout((options.slowToolPersistence ? firstTool : bothTools).promise, 2_000);
+      let messageNumber = 0;
+      let markerNumber = 0;
+      async function prepareAppend(text: string): Promise<AgentRuntimeFollowupInput> {
+        const next = await ingestEvent(makeSlackEvent({
+          channelId: 'D-anima', teamId: 'T-demo', text, userId: 'U1',
+          ts: `1770000000.${String(++messageNumber).padStart(6, '0')}`,
+        }), { agentId: 'anima', stateDir });
+        return runtimeFollowupInput(runtime!, ctx, next);
+      }
+      await body({
+        activeItemId: ctx.item.id,
+        completionPersistenceReached: completionPersistence.promise,
+        async append(text) {
+          return runtime!.appendToActiveRun(await prepareAppend(text));
+        },
+        prepareAppend,
+        async calls() {
+          return (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        },
+        async emit(frames, final = false) {
+          const commandCount = frames.reduce((count, frame) => Math.max(count,
+            typeof frame['commandIndex'] === 'number' ? frame['commandIndex'] + 1 : 0,
+          ), 0);
+          if (commandCount > 0) {
+            // Native lifecycle frames can only refer to input the CLI received.
+            // Use the real event loop while confirmation tests mock setTimeout.
+            const deadline = Date.now() + 1_000;
+            while ((await readFile(callsPath, 'utf8')).trim().split('\n').filter(Boolean).length < commandCount) {
+              assert.ok(Date.now() < deadline, 'mock CLI must consume input before its lifecycle frame');
+              await nextImmediate();
+            }
+          }
+          const marker = `lifecycle-fixture-barrier-${++markerNumber}`;
+          const signal = deferredSignal();
+          if (!final) {
+            markers.set(marker, signal);
+            frames = [...frames, { type: 'assistant', message: { content: [{ type: 'text', text: marker }] } }];
+          }
+          await appendFile(controlPath, `${JSON.stringify(frames)}\n`, 'utf8');
+          if (!final) await withTimeout(signal.promise, 2_000);
+        },
+        releaseToolPersistence: releaseTool.resolve,
+        releaseCompletionPersistence: releaseCompletion.resolve,
+        runPromise,
+        runtime: runtime!,
+      });
+    });
+  } finally {
+    releaseTool.resolve();
+    releaseCompletion.resolve();
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+}
+
+function nativeCommand(commandIndex: number, state: string): Record<string, unknown> {
+  return { type: 'command_lifecycle', commandIndex, state };
+}
+
+function nativeToolReturns(): Record<string, unknown> {
+  return { type: 'user', message: { content: ['native-tool-b', 'native-tool-a'].map((tool_use_id) => ({
+    type: 'tool_result', tool_use_id, content: 'done',
+  })) } };
+}
+
+test('claude-code native lifecycle permits burst input during tools and slow persistence without releasing drain', async () => {
+  await withClaudeLifecycleFixture(async (fixture) => {
+    assert.equal((await withTimeout(fixture.append('first followup'), 1_000)).accepted, true);
+    assert.equal((await withTimeout(fixture.append('second followup'), 1_000)).accepted, true);
+    await waitFor(async () => (await fixture.calls()).length === 3);
+    const uuids = (await fixture.calls()).map((call) => call.uuid);
+    assert.equal(new Set(uuids).size, 3);
+    assert.ok(uuids.every((uuid) => /^[a-f0-9-]{36}$/.test(uuid)));
+    assert.equal(fixture.runtime.isProviderQuiescent?.(), false);
+    let drained = false;
+    const drain = fixture.runtime.requestDrain!({ activeItemId: fixture.activeItemId }).then(() => { drained = true; });
+    await nextImmediate();
+    assert.equal(drained, false);
+    fixture.releaseToolPersistence();
+    await fixture.emit([nativeToolReturns(), nativeCommand(1, 'started'), nativeCommand(2, 'started'),
+      nativeCommand(1, 'completed'), nativeCommand(2, 'completed')]);
+    assert.equal(drained, false);
+    await fixture.emit([{ type: 'result', subtype: 'success', result: 'both followups done' }, nativeCommand(0, 'completed')], true);
+    assert.equal((await withTimeout(fixture.runPromise, 2_000)).text, 'both followups done');
+    await withTimeout(drain, 1_000);
+    assert.equal(fixture.runtime.isProviderQuiescent?.(), true);
+  }, { slowToolPersistence: true });
+});
+
+test('claude-code keeps a written followup active across old result and requires its own result as well as completed', async () => {
+  await withClaudeLifecycleFixture(async (fixture) => {
+    await fixture.append('followup on a new native turn');
+    let settled = false;
+    void fixture.runPromise.finally(() => { settled = true; });
+    await fixture.emit([nativeToolReturns(), { type: 'result', subtype: 'success', result: 'old result' }, nativeCommand(0, 'completed')]);
+    assert.equal(settled, false);
+    assert.equal(fixture.runtime.isProviderQuiescent?.(), false);
+    await fixture.emit([nativeCommand(1, 'started'), nativeCommand(1, 'completed')]);
+    assert.equal(settled, false, 'completed is not a native result');
+    await fixture.emit([{ type: 'result', subtype: 'success', result: 'new result' }], true);
+    assert.equal((await withTimeout(fixture.runPromise, 2_000)).text, 'new result');
+  });
+});
+
+test('claude-code waits for a standalone input completed frame after its result', async () => {
+  await withClaudeLifecycleFixture(async (fixture) => {
+    await fixture.append('standalone followup');
+    await fixture.emit([nativeToolReturns(), { type: 'result', subtype: 'success', result: 'old result' }, nativeCommand(0, 'completed'), nativeCommand(1, 'started')]);
+    let settled = false;
+    void fixture.runPromise.finally(() => { settled = true; });
+    await fixture.emit([{ type: 'result', subtype: 'success', result: 'standalone result' }]);
+    assert.equal(settled, false);
+    await fixture.emit([nativeCommand(1, 'completed')], true);
+    assert.equal((await withTimeout(fixture.runPromise, 2_000)).text, 'standalone result');
+  });
+});
+
+for (const boundary of [
+  { type: 'system', subtype: 'compact_boundary' },
+  { type: 'system', subtype: 'status', compact_result: 'failed' },
+]) {
+  test(`claude-code native input retains FIFO compression waiting until ${boundary.subtype}`, async () => {
+    await withClaudeLifecycleFixture(async (fixture) => {
+      await fixture.emit([{ type: 'system', subtype: 'status', status: 'compacting' }]);
+      const firstInput = await fixture.prepareAppend('compressed followup one');
+      const secondInput = await fixture.prepareAppend('compressed followup two');
+      let written = 0;
+      const first = fixture.runtime.appendToActiveRun(firstInput).then((value) => { written += 1; return value; });
+      const second = fixture.runtime.appendToActiveRun(secondInput).then((value) => { written += 1; return value; });
+      await sleep(20);
+      assert.equal(written, 0);
+      assert.equal((await fixture.calls()).length, 1);
+      await fixture.emit([boundary]);
+      assert.equal((await withTimeout(first, 1_000)).accepted, true);
+      assert.equal((await withTimeout(second, 1_000)).accepted, true);
+      await waitFor(async () => (await fixture.calls()).length === 3);
+      const calls = await fixture.calls();
+      assert.match(calls[1]!.message.content[0]!.text, /compressed followup one/);
+      assert.match(calls[2]!.message.content[0]!.text, /compressed followup two/);
+      await fixture.emit([nativeToolReturns(), nativeCommand(1, 'started'), nativeCommand(2, 'started'),
+        nativeCommand(1, 'completed'), nativeCommand(2, 'completed'),
+        { type: 'result', subtype: 'success', result: 'compressed followups done' }, nativeCommand(0, 'completed')], true);
+      assert.equal((await withTimeout(fixture.runPromise, 2_000)).text, 'compressed followups done');
+    });
+  });
+}
+
+for (const state of ['cancelled', 'discarded', 'refused']) {
+  test(`claude-code fails ${state} sent input without replaying it`, async () => {
+    await withClaudeLifecycleFixture(async (fixture) => {
+      await fixture.append('already sent followup');
+      await fixture.emit([nativeCommand(1, state)], true);
+      await assert.rejects(fixture.runPromise, new RegExp(`input ${state}`));
+      assert.equal((await fixture.calls()).length, 2);
+    });
+  });
+}
+
+test('claude-code rejects sent input on a clean child exit before lifecycle completion', async () => {
+  await withClaudeLifecycleFixture(async (fixture) => {
+    await fixture.append('unconfirmed sent followup');
+    await fixture.emit([nativeToolReturns(), { type: 'result', subtype: 'success', result: 'old result' }, nativeCommand(0, 'completed'), { exit: 0 }], true);
+    await assert.rejects(fixture.runPromise, /exited before sent input completion was confirmed/);
+  });
+});
+
+test('claude-code does not retry a transient native result after writing a followup', async () => {
+  await withClaudeLifecycleFixture(async (fixture) => {
+    await fixture.append('sent before provider error');
+    await fixture.emit([nativeToolReturns(), {
+      type: 'result', subtype: 'error_during_execution', is_error: true, result: 'network connection timeout',
+    }], true);
+    await assert.rejects(fixture.runPromise, (error) => {
+      assert.equal(classifyProviderRetry(error), 'terminal');
+      assert.match(String(error), /failed after followup input was sent/);
+      return true;
+    });
+    assert.equal((await fixture.calls()).length, 2);
+  });
+});
+
+test('claude-code does not replay written followups after a native process crash', async () => {
+  await withClaudeLifecycleFixture(async (fixture) => {
+    await fixture.append('sent before process crash');
+    await fixture.emit([{ exit: 7 }], true);
+    await assert.rejects(fixture.runPromise, (error) => {
+      assert.equal(classifyProviderRetry(error), 'terminal');
+      assert.match(String(error), /runtime exited with code 7/);
+      return true;
+    });
+    assert.equal((await fixture.calls()).length, 2);
+  });
+});
+
+test('claude-code rejects unwritten compressed input on exit and does not claim append success', async () => {
+  await withClaudeLifecycleFixture(async (fixture) => {
+    await fixture.emit([{ type: 'system', subtype: 'status', status: 'compacting' }]);
+    const append = fixture.runtime.appendToActiveRun(await fixture.prepareAppend('not written yet'));
+    void append.catch(() => {});
+    await fixture.emit([{ exit: 0 }], true);
+    await assert.rejects(append, /before queued input reached stdin/);
+    await assert.rejects(fixture.runPromise, /before sent input completion was confirmed/);
+    assert.equal((await fixture.calls()).length, 1);
+  });
+});
+
+test('claude-code bounds missing input confirmation after a result', async (t) => {
+  await withClaudeLifecycleFixture(async (fixture) => {
+    await fixture.append('followup missing completed frame');
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    try {
+      await fixture.emit([nativeToolReturns(), nativeCommand(1, 'started'), nativeCommand(1, 'completed'),
+        { type: 'result', subtype: 'success', result: 'missing initial completed' }]);
+      t.mock.timers.tick(30_000);
+      await assert.rejects(fixture.runPromise, /did not confirm sent input completion/);
+    } finally {
+      t.mock.timers.reset();
+    }
+  });
+});
+
+function holdClaudeFramePersistence(runtime: AgentRuntime, matches: (frame: Record<string, unknown>) => boolean) {
+  // Some control frames currently produce no persisted activity. Pause the
+  // mapper itself to exercise the control-state/persistence boundary equally.
+  const controller = (runtime as unknown as {
+    slot: { get(): { currentTurn: { jsonlMapper: { accept(chunk: string): Promise<void> } } } };
+  }).slot.get();
+  const mapper = controller.currentTurn.jsonlMapper;
+  const originalAccept = mapper.accept;
+  const entered = deferredSignal();
+  const release = deferredSignal();
+  mapper.accept = async (chunk) => {
+    if (matches(JSON.parse(chunk) as Record<string, unknown>)) {
+      entered.resolve();
+      await release.promise;
+    }
+    await originalAccept.call(mapper, chunk);
+  };
+  return { entered: entered.promise, release: release.resolve };
+}
+
+for (const [label, frame, finish] of [
+  ['new turn', { type: 'system', subtype: 'turn_starting', mode: 'prompt' }, []],
+  ['new tool', { type: 'assistant', message: { content: [{
+    type: 'tool_use', id: 'slow-new-tool', name: 'Read', input: { file_path: '/tmp/probe' },
+  }] } }, [{ type: 'user', message: { content: [{
+    type: 'tool_result', tool_use_id: 'slow-new-tool', content: 'done',
+  }] } }]],
+  ['compression', { type: 'system', subtype: 'status', status: 'compacting' }, [{ type: 'system', subtype: 'compact_boundary' }]],
+] as const) {
+  test(`claude-code cancels confirmation grace before slow ${label} persistence`, async (t) => {
+    await withClaudeLifecycleFixture(async (fixture) => {
+      await fixture.append('followup after old result');
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      let hold: ReturnType<typeof holdClaudeFramePersistence> | undefined;
+      try {
+        await fixture.emit([nativeToolReturns(), { type: 'result', subtype: 'success', result: 'old result' }, nativeCommand(0, 'completed')]);
+        hold = holdClaudeFramePersistence(fixture.runtime, (value) => value['type'] === frame.type);
+        let settled = false;
+        void fixture.runPromise.then(() => { settled = true; }, () => { settled = true; });
+        await fixture.emit([frame], true);
+        await withTimeout(hold.entered, 1_000);
+        assert.equal(fixture.runtime.isProviderQuiescent?.(), false);
+        t.mock.timers.tick(30_000);
+        await nextImmediate();
+        assert.equal(settled, false, 'new native work cancels the old idle deadline before persistence');
+        assert.equal(fixture.runtime.health?.().child?.alive, true);
+        hold.release();
+        await fixture.emit([...finish, nativeCommand(1, 'started'), nativeCommand(1, 'completed'),
+          { type: 'result', subtype: 'success', result: 'followup done' }], true);
+        assert.equal((await withTimeout(fixture.runPromise, 2_000)).text, 'followup done');
+      } finally {
+        hold?.release();
+        t.mock.timers.reset();
+      }
+    });
+  });
+}
+
+test('claude-code cancels confirmation grace when completion arrives before slow persistence', async (t) => {
+  await withClaudeLifecycleFixture(async (fixture) => {
+    await fixture.append('followup awaiting confirmation');
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let hold: ReturnType<typeof holdClaudeFramePersistence> | undefined;
+    try {
+      await fixture.emit([nativeToolReturns(), nativeCommand(1, 'started'), nativeCommand(1, 'completed'),
+        { type: 'result', subtype: 'success', result: 'followup result' }]);
+      hold = holdClaudeFramePersistence(fixture.runtime, (value) => value['type'] === 'command_lifecycle');
+      let settled = false;
+      void fixture.runPromise.then(() => { settled = true; }, () => { settled = true; });
+      await fixture.emit([nativeCommand(0, 'completed')], true);
+      await withTimeout(hold.entered, 1_000);
+      t.mock.timers.tick(30_000);
+      await nextImmediate();
+      assert.equal(settled, false, 'confirmed input must not fail while its persistence is pending');
+      assert.equal(fixture.runtime.health?.().child?.alive, true);
+      hold.release();
+      assert.equal((await withTimeout(fixture.runPromise, 2_000)).text, 'followup result');
+    } finally {
+      hold?.release();
+      t.mock.timers.reset();
+    }
+  });
+});
+
+test('claude-code background results cannot satisfy pending native user input', async () => {
+  await withClaudeLifecycleFixture(async (fixture) => {
+    await fixture.append('human followup');
+    await fixture.emit([nativeToolReturns(), nativeCommand(1, 'started'), nativeCommand(1, 'completed'), nativeCommand(0, 'completed'),
+      { type: 'system', subtype: 'turn_starting', mode: 'task-notification' },
+      { type: 'result', subtype: 'success', result: 'background result' }]);
+    assert.equal(fixture.runtime.isProviderQuiescent?.(), false);
+    await fixture.emit([{ type: 'system', subtype: 'turn_starting', mode: 'prompt' },
+      { type: 'result', subtype: 'success', result: 'human result' }], true);
+    assert.equal((await withTimeout(fixture.runPromise, 2_000)).text, 'human result');
+  });
+});
+
+test('claude-code declines input after native completion while Anima completion persistence is pending', async () => {
+  await withClaudeLifecycleFixture(async (fixture) => {
+    await fixture.emit([nativeToolReturns(), { type: 'result', subtype: 'success', result: 'finished' }, nativeCommand(0, 'completed')], true);
+    await withTimeout(fixture.completionPersistenceReached, 1_000);
+    assert.deepEqual(await fixture.append('arrived during runtime.completed persistence'), { accepted: false });
+    assert.equal((await fixture.calls()).length, 1);
+    fixture.releaseCompletionPersistence();
+    assert.equal((await withTimeout(fixture.runPromise, 1_000)).text, 'finished');
+  }, { slowCompletionPersistence: true });
+});
+
+test('claude-code rejects unwritten compressed followups when the native turn fails', async () => {
+  await withClaudeLifecycleFixture(async (fixture) => {
+    await fixture.emit([{ type: 'system', subtype: 'status', status: 'compacting' }]);
+    const input = await fixture.prepareAppend('unwritten input before error');
+    const append = fixture.runtime.appendToActiveRun(input);
+    void append.catch(() => {});
+    await fixture.emit([{ type: 'result', subtype: 'error_max_turns', is_error: true, result: 'Max turns exceeded' }], true);
+    await assert.rejects(append, /Max turns exceeded/);
+    await assert.rejects(fixture.runPromise, /Max turns exceeded/);
+    assert.equal((await fixture.calls()).length, 1);
+  });
 });
