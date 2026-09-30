@@ -623,9 +623,9 @@ function RuntimeModal({
                         </p>
                       ) : (
                         <p className="font-sans pl-[26px] text-[11px] leading-snug text-text-muted">
-                          Requests faster responses for supported Codex models. Uses 2.5× subscription
-                          usage or 2× purchased credits; API-key sessions use Priority pricing.
-                          Availability depends on the account and model.
+                          Requests faster responses for supported Codex models. Uses 2.5×
+                          subscription usage or 2× purchased credits; API-key sessions use Priority
+                          pricing. Availability depends on the account and model.
                         </p>
                       )}
                     </div>
