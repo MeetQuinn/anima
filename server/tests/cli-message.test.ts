@@ -981,54 +981,59 @@ test('message send uses a Slack markdown block while preserving one API call', a
   }
 });
 
-test('message read fetches a Slack thread through configured credentials', async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-message-read-test-'));
-  const slackApi = await startSlackApiMock((method) => {
-    if (method === 'auth.test') {
-      return { ok: true, team_id: 'T-demo' };
-    }
-    if (method === 'conversations.info') {
+for (const teamId of ['T-demo', '']) {
+  test(`message read fetches a Slack thread with ${teamId ? 'configured' : 'queried'} workspace identity`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-message-read-test-'));
+    const slackMethods: string[] = [];
+    const slackApi = await startSlackApiMock((method) => {
+      slackMethods.push(method);
+      if (method === 'auth.test') {
+        return teamId ? { ok: false, error: 'invalid_auth' } : { ok: true, team_id: 'T-demo' };
+      }
+      if (method === 'conversations.info') {
+        return {
+          channel: { id: 'C-product', is_channel: true, name: 'product', name_normalized: 'product' },
+          ok: true,
+        };
+      }
+      if (method === 'users.info') {
+        return {
+          ok: true,
+          user: { id: 'U1', name: 'alice' },
+        };
+      }
+      if (method !== 'conversations.replies') throw new Error(`unexpected method ${method}`);
       return {
-        channel: { id: 'C-product', is_channel: true, name: 'product', name_normalized: 'product' },
         ok: true,
+        messages: [{ text: 'thread root', thread_ts: '1770000200.000001', ts: '1770000200.000001', type: 'message', user: 'U1' }],
       };
+    });
+    try {
+      await writeSlackConfig(stateDir, { teamId });
+      const read = await runNode(
+        [
+          cliPath,
+          'message',
+          'read',
+          '--channel',
+          'C-product',
+          '--thread-ts',
+          '1770000200.000001',
+        ],
+        {
+          env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_INBOX_ITEM_ID: '', ANIMA_SLACK_API_URL: slackApi.url },
+        },
+      );
+      assert.equal(read.status, 0, read.stderr || read.stdout);
+      assert.match(read.stdout, /\[channel=C-product thread_ts=1770000200\.000001 message_ts=1770000200\.000001/);
+      assert.match(read.stdout, /@alice: thread root/);
+      assert.equal(slackMethods.filter((method) => method === 'auth.test').length, teamId ? 0 : 1);
+    } finally {
+      await slackApi.close();
+      await rm(stateDir, { force: true, recursive: true });
     }
-    if (method === 'users.info') {
-      return {
-        ok: true,
-        user: { id: 'U1', name: 'alice' },
-      };
-    }
-    if (method !== 'conversations.replies') throw new Error(`unexpected method ${method}`);
-    return {
-      ok: true,
-      messages: [{ text: 'thread root', thread_ts: '1770000200.000001', ts: '1770000200.000001', type: 'message', user: 'U1' }],
-    };
   });
-  try {
-    await writeSlackConfig(stateDir);
-    const read = await runNode(
-      [
-        cliPath,
-        'message',
-        'read',
-        '--channel',
-        'C-product',
-        '--thread-ts',
-        '1770000200.000001',
-      ],
-      {
-        env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_INBOX_ITEM_ID: '', ANIMA_SLACK_API_URL: slackApi.url },
-      },
-    );
-    assert.equal(read.status, 0, read.stderr || read.stdout);
-    assert.match(read.stdout, /\[channel=C-product thread_ts=1770000200\.000001 message_ts=1770000200\.000001/);
-    assert.match(read.stdout, /@alice: thread root/);
-  } finally {
-    await slackApi.close();
-    await rm(stateDir, { force: true, recursive: true });
-  }
-});
+}
 
 test('message update records an audited Slack output update', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-message-update-test-'));
