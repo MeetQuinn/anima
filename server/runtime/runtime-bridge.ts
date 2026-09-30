@@ -29,6 +29,8 @@ import type {
   ProviderSessionRecord,
 } from '../providers/contract.js';
 import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
+import { activitiesForInboxItemWindow } from './item-activities.js';
+import { restartSubtaskObservations } from './restart-subtasks.js';
 
 export class AgentRuntimeBridge {
   constructor(private readonly runtime: AgentRuntime) {}
@@ -99,6 +101,21 @@ export class AgentRuntimeBridge {
 
   private async promptContext(context: RuntimeItemContext): Promise<CodeAgentPromptContext> {
     const event = context.item;
+    if (event.handling.resumeReason === 'runtime_restart') {
+      const activities = await activitiesForInboxItemWindow(context.agentId, event.id);
+      const sessionStartedAt = context.session.currentStartedAt;
+      const promptContext: CodeAgentPromptContext = {
+        restartSubtasks: restartSubtaskObservations(
+          activities.filter((activity) => !sessionStartedAt || activity.createdAt >= sessionStartedAt),
+          this.runtime.kind,
+          event.id,
+        ),
+      };
+      if (context.cursorDelivery?.promptBody) {
+        promptContext.cursorDeliveryPromptBody = context.cursorDelivery.promptBody;
+      }
+      return promptContext;
+    }
     if (event.kind === 'memory_coherence') {
       const config = await defaultServerSettingsService.readConfig();
       return {

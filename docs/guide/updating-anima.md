@@ -25,6 +25,11 @@ queued.
 The dashboard waits for the service to return, then reloads against the new runtime. A successful
 drain reports how many agents resumed.
 
+On continuation, the main agent is asked to check subagent results and surviving work before
+resuming or reassigning unfinished tasks. Anima includes recorded subagent references from the
+interrupted task when available. This does not preserve child processes or guarantee every
+subagent can resume; the agent checks native session history and external-action receipts first.
+
 If installation fails before restart, the current runtime keeps serving. If a later upgrade phase
 fails, the Server panel reports the running version, rollback result, error, and upgrade log path
 instead of claiming success.

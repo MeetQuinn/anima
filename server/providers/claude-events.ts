@@ -700,6 +700,10 @@ function summarizeClaudeToolInput(
       ...(taskSubject ? { taskSubject: singleLine(taskSubject) } : {}),
     };
   }
+  if (name === 'Agent' || name === 'Task') {
+    const target = stringField(input, 'description');
+    return target ? { target: singleLine(target) } : {};
+  }
   const target =
     stringField(input, 'file_path') ??
     stringField(input, 'path') ??

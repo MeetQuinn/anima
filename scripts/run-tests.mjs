@@ -70,6 +70,7 @@ const groups = {
     'cursor-wake-journal-backfill.test.js',
     'workspace-directory.test.js',
     'prompt-attachments.test.js',
+    'restart-subtasks.test.js',
     'prompt-template.test.js',
     'provider-failure.test.js',
     'provider-launch.test.js',

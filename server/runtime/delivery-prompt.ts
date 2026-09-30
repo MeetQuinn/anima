@@ -32,6 +32,7 @@ import {
   providerTransientRetryNote,
   RUNTIME_RESTART_CONTINUATION_NOTE,
 } from './delivery-notes.js';
+import { restartSubtaskPrompt, type RestartSubtaskObservation } from './restart-subtasks.js';
 
 export interface CodeAgentPromptContext {
   memoryCoherence?: {
@@ -39,6 +40,7 @@ export interface CodeAgentPromptContext {
     homePath?: string;
   };
   reminder?: Reminder;
+  restartSubtasks?: RestartSubtaskObservation[];
   /**
    * Cut (b): when present, Slack wakes use the cursor-delivery prompt body
    * instead of the single-message form. Gate-off leaves this undefined so
@@ -75,6 +77,7 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
     const continuation = buildRuntimeRestartContinuationDeliveryPrompt({
       itemId: event.id,
       time: event.handling.startedAt ?? event.receivedAt,
+      subtasks: context.restartSubtasks,
     });
     // Cursor body is already the full provider-facing envelope (incl. files/previews).
     if (context.cursorDeliveryPromptBody && event.kind === 'slack') {
@@ -344,6 +347,7 @@ function formatMemorySize(bytes: number): string {
 export function buildRuntimeRestartContinuationDeliveryPrompt(input: {
   itemId: string;
   time: string;
+  subtasks?: RestartSubtaskObservation[];
 }): string {
   return [
     'Runtime restart continuation:',
@@ -354,7 +358,8 @@ export function buildRuntimeRestartContinuationDeliveryPrompt(input: {
     ]),
     '',
     RUNTIME_RESTART_CONTINUATION_NOTE,
-  ].join('\n');
+    restartSubtaskPrompt(input.subtasks ?? []),
+  ].filter((line) => line !== '').join('\n\n');
 }
 
 export function buildDeferredWakeRetryDeliveryPrompt(input: {

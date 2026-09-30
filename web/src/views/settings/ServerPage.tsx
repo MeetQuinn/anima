@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchServerInfo, pingHealth } from '@/api/system';
 import { shortIso, formatUptime } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
@@ -24,6 +25,7 @@ import RuntimeUpgradeRow from '@/components/RuntimeUpgrade';
  * its own Policies page (Outreach limits).
  */
 export default function ServerPage() {
+  const queryClient = useQueryClient();
   // --- Server info ---
   const { data: healthOk } = useQuery({
     queryKey: queryKeys.health(),
@@ -34,7 +36,15 @@ export default function ServerPage() {
     queryKey: queryKeys.serverInfo(),
     queryFn: fetchServerInfo,
     staleTime: 60_000,
+    refetchInterval: 30_000,
   });
+  // The version and upgrade card have separate caches. Refresh the card on
+  // entry and after an upgrade performed from another browser or the CLI.
+  useEffect(() => {
+    if (info?.version) {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.runtimeUpgrade() });
+    }
+  }, [info?.version, queryClient]);
   const health: 'loading' | 'ok' | 'error' =
     healthOk === undefined ? 'loading' : healthOk ? 'ok' : 'error';
 
