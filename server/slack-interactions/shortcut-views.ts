@@ -133,6 +133,16 @@ function healthIssue(health: AgentRuntimeHealthSummary | undefined): HealthIssue
       rateLimited: reason === 'provider_rate_limited',
     };
   }
+  // No current health reading (never reported, or an old rate-limit report
+  // aged out). Saying Idle here would vouch for an agent nobody has checked.
+  if (health.state === 'unknown') {
+    return {
+      detail: "Anima can't confirm right now whether it's able to work.",
+      emoji: ':grey_question:',
+      label: 'Status unknown',
+      rateLimited: false,
+    };
+  }
   if (health.state === 'degraded') {
     return {
       detail: retryingText(health.reason),

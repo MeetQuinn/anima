@@ -258,6 +258,31 @@ test('home shortcut leads with a health problem instead of reading as Idle', asy
   assert.doesNotMatch(text, /Idle|Picks back up/);
 });
 
+test('home shortcut does not show green Idle when health is explicitly unknown', async () => {
+  const client = fakeWebClient();
+  const service = new SlackShortcutService({
+    agentService: fakeAgentService({ id: 'scout', displayName: 'Scout' }),
+    runtimeService: {
+      getStatus: async () => ({
+        agentId: 'scout',
+        health: { state: 'unknown', updatedAt: '2026-05-26T12:09:00.000Z' },
+        itemCount: 0,
+        queueDepth: 0,
+      }),
+    },
+  });
+
+  await service.handleShortcut({
+    agentId: 'scout',
+    body: { callback_id: 'anima.home', trigger_id: 'trigger-1', user: { id: 'U1' } },
+    client: client.client,
+  });
+
+  const text = modalText(openedModal(client));
+  assert.equal(text, ":grey_question:  *Status unknown*\nAnima can't confirm right now whether it's able to work.");
+  assert.doesNotMatch(text, /Idle|white_check_mark/);
+});
+
 test('home shortcut says when rate-limited work picks back up, in the viewer time zone', async () => {
   const client = fakeWebClient();
   const service = new SlackShortcutService({
