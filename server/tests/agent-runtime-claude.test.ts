@@ -1592,6 +1592,18 @@ async function withClaudeLifecycleFixture(
           return (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
         },
         async emit(frames, final = false) {
+          const commandCount = frames.reduce((count, frame) => Math.max(count,
+            typeof frame['commandIndex'] === 'number' ? frame['commandIndex'] + 1 : 0,
+          ), 0);
+          if (commandCount > 0) {
+            // Native lifecycle frames can only refer to input the CLI received.
+            // Use the real event loop while confirmation tests mock setTimeout.
+            const deadline = Date.now() + 1_000;
+            while ((await readFile(callsPath, 'utf8')).trim().split('\n').filter(Boolean).length < commandCount) {
+              assert.ok(Date.now() < deadline, 'mock CLI must consume input before its lifecycle frame');
+              await nextImmediate();
+            }
+          }
           const marker = `lifecycle-fixture-barrier-${++markerNumber}`;
           const signal = deferredSignal();
           if (!final) {
