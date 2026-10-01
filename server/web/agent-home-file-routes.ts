@@ -8,6 +8,7 @@ import {
   contentTypeFor,
   expandHome,
   INLINE_TEXT_CAP,
+  sniffUnknownText,
 } from '../kb/kb.helper.js';
 import {
   kbCodeLanguage,
@@ -280,6 +281,10 @@ async function readHomeFile(
     } else {
       meta.content = await readFile(absPath, 'utf8');
     }
+  } else if (kind === 'binary') {
+    // Same unknown-extension sniff as the KB reader (see sniffUnknownText).
+    const text = await sniffUnknownText(absPath, size);
+    if (text) Object.assign(meta, { kind: 'text' }, text);
   }
   return meta;
 }

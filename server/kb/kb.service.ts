@@ -27,6 +27,7 @@ import {
   KbError,
   kbView,
   normalizeRelPath,
+  sniffUnknownText,
   type KbDirectoryBrowse,
   type ResolvedKbRoot,
 } from './kb.helper.js';
@@ -378,13 +379,17 @@ export class KbService {
     }
     // Image / HTML / PDF / binary render via the raw route (img / iframe src),
     // so we don't inline their bytes here. Text-ish kinds carry their content
-    // for the client renderer, capped.
+    // for the client renderer, capped. An unrecognised extension is sniffed
+    // first, so a plain-text config file still reads as text.
     if (kind === 'markdown' || kind === 'json' || kind === 'code' || kind === 'text') {
       if (fileStat.size > INLINE_TEXT_CAP) {
         meta.truncated = true;
       } else {
         meta.content = await readFile(absPath, 'utf8');
       }
+    } else if (kind === 'binary') {
+      const text = await sniffUnknownText(absPath, fileStat.size);
+      if (text) Object.assign(meta, { kind: 'text' }, text);
     }
     return meta;
   }

@@ -663,6 +663,37 @@ test('kb file endpoint classifies and inlines tracked text', async () => {
   }
 });
 
+test('kb file endpoint reads an unrecognised extension as text only when its bytes are text', async () => {
+  const { homeDir, repoDir } = await setupKb('anima-kb-sniff');
+  try {
+    await mkdir(join(repoDir, 'surge'), { recursive: true });
+    const conf = '[General]\nloglevel = notify\n';
+    await writeFile(join(repoDir, 'surge', 'default.conf'), conf, 'utf8');
+    const rules = 'DOMAIN-SUFFIX,example.com,DIRECT\n';
+    await writeFile(join(repoDir, 'surge', 'proxy.rules'), rules, 'utf8');
+    await writeFile(join(repoDir, 'surge', 'blob.dat'), Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0x01]));
+    await withServer(homeDir, async (base) => {
+      const read = async (path: string) => {
+        const res = await fetch(`${base}/api/kbs/test/file?path=${encodeURIComponent(path)}`);
+        assert.equal(res.status, 200);
+        return (await res.json()) as { kind: string; content?: string };
+      };
+      const listed = await read('surge/default.conf');
+      assert.equal(listed.kind, 'text');
+      assert.equal(listed.content, conf);
+      const sniffed = await read('surge/proxy.rules');
+      assert.equal(sniffed.kind, 'text');
+      assert.equal(sniffed.content, rules);
+      const blob = await read('surge/blob.dat');
+      assert.equal(blob.kind, 'binary');
+      assert.equal(blob.content, undefined);
+    });
+  } finally {
+    await rm(homeDir, { force: true, recursive: true });
+    await rm(repoDir, { force: true, recursive: true });
+  }
+});
+
 test('kb download endpoint serves file with attachment headers', async () => {
   const { homeDir, repoDir } = await setupKb('anima-kb-discoverability');
   try {
