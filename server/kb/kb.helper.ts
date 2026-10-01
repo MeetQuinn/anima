@@ -1,3 +1,4 @@
+import { open, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, posix } from 'node:path';
 
@@ -36,6 +37,51 @@ export interface ResolvedKbRoot {
 // falls back to the raw route. Keeps a giant tracked file from bloating a JSON
 // response.
 export const INLINE_TEXT_CAP = 2 * 1024 * 1024;
+
+// How much of a file with an unrecognised extension is checked before we decide
+// it is binary. Plain-text files often carry extensions no list anticipates
+// (`.rules`, `.service`, a Surge `.conf` before it was listed), and calling them
+// "Binary file" hides content anyone could read.
+const TEXT_SNIFF_BYTES = 8 * 1024;
+
+/**
+ * Text check for bytes of unknown kind: no NUL byte and valid UTF-8. `partial`
+ * marks a prefix sample, whose last character may be cut mid-sequence.
+ */
+export function looksLikeUtf8Text(bytes: Uint8Array, options: { partial?: boolean } = {}): boolean {
+  if (bytes.includes(0)) return false;
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(bytes, { stream: options.partial === true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * For a file `kbFileKind` called binary only because of its extension: when the
+ * bytes are text, the inline payload a text kind carries (content, or
+ * `truncated` past the cap); otherwise undefined and the file stays binary.
+ * Only the sample is read unless it already looks like text.
+ */
+export async function sniffUnknownText(
+  absPath: string,
+  size: number,
+): Promise<{ content: string } | { truncated: true } | undefined> {
+  const handle = await open(absPath, 'r');
+  let sample: Buffer;
+  try {
+    const buffer = Buffer.alloc(Math.min(size, TEXT_SNIFF_BYTES));
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    sample = buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+  if (!looksLikeUtf8Text(sample, { partial: size > sample.length })) return undefined;
+  if (size > INLINE_TEXT_CAP) return { truncated: true };
+  const bytes = size > sample.length ? await readFile(absPath) : sample;
+  return looksLikeUtf8Text(bytes) ? { content: bytes.toString('utf8') } : undefined;
+}
 
 // Short cache so an HTML report pulling many relative assets doesn't rescan the
 // KB per asset. Visibility rarely changes within a page load; staleness

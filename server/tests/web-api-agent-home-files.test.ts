@@ -219,6 +219,39 @@ test('agent home file read marks oversized text truncated without content', asyn
   }
 });
 
+test('agent home file with an unrecognised extension inlines as text when its bytes are text', async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), 'anima-home-files-sniff-'));
+  try {
+    const rules = 'DOMAIN-SUFFIX,example.com,DIRECT\n# 规则\n';
+    await writeHomeFile(homeDir, 'surge/proxy.rules', rules);
+    await writeHomeFile(homeDir, 'surge/large.rules', Buffer.alloc(INLINE_TEXT_CAP + 1, 'a'));
+    await writeHomeFile(homeDir, 'surge/blob.dat', Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0x01]));
+    await withHomeServer(homeDir, async (base) => {
+      const text = await getJson<Record<string, unknown>>(
+        `${base}/api/agents/anima/home/files/surge/proxy.rules`,
+      );
+      assert.equal(text.status, 200);
+      assert.equal(text.body.kind, 'text');
+      assert.equal(text.body.content, rules);
+
+      const large = await getJson<Record<string, unknown>>(
+        `${base}/api/agents/anima/home/files/surge/large.rules`,
+      );
+      assert.equal(large.body.kind, 'text');
+      assert.equal(large.body.truncated, true);
+      assert.equal('content' in large.body, false);
+
+      const blob = await getJson<Record<string, unknown>>(
+        `${base}/api/agents/anima/home/files/surge/blob.dat`,
+      );
+      assert.equal(blob.body.kind, 'binary');
+      assert.equal('content' in blob.body, false);
+    });
+  } finally {
+    await rm(homeDir, { force: true, recursive: true });
+  }
+});
+
 test('agent home binary file is metadata-only and raw route returns exact bytes', async () => {
   const homeDir = await mkdtemp(join(tmpdir(), 'anima-home-files-home-'));
   try {

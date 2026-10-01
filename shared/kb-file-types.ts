@@ -1,7 +1,7 @@
 export type KbFileKind = 'markdown' | 'html' | 'json' | 'code' | 'image' | 'pdf' | 'text' | 'binary';
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp', 'avif']);
-const TEXT_EXTENSIONS = new Set(['txt', 'text', 'log', '', 'env', 'gitignore']);
+const TEXT_EXTENSIONS = new Set(['txt', 'text', 'log', '', 'env', 'gitignore', 'conf', 'cfg', 'ini']);
 
 const CODE_LANGUAGES: Record<string, string> = {
   bash: 'bash',
