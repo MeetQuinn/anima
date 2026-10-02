@@ -17,6 +17,56 @@ export function stripQuotes(value: string): string {
   return value;
 }
 
+// `|` keeps line breaks, `>` folds them; optional chomping (+/-) and an
+// explicit indentation digit may follow in either order, then a comment.
+const BLOCK_SCALAR_HEADER = /^([|>])(?:([1-9])[+-]?|[+-]([1-9])?)?(?:[ \t]+#.*)?$/;
+
+function leadingWidth(line: string): number {
+  return /^[ \t]*/.exec(line)?.[0].length ?? 0;
+}
+
+/** Lines after a top-level key that belong to its value: blank or indented. */
+function takeIndented(lines: string[], start: number): { taken: string[]; next: number } {
+  let end = start;
+  while (end < lines.length && (lines[end].trim() === '' || /^\s/.test(lines[end]))) end++;
+  let last = end;
+  while (last > start && lines[last - 1].trim() === '') last--;
+  return { taken: lines.slice(start, last), next: end };
+}
+
+/**
+ * YAML folding for display: adjacent lines join with a space, each blank line
+ * becomes a line break, and more-indented lines keep the breaks around them.
+ */
+function foldLines(lines: string[]): string {
+  let out = '';
+  let prev: 'none' | 'text' | 'more' = 'none';
+  let blanks = 0;
+  for (const line of lines) {
+    if (line.trim() === '') {
+      blanks++;
+      continue;
+    }
+    const kind = /^[ \t]/.test(line) ? 'more' : 'text';
+    if (prev !== 'none') {
+      out += prev === 'text' && kind === 'text' ? (blanks > 0 ? '\n'.repeat(blanks) : ' ') : '\n'.repeat(blanks + 1);
+    }
+    out += line;
+    prev = kind;
+    blanks = 0;
+  }
+  return out;
+}
+
+function blockScalarValue(style: string, explicitIndent: number | null, lines: string[]): string {
+  const firstText = lines.find((line) => line.trim() !== '');
+  const indent = explicitIndent ?? (firstText ? leadingWidth(firstText) : 0);
+  const body = lines.map((line) => line.slice(Math.min(indent, leadingWidth(line))));
+  while (body.length > 0 && body[0].trim() === '') body.shift();
+  // Chomping only changes trailing newlines, which a table cell never shows.
+  return style === '|' ? body.join('\n') : foldLines(body);
+}
+
 export function parseTopLevelYaml(inner: string): FrontmatterEntry[] {
   const lines = inner.split('\n');
   const entries: FrontmatterEntry[] = [];
@@ -35,9 +85,25 @@ export function parseTopLevelYaml(inner: string): FrontmatterEntry[] {
     }
     const key = match[1];
     const inlineVal = (match[2] ?? '').trim();
+    const header = BLOCK_SCALAR_HEADER.exec(inlineVal);
+    if (header) {
+      // `key: >-` / `key: |`: the value is the indented text below the header.
+      const { taken, next } = takeIndented(lines, i + 1);
+      const explicitIndent = header[2] ?? header[3];
+      entries.push({
+        key,
+        value: blockScalarValue(header[1], explicitIndent ? Number(explicitIndent) : null, taken),
+        block: null,
+      });
+      i = next;
+      continue;
+    }
     if (inlineVal !== '') {
-      entries.push({ key, value: stripQuotes(inlineVal), block: null });
-      i++;
+      // A plain or quoted scalar may continue on indented lines; YAML folds them.
+      const { taken, next } = takeIndented(lines, i + 1);
+      const folded = foldLines([inlineVal, ...taken.map((line) => line.trim())]);
+      entries.push({ key, value: stripQuotes(folded), block: null });
+      i = next;
       continue;
     }
     // Bare `key:` — collect the following indented or list lines as its block.

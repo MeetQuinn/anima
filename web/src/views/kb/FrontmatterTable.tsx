@@ -43,7 +43,8 @@ export function FrontmatterTable({ entries }: { entries: FrontmatterEntry[] }) {
                 {entry.block ? (
                   <FrontmatterBlockValue block={entry.block} />
                 ) : (
-                  <span className="break-words">{entry.value}</span>
+                  // Block scalars (`|`, `>`) can carry line breaks.
+                  <span className="whitespace-pre-wrap break-words">{entry.value}</span>
                 )}
               </td>
             </tr>

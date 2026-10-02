@@ -25,6 +25,69 @@ describe('frontmatter parsing', () => {
     ]);
   });
 
+  it('reads folded and literal block scalars instead of showing the indicator', () => {
+    expect(parseTopLevelYaml([
+      'owner: Juno',
+      'verification: >-',
+      '  Checked against the live tree',
+      '  on 2026-10-02.',
+      'steps: |',
+      '  first line',
+      '    kept indent',
+      '',
+      '  after a gap',
+      'verified: 2026-10-02',
+    ].join('\n'))).toEqual([
+      { key: 'owner', value: 'Juno', block: null },
+      { key: 'verification', value: 'Checked against the live tree on 2026-10-02.', block: null },
+      { key: 'steps', value: 'first line\n  kept indent\n\nafter a gap', block: null },
+      { key: 'verified', value: '2026-10-02', block: null },
+    ]);
+  });
+
+  it('folds blank and more-indented lines the way YAML does', () => {
+    expect(parseTopLevelYaml([
+      'summary: >',
+      '  one',
+      '  two',
+      '',
+      '  three',
+      '    code',
+      '  four',
+    ].join('\n'))).toEqual([
+      { key: 'summary', value: 'one two\nthree\n  code\nfour', block: null },
+    ]);
+  });
+
+  it('accepts chomping, indentation indicators and a trailing comment', () => {
+    expect(parseTopLevelYaml([
+      'a: |2-',
+      '    two extra',
+      'b: >+ # keep',
+      '  folded',
+      'c: |-',
+      '',
+    ].join('\n'))).toEqual([
+      { key: 'a', value: '  two extra', block: null },
+      { key: 'b', value: 'folded', block: null },
+      { key: 'c', value: '', block: null },
+    ]);
+  });
+
+  it('folds a plain or quoted scalar that continues on indented lines', () => {
+    expect(parseTopLevelYaml([
+      'description: Starts here',
+      '  and continues',
+      'quote: "Opens here',
+      '  and closes"',
+      'next: done',
+    ].join('\n'))).toEqual([
+      { key: 'description', value: 'Starts here and continues', block: null },
+      { key: 'quote', value: 'Opens here and closes', block: null },
+      { key: 'next', value: 'done', block: null },
+    ]);
+  });
+
   it('splits valid frontmatter from the markdown body', () => {
     expect(parseFrontmatter('---\ntitle: Test\n---\n# Body')).toEqual({
       entries: [{ key: 'title', value: 'Test', block: null }],
