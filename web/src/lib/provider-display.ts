@@ -4,6 +4,14 @@ export function providerKindLabel(kind: string, catalog: ProviderCatalogEntry[])
   return catalog.find((entry) => entry.kind === kind)?.label ?? kind;
 }
 
+/**
+ * Catalog labels as "A, B, or C". Install copy built from this names exactly
+ * the providers the create flow offers, so a new provider cannot be left out.
+ */
+export function providerLabelList(catalog: ProviderCatalogEntry[]): string {
+  return new Intl.ListFormat('en', { type: 'disjunction' }).format(catalog.map((entry) => entry.label));
+}
+
 export function providerValueLabel(value: string | undefined): string {
   if (!value) return '';
   const modelLabel = catalogModelLabel(value);

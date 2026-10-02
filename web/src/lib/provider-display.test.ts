@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { PROVIDER_CATALOG } from '@shared/provider-catalog';
 
-import { providerValueLabel } from './provider-display';
+import { providerLabelList, providerValueLabel } from './provider-display';
 
 describe('catalog model labels', () => {
   it('names every model id the catalog offers', () => {
@@ -34,6 +34,20 @@ describe('catalog model labels', () => {
       }
     }
     expect(conflicts).toEqual([]);
+  });
+});
+
+describe('providerLabelList', () => {
+  it('joins catalog labels as an "or" list', () => {
+    const [a, b, c] = PROVIDER_CATALOG;
+    expect(providerLabelList([a])).toBe(a.label);
+    expect(providerLabelList([a, b])).toBe(`${a.label} or ${b.label}`);
+    expect(providerLabelList([a, b, c])).toBe(`${a.label}, ${b.label}, or ${c.label}`);
+  });
+
+  it('names every provider in the catalog', () => {
+    const list = providerLabelList(PROVIDER_CATALOG);
+    expect(PROVIDER_CATALOG.filter((entry) => !list.includes(entry.label)).map((entry) => entry.kind)).toEqual([]);
   });
 });
 

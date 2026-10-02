@@ -28,7 +28,7 @@ import {
   providerUnavailableHint,
   unavailableProviderHints,
 } from '@/lib/provider-availability';
-import { providerValueLabel } from '@/lib/provider-display';
+import { providerLabelList, providerValueLabel } from '@/lib/provider-display';
 import AnimaIcon from '@/components/AnimaIcon';
 import { StepDot, WorkspacePlatformStep } from './components';
 import { Button } from '@/components/ui/button';
@@ -661,7 +661,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
               </label>
               {providerAvailability && unavailableProviders.length === providerOptions.length ? (
                 <p className="font-sans text-[12px] text-health-warn">
-                  No providers detected. Install Claude Code, Codex, Kimi Code, Grok Build, or OpenCode first.
+                  No providers detected. Install {providerLabelList(providerOptions)} first.
                 </p>
               ) : (
                 /* Stack on phones: three columns inside the card leave ~100px
