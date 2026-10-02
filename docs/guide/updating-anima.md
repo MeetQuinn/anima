@@ -31,7 +31,7 @@ interrupted task when available. This does not preserve child processes or guara
 subagent can resume; the agent checks native session history and external-action receipts first.
 
 If installation fails before restart, the current runtime keeps serving. If a later upgrade phase
-fails, the Server panel reports the running version, rollback result, error, and upgrade log path
+fails, **Settings > Server** reports the running version, rollback result, error, and upgrade log path
 instead of claiming success.
 
 ## Update from a terminal
