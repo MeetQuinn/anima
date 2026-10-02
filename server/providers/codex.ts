@@ -19,6 +19,7 @@ export const CODEX_AUTO_COMPACT_TOKEN_LIMIT_SCOPE = 'total';
 export const CODEX_FAST_MODE_CONFIG = ['service_tier="fast"', 'features.fast_mode=true'] as const;
 const CODEX_TOOL_ENV_BASE_INCLUDE = [
   'ANIMA_AGENT_ID',
+  'ANIMA_HOME',
   'COLORTERM',
   'HOME',
   'LANG',

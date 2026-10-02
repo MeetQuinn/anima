@@ -1,4 +1,6 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { waitFor, withTimeout } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,6 +28,7 @@ import { withAnimaHome } from './anima-home.js';
 import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
 import { runtimeInput, runtimeFollowupInput, assertFollowupPrompt, providerSessionStartedPayload, runtimeTestEnv } from './helpers/agent-runtime.js';
 import { runtimeSessionServiceForAgent } from '../runtime/runtime-session.service.js';
+import { runtimeEnv } from '../runtime/runtime-bridge.js';
 import {
   isProviderSessionCorruptionError,
 } from '../providers/session-corruption.js';
@@ -81,14 +84,46 @@ for (const scenario of [
   });
 }
 
-test('codex-cli tool shells retain runtime agent identity without a provider env override', () => {
+test('codex-cli tool shells retain runtime agent identity and home without a provider env override', () => {
   const args = codexAppServerArgs({ kind: 'codex-cli' });
   const includeArg = args.find((arg) => arg.startsWith('shell_environment_policy.include_only='));
   assert.ok(includeArg);
   const include = JSON.parse(includeArg.slice(includeArg.indexOf('=') + 1)) as string[];
   assert.ok(include.includes('ANIMA_AGENT_ID'));
+  assert.ok(include.includes('ANIMA_HOME'));
+  assert.equal(include.includes('ANIMA_INBOX_ITEM_ID'), false);
   assert.equal(include.includes('ANIMA_*'), false);
   assert.equal(include.includes('CODEX_*'), false);
+});
+
+test('codex-cli tool shells resolve the runtime home instead of the default home', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'anima-codex-tool-home-'));
+  const stateDir = join(scratch, 'instance');
+  const defaultHome = join(scratch, 'user');
+  try {
+    await mkdir(stateDir);
+    await mkdir(defaultHome);
+    await withAnimaHome(stateDir, async () => {
+      const context = await ingestEvent(makeSlackEvent({
+        channelId: 'D-home', teamId: 'T-home', text: 'check tool home', userId: 'U-home',
+      }), { agentId: 'anima', stateDir });
+      const env = runtimeEnv(context, { HOME: defaultHome });
+      const include = codexToolEnvIncludeList(undefined);
+      const toolEnv = Object.fromEntries(
+        Object.entries(env).filter(([key]) => include.includes(key)),
+      );
+      // A fresh subprocess has no AsyncLocalStorage scope; use the real CLI resolver.
+      const resolverUrl = new URL('../anima-home.js', import.meta.url).href;
+      const { stdout } = await promisify(execFile)(process.execPath, [
+        '--input-type=module', '-e',
+        `import { resolveAnimaHome } from ${JSON.stringify(resolverUrl)};\n` +
+          'console.log(JSON.stringify({ agent: process.env.ANIMA_AGENT_ID, home: resolveAnimaHome() }));',
+      ], { cwd: defaultHome, env: toolEnv, timeout: 5000 });
+      assert.deepEqual(JSON.parse(stdout), { agent: 'anima', home: stateDir });
+    });
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
 });
 
 test('codex-cli app-server launch allows managed provider env into tool shells', () => {
