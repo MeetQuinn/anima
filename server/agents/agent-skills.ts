@@ -360,9 +360,8 @@ interface SkillFrontmatter {
 // values show their text rather than the indicator or only the first line.
 function parseSkillFrontmatter(content: string): SkillFrontmatter {
   const result: SkillFrontmatter = {};
-  for (const entry of parseFrontmatter(content).entries ?? []) {
-    const key = entry.key.trim();
-    const value = entry.value?.trim();
+  for (const { key, value: raw } of parseFrontmatter(content).entries ?? []) {
+    const value = raw?.trim();
     if (!value) continue;
     if (key === "description") result.description = value;
     if (key === "name") result.name = value;

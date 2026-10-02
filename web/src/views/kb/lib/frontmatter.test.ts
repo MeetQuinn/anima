@@ -25,6 +25,23 @@ describe('frontmatter parsing', () => {
     ]);
   });
 
+  it('allows spaces or tabs between a key and its colon', () => {
+    expect(parseTopLevelYaml([
+      'title\t: Tabbed',
+      'owner  : Juno',
+      'tags :',
+      '  - a',
+      'summary\t: >-',
+      '  one',
+      '  two',
+    ].join('\n'))).toEqual([
+      { key: 'title', value: 'Tabbed', block: null },
+      { key: 'owner', value: 'Juno', block: null },
+      { key: 'tags', value: null, block: ['  - a'] },
+      { key: 'summary', value: 'one two', block: null },
+    ]);
+  });
+
   it('reads folded and literal block scalars instead of showing the indicator', () => {
     expect(parseTopLevelYaml([
       'owner: Juno',

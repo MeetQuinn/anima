@@ -126,8 +126,9 @@ export function parseTopLevelYaml(inner: string): FrontmatterEntry[] {
       i++;
       continue;
     }
-    // A top-level key has no leading indentation.
-    const match = /^([A-Za-z0-9_][\w .-]*):(?:[ \t]+(.*))?$/.exec(line);
+    // A top-level key has no leading indentation. Spaces or tabs may sit
+    // between the key and its colon, as YAML allows.
+    const match = /^([A-Za-z0-9_][\w .-]*?)[ \t]*:(?:[ \t]+(.*))?$/.exec(line);
     if (!match || /^\s/.test(line)) {
       i++;
       continue;

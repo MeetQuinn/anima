@@ -122,6 +122,38 @@ test("skill descriptions read multi-line YAML values", async () => {
   }
 });
 
+test("skill name and description allow spaces or tabs before the colon", async () => {
+  const root = await mkdtemp(join(tmpdir(), "anima-skill-key-space-test-"));
+  try {
+    const agentHome = join(root, "agent-home");
+    const skillsDir = join(agentHome, ".codex", "skills");
+    await writeRawSkill(
+      join(skillsDir, "tab-dir"),
+      "---\nname\t: Tabbed\ndescription\t: Tab key\n---\n",
+    );
+    await writeRawSkill(
+      join(skillsDir, "space-dir"),
+      "---\nname  : Spaced\ndescription : Space key\n---\n",
+    );
+
+    const skills = await scanAgentSkills(codexAgent(agentHome), {
+      homeDir: root,
+    });
+
+    assert.deepEqual(
+      skills.local
+        .map((skill) => ({ description: skill.description, name: skill.name }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      [
+        { description: "Space key", name: "Spaced" },
+        { description: "Tab key", name: "Tabbed" },
+      ],
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("claude skills follow global symlinks and include only user-scope installed plugins", async () => {
   const root = await mkdtemp(join(tmpdir(), "anima-claude-skills-test-"));
   try {
