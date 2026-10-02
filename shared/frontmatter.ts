@@ -1,3 +1,6 @@
+// Top-level YAML frontmatter, read for display. The KB file view and the
+// Skills list share it, so both show a multi-line value the same way.
+
 export interface FrontmatterEntry {
   key: string;
   /** Inline scalar value, e.g. `name: foo`. Null when the value is a block. */
@@ -28,9 +31,13 @@ function leadingWidth(line: string): number {
 /** Lines after a top-level key that belong to its value: blank or indented. */
 function takeIndented(lines: string[], start: number): { taken: string[]; next: number } {
   let end = start;
-  while (end < lines.length && (lines[end].trim() === '' || /^\s/.test(lines[end]))) end++;
+  while (end < lines.length) {
+    const line = lines[end] ?? '';
+    if (line.trim() !== '' && !/^\s/.test(line)) break;
+    end++;
+  }
   let last = end;
-  while (last > start && lines[last - 1].trim() === '') last--;
+  while (last > start && (lines[last - 1] ?? '').trim() === '') last--;
   return { taken: lines.slice(start, last), next: end };
 }
 
@@ -97,35 +104,36 @@ function closingQuote(text: string, quote: string, from: number): number {
  */
 function scalarLines(inlineVal: string, continuation: string[]): string[] {
   const lines = [inlineVal, ...continuation.map((line) => line.trim())];
-  const quote = inlineVal[0] === '"' || inlineVal[0] === "'" ? inlineVal[0] : null;
+  const quote = inlineVal.startsWith('"') ? '"' : inlineVal.startsWith("'") ? "'" : null;
   if (!quote) {
     const comment = lines.findIndex((line, index) => index > 0 && line.startsWith('#'));
     return comment === -1 ? lines : lines.slice(0, comment);
   }
-  for (let index = 0; index < lines.length; index++) {
-    const close = closingQuote(lines[index], quote, index === 0 ? 1 : 0);
-    if (close !== -1) return [...lines.slice(0, index), lines[index].slice(0, close + 1)];
+  for (const [index, line] of lines.entries()) {
+    const close = closingQuote(line, quote, index === 0 ? 1 : 0);
+    if (close !== -1) return [...lines.slice(0, index), line.slice(0, close + 1)];
   }
   return lines; // Never closed: show everything rather than guess.
 }
 
 export function parseTopLevelYaml(inner: string): FrontmatterEntry[] {
-  const lines = inner.split('\n');
+  const lines = inner.split(/\r?\n/);
   const entries: FrontmatterEntry[] = [];
   let i = 0;
   while (i < lines.length) {
-    const line = lines[i];
+    const line = lines[i] ?? '';
     if (line.trim() === '' || line.trimStart().startsWith('#')) {
       i++;
       continue;
     }
-    // A top-level key has no leading indentation.
-    const match = /^([A-Za-z0-9_][\w .-]*):(?:[ \t]+(.*))?$/.exec(line);
+    // A top-level key has no leading indentation. Spaces or tabs may sit
+    // between the key and its colon, as YAML allows.
+    const match = /^([A-Za-z0-9_][\w .-]*?)[ \t]*:(?:[ \t]+(.*))?$/.exec(line);
     if (!match || /^\s/.test(line)) {
       i++;
       continue;
     }
-    const key = match[1];
+    const key = match[1] ?? '';
     const rawVal = (match[2] ?? '').trim();
     // `key: # note` above an indented block is a bare key with a comment; the
     // block is its value. With nothing below, the text shows as written.
@@ -139,7 +147,7 @@ export function parseTopLevelYaml(inner: string): FrontmatterEntry[] {
       const explicitIndent = header[2] ?? header[3];
       entries.push({
         key,
-        value: blockScalarValue(header[1], explicitIndent ? Number(explicitIndent) : null, lines.slice(i + 1, next)),
+        value: blockScalarValue(header[1] ?? '|', explicitIndent ? Number(explicitIndent) : null, lines.slice(i + 1, next)),
         block: null,
       });
       i = next;
@@ -157,7 +165,7 @@ export function parseTopLevelYaml(inner: string): FrontmatterEntry[] {
     const block: string[] = [];
     i++;
     while (i < lines.length) {
-      const next = lines[i];
+      const next = lines[i] ?? '';
       if (next.trim() === '') {
         i++;
         continue;
@@ -177,7 +185,7 @@ export function parseTopLevelYaml(inner: string): FrontmatterEntry[] {
 export function parseFrontmatter(content: string): { entries: FrontmatterEntry[] | null; body: string } {
   const fenced = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(content);
   if (!fenced) return { entries: null, body: content };
-  const entries = parseTopLevelYaml(fenced[1]);
+  const entries = parseTopLevelYaml(fenced[1] ?? '');
   if (entries.length === 0) return { entries: null, body: content };
   return { entries, body: content.slice(fenced[0].length) };
 }

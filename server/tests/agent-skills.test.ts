@@ -73,6 +73,87 @@ test("codex skills include common, user, system, bundled, and agent-local source
   }
 });
 
+test("skill descriptions read multi-line YAML values", async () => {
+  const root = await mkdtemp(join(tmpdir(), "anima-skill-frontmatter-test-"));
+  try {
+    const agentHome = join(root, "agent-home");
+    const skillsDir = join(agentHome, ".codex", "skills");
+    await writeRawSkill(
+      join(skillsDir, "folded"),
+      "---\nname: folded\ndescription: >\n  Type-safe AI calls\n  with schemas.\n---\n\n# folded\n",
+    );
+    await writeRawSkill(
+      join(skillsDir, "literal"),
+      "---\nname: literal\ndescription: |-\n  First line\n  Second line\n---\n",
+    );
+    await writeRawSkill(
+      join(skillsDir, "plain"),
+      '---\ndescription: Starts here\n  and continues\n  # note\nname: "plain"\n---\n',
+    );
+    await writeRawSkill(
+      join(skillsDir, "quoted"),
+      '---\nname: quoted\ndescription: "Opens # kept\n  closes" # tail\n  # after\n---\n',
+    );
+    await writeRawSkill(
+      join(skillsDir, "crlf"),
+      "---\r\nname: crlf\r\ndescription: >-\r\n  Windows\r\n  lines\r\n---\r\n",
+    );
+    await writeRawSkill(join(skillsDir, "bare"), "# No frontmatter\n");
+
+    const skills = await scanAgentSkills(codexAgent(agentHome), {
+      homeDir: root,
+    });
+
+    assert.deepEqual(
+      skills.local
+        .map((skill) => ({ description: skill.description, name: skill.name }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      [
+        { description: undefined, name: "bare" },
+        { description: "Windows lines", name: "crlf" },
+        { description: "Type-safe AI calls with schemas.", name: "folded" },
+        { description: "First line\nSecond line", name: "literal" },
+        { description: "Starts here and continues", name: "plain" },
+        { description: "Opens # kept closes", name: "quoted" },
+      ],
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("skill name and description allow spaces or tabs before the colon", async () => {
+  const root = await mkdtemp(join(tmpdir(), "anima-skill-key-space-test-"));
+  try {
+    const agentHome = join(root, "agent-home");
+    const skillsDir = join(agentHome, ".codex", "skills");
+    await writeRawSkill(
+      join(skillsDir, "tab-dir"),
+      "---\nname\t: Tabbed\ndescription\t: Tab key\n---\n",
+    );
+    await writeRawSkill(
+      join(skillsDir, "space-dir"),
+      "---\nname  : Spaced\ndescription : Space key\n---\n",
+    );
+
+    const skills = await scanAgentSkills(codexAgent(agentHome), {
+      homeDir: root,
+    });
+
+    assert.deepEqual(
+      skills.local
+        .map((skill) => ({ description: skill.description, name: skill.name }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      [
+        { description: "Space key", name: "Spaced" },
+        { description: "Tab key", name: "Tabbed" },
+      ],
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("claude skills follow global symlinks and include only user-scope installed plugins", async () => {
   const root = await mkdtemp(join(tmpdir(), "anima-claude-skills-test-"));
   try {

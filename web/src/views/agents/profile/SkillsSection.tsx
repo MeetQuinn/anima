@@ -61,7 +61,8 @@ function SkillRow({
       {open && (
         <div className="space-y-2 pb-3 pr-6">
           {skill.description && (
-            <p className="max-w-prose font-sans text-[12px] leading-relaxed text-text-muted">
+            // A `|` description keeps its line breaks.
+            <p className="max-w-prose whitespace-pre-wrap break-words font-sans text-[12px] leading-relaxed text-text-muted">
               {skill.description}
             </p>
           )}

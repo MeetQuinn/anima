@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { dedentBlock, parseFrontmatter, parseTopLevelYaml, stripQuotes } from './frontmatter';
+import { dedentBlock, parseFrontmatter, parseTopLevelYaml, stripQuotes } from '@shared/frontmatter';
 
 describe('frontmatter parsing', () => {
   it('strips matching single and double quotes', () => {
@@ -22,6 +22,23 @@ describe('frontmatter parsing', () => {
       { key: 'title', value: 'Guide', block: null },
       { key: 'tags', value: null, block: ['  - docs', '  - "kb"'] },
       { key: 'notes', value: null, block: ['  line one', '  line two'] },
+    ]);
+  });
+
+  it('allows spaces or tabs between a key and its colon', () => {
+    expect(parseTopLevelYaml([
+      'title\t: Tabbed',
+      'owner  : Juno',
+      'tags :',
+      '  - a',
+      'summary\t: >-',
+      '  one',
+      '  two',
+    ].join('\n'))).toEqual([
+      { key: 'title', value: 'Tabbed', block: null },
+      { key: 'owner', value: 'Juno', block: null },
+      { key: 'tags', value: null, block: ['  - a'] },
+      { key: 'summary', value: 'one two', block: null },
     ]);
   });
 
