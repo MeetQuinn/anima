@@ -9,7 +9,7 @@ Use this runbook when the dashboard is unreachable, the agent daemon is unhealth
 runtime restart did not return cleanly. Most routine operations belong in [Runtime and
 services](./deployment.md).
 
-Always identify the Anima home before acting. The **Home** row in the Server panel is the easiest
+Always identify the Anima home before acting. The **Home** row in **Settings > Server** is the easiest
 source when the dashboard still works. In a terminal, set it explicitly for every command:
 
 ```bash
