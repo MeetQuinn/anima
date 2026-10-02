@@ -13,6 +13,7 @@ import { Highlight, themes } from 'prism-react-renderer';
 import { useNavigate } from 'react-router-dom';
 import { buildKbPath, buildKbRawPath } from '@/lib/url-state';
 import { formatBytes } from '@/lib/format';
+import { parseFrontmatter } from '@shared/frontmatter';
 import type { KbFile } from '@shared/kb';
 import { CodeView } from './CodeView';
 import { CopyButton, HeadingAnchor, ViewModeToggle } from './FileChrome';
@@ -21,7 +22,6 @@ import { FrontmatterTable } from './FrontmatterTable';
 import { ImageLightbox } from './ImageLightbox';
 import { MermaidBlock } from './MermaidBlock';
 import { ALERT_META, alertTypeFromClassName, rehypeGithubAlerts } from './lib/github-alerts';
-import { parseFrontmatter } from './lib/frontmatter';
 export { extractToc, lineFromHash } from './lib/markdown-toc';
 import {
   extractToc,

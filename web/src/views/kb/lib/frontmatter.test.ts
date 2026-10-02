@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { dedentBlock, parseFrontmatter, parseTopLevelYaml, stripQuotes } from './frontmatter';
+import { dedentBlock, parseFrontmatter, parseTopLevelYaml, stripQuotes } from '@shared/frontmatter';
 
 describe('frontmatter parsing', () => {
   it('strips matching single and double quotes', () => {

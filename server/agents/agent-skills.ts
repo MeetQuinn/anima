@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
 import type { AgentConfig } from "../../shared/agent-config.js";
+import { parseFrontmatter } from "../../shared/frontmatter.js";
 import type {
   AgentSkills,
   SkillSourceKind,
@@ -355,25 +356,16 @@ interface SkillFrontmatter {
   name?: string;
 }
 
+// Same reader as the KB file view, so `description: >-` and other multi-line
+// values show their text rather than the indicator or only the first line.
 function parseSkillFrontmatter(content: string): SkillFrontmatter {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!match) return {};
   const result: SkillFrontmatter = {};
-  for (const line of match[1]!.split(/\r?\n/)) {
-    const keyValue = line.match(/^(\w+)\s*:\s*(.*)/);
-    if (!keyValue) continue;
-    const key = keyValue[1]!;
-    const value = normalizeFrontmatterValue(keyValue[2]!.trim());
-    if (key === "description" && value) result.description = value;
-    if (key === "name" && value) result.name = value;
+  for (const entry of parseFrontmatter(content).entries ?? []) {
+    const key = entry.key.trim();
+    const value = entry.value?.trim();
+    if (!value) continue;
+    if (key === "description") result.description = value;
+    if (key === "name") result.name = value;
   }
   return result;
-}
-
-function normalizeFrontmatterValue(value: string): string {
-  if (value.length < 2) return value;
-  const quote = value[0];
-  if ((quote !== '"' && quote !== "'") || value[value.length - 1] !== quote)
-    return value;
-  return value.slice(1, -1);
 }

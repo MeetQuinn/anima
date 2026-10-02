@@ -1,5 +1,5 @@
-import { dedentBlock, stripQuotes } from './lib/frontmatter';
-import type { FrontmatterEntry } from './lib/frontmatter';
+import { dedentBlock, stripQuotes } from '@shared/frontmatter';
+import type { FrontmatterEntry } from '@shared/frontmatter';
 
 function FrontmatterBlockValue({ block }: { block: string[] }) {
   const dedented = dedentBlock(block);
