@@ -119,6 +119,73 @@ describe('frontmatter parsing', () => {
     ]);
   });
 
+  it('ends a quoted value at its closing quote, even on a later line', () => {
+    expect(parseTopLevelYaml([
+      'double: "Checked',
+      '  against live tree"',
+      '  # metadata note',
+      "single: 'Checked",
+      "  against live tree'",
+      '  # metadata note',
+      'kept: "Opens',
+      '  # kept',
+      '  closes" # tail',
+      '  # dropped',
+      'inline: "a" # c',
+      "inline2: 'b' # d",
+      'next: done',
+    ].join('\n'))).toEqual([
+      { key: 'double', value: 'Checked against live tree', block: null },
+      { key: 'single', value: 'Checked against live tree', block: null },
+      { key: 'kept', value: 'Opens # kept closes', block: null },
+      { key: 'inline', value: 'a', block: null },
+      { key: 'inline2', value: 'b', block: null },
+      { key: 'next', value: 'done', block: null },
+    ]);
+  });
+
+  it('reads `key: # note` above a block as a bare key', () => {
+    expect(parseTopLevelYaml([
+      'tags: # list',
+      '  - a',
+      '  - b',
+      'color: #fff',
+      'next: x',
+    ].join('\n'))).toEqual([
+      { key: 'tags', value: null, block: ['  - a', '  - b'] },
+      // YAML reads this as null; shown as written, as before.
+      { key: 'color', value: '#fff', block: null },
+      { key: 'next', value: 'x', block: null },
+    ]);
+  });
+
+  it('keeps spaces past the indent on a blank block line', () => {
+    expect(parseTopLevelYaml([
+      'three: |2-',
+      '  first',
+      '   ',
+      '  next',
+      'four: |-',
+      '  first',
+      '    ',
+      '  next',
+      'folded: >-',
+      '  first',
+      '    ',
+      '  next',
+      'tail: |-',
+      '  first',
+      '    ',
+      'next: done',
+    ].join('\n'))).toEqual([
+      { key: 'three', value: 'first\n \nnext', block: null },
+      { key: 'four', value: 'first\n  \nnext', block: null },
+      { key: 'folded', value: 'first\n  \nnext', block: null },
+      { key: 'tail', value: 'first\n  ', block: null },
+      { key: 'next', value: 'done', block: null },
+    ]);
+  });
+
   it('keeps leading blank lines of a block scalar', () => {
     expect(parseTopLevelYaml([
       'a: |-',

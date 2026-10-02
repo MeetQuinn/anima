@@ -44,7 +44,8 @@ function foldLines(lines: string[]): string {
   let prev: 'none' | 'text' | 'more' = 'none';
   let blanks = 0;
   for (const line of lines) {
-    if (line.trim() === '') {
+    // Only an empty line is blank; spaces past the indent are more-indented text.
+    if (line === '') {
       blanks++;
       continue;
     }
@@ -68,23 +69,44 @@ function blockScalarValue(style: string, explicitIndent: number | null, lines: s
   // `#` line there is a comment. At or past the content indent, `#` is text.
   const end = lines.findIndex((line) => line.trim() !== '' && leadingWidth(line) < indent);
   const content = end === -1 ? lines : lines.slice(0, end);
-  while (content.length > 0 && content[content.length - 1].trim() === '') content.pop();
-  // Leading blank lines are content. Chomping only changes trailing newlines,
-  // which a table cell never shows.
-  const body = content.map((line) => (line.trim() === '' ? '' : line.slice(indent)));
+  // Leading blank lines are content, and so are spaces past the indent on a
+  // blank line, trailing ones included. Chomping only changes trailing
+  // newlines, which a cell never shows.
+  const body = content.map((line) => line.slice(Math.min(indent, leadingWidth(line))));
+  while (body.length > 0 && body[body.length - 1] === '') body.pop();
   return style === '|' ? body.join('\n') : foldLines(body);
 }
 
+/** Index of the quote that closes a quoted scalar, skipping `\"` and `''`. */
+function closingQuote(text: string, quote: string, from: number): number {
+  for (let at = from; at < text.length; at++) {
+    if (quote === '"' && text[at] === '\\') {
+      at++;
+    } else if (text[at] === quote) {
+      if (quote === "'" && text[at + 1] === "'") at++;
+      else return at;
+    }
+  }
+  return -1;
+}
+
 /**
- * Indented lines that continue an inline scalar. A closed quoted value has
- * none. Inside an open quote every line is text; in a plain value a `#` line
- * is a comment, which ends it.
+ * The lines of an inline scalar, first line included. A quoted value runs to
+ * its closing quote, wherever that falls, and `#` before it is text; anything
+ * after it is a comment. A plain value ends at a `#` comment line.
  */
-function scalarContinuation(inlineVal: string, lines: string[]): string[] {
+function scalarLines(inlineVal: string, continuation: string[]): string[] {
+  const lines = [inlineVal, ...continuation.map((line) => line.trim())];
   const quote = inlineVal[0] === '"' || inlineVal[0] === "'" ? inlineVal[0] : null;
-  if (quote && inlineVal.length >= 2 && inlineVal.endsWith(quote)) return [];
-  const comment = quote ? -1 : lines.findIndex((line) => line.trimStart().startsWith('#'));
-  return (comment === -1 ? lines : lines.slice(0, comment)).map((line) => line.trim());
+  if (!quote) {
+    const comment = lines.findIndex((line, index) => index > 0 && line.startsWith('#'));
+    return comment === -1 ? lines : lines.slice(0, comment);
+  }
+  for (let index = 0; index < lines.length; index++) {
+    const close = closingQuote(lines[index], quote, index === 0 ? 1 : 0);
+    if (close !== -1) return [...lines.slice(0, index), lines[index].slice(0, close + 1)];
+  }
+  return lines; // Never closed: show everything rather than guess.
 }
 
 export function parseTopLevelYaml(inner: string): FrontmatterEntry[] {
@@ -104,15 +126,20 @@ export function parseTopLevelYaml(inner: string): FrontmatterEntry[] {
       continue;
     }
     const key = match[1];
-    const inlineVal = (match[2] ?? '').trim();
+    const rawVal = (match[2] ?? '').trim();
+    // `key: # note` above an indented block is a bare key with a comment; the
+    // block is its value. With nothing below, the text shows as written.
+    const inlineVal =
+      rawVal.startsWith('#') && takeIndented(lines, i + 1).taken.length > 0 ? '' : rawVal;
     const header = BLOCK_SCALAR_HEADER.exec(inlineVal);
     if (header) {
       // `key: >-` / `key: |`: the value is the indented text below the header.
-      const { taken, next } = takeIndented(lines, i + 1);
+      // Untrimmed: a trailing line of spaces past the indent is content.
+      const { next } = takeIndented(lines, i + 1);
       const explicitIndent = header[2] ?? header[3];
       entries.push({
         key,
-        value: blockScalarValue(header[1], explicitIndent ? Number(explicitIndent) : null, taken),
+        value: blockScalarValue(header[1], explicitIndent ? Number(explicitIndent) : null, lines.slice(i + 1, next)),
         block: null,
       });
       i = next;
@@ -121,7 +148,7 @@ export function parseTopLevelYaml(inner: string): FrontmatterEntry[] {
     if (inlineVal !== '') {
       // A plain or quoted scalar may continue on indented lines; YAML folds them.
       const { taken, next } = takeIndented(lines, i + 1);
-      const folded = foldLines([inlineVal, ...scalarContinuation(inlineVal, taken)]);
+      const folded = foldLines(scalarLines(inlineVal, taken));
       entries.push({ key, value: stripQuotes(folded), block: null });
       i = next;
       continue;
