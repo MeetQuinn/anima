@@ -88,6 +88,57 @@ describe('frontmatter parsing', () => {
     ]);
   });
 
+  it('treats indented comment lines as comments, not value text', () => {
+    expect(parseTopLevelYaml([
+      'owner: Juno',
+      '  # metadata note',
+      'quote: "Closed"',
+      '  # note',
+      'open: "Opens',
+      '  # kept',
+      '  closes"',
+      'plain: first',
+      '  second',
+      '',
+      '  # trailing note',
+      'verification: |-',
+      '    Checked',
+      '  # note',
+      'steps: |',
+      '  # step one',
+      '  run it',
+      'next: done',
+    ].join('\n'))).toEqual([
+      { key: 'owner', value: 'Juno', block: null },
+      { key: 'quote', value: 'Closed', block: null },
+      { key: 'open', value: 'Opens # kept closes', block: null },
+      { key: 'plain', value: 'first second', block: null },
+      { key: 'verification', value: 'Checked', block: null },
+      { key: 'steps', value: '# step one\nrun it', block: null },
+      { key: 'next', value: 'done', block: null },
+    ]);
+  });
+
+  it('keeps leading blank lines of a block scalar', () => {
+    expect(parseTopLevelYaml([
+      'a: |-',
+      '',
+      '  Checked',
+      'b: >-',
+      '',
+      '  Checked',
+      'c: >',
+      '',
+      '',
+      '  one',
+      '  two',
+    ].join('\n'))).toEqual([
+      { key: 'a', value: '\nChecked', block: null },
+      { key: 'b', value: '\nChecked', block: null },
+      { key: 'c', value: '\n\none two', block: null },
+    ]);
+  });
+
   it('splits valid frontmatter from the markdown body', () => {
     expect(parseFrontmatter('---\ntitle: Test\n---\n# Body')).toEqual({
       entries: [{ key: 'title', value: 'Test', block: null }],

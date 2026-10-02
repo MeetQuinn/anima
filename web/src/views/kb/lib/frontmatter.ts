@@ -36,7 +36,8 @@ function takeIndented(lines: string[], start: number): { taken: string[]; next: 
 
 /**
  * YAML folding for display: adjacent lines join with a space, each blank line
- * becomes a line break, and more-indented lines keep the breaks around them.
+ * becomes a line break (leading ones included), and more-indented lines keep
+ * the breaks around them.
  */
 function foldLines(lines: string[]): string {
   let out = '';
@@ -48,7 +49,9 @@ function foldLines(lines: string[]): string {
       continue;
     }
     const kind = /^[ \t]/.test(line) ? 'more' : 'text';
-    if (prev !== 'none') {
+    if (prev === 'none') {
+      out += '\n'.repeat(blanks);
+    } else {
       out += prev === 'text' && kind === 'text' ? (blanks > 0 ? '\n'.repeat(blanks) : ' ') : '\n'.repeat(blanks + 1);
     }
     out += line;
@@ -61,10 +64,27 @@ function foldLines(lines: string[]): string {
 function blockScalarValue(style: string, explicitIndent: number | null, lines: string[]): string {
   const firstText = lines.find((line) => line.trim() !== '');
   const indent = explicitIndent ?? (firstText ? leadingWidth(firstText) : 0);
-  const body = lines.map((line) => line.slice(Math.min(indent, leadingWidth(line))));
-  while (body.length > 0 && body[0].trim() === '') body.shift();
-  // Chomping only changes trailing newlines, which a table cell never shows.
+  // The block ends at the first text line indented less than its content; a
+  // `#` line there is a comment. At or past the content indent, `#` is text.
+  const end = lines.findIndex((line) => line.trim() !== '' && leadingWidth(line) < indent);
+  const content = end === -1 ? lines : lines.slice(0, end);
+  while (content.length > 0 && content[content.length - 1].trim() === '') content.pop();
+  // Leading blank lines are content. Chomping only changes trailing newlines,
+  // which a table cell never shows.
+  const body = content.map((line) => (line.trim() === '' ? '' : line.slice(indent)));
   return style === '|' ? body.join('\n') : foldLines(body);
+}
+
+/**
+ * Indented lines that continue an inline scalar. A closed quoted value has
+ * none. Inside an open quote every line is text; in a plain value a `#` line
+ * is a comment, which ends it.
+ */
+function scalarContinuation(inlineVal: string, lines: string[]): string[] {
+  const quote = inlineVal[0] === '"' || inlineVal[0] === "'" ? inlineVal[0] : null;
+  if (quote && inlineVal.length >= 2 && inlineVal.endsWith(quote)) return [];
+  const comment = quote ? -1 : lines.findIndex((line) => line.trimStart().startsWith('#'));
+  return (comment === -1 ? lines : lines.slice(0, comment)).map((line) => line.trim());
 }
 
 export function parseTopLevelYaml(inner: string): FrontmatterEntry[] {
@@ -101,7 +121,7 @@ export function parseTopLevelYaml(inner: string): FrontmatterEntry[] {
     if (inlineVal !== '') {
       // A plain or quoted scalar may continue on indented lines; YAML folds them.
       const { taken, next } = takeIndented(lines, i + 1);
-      const folded = foldLines([inlineVal, ...taken.map((line) => line.trim())]);
+      const folded = foldLines([inlineVal, ...scalarContinuation(inlineVal, taken)]);
       entries.push({ key, value: stripQuotes(folded), block: null });
       i = next;
       continue;
