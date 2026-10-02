@@ -233,13 +233,14 @@ const TOAST_DWELL_MS = 6_000;
 const TOAST_ACK_KEY = 'restart-echo-ack';
 
 /**
- * Transient confirmation after a plain restart. Mounted once at the app root so
- * it survives the post-restart page reload (which closes the Server panel) —
- * the panel can't host this echo because it isn't open when the page comes
- * back. Reads serverInfo.lastRestart, shows the honest echo briefly, then
- * acks the event (per-tab) so a manual refresh inside the fresh window doesn't
- * re-pop it. The upgrade echo rides its own version-flip surface (inline in the
- * upgrade row), not this toast.
+ * Transient confirmation after a plain restart. Mounted once at the app root:
+ * it reads server state (serverInfo.lastRestart), not this tab's click, so any
+ * tab that loads inside the fresh window shows it on whatever route it is on.
+ * The restart's own reload keeps the URL, so the tab that asked lands back on
+ * Settings > Server. Shows the honest echo briefly, then acks the event
+ * (per-tab) so a manual refresh inside the fresh window doesn't re-pop it. The
+ * upgrade echo rides its own version-flip surface (inline in the upgrade row),
+ * not this toast.
  */
 export function RestartEchoToast() {
   const { data: info } = useQuery({

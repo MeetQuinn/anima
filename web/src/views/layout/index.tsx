@@ -165,8 +165,8 @@ export default function Layout() {
 
   return (
     <>
-      {/* App-level: honest post-restart echo, survives the restart's page reload
-          (which leaves the Settings surface). Portals to body. */}
+      {/* App-level: honest post-restart echo, read from server state so it
+          shows on any route. Portals to body. */}
       <RestartEchoToast />
 
       {!kbLocation && <AgentReconciler disabled={reconcilerDisabled} />}
