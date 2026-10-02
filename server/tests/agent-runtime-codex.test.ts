@@ -81,6 +81,16 @@ for (const scenario of [
   });
 }
 
+test('codex-cli tool shells retain runtime agent identity without a provider env override', () => {
+  const args = codexAppServerArgs({ kind: 'codex-cli' });
+  const includeArg = args.find((arg) => arg.startsWith('shell_environment_policy.include_only='));
+  assert.ok(includeArg);
+  const include = JSON.parse(includeArg.slice(includeArg.indexOf('=') + 1)) as string[];
+  assert.ok(include.includes('ANIMA_AGENT_ID'));
+  assert.equal(include.includes('ANIMA_*'), false);
+  assert.equal(include.includes('CODEX_*'), false);
+});
+
 test('codex-cli app-server launch allows managed provider env into tool shells', () => {
   const include = codexToolEnvIncludeList({
     ANIMA_HOME: '/tmp/anima-home',

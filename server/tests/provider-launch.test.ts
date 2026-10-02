@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { sleep, waitFor } from './helpers/harness.js';
 import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
@@ -14,6 +17,10 @@ import {
   claudeProviderEnv,
 } from '../providers/claude-launch.js';
 import { ControllerAgentRuntime } from '../providers/provider-runtime.js';
+import { withAnimaHome } from './anima-home.js';
+import { ingestEvent } from './helpers/inbox.js';
+import { makeSlackEvent } from './helpers/slack.js';
+import { runtimeInput } from './helpers/agent-runtime.js';
 import { createAgentRuntime } from '../providers/factory.js';
 import type {
   AgentRuntime,
@@ -22,6 +29,43 @@ import type {
   AgentRuntimeInput,
   AgentRuntimeResult,
 } from '../providers/contract.js';
+
+for (const kind of ['codex-cli', 'claude-code', 'kimi-cli', 'grok-cli', 'opencode-cli', 'pi'] as const) {
+  test(`${kind} launches with the runtime agent identity`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-provider-env-'));
+    let runtime: AgentRuntime | undefined;
+    try {
+      await withAnimaHome(stateDir, async () => {
+        const capturePath = join(stateDir, 'env.json');
+        const command = join(stateDir, 'capture-env.mjs');
+        await writeFile(command, [
+          "import { writeFileSync } from 'node:fs';",
+          'writeFileSync(process.env.ENV_CAPTURE_PATH, JSON.stringify({',
+          '  agent: process.env.ANIMA_AGENT_ID,',
+          '  home: process.env.ANIMA_HOME,',
+          '  item: process.env.ANIMA_INBOX_ITEM_ID,',
+          '}));',
+          'process.exit(23);',
+        ].join('\n'));
+        runtime = createAgentRuntime({
+          kind,
+          env: { ANIMA_AGENT_ID: 'wrong-agent', ENV_CAPTURE_PATH: capturePath },
+        }, { command: process.execPath, args: [command] });
+        const context = await ingestEvent(makeSlackEvent({
+          channelId: 'D-env', teamId: 'T-env', text: 'capture env', userId: 'U-env',
+        }), { agentId: 'anima', stateDir });
+        // The probe exits before speaking the provider protocol or calling a model.
+        await assert.rejects(runtime.run(await runtimeInput(runtime, context)));
+        assert.deepEqual(JSON.parse(await readFile(capturePath, 'utf8')), {
+          agent: 'anima', home: stateDir, item: context.item.id,
+        });
+      });
+    } finally {
+      await runtime?.close?.();
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+}
 
 test('provider runtimes use catalog commands by default and accept one executable override', () => {
   const cases = [
