@@ -242,15 +242,24 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
 
   // When the file panel returns to the tree, keep the last-opened row in view.
   // This is intentionally transient/in-memory, not a durable preference.
+  // It happens once per return: after the row is centred, or once the user
+  // expands or collapses a folder, the scroll position is theirs. Retrying on
+  // every change to `expanded` pulled the list back to the row on each tap.
   const rowToRestore = filePath ? null : (lastViewedFileByKb.get(id) ?? null);
+  const restorePendingRef = useRef(false);
   useEffect(() => {
-    if (filterQuery.trim() || rootQuery.isPending || !rowToRestore) return;
+    restorePendingRef.current = rowToRestore !== null;
+  }, [rowToRestore]);
+  useEffect(() => {
+    if (filterQuery.trim() || rootQuery.isPending || !rowToRestore || !restorePendingRef.current) return;
     const t = setTimeout(() => {
       const rows = Array.from(
         treeRef.current?.querySelectorAll<HTMLElement>('[data-tree-row][data-type="file"]') ?? [],
       );
       const row = rows.find((candidate) => candidate.dataset.path === rowToRestore);
-      row?.scrollIntoView({ block: 'center' });
+      if (!row) return;
+      restorePendingRef.current = false;
+      row.scrollIntoView({ block: 'center' });
     }, 0);
     return () => clearTimeout(t);
   }, [expanded, filterQuery, rootQuery.isPending, rowToRestore]);
@@ -262,6 +271,7 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
   const kbTitle = kb?.label ?? 'Knowledge Base';
 
   const toggleDir = useCallback((path: string) => {
+    restorePendingRef.current = false;
     setExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
