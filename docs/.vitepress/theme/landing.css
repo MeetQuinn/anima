@@ -1032,6 +1032,19 @@
       padding: 13px 14px;
     }
 
+    /* Wrap the command at its spaces and <wbr> points instead of clipping it
+       inside a hidden-scrollbar strip; the copy button still copies
+       data-command, so the wrap never reaches the clipboard. */
+    & .landing-install-cmd {
+      white-space: normal;
+      overflow-x: visible;
+      min-width: 0;
+    }
+
+    & .landing-install-dollar {
+      align-self: flex-start;
+    }
+
     & .landing-install-copy {
       margin-left: 0;
     }
