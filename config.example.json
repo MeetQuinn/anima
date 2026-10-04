@@ -11,6 +11,6 @@
     "claude-code": []
   },
   "runtime": {
-    "maxConcurrentAgentRuns": 5
+    "maxConcurrentAgentRuns": 10
   }
 }
