@@ -91,7 +91,7 @@ titleTemplate: AI teammates in your Slack
         <p class="landing-setup-k">it keeps, on that machine</p>
         <ul>
           <li>runtime state, queues, and activity in <code>~/.anima</code></li>
-          <li>each agent&rsquo;s memory, notes, and skills as plain files in <code>~/anima-team</code></li>
+          <li>each agent&rsquo;s memory and notes as plain files, by default in <code>~/anima-team</code></li>
           <li>no hosted Anima backend. Your provider login stays in the provider&rsquo;s own store.</li>
         </ul>
       </div>
