@@ -925,6 +925,350 @@
     color: var(--al-dim);
   }
 
+  /* ------------------------------------------- redesign prototype (wip) */
+
+  & .landing-proto-tag {
+    display: inline-block;
+    margin: 0 0 18px;
+    padding: 5px 10px;
+    border: 1px dashed var(--al-accent);
+    background: var(--al-bg);
+    color: var(--al-accent);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  & .landing-hero-proof {
+    margin-top: 56px;
+  }
+
+  & .landing-needs {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    column-gap: 18px;
+    row-gap: 4px;
+    margin: 26px 0 0;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  & .landing-needs dt {
+    grid-column: 1;
+    color: var(--al-dim);
+  }
+
+  & .landing-needs dt:not(:first-of-type) {
+    margin-top: 10px;
+  }
+
+  & .landing-needs dt:not(:first-of-type) + dd {
+    margin-top: 10px;
+  }
+
+  & .landing-needs dd {
+    grid-column: 2;
+    margin: 0;
+    color: var(--al-text);
+  }
+
+  & .landing-needs dd::before {
+    content: "- ";
+    color: var(--al-green);
+  }
+
+  & .landing-install.is-card {
+    display: block;
+    width: fit-content;
+    padding: 12px 18px 15px;
+    font-size: 14px;
+  }
+
+  & .landing-install-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 10px;
+    color: var(--al-dim);
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+  }
+
+  & .landing-install-top .landing-install-copy {
+    margin-left: 0;
+  }
+
+  & .landing-install-line {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+
+  & .landing-hero.is-split .landing-hero-links {
+    margin-top: 22px;
+  }
+
+  /* Gate rows in the Slack replica: Slack's light palette in both modes. */
+  & .landing-hero-proof .smsg > div {
+    flex: 1;
+    min-width: 0;
+  }
+
+  & .smsg.is-gate {
+    background: #fdf4ee;
+    box-shadow: inset 3px 0 0 #b3401f;
+  }
+
+  & .sgate {
+    margin-left: auto;
+    align-self: center;
+    padding: 1px 7px;
+    border: 1px dashed rgba(179, 64, 31, 0.55);
+    border-radius: 3px;
+    color: #b3401f;
+    font-family: var(--al-mono);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+
+  & .landing-setup {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    margin-top: 28px;
+    background: var(--al-line);
+    border: 1px solid var(--al-line);
+  }
+
+  & .landing-setup-col {
+    background: var(--al-bg);
+    padding: 24px 24px 26px;
+  }
+
+  & .landing-setup-k {
+    margin: 0 0 14px;
+    color: var(--al-strong);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  & .landing-setup-k::before {
+    content: "# ";
+    color: var(--al-dim);
+  }
+
+  & .landing-setup-col.is-warn .landing-setup-k {
+    color: var(--al-accent);
+  }
+
+  & .landing-setup ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .landing-setup li {
+    position: relative;
+    padding-left: 16px;
+    margin: 0 0 10px;
+    color: var(--al-text);
+    font-size: 13.5px;
+    line-height: 1.65;
+  }
+
+  & .landing-setup li:last-child {
+    margin-bottom: 0;
+  }
+
+  & .landing-setup li::before {
+    content: "-";
+    position: absolute;
+    left: 0;
+    color: var(--al-dim);
+  }
+
+  & .landing-setup code {
+    padding: 1px 5px;
+    background: var(--al-panel);
+    border: 1px solid var(--al-line);
+    border-radius: 0;
+    color: var(--al-strong);
+    font-family: var(--al-mono);
+    font-size: 12.5px;
+    white-space: nowrap;
+  }
+
+  & .landing-note a {
+    color: var(--al-accent);
+    text-decoration: none;
+  }
+
+  & .landing-note a:hover {
+    text-decoration: underline;
+  }
+
+  & .landing-why {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 40px;
+    margin-top: 36px;
+  }
+
+  & .landing-why-item h3 {
+    margin: 0 0 8px;
+    color: var(--al-strong);
+    font-family: var(--al-mono);
+    font-size: 15.5px;
+    font-weight: 600;
+    line-height: 1.45;
+  }
+
+  & .landing-why-item p:last-child {
+    margin: 0;
+    color: var(--al-dim);
+    font-size: 13.5px;
+    line-height: 1.7;
+  }
+
+  & .landing-dash {
+    margin-top: 28px;
+  }
+
+  & .landing-browser {
+    margin: 0;
+    border: 1px solid var(--al-line);
+    background: var(--al-panel);
+    box-shadow: var(--al-slack-shadow);
+  }
+
+  & .landing-browser-bar {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--al-line);
+  }
+
+  & .landing-browser-bar span {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--al-line);
+  }
+
+  & .landing-browser-bar code {
+    margin-left: 12px;
+    padding: 0;
+    background: none;
+    color: var(--al-dim);
+    font-family: var(--al-mono);
+    font-size: 12px;
+  }
+
+  & .landing-browser img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  & .landing-dash-notes {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 40px;
+    margin: 32px 0 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: dash;
+  }
+
+  & .landing-dash-notes li {
+    counter-increment: dash;
+    margin: 0;
+    padding-top: 14px;
+    border-top: 1px solid var(--al-line);
+    color: var(--al-dim);
+    font-size: 13.5px;
+    line-height: 1.7;
+  }
+
+  & .landing-dash-notes li::before {
+    content: counter(dash, decimal-leading-zero);
+    display: block;
+    margin-bottom: 6px;
+    color: var(--al-accent);
+    font-size: 12px;
+    letter-spacing: 0.12em;
+  }
+
+  & .landing-dash-notes b {
+    color: var(--al-strong);
+    font-weight: 600;
+  }
+
+  @media (min-width: 1240px) {
+    & .landing-hero.is-split {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+      gap: 56px;
+      align-items: start;
+      padding-top: 72px;
+    }
+
+    & .landing-hero.is-split h1 {
+      font-size: 50px;
+    }
+
+    & .landing-hero.is-split .landing-install {
+      margin-top: 32px;
+    }
+
+    & .landing-hero.is-split .landing-hero-proof {
+      margin-top: 6px;
+    }
+  }
+
+  @media (max-width: 960px) {
+    & .landing-setup,
+    & .landing-why,
+    & .landing-dash-notes {
+      grid-template-columns: 1fr;
+    }
+
+    & .landing-dash-notes {
+      gap: 18px;
+    }
+
+    & .landing-why {
+      gap: 26px;
+    }
+  }
+
+  @media (max-width: 620px) {
+    & .landing-needs {
+      grid-template-columns: 1fr;
+      row-gap: 2px;
+    }
+
+    & .landing-needs dt,
+    & .landing-needs dd {
+      grid-column: 1;
+    }
+
+    & .landing-needs dt:not(:first-of-type) + dd {
+      margin-top: 0;
+    }
+
+    & .sgate {
+      font-size: 10px;
+      padding: 0 5px;
+    }
+  }
+
   /* ---------------------------------------------------------- responsive */
 
   @media (max-width: 960px) {
