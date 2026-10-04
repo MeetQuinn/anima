@@ -337,34 +337,11 @@
     flex: none;
   }
 
-  /* Demo identities in the handoff window: Slack-style initial avatars. */
-  & .savatar,
+  /* Continuation rows keep the text aligned with the avatar column. */
   & .savatar-gap {
     width: 38px;
     height: 38px;
     flex: none;
-  }
-
-  & .savatar {
-    display: grid;
-    place-items: center;
-    border-radius: 6px;
-    color: #ffffff;
-    font-size: 17px;
-    font-weight: 900;
-    line-height: 1;
-  }
-
-  & .savatar-pip {
-    background: #d8833a;
-  }
-
-  & .savatar-forge {
-    background: #2d6a73;
-  }
-
-  & .savatar-sam {
-    background: #4f7a43;
   }
 
   & .smsg.is-cont {
@@ -1100,18 +1077,13 @@
       display: none;
     }
 
-    & .smsg img,
-    & .savatar {
+    & .smsg img {
       width: 32px;
       height: 32px;
     }
 
     & .savatar-gap {
       width: 32px;
-    }
-
-    & .savatar {
-      font-size: 15px;
     }
   }
 }
