@@ -57,6 +57,7 @@ const groups = {
     'kb-file-types.test.js',
     'memory-coherence.test.js',
     'message.service.test.js',
+    'message-send-finalization.test.js',
     'message-profiles.test.js',
     'messages.test.js',
     'message-transport.test.js',
