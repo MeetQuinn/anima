@@ -11,7 +11,7 @@ titleTemplate: AI teammates in your Slack
     <h1 id="landing-title" data-reveal style="--reveal-delay: 60ms">AI teammates<br>in your <span class="landing-accent">Slack</span>.<span class="landing-cursor" aria-hidden="true"></span></h1>
     <p class="landing-dek" data-reveal style="--reveal-delay: 140ms">An AI agent can do real work now, but it only works for the person at the keyboard. Everyone else has to go through them. Anima puts your agents in Slack, so anyone on your team can hand them work directly. <span class="landing-comment"># runs on one machine you control</span></p>
     <div class="landing-install" data-reveal style="--reveal-delay: 220ms">
-      <span class="landing-install-dollar" aria-hidden="true">$</span><code class="landing-install-cmd">curl -fsSL https://anima.meetquinn.ai/install.sh | sh</code><button type="button" class="landing-install-copy" data-command="curl -fsSL https://anima.meetquinn.ai/install.sh | sh" data-copied-label="copied">copy</button>
+      <span class="landing-install-dollar" aria-hidden="true">$</span><code class="landing-install-cmd">curl -fsSL https://<wbr>anima.meetquinn.ai/<wbr>install.sh | sh</code><button type="button" class="landing-install-copy" data-command="curl -fsSL https://anima.meetquinn.ai/install.sh | sh" data-copied-label="copied">copy</button>
     </div>
     <p class="landing-hero-links" data-reveal style="--reveal-delay: 300ms">or read the <a href="/guide/quickstart">quickstart</a> first</p>
   </section>
@@ -150,7 +150,7 @@ titleTemplate: AI teammates in your Slack
 
   <section class="landing-section" aria-labelledby="landing-team-title">
     <h2 class="landing-sec-title" id="landing-team-title" data-reveal>the team that builds anima</h2>
-    <p class="landing-window-note" data-reveal>Anima is built by the agents it runs. The pull request below is their real work on this repo, reviewed in public, merged by a human.</p>
+    <p class="landing-window-note" data-reveal>Anima is built by the agents it runs.</p>
     <div class="landing-team">
       <div class="landing-agent" data-reveal><img src="/landing/team/iris.png" alt="Iris, an AI teammate on the Anima team" width="56" height="56" loading="lazy" decoding="async"><div class="landing-agent-name">iris</div><div class="landing-agent-role">product</div></div>
       <div class="landing-agent" data-reveal style="--reveal-delay: 100ms"><img src="/landing/team/milo.png" alt="Milo, an AI teammate on the Anima team" width="56" height="56" loading="lazy" decoding="async"><div class="landing-agent-name">milo</div><div class="landing-agent-role">eng leader</div></div>
@@ -198,7 +198,7 @@ titleTemplate: AI teammates in your Slack
   <section class="landing-end" aria-labelledby="landing-end-title">
     <h2 id="landing-end-title" data-reveal>Give your team its first teammate.</h2>
     <div class="landing-install" data-reveal style="--reveal-delay: 120ms">
-      <span class="landing-install-dollar" aria-hidden="true">$</span><code class="landing-install-cmd">curl -fsSL https://anima.meetquinn.ai/install.sh | sh</code><button type="button" class="landing-install-copy" data-command="curl -fsSL https://anima.meetquinn.ai/install.sh | sh" data-copied-label="copied">copy</button>
+      <span class="landing-install-dollar" aria-hidden="true">$</span><code class="landing-install-cmd">curl -fsSL https://<wbr>anima.meetquinn.ai/<wbr>install.sh | sh</code><button type="button" class="landing-install-copy" data-command="curl -fsSL https://anima.meetquinn.ai/install.sh | sh" data-copied-label="copied">copy</button>
     </div>
     <p class="landing-foot" data-reveal style="--reveal-delay: 200ms">Apache-2.0 · macOS / Linux · Node 20+</p>
   </section>
