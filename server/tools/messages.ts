@@ -163,7 +163,7 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
       if (stage === 'activity') {
         console.warn(`Sent message completion audit write failed for ${agentId}: ${errorMessage(error)}`);
       }
-      warnings.push(`Message was sent, but its local ${stage === 'activity' ? 'completion audit' : 'outbox record'} could not be saved. Do not resend it.`);
+      warnings.push(`Message was sent, but its local ${stage === 'activity' ? 'completion audit and outbox record' : 'outbox record'} could not be saved. Do not resend it.`);
     },
     op: async () => {
       const response = await client.chat.postMessage(payload);

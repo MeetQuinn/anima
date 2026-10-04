@@ -106,7 +106,7 @@ ActivityService.prototype.record = function(input) {
       assert.equal(state.posts.length, 1);
       assert.match(stdout, /^sent successfully\./);
       assert.match(stdout, /message_ts=1770000200\.000123/);
-      assert.match(stdout, /completion audit could not be saved\. Do not resend it/);
+      assert.match(stdout, /completion audit and outbox record could not be saved\. Do not resend it/);
       assert.match(stderr, /injected completion audit fault/);
       assert.equal((await new ActivityService(AGENT).readAll()).filter((a) => a.type === 'external.effect.failed').length, 0);
       const journal = await new ObservedConversationStore(AGENT).readJournal(`slack:${TEAM}:${CHANNEL}`, { limit: 10 });
