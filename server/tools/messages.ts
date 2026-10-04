@@ -4,12 +4,9 @@ import { createFeishuMessageClient as createDefaultFeishuMessageClient } from '.
 import type { FeishuReceiveIdType } from '../feishu/client.js';
 import { markdownToFeishuPost } from '../feishu/markdown-to-feishu-post.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
-import { nowIso } from '../ids.js';
+import { errorMessage, nowIso } from '../ids.js';
 import { assertSlackContactAllowed } from '../messages/contact-policy.service.js';
-import {
-  ensureThreadSubscriptionForSentMessage,
-  recordOutboundEngagement,
-} from '../inbox/subscription.service.js';
+import { finalizeSentSlackMessage } from '../messages/sent-message.service.js';
 import { resolveChatTarget } from './chat-target-resolver.js';
 import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
 import { SLACK_NO_UNFURL, slackMessageContentForText } from './slack-message-format.js';
@@ -158,10 +155,16 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
   });
   if (hold.kind === 'held') return;
 
-  await withToolActivity({
+  const response = await withToolActivity({
     audit: { agentId },
     basePayload,
     effectType: 'slack.message.send',
+    onCompletedAuditError: (stage, error) => {
+      if (stage === 'activity') {
+        console.warn(`Sent message completion audit write failed for ${agentId}: ${errorMessage(error)}`);
+      }
+      warnings.push(`Message was sent, but its local ${stage === 'activity' ? 'completion audit' : 'outbox record'} could not be saved. Do not resend it.`);
+    },
     op: async () => {
       const response = await client.chat.postMessage(payload);
       const channelId = response.channel ?? channel.id;
@@ -179,27 +182,16 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
         });
       }
       const permalink = slackMessageRedirectLink({ channelId, messageTs: response.ts });
-      if (!channel.dmUserId && !threadTs) {
-        await recordOutboundEngagement({ agentId, channelId });
-      }
-      const threadSubscription = channel.dmUserId || !response.ts
-        ? undefined
-        : await ensureThreadSubscriptionForSentMessage({
-            agentId,
-            channelId,
-            messageTs: response.ts,
-            ...(threadTs ? { threadTs } : {}),
-          });
-      const writeOutput = deps.writeOutput ?? console.log;
-      writeOutput(slackOutputLine({
+      const finalization = await finalizeSentSlackMessage({
+        agentId,
+        channelId,
+        isDm: Boolean(channel.dmUserId),
         messageTs: response.ts,
-        status: 'sent',
-        target,
-        ...(thread ? { thread } : {}),
-        warnings,
-      }));
+        ...(threadTs ? { threadTs } : {}),
+      });
+      warnings.push(...finalization.warnings);
       return {
-        result: undefined,
+        result: response,
         completedPayload: {
           payload,
           ...slackTextPayload(slackText, text),
@@ -207,7 +199,7 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
           ...(content.blockCount ? { blockCount: content.blockCount } : {}),
           ...(permalink ? { permalink } : {}),
           ...(warnings.length ? { warnings } : {}),
-          ...(threadSubscription ? { threadSubscription: subscriptionPayload(threadSubscription) } : {}),
+          ...(finalization.threadSubscription ? { threadSubscription: subscriptionPayload(finalization.threadSubscription) } : {}),
           status: 'sent',
           text,
           ...(response.ts ? { ts: response.ts } : {}),
@@ -215,6 +207,13 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
       };
     },
   });
+  (deps.writeOutput ?? console.log)(slackOutputLine({
+    messageTs: response.ts,
+    status: 'sent',
+    target,
+    ...(thread ? { thread } : {}),
+    warnings,
+  }));
 }
 
 async function runFeishuMessageSend(input: {

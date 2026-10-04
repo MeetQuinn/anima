@@ -541,6 +541,11 @@ anima message send --channel C0XXXX --thread-ts 1780000000.000000 <<'MSG'
 MSG
 ```
 
+For a successful Slack send, keep the returned `message_ts` as the receipt. If local engagement,
+thread subscription, completion audit, or outbox recording fails after Slack accepts the post,
+the command still exits successfully and prints a warning with that receipt. Do not resend the
+message to repair local bookkeeping; it has already been sent.
+
 A reaction is a lightweight reply when a full message is not needed. The emoji is a name, without
 colons:
 

@@ -1,6 +1,7 @@
 import type { WebClient } from '@slack/web-api';
 
 import type { AgentConfig } from '../../shared/agent-config.js';
+import type { Activity } from '../../shared/activity.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import {
@@ -28,6 +29,9 @@ export async function withToolActivity<T>(input: {
   audit?: ToolActivityAudit;
   basePayload: Record<string, unknown>;
   effectType?: string;
+  // Opt in only when op's result already establishes the external effect.
+  // The started audit and op itself still fail normally.
+  onCompletedAuditError?: (stage: 'activity' | 'outbox', error: unknown) => void;
   op: () => Promise<{ result: T; completedPayload?: Record<string, unknown> }>;
 }): Promise<T> {
   const startedType = input.effectType ? 'external.effect.started' : 'tool.call.started';
@@ -47,14 +51,22 @@ export async function withToolActivity<T>(input: {
   try {
     const { result, completedPayload } = await input.op();
     if (input.audit) {
-      const activity = await activityServiceForAgent(input.audit.agentId).record({
-        payload: payload('completed', completedPayload),
-        type: completedType,
-      });
+      let activity: Activity;
+      try {
+        activity = await activityServiceForAgent(input.audit.agentId).record({
+          payload: payload('completed', completedPayload),
+          type: completedType,
+        });
+      } catch (error) {
+        if (!input.onCompletedAuditError) throw error;
+        input.onCompletedAuditError('activity', error);
+        return result;
+      }
       try {
         await messageServiceForAgent(input.audit.agentId).recordOutboxActivity(activity);
       } catch (error) {
         console.warn(`Tool message ledger write failed for activity ${activity.activityId}: ${errorMessage(error)}`);
+        input.onCompletedAuditError?.('outbox', error);
       }
     }
     return result;
