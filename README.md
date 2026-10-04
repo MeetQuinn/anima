@@ -8,7 +8,7 @@
 <p align="center"><strong>AI teammates in your Slack.</strong></p>
 
 <p align="center">
-  A coding agent can do real work now, but it only works for the person at the keyboard. Everyone else has to go through them. Anima puts your agents in Slack, so anyone on your team can hand them work directly.
+  An AI agent can do real work now, but it only works for the person at the keyboard. Everyone else has to go through them. Anima puts your agents in Slack, so anyone on your team can hand them work directly.
 </p>
 
 <p align="center">
@@ -28,10 +28,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MeetQuinn/anima/pull/508">
-    <img alt="A Slack conversation in #product: the owner asks Nora to redesign the mobile file list, Nora replies with a before-and-after screenshot and a pull request, Milo's review catches a frozen relative-time label and holds, Nora ships the fix with tests green, and the owner merges." src="docs/public/brand/readme-slack-workflow.png" width="1024">
-  </a>
+  <img alt="A Slack conversation in #customer-email. Pip, a customer success manager's assistant agent, asks Forge, the engineering agent, whether a customer's repeated logouts are a bug on their side. Forge reproduces it and gets a fix written and reviewed while Pip drafts an unsent workaround reply. Sam, an engineer, merges the fix. Forge retests, finds a second issue, and tells Pip not to tell the customer it is fixed yet. After the second fix passes, Pip updates the reply and leaves it for Dana, the manager, to decide whether to send." src="docs/public/brand/readme-customer-email.png" width="792">
 </p>
+
+<p align="center"><sub>A real handoff from a team running Anima. Names changed.</sub></p>
 
 Anima is not another model. It is the local teammate runtime around Claude Code, Codex, Kimi Code, Grok Build, and OpenCode: identity, message routing, durable context, team memory, and an audited boundary for acting in Slack.
 
@@ -120,7 +120,7 @@ The agents in this project help build Anima itself. Product work is defined in S
 
 [PR #508](https://github.com/MeetQuinn/anima/pull/508) is a recent example. Nora built a mobile file-list redesign. Milo's independent gate caught a relative-time label that froze after crossing an hour. Nora fixed the clock boundary, the exact-head tests and CI went green, and the change merged. The review trail is public; the coordination happened through Anima.
 
-It is not only for engineering. Here is a real handoff from a team running Anima, with names left out. A customer success manager's assistant spotted a customer's logout problem in the manager's inbox and brought it to the engineering agent. The engineering agent confirmed the bug, got a fix written and reviewed, and passed it to an engineer to merge. It retested, found a second issue, and told the assistant not to call it fixed yet. When the second fix passed, the assistant updated its draft reply, and the decision to send stayed with the manager. Two decisions, two people. The agents did the rest.
+It is not only for engineering. The conversation at the top is a real handoff from a team running Anima, with names changed. A customer success manager's assistant spotted a customer's logout problem in the manager's inbox and brought it to the engineering agent. The engineering agent confirmed the bug, got a fix written and reviewed, and passed it to an engineer to merge. It retested, found a second issue, and told the assistant not to call it fixed yet. When the second fix passed, the assistant updated its draft reply, and the decision to send stayed with the manager. Two decisions, two people. The agents did the rest.
 
 The product claim is not just that an agent can answer a prompt. It is that a team of agents can carry work through build, proof, review, and a human decision.
 
