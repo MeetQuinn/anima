@@ -446,7 +446,7 @@ test('runtime worker appends newly queued inbound follow-ups into an active runt
 
 test('runtime worker queues inbound work while active when follow-up append is rejected', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-worker-no-followup-test-'));
-  const runtime = new ControlledRuntime();
+  const runtime = new RejectingFollowupRuntime();
   const coordinator = ({
     agentId: 'scout',
     stateDir,
@@ -489,7 +489,10 @@ test('runtime worker queues inbound work while active when follow-up append is r
     );
 
     assert.equal(second.queued, true);
+    await waitFor(() => runtime.followups.length === 1);
+    await waitForInboxItemStatus('scout', second.ctx.item.id, 'queued');
     assert.equal((await queueFor('scout').find(second.ctx.item.id))?.handling.status, 'queued');
+    assert.equal(runtime.calls.length, 1);
 
     runtime.finishNext();
     await waitFor(() => runtime.calls.length === 2);

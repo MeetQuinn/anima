@@ -22,8 +22,8 @@ import {
   waitForInboxItemAppendedTo,
 } from './helpers/runtime-worker.js';
 
-test('team run limit defaults to five active provider runs', () => {
-  assert.equal(TEAM_ACTIVE_RUN_LIMIT, 5);
+test('team run limit defaults to ten active provider runs', () => {
+  assert.equal(TEAM_ACTIVE_RUN_LIMIT, 10);
 });
 
 test('server config controls the runtime-wide active provider run limit', async () => {
@@ -31,9 +31,13 @@ test('server config controls the runtime-wide active provider run limit', async 
     const store = new ServerConfigStore(stateDir);
     const settings = new ServerSettingsService(store);
 
-    assert.equal(await settings.getMaxConcurrentAgentRuns(), 5);
+    assert.equal(await settings.getMaxConcurrentAgentRuns(), 10);
     await store.write({ runtime: { maxConcurrentAgentRuns: 9 } });
     assert.equal(await settings.getMaxConcurrentAgentRuns(), 9);
+    await store.write({ runtime: { maxConcurrentAgentRuns: 5 } });
+    assert.equal(await settings.getMaxConcurrentAgentRuns(), 5);
+    await store.write({ runtime: { maxConcurrentAgentRuns: 100 } });
+    assert.equal(await settings.getMaxConcurrentAgentRuns(), 100);
 
     await assert.rejects(
       store.write({ runtime: { maxConcurrentAgentRuns: 0 } }),
@@ -115,7 +119,7 @@ test('team run limiter admits waiters in request order', async () => {
   fourthRelease();
 });
 
-test('runtime workers keep a sixth provider run queued and release a slot after failure', async () => {
+test('runtime workers keep an eleventh provider run queued and release a slot after failure', async () => {
   await withTempAnimaHome(async (stateDir) => {
     const limiter = new TeamRunLimiter();
     const runtimes: AgentRuntime[] = [
@@ -176,7 +180,7 @@ test('runtime workers keep a sixth provider run queued and release a slot after 
 
       (runtimes[TEAM_ACTIVE_RUN_LIMIT - 1] as DeferredFailureRuntime).fail();
       await waitFor(() => runtimeCalls(runtimes[TEAM_ACTIVE_RUN_LIMIT]!) === 1, {
-        description: 'sixth provider run to start after failure',
+        description: 'eleventh provider run to start after failure',
       });
 
       for (let index = 0; index < TEAM_ACTIVE_RUN_LIMIT - 1; index += 1) {
