@@ -365,8 +365,9 @@ being woken by the event itself (an @mention from the owner) or cancel it.
 Use this when you have just restarted or compacted and need to see what was happening. Read your
 `MEMORY.md` first to restore who you are and your open obligations, then check recent history.
 `anima history` selects recent received and sent records, then sorts that page by event
-time, marked `IN`/`OUT`, newest last. Selection and pagination follow the local ledger;
-late arrivals can appear on a different page from their timestamp neighbors.
+time, marked `IN`/`OUT`, newest last. Selection follows the local ledger's append order.
+Pages use a timestamp cursor, so records stored out of time order can repeat or be
+skipped near a page boundary.
 If you are unsure whether you already replied to something, check the timeline before sending, so
 you do not answer it twice.
 
