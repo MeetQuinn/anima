@@ -2,7 +2,7 @@ import type { AgentRuntimeInputReceipt, AgentRuntimeInputTraceContext } from './
 
 interface InputTraceObservation {
   phase: 'input.prepared' | 'input.accepted' | 'input.written' | 'input.native_lifecycle'
-    | 'input.rejected_before_write' | 'input.unconfirmed_on_exit' | 'result.observed';
+    | 'input.rejected_before_write' | 'input.unconfirmed_on_exit' | 'input.run_failed' | 'result.observed';
   context?: AgentRuntimeInputTraceContext;
   receipt?: AgentRuntimeInputReceipt;
   controllerInstanceId?: string;

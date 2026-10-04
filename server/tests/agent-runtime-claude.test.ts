@@ -2047,3 +2047,31 @@ test('claude-code legacy capability trace preserves written evidence without inv
     assert.equal(fixture.traces.filter((row) => row['phase'] === 'input.native_lifecycle').length, 0);
   }, { nativeLifecycle: false });
 });
+
+for (const tracePersistence of [undefined, 'slow', 'failed'] as const) {
+  test(`claude-code preserves every written input at run failure with ${tracePersistence ?? 'normal'} trace persistence`, async (t) => {
+    t.mock.method(console, 'warn', () => {});
+    await withClaudeLifecycleFixture(async (fixture) => {
+      const firstInput = await fixture.prepareAppend('failure-private-body-sentinel');
+      const secondInput = await fixture.prepareAppend('another pending input');
+      const first = await fixture.runtime.appendToActiveRun(firstInput);
+      const second = await fixture.runtime.appendToActiveRun(secondInput);
+      await waitFor(async () => (await fixture.calls()).length === 3);
+      await fixture.emit([{ type: 'result', subtype: 'error_max_turns', is_error: true,
+        result: 'Max turns exceeded failure-error-secret-sentinel' }], true);
+      await assert.rejects(fixture.runPromise, /Max turns exceeded/);
+      await fixture.runtime.close?.();
+      const calls = await fixture.calls();
+      assert.equal(calls.length, 3, 'failed trace cannot replay written inputs');
+      const failed = fixture.traces.filter((trace) => trace['phase'] === 'input.run_failed');
+      assert.deepEqual(failed.map((trace) => trace['nativeInputId']), calls.map((call) => call.uuid),
+        'parent run failure must retain all written input identities even after currentTurn is cleared');
+      assert.equal(failed[1]?.['nativeInputId'], first.inputReceipt?.nativeInputId);
+      assert.equal(failed[2]?.['nativeInputId'], second.inputReceipt?.nativeInputId);
+      assert.deepEqual(failed[1]?.['itemIds'], firstInput.itemIds);
+      assert.deepEqual(failed[2]?.['itemIds'], secondInput.itemIds);
+      assert.equal(new Set(failed.map((trace) => trace['controllerInstanceId'])).size, 1);
+      assert.equal(/failure-private-body-sentinel|failure-error-secret-sentinel/.test(JSON.stringify(failed)), false);
+    }, { tracePersistence });
+  });
+}

@@ -568,6 +568,14 @@ class ClaudeStreamJsonController {
     this.currentTurn = undefined;
     turn.reject(error);
     this.resolveQuiescentWaitersIfReady();
+    // Rejection discards the control map before the process may exit. Preserve
+    // written identities at this actual failure point, without claiming exit,
+    // native cancellation, or permission to replay any input.
+    for (const command of turn.commands.values()) {
+      observeInputTrace((payload) => turn.input.effects.recordEvent(payload), {
+        phase: 'input.run_failed', context: command.context, receipt: command.receipt,
+      });
+    }
   }
 
   private flushQueuedMessages(): number {
