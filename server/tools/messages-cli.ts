@@ -36,6 +36,7 @@ const MessageSearchSchema = z.object({
   keywords: z.array(z.string()).min(1),
   limit: z.coerce.number().int().positive().optional(),
   since: z.string().optional(),
+  threadTs: z.string().trim().min(1).optional(),
 });
 
 const MessageUpdateSchema = z.object({
@@ -99,6 +100,7 @@ export function registerMessageCommands(program: Command): void {
     .description('Search this agent-visible message history, not workspace search.')
     .argument('<keywords...>', 'keywords to search for; all keywords must match')
     .option('--channel <channel>', 'only search one channel/DM by id or display label')
+    .option('--thread-ts <id>', 'only search this thread and its root message; requires --channel')
     .option('--limit <n>', 'max matches to return (default: 20; hard cap: 500)')
     .option('--before <iso>', 'matches before this ISO timestamp')
     .option('--since <iso>', 'matches at or after this ISO timestamp')

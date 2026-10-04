@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -325,11 +325,44 @@ test('anima ask rejects bot users as explicit answer targets', async () => {
       );
 
       assert.notEqual(run.status, 0);
-      assert.match(run.stderr, /human Slack users, not bots/);
+      assert.match(run.stderr, /input\.invalid_ask_target/);
+      assert.match(run.stderr, /anima message send with an @mention/);
+      assert.doesNotMatch(run.stderr, /anima\.unexpected|ask the operator/);
       assert.equal(posts.length, 0);
+      assert.deepEqual(await new InteractiveAskStore('scout').list(), []);
     });
   } finally {
     await slackApi.close();
+  }
+});
+
+test('anima ask rejects deleted human targets with an actionable input error', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-interactive-ask-deleted-target-'));
+  const methods: string[] = [];
+  const slackApi = await startSlackApiMock((method) => {
+    methods.push(method);
+    if (method === 'conversations.info') return {
+      channel: { id: 'C-product', is_channel: true, name: 'product', name_normalized: 'product' }, ok: true,
+    };
+    if (method === 'users.info') return { user: { id: 'UOLD', deleted: true, name: 'former' }, ok: true };
+    throw new Error(`unexpected method ${method}`);
+  });
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeAgentConfig('scout', { slack: { appToken: 'xapp-test', botToken: 'xoxb-test', teamId: 'T-demo' } });
+      const run = await runNode([cliPath, 'ask', '--channel', 'C-product', '--question', 'Ship?', '--option', 'Ship', '--option', 'Hold', '--to', 'UOLD'], {
+        env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_SLACK_API_URL: slackApi.url },
+      });
+      assert.notEqual(run.status, 0);
+      assert.match(run.stderr, /input\.invalid_ask_target/);
+      assert.match(run.stderr, /Choose an active human Slack user/);
+      assert.doesNotMatch(run.stderr, /anima\.unexpected/);
+      assert.equal(methods.includes('chat.postMessage'), false);
+      assert.deepEqual(await new InteractiveAskStore('scout').list(), []);
+    });
+  } finally {
+    await slackApi.close();
+    await rm(stateDir, { force: true, recursive: true });
   }
 });
 
