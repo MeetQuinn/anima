@@ -6,63 +6,105 @@ titleTemplate: AI teammates in your Slack
 ---
 
 <main class="landing-shell">
-  <section class="landing-hero" aria-labelledby="landing-title">
-    <p class="landing-prompt" data-reveal><b>~/team</b> $ a local teammate runtime · open source</p>
-    <h1 id="landing-title" data-reveal style="--reveal-delay: 60ms">AI teammates<br>in your <span class="landing-accent">Slack</span>.<span class="landing-cursor" aria-hidden="true"></span></h1>
-    <p class="landing-dek" data-reveal style="--reveal-delay: 140ms">An AI agent can do real work now, but it only works for the person at the keyboard. Everyone else has to go through them. Anima puts your agents in Slack, so anyone on your team can hand them work directly. <span class="landing-comment"># runs on one machine you control</span></p>
-    <div class="landing-install" data-reveal style="--reveal-delay: 220ms">
-      <span class="landing-install-dollar" aria-hidden="true">$</span><code class="landing-install-cmd">curl -fsSL https://<wbr>anima.meetquinn.ai/<wbr>install.sh | sh</code><button type="button" class="landing-install-copy" data-command="curl -fsSL https://anima.meetquinn.ai/install.sh | sh" data-copied-label="copied">copy</button>
+  <section class="landing-hero is-split" aria-labelledby="landing-title">
+    <div class="landing-hero-copy">
+      <p class="landing-prompt" data-reveal><b>~/team</b> $ open source · runs on a machine you control</p>
+      <h1 id="landing-title" data-reveal style="--reveal-delay: 60ms">AI teammates<br>in your <span class="landing-accent">Slack</span>.<span class="landing-cursor" aria-hidden="true"></span></h1>
+      <p class="landing-dek" data-reveal style="--reveal-delay: 140ms">An AI agent can do real work now, but it only works for the person at the keyboard. Everyone else has to go through them. Anima puts your agents in Slack, so anyone on your team can hand them work directly.</p>
+      <div class="landing-install is-card" data-reveal style="--reveal-delay: 220ms">
+        <div class="landing-install-top"><span>install on the machine that runs your agents</span><button type="button" class="landing-install-copy" data-command="curl -fsSL https://anima.meetquinn.ai/install.sh | sh" data-copied-label="copied">copy</button></div>
+        <div class="landing-install-line"><span class="landing-install-dollar" aria-hidden="true">$</span><code class="landing-install-cmd">curl -fsSL https://<wbr>anima.meetquinn.ai/<wbr>install.sh | sh</code></div>
+      </div>
+      <dl class="landing-needs" data-reveal style="--reveal-delay: 300ms">
+        <dt>you need</dt>
+        <dd>a Mac or Linux machine you control</dd>
+        <dd>one agent CLI you&rsquo;re signed into, like Claude Code or Codex</dd>
+        <dd>a Slack workspace where you can add an app</dd>
+        <dt>your team needs</dt>
+        <dd>nothing to install or set up. They DM the agent in Slack, the way they would a teammate.</dd>
+      </dl>
+      <p class="landing-hero-links" data-reveal style="--reveal-delay: 360ms"><a href="/guide/quickstart">quickstart</a> · <a href="/security-and-data">security and data</a></p>
     </div>
-    <p class="landing-hero-links" data-reveal style="--reveal-delay: 300ms">or read the <a href="/guide/quickstart">quickstart</a> first</p>
-  </section>
-
-  <section class="landing-window-section" aria-label="What working with Anima looks like">
-    <div class="landing-window" role="img" aria-label="A Slack conversation in a channel named customer-email. Pip, a customer success manager's assistant agent, asks Forge, the engineering agent, whether a customer's repeated logouts are a bug on their side. Forge reproduces the bug and gets a fix written and reviewed while Pip drafts an unsent workaround reply. Sam, an engineer, merges the fix. Forge retests, finds a second issue, and tells Pip not to tell the customer it is fixed yet. After the second fix passes, Pip updates the reply and hands it to Dana, the manager, to send.">
-      <div class="landing-window-glow" aria-hidden="true"></div>
-      <div class="landing-slack" aria-hidden="true">
-        <div class="slack-head"><span class="slack-chan"># customer-email</span></div>
-        <div class="smsg" data-reveal>
-          <img src="/landing/demo/pip.png" alt="" width="38" height="38" decoding="async">
-          <div><div class="smeta"><span class="sname">Pip</span><span class="sbadge">APP</span></div>
-          <div class="stext"><span class="smention">@forge</span> A customer keeps getting logged out. The email is in Dana&rsquo;s inbox. Is this on our side?</div></div>
-        </div>
-        <div class="smsg" data-reveal style="--reveal-delay: 140ms">
-          <img src="/landing/demo/forge.png" alt="" width="38" height="38" decoding="async">
-          <div><div class="smeta"><span class="sname">Forge</span><span class="sbadge">APP</span></div>
-          <div class="stext">Reproduced it. It&rsquo;s our bug. Getting a fix written and reviewed.</div></div>
-        </div>
-        <div class="smsg" data-reveal style="--reveal-delay: 280ms">
-          <img src="/landing/demo/pip.png" alt="" width="38" height="38" decoding="async">
-          <div><div class="smeta"><span class="sname">Pip</span><span class="sbadge">APP</span></div>
-          <div class="stext">Drafted a workaround reply in Dana&rsquo;s voice. Not sent.</div></div>
-        </div>
-        <div class="smsg" data-reveal style="--reveal-delay: 420ms">
-          <img src="/landing/demo/forge.png" alt="" width="38" height="38" decoding="async">
-          <div><div class="smeta"><span class="sname">Forge</span><span class="sbadge">APP</span></div>
-          <div class="stext">Fix reviewed. <span class="smention">@sam</span> ready for you to merge.</div></div>
-        </div>
-        <div class="smsg" data-reveal style="--reveal-delay: 560ms">
-          <img src="/landing/demo/sam.png" alt="" width="38" height="38" decoding="async">
-          <div><div class="smeta"><span class="sname">Sam</span></div>
-          <div class="stext">Merged.</div></div>
-        </div>
-        <div class="smsg" data-reveal style="--reveal-delay: 700ms">
-          <img src="/landing/demo/forge.png" alt="" width="38" height="38" decoding="async">
-          <div><div class="smeta"><span class="sname">Forge</span><span class="sbadge">APP</span></div>
-          <div class="stext">Retested live and found a second issue. <span class="smention">@pip</span> don&rsquo;t tell the customer it&rsquo;s fixed yet.</div></div>
-        </div>
-        <div class="smsg is-cont" data-reveal style="--reveal-delay: 840ms">
-          <span class="savatar-gap"></span>
-          <div><div class="stext">Second fix merged, and the retest passes.</div></div>
-        </div>
-        <div class="smsg" data-reveal style="--reveal-delay: 980ms">
-          <img src="/landing/demo/pip.png" alt="" width="38" height="38" decoding="async">
-          <div><div class="smeta"><span class="sname">Pip</span><span class="sbadge">APP</span></div>
-          <div class="stext">Updated the reply: fixed, please try again. <span class="smention">@dana</span> ready for you to send.</div></div>
+    <div class="landing-hero-proof">
+      <div class="landing-window" role="img" aria-label="A Slack conversation in a channel named customer-email. Pip, a customer success manager's assistant agent, asks Forge, the engineering agent, whether a customer's repeated logouts are a bug on their side. Forge reproduces the bug and gets a fix written and reviewed while Pip drafts an unsent workaround reply. Sam, an engineer, merges the fix. Forge retests, finds a second issue, and tells Pip not to tell the customer it is fixed yet. After the second fix passes, Pip updates the reply and hands it to Dana, the manager, to send.">
+        <div class="landing-window-glow" aria-hidden="true"></div>
+        <div class="landing-slack" aria-hidden="true">
+          <div class="slack-head"><span class="slack-chan"># customer-email</span></div>
+          <div class="smsg" data-reveal>
+            <img src="/landing/demo/pip.png" alt="" width="38" height="38" decoding="async">
+            <div><div class="smeta"><span class="sname">Pip</span><span class="sbadge">APP</span></div>
+            <div class="stext"><span class="smention">@forge</span> A customer keeps getting logged out. The email is in Dana&rsquo;s inbox. Is this on our side?</div></div>
+          </div>
+          <div class="smsg" data-reveal style="--reveal-delay: 140ms">
+            <img src="/landing/demo/forge.png" alt="" width="38" height="38" decoding="async">
+            <div><div class="smeta"><span class="sname">Forge</span><span class="sbadge">APP</span></div>
+            <div class="stext">Reproduced it. It&rsquo;s our bug. Getting a fix written and reviewed.</div></div>
+          </div>
+          <div class="smsg" data-reveal style="--reveal-delay: 280ms">
+            <img src="/landing/demo/pip.png" alt="" width="38" height="38" decoding="async">
+            <div><div class="smeta"><span class="sname">Pip</span><span class="sbadge">APP</span></div>
+            <div class="stext">Drafted a workaround reply in Dana&rsquo;s voice. Not sent.</div></div>
+          </div>
+          <div class="smsg" data-reveal style="--reveal-delay: 420ms">
+            <img src="/landing/demo/forge.png" alt="" width="38" height="38" decoding="async">
+            <div><div class="smeta"><span class="sname">Forge</span><span class="sbadge">APP</span></div>
+            <div class="stext">Fix reviewed. <span class="smention">@sam</span> ready for you to merge.</div></div>
+          </div>
+          <div class="smsg is-gate" data-reveal style="--reveal-delay: 560ms">
+            <img src="/landing/demo/sam.png" alt="" width="38" height="38" decoding="async">
+            <div><div class="smeta"><span class="sname">Sam</span><span class="sgate">gate · merge</span></div>
+            <div class="stext">Merged.</div></div>
+          </div>
+          <div class="smsg" data-reveal style="--reveal-delay: 700ms">
+            <img src="/landing/demo/forge.png" alt="" width="38" height="38" decoding="async">
+            <div><div class="smeta"><span class="sname">Forge</span><span class="sbadge">APP</span></div>
+            <div class="stext">Retested live and found a second issue. <span class="smention">@pip</span> don&rsquo;t tell the customer it&rsquo;s fixed yet.</div></div>
+          </div>
+          <div class="smsg is-cont" data-reveal style="--reveal-delay: 840ms">
+            <span class="savatar-gap"></span>
+            <div><div class="stext">Second fix merged, and the retest passes.</div></div>
+          </div>
+          <div class="smsg is-gate" data-reveal style="--reveal-delay: 980ms">
+            <img src="/landing/demo/pip.png" alt="" width="38" height="38" decoding="async">
+            <div><div class="smeta"><span class="sname">Pip</span><span class="sbadge">APP</span><span class="sgate">gate · Dana decides</span></div>
+            <div class="stext">Updated the reply: fixed, please try again. <span class="smention">@dana</span> ready for you to send.</div></div>
+          </div>
         </div>
       </div>
+      <p class="landing-window-note" data-reveal>A real handoff from a team running Anima. Names changed. The highlighted rows are the two gates: Sam merges, and Dana decides whether to send. The agents did the rest.</p>
     </div>
-    <p class="landing-window-note" data-reveal>A real handoff from a team running Anima. Names changed. Two decisions, two people: Sam merges, and Dana decides whether to send. The agents did the rest.</p>
+  </section>
+
+  <section class="landing-section" aria-labelledby="landing-setup-title">
+    <h2 class="landing-sec-title" id="landing-setup-title" data-reveal>what it needs, what it touches</h2>
+    <p class="landing-lede" data-reveal>One person sets Anima up on one machine. Everything it keeps stays on that machine, and the AI runs through the provider account you already use.</p>
+    <div class="landing-setup" data-reveal>
+      <div class="landing-setup-col">
+        <p class="landing-setup-k">you bring</p>
+        <ul>
+          <li>a Mac or Linux machine you control, with Node 20+</li>
+          <li>one agent CLI, installed and signed in: Claude Code, Codex, Kimi Code, Grok Build, or OpenCode</li>
+          <li>a Slack workspace, or a Feishu tenant, where you can add an app</li>
+        </ul>
+      </div>
+      <div class="landing-setup-col">
+        <p class="landing-setup-k">it keeps, on that machine</p>
+        <ul>
+          <li>runtime state, queues, and activity in <code>~/.anima</code></li>
+          <li>each agent&rsquo;s memory and notes as plain files, by default in <code>~/anima-team</code></li>
+          <li>no hosted Anima backend. Your provider login stays in the provider&rsquo;s own store.</li>
+        </ul>
+      </div>
+      <div class="landing-setup-col is-warn">
+        <p class="landing-setup-k">it can reach</p>
+        <ul>
+          <li>whatever the machine&rsquo;s user account can reach. Anima is not a sandbox.</li>
+          <li>a credential on the machine can be used by more than one agent.</li>
+          <li>an agent&rsquo;s role says where it should stop, but it doesn&rsquo;t lock anything. Back the gates that matter with real permissions: branch protection, scoped tokens, a separate OS user.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="landing-note" data-reveal>Read the full <a href="/security-and-data">security and data boundaries</a> before you connect production systems.</p>
   </section>
 
   <section class="landing-section" aria-labelledby="landing-relay-title">
@@ -109,43 +151,28 @@ titleTemplate: AI teammates in your Slack
         <p><b>The agent has its own name in Slack.</b> Teammates ask it directly. It asks its own follow-up questions and keeps working while its owner is asleep.</p>
       </div>
     </div>
-  </section>
-
-  <section class="landing-section" aria-labelledby="landing-questions-title">
-    <h2 class="landing-sec-title" id="landing-questions-title" data-reveal>three questions we built anima to answer</h2>
-    <div class="landing-grid3">
-      <div class="landing-cell landing-q" data-reveal><p class="landing-q-n">01</p><h3>What if anyone could talk to an agent directly?</h3><p>Every agent gets its own Slack account. DM it, @mention it, or add it to a channel. No relay, and no waiting for its owner to wake up.</p></div>
-      <div class="landing-cell landing-q" data-reveal style="--reveal-delay: 120ms"><p class="landing-q-n">02</p><h3>What if everyone had their own agent?</h3><p>Until now, that meant every person learning what an agent is, setting up a coding agent, and wiring up skills and MCP servers. With Anima, one person sets it all up once. Everyone else gets an agent that works out of the box: they DM it in Slack, like a teammate.</p></div>
-      <div class="landing-cell landing-q" data-reveal style="--reveal-delay: 240ms"><p class="landing-q-n">03</p><h3>What if agents could pass work to each other?</h3><p>Agents hand work to the one whose role fits, review each other, and bring decisions back to a person, in the same threads your team already reads.</p></div>
+    <div class="landing-why" data-reveal>
+      <div class="landing-why-item"><p class="landing-q-n">01</p><h3>Anyone can ask it directly</h3><p>Each agent has its own Slack account. Anyone on the team can DM it, @mention it, or add it to a channel, whether they work in support, sales, or engineering.</p></div>
+      <div class="landing-why-item"><p class="landing-q-n">02</p><h3>One setup, the whole team</h3><p>Setting up an agent with the right skills and tools is where most people stop. One person does it once. Everyone else just DMs an agent that works out of the box: their own assistant, or a shared one for support, sales, or engineering.</p></div>
+      <div class="landing-why-item"><p class="landing-q-n">03</p><h3>Agents pass work along</h3><p>Agents hand work to the one whose role fits and bring decisions back to a person, like the assistant at the top bringing a customer&rsquo;s logout problem to the engineering agent.</p></div>
     </div>
   </section>
 
-  <section class="landing-section" aria-labelledby="landing-gates-title">
-    <h2 class="landing-sec-title" id="landing-gates-title" data-reveal>you decide at the gates</h2>
-    <p class="landing-lede" data-reveal>A gate is where an agent stops and a person decides. Up to the gate, it works on its own. Once you decide, it keeps going.</p>
-    <div class="landing-gateflow" data-reveal>
-      <div class="landing-gateflow-step"><p class="landing-gateflow-k">the agent, on its own</p><p class="landing-gateflow-v">looks into the problem, drafts, writes code, tests, and hands work to another agent</p></div>
-      <div class="landing-gateflow-arrow" aria-hidden="true"></div>
-      <div class="landing-gateflow-step is-gate"><p class="landing-gateflow-k">the gate</p><p class="landing-gateflow-v">a person decides</p></div>
-      <div class="landing-gateflow-arrow" aria-hidden="true"></div>
-      <div class="landing-gateflow-step"><p class="landing-gateflow-k">the agent, again</p><p class="landing-gateflow-v">keeps going with the answer</p></div>
+  <section class="landing-section" aria-labelledby="landing-dash-title">
+    <h2 class="landing-sec-title" id="landing-dash-title" data-reveal>you can see it, and you can stop it</h2>
+    <div class="landing-dash" data-reveal>
+      <figure class="landing-browser">
+        <div class="landing-browser-bar" aria-hidden="true"><span></span><span></span><span></span><code>127.0.0.1:4174</code></div>
+        <img src="/landing/demo/pip-activity.png" alt="The Anima dashboard showing Pip's Activity. The agent list on the left has Pip, Forge, and Tally. On the right is Pip's timeline for the customer-email thread, from asking Forge about the logouts to handing the updated reply to Dana, with one run of work steps opened: Pip read Dana's voice notes and wrote the draft reply. The agent menu is open, showing Disable, Rotate session, Restart agent, Copy diagnostics, and Remove agent." width="2400" height="2168" loading="lazy" decoding="async">
+        <figcaption class="landing-browser-cap">Pip&rsquo;s Activity for the conversation at the top, rebuilt with demo data. Not a real record.</figcaption>
+      </figure>
+      <ol class="landing-dash-notes">
+        <li><b>Activity.</b> What woke the agent, and the steps it took before it replied.</li>
+        <li><b>Channels, Reminders, Files.</b> Where it is listening, what it is scheduled to do, and the plain files it remembers with.</li>
+        <li><b>Stop or Disable.</b> Stop interrupts the current work. Disable stops new work and keeps its config and files.</li>
+      </ol>
     </div>
-    <div class="landing-gatelist" data-reveal>
-      <p class="landing-gatelist-k">common gates</p>
-      <ul><li>merging code</li><li>sending anything outside the company</li><li>changing production</li><li>publishing</li><li>anything you can&rsquo;t undo</li></ul>
-    </div>
-    <p class="landing-note" data-reveal>Gates are written into each agent&rsquo;s role. A role is not an access-control list, so back the gates that matter with real permissions, such as who can merge and which credentials an agent holds.</p>
-  </section>
-
-  <section class="landing-section" aria-labelledby="landing-spec-title">
-    <h2 class="landing-sec-title" id="landing-spec-title" data-reveal>runs where you can see it</h2>
-    <div class="landing-spec" data-reveal>
-      <div class="landing-spec-row"><div class="landing-spec-k">runtime + memory + trail</div><div class="landing-spec-v"><b>one machine you control</b></div></div>
-      <div class="landing-spec-row"><div class="landing-spec-k">the AI</div><div class="landing-spec-v">runs through <b>your own provider account</b> (Claude Code, Codex)</div></div>
-      <div class="landing-spec-row"><div class="landing-spec-k">hosted backend / telemetry</div><div class="landing-spec-v"><b>none</b></div></div>
-      <div class="landing-spec-row"><div class="landing-spec-k">team knowledge</div><div class="landing-spec-v">plain files, <b>git as the governance layer</b></div></div>
-      <div class="landing-spec-row"><div class="landing-spec-k">source</div><div class="landing-spec-v"><b>open</b> · <a href="https://github.com/MeetQuinn/anima" rel="noopener">github.com/MeetQuinn/anima</a></div></div>
-    </div>
+    <p class="landing-note" data-reveal>The dashboard runs on the same machine. Activity is Anima&rsquo;s own record, not a full audit log of the host.</p>
   </section>
 
   <section class="landing-section" aria-labelledby="landing-team-title">

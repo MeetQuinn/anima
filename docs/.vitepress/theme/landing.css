@@ -192,10 +192,6 @@
     line-height: 1.65;
   }
 
-  & .landing-comment {
-    color: var(--al-dim);
-  }
-
   /* ------------------------------------------------------- install block */
 
   & .landing-install {
@@ -256,23 +252,17 @@
   }
 
   & .landing-hero-links a,
-  & .landing-window-note a,
-  & .landing-spec-v a {
+  & .landing-window-note a {
     color: var(--al-accent);
     text-decoration: none;
   }
 
   & .landing-hero-links a:hover,
-  & .landing-window-note a:hover,
-  & .landing-spec-v a:hover {
+  & .landing-window-note a:hover {
     text-decoration: underline;
   }
 
   /* ----------------------------------------------------- the lit window */
-
-  & .landing-window-section {
-    padding: 64px 0 0;
-  }
 
   & .landing-window {
     position: relative;
@@ -463,42 +453,6 @@
     color: var(--al-dim);
   }
 
-  & .landing-grid3 {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1px;
-    background: var(--al-line);
-    border: 1px solid var(--al-line);
-    margin-top: 28px;
-  }
-
-  & .landing-cell {
-    background: var(--al-bg);
-    padding: 28px 26px;
-  }
-
-  & .landing-cell h3 {
-    margin: 0 0 10px;
-    color: var(--al-strong);
-    font-family: var(--al-mono);
-    font-size: 17px;
-    font-weight: 600;
-    letter-spacing: 0;
-    line-height: 1.4;
-  }
-
-  & .landing-cell h3::before {
-    content: "> ";
-    color: var(--al-accent);
-  }
-
-  & .landing-cell p {
-    margin: 0;
-    font-size: 13.5px;
-    color: var(--al-dim);
-    line-height: 1.7;
-  }
-
   /* -------------------------------------------- relay: before / after */
 
   & .landing-relay {
@@ -658,11 +612,7 @@
     background: var(--al-line);
   }
 
-  & .landing-q h3::before {
-    content: none;
-  }
-
-  /* ------------------------------------------------------------- gates */
+  /* ------------------------------------------------------ section lede */
 
   & .landing-lede {
     max-width: 760px;
@@ -672,138 +622,7 @@
     line-height: 1.65;
   }
 
-  & .landing-gateflow {
-    display: grid;
-    grid-template-columns: minmax(0, 1.5fr) 56px minmax(0, 1fr) 56px minmax(0, 1fr);
-    margin-top: 30px;
-  }
-
-  & .landing-gateflow-step {
-    position: relative;
-    border: 1px solid var(--al-line);
-    background: var(--al-bg);
-    padding: 24px 22px 26px;
-  }
-
-  & .landing-gateflow-step.is-gate {
-    border-color: var(--al-accent);
-    background: var(--al-glow);
-    padding-top: 34px;
-  }
-
   /* The barrier arm: hazard stripes along the top of the gate. */
-  & .landing-gateflow-step.is-gate::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 8px;
-    background: repeating-linear-gradient(
-      -45deg,
-      var(--al-accent) 0 7px,
-      transparent 7px 14px
-    );
-  }
-
-  & .landing-gateflow-k {
-    margin: 0;
-    color: var(--al-dim);
-    font-size: 12px;
-    font-weight: 500;
-    letter-spacing: 0.14em;
-    line-height: 1.5;
-    text-transform: uppercase;
-  }
-
-  & .is-gate .landing-gateflow-k {
-    color: var(--al-accent);
-  }
-
-  & .landing-gateflow-v {
-    margin: 12px 0 0;
-    color: var(--al-strong);
-    font-size: 15px;
-    font-weight: 500;
-    line-height: 1.55;
-  }
-
-  & .is-gate .landing-gateflow-v {
-    font-size: 21px;
-    font-weight: 700;
-    line-height: 1.3;
-  }
-
-  & .landing-gateflow-arrow {
-    position: relative;
-  }
-
-  & .landing-gateflow-arrow::before {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 10px;
-    right: 16px;
-    height: 1.5px;
-    background: var(--al-dim);
-  }
-
-  & .landing-gateflow-arrow::after {
-    content: "";
-    position: absolute;
-    top: calc(50% - 4.25px);
-    right: 9px;
-    border-left: 8px solid var(--al-dim);
-    border-top: 5px solid transparent;
-    border-bottom: 5px solid transparent;
-  }
-
-  & .landing-gatelist {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px 16px;
-    margin-top: 26px;
-  }
-
-  & .landing-gatelist-k {
-    margin: 0;
-    color: var(--al-dim);
-    font-size: 12px;
-    font-weight: 500;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-  }
-
-  & .landing-gatelist ul {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  & .landing-gatelist li {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    margin: 0;
-    border: 1px solid var(--al-line);
-    padding: 6px 11px;
-    color: var(--al-strong);
-    font-size: 13px;
-    line-height: 1.4;
-  }
-
-  & .landing-gatelist li::before {
-    content: "";
-    flex: none;
-    width: 6px;
-    height: 6px;
-    background: var(--al-accent);
-  }
-
   & .landing-note {
     max-width: 760px;
     margin: 26px 0 0;
@@ -812,43 +631,6 @@
     color: var(--al-dim);
     font-size: 13.5px;
     line-height: 1.7;
-  }
-
-  /* ---------------------------------------------------------- spec sheet */
-
-  & .landing-spec {
-    margin-top: 28px;
-    border: 1px solid var(--al-line);
-  }
-
-  & .landing-spec-row {
-    display: grid;
-    grid-template-columns: 300px 1fr;
-    border-bottom: 1px solid var(--al-line);
-  }
-
-  & .landing-spec-row:last-child {
-    border-bottom: 0;
-  }
-
-  & .landing-spec-k {
-    padding: 15px 22px;
-    color: var(--al-dim);
-    font-size: 13.5px;
-    line-height: 1.65;
-    border-right: 1px solid var(--al-line);
-  }
-
-  & .landing-spec-v {
-    padding: 15px 22px;
-    color: var(--al-text);
-    font-size: 13.5px;
-    line-height: 1.65;
-  }
-
-  & .landing-spec-v b {
-    color: var(--al-strong);
-    font-weight: 600;
   }
 
   /* ---------------------------------------------------------------- team */
@@ -925,6 +707,346 @@
     color: var(--al-dim);
   }
 
+  /* ------------------------------------------- installer-first sections */
+
+  & .landing-hero-proof {
+    margin-top: 56px;
+  }
+
+  & .landing-needs {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    column-gap: 18px;
+    row-gap: 4px;
+    margin: 26px 0 0;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  & .landing-needs dt {
+    grid-column: 1;
+    color: var(--al-dim);
+  }
+
+  & .landing-needs dt:not(:first-of-type) {
+    margin-top: 10px;
+  }
+
+  & .landing-needs dt:not(:first-of-type) + dd {
+    margin-top: 10px;
+  }
+
+  & .landing-needs dd {
+    grid-column: 2;
+    margin: 0;
+    color: var(--al-text);
+  }
+
+  & .landing-needs dd::before {
+    content: "- ";
+    color: var(--al-green);
+  }
+
+  & .landing-install.is-card {
+    display: block;
+    width: fit-content;
+    padding: 12px 18px 15px;
+    font-size: 14px;
+  }
+
+  & .landing-install-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 10px;
+    color: var(--al-dim);
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+  }
+
+  & .landing-install-top .landing-install-copy {
+    margin-left: 0;
+  }
+
+  & .landing-install-line {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+
+  & .landing-hero.is-split .landing-hero-links {
+    margin-top: 22px;
+  }
+
+  /* Gate rows in the Slack replica: Slack's light palette in both modes. */
+  & .landing-hero-proof .smsg > div {
+    flex: 1;
+    min-width: 0;
+  }
+
+  & .smsg.is-gate {
+    background: #fdf4ee;
+    box-shadow: inset 3px 0 0 #b3401f;
+  }
+
+  & .sgate {
+    margin-left: auto;
+    align-self: center;
+    padding: 1px 7px;
+    border: 1px dashed rgba(179, 64, 31, 0.55);
+    border-radius: 3px;
+    color: #b3401f;
+    font-family: var(--al-mono);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+
+  & .landing-setup {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    margin-top: 28px;
+    background: var(--al-line);
+    border: 1px solid var(--al-line);
+  }
+
+  & .landing-setup-col {
+    background: var(--al-bg);
+    padding: 24px 24px 26px;
+  }
+
+  & .landing-setup-k {
+    margin: 0 0 14px;
+    color: var(--al-strong);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  & .landing-setup-k::before {
+    content: "# ";
+    color: var(--al-dim);
+  }
+
+  & .landing-setup-col.is-warn .landing-setup-k {
+    color: var(--al-accent);
+  }
+
+  & .landing-setup ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .landing-setup li {
+    position: relative;
+    padding-left: 16px;
+    margin: 0 0 10px;
+    color: var(--al-text);
+    font-size: 13.5px;
+    line-height: 1.65;
+  }
+
+  & .landing-setup li:last-child {
+    margin-bottom: 0;
+  }
+
+  & .landing-setup li::before {
+    content: "-";
+    position: absolute;
+    left: 0;
+    color: var(--al-dim);
+  }
+
+  & .landing-setup code {
+    padding: 1px 5px;
+    background: var(--al-panel);
+    border: 1px solid var(--al-line);
+    border-radius: 0;
+    color: var(--al-strong);
+    font-family: var(--al-mono);
+    font-size: 12.5px;
+    white-space: nowrap;
+  }
+
+  & .landing-note a {
+    color: var(--al-accent);
+    text-decoration: none;
+  }
+
+  & .landing-note a:hover {
+    text-decoration: underline;
+  }
+
+  & .landing-why {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 40px;
+    margin-top: 36px;
+  }
+
+  & .landing-why-item h3 {
+    margin: 0 0 8px;
+    color: var(--al-strong);
+    font-family: var(--al-mono);
+    font-size: 15.5px;
+    font-weight: 600;
+    line-height: 1.45;
+  }
+
+  & .landing-why-item p:last-child {
+    margin: 0;
+    color: var(--al-dim);
+    font-size: 13.5px;
+    line-height: 1.7;
+  }
+
+  & .landing-dash {
+    margin-top: 28px;
+  }
+
+  & .landing-browser {
+    margin: 0;
+    border: 1px solid var(--al-line);
+    background: var(--al-panel);
+    box-shadow: var(--al-slack-shadow);
+  }
+
+  & .landing-browser-bar {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--al-line);
+  }
+
+  & .landing-browser-bar span {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--al-line);
+  }
+
+  & .landing-browser-bar code {
+    margin-left: 12px;
+    padding: 0;
+    background: none;
+    color: var(--al-dim);
+    font-family: var(--al-mono);
+    font-size: 12px;
+  }
+
+  & .landing-browser img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  & .landing-browser-cap {
+    padding: 10px 14px;
+    border-top: 1px solid var(--al-line);
+    color: var(--al-dim);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  & .landing-dash-notes {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 40px;
+    margin: 32px 0 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: dash;
+  }
+
+  & .landing-dash-notes li {
+    counter-increment: dash;
+    margin: 0;
+    padding-top: 14px;
+    border-top: 1px solid var(--al-line);
+    color: var(--al-dim);
+    font-size: 13.5px;
+    line-height: 1.7;
+  }
+
+  & .landing-dash-notes li::before {
+    content: counter(dash, decimal-leading-zero);
+    display: block;
+    margin-bottom: 6px;
+    color: var(--al-accent);
+    font-size: 12px;
+    letter-spacing: 0.12em;
+  }
+
+  & .landing-dash-notes b {
+    color: var(--al-strong);
+    font-weight: 600;
+  }
+
+  @media (min-width: 1240px) {
+    & .landing-hero.is-split {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+      gap: 56px;
+      align-items: start;
+      padding-top: 72px;
+    }
+
+    & .landing-hero.is-split h1 {
+      font-size: 50px;
+    }
+
+    & .landing-hero.is-split .landing-install {
+      margin-top: 32px;
+    }
+
+    & .landing-hero.is-split .landing-hero-proof {
+      margin-top: 6px;
+    }
+  }
+
+  @media (max-width: 960px) {
+    & .landing-setup,
+    & .landing-why,
+    & .landing-dash-notes {
+      grid-template-columns: 1fr;
+    }
+
+    & .landing-dash-notes {
+      gap: 18px;
+    }
+
+    & .landing-why {
+      gap: 26px;
+    }
+  }
+
+  @media (max-width: 620px) {
+    & .landing-needs {
+      grid-template-columns: 1fr;
+      row-gap: 2px;
+    }
+
+    & .landing-needs dt,
+    & .landing-needs dd {
+      grid-column: 1;
+    }
+
+    & .landing-needs dt:not(:first-of-type) + dd {
+      margin-top: 0;
+    }
+
+    & .sgate {
+      font-size: 10px;
+      padding: 0 5px;
+    }
+  }
+
   /* ---------------------------------------------------------- responsive */
 
   @media (max-width: 960px) {
@@ -940,45 +1062,10 @@
       font-size: 48px;
     }
 
-    & .landing-grid3 {
-      grid-template-columns: 1fr;
-    }
-
-    & .landing-gateflow {
-      grid-template-columns: 1fr;
-    }
-
-    & .landing-gateflow-arrow {
-      height: 36px;
-    }
-
-    & .landing-gateflow-arrow::before {
-      top: 6px;
-      bottom: 13px;
-      left: calc(50% - 0.75px);
-      right: auto;
-      width: 1.5px;
-      height: auto;
-    }
-
-    & .landing-gateflow-arrow::after {
-      top: auto;
-      bottom: 5px;
-      right: auto;
-      left: calc(50% - 5px);
-      border-top: 8px solid var(--al-dim);
-      border-left: 5px solid transparent;
-      border-right: 5px solid transparent;
-      border-bottom: 0;
-    }
-
     & .landing-team {
       grid-template-columns: repeat(2, 1fr);
     }
 
-    & .landing-spec-row {
-      grid-template-columns: 220px 1fr;
-    }
   }
 
   @media (max-width: 620px) {
@@ -1041,27 +1128,6 @@
     /* The diagram renders ~245px wide here, so labels scale to ~0.77x. */
     & .landing-relay-dia text {
       font-size: 14.5px;
-    }
-
-    & .landing-gateflow-step {
-      padding: 20px 18px 22px;
-    }
-
-    & .landing-gateflow-step.is-gate {
-      padding-top: 30px;
-    }
-
-    & .landing-spec-row {
-      grid-template-columns: 1fr;
-    }
-
-    & .landing-spec-k {
-      border-right: 0;
-      padding-bottom: 0;
-    }
-
-    & .landing-spec-v {
-      padding-top: 4px;
     }
 
     & .landing-end {
