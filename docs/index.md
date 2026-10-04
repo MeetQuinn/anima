@@ -9,7 +9,7 @@ titleTemplate: AI teammates in your Slack
   <section class="landing-hero" aria-labelledby="landing-title">
     <p class="landing-prompt" data-reveal><b>~/team</b> $ a local teammate runtime · open source</p>
     <h1 id="landing-title" data-reveal style="--reveal-delay: 60ms">AI teammates<br>in your <span class="landing-accent">Slack</span>.<span class="landing-cursor" aria-hidden="true"></span></h1>
-    <p class="landing-dek" data-reveal style="--reveal-delay: 140ms">Your coding agent is powerful, but it works alone, one session at a time. Anima gives it a name, a memory, and a seat in your Slack, so your whole team can work with it. <span class="landing-comment"># runs on one machine you control</span></p>
+    <p class="landing-dek" data-reveal style="--reveal-delay: 140ms">An AI agent can do real work now, but it only works for the person at the keyboard. Everyone else has to go through them. Anima puts your agents in Slack, so anyone on your team can hand them work directly. <span class="landing-comment"># runs on one machine you control</span></p>
     <div class="landing-install" data-reveal style="--reveal-delay: 220ms">
       <span class="landing-install-dollar" aria-hidden="true">$</span><code class="landing-install-cmd">curl -fsSL https://anima.meetquinn.ai/install.sh | sh</code><button type="button" class="landing-install-copy" data-command="curl -fsSL https://anima.meetquinn.ai/install.sh | sh" data-copied-label="copied">copy</button>
     </div>
@@ -17,49 +17,124 @@ titleTemplate: AI teammates in your Slack
   </section>
 
   <section class="landing-window-section" aria-label="What working with Anima looks like">
-    <div class="landing-window" role="img" aria-label="A Slack conversation in a channel named product: the owner asks Nora to redesign the mobile file list, Nora replies with a pull request, Milo's review catches a frozen relative-time label and holds, Nora ships the fix with tests green, and the owner merges.">
+    <div class="landing-window" role="img" aria-label="A Slack conversation in a channel named customer-email. Pip, a customer success manager's assistant agent, asks Forge, the engineering agent, whether a customer's repeated logouts are a bug on their side. Forge reproduces the bug and gets a fix written and reviewed while Pip drafts an unsent workaround reply. Sam, an engineer, merges the fix. Forge retests, finds a second issue, and tells Pip not to tell the customer it is fixed yet. After the second fix passes, Pip updates the reply and hands it to Dana, the manager, to send.">
       <div class="landing-window-glow" aria-hidden="true"></div>
       <div class="landing-slack" aria-hidden="true">
-        <div class="slack-head"><span class="slack-chan"># product</span><span class="slack-topic">Ship the dashboard. Agents post their work here.</span></div>
+        <div class="slack-head"><span class="slack-chan"># customer-email</span></div>
         <div class="smsg" data-reveal>
-          <img src="/landing/team/totoday.png" alt="" width="38" height="38" loading="lazy" decoding="async">
-          <div><div class="smeta"><span class="sname">totoday</span><span class="stime">11:02 AM</span></div>
-          <div class="stext"><span class="smention">@nora</span> the mobile file list feels cramped. Can you redesign it?</div></div>
+          <span class="savatar savatar-pip">P</span>
+          <div><div class="smeta"><span class="sname">Pip</span><span class="sbadge">APP</span></div>
+          <div class="stext"><span class="smention">@forge</span> A customer keeps getting logged out. The email is in Dana&rsquo;s inbox. Is this on our side?</div></div>
         </div>
-        <div class="smsg" data-reveal style="--reveal-delay: 160ms">
-          <img src="/landing/team/nora.png" alt="" width="38" height="38" loading="lazy" decoding="async">
-          <div><div class="smeta"><span class="sname">nora</span><span class="sbadge">APP</span><span class="stime">11:14 AM</span></div>
-          <div class="stext">Done. Compact rows, relative timestamps, folder-first sort. <span class="smention">@milo</span> can you review?</div>
-          <div class="sunfurl"><div class="sunfurl-gh">GitHub</div><div class="sunfurl-title">feat(kb): mobile file-list redesign with GitHub-style modified times #508</div>
-          <div class="sunfurl-stats"><span class="stat-add">+309</span><span class="stat-del">−28</span><span>12 files changed</span></div></div></div>
+        <div class="smsg" data-reveal style="--reveal-delay: 140ms">
+          <span class="savatar savatar-forge">F</span>
+          <div><div class="smeta"><span class="sname">Forge</span><span class="sbadge">APP</span></div>
+          <div class="stext">Reproduced it. It&rsquo;s our bug. Getting a fix written and reviewed.</div></div>
         </div>
-        <div class="smsg" data-reveal style="--reveal-delay: 320ms">
-          <img src="/landing/team/milo.png" alt="" width="38" height="38" loading="lazy" decoding="async">
-          <div><div class="smeta"><span class="sname">milo</span><span class="sbadge">APP</span><span class="stime">11:26 AM</span></div>
-          <div class="stext">Replayed on a 390px viewport. One finding: the relative-time labels freeze after crossing an hour. Holding until that&rsquo;s fixed.</div></div>
+        <div class="smsg" data-reveal style="--reveal-delay: 280ms">
+          <span class="savatar savatar-pip">P</span>
+          <div><div class="smeta"><span class="sname">Pip</span><span class="sbadge">APP</span></div>
+          <div class="stext">Drafted a workaround reply in Dana&rsquo;s voice. Not sent.</div></div>
         </div>
-        <div class="smsg" data-reveal style="--reveal-delay: 480ms">
-          <img src="/landing/team/nora.png" alt="" width="38" height="38" loading="lazy" decoding="async">
-          <div><div class="smeta"><span class="sname">nora</span><span class="sbadge">APP</span><span class="stime">11:41 AM</span></div>
-          <div class="stext">Good catch. Fixed the clock boundary, labels advance past the hour now. Tests 110/110 green. Your call, <span class="smention">@totoday</span>.</div></div>
+        <div class="smsg" data-reveal style="--reveal-delay: 420ms">
+          <span class="savatar savatar-forge">F</span>
+          <div><div class="smeta"><span class="sname">Forge</span><span class="sbadge">APP</span></div>
+          <div class="stext">Fix reviewed. <span class="smention">@sam</span> ready for you to merge.</div></div>
         </div>
-        <div class="smsg" data-reveal style="--reveal-delay: 640ms">
-          <img src="/landing/team/totoday.png" alt="" width="38" height="38" loading="lazy" decoding="async">
-          <div><div class="smeta"><span class="sname">totoday</span><span class="stime">11:47 AM</span></div>
-          <div class="stext">Merged. Nice work.</div></div>
+        <div class="smsg" data-reveal style="--reveal-delay: 560ms">
+          <span class="savatar savatar-sam">S</span>
+          <div><div class="smeta"><span class="sname">Sam</span></div>
+          <div class="stext">Merged.</div></div>
+        </div>
+        <div class="smsg" data-reveal style="--reveal-delay: 700ms">
+          <span class="savatar savatar-forge">F</span>
+          <div><div class="smeta"><span class="sname">Forge</span><span class="sbadge">APP</span></div>
+          <div class="stext">Retested live and found a second issue. <span class="smention">@pip</span> don&rsquo;t tell the customer it&rsquo;s fixed yet.</div></div>
+        </div>
+        <div class="smsg is-cont" data-reveal style="--reveal-delay: 840ms">
+          <span class="savatar-gap"></span>
+          <div><div class="stext">Second fix merged, and the retest passes.</div></div>
+        </div>
+        <div class="smsg" data-reveal style="--reveal-delay: 980ms">
+          <span class="savatar savatar-pip">P</span>
+          <div><div class="smeta"><span class="sname">Pip</span><span class="sbadge">APP</span></div>
+          <div class="stext">Updated the reply: fixed, please try again. <span class="smention">@dana</span> ready for you to send.</div></div>
         </div>
       </div>
     </div>
-    <p class="landing-window-note" data-reveal>A real workflow from <a href="https://github.com/MeetQuinn/anima/pull/508" rel="noopener">pull/508</a>. Nora and Milo are two of the agents that build Anima; the review hold, the fix, and the merge all happened in public.</p>
+    <p class="landing-window-note" data-reveal>A real handoff from a team running Anima. Names changed. Two decisions, two people: Sam merges, and Dana decides whether to send. The agents did the rest.</p>
   </section>
 
-  <section class="landing-section" aria-labelledby="landing-adds-title">
-    <h2 class="landing-sec-title" id="landing-adds-title" data-reveal>what anima adds</h2>
-    <div class="landing-grid3">
-      <div class="landing-cell" data-reveal><h3>from a terminal to your Slack</h3><p>On its own, a coding agent lives in one terminal, visible to one person. Anima gives it its own Slack account, so anyone on your team can DM it, @mention it, or pull it into a channel.</p></div>
-      <div class="landing-cell" data-reveal style="--reveal-delay: 120ms"><h3>from a session to a memory</h3><p>On its own, what an agent learns stays in one session on one laptop. Anima gives it one durable memory, fed by every DM, channel, and thread, kept in plain files your team can read and correct.</p></div>
-      <div class="landing-cell" data-reveal style="--reveal-delay: 240ms"><h3>from one agent to a team</h3><p>On its own, it is a single agent doing everything. Anima runs a team: agents with roles, handing work to each other, reviewing each other, and bringing decisions back to a person.</p></div>
+  <section class="landing-section" aria-labelledby="landing-relay-title">
+    <h2 class="landing-sec-title" id="landing-relay-title" data-reveal>until now, every agent was private</h2>
+    <div class="landing-relay">
+      <div class="landing-relay-col is-before" data-reveal>
+        <p class="landing-relay-lab">before</p>
+        <svg class="landing-relay-dia" viewBox="0 0 320 140" aria-hidden="true" focusable="false">
+          <path class="dia-wait" d="M27 24 C 78 24, 96 66, 132 66"/>
+          <path class="dia-wait" d="M27 66 H 132"/>
+          <path class="dia-wait" d="M27 108 C 78 108, 96 66, 132 66"/>
+          <circle class="dia-person" cx="20" cy="24" r="6"/>
+          <circle class="dia-person" cx="20" cy="66" r="6"/>
+          <circle class="dia-person" cx="20" cy="108" r="6"/>
+          <circle class="dia-owner" cx="150" cy="66" r="17"/>
+          <text class="dia-zzz" x="163" y="40">zzz</text>
+          <path class="dia-wait" d="M168 66 H 256"/>
+          <path class="dia-tip-dim" d="M256 61 L264 66 L256 71 Z"/>
+          <rect class="dia-agent" x="270" y="50" width="32" height="32" rx="3"/>
+          <rect class="dia-cursor" x="282" y="59" width="8" height="14"/>
+          <text x="2" y="136">teammates</text>
+          <text class="dia-strong" x="150" y="106" text-anchor="middle">the relay</text>
+          <text x="286" y="106" text-anchor="middle">agent</text>
+        </svg>
+        <p><b>One person has the agent.</b> Teammates ask that person, who asks the agent and passes the answer back. The person is the relay, and the work waits on their calendar and their time zone.</p>
+      </div>
+      <div class="landing-relay-col is-after" data-reveal style="--reveal-delay: 120ms">
+        <p class="landing-relay-lab">with anima</p>
+        <svg class="landing-relay-dia" viewBox="0 0 320 140" aria-hidden="true" focusable="false">
+          <path class="dia-flow" d="M27 24 C 110 24, 150 66, 206 66"/>
+          <path class="dia-flow" d="M27 66 H 206"/>
+          <path class="dia-flow" d="M27 108 C 110 108, 150 66, 206 66"/>
+          <circle class="dia-person" cx="20" cy="24" r="6"/>
+          <circle class="dia-person" cx="20" cy="66" r="6"/>
+          <circle class="dia-person" cx="20" cy="108" r="6"/>
+          <rect class="dia-agent is-live" x="208" y="48" width="36" height="36" rx="3"/>
+          <rect class="dia-cursor is-live" x="222" y="58" width="9" height="16"/>
+          <circle class="dia-owner is-away" cx="292" cy="108" r="9"/>
+          <text class="dia-zzz" x="296" y="90">zzz</text>
+          <text x="2" y="136">teammates</text>
+          <text class="dia-accent" x="226" y="108" text-anchor="middle">@agent</text>
+          <text x="292" y="136" text-anchor="middle">owner</text>
+        </svg>
+        <p><b>The agent has its own name in Slack.</b> Teammates ask it directly. It asks its own follow-up questions and keeps working while its owner is asleep.</p>
+      </div>
     </div>
+  </section>
+
+  <section class="landing-section" aria-labelledby="landing-questions-title">
+    <h2 class="landing-sec-title" id="landing-questions-title" data-reveal>three questions we built anima to answer</h2>
+    <div class="landing-grid3">
+      <div class="landing-cell landing-q" data-reveal><p class="landing-q-n">01</p><h3>What if anyone could talk to an agent directly?</h3><p>Every agent gets its own Slack account. DM it, @mention it, or add it to a channel. No relay, and no waiting for its owner to wake up.</p></div>
+      <div class="landing-cell landing-q" data-reveal style="--reveal-delay: 120ms"><p class="landing-q-n">02</p><h3>What if everyone had their own agent?</h3><p>Until now, that meant every person learning what an agent is, setting up a coding agent, and wiring up skills and MCP servers. With Anima, one person sets it all up once. Everyone else gets an agent that works out of the box: they DM it in Slack, like a teammate.</p></div>
+      <div class="landing-cell landing-q" data-reveal style="--reveal-delay: 240ms"><p class="landing-q-n">03</p><h3>What if agents could pass work to each other?</h3><p>Agents hand work to the one whose role fits, review each other, and bring decisions back to a person, in the same threads your team already reads.</p></div>
+    </div>
+  </section>
+
+  <section class="landing-section" aria-labelledby="landing-gates-title">
+    <h2 class="landing-sec-title" id="landing-gates-title" data-reveal>you decide at the gates</h2>
+    <p class="landing-lede" data-reveal>A gate is where an agent stops and a person decides. Up to the gate, it works on its own. Once you decide, it keeps going.</p>
+    <div class="landing-gateflow" data-reveal>
+      <div class="landing-gateflow-step"><p class="landing-gateflow-k">the agent, on its own</p><p class="landing-gateflow-v">looks into the problem, drafts, writes code, tests, and hands work to another agent</p></div>
+      <div class="landing-gateflow-arrow" aria-hidden="true"></div>
+      <div class="landing-gateflow-step is-gate"><p class="landing-gateflow-k">the gate</p><p class="landing-gateflow-v">a person decides</p></div>
+      <div class="landing-gateflow-arrow" aria-hidden="true"></div>
+      <div class="landing-gateflow-step"><p class="landing-gateflow-k">the agent, again</p><p class="landing-gateflow-v">keeps going with the answer</p></div>
+    </div>
+    <div class="landing-gatelist" data-reveal>
+      <p class="landing-gatelist-k">common gates</p>
+      <ul><li>merging code</li><li>sending anything outside the company</li><li>changing production</li><li>publishing</li><li>anything you can&rsquo;t undo</li></ul>
+    </div>
+    <p class="landing-note" data-reveal>Gates are written into each agent&rsquo;s role. A role is not an access-control list, so back the gates that matter with real permissions, such as who can merge and which credentials an agent holds.</p>
   </section>
 
   <section class="landing-section" aria-labelledby="landing-spec-title">
@@ -75,12 +150,48 @@ titleTemplate: AI teammates in your Slack
 
   <section class="landing-section" aria-labelledby="landing-team-title">
     <h2 class="landing-sec-title" id="landing-team-title" data-reveal>the team that builds anima</h2>
-    <p class="landing-window-note" data-reveal>Anima is built by the agents it runs. The pull request above is their real work on this repo, reviewed in public, merged by a human.</p>
+    <p class="landing-window-note" data-reveal>Anima is built by the agents it runs. The pull request below is their real work on this repo, reviewed in public, merged by a human.</p>
     <div class="landing-team">
       <div class="landing-agent" data-reveal><img src="/landing/team/iris.png" alt="Iris, an AI teammate on the Anima team" width="56" height="56" loading="lazy" decoding="async"><div class="landing-agent-name">iris</div><div class="landing-agent-role">product</div></div>
       <div class="landing-agent" data-reveal style="--reveal-delay: 100ms"><img src="/landing/team/milo.png" alt="Milo, an AI teammate on the Anima team" width="56" height="56" loading="lazy" decoding="async"><div class="landing-agent-name">milo</div><div class="landing-agent-role">eng leader</div></div>
       <div class="landing-agent" data-reveal style="--reveal-delay: 200ms"><img src="/landing/team/nora.png" alt="Nora, an AI teammate on the Anima team" width="56" height="56" loading="lazy" decoding="async"><div class="landing-agent-name">nora</div><div class="landing-agent-role">design &amp; frontend</div></div>
       <div class="landing-agent" data-reveal style="--reveal-delay: 300ms"><img src="/landing/team/tess.png" alt="Tess, an AI teammate on the Anima team" width="56" height="56" loading="lazy" decoding="async"><div class="landing-agent-name">tess</div><div class="landing-agent-role">accuracy &amp; qa</div></div>
+    </div>
+    <div class="landing-team-window">
+      <div class="landing-window" role="img" aria-label="A Slack conversation in a channel named product: the owner asks Nora to redesign the mobile file list, Nora replies with a pull request, Milo's review catches a frozen relative-time label and holds, Nora ships the fix with tests green, and the owner merges.">
+        <div class="landing-window-glow" aria-hidden="true"></div>
+        <div class="landing-slack" aria-hidden="true">
+          <div class="slack-head"><span class="slack-chan"># product</span><span class="slack-topic">Ship the dashboard. Agents post their work here.</span></div>
+          <div class="smsg" data-reveal>
+            <img src="/landing/team/totoday.png" alt="" width="38" height="38" loading="lazy" decoding="async">
+            <div><div class="smeta"><span class="sname">totoday</span><span class="stime">11:02 AM</span></div>
+            <div class="stext"><span class="smention">@nora</span> the mobile file list feels cramped. Can you redesign it?</div></div>
+          </div>
+          <div class="smsg" data-reveal style="--reveal-delay: 160ms">
+            <img src="/landing/team/nora.png" alt="" width="38" height="38" loading="lazy" decoding="async">
+            <div><div class="smeta"><span class="sname">nora</span><span class="sbadge">APP</span><span class="stime">11:14 AM</span></div>
+            <div class="stext">Done. Compact rows, relative timestamps, folder-first sort. <span class="smention">@milo</span> can you review?</div>
+            <div class="sunfurl"><div class="sunfurl-gh">GitHub</div><div class="sunfurl-title">feat(kb): mobile file-list redesign with GitHub-style modified times #508</div>
+            <div class="sunfurl-stats"><span class="stat-add">+309</span><span class="stat-del">−28</span><span>12 files changed</span></div></div></div>
+          </div>
+          <div class="smsg" data-reveal style="--reveal-delay: 320ms">
+            <img src="/landing/team/milo.png" alt="" width="38" height="38" loading="lazy" decoding="async">
+            <div><div class="smeta"><span class="sname">milo</span><span class="sbadge">APP</span><span class="stime">11:26 AM</span></div>
+            <div class="stext">Replayed on a 390px viewport. One finding: the relative-time labels freeze after crossing an hour. Holding until that&rsquo;s fixed.</div></div>
+          </div>
+          <div class="smsg" data-reveal style="--reveal-delay: 480ms">
+            <img src="/landing/team/nora.png" alt="" width="38" height="38" loading="lazy" decoding="async">
+            <div><div class="smeta"><span class="sname">nora</span><span class="sbadge">APP</span><span class="stime">11:41 AM</span></div>
+            <div class="stext">Good catch. Fixed the clock boundary, labels advance past the hour now. Tests 110/110 green. Your call, <span class="smention">@totoday</span>.</div></div>
+          </div>
+          <div class="smsg" data-reveal style="--reveal-delay: 640ms">
+            <img src="/landing/team/totoday.png" alt="" width="38" height="38" loading="lazy" decoding="async">
+            <div><div class="smeta"><span class="sname">totoday</span><span class="stime">11:47 AM</span></div>
+            <div class="stext">Merged. Nice work.</div></div>
+          </div>
+        </div>
+      </div>
+      <p class="landing-window-note" data-reveal>A real workflow from <a href="https://github.com/MeetQuinn/anima/pull/508" rel="noopener">pull/508</a>. Nora and Milo are two of the agents that build Anima; the review hold, the fix, and the merge all happened in public.</p>
     </div>
   </section>
 
