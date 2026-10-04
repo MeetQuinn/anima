@@ -542,9 +542,10 @@ test('inbox and outbox commands show recent received and sent history', async ()
     assert.equal(inbox.status, 0, inbox.stderr || inbox.stdout);
     assert.match(inbox.stdout, /^Inbox \(1 entry, newest first\)/);
     assert.match(inbox.stdout, /\[time=2026-05-11T00:05:00\.000Z channel=#product channel_id=C-product message_ts=1770000205\.000001\] @bob: Second message for pagination\./);
-    assert.match(inbox.stdout, /\[page has_more=true next_cursor=2026-05-11T00:05:00\.000Z\]/);
+    assert.match(inbox.stdout, /\[page has_more=true next_cursor=c1\.[A-Za-z0-9_-]+\]/);
+    const cursor = inbox.stdout.match(/next_cursor=(c1\.[A-Za-z0-9_-]+)/)![1]!;
 
-    const secondPage = await runNode([cliPath, 'inbox', '--before', '2026-05-11T00:05:00.000Z'], { env });
+    const secondPage = await runNode([cliPath, 'inbox', '--before', cursor], { env });
     assert.equal(secondPage.status, 0, secondPage.stderr || secondPage.stdout);
     assert.match(secondPage.stdout, /\[time=2026-05-11T00:00:00\.000Z channel=#product channel_id=C-product thread_ts=1770000200\.000001 message_ts=1770000200\.000002\] Alice Cooper \(@alice\): Can you summarize the launch thread\?/);
 
@@ -623,7 +624,7 @@ test('local history commands scope threads before limiting and include the root'
     assert.equal(inbox.status, 0, inbox.stderr);
     assert.match(inbox.stdout, /launch inbound/);
     assert.doesNotMatch(inbox.stdout, /launch root|launch outbound|launch unrelated/);
-    assert.match(inbox.stdout, /has_more=true next_cursor=2026-05-11T00:01:00.000Z/);
+    assert.match(inbox.stdout, /has_more=true next_cursor=c1\.[A-Za-z0-9_-]+/);
     const next = await runNode([cliPath, 'inbox', ...scope, '--limit', '1', '--before', '2026-05-11T00:01:00.000Z'], { env });
     assert.equal(next.status, 0, next.stderr);
     assert.match(next.stdout, /launch root/);
@@ -711,7 +712,7 @@ test('inbox command defaults to twenty entries', async () => {
     assert.equal(inbox.stdout.split('\n').filter((line) => line.startsWith('[time=')).length, 20);
     assert.match(inbox.stdout, /\[time=2026-05-11T00:20:00\.000Z channel=#product channel_id=C-product message_ts=1770000320\.000001\] @user20: Message 20/);
     assert.doesNotMatch(inbox.stdout, /Message 00/);
-    assert.match(inbox.stdout, /\[page has_more=true next_cursor=2026-05-11T00:01:00\.000Z\]/);
+    assert.match(inbox.stdout, /\[page has_more=true next_cursor=c1\.[A-Za-z0-9_-]+\]/);
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }

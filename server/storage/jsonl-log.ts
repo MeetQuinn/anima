@@ -1,9 +1,14 @@
-import { appendFile, open, readFile, readdir, rename, unlink, type FileHandle } from 'node:fs/promises';
+import { appendFile, open, readFile, readdir, rename, stat, unlink, type FileHandle } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 import { cacheDelete, cacheHit, cacheSet, isMissingFile, statOrNull } from './json-file.js';
 import { withFileLock } from './lock.js';
 import { currentWriteRoot, ensureParentDirectory } from './write-root.js';
+import { HistoryReadError, type LogPosition } from './history-cursor.js';
+
+interface LogSegment { path: string; dev: string; ino: string }
+export interface PositionedRecord<T> { record: T; position: LogPosition }
+class SegmentChanged extends Error {}
 
 export const DEFAULT_JSONL_ROTATE_BYTES = 10 * 1024 * 1024;
 
@@ -119,6 +124,130 @@ export class JsonlAppendLog<T> {
       }
     }
     return out;
+  }
+
+  /** Append-order pagination. Positions remain valid when live is renamed. */
+  async readPage(input: {
+    limit: number;
+    matches: (record: T) => boolean;
+    idOf: (record: T) => string;
+    anchor?: { p: LogPosition; id: string };
+  }): Promise<{ rows: PositionedRecord<T>[]; hasMore: boolean }> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const segments = await this.pageSegments();
+      let result: { rows: PositionedRecord<T>[]; hasMore: boolean } | undefined;
+      let failure: unknown;
+      try {
+        result = await this.scanPage(segments, input);
+      } catch (error) {
+        failure = error;
+      }
+      const after = await this.pageSegments();
+      // Check every scan, even a successful short first page or missing anchor.
+      if (failure instanceof SegmentChanged || JSON.stringify(segments) !== JSON.stringify(after)) continue;
+      if (failure) throw failure;
+      if (result) return result;
+    }
+    throw new HistoryReadError('history_unstable', 503, 'History rotated during the read; retry this page.');
+  }
+
+  private async scanPage(segments: LogSegment[], input: {
+    limit: number;
+    matches: (record: T) => boolean;
+    idOf: (record: T) => string;
+    anchor?: { p: LogPosition; id: string };
+  }): Promise<{ rows: PositionedRecord<T>[]; hasMore: boolean }> {
+    const loaded = new Map<number, T[]>();
+    const read = async (i: number): Promise<T[]> => {
+      let records = loaded.get(i);
+      if (!records) {
+        records = await this.readPageSegment(segments[i]!);
+        loaded.set(i, records);
+      }
+      return records;
+    };
+    let segmentIndex = segments.length - 1;
+    let line: number | undefined;
+    if (input.anchor) {
+      const { p, id } = input.anchor;
+      segmentIndex = segments.findIndex((s) => s.dev === p.dev && s.ino === p.ino);
+      const candidate = segmentIndex < 0 ? undefined : (await read(segmentIndex))[p.line];
+      if (candidate !== undefined && input.idOf(candidate) === id) {
+        line = p.line - 1;
+      } else {
+        // Restore/copy/manual rewrite: only a unique logical id is safe.
+        const occurrences: { segment: number; line: number }[] = [];
+        for (let i = 0; i < segments.length; i += 1) {
+          (await read(i)).forEach((record, j) => {
+            if (input.idOf(record) === id) occurrences.push({ segment: i, line: j });
+          });
+        }
+        if (occurrences.length !== 1) {
+          throw new HistoryReadError('cursor_expired', 410,
+            occurrences.length === 0 ? 'anchor_missing; reload the first page.' : 'anchor_ambiguous; reload the first page.');
+        }
+        segmentIndex = occurrences[0]!.segment;
+        line = occurrences[0]!.line - 1;
+      }
+    }
+    const rows: PositionedRecord<T>[] = [];
+    for (let i = segmentIndex; i >= 0; i -= 1) {
+      const records = await read(i);
+      for (let j = line ?? records.length - 1; j >= 0; j -= 1) {
+        const record = records[j]!;
+        if (!input.matches(record)) continue;
+        if (rows.length === input.limit) return { rows, hasMore: true };
+        const segment = segments[i]!;
+        rows.push({ record, position: { dev: segment.dev, ino: segment.ino, line: j } });
+      }
+      line = undefined;
+    }
+    return { rows, hasMore: false };
+  }
+
+  private async pageSegments(): Promise<LogSegment[]> {
+    const paths = this.rotationEnabled() ? await this.segmentPaths() : [this.path];
+    const segments = await Promise.all(paths.map(async (path) => {
+      try {
+        const info = await stat(path, { bigint: true });
+        return { path, dev: String(info.dev), ino: String(info.ino) };
+      } catch (error) {
+        if (isMissingFile(error)) return undefined;
+        throw error;
+      }
+    }));
+    return segments.filter((s): s is LogSegment => s !== undefined);
+  }
+
+  private async readPageSegment(segment: LogSegment): Promise<T[]> {
+    let fd: FileHandle | undefined;
+    try {
+      fd = await open(segment.path, 'r');
+      const info = await fd.stat({ bigint: true });
+      if (String(info.dev) !== segment.dev || String(info.ino) !== segment.ino) throw new SegmentChanged();
+      const cacheKey = `${segment.path}:${segment.dev}:${segment.ino}`;
+      const stamp = { size: Number(info.size), mtimeMs: Number(info.mtimeMs) };
+      const hit = cacheHit<T[]>(cacheKey, stamp);
+      if (hit) return hit;
+      // Bind the rows and their line positions to this handle, not a path
+      // reopened after rename. A live append cannot extend this read window.
+      const bytes = Buffer.alloc(stamp.size);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const { bytesRead } = await fd.read(bytes, offset, bytes.length - offset, offset);
+        if (!bytesRead) throw new SegmentChanged();
+        offset += bytesRead;
+      }
+      const records = bytes.toString('utf8').split(/\r?\n/)
+        .filter((s) => s.trim() !== '').map((s) => JSON.parse(s) as T);
+      cacheSet(cacheKey, records, stamp);
+      return records;
+    } catch (error) {
+      if (isMissingFile(error)) throw new SegmentChanged();
+      throw error;
+    } finally {
+      await fd?.close();
+    }
   }
 
   async readNewestUntil(shouldStop: (record: T) => boolean): Promise<T[]> {

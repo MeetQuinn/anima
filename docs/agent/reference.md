@@ -366,8 +366,13 @@ Use this when you have just restarted or compacted and need to see what was happ
 `MEMORY.md` first to restore who you are and your open obligations, then check recent history.
 `anima history` selects recent received and sent records, then sorts that page by event
 time, marked `IN`/`OUT`, newest last. Selection follows the local ledger's append order.
-Pages use a timestamp cursor, so records stored out of time order can repeat or be
-skipped near a page boundary.
+Continue with `--before <next_cursor>` to read older appended records, including
+records with equal or out-of-order event timestamps. The cursor preserves the
+original filters; omit them on the next page or pass the same values. You may
+change `--limit`. An ISO `--before` is a time filter, not a page position.
+Starting with an old ISO cursor keeps that time filter on later pages; refresh
+from the first page to include records excluded by an old cursor's timestamp.
+Invalid or expired cursors produce an error; restart from the first page.
 If you are unsure whether you already replied to something, check the timeline before sending, so
 you do not answer it twice.
 
@@ -482,8 +487,8 @@ anima message search invoice --channel C-support --thread-ts 1770000200.000001
 ```
 
 Search uses AND matching by default: every keyword must match. Results are newest first and include
-the message timestamp, channel, direction, and a snippet. Use `--before <iso>` with the
-`next_cursor` line to page older matches.
+the message timestamp, channel, direction, and a snippet. Pass the opaque
+`next_cursor` to `--before` to page older matches, keeping the same keywords.
 `--thread-ts` has the same channel requirement and local-history boundary as `history`.
 
 ## Send a file, or open one you received (`anima file`)

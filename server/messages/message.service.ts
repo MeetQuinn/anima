@@ -11,6 +11,7 @@ import { messageFromActivity, messageFromInboxItem } from './message.projection.
 
 export interface MessageListInput {
   before?: string;
+  cursor?: string;
   channel?: string;
   direction?: AgentMessageDirection;
   limit?: number;
@@ -20,6 +21,7 @@ export interface MessageListInput {
 
 export interface MessageSearchInput {
   before?: string;
+  cursor?: string;
   channel?: string;
   keywords: string[];
   limit?: number;
@@ -49,10 +51,7 @@ export class MessageService {
 
   async list(input: MessageListInput = {}): Promise<AgentMessageHistoryPage> {
     const limit = normalizeHistoryLimit(input.limit);
-    const entries = await this.store.readLatest({ ...input, limit: limit + 1 });
-    const page = entries.slice(0, limit);
-    const nextCursor = entries.length > limit ? (page.at(-1)?.timestamp ?? null) : null;
-    return { entries: page, nextCursor };
+    return this.store.readPage({ ...input, limit, matchesKeywords: messageMatchesKeywords });
   }
 
   async listLatest(input: { limit: number }): Promise<AgentMessageRecord[]> {
@@ -67,14 +66,7 @@ export class MessageService {
     const keywords = normalizeSearchKeywords(input.keywords);
     if (keywords.length === 0) return { entries: [], nextCursor: null };
     const limit = normalizeHistoryLimit(input.limit);
-    const entries = await this.store.readLatest({
-      ...input,
-      limit: limit + 1,
-      matches: (entry) => messageMatchesKeywords(entry, keywords),
-    });
-    const page = entries.slice(0, limit);
-    const nextCursor = entries.length > limit ? (page.at(-1)?.timestamp ?? null) : null;
-    return { entries: page, nextCursor };
+    return this.store.readPage({ ...input, keywords, limit, matchesKeywords: messageMatchesKeywords });
   }
 
   hasInboxItem(itemId: string): Promise<boolean> {

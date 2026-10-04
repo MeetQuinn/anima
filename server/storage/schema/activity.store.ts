@@ -4,6 +4,7 @@ import { agentsDir } from './agent.store.js';
 import { makeId, nowIso } from '../../ids.js';
 import { DEFAULT_JSONL_ROTATE_BYTES, JsonlAppendLog } from '../jsonl-log.js';
 import type { Activity, ActivityType } from '../../../shared/activity.js';
+import { encodeHistoryCursor, resolveHistoryQuery } from '../history-cursor.js';
 
 export interface ActivityRecordInput {
   createdAt?: string;
@@ -29,6 +30,24 @@ export class ActivityStore {
     return await this.log().readAll();
   }
 
+  async readPage(input: { before?: string; cursor?: string; limit: number }): Promise<{
+    events: Activity[]; nextCursor: string | null;
+  }> {
+    const { anchor, filters } = resolveHistoryQuery({
+      agentId: this.agentId, kind: 'activity', before: input.before, cursor: input.cursor,
+    });
+    const { rows, hasMore } = await this.log().readPage({
+      limit: input.limit, anchor, idOf: (event) => event.activityId,
+      matches: (event) => !filters.beforeTime || event.createdAt < filters.beforeTime,
+    });
+    const last = rows.at(-1);
+    return {
+      events: rows.map(({ record }) => record).reverse(),
+      nextCursor: hasMore && last ? encodeHistoryCursor({ k: 'activity', a: this.agentId,
+        f: filters, p: last.position, id: last.record.activityId }) : null,
+    };
+  }
+
   /** Read the last `n` activity records without loading the full log file. */
   async readLastN(n: number): Promise<Activity[]> {
     return this.log().readTail(n);
@@ -49,7 +68,7 @@ export class ActivityStore {
 
   /**
    * Read the last `n` activity records with `createdAt` strictly before the
-   * given ISO timestamp cursor. Used for cursor-based backward pagination.
+   * given ISO time filter. Paged feeds use readPage's append-position cursor.
    * Returns oldest-first within the page.
    */
   async readBefore(beforeCreatedAt: string, n: number): Promise<Activity[]> {

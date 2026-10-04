@@ -180,9 +180,8 @@ export type Activity =
 export type ActivityType = Activity['type'];
 
 export interface AgentActivityFeedPage {
-  // Oldest-first within the page. Feed ordering derives from `createdAt`.
+  // Oldest-appended first within the page.
   events: Activity[];
-  // Cursor for the previous (older) page. ISO timestamp of the oldest feed
-  // event in this response. Null means there are no older events to load.
+  // Opaque append-position cursor. Null means no older matching records.
   nextCursor?: string | null;
 }

@@ -31,7 +31,7 @@ export function registerMessageHistoryCommands(program: Command): void {
     .command('history')
     .description('Show one chronological timeline of recent received and sent conversation traffic.')
     .option('--limit <n>', 'max entries to return (default: 20; hard cap: 500)')
-    .option('--before <iso>', 'page older than this ISO timestamp')
+    .option('--before <cursor-or-iso>', 'continue with next_cursor, or filter before an ISO timestamp')
     .option('--since <iso>', 'only include entries at or after this ISO timestamp')
     .option('--channel <id-or-name>', 'only include entries from a channel, DM handle, or conversation id')
     .option('--thread-ts <id>', 'only include this thread and its root message; requires --channel')
@@ -44,7 +44,7 @@ export function registerMessageHistoryCommands(program: Command): void {
     .command('inbox')
     .description('Show recent messages and wakes received by this agent.')
     .option('--limit <n>', 'max entries to return (default: 20; hard cap: 500)')
-    .option('--before <iso>', 'page older than this ISO timestamp')
+    .option('--before <cursor-or-iso>', 'continue with next_cursor, or filter before an ISO timestamp')
     .option('--since <iso>', 'only include entries at or after this ISO timestamp')
     .option('--channel <id-or-name>', 'only include entries from a channel, DM handle, or conversation id')
     .option('--thread-ts <id>', 'only include this thread and its root message; requires --channel')
@@ -57,7 +57,7 @@ export function registerMessageHistoryCommands(program: Command): void {
     .command('outbox')
     .description('Show recent messages, files, and reactions sent by this agent.')
     .option('--limit <n>', 'max entries to return (default: 20; hard cap: 500)')
-    .option('--before <iso>', 'page older than this ISO timestamp')
+    .option('--before <cursor-or-iso>', 'continue with next_cursor, or filter before an ISO timestamp')
     .option('--since <iso>', 'only include entries at or after this ISO timestamp')
     .option('--channel <id-or-name>', 'only include entries from a channel, DM handle, or conversation id')
     .option('--thread-ts <id>', 'only include this thread and its root message; requires --channel')
@@ -145,7 +145,7 @@ function validateThreadFilter(opts: { channel?: string; threadTs?: string }): vo
 
 function normalizeTimeWindow(opts: MessageHistoryInput): { before?: string; since?: string } {
   return {
-    ...(opts.before ? { before: normalizeIsoCursor(opts.before, '--before') } : {}),
+    ...(opts.before ? { before: opts.before.startsWith('c1.') ? opts.before : normalizeIsoCursor(opts.before, '--before') } : {}),
     ...(opts.since ? { since: normalizeIsoCursor(opts.since, '--since') } : {}),
   };
 }

@@ -92,6 +92,7 @@ export interface AgentMessageRecord {
 
 export interface AgentMessageHistoryPage {
   entries: AgentMessageRecord[];
+  // Opaque append-position cursor. Null means no older matching records.
   nextCursor?: string | null;
 }
 
