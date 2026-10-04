@@ -9,6 +9,8 @@ import { makeSlackEvent } from './helpers/slack.js';
 import { makeReminderInboxItem } from './helpers/inbox.js';
 import { waitFor } from './helpers/harness.js';
 import { allActivities, loadState } from './helpers/state.js';
+import type { AgentRuntimeFollowupInput, AgentRuntimeFollowupResult } from '../providers/contract.js';
+import { ActivityStore, type ActivityRecordInput } from '../storage/schema/activity.store.js';
 import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import { addProcessingReaction, removeProcessingReactions } from '../runtime/processing-reactions.js';
@@ -28,78 +30,126 @@ import {
   waitForInboxItemStatus,
 } from './helpers/runtime-worker.js';
 
-test('runtime worker appends one ordered snapshot across Slack surfaces', async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-worker-followup-batch-test-'));
-  const runtime = new FollowupRuntime();
-  const appendedIds: string[] = [];
-  let worker: AgentRuntimeWorker | undefined;
-  try {
-    await withAnimaHome(stateDir, async () => {
-      const coordinator = { agentId: 'scout', stateDir };
-      const first = await enqueueInbox(makeSlackEvent({
-        channelId: 'D-user',
-        eventId: 'evt-batch-first',
-        teamId: 'T-demo',
-        text: 'active body sentinel',
-        ts: '1770000010.000001',
-        userId: 'U1',
-      }), coordinator);
-      const second = await enqueueInbox(makeSlackEvent({
-        channelId: 'C-alpha',
-        eventId: 'evt-batch-second',
-        teamId: 'T-demo',
-        text: 'alpha body sentinel',
-        threadTs: '1770000001.000001',
-        ts: '1770000011.000001',
-        userId: 'U2',
-      }), coordinator);
-      const third = await enqueueInbox(makeSlackEvent({
-        channelId: 'C-beta',
-        eventId: 'evt-batch-third',
-        teamId: 'T-demo',
-        text: 'beta body sentinel',
-        ts: '1770000012.000001',
-        userId: 'U3',
-      }), coordinator);
-      worker = new AgentRuntimeWorker({
-        agentId: 'scout',
-        agentRuntime: runtime,
-        queue: queueFor('scout'),
-        onItemFollowupAppended: async (_active, context) => {
-          appendedIds.push(context.item.id);
-        },
-        pollIntervalMs: 10_000,
-        stateDir,
-        workerId: 'test-worker',
-      }, silentLogger);
-
-      const drain = worker.drainOnce();
-      await waitFor(() => runtime.followups.length === 1);
-      const followup = runtime.followups[0];
-      assert.deepEqual(followup?.itemIds, [second.ctx.item.id, third.ctx.item.id]);
-      assert.ok(followup);
-      assert.equal(
-        followup.prompt,
-        [
-          buildCodeAgentDeliveryPrompt(second.ctx.item),
-          buildCodeAgentDeliveryPrompt(third.ctx.item),
-        ].join('\n\n'),
-      );
-      await waitFor(() => appendedIds.length === 2);
-      assert.deepEqual(appendedIds, [second.ctx.item.id, third.ctx.item.id]);
-      await waitForInboxItemAppendedTo('scout', second.ctx.item.id, first.ctx.item.id);
-      await waitForInboxItemAppendedTo('scout', third.ctx.item.id, first.ctx.item.id);
-
-      runtime.finishNext();
-      assert.equal(await drain, 1);
-      assert.equal(await queueFor('scout').find(second.ctx.item.id), undefined);
-      assert.equal(await queueFor('scout').find(third.ctx.item.id), undefined);
+for (const tracePersistence of ['normal', 'slow', 'failed'] as const) {
+  test(`runtime worker appends one ordered snapshot across Slack surfaces with ${tracePersistence} trace persistence`, async (t) => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-worker-followup-batch-test-'));
+    const runtime = new class extends FollowupRuntime {
+      override async appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<AgentRuntimeFollowupResult & { text: string }> {
+        return { ...await super.appendToActiveRun(input), inputReceipt: {
+          controllerInstanceId: 'fake-controller', nativeInputId: 'fake-input-uuid',
+        } };
+      }
+    }();
+    const traces: Record<string, unknown>[] = [];
+    let releaseTrace!: () => void;
+    const traceGate = new Promise<void>((resolve) => { releaseTrace = resolve; });
+    const traceWrites: Promise<unknown>[] = [];
+    const record = ActivityStore.prototype.record;
+    t.mock.method(console, 'warn', () => {});
+    t.mock.method(ActivityStore.prototype, 'record', function (this: ActivityStore, input: ActivityRecordInput) {
+      if (input.payload?.['eventType'] !== 'runtime.input.trace') return record.call(this, input);
+      traces.push(input.payload);
+      const write = (async () => {
+        if (tracePersistence === 'failed') throw new Error('trace-worker-secret-error');
+        if (tracePersistence === 'slow') await traceGate;
+        return record.call(this, input);
+      })();
+      traceWrites.push(write);
+      return write;
     });
-  } finally {
-    await worker?.close();
-    await rm(stateDir, { force: true, recursive: true });
-  }
-});
+    const appendedIds: string[] = [];
+    let worker: AgentRuntimeWorker | undefined;
+    try {
+      await withAnimaHome(stateDir, async () => {
+        try {
+          const coordinator = { agentId: 'scout', stateDir };
+          const first = await enqueueInbox(makeSlackEvent({
+            channelId: 'D-user',
+            eventId: 'evt-batch-first',
+            teamId: 'T-demo',
+            text: 'active body sentinel',
+            ts: '1770000010.000001',
+            userId: 'U1',
+          }), coordinator);
+          const second = await enqueueInbox(makeSlackEvent({
+            channelId: 'C-alpha',
+            eventId: 'evt-batch-second',
+            teamId: 'T-demo',
+            text: 'alpha body sentinel',
+            threadTs: '1770000001.000001',
+            ts: '1770000011.000001',
+            userId: 'U2',
+          }), coordinator);
+          const third = await enqueueInbox(makeSlackEvent({
+            channelId: 'C-beta',
+            eventId: 'evt-batch-third',
+            teamId: 'T-demo',
+            text: 'beta body sentinel',
+            ts: '1770000012.000001',
+            userId: 'U3',
+          }), coordinator);
+          worker = new AgentRuntimeWorker({
+            agentId: 'scout',
+            agentRuntime: runtime,
+            queue: queueFor('scout'),
+            onItemFollowupAppended: async (_active, context) => {
+              appendedIds.push(context.item.id);
+            },
+            pollIntervalMs: 10_000,
+            stateDir,
+            workerId: 'test-worker',
+          }, silentLogger);
+
+          const drain = worker.drainOnce();
+          await waitFor(() => runtime.followups.length === 1);
+          const followup = runtime.followups[0];
+          assert.deepEqual(followup?.itemIds, [second.ctx.item.id, third.ctx.item.id]);
+          assert.ok(followup);
+          assert.equal(
+            followup.prompt,
+            [
+              buildCodeAgentDeliveryPrompt(second.ctx.item),
+              buildCodeAgentDeliveryPrompt(third.ctx.item),
+            ].join('\n\n'),
+          );
+          await waitFor(() => appendedIds.length === 2);
+          assert.deepEqual(appendedIds, [second.ctx.item.id, third.ctx.item.id]);
+          await waitForInboxItemAppendedTo('scout', second.ctx.item.id, first.ctx.item.id);
+          await waitForInboxItemAppendedTo('scout', third.ctx.item.id, first.ctx.item.id);
+
+          assert.equal(runtime.followups.length, 1, 'failed or slow observations cannot resend');
+          assert.deepEqual(traces.map((trace) => trace['phase']), ['input.prepared', 'input.accepted']);
+          assert.ok(followup.batchId);
+          assert.ok(traces.every((trace) => trace['batchId'] === followup.batchId));
+          assert.ok(traces.every((trace) => trace['activeItemId'] === first.ctx.item.id));
+          assert.ok(traces.every((trace) => JSON.stringify(trace['itemIds']) === JSON.stringify(followup.itemIds)));
+          assert.equal(traces[1]?.['nativeInputId'], 'fake-input-uuid');
+          assert.equal(traces[1]?.['controllerInstanceId'], 'fake-controller');
+          assert.equal(/body sentinel|trace-worker-secret-error/.test(JSON.stringify(traces)), false);
+          releaseTrace();
+          await Promise.allSettled(traceWrites);
+          if (tracePersistence !== 'failed') {
+            const stored = allActivities(await loadState()).filter((activity) => activity.payload?.['eventType'] === 'runtime.input.trace');
+            assert.equal(stored.length, 2, 'real activity consumer persists both stages');
+          }
+          runtime.finishNext();
+          assert.equal(await drain, 1);
+          assert.equal(await queueFor('scout').find(second.ctx.item.id), undefined);
+          assert.equal(await queueFor('scout').find(third.ctx.item.id), undefined);
+        } finally {
+          releaseTrace();
+          await worker?.close();
+          await Promise.allSettled(traceWrites);
+        }
+      });
+    } finally {
+      releaseTrace();
+      await worker?.close();
+      await Promise.allSettled(traceWrites);
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
 
 test('runtime worker follow-up snapshots enforce the item-count limit', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-followup-batch-limits-test-'));

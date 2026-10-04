@@ -1,12 +1,14 @@
+import { observeInputTrace } from '../providers/input-trace.js';
 import { errorMessage } from '../ids.js';
 import type { WakeQueueService } from '../inbox/wake-queue.service.js';
 import {
   recordRuntimeFollowupAppended,
   recordRuntimeFollowupFailed,
   recordRuntimePending,
+  recordRuntimeEvent,
 } from './activity.js';
 import { runtimeContextForItemId } from './context.js';
-import type { AgentRuntime } from '../providers/contract.js';
+import type { AgentRuntime, AgentRuntimeInputReceipt } from '../providers/contract.js';
 import type { AgentRuntimeBridge } from './runtime-bridge.js';
 import { readRestartDrainActive } from './intake-gate.js';
 import type { RuntimeItemContext, RuntimeWorkerConfig } from './types.js';
@@ -183,12 +185,20 @@ async function tryFollowupBatch(
       return;
     }
 
-    const result = await input.agentRuntime.appendToActiveRun({
+    const traceContext = {
+      batchId: followupInput.batchId,
       activeItemId: input.activeContext.item.id,
       itemIds,
-      prompt,
-    });
+    };
+    const trace = (phase: 'input.prepared' | 'input.accepted' | 'input.rejected_before_write',
+      receipt?: AgentRuntimeInputReceipt) => observeInputTrace(
+      (payload) => recordRuntimeEvent({ agentId: input.runtimeConfig.agentId }, input.agentRuntime.kind, undefined, payload),
+      { phase, context: traceContext, receipt },
+    );
+    trace('input.prepared');
+    const result = await input.agentRuntime.appendToActiveRun({ ...traceContext, prompt });
     if (!result.accepted) {
+      trace('input.rejected_before_write');
       // Rejected: do not advance cursors or coalesce.
       await input.queue.requeueBatch(itemIds);
       if (result.retryable) {
@@ -210,6 +220,7 @@ async function tryFollowupBatch(
 
     // Irreversible accept: never requeue from here, even if commit fails.
     accepted = true;
+    trace('input.accepted', result.inputReceipt);
 
     // Commit each unique merged plan once. On failure: still mark appended
     // (provider already has the text) and surface a durable error — no requeue.

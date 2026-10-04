@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -93,6 +94,7 @@ export class AgentRuntimeBridge {
       promptBytes = candidateBytes;
     }
     return {
+      batchId: randomUUID(),
       activeItemId: input.activeContext.item.id,
       itemIds,
       prompt: prompts.join('\n\n'),
@@ -161,7 +163,7 @@ export class AgentRuntimeBridge {
         return recordAgentText(target, this.runtime.kind, text, payload);
       },
       recordEvent: (payload) => {
-        noteActivity();
+        if (payload['eventType'] !== 'runtime.input.trace') noteActivity();
         return recordRuntimeEvent(target, this.runtime.kind, this.runtime.env, payload);
       },
       recordOutput: (stream, text) => {

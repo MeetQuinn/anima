@@ -64,14 +64,24 @@ export interface AgentRuntimeResult {
   text?: string;
 }
 
-export interface AgentRuntimeFollowupInput {
+export interface AgentRuntimeInputTraceContext {
+  batchId: string;
   activeItemId: string;
   itemIds: string[];
+}
+
+export interface AgentRuntimeInputReceipt {
+  controllerInstanceId: string;
+  nativeInputId: string;
+}
+
+export interface AgentRuntimeFollowupInput extends AgentRuntimeInputTraceContext {
   prompt: string;
 }
 
 export interface AgentRuntimeFollowupResult {
   accepted: boolean;
+  inputReceipt?: AgentRuntimeInputReceipt;
   retryable?: boolean;
   text?: string;
 }
