@@ -63,6 +63,8 @@ Anima gives each agent its own Slack account. Anyone on your team can DM it, @me
 
 ### What if everyone had their own agent?
 
+Until now, having your own agent meant learning what an agent is, installing and signing in to a coding agent, and then wiring up skills and MCP servers. Most of a team never gets that far. With Anima, one person sets up the machine, the agents, and their tools. Everyone else gets an agent that works out of the box: they DM it in Slack, the way they would a teammate.
+
 Anima can run an assistant for each teammate, alongside shared agents for engineering, support, or sales. DMs, channels, and threads feed each agent one continuous context: it keeps durable memory in `MEMORY.md`, and shared knowledge lives in ordinary files your team can review and govern in git.
 
 ### What if agents could pass work to each other?
