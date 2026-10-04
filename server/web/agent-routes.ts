@@ -155,10 +155,10 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
     async (request) => {
       const limitParam = queryParam(request.url, 'limit');
       const limit = limitParam ? parseInt(limitParam, 10) : undefined;
-      // `before` is an ISO timestamp cursor for backward pagination.
-      // Absent on the first (newest) page; present when loading older history.
+      // Opaque append-position cursor; legacy ISO values remain time filters.
       const before = queryParam(request.url, 'before') ?? undefined;
-      return activityServiceForAgent(request.params.agentId).listActivityFeed({ before, limit });
+      const cursor = queryParam(request.url, 'cursor') ?? undefined;
+      return activityServiceForAgent(request.params.agentId).listActivityFeed({ before, cursor, limit });
     },
   );
   fastify.get<{ Params: { agentId: string } }>(
@@ -168,6 +168,7 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
       const limit = limitParam ? parseInt(limitParam, 10) : undefined;
       const before = queryParam(request.url, 'before') ?? undefined;
       const since = queryParam(request.url, 'since') ?? undefined;
+      const cursor = queryParam(request.url, 'cursor') ?? undefined;
       const rawDirection = queryParam(request.url, 'direction');
       const direction = rawDirection === 'in' || rawDirection === 'out' ? rawDirection : undefined;
       // Channel scope for the Channels detail pane: fetch (and paginate) only
@@ -176,6 +177,7 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
       const channel = queryParam(request.url, 'channel') ?? undefined;
       const page = await messageServiceForAgent(request.params.agentId).list({
         before,
+        cursor,
         channel,
         direction,
         limit,

@@ -70,7 +70,10 @@ test('message service reads newest matching page without requiring a full ledger
 
       const firstPage = await messageServiceForAgent('scout').list({ limit: 2 });
       assert.deepEqual(firstPage.entries.map((entry) => entry.messageId), ['new-in', 'mid-out']);
-      assert.equal(firstPage.nextCursor, '2026-05-11T00:01:00.000Z');
+      assert.match(firstPage.nextCursor!, /^c1\./);
+      const older = await messageServiceForAgent('scout').list({ before: firstPage.nextCursor!, limit: 2 });
+      assert.deepEqual(older.entries.map((entry) => entry.messageId), ['old-in']);
+      assert.equal(older.nextCursor, null);
 
       const inboxPage = await messageServiceForAgent('scout').list({ direction: 'in', limit: 2 });
       assert.deepEqual(inboxPage.entries.map((entry) => entry.messageId), ['new-in', 'old-in']);
@@ -125,7 +128,7 @@ test('thread filters include stored roots, scope channels and preserve opaque to
       ]);
       const page = await messageServiceForAgent('scout').list({ channel: '#product', threadTs: 'topic:opaque-id', limit: 1 });
       assert.deepEqual(page.entries.map((entry) => entry.messageId), ['reply']);
-      assert.equal(page.nextCursor, '2026-05-11T00:01:00.000Z');
+      assert.match(page.nextCursor!, /^c1\./);
       const next = await messageServiceForAgent('scout').list({ channel: '#product', threadTs: 'topic:opaque-id', before: page.nextCursor!, limit: 1 });
       assert.deepEqual(next.entries.map((entry) => entry.messageId), ['root']);
       assert.equal(next.nextCursor, null);

@@ -4,6 +4,7 @@ import { agentsDir } from './agent.store.js';
 import type { AgentMessageDirection, AgentMessageRecord } from '../../../shared/messages.js';
 import { messageMatchesChannel } from '../../../shared/channel-match.js';
 import { DEFAULT_JSONL_ROTATE_BYTES, JsonlAppendLog } from '../jsonl-log.js';
+import { encodeHistoryCursor, resolveHistoryQuery } from '../history-cursor.js';
 
 const MESSAGE_DEDUPE_RECENT_LIMIT = 10_000;
 
@@ -30,6 +31,40 @@ export class MessageStore {
 
   async hasMessageId(messageId: string): Promise<boolean> {
     return (await this.log().readNewestMatching(1, (entry) => entry.messageId === messageId)).length > 0;
+  }
+
+  async readPage(input: {
+    before?: string;
+    cursor?: string;
+    channel?: string;
+    direction?: AgentMessageDirection;
+    keywords?: string[];
+    limit: number;
+    since?: string;
+    threadTs?: string;
+    matchesKeywords: (entry: AgentMessageRecord, keywords: string[]) => boolean;
+  }): Promise<{ entries: AgentMessageRecord[]; nextCursor: string | null }> {
+    const { anchor, filters } = resolveHistoryQuery({
+      agentId: this.agentId, kind: 'messages', before: input.before, cursor: input.cursor,
+      filters: { channel: input.channel, direction: input.direction, keywords: input.keywords,
+        since: input.since, threadTs: input.threadTs },
+    });
+    const { rows, hasMore } = await this.log().readPage({
+      limit: input.limit, anchor, idOf: (entry) => entry.messageId,
+      matches: (entry) =>
+        (!filters.direction || entry.direction === filters.direction) &&
+        (!filters.beforeTime || entry.timestamp < filters.beforeTime) &&
+        (!filters.since || entry.timestamp >= filters.since) &&
+        (!filters.channel || messageMatchesChannel(entry, filters.channel)) &&
+        (!filters.threadTs || (entry.threadTs ?? entry.messageTs) === filters.threadTs) &&
+        (!filters.keywords || input.matchesKeywords(entry, filters.keywords)),
+    });
+    const last = rows.at(-1);
+    return {
+      entries: rows.map(({ record }) => record),
+      nextCursor: hasMore && last ? encodeHistoryCursor({ k: 'messages', a: this.agentId,
+        f: filters, p: last.position, id: last.record.messageId }) : null,
+    };
   }
 
   async readLatest(input: {

@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { defaultAgentRegistryService } from '../../agents/agent.service.js';
-import type { Activity, AgentActivityFeedPage } from '../../../shared/activity.js';
+import type { Activity } from '../../../shared/activity.js';
 
 export const agentService = (agentId: string) => defaultAgentRegistryService.serviceFor(agentId);
 
@@ -21,16 +21,11 @@ export function webApiTestActivity(activityId: string, createdAt: string): Activ
   };
 }
 
-export function activityFeedReferencePages(activities: Activity[], limit: number): AgentActivityFeedPage[] {
-  const pages: AgentActivityFeedPage[] = [];
-  let cursor: string | undefined;
-  do {
-    const before = cursor;
-    const events = (before ? activities.filter((activity) => activity.createdAt < before) : activities).slice(-limit);
-    const nextCursor = events.length >= limit ? (events[0]?.createdAt ?? null) : null;
-    pages.push({ events, nextCursor });
-    cursor = nextCursor ?? undefined;
-  } while (cursor);
+export function activityFeedReferencePages(activities: Activity[], limit: number): Activity[][] {
+  const pages: Activity[][] = [];
+  for (let end = activities.length; end > 0; end -= limit) {
+    pages.push(activities.slice(Math.max(0, end - limit), end));
+  }
   return pages;
 }
 

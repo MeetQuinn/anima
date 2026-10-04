@@ -190,7 +190,10 @@ test('activity feed cursor pagination matches readAll reference across archives'
         cursor = page.nextCursor ?? undefined;
       } while (cursor);
 
-      assert.deepEqual(actualPages, activityFeedReferencePages(await service.readAll(), 3));
+      const reference = activityFeedReferencePages(await service.readAll(), 3);
+      assert.deepEqual(actualPages.map((page) => page.events), reference);
+      assert.match(actualPages[0]!.nextCursor!, /^c1\./);
+      assert.equal(actualPages.at(-1)!.nextCursor, null);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

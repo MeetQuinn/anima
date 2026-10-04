@@ -1,5 +1,6 @@
 import { ZodError } from 'zod';
 import { ContactPolicyRefusal } from '../messages/contact-policy.service.js';
+import { HistoryReadError } from '../storage/history-cursor.js';
 
 type CliErrorLayer = 'input' | 'anima' | 'slack' | 'feishu' | 'network';
 type CliErrorCode = `${CliErrorLayer}.${string}`;
@@ -35,6 +36,13 @@ export function cliError(classification: CliErrorClassification): CliError {
 
 function classifyCliError(error: unknown): CliErrorClassification {
   if (error instanceof CliError) return error.cli;
+  if (error instanceof HistoryReadError) {
+    return {
+      code: error.code === 'cursor_invalid' ? 'input.cursor_invalid' : `anima.${error.code}`,
+      hint: error.message,
+      retryable: error.code === 'history_unstable',
+    };
+  }
   if (error instanceof ContactPolicyRefusal) {
     if (error.kind === 'unverified') return { code: 'anima.contact_unverified', hint: error.message, retryable: true };
     if (error.kind === 'config') return { code: 'anima.contact_policy_config', hint: error.message, retryable: false };

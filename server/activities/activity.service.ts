@@ -4,6 +4,7 @@ import { ActivityStore, type ActivityRecordInput } from '../storage/schema/activ
 
 export interface ActivityListInput {
   before?: string;
+  cursor?: string;
   limit?: number;
 }
 
@@ -40,12 +41,7 @@ export class ActivityService {
 
   async listActivityFeed(input: ActivityListInput = {}): Promise<AgentActivityFeedPage> {
     const limit = normalizeHistoryLimit(input.limit);
-    const activities = input.before
-      ? await this.store.readBefore(input.before, limit)
-      : await this.store.readLastN(limit);
-    const events = activities;
-    const nextCursor = events.length >= limit ? (events[0]?.createdAt ?? null) : null;
-    return { events, nextCursor };
+    return this.store.readPage({ ...input, limit });
   }
 
 }

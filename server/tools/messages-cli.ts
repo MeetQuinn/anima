@@ -102,7 +102,7 @@ export function registerMessageCommands(program: Command): void {
     .option('--channel <channel>', 'only search one channel/DM by id or display label')
     .option('--thread-ts <id>', 'only search this thread and its root message; requires --channel')
     .option('--limit <n>', 'max matches to return (default: 20; hard cap: 500)')
-    .option('--before <iso>', 'matches before this ISO timestamp')
+    .option('--before <cursor-or-iso>', 'continue with next_cursor, or filter before an ISO timestamp')
     .option('--since <iso>', 'matches at or after this ISO timestamp')
     .action(async (keywords: string[], _: unknown, command: Command) => {
       const opts = MessageSearchSchema.parse({
