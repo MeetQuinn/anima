@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { observeInputTrace } from './input-trace.js';
 import { isRecord, stringField } from '../json.js';
 import { classifyProviderFailureReason, ProviderTurnFailedError } from './provider-failure.js';
 import { type RunningChildProcess } from './child-process.js';
@@ -17,6 +18,8 @@ import type { ProviderWorkSnapshot } from '../../shared/snapshot.js';
 import {
   providerSessionPayload,
   type ProviderSessionRecord,
+  AgentRuntimeInputTraceContext,
+  AgentRuntimeInputReceipt,
   AgentRuntimeFollowupInput,
   AgentRuntimeFollowupResult,
   AgentRuntimeInput,
@@ -139,8 +142,8 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
     const controller = this.slot.get();
     if (!this.activeRun.accepts(input)) return { accepted: false };
     if (!controller?.hasCurrentTurn()) return { accepted: false };
-    await controller.writeUserMessage(input.prompt);
-    return { accepted: true, text: 'appended to Claude stream-json stdin' };
+    const inputReceipt = await controller.writeUserMessage(input.prompt, input);
+    return { accepted: true, inputReceipt, text: 'appended to Claude stream-json stdin' };
   }
 
   private async ensureController(input: AgentRuntimeInput): Promise<ClaudeStreamJsonController> {
@@ -171,7 +174,9 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
     const turn = controller.startTurn(input, jsonlMapper);
     const usageRecordCount = jsonlMapper.usageRecordCount();
     try {
-      await controller.writeUserMessage(prompt);
+      const context = { batchId: randomUUID(), activeItemId: input.itemId, itemIds: [input.itemId] };
+      observeInputTrace((payload) => input.effects.recordEvent(payload), { phase: 'input.prepared', context });
+      await controller.writeUserMessage(prompt, context);
       return await turn;
     } catch (error) {
       controller.abortCurrentTurn(error);
@@ -233,6 +238,7 @@ function claudeSessionNotFound(stderr: string): boolean {
 }
 
 class ClaudeStreamJsonController {
+  private readonly controllerInstanceId = randomUUID();
   private readonly activeToolUseIds = new Set<string>();
   private readonly activeHookIds = new Set<string>();
   private autoRewakePending = false;
@@ -252,7 +258,12 @@ class ClaudeStreamJsonController {
   private providerTurnActive = false;
   private stderrText = '';
   private currentTurn?: {
-    commands: Map<string, { startedAfterResult?: number; completed: boolean }>;
+    commands: Map<string, {
+      startedAfterResult?: number;
+      completed: boolean;
+      context: AgentRuntimeInputTraceContext;
+      receipt: AgentRuntimeInputReceipt;
+    }>;
     hadProviderToolCall: boolean;
     input: AgentRuntimeInput;
     jsonlMapper: ReturnType<typeof createClaudeJsonlActivityMapper>;
@@ -263,13 +274,18 @@ class ClaudeStreamJsonController {
   };
   private readonly queuedMessages: Array<{
     reject(error: unknown): void;
-    resolve(): void;
+    resolve(receipt: AgentRuntimeInputReceipt): void;
+    context: AgentRuntimeInputTraceContext;
     text: string;
   }> = [];
   private readonly quiescentWaiters = new QuiescentWaiterSet();
   private startedSession = false;
 
   constructor(private readonly child: RunningChildProcess) {
+    void child.completion.then(
+      () => this.observeExitGap(),
+      () => this.observeExitGap(),
+    );
     child.completion
       .then(async ({ stderr, stdout }) => {
         this.clearAutoRewakePending();
@@ -348,24 +364,25 @@ class ClaudeStreamJsonController {
     });
   }
 
-  writeUserMessage(text: string): Promise<void> {
+  writeUserMessage(text: string, context: AgentRuntimeInputTraceContext): Promise<AgentRuntimeInputReceipt> {
     if (this.inputGateClosed()) {
       return new Promise((resolve, reject) => {
-        this.queuedMessages.push({ reject, resolve, text });
+        this.queuedMessages.push({ context, reject, resolve, text });
       });
     }
-    this.sendUserMessage(text);
-    return Promise.resolve();
+    return Promise.resolve(this.sendUserMessage(text, context));
   }
 
   abortCurrentTurn(error: unknown): void {
     this.rejectCurrentTurn(error);
   }
 
-  private sendUserMessage(text: string): void {
+  private sendUserMessage(text: string, context: AgentRuntimeInputTraceContext): AgentRuntimeInputReceipt {
     const uuid = randomUUID();
     const turn = this.currentTurn;
-    turn?.commands.set(uuid, { completed: false });
+    const receipt = { controllerInstanceId: this.controllerInstanceId, nativeInputId: uuid };
+    const traceContext = { batchId: context.batchId, activeItemId: context.activeItemId, itemIds: [...context.itemIds] };
+    turn?.commands.set(uuid, { completed: false, context: traceContext, receipt });
     try {
       this.child.writeStdin(`${JSON.stringify({
         message: {
@@ -377,8 +394,15 @@ class ClaudeStreamJsonController {
       })}\n`);
     } catch (error) {
       turn?.commands.delete(uuid);
+      if (turn) observeInputTrace((payload) => turn.input.effects.recordEvent(payload), {
+        phase: 'input.rejected_before_write', context: traceContext,
+      });
       throw error;
     }
+    if (turn) observeInputTrace((payload) => turn.input.effects.recordEvent(payload), {
+      phase: 'input.written', context: traceContext, receipt,
+    });
+    return receipt;
   }
 
   kill(signal?: NodeJS.Signals): void {
@@ -408,6 +432,7 @@ class ClaudeStreamJsonController {
       if (value) {
         this.updateInputGate(value);
         this.refreshInputCompletionTimeout();
+        this.observeNativeLifecycle(value);
       }
       const sink = this.outputSink(value);
       sink?.input.onActivity?.();
@@ -473,8 +498,18 @@ class ClaudeStreamJsonController {
       this.compacting = false;
       this.activeToolUseIds.clear();
       this.resolveQuiescentWaitersIfReady();
+      const resultSink = owner === 'background'
+        ? this.backgroundObserver ?? this.currentTurn
+        : this.currentTurn ?? this.backgroundObserver;
+      const effects = resultSink?.input.effects;
       const providerError = claudeProviderErrorFromResult(parsed, {
         sideEffectFree: owner !== 'background' && this.currentTurn?.hadProviderToolCall !== true,
+      });
+      if (effects) observeInputTrace((payload) => effects.recordEvent(payload), {
+        // Controller-level evidence only: an old/background result must not
+        // acquire the batch or UUID of a pending human input.
+        phase: 'result.observed', controllerInstanceId: this.controllerInstanceId,
+        resultOrdinal: this.nativeResultCount + (owner !== 'background' && !providerError ? 1 : 0), owner: owner ?? 'unknown',
       });
       if (providerError) {
         if (owner !== 'background') {
@@ -542,14 +577,40 @@ class ClaudeStreamJsonController {
       const message = this.queuedMessages.shift();
       if (!message) continue;
       try {
-        this.sendUserMessage(message.text);
-        message.resolve();
+        const receipt = this.sendUserMessage(message.text, message.context);
+        message.resolve(receipt);
         flushed += 1;
       } catch (error) {
         message.reject(error);
       }
     }
     return flushed;
+  }
+
+  private observeNativeLifecycle(value: Record<string, unknown>): void {
+    if (stringField(value, 'type') !== 'command_lifecycle') return;
+    const uuid = stringField(value, 'command_uuid');
+    const turn = this.currentTurn;
+    const command = uuid && turn?.commands.get(uuid);
+    const state = stringField(value, 'state');
+    if (!command || !turn || !state
+      || !['queued', 'started', 'completed', 'cancelled', 'discarded', 'refused'].includes(state)) return;
+    observeInputTrace((payload) => turn.input.effects.recordEvent(payload), {
+      phase: 'input.native_lifecycle', context: command.context, receipt: command.receipt,
+      nativeState: state, resultOrdinal: this.nativeResultCount,
+    });
+  }
+
+  private observeExitGap(): void {
+    const turn = this.currentTurn;
+    if (!turn) return;
+    for (const command of turn.commands.values()) {
+      if (command.completed && command.startedAfterResult !== undefined
+        && this.nativeResultCount > command.startedAfterResult) continue;
+      observeInputTrace((payload) => turn.input.effects.recordEvent(payload), {
+        phase: 'input.unconfirmed_on_exit', context: command.context, receipt: command.receipt,
+      });
+    }
   }
 
   private inputGateClosed(): boolean {
@@ -732,7 +793,12 @@ class ClaudeStreamJsonController {
   private rejectQueuedMessages(error: unknown): void {
     while (this.queuedMessages.length > 0) {
       const message = this.queuedMessages.shift();
-      message?.reject(error);
+      if (!message) continue;
+      const turn = this.currentTurn;
+      if (turn) observeInputTrace((payload) => turn.input.effects.recordEvent(payload), {
+        phase: 'input.rejected_before_write', context: message.context,
+      });
+      message.reject(error);
     }
   }
 }

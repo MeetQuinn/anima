@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { sleep, waitFor, withTimeout } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
@@ -1060,10 +1061,10 @@ test('claude-code stream-json input keeps stdin open for active-run follow-up', 
     });
     const runPromise = runtime.run(await runtimeInput(runtime, firstCtx, await loadState()));
     await waitFor(async () => (await readFile(callsPath, 'utf8')).includes('first message'));
-    assert.deepEqual(
-      await runtime.appendToActiveRun(await runtimeFollowupInput(runtime, firstCtx, secondCtx, await loadState())),
-      { accepted: true, text: 'appended to Claude stream-json stdin' },
-    );
+    const appended = await runtime.appendToActiveRun(await runtimeFollowupInput(runtime, firstCtx, secondCtx, await loadState()));
+    assert.equal(appended.accepted, true);
+    assert.equal(appended.text, 'appended to Claude stream-json stdin');
+    assert.ok(appended.inputReceipt);
     assert.equal((await runPromise).text, 'stream-json done');
 
     const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { message: { content: Array<{ text: string }> } });
@@ -1201,10 +1202,10 @@ test('claude-code follow-up append waits for compact and tool gates before writi
       assert.equal((await readFile(callsPath, 'utf8')).trim().split('\n').length, 1);
 
       await writeFile(releasePath, '1', 'utf8');
-      assert.deepEqual(
-        await withTimeout(appendPromise, 2_000),
-        { accepted: true, text: 'appended to Claude stream-json stdin' },
-      );
+      const appended = await withTimeout(appendPromise, 2_000);
+      assert.equal(appended.accepted, true);
+      assert.equal(appended.text, 'appended to Claude stream-json stdin');
+      assert.ok(appended.inputReceipt);
       assert.equal((await withTimeout(runPromise, 2_000)).text, 'gated done');
     } finally {
       releaseGatePersistence.resolve();
@@ -1322,10 +1323,10 @@ test('claude-code closes the tool gate before tool.call.started persists', async
       assert.equal(appendSettled, false);
 
       await writeFile(releasePath, '1', 'utf8');
-      assert.deepEqual(
-        await withTimeout(appendPromise, 2_000),
-        { accepted: true, text: 'appended to Claude stream-json stdin' },
-      );
+      const appended = await withTimeout(appendPromise, 2_000);
+      assert.equal(appended.accepted, true);
+      assert.equal(appended.text, 'appended to Claude stream-json stdin');
+      assert.ok(appended.inputReceipt);
       assert.equal((await withTimeout(runPromise, 2_000)).text, 'tool gated done');
     } finally {
       releaseToolPersistence.resolve();
@@ -1482,19 +1483,24 @@ interface ClaudeLifecycleFixture {
   emit(frames: Array<Record<string, unknown>>, final?: boolean): Promise<void>;
   releaseToolPersistence(): void;
   releaseCompletionPersistence(): void;
+  traces: Array<Record<string, unknown>>;
   runPromise: Promise<AgentRuntimeResult>;
   runtime: AgentRuntime;
 }
 
 async function withClaudeLifecycleFixture(
   body: (fixture: ClaudeLifecycleFixture) => Promise<void>,
-  options: { slowToolPersistence?: boolean; slowCompletionPersistence?: boolean } = {},
+  options: { slowToolPersistence?: boolean; slowCompletionPersistence?: boolean;
+    tracePersistence?: 'slow' | 'failed'; nativeLifecycle?: false } = {},
 ): Promise<void> {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-claude-lifecycle-'));
   let runtime: AgentRuntime | undefined;
   const releaseTool = deferredSignal();
   const completionPersistence = deferredSignal();
   const releaseCompletion = deferredSignal();
+  const releaseTrace = deferredSignal();
+  const traces: Array<Record<string, unknown>> = [];
+  const traceWrites: Array<Promise<unknown>> = [];
   try {
     await withAnimaHome(stateDir, async () => {
       const callsPath = join(stateDir, 'inputs.jsonl');
@@ -1512,11 +1518,11 @@ async function withClaudeLifecycleFixture(
         '  const value = JSON.parse(line);',
         '  commands.push(value);',
         "  appendFileSync(process.env.CALLS_PATH, line + '\\n');",
-        "  send({ type: 'command_lifecycle', command_uuid: value.uuid, state: 'queued' });",
+        options.nativeLifecycle === false ? '' : "  send({ type: 'command_lifecycle', command_uuid: value.uuid, state: 'queued' });",
         '  if (commands.length !== 1) return;',
-        "  send({ type: 'command_lifecycle', command_uuid: value.uuid, state: 'started' });",
+        options.nativeLifecycle === false ? '' : "  send({ type: 'command_lifecycle', command_uuid: value.uuid, state: 'started' });",
         "  for (const id of ['native-tool-a', 'native-tool-b']) {",
-        "    send({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: '/tmp/probe' } }] } });",
+        "    send({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: '/tmp/tool-path-sentinel' } }] } });",
         '  }',
         '});',
         'let handled = 0;',
@@ -1541,7 +1547,7 @@ async function withClaudeLifecycleFixture(
         channelId: 'D-anima', teamId: 'T-demo', text: 'initial native work', userId: 'U1',
       }), { agentId: 'anima', stateDir });
       runtime = createAgentRuntime({
-        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath, CONTROL_PATH: controlPath }),
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath, CONTROL_PATH: controlPath, TRACE_SECRET: 'trace-env-secret-sentinel' }),
         kind: 'claude-code',
       });
       const input = await runtimeInput(runtime, ctx, await loadState());
@@ -1551,6 +1557,17 @@ async function withClaudeLifecycleFixture(
       const effects = input.effects;
       input.effects = {
         ...effects,
+        recordEvent(payload) {
+          if (payload['eventType'] !== 'runtime.input.trace') return effects.recordEvent(payload);
+          traces.push(payload);
+          const write = (async () => {
+            if (options.tracePersistence === 'failed') throw new Error('trace-error-secret-sentinel');
+            if (options.tracePersistence === 'slow') await releaseTrace.promise;
+            await effects.recordEvent(payload);
+          })();
+          traceWrites.push(write);
+          return write;
+        },
         async recordRuntime(type, payload) {
           if (type === 'runtime.completed' && options.slowCompletionPersistence) {
             completionPersistence.resolve();
@@ -1583,43 +1600,54 @@ async function withClaudeLifecycleFixture(
         }), { agentId: 'anima', stateDir });
         return runtimeFollowupInput(runtime!, ctx, next);
       }
-      await body({
-        activeItemId: ctx.item.id,
-        completionPersistenceReached: completionPersistence.promise,
-        async append(text) {
-          return runtime!.appendToActiveRun(await prepareAppend(text));
-        },
-        prepareAppend,
-        async calls() {
-          return (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
-        },
-        async emit(frames, final = false) {
-          const commandCount = frames.reduce((count, frame) => Math.max(count,
-            typeof frame['commandIndex'] === 'number' ? frame['commandIndex'] + 1 : 0,
-          ), 0);
-          if (commandCount > 0) {
-            // Native lifecycle frames can only refer to input the CLI received.
-            // Use the real event loop while confirmation tests mock setTimeout.
-            const deadline = Date.now() + 1_000;
-            while ((await readFile(callsPath, 'utf8')).trim().split('\n').filter(Boolean).length < commandCount) {
-              assert.ok(Date.now() < deadline, 'mock CLI must consume input before its lifecycle frame');
-              await nextImmediate();
+      try {
+        await body({
+          traces,
+          activeItemId: ctx.item.id,
+          completionPersistenceReached: completionPersistence.promise,
+          async append(text) {
+            return runtime!.appendToActiveRun(await prepareAppend(text));
+          },
+          prepareAppend,
+          async calls() {
+            return (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+          },
+          async emit(frames, final = false) {
+            const commandCount = frames.reduce((count, frame) => Math.max(count,
+              typeof frame['commandIndex'] === 'number' ? frame['commandIndex'] + 1 : 0,
+            ), 0);
+            if (commandCount > 0) {
+              // Native lifecycle frames can only refer to input the CLI received.
+              // Use the real event loop while confirmation tests mock setTimeout.
+              const deadline = Date.now() + 1_000;
+              while ((await readFile(callsPath, 'utf8')).trim().split('\n').filter(Boolean).length < commandCount) {
+                assert.ok(Date.now() < deadline, 'mock CLI must consume input before its lifecycle frame');
+                await nextImmediate();
+              }
             }
-          }
-          const marker = `lifecycle-fixture-barrier-${++markerNumber}`;
-          const signal = deferredSignal();
-          if (!final) {
-            markers.set(marker, signal);
-            frames = [...frames, { type: 'assistant', message: { content: [{ type: 'text', text: marker }] } }];
-          }
-          await appendFile(controlPath, `${JSON.stringify(frames)}\n`, 'utf8');
-          if (!final) await withTimeout(signal.promise, 2_000);
-        },
-        releaseToolPersistence: releaseTool.resolve,
-        releaseCompletionPersistence: releaseCompletion.resolve,
-        runPromise,
-        runtime: runtime!,
-      });
+            const marker = `lifecycle-fixture-barrier-${++markerNumber}`;
+            const signal = deferredSignal();
+            if (!final) {
+              markers.set(marker, signal);
+              frames = [...frames, { type: 'assistant', message: { content: [{ type: 'text', text: marker }] } }];
+            }
+            await appendFile(controlPath, `${JSON.stringify(frames)}\n`, 'utf8');
+            if (!final) await withTimeout(signal.promise, 2_000);
+          },
+          releaseToolPersistence: releaseTool.resolve,
+          releaseCompletionPersistence: releaseCompletion.resolve,
+          runPromise,
+          runtime: runtime!,
+        });
+      } finally {
+        // Detached observations must finish inside this fixture's home, including
+        // exit observations created by close. Never leak writes into the next test.
+        releaseTrace.resolve();
+        releaseTool.resolve();
+        releaseCompletion.resolve();
+        await runtime?.close?.();
+        await Promise.allSettled(traceWrites);
+      }
     });
   } finally {
     releaseTool.resolve();
@@ -1706,11 +1734,15 @@ for (const boundary of [
       await sleep(20);
       assert.equal(written, 0);
       assert.equal((await fixture.calls()).length, 1);
+      assert.equal(fixture.traces.filter((trace) => trace['phase'] === 'input.written').length, 1);
       await fixture.emit([boundary]);
       assert.equal((await withTimeout(first, 1_000)).accepted, true);
       assert.equal((await withTimeout(second, 1_000)).accepted, true);
       await waitFor(async () => (await fixture.calls()).length === 3);
       const calls = await fixture.calls();
+      const writtenTraces = fixture.traces.filter((trace) => trace['phase'] === 'input.written');
+      assert.deepEqual(writtenTraces.map((trace) => trace['nativeInputId']), calls.map((call) => call.uuid));
+      assert.deepEqual(writtenTraces.slice(1).map((trace) => trace['batchId']), [firstInput.batchId, secondInput.batchId]);
       assert.match(calls[1]!.message.content[0]!.text, /compressed followup one/);
       assert.match(calls[2]!.message.content[0]!.text, /compressed followup two/);
       await fixture.emit([nativeToolReturns(), nativeCommand(1, 'started'), nativeCommand(2, 'started'),
@@ -1734,9 +1766,12 @@ for (const state of ['cancelled', 'discarded', 'refused']) {
 
 test('claude-code rejects sent input on a clean child exit before lifecycle completion', async () => {
   await withClaudeLifecycleFixture(async (fixture) => {
-    await fixture.append('unconfirmed sent followup');
+    const accepted = await fixture.append('unconfirmed sent followup');
     await fixture.emit([nativeToolReturns(), { type: 'result', subtype: 'success', result: 'old result' }, nativeCommand(0, 'completed'), { exit: 0 }], true);
     await assert.rejects(fixture.runPromise, /exited before sent input completion was confirmed/);
+    const gaps = fixture.traces.filter((trace) => trace['phase'] === 'input.unconfirmed_on_exit');
+    assert.ok(gaps.some((trace) => trace['nativeInputId'] === accepted.inputReceipt?.nativeInputId));
+    assert.equal((await fixture.calls()).length, 2);
   });
 });
 
@@ -1771,11 +1806,15 @@ test('claude-code does not replay written followups after a native process crash
 test('claude-code rejects unwritten compressed input on exit and does not claim append success', async () => {
   await withClaudeLifecycleFixture(async (fixture) => {
     await fixture.emit([{ type: 'system', subtype: 'status', status: 'compacting' }]);
-    const append = fixture.runtime.appendToActiveRun(await fixture.prepareAppend('not written yet'));
+    const input = await fixture.prepareAppend('not written yet');
+    const append = fixture.runtime.appendToActiveRun(input);
     void append.catch(() => {});
     await fixture.emit([{ exit: 0 }], true);
     await assert.rejects(append, /before queued input reached stdin/);
     await assert.rejects(fixture.runPromise, /before sent input completion was confirmed/);
+    const rejected = fixture.traces.find((trace) => trace['batchId'] === input.batchId);
+    assert.equal(rejected?.['phase'], 'input.rejected_before_write');
+    assert.equal(rejected?.['nativeInputId'], undefined);
     assert.equal((await fixture.calls()).length, 1);
   });
 });
@@ -1914,4 +1953,97 @@ test('claude-code rejects unwritten compressed followups when the native turn fa
     await assert.rejects(fixture.runPromise, /Max turns exceeded/);
     assert.equal((await fixture.calls()).length, 1);
   });
+});
+
+for (const tracePersistence of ['slow', 'failed'] as const) {
+  test(`claude-code correlates multi-item burst input despite ${tracePersistence} trace persistence`, async (t) => {
+    t.mock.method(console, 'warn', () => {});
+    await withClaudeLifecycleFixture(async (fixture) => {
+      const first = await fixture.prepareAppend('trace-private-body-sentinel');
+      const second = await fixture.prepareAppend('trace-second-body-sentinel');
+      first.itemIds.push(...second.itemIds);
+      const firstReceipt = (await withTimeout(fixture.runtime.appendToActiveRun(first), 1_000)).inputReceipt;
+      const secondReceipt = (await withTimeout(fixture.runtime.appendToActiveRun(second), 1_000)).inputReceipt;
+      assert.ok(firstReceipt && secondReceipt);
+      await waitFor(async () => (await fixture.calls()).length === 3);
+      const calls = await fixture.calls();
+      assert.equal(firstReceipt.nativeInputId, calls[1]!.uuid);
+      assert.equal(secondReceipt.nativeInputId, calls[2]!.uuid);
+      assert.equal(firstReceipt.controllerInstanceId, secondReceipt.controllerInstanceId);
+      assert.notEqual(firstReceipt.nativeInputId, secondReceipt.nativeInputId);
+      const firstWritten = fixture.traces.find((row) => row['phase'] === 'input.written' && row['batchId'] === first.batchId);
+      assert.deepEqual(firstWritten?.['itemIds'], first.itemIds);
+      assert.equal(firstWritten?.['activeItemId'], fixture.activeItemId);
+      assert.equal(firstWritten?.['nativeInputId'], firstReceipt.nativeInputId);
+      fixture.releaseToolPersistence();
+      await fixture.emit([]);
+      const beforeUnknown = fixture.traces.length;
+      await fixture.emit([{ type: 'command_lifecycle', command_uuid: randomUUID(), state: 'started' }]);
+      assert.equal(fixture.traces.length, beforeUnknown, 'unknown UUID cannot claim a batch');
+      await fixture.emit([nativeToolReturns(), nativeCommand(1, 'started'), nativeCommand(2, 'started'),
+        nativeCommand(1, 'completed'), nativeCommand(2, 'completed'), nativeCommand(0, 'completed'),
+        { type: 'result', subtype: 'success', result: 'trace burst done' }], true);
+      assert.equal((await withTimeout(fixture.runPromise, 2_000)).text, 'trace burst done');
+      assert.equal((await fixture.calls()).length, 3, 'observation cannot replay accepted input');
+      const firstStarted = fixture.traces.filter((row) => row['nativeInputId'] === firstReceipt.nativeInputId
+        && row['nativeState'] === 'started');
+      assert.equal(firstStarted.length, 1, 'multiple items share one native consumption');
+      assert.deepEqual(firstStarted[0]?.['itemIds'], first.itemIds);
+      const serialized = JSON.stringify(fixture.traces);
+      for (const sentinel of ['trace-private-body-sentinel', 'trace-second-body-sentinel',
+        'trace-env-secret-sentinel', 'trace-error-secret-sentinel', '/tmp/tool-path-sentinel']) {
+        assert.equal(serialized.includes(sentinel), false);
+      }
+    }, { tracePersistence, slowToolPersistence: true });
+  });
+}
+
+test('claude-code trace keeps old and background results separate from pending input under slow mapping', async () => {
+  await withClaudeLifecycleFixture(async (fixture) => {
+    const followup = await fixture.append('new human input');
+    await fixture.emit([nativeToolReturns(), { type: 'result', subtype: 'success', result: 'old' }, nativeCommand(0, 'completed')]);
+    const hold = holdClaudeFramePersistence(fixture.runtime, (value) => value['type'] === 'command_lifecycle' && value['state'] === 'started');
+    try {
+      await fixture.emit([nativeCommand(1, 'started')], true);
+      await withTimeout(hold.entered, 1_000);
+      const started = fixture.traces.find((row) => row['nativeInputId'] === followup.inputReceipt?.nativeInputId
+        && row['nativeState'] === 'started');
+      assert.ok(started, 'control and observation run before the blocked mapper');
+      assert.equal(fixture.runtime.isProviderQuiescent?.(), false);
+    } finally {
+      hold.release();
+    }
+    await fixture.emit([{ type: 'system', subtype: 'turn_starting', mode: 'task-notification' },
+      { type: 'result', subtype: 'success', result: 'background' }]);
+    const results = fixture.traces.filter((row) => row['phase'] === 'result.observed');
+    assert.deepEqual(results.map((row) => row['owner']), ['current', 'background']);
+    assert.deepEqual(results.map((row) => row['resultOrdinal']), [1, 1]);
+    assert.ok(results.every((row) => row['nativeInputId'] === undefined && row['batchId'] === undefined));
+    assert.equal(fixture.runtime.isProviderQuiescent?.(), false);
+    await fixture.emit([{ type: 'system', subtype: 'turn_starting', mode: 'prompt' }, nativeCommand(1, 'completed'),
+      { type: 'result', subtype: 'success', result: 'human' }], true);
+    assert.equal((await withTimeout(fixture.runPromise, 2_000)).text, 'human');
+    assert.deepEqual(fixture.traces.filter((row) => row['phase'] === 'result.observed')
+      .map((row) => row['resultOrdinal']), [1, 1, 2]);
+  }, { tracePersistence: 'slow' });
+});
+
+test('claude-code legacy capability trace preserves written evidence without inventing consumption', async () => {
+  await withClaudeLifecycleFixture(async (fixture) => {
+    const input = await fixture.prepareAppend('legacy followup');
+    let accepted = false;
+    const append = fixture.runtime.appendToActiveRun(input).then((value) => { accepted = true; return value; });
+    await fixture.emit([{ type: 'command_lifecycle', command_uuid: randomUUID(), state: 'queued' }]);
+    assert.equal(accepted, false, 'unknown lifecycle cannot open the legacy tool gate');
+    assert.equal(fixture.traces.filter((row) => row['phase'] === 'input.native_lifecycle').length, 0);
+    await fixture.emit([nativeToolReturns()]);
+    const receipt = (await withTimeout(append, 1_000)).inputReceipt;
+    assert.ok(receipt);
+    await waitFor(async () => (await fixture.calls()).length === 2);
+    assert.equal(receipt.nativeInputId, (await fixture.calls())[1]!.uuid);
+    await fixture.emit([{ type: 'result', subtype: 'success', result: 'legacy done' }], true);
+    assert.equal((await withTimeout(fixture.runPromise, 2_000)).text, 'legacy done');
+    assert.equal(fixture.traces.filter((row) => row['phase'] === 'input.written').length, 2);
+    assert.equal(fixture.traces.filter((row) => row['phase'] === 'input.native_lifecycle').length, 0);
+  }, { nativeLifecycle: false });
 });
