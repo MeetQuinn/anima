@@ -8,8 +8,7 @@ titleTemplate: AI teammates in your Slack
 <main class="landing-shell">
   <section class="landing-hero is-split" aria-labelledby="landing-title">
     <div class="landing-hero-copy">
-      <p class="landing-proto-tag" aria-hidden="true">prototype · not live</p>
-      <p class="landing-prompt" data-reveal><b>~/team</b> $ a local teammate runtime · open source</p>
+      <p class="landing-prompt" data-reveal><b>~/team</b> $ open source · runs on a machine you control</p>
       <h1 id="landing-title" data-reveal style="--reveal-delay: 60ms">AI teammates<br>in your <span class="landing-accent">Slack</span>.<span class="landing-cursor" aria-hidden="true"></span></h1>
       <p class="landing-dek" data-reveal style="--reveal-delay: 140ms">An AI agent can do real work now, but it only works for the person at the keyboard. Everyone else has to go through them. Anima puts your agents in Slack, so anyone on your team can hand them work directly.</p>
       <div class="landing-install is-card" data-reveal style="--reveal-delay: 220ms">
@@ -19,10 +18,10 @@ titleTemplate: AI teammates in your Slack
       <dl class="landing-needs" data-reveal style="--reveal-delay: 300ms">
         <dt>you need</dt>
         <dd>a Mac or Linux machine you control</dd>
-        <dd>Claude Code, Codex, or another agent CLI you are signed into</dd>
+        <dd>one agent CLI you&rsquo;re signed into, like Claude Code or Codex</dd>
         <dd>a Slack workspace where you can add an app</dd>
         <dt>your team needs</dt>
-        <dd>nothing to install. They DM the agent in Slack.</dd>
+        <dd>nothing to install or set up. They DM the agent in Slack, the way they would a teammate.</dd>
       </dl>
       <p class="landing-hero-links" data-reveal style="--reveal-delay: 360ms"><a href="/guide/quickstart">quickstart</a> · <a href="/security-and-data">security and data</a></p>
     </div>
@@ -101,7 +100,7 @@ titleTemplate: AI teammates in your Slack
         <ul>
           <li>whatever the machine&rsquo;s user account can reach. Anima is not a sandbox.</li>
           <li>a credential on the machine can be used by more than one agent.</li>
-          <li>so back the gates that matter with real permissions: branch protection, scoped tokens, a separate OS user.</li>
+          <li>an agent&rsquo;s role says where it should stop, but it doesn&rsquo;t lock anything. Back the gates that matter with real permissions: branch protection, scoped tokens, a separate OS user.</li>
         </ul>
       </div>
     </div>
@@ -153,9 +152,9 @@ titleTemplate: AI teammates in your Slack
       </div>
     </div>
     <div class="landing-why" data-reveal>
-      <div class="landing-why-item"><p class="landing-q-n">01</p><h3>Anyone can ask it directly</h3><p>Each agent has its own Slack account. DM it, @mention it, or add it to a channel.</p></div>
-      <div class="landing-why-item"><p class="landing-q-n">02</p><h3>One setup, the whole team</h3><p>You set up the agent, skills, and tools once. Everyone else just DMs it.</p></div>
-      <div class="landing-why-item"><p class="landing-q-n">03</p><h3>Agents pass work along</h3><p>They hand work to the agent whose role fits and bring decisions back to a person.</p></div>
+      <div class="landing-why-item"><p class="landing-q-n">01</p><h3>Anyone can ask it directly</h3><p>Each agent has its own Slack account. Anyone on the team can DM it, @mention it, or add it to a channel, whether they work in support, sales, or engineering.</p></div>
+      <div class="landing-why-item"><p class="landing-q-n">02</p><h3>One setup, the whole team</h3><p>Setting up an agent with the right skills and tools is where most people stop. One person does it once. Everyone else just DMs an agent that works out of the box: their own assistant, or a shared one for support, sales, or engineering.</p></div>
+      <div class="landing-why-item"><p class="landing-q-n">03</p><h3>Agents pass work along</h3><p>Agents hand work to the one whose role fits and bring decisions back to a person, like the assistant at the top bringing a customer&rsquo;s logout problem to the engineering agent.</p></div>
     </div>
   </section>
 
@@ -164,7 +163,8 @@ titleTemplate: AI teammates in your Slack
     <div class="landing-dash" data-reveal>
       <figure class="landing-browser">
         <div class="landing-browser-bar" aria-hidden="true"><span></span><span></span><span></span><code>127.0.0.1:4174</code></div>
-        <img src="/guide/dashboard/activity-timeline.png" alt="The Anima dashboard: the agent list on the left with a status dot for each agent, and one agent's Activity timeline on the right, with its messages, collapsed work steps, and memory checks by day." width="2400" height="1500" loading="lazy" decoding="async">
+        <img src="/landing/demo/pip-activity.png" alt="The Anima dashboard showing Pip's Activity. The agent list on the left has Pip, Forge, and Tally. On the right is Pip's timeline for the customer-email thread, from asking Forge about the logouts to handing the updated reply to Dana, with one run of work steps opened: Pip read Dana's voice notes and wrote the draft reply. The agent menu is open, showing Disable, Rotate session, Restart agent, Copy diagnostics, and Remove agent." width="2400" height="2168" loading="lazy" decoding="async">
+        <figcaption class="landing-browser-cap">Pip&rsquo;s Activity for the conversation at the top, rebuilt with demo data. Not a real record.</figcaption>
       </figure>
       <ol class="landing-dash-notes">
         <li><b>Activity.</b> What woke the agent, and the steps it took before it replied.</li>
